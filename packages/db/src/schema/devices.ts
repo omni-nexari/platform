@@ -8,11 +8,11 @@ import {
   doublePrecision,
   jsonb,
 } from 'drizzle-orm/pg-core';
-import { organisations } from './auth';
-import { workspaces } from './workspaces';
-import { users } from './users';
-import { playlists } from './playlists';
-import { contentItems } from './content';
+import { organisations } from './auth.js';
+import { workspaces } from './workspaces.js';
+import { users } from './users.js';
+import { playlists } from './playlists.js';
+import { contentItems } from './content.js';
 
 export const devices = pgTable('devices', {
   id: uuid('id').primaryKey().defaultRandom(),

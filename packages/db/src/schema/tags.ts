@@ -7,7 +7,7 @@ import {
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core';
-import { workspaces } from './workspaces';
+import { workspaces } from './workspaces.js';
 
 export const tagCategories = pgTable('tag_categories', {
   id: uuid('id').primaryKey().defaultRandom(),

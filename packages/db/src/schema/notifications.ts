@@ -5,8 +5,8 @@ import {
   boolean,
   timestamp,
 } from 'drizzle-orm/pg-core';
-import { organisations } from './auth';
-import { users } from './users';
+import { organisations } from './auth.js';
+import { users } from './users.js';
 
 export const notifications = pgTable('notifications', {
   id: uuid('id').primaryKey().defaultRandom(),

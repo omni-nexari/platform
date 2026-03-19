@@ -15,15 +15,14 @@ if [[ -z "${GIT_REPO}" && ! -d "${APP_DIR}/.git" ]]; then
 fi
 
 mkdir -p "${APP_DIR}"
-chown -R $(whoami) "${APP_DIR}" || true
 
 if [[ ! -d "${APP_DIR}/.git" ]]; then
-  echo "Cloning ${GIT_REPO} -> ${APP_DIR}"
+  echo "Cloning ${GIT_REPO} (branch: ${BRANCH}) -> ${APP_DIR}"
   git clone --depth 1 --branch "${BRANCH}" "${GIT_REPO}" "${APP_DIR}"
 else
   echo "Updating existing repo in ${APP_DIR}"
   git -C "${APP_DIR}" fetch --all --prune
-  git -C "${APP_DIR}" checkout "${BRANCH}" || true
+  git -C "${APP_DIR}" checkout "${BRANCH}" 2>/dev/null || true
   git -C "${APP_DIR}" pull --rebase origin "${BRANCH}" || true
 fi
 
@@ -34,8 +33,11 @@ fi
 
 cd "${APP_DIR}"
 
-corepack enable
-corepack prepare pnpm@9 --activate
+# corepack needs sudo when node is installed system-wide
+sudo corepack enable
+sudo corepack prepare pnpm@9 --activate
+export PNPM_HOME="/usr/local/share/pnpm"
+export PATH="$PNPM_HOME:$PATH"
 pnpm install --frozen-lockfile
 pnpm -r build
 
@@ -50,9 +52,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now signage-api
 sudo systemctl restart signage-api || true
 
-# Install nginx site and set host
+# Install nginx site (server_name is already ds.chiho.app in the config)
 sudo cp infra/nginx/signage.conf /etc/nginx/sites-available/signage.conf
-sudo sed -i "s/server_name _;/server_name ${DS_HOSTNAME};/" /etc/nginx/sites-available/signage.conf || true
 sudo ln -sfn /etc/nginx/sites-available/signage.conf /etc/nginx/sites-enabled/signage.conf
 if [[ -f /etc/nginx/sites-enabled/default ]]; then
   sudo rm -f /etc/nginx/sites-enabled/default || true

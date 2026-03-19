@@ -1,11 +1,19 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$Host,
+    [string]$PiHost,
 
-    [string]$User = "signage",
+    [string]$User = "chiho",
     [string]$RemoteDir = "/opt/signage",
-    [string]$GitRepo = "",
+
+    # GitHub HTTPS access
+    [Parameter(Mandatory = $true)]
+    [string]$GitRepo,
     [string]$Branch = "main",
+    [Parameter(Mandatory = $true)]
+    [string]$GitUsername,
+    [Parameter(Mandatory = $true)]
+    [string]$GitToken,
+
     [string]$CertbotEmail = "",
     [switch]$RunBootstrap
 )
@@ -19,48 +27,40 @@ function Require-Command {
     }
 }
 
-Require-Command "git"
 Require-Command "ssh"
 
-$root = Split-Path -Parent $PSScriptRoot
-$sshTarget = "$User@$Host"
+$sshTarget = "$User@$PiHost"
 
-if ($GitRepo) {
-    Write-Host "Cloning/updating remote repo $GitRepo on $sshTarget:$RemoteDir ..." -ForegroundColor Cyan
-    $cloneCmd = "mkdir -p '$RemoteDir' && if [ ! -d '$RemoteDir/.git' ]; then git clone --depth 1 --branch '$Branch' '$GitRepo' '$RemoteDir'; else git -C '$RemoteDir' fetch --all --prune && git -C '$RemoteDir' checkout '$Branch' || true && git -C '$RemoteDir' pull --rebase origin '$Branch' || true; fi"
-    ssh $sshTarget $cloneCmd
-    if ($LASTEXITCODE -ne 0) {
-        throw "Remote git clone/pull failed"
-    }
-} else {
-    Write-Host "Uploading repository to $sshTarget:$RemoteDir via git archive ..." -ForegroundColor Cyan
-    $archiveCmd = "git archive --format=tar HEAD"
-    $extractCmd = "mkdir -p '$RemoteDir' && tar -xf - -C '$RemoteDir'"
-
-    cmd /c "$archiveCmd | ssh $sshTarget \"$extractCmd\""
-    if ($LASTEXITCODE -ne 0) {
-        throw "Upload failed"
-    }
-}
+# ── Write .netrc on Pi for passwordless HTTPS clone ───────────────────────────
+Write-Host "Configuring git credentials on $sshTarget ..." -ForegroundColor Cyan
+$setupCreds = "printf 'machine github.com\nlogin $GitUsername\npassword $GitToken\n' > ~/.netrc && chmod 600 ~/.netrc"
+ssh $sshTarget $setupCreds
+if ($LASTEXITCODE -ne 0) { throw "Failed to write .netrc on remote host" }
 
 if ($RunBootstrap) {
     Write-Host "Running bootstrap on remote host ..." -ForegroundColor Yellow
+    # Bootstrap requires the repo to already be present; upload a minimal copy first via git archive
+    $archiveCmd = "git archive --format=tar HEAD"
+    $extractCmd = "mkdir -p '$RemoteDir' && tar -xf - -C '$RemoteDir'"
+    cmd /c "$archiveCmd | ssh $sshTarget `"$extractCmd`""
+    if ($LASTEXITCODE -ne 0) { throw "Archive upload failed" }
     ssh $sshTarget "cd '$RemoteDir' && sudo bash infra/pi/bootstrap.sh"
-    if ($LASTEXITCODE -ne 0) {
-        throw "Bootstrap failed"
-    }
+    if ($LASTEXITCODE -ne 0) { throw "Bootstrap failed" }
 }
 
-Write-Host "Running deployment on remote host ..." -ForegroundColor Green
-$envArgs = @()
-if ($GitRepo) { $envArgs += "GIT_REPO='$GitRepo'" }
-if ($Branch) { $envArgs += "BRANCH='$Branch'" }
+# ── Run deploy.sh on remote ────────────────────────────────────────────────────
+Write-Host "Running deployment on $sshTarget ..." -ForegroundColor Green
+$envArgs = @(
+    "GIT_REPO='$GitRepo'",
+    "BRANCH='$Branch'",
+    "APP_DIR='$RemoteDir'"
+)
 if ($CertbotEmail) { $envArgs += "CERTBOT_EMAIL='$CertbotEmail'" }
 $envStr = $envArgs -join ' '
-ssh $sshTarget "cd '$RemoteDir' && $envStr bash infra/pi/deploy.sh"
-if ($LASTEXITCODE -ne 0) {
-    throw "Deploy failed"
-}
+ssh $sshTarget "$envStr bash -s" -T < "$PSScriptRoot/../infra/pi/deploy.sh"
+if ($LASTEXITCODE -ne 0) { throw "Deploy failed" }
 
-Write-Host "Done."
-Write-Host "Check health: ssh $sshTarget 'curl -sS http://127.0.0.1:3000/health'"
+Write-Host ""
+Write-Host "Done. Check health:" -ForegroundColor Green
+Write-Host "  curl -sS http://127.0.0.1:3000/health   (on Pi)" -ForegroundColor Gray
+Write-Host "  https://ds.chiho.app/api/health          (public once TLS up)" -ForegroundColor Gray

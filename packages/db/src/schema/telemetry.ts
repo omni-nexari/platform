@@ -13,10 +13,10 @@ import {
   index,
 } from 'drizzle-orm/pg-core';
 import { desc } from 'drizzle-orm';
-import { organisations } from './auth';
-import { devices } from './devices';
-import { contentItems } from './content';
-import { workspaces } from './workspaces';
+import { organisations } from './auth.js';
+import { devices } from './devices.js';
+import { contentItems } from './content.js';
+import { workspaces } from './workspaces.js';
 
 /**
  * One row per device heartbeat (every 30 s).

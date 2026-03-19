@@ -1,8 +1,8 @@
 import { pgTable, uuid, text, integer, boolean, timestamp } from 'drizzle-orm/pg-core';
 import { type AnyPgColumn } from 'drizzle-orm/pg-core';
-import { workspaces } from './workspaces';
-import { users } from './users';
-import { contentItems } from './content';
+import { workspaces } from './workspaces.js';
+import { users } from './users.js';
+import { contentItems } from './content.js';
 
 export const playlists = pgTable('playlists', {
   id: uuid('id').primaryKey().defaultRandom(),

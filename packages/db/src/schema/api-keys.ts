@@ -4,9 +4,9 @@ import {
   text,
   timestamp,
 } from 'drizzle-orm/pg-core';
-import { organisations } from './auth';
-import { users } from './users';
-import { workspaces } from './workspaces';
+import { organisations } from './auth.js';
+import { users } from './users.js';
+import { workspaces } from './workspaces.js';
 
 export const apiKeys = pgTable('api_keys', {
   id: uuid('id').primaryKey().defaultRandom(),

@@ -7,8 +7,8 @@ import {
   timestamp,
 } from 'drizzle-orm/pg-core';
 import { type AnyPgColumn } from 'drizzle-orm/pg-core';
-import { workspaces } from './workspaces';
-import { users } from './users';
+import { workspaces } from './workspaces.js';
+import { users } from './users.js';
 
 export const contentFolders = pgTable('content_folders', {
   id: uuid('id').primaryKey().defaultRandom(),

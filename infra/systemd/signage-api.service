@@ -9,7 +9,7 @@ Group=chiho
 WorkingDirectory=/opt/signage/apps/api
 Environment=NODE_ENV=production
 EnvironmentFile=/etc/signage/api.env
-ExecStart=/usr/bin/node /opt/signage/apps/api/dist/index.js
+ExecStart=/home/chiho/.nvm/versions/node/v24.13.1/bin/node /opt/signage/apps/api/dist/index.js
 Restart=on-failure
 RestartSec=5
 

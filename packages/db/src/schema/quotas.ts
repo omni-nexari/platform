@@ -4,7 +4,7 @@ import {
   bigint,
   timestamp,
 } from 'drizzle-orm/pg-core';
-import { organisations } from './auth';
+import { organisations } from './auth.js';
 
 export const orgStorageQuotas = pgTable('org_storage_quotas', {
   id: uuid('id').primaryKey().defaultRandom(),

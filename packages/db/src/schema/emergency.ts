@@ -1,7 +1,7 @@
 import { pgTable, uuid, text, timestamp } from 'drizzle-orm/pg-core';
-import { organisations } from './auth';
-import { workspaces } from './workspaces';
-import { users } from './users';
+import { organisations } from './auth.js';
+import { workspaces } from './workspaces.js';
+import { users } from './users.js';
 
 /**
  * An active emergency override that interrupts all device playback.
