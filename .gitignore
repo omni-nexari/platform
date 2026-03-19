@@ -1,0 +1,25 @@
+
+# Dev only
+dev.ps1
+node_modules/
+dist/
+.env
+.env.local
+*.tsbuildinfo
+.vscode/
+.idea/
+
+# Upload
+signage_uploads/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+
+# Logs and temp
+*.log
+tmp/
+.cache/
+
+
+
