@@ -1,0 +1,69 @@
+import {
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  inet,
+} from 'drizzle-orm/pg-core';
+
+export const superAdmins = pgTable('super_admins', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  email: text('email').notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
+  name: text('name'),
+  lastLogin: timestamp('last_login', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const organisations = pgTable('organisations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  slug: text('slug').notNull().unique(),
+  plan: text('plan').notNull().default('starter'),
+  settings: text('settings').notNull().default('{}'), // stored as JSON string
+  suspendedAt: timestamp('suspended_at', { withTimezone: true }),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const orgInvitations = pgTable('org_invitations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').notNull().references(() => organisations.id),
+  invitedBy: uuid('invited_by').notNull(),
+  email: text('email').notNull(),
+  orgRole: text('org_role').notNull(),
+  token: text('token').notNull().unique(),
+  initialWorkspaceId: uuid('initial_workspace_id'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const refreshTokens = pgTable('refresh_tokens', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull(),
+  tokenHash: text('token_hash').notNull().unique(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  ipAddress: inet('ip_address'),
+  userAgent: text('user_agent'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const auditLog = pgTable('audit_log', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  orgId: uuid('org_id').references(() => organisations.id),
+  actorId: uuid('actor_id'),
+  actorType: text('actor_type').notNull().default('user'), // user | device | system
+  action: text('action').notNull(),
+  entityType: text('entity_type'),
+  entityId: uuid('entity_id'),
+  meta: text('meta').notNull().default('{}'),
+  ipAddress: inet('ip_address'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});

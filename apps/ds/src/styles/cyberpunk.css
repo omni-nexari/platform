@@ -1,0 +1,171 @@
+﻿/* ═══════════════════════════════════════════════════════════════════════════
+   CYBERPUNK THEME  —  apply data-theme="cy" to <body>
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. Token overrides ──────────────────────────────────────────────────── */
+body[data-theme="cy"] {
+  --cp-cyan:    #00fff9;
+  --cp-pink:    #ff2d78;
+  --cp-yellow:  #f5ff00;
+  --cp-green:   #39ff14;
+  --cp-bg:      #03000e;
+
+  /* remap shared tokens */
+  --bg:          var(--cp-bg);
+  --bg2:         #060213;
+  --surface:     #070418;
+  --card:        rgba(0, 255, 249, 0.04);
+  --card-border: rgba(0, 255, 249, 0.15);
+  --modal-bg:    #0d0820;
+  --border:      rgba(0, 255, 249, 0.15);
+  --blue:        var(--cp-cyan);
+  --aqua:        var(--cp-cyan);
+  --magenta:     var(--cp-pink);
+  --danger:      var(--cp-pink);
+  --success:     var(--cp-green);
+  --warning:     var(--cp-yellow);
+  --text:        #d0faff;
+  --text-muted:  #4e9096;
+
+  font-family: "Orbitron", "Share Tech Mono", monospace;
+  background-color: var(--cp-bg);
+}
+
+/* ── 2. Animated grid + neon blobs background ────────────────────────────── */
+body[data-theme="cy"]::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 60% 40% at 10% -5%,  rgba(0, 255, 249, 0.09) 0%, transparent 55%),
+    radial-gradient(ellipse 50% 35% at 90% 105%, rgba(255, 45, 120, 0.09) 0%, transparent 50%),
+    repeating-linear-gradient(
+      0deg,
+      transparent, transparent 39px,
+      rgba(0, 255, 249, 0.045) 39px, rgba(0, 255, 249, 0.045) 40px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent, transparent 39px,
+      rgba(0, 255, 249, 0.045) 39px, rgba(0, 255, 249, 0.045) 40px
+    ),
+    var(--cp-bg);
+  animation: cy-grid-drift 24s linear infinite;
+}
+
+@keyframes cy-grid-drift {
+  from { background-position: 0 0, 0 0, 0 0,    0 0,    0 0; }
+  to   { background-position: 0 0, 0 0, 0 40px, 40px 0, 0 0; }
+}
+
+/* ── 3. Scanline overlay ─────────────────────────────────────────────────── */
+body[data-theme="cy"]::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.10) 2px,
+    rgba(0, 0, 0, 0.10) 4px
+  );
+}
+
+/* ── 4. Input overrides ──────────────────────────────────────────────────── */
+body[data-theme="cy"] .input {
+  background: rgba(0, 255, 249, 0.03);
+  border-color: rgba(0, 255, 249, 0.25);
+  font-family: "Share Tech Mono", monospace;
+  letter-spacing: 0.04em;
+  color: var(--cp-cyan);
+}
+body[data-theme="cy"] .input::placeholder { color: var(--text-muted); }
+body[data-theme="cy"] .input:focus {
+  border-color: var(--cp-cyan);
+  box-shadow: 0 0 0 2px rgba(0, 255, 249, 0.10), 0 0 14px rgba(0, 255, 249, 0.20);
+}
+
+/* ── 5. Button overrides ─────────────────────────────────────────────────── */
+body[data-theme="cy"] .btn-primary {
+  background: transparent;
+  border: 1px solid var(--cp-cyan);
+  color: var(--cp-cyan);
+  font-family: "Orbitron", monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  box-shadow: 0 0 8px rgba(0, 255, 249, 0.30), inset 0 0 8px rgba(0, 255, 249, 0.05);
+  clip-path: polygon(10px 0%, 100% 0%, calc(100% - 10px) 100%, 0% 100%);
+}
+body[data-theme="cy"] .btn-primary:hover {
+  opacity: 1;
+  background: rgba(0, 255, 249, 0.10);
+  box-shadow: 0 0 18px rgba(0, 255, 249, 0.50), inset 0 0 12px rgba(0, 255, 249, 0.08);
+}
+body[data-theme="cy"] .btn-primary:disabled {
+  opacity: 0.35;
+  box-shadow: none;
+}
+
+/* ── 6. Card neon border glow ────────────────────────────────────────────── */
+body[data-theme="cy"] [style*="card-border"] {
+  box-shadow: 0 0 0 1px rgba(0, 255, 249, 0.10), 0 0 16px rgba(0, 255, 249, 0.04);
+}
+
+/* ── 7. Glitch heading class (.cy-glitch) ────────────────────────────────── */
+body[data-theme="cy"] .cy-glitch {
+  position: relative;
+  color: var(--cp-cyan);
+  text-shadow:
+    0 0  6px rgba(0, 255, 249, 0.90),
+    0 0 20px rgba(0, 255, 249, 0.50),
+    0 0 40px rgba(0, 255, 249, 0.20);
+  animation: cy-glitch 7s infinite;
+}
+
+@keyframes cy-glitch {
+  0%,  91%, 100% { clip-path: none; transform: none; }
+  92%            { clip-path: inset(20% 0 60% 0); transform: translate(-3px, 0); }
+  93%            { clip-path: inset(60% 0 10% 0); transform: translate( 3px, 0); }
+  94%            { clip-path: none; transform: none; }
+  95%            { clip-path: inset(40% 0 40% 0); transform: translate(-1px, 0); }
+  96%            { clip-path: none; transform: none; }
+}
+
+/* ── 8. HUD corner brackets (.cy-hud) ───────────────────────────────────── */
+body[data-theme="cy"] .cy-hud {
+  position: relative;
+}
+body[data-theme="cy"] .cy-hud::before,
+body[data-theme="cy"] .cy-hud::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+}
+body[data-theme="cy"] .cy-hud::before {
+  top: 0; left: 0;
+  border-top:  2px solid var(--cp-cyan);
+  border-left: 2px solid var(--cp-cyan);
+  box-shadow: -2px -2px 6px rgba(0, 255, 249, 0.4);
+}
+body[data-theme="cy"] .cy-hud::after {
+  bottom: 0; right: 0;
+  border-bottom: 2px solid var(--cp-pink);
+  border-right:  2px solid var(--cp-pink);
+  box-shadow: 2px 2px 6px rgba(255, 45, 120, 0.4);
+}
+
+/* ── 9. Neon online / status dot override ────────────────────────────────── */
+body[data-theme="cy"] .text-green-400  { color: var(--cp-green) !important; }
+body[data-theme="cy"] .text-amber-400  { color: var(--cp-yellow) !important; }
+body[data-theme="cy"] .bg-green-500\/15 { background: rgba(57, 255, 20, 0.10) !important; }
+body[data-theme="cy"] .bg-red-600      { background: var(--cp-pink) !important; }
+body[data-theme="cy"] .hover\:bg-red-700:hover { background: #cc1f5e !important; }

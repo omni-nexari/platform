@@ -1,0 +1,254 @@
+import { useState } from 'react';
+import { Link } from 'react-router';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { toast } from 'sonner';
+import { Plus, Users, Calendar, Search } from 'lucide-react';
+import { CreateOrgSchema } from '@signage/shared';
+import type { CreateOrgInput } from '@signage/shared';
+import { saApi } from '../../lib/superadmin-auth.js';
+import {
+  Badge,
+  InlineActionButton,
+  Modal,
+  ModalBody,
+  ModalFooter,
+  ModalHeader,
+  ModalPrimaryButton,
+  ModalSecondaryButton,
+  PageHeader,
+} from '../../components/UiPrimitives.js';
+
+interface OrgRow {
+  id: string;
+  name: string;
+  slug: string;
+  plan: 'starter' | 'pro' | 'enterprise';
+  suspendedAt: string | null;
+  deletedAt: string | null;
+  createdAt: string;
+  memberCount: number;
+}
+
+const PLAN_TONES = {
+  starter: 'neutral',
+  pro: 'accent',
+  enterprise: 'success',
+} as const;
+
+const ORG_STATUS_TONES = {
+  active: 'success',
+  suspended: 'warning',
+} as const;
+
+function getOrgStatus(org: OrgRow) {
+  return org.suspendedAt ? 'suspended' : 'active';
+};
+
+export default function OrgsListPage() {
+  const qc = useQueryClient();
+  const [showCreate, setShowCreate] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const { data: orgs = [], isLoading } = useQuery({
+    queryKey: ['sa-orgs'],
+    queryFn: () => saApi.get<OrgRow[]>('/superadmin/orgs'),
+  });
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<CreateOrgInput>({ resolver: zodResolver(CreateOrgSchema) });
+
+  const createOrg = useMutation({
+    mutationFn: (data: CreateOrgInput) =>
+      saApi.post<{ org: OrgRow }>('/superadmin/orgs', data),
+    onSuccess: (res) => {
+      toast.success(`Invite sent to ${res.org.name === '(pending)' ? 'owner' : res.org.name}`);
+      void qc.invalidateQueries({ queryKey: ['sa-orgs'] });
+      reset();
+      setShowCreate(false);
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : 'Failed to send invite');
+    },
+  });
+
+  const suspendOrg = useMutation({
+    mutationFn: ({ id, suspended }: { id: string; suspended: boolean }) =>
+      saApi.patch<OrgRow>(`/superadmin/orgs/${id}`, { suspended }),
+    onSuccess: (_, vars) => {
+      toast.success(vars.suspended ? 'Organization suspended' : 'Organization unsuspended');
+      void qc.invalidateQueries({ queryKey: ['sa-orgs'] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Action failed'),
+  });
+
+  // Pending-setup orgs show a placeholder name — display them differently
+  function displayOrgName(org: OrgRow) {
+    return org.name === '(pending)' ? (
+      <span className="text-[var(--text-muted)] italic">Pending setup…</span>
+    ) : (
+      org.name
+    );
+  }
+  const filtered = orgs.filter(
+    (o) =>
+      o.name.toLowerCase().includes(search.toLowerCase()) ||
+      o.slug.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  return (
+    <div className="p-8 max-w-7xl mx-auto">
+      <PageHeader
+        className="workspace-page-header"
+        title="Organizations"
+        subtitle={`${orgs.length} total`}
+        trailing={(
+          <label className="workspace-page-search w-full max-w-sm">
+            <Search size={15} className="text-[var(--text-muted)]" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name or slug"
+              className="w-full bg-transparent text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-muted)]"
+            />
+          </label>
+        )}
+        action={(
+          <button onClick={() => setShowCreate(true)} className="workspace-page-action">
+            <Plus size={16} />
+            New Organization
+          </button>
+        )}
+      />
+
+      {/* Table */}
+      <div className="ui-data-surface">
+        {isLoading ? (
+          <div className="p-12 text-center text-[var(--text-muted)]">Loading…</div>
+        ) : filtered.length === 0 ? (
+          <div className="p-12 text-center text-[var(--text-muted)]">No organizations found</div>
+        ) : (
+          <table className="ui-data-table">
+            <thead>
+              <tr>
+                <th>Organization</th>
+                <th>Plan</th>
+                <th>
+                  <span className="flex items-center gap-1">
+                    <Users size={13} /> Members
+                  </span>
+                </th>
+                <th>Status</th>
+                <th>
+                  <span className="flex items-center gap-1">
+                    <Calendar size={13} /> Created
+                  </span>
+                </th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((org, i) => (
+                <tr key={org.id}>
+                  <td>
+                    <Link
+                      to={`/superadmin/orgs/${org.id}`}
+                      className="font-medium hover:text-[var(--blue)] transition-colors"
+                    >
+                      {displayOrgName(org)}
+                    </Link>
+                    <p className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">{org.name === '(pending)' ? '' : org.slug}</p>
+                  </td>
+                  <td>
+                    <Badge tone={PLAN_TONES[org.plan as keyof typeof PLAN_TONES] ?? 'neutral'} className="capitalize">
+                      {org.plan}
+                    </Badge>
+                  </td>
+                  <td className="tabular-nums">{org.memberCount}</td>
+                  <td>
+                    <Badge tone={ORG_STATUS_TONES[getOrgStatus(org)]}>
+                      {getOrgStatus(org)}
+                    </Badge>
+                  </td>
+                  <td className="text-[var(--text-muted)]">
+                    {new Date(org.createdAt).toLocaleDateString()}
+                  </td>
+                  <td>
+                    <div className="flex items-center gap-2 justify-end">
+                      <InlineActionButton
+                        onClick={() =>
+                          suspendOrg.mutate({ id: org.id, suspended: !org.suspendedAt })
+                        }
+                      >
+                        {org.suspendedAt ? 'Unsuspend' : 'Suspend'}
+                      </InlineActionButton>
+                      <Link
+                        to={`/superadmin/orgs/${org.id}`}
+                        className="ui-inline-action-btn"
+                      >
+                        View
+                      </Link>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Invite Owner Modal */}
+      {showCreate && (
+        <Modal onClose={() => setShowCreate(false)} size="sm">
+          <ModalHeader
+            title="Invite Organization Owner"
+            subtitle="They'll receive an email to set up their organization."
+            onClose={() => setShowCreate(false)}
+          />
+
+          <ModalBody>
+            <form
+              id="create-org-form"
+              onSubmit={handleSubmit((d) => createOrg.mutate(d))}
+              className="space-y-4"
+            >
+              <div>
+                <label className="block text-sm font-medium mb-1">Full name</label>
+                <input {...register('ownerName')} placeholder="Jane Smith" className="input w-full" />
+                {errors.ownerName && <p className="text-xs text-[var(--danger)] mt-1">{errors.ownerName.message}</p>}
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Email address</label>
+                <input {...register('ownerEmail')} type="email" placeholder="jane@acme.com" className="input w-full" />
+                {errors.ownerEmail && <p className="text-xs text-[var(--danger)] mt-1">{errors.ownerEmail.message}</p>}
+              </div>
+            </form>
+          </ModalBody>
+
+            <ModalFooter>
+              <ModalSecondaryButton
+                type="button"
+                onClick={() => setShowCreate(false)}
+                className="flex-1"
+              >
+                Cancel
+              </ModalSecondaryButton>
+              <ModalPrimaryButton
+                form="create-org-form"
+                type="submit"
+                disabled={createOrg.isPending}
+                className="flex-1"
+              >
+                {createOrg.isPending ? 'Sending…' : 'Send Invite'}
+              </ModalPrimaryButton>
+            </ModalFooter>
+        </Modal>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,23 @@
+{
+  "name": "omni-signage",
+  "private": true,
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=9"
+  },
+  "scripts": {
+    "dev:api": "pnpm --filter @signage/api dev",
+    "dev:web": "pnpm --filter @signage/ds dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "smoke:test": "node ./tools/smoke-test.mjs",
+    "db:generate": "pnpm --filter @signage/db db:generate",
+    "db:migrate": "pnpm --filter @signage/db db:migrate",
+    "db:studio": "pnpm --filter @signage/db db:studio"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

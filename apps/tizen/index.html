@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Signage Player</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100vw; height: 100vh; overflow: hidden; background: #000; }
+  </style>
+  <!-- Samsung Tizen Web API injection — available at runtime on device -->
+  <script src="$WEBAPIS/webapis/webapis.js"></script>
+</head>
+<body>
+  <!-- Layer z:10 — image / iframe content -->
+  <div id="layer-a" style="position:absolute;inset:0;z-index:10;"></div>
+  <div id="layer-b" style="position:absolute;inset:0;z-index:10;display:none;"></div>
+  <!-- Layer z:50 — OSD / debug overlay -->
+  <div id="osd" style="position:absolute;inset:0;z-index:50;pointer-events:none;"></div>
+  <!-- Layer z:100 — emergency overlay -->
+  <div id="emergency" style="position:absolute;inset:0;z-index:100;display:none;"></div>
+  <!-- Layer z:5 — idle screen -->
+  <div id="idle" style="position:absolute;inset:0;z-index:5;display:none;"></div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
