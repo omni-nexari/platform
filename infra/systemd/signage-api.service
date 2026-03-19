@@ -4,8 +4,8 @@ After=network.target postgresql.service redis-server.service
 
 [Service]
 Type=simple
-User=signage
-Group=signage
+User=chiho
+Group=chiho
 WorkingDirectory=/opt/signage/apps/api
 Environment=NODE_ENV=production
 EnvironmentFile=/etc/signage/api.env
