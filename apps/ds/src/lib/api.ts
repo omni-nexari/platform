@@ -10,6 +10,18 @@ function resolveApiBase() {
 
 const BASE = resolveApiBase();
 
+function normalizePath(path: string) {
+  return path.startsWith('/') ? path : `/${path}`;
+}
+
+function resolveBaseUrl() {
+  if (BASE.startsWith('http://') || BASE.startsWith('https://')) {
+    return BASE.endsWith('/') ? BASE : `${BASE}/`;
+  }
+
+  return new URL(BASE.endsWith('/') ? BASE : `${BASE}/`, window.location.origin).toString();
+}
+
 function isAuthMeNotFound(text: string) {
   return text.includes('User not found') || text.includes('Org not found');
 }
@@ -26,18 +38,13 @@ function sleep(ms: number) {
 }
 
 export function buildApiUrl(path: string) {
-  return `${BASE}${path}`;
+  return new URL(normalizePath(path).slice(1), resolveBaseUrl()).toString();
 }
 
 export function buildWebSocketUrl(path: string) {
-  if (BASE.startsWith('http://') || BASE.startsWith('https://')) {
-    const httpUrl = new URL(buildApiUrl(path));
-    httpUrl.protocol = httpUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-    return httpUrl.toString();
-  }
-
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}://${window.location.host}${buildApiUrl(path)}`;
+  const httpUrl = new URL(buildApiUrl(path));
+  httpUrl.protocol = httpUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+  return httpUrl.toString();
 }
 
 async function refreshAccessToken(): Promise<string> {
