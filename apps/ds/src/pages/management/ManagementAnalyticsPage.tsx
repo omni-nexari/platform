@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRight,
   BarChart2,
@@ -16,8 +16,8 @@ import {
 import { toast } from 'sonner';
 import { saApi, saDownloadBlob, saImpersonateOrg } from '../../lib/superadmin-auth.js';
 import {
-  buildPortalAnalyticsAlerts,
   buildWorkspaceViewPath,
+  type PortalAnalyticsPreset,
   type PortalAnalyticsResponse,
   formatBytes,
   formatDelta,
@@ -26,6 +26,7 @@ import {
   toDateInput,
   type WorkspaceDrilldownView,
 } from '../../lib/portal-analytics.js';
+import PortalAnalyticsControls from '../../components/PortalAnalyticsControls.js';
 import PortalTrendChart from '../../components/PortalTrendChart.js';
 import { Badge, Callout, PageHeader, Skeleton } from '../../components/UiPrimitives.js';
 
@@ -66,6 +67,7 @@ function setRangeDays(setFrom: (value: string) => void, setTo: (value: string) =
 
 export default function ManagementAnalyticsPage() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const defaultTo = new Date();
   const defaultFrom = new Date(defaultTo.getTime() - 30 * 86_400_000);
 
@@ -83,6 +85,45 @@ export default function ManagementAnalyticsPage() {
   const { data, isLoading } = useQuery<PortalAnalyticsResponse>({
     queryKey: ['reseller-analytics', from, to, compareMode],
     queryFn: () => saApi.get(`/superadmin/analytics?${params}`),
+  });
+
+  const { data: presets = [] } = useQuery<PortalAnalyticsPreset[]>({
+    queryKey: ['reseller-analytics-presets'],
+    queryFn: () => saApi.get('/superadmin/analytics/presets'),
+  });
+
+  const saveSettings = useMutation({
+    mutationFn: (settings: PortalAnalyticsResponse['settings']) => saApi.put('/superadmin/analytics/preferences', settings),
+    onSuccess: async () => {
+      toast.success('Alert settings saved');
+      await qc.invalidateQueries({ queryKey: ['reseller-analytics'] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'Failed to save settings');
+    },
+  });
+
+  const createPreset = useMutation({
+    mutationFn: (payload: { name: string; orgId: string; workspaceId: string; view: WorkspaceDrilldownView; searchParams?: Record<string, string> }) =>
+      saApi.post('/superadmin/analytics/presets', payload),
+    onSuccess: async () => {
+      toast.success('Preset saved');
+      await qc.invalidateQueries({ queryKey: ['reseller-analytics-presets'] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'Failed to save preset');
+    },
+  });
+
+  const deletePreset = useMutation({
+    mutationFn: (id: string) => saApi.delete(`/superadmin/analytics/presets/${id}`),
+    onSuccess: async () => {
+      toast.success('Preset removed');
+      await qc.invalidateQueries({ queryKey: ['reseller-analytics-presets'] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete preset');
+    },
   });
 
   const exportCsv = async () => {
@@ -117,7 +158,11 @@ export default function ManagementAnalyticsPage() {
     }
   };
 
-  const alerts = data ? buildPortalAnalyticsAlerts(data) : [];
+  const alerts = data?.alerts ?? [];
+
+  const openPreset = async (preset: PortalAnalyticsPreset) => {
+    await openWorkspaceDrilldown(`preset-${preset.id}`, preset.orgId, preset.workspaceId, preset.view, preset.searchParams);
+  };
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">
@@ -159,6 +204,20 @@ export default function ManagementAnalyticsPage() {
         </div>
       ) : (
         <>
+          <PortalAnalyticsControls
+            settings={data.settings}
+            presets={presets}
+            workspaces={data.topWorkspaces}
+            scopeLabel="reseller"
+            savingSettings={saveSettings.isPending}
+            creatingPreset={createPreset.isPending}
+            deletingPresetId={deletePreset.isPending ? deletePreset.variables ?? null : null}
+            onSaveSettings={(settings) => saveSettings.mutate(settings)}
+            onCreatePreset={(preset) => createPreset.mutate(preset)}
+            onOpenPreset={(preset) => void openPreset(preset)}
+            onDeletePreset={(id) => deletePreset.mutate(id)}
+          />
+
           {alerts.length > 0 ? (
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
               {alerts.map((alert) => {

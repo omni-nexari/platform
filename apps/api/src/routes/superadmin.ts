@@ -17,6 +17,10 @@ import {
   playlists,
   schedules,
   playEvents,
+  portalAnalyticsPreferences,
+  portalAnalyticsDrilldownPresets,
+  portalAnalyticsAlertStates,
+  platformAdminNotifications,
 } from '@signage/db';
 import { eq, isNull, count, sql, desc, and, inArray, asc, sum, gte, lte } from 'drizzle-orm';
 import * as argon2 from 'argon2';
@@ -216,6 +220,96 @@ function isOwnerCaller(
   caller: PlatformAdminCaller,
 ): caller is Extract<PlatformAdminCaller, { type: 'platform_owner' }> {
   return caller.type === 'platform_owner';
+}
+
+type PortalAnalyticsSettings = {
+  thresholds: {
+    storageUsagePct: number;
+    storageGrowthPct: number;
+    storageSevereUsagePct: number;
+    onlineDeviceDropCount: number;
+    severeOnlineDeviceDropCount: number;
+    playDropPct: number;
+    severePlayDropPct: number;
+  };
+  notifications: {
+    storageGrowth: boolean;
+    deviceDrop: boolean;
+    playAnomaly: boolean;
+  };
+  repeatHours: number;
+};
+
+type PortalAnalyticsAlert = {
+  id: 'storage-growth' | 'device-drop' | 'play-anomaly';
+  tone: 'accent' | 'warning' | 'danger';
+  title: string;
+  description: string;
+  drilldownLabel?: string;
+  drilldown?: {
+    orgId: string;
+    workspaceId: string;
+    view: 'workspace' | 'devices' | 'content' | 'analytics';
+    searchParams?: Record<string, string>;
+  };
+};
+
+const DEFAULT_PORTAL_ANALYTICS_SETTINGS: PortalAnalyticsSettings = {
+  thresholds: {
+    storageUsagePct: 80,
+    storageGrowthPct: 15,
+    storageSevereUsagePct: 90,
+    onlineDeviceDropCount: 3,
+    severeOnlineDeviceDropCount: 6,
+    playDropPct: 20,
+    severePlayDropPct: 35,
+  },
+  notifications: {
+    storageGrowth: true,
+    deviceDrop: true,
+    playAnomaly: true,
+  },
+  repeatHours: 12,
+};
+
+function getPortalAnalyticsActor(caller: PlatformAdminCaller) {
+  return {
+    actorType: caller.type,
+    actorId: caller.sub,
+  };
+}
+
+function mergePortalAnalyticsSettings(input: unknown): PortalAnalyticsSettings {
+  const raw = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const rawThresholds = raw['thresholds'] && typeof raw['thresholds'] === 'object'
+    ? raw['thresholds'] as Record<string, unknown>
+    : {};
+  const rawNotifications = raw['notifications'] && typeof raw['notifications'] === 'object'
+    ? raw['notifications'] as Record<string, unknown>
+    : {};
+
+  const numberOr = (value: unknown, fallback: number) => {
+    const next = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(next) ? next : fallback;
+  };
+
+  return {
+    thresholds: {
+      storageUsagePct: numberOr(rawThresholds['storageUsagePct'], DEFAULT_PORTAL_ANALYTICS_SETTINGS.thresholds.storageUsagePct),
+      storageGrowthPct: numberOr(rawThresholds['storageGrowthPct'], DEFAULT_PORTAL_ANALYTICS_SETTINGS.thresholds.storageGrowthPct),
+      storageSevereUsagePct: numberOr(rawThresholds['storageSevereUsagePct'], DEFAULT_PORTAL_ANALYTICS_SETTINGS.thresholds.storageSevereUsagePct),
+      onlineDeviceDropCount: numberOr(rawThresholds['onlineDeviceDropCount'], DEFAULT_PORTAL_ANALYTICS_SETTINGS.thresholds.onlineDeviceDropCount),
+      severeOnlineDeviceDropCount: numberOr(rawThresholds['severeOnlineDeviceDropCount'], DEFAULT_PORTAL_ANALYTICS_SETTINGS.thresholds.severeOnlineDeviceDropCount),
+      playDropPct: numberOr(rawThresholds['playDropPct'], DEFAULT_PORTAL_ANALYTICS_SETTINGS.thresholds.playDropPct),
+      severePlayDropPct: numberOr(rawThresholds['severePlayDropPct'], DEFAULT_PORTAL_ANALYTICS_SETTINGS.thresholds.severePlayDropPct),
+    },
+    notifications: {
+      storageGrowth: typeof rawNotifications['storageGrowth'] === 'boolean' ? rawNotifications['storageGrowth'] : DEFAULT_PORTAL_ANALYTICS_SETTINGS.notifications.storageGrowth,
+      deviceDrop: typeof rawNotifications['deviceDrop'] === 'boolean' ? rawNotifications['deviceDrop'] : DEFAULT_PORTAL_ANALYTICS_SETTINGS.notifications.deviceDrop,
+      playAnomaly: typeof rawNotifications['playAnomaly'] === 'boolean' ? rawNotifications['playAnomaly'] : DEFAULT_PORTAL_ANALYTICS_SETTINGS.notifications.playAnomaly,
+    },
+    repeatHours: Math.max(1, numberOr(raw['repeatHours'], DEFAULT_PORTAL_ANALYTICS_SETTINGS.repeatHours)),
+  };
 }
 
 export async function superAdminRoutes(app: FastifyInstance) {
@@ -704,10 +798,14 @@ export async function superAdminRoutes(app: FastifyInstance) {
     to: Date,
     compareMode: 'none' | 'previous_period' = 'previous_period',
   ) {
+    const settings = await getPortalAnalyticsSettings(caller);
     const current = await buildPortalAnalyticsPayload(caller, from, to);
 
     if (compareMode !== 'previous_period') {
-      return { ...current, comparison: null };
+      const payload = { ...current, comparison: null };
+      const alerts = buildPortalAnalyticsAlerts(payload, settings);
+      await syncPortalAnalyticsNotifications(caller, alerts, settings);
+      return { ...payload, settings, alerts };
     }
 
     const rangeMs = Math.max(1, to.getTime() - from.getTime());
@@ -715,7 +813,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
     const previousFrom = new Date(previousTo.getTime() - rangeMs);
     const previous = await buildPortalAnalyticsPayload(caller, previousFrom, previousTo);
 
-    return {
+    const payload = {
       ...current,
       comparison: {
         mode: 'previous_period' as const,
@@ -728,6 +826,184 @@ export async function superAdminRoutes(app: FastifyInstance) {
         ),
       },
     };
+
+    const alerts = buildPortalAnalyticsAlerts(payload, settings);
+    await syncPortalAnalyticsNotifications(caller, alerts, settings);
+
+    return { ...payload, settings, alerts };
+  }
+
+  async function getPortalAnalyticsSettings(caller: PlatformAdminCaller): Promise<PortalAnalyticsSettings> {
+    const actor = getPortalAnalyticsActor(caller);
+    const existing = await db.query.portalAnalyticsPreferences.findFirst({
+      where: and(
+        eq(portalAnalyticsPreferences.actorType, actor.actorType),
+        eq(portalAnalyticsPreferences.actorId, actor.actorId),
+      ),
+    });
+    return mergePortalAnalyticsSettings(existing?.settings ?? null);
+  }
+
+  function buildPortalAnalyticsAlerts(
+    payload: Awaited<ReturnType<typeof buildPortalAnalyticsPayload>> & { comparison: ReturnType<typeof buildSummaryDeltas> | null } | {
+      summary: Awaited<ReturnType<typeof buildPortalAnalyticsPayload>>['summary'];
+      topWorkspaces: Awaited<ReturnType<typeof buildPortalAnalyticsPayload>>['topWorkspaces'];
+      comparison: { deltas: Record<string, { change: number; percentChange: number | null }> } | null;
+    },
+    settings: PortalAnalyticsSettings,
+  ): PortalAnalyticsAlert[] {
+    const alerts: PortalAnalyticsAlert[] = [];
+    const comparison = payload.comparison && 'deltas' in payload.comparison
+      ? payload.comparison as { deltas: Record<string, { change: number; percentChange: number | null }> }
+      : null;
+    const storageUsagePct = payload.summary.totalStorageLimitBytes > 0
+      ? (payload.summary.totalStorageUsedBytes / payload.summary.totalStorageLimitBytes) * 100
+      : 0;
+    const topWorkspaceByContent = [...payload.topWorkspaces].sort((left, right) => right.contentCount - left.contentCount)[0];
+    const topWorkspaceByOffline = [...payload.topWorkspaces].sort((left, right) => right.offlineDeviceCount - left.offlineDeviceCount)[0];
+    const topWorkspaceByPlays = [...payload.topWorkspaces].sort((left, right) => right.playCount - left.playCount)[0];
+    const storageDelta = comparison?.deltas['totalStorageUsedBytes'];
+    const onlineDeviceDelta = comparison?.deltas['onlineDevices'];
+    const playDelta = comparison?.deltas['totalPlays'];
+
+    if (
+      storageUsagePct >= settings.thresholds.storageUsagePct
+      || (storageDelta?.percentChange != null && storageDelta.percentChange >= settings.thresholds.storageGrowthPct)
+    ) {
+      alerts.push({
+        id: 'storage-growth',
+        tone: storageUsagePct >= settings.thresholds.storageSevereUsagePct ? 'danger' : 'warning',
+        title: 'Storage pressure is rising',
+        description: storageDelta?.percentChange != null
+          ? `${Math.round(storageDelta.percentChange)}% storage growth versus the previous period.`
+          : 'Storage usage exceeded the configured operating threshold.',
+        ...(topWorkspaceByContent ? {
+          drilldownLabel: 'Inspect content-heavy workspace',
+          drilldown: {
+            orgId: topWorkspaceByContent.orgId,
+            workspaceId: topWorkspaceByContent.workspaceId,
+            view: 'content' as const,
+            searchParams: { sort: 'size' },
+          },
+        } : {}),
+      });
+    }
+
+    if (
+      payload.topWorkspaces.some((workspace) => workspace.offlineDeviceCount > 0)
+      || (onlineDeviceDelta?.change != null && Math.abs(onlineDeviceDelta.change) >= settings.thresholds.onlineDeviceDropCount && onlineDeviceDelta.change < 0)
+    ) {
+      alerts.push({
+        id: 'device-drop',
+        tone: onlineDeviceDelta != null && Math.abs(onlineDeviceDelta.change) >= settings.thresholds.severeOnlineDeviceDropCount ? 'danger' : 'warning',
+        title: 'Device availability dropped',
+        description: onlineDeviceDelta?.change != null && onlineDeviceDelta.change < 0
+          ? `${Math.abs(onlineDeviceDelta.change).toLocaleString()} fewer devices are online than in the previous period.`
+          : 'At least one tracked workspace currently has offline or errored devices.',
+        ...(topWorkspaceByOffline ? {
+          drilldownLabel: 'Open affected devices',
+          drilldown: {
+            orgId: topWorkspaceByOffline.orgId,
+            workspaceId: topWorkspaceByOffline.workspaceId,
+            view: 'devices' as const,
+            searchParams: { status: 'offline' },
+          },
+        } : {}),
+      });
+    }
+
+    if (playDelta?.percentChange != null && playDelta.percentChange <= -settings.thresholds.playDropPct) {
+      alerts.push({
+        id: 'play-anomaly',
+        tone: playDelta.percentChange <= -settings.thresholds.severePlayDropPct ? 'danger' : 'accent',
+        title: 'Play volume is below baseline',
+        description: `Proof-of-play is down ${Math.abs(Math.round(playDelta.percentChange))}% versus the previous period.`,
+        ...(topWorkspaceByPlays ? {
+          drilldownLabel: 'Open workspace analytics',
+          drilldown: {
+            orgId: topWorkspaceByPlays.orgId,
+            workspaceId: topWorkspaceByPlays.workspaceId,
+            view: 'analytics' as const,
+          },
+        } : {}),
+      });
+    }
+
+    return alerts.slice(0, 3);
+  }
+
+  async function syncPortalAnalyticsNotifications(
+    caller: PlatformAdminCaller,
+    alerts: PortalAnalyticsAlert[],
+    settings: PortalAnalyticsSettings,
+  ) {
+    const actor = getPortalAnalyticsActor(caller);
+    const existingStates = await db.query.portalAnalyticsAlertStates.findMany({
+      where: and(
+        eq(portalAnalyticsAlertStates.actorType, actor.actorType),
+        eq(portalAnalyticsAlertStates.actorId, actor.actorId),
+      ),
+    });
+    const stateMap = new Map(existingStates.map((state) => [state.alertKey, state]));
+    const activeKeys = new Set<string>(alerts.map((alert) => alert.id));
+    const now = new Date();
+    const repeatMs = settings.repeatHours * 3_600_000;
+
+    const routeEnabled: Record<PortalAnalyticsAlert['id'], boolean> = {
+      'storage-growth': settings.notifications.storageGrowth,
+      'device-drop': settings.notifications.deviceDrop,
+      'play-anomaly': settings.notifications.playAnomaly,
+    };
+
+    for (const alert of alerts) {
+      const fingerprint = JSON.stringify({
+        title: alert.title,
+        description: alert.description,
+        workspaceId: alert.drilldown?.workspaceId ?? null,
+      });
+      const state = stateMap.get(alert.id);
+      const shouldCreateNotification = routeEnabled[alert.id] && (
+        !state
+        || state.fingerprint !== fingerprint
+        || state.resolvedAt != null
+        || (state.lastTriggeredAt != null && now.getTime() - state.lastTriggeredAt.getTime() >= repeatMs)
+      );
+
+      if (shouldCreateNotification) {
+        await db.insert(platformAdminNotifications).values({
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          type: `analytics_${alert.id.replace(/-/g, '_')}`,
+          title: alert.title,
+          body: alert.description,
+          entityType: alert.drilldown ? 'workspace' : 'analytics_alert',
+          entityId: alert.drilldown?.workspaceId ?? null,
+        });
+      }
+
+      if (state) {
+        await db.update(portalAnalyticsAlertStates)
+          .set({ fingerprint, lastTriggeredAt: now, resolvedAt: null, updatedAt: now })
+          .where(eq(portalAnalyticsAlertStates.id, state.id));
+      } else {
+        await db.insert(portalAnalyticsAlertStates).values({
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          alertKey: alert.id,
+          fingerprint,
+          lastTriggeredAt: now,
+          resolvedAt: null,
+        });
+      }
+    }
+
+    for (const state of existingStates) {
+      if (!activeKeys.has(state.alertKey) && state.resolvedAt == null) {
+        await db.update(portalAnalyticsAlertStates)
+          .set({ resolvedAt: now, updatedAt: now })
+          .where(eq(portalAnalyticsAlertStates.id, state.id));
+      }
+    }
   }
 
   async function buildSystemHealthPayload() {
@@ -1961,6 +2237,205 @@ export async function superAdminRoutes(app: FastifyInstance) {
     const from = parseDate(q.from, new Date(to.getTime() - 30 * 86_400_000));
 
     return reply.send(await buildPortalAnalyticsResponse(caller, from, to, q.compare ?? 'previous_period'));
+  });
+
+  app.get('/analytics/preferences', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const caller = req.user as PlatformAdminCaller;
+    return reply.send(await getPortalAnalyticsSettings(caller));
+  });
+
+  app.put('/analytics/preferences', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const caller = req.user as PlatformAdminCaller;
+    const body = z.object({
+      thresholds: z.object({
+        storageUsagePct: z.number().min(1).max(100),
+        storageGrowthPct: z.number().min(1).max(500),
+        storageSevereUsagePct: z.number().min(1).max(100),
+        onlineDeviceDropCount: z.number().min(1).max(10_000),
+        severeOnlineDeviceDropCount: z.number().min(1).max(10_000),
+        playDropPct: z.number().min(1).max(100),
+        severePlayDropPct: z.number().min(1).max(100),
+      }),
+      notifications: z.object({
+        storageGrowth: z.boolean(),
+        deviceDrop: z.boolean(),
+        playAnomaly: z.boolean(),
+      }),
+      repeatHours: z.number().min(1).max(168),
+    }).safeParse(req.body);
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    const actor = getPortalAnalyticsActor(caller);
+    const existing = await db.query.portalAnalyticsPreferences.findFirst({
+      where: and(
+        eq(portalAnalyticsPreferences.actorType, actor.actorType),
+        eq(portalAnalyticsPreferences.actorId, actor.actorId),
+      ),
+    });
+
+    if (existing) {
+      await db.update(portalAnalyticsPreferences)
+        .set({ settings: body.data, updatedAt: new Date() })
+        .where(eq(portalAnalyticsPreferences.id, existing.id));
+    } else {
+      await db.insert(portalAnalyticsPreferences).values({
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        settings: body.data,
+      });
+    }
+
+    return reply.send(body.data);
+  });
+
+  app.get('/analytics/presets', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const caller = req.user as PlatformAdminCaller;
+    const actor = getPortalAnalyticsActor(caller);
+
+    const presets = await db.query.portalAnalyticsDrilldownPresets.findMany({
+      where: and(
+        eq(portalAnalyticsDrilldownPresets.actorType, actor.actorType),
+        eq(portalAnalyticsDrilldownPresets.actorId, actor.actorId),
+      ),
+      orderBy: [desc(portalAnalyticsDrilldownPresets.pinned), desc(portalAnalyticsDrilldownPresets.updatedAt)],
+    });
+
+    return reply.send(presets);
+  });
+
+  app.post('/analytics/presets', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const caller = req.user as PlatformAdminCaller;
+    const actor = getPortalAnalyticsActor(caller);
+    const body = z.object({
+      name: z.string().min(1).max(120),
+      orgId: z.string().uuid(),
+      workspaceId: z.string().uuid(),
+      view: z.enum(['workspace', 'devices', 'content', 'analytics']),
+      searchParams: z.record(z.string()).optional(),
+      pinned: z.boolean().optional(),
+    }).safeParse(req.body);
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    const org = await db.query.organisations.findFirst({ where: eq(organisations.id, body.data.orgId) });
+    if (!org || org.deletedAt) return reply.status(404).send({ error: 'Organization not found' });
+    if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
+      return reply.status(403).send({ error: 'Forbidden' });
+    }
+
+    const workspace = await db.query.workspaces.findFirst({
+      where: and(eq(workspaces.id, body.data.workspaceId), eq(workspaces.orgId, body.data.orgId), isNull(workspaces.deletedAt)),
+    });
+    if (!workspace) return reply.status(404).send({ error: 'Workspace not found' });
+
+    const [created] = await db.insert(portalAnalyticsDrilldownPresets).values({
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      name: body.data.name,
+      orgId: body.data.orgId,
+      workspaceId: body.data.workspaceId,
+      view: body.data.view,
+      searchParams: body.data.searchParams ?? {},
+      pinned: body.data.pinned ?? false,
+    }).returning();
+
+    return reply.status(201).send(created);
+  });
+
+  app.delete('/analytics/presets/:id', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const caller = req.user as PlatformAdminCaller;
+    const actor = getPortalAnalyticsActor(caller);
+    const { id } = req.params as { id: string };
+
+    const existing = await db.query.portalAnalyticsDrilldownPresets.findFirst({ where: eq(portalAnalyticsDrilldownPresets.id, id) });
+    if (!existing) return reply.status(404).send({ error: 'Preset not found' });
+    if (existing.actorType !== actor.actorType || existing.actorId !== actor.actorId) {
+      return reply.status(404).send({ error: 'Preset not found' });
+    }
+
+    await db.delete(portalAnalyticsDrilldownPresets).where(eq(portalAnalyticsDrilldownPresets.id, id));
+    return reply.status(204).send();
+  });
+
+  app.get('/notifications', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const caller = req.user as PlatformAdminCaller;
+    const actor = getPortalAnalyticsActor(caller);
+    const q = req.query as { page?: string; limit?: string };
+    const page = Math.max(1, parseInt(q.page ?? '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt(q.limit ?? '20', 10)));
+    const offset = (page - 1) * limit;
+
+    const base = and(
+      eq(platformAdminNotifications.actorType, actor.actorType),
+      eq(platformAdminNotifications.actorId, actor.actorId),
+      eq(platformAdminNotifications.dismissed, false),
+    );
+
+    const notifications = await db.query.platformAdminNotifications.findMany({
+      where: base,
+      orderBy: [desc(platformAdminNotifications.createdAt)],
+      limit,
+      offset,
+    });
+
+    const [totalRow] = await db.select({ total: count() }).from(platformAdminNotifications).where(base);
+    const [unreadRow] = await db.select({ total: count() }).from(platformAdminNotifications).where(and(base, isNull(platformAdminNotifications.readAt)));
+
+    return reply.send({
+      notifications,
+      total: Number(totalRow?.total ?? 0),
+      unreadCount: Number(unreadRow?.total ?? 0),
+      page,
+      limit,
+    });
+  });
+
+  app.patch('/notifications/:id/read', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const caller = req.user as PlatformAdminCaller;
+    const actor = getPortalAnalyticsActor(caller);
+    const { id } = req.params as { id: string };
+
+    const existing = await db.query.platformAdminNotifications.findFirst({ where: eq(platformAdminNotifications.id, id) });
+    if (!existing || existing.actorType !== actor.actorType || existing.actorId !== actor.actorId) {
+      return reply.status(404).send({ error: 'Not found' });
+    }
+
+    const [updated] = await db.update(platformAdminNotifications)
+      .set({ readAt: new Date() })
+      .where(eq(platformAdminNotifications.id, id))
+      .returning();
+
+    return reply.send({ notification: updated });
+  });
+
+  app.post('/notifications/mark-all-read', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const caller = req.user as PlatformAdminCaller;
+    const actor = getPortalAnalyticsActor(caller);
+
+    await db.update(platformAdminNotifications)
+      .set({ readAt: new Date() })
+      .where(and(
+        eq(platformAdminNotifications.actorType, actor.actorType),
+        eq(platformAdminNotifications.actorId, actor.actorId),
+        isNull(platformAdminNotifications.readAt),
+      ));
+
+    return reply.send({ ok: true });
+  });
+
+  app.delete('/notifications/:id', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const caller = req.user as PlatformAdminCaller;
+    const actor = getPortalAnalyticsActor(caller);
+    const { id } = req.params as { id: string };
+    const existing = await db.query.platformAdminNotifications.findFirst({ where: eq(platformAdminNotifications.id, id) });
+    if (!existing || existing.actorType !== actor.actorType || existing.actorId !== actor.actorId) {
+      return reply.status(404).send({ error: 'Not found' });
+    }
+
+    await db.update(platformAdminNotifications)
+      .set({ dismissed: true })
+      .where(eq(platformAdminNotifications.id, id));
+
+    return reply.status(204).send();
   });
 
   app.get('/analytics/export.csv', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {

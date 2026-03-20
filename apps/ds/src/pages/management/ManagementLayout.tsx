@@ -6,6 +6,7 @@ import {
   applyManagementBrandingDocument,
   getManagementBrandingStyle,
 } from '../../lib/management-branding.js';
+import PortalNotificationTray from '../../components/PortalNotificationTray.js';
 
 const NAV = [
   { to: '/management', icon: LayoutDashboard, label: 'Dashboard', end: true as const },
@@ -83,6 +84,7 @@ export default function ManagementLayout() {
               <p className="text-xs font-medium truncate">{user?.name ?? user?.email}</p>
               <p className="text-xs text-[var(--text-muted)] truncate">{user?.email}</p>
             </div>
+            <PortalNotificationTray analyticsPath="/management/analytics" />
             <button
               onClick={handleLogout}
               className="text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors"

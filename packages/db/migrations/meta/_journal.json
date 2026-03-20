@@ -120,6 +120,13 @@
       "when": 1774048200000,
       "tag": "0016_management_company_branding_extras",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1774050000000,
+      "tag": "0017_portal_analytics_preferences",
+      "breakpoints": true
     }
   ]
 }

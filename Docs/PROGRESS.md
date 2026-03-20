@@ -20,6 +20,7 @@
 
 | Date | Milestone | Status | Notes |
 |---|---|---|---|
+| March 20, 2026 | Portal analytics persistence + notification routing | ✅ | Platform Owner and reseller analytics now persist alert thresholds and routing preferences, sync threshold-based analytics alerts into a platform-admin notification inbox, and support saved workspace drilldown presets for repeat operational views |
 | March 20, 2026 | Analytics exports + drilldowns + period comparison | ✅ | Platform Owner and reseller analytics now support CSV export, click-through navigation from top reseller / organization tables into detail pages, and previous-period comparison with quick 7/30/90-day presets |
 | March 20, 2026 | Platform Owner + reseller analytics dashboards | ✅ | `/superadmin/analytics` and `/management/analytics` now render real dashboards backed by a shared role-scoped analytics payload with date filters, growth charts, proof-of-play trend, top reseller / top organization tables, recent organizations, storage totals, invite counts, and device/content/workspace rollups |
 | March 20, 2026 | Management company white-labeling expanded | ✅ | Management companies now support branded login at `/m/:slug`, company sidebar theming, typography presets, login background art, direct logo/favicon/background uploads from the portal and first-time invite acceptance flow, platform-owner branding override tools, and branded management invite / client-onboarding email templates |
@@ -225,6 +226,7 @@
 | Platform/Reseller analytics drilldowns | ✅ | Top reseller and top/recent organization tables link directly into Platform Owner or reseller detail pages |
 | Platform/Reseller period comparison | ✅ | Previous-period comparison with quick 7/30/90-day presets and per-metric delta badges |
 | Platform/Reseller analytics charting + alerts | ✅ | Platform Owner and reseller analytics now use hoverable trend charts, threshold-based storage/device/play alerts, workspace-level rollups, and direct drilldowns into filtered workspace/device/content views via scoped org impersonation |
+| Platform/Reseller alert tuning + saved presets | ✅ | Both portal analytics pages now persist alert thresholds, repeat cadence, and inbox routing, and can save named workspace drilldown presets for repeat monitoring flows |
 
 ---
 
@@ -241,6 +243,7 @@
 | Content processing failed alerts | ✅ | Thumbnail regeneration failure now marks content `error` and creates `content_failed` notification |
 | Storage quota 80% / 100% alerts | ✅ | Upload flow now emits `storage_warning` notifications when thresholds are crossed |
 | Emergency override alerts | ✅ | Emergency activation route now creates `emergency_activated` notifications |
+| Platform-admin analytics inbox | ✅ | Platform Owner and reseller layouts now mount a dedicated analytics notification tray backed by `/superadmin/notifications`, with mark-read, dismiss, and mark-all-read actions for persisted analytics alerts |
 
 ---
 

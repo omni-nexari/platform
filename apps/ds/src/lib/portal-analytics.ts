@@ -67,10 +67,65 @@ export interface PortalAnalyticsAlert {
   } | undefined;
 }
 
+export interface PortalAnalyticsSettings {
+  thresholds: {
+    storageUsagePct: number;
+    storageGrowthPct: number;
+    storageSevereUsagePct: number;
+    onlineDeviceDropCount: number;
+    severeOnlineDeviceDropCount: number;
+    playDropPct: number;
+    severePlayDropPct: number;
+  };
+  notifications: {
+    storageGrowth: boolean;
+    deviceDrop: boolean;
+    playAnomaly: boolean;
+  };
+  repeatHours: number;
+}
+
+export interface PortalAnalyticsPreset {
+  id: string;
+  name: string;
+  actorType: 'platform_owner' | 'management_company';
+  actorId: string;
+  orgId: string;
+  workspaceId: string;
+  view: WorkspaceDrilldownView;
+  searchParams: Record<string, string>;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlatformAdminNotification {
+  id: string;
+  actorType: 'platform_owner' | 'management_company';
+  actorId: string;
+  type: string;
+  title: string;
+  body: string;
+  data: Record<string, unknown>;
+  readAt: string | null;
+  dismissed: boolean;
+  createdAt: string;
+}
+
+export interface PlatformAdminNotificationResponse {
+  notifications: PlatformAdminNotification[];
+  total: number;
+  unreadCount: number;
+  page: number;
+  limit: number;
+}
+
 export interface PortalAnalyticsResponse {
   scope: 'platform_owner' | 'reseller';
   from: string;
   to: string;
+  settings: PortalAnalyticsSettings;
+  alerts: PortalAnalyticsAlert[];
   summary: PortalAnalyticsSummary;
   totalManagementCompanies: number;
   totalResellers: number;
@@ -237,4 +292,13 @@ export function buildPortalAnalyticsAlerts(data: PortalAnalyticsResponse): Porta
   }
 
   return alerts.slice(0, 3);
+}
+
+export function buildPresetSearchParams(
+  view: WorkspaceDrilldownView,
+  workspace: Pick<PortalWorkspaceDrilldown, 'offlineDeviceCount'>,
+) {
+  if (view === 'devices' && workspace.offlineDeviceCount > 0) return { status: 'offline' };
+  if (view === 'content') return { sort: 'size' };
+  return {};
 }

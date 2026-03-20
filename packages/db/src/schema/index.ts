@@ -12,5 +12,6 @@ export * from './playlists.js';
 export * from './schedules.js';
 export * from './tags.js';
 export * from './smart-views.js';
+export * from './portal-analytics.js';
 export * from './telemetry.js';
 export * from './canvas.js';

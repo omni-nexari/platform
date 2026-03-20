@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from 'react-router';
 import { Building2, BarChart2, Activity, LogOut, Layers, LayoutDashboard } from 'lucide-react';
 import { useSAStore } from '../../lib/superadmin-auth.js';
+import PortalNotificationTray from '../../components/PortalNotificationTray.js';
 
 const NAV = [
   { to: '/superadmin', icon: LayoutDashboard, label: 'Dashboard', end: true as const },
@@ -70,6 +71,7 @@ export default function SuperAdminLayout() {
               <p className="text-xs font-medium truncate">{user?.name ?? user?.email}</p>
               <p className="text-xs text-[var(--text-muted)] truncate">{user?.email}</p>
             </div>
+            <PortalNotificationTray analyticsPath="/superadmin/analytics" />
             <button
               onClick={handleLogout}
               className="text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors"
