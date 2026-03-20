@@ -397,11 +397,15 @@ export async function superAdminRoutes(app: FastifyInstance) {
       .innerJoin(organisations, eq(workspaces.orgId, organisations.id))
       .where(and(orgScope, isNull(workspaces.deletedAt), isNull(schedules.deletedAt)));
 
-    const [storageRow] = await db
-      .select({
-        used: sum(orgStorageQuotas.usedBytes),
-        limit: sum(orgStorageQuotas.limitBytes),
-      })
+    const [storageUsageRow] = await db
+      .select({ used: sum(contentItems.fileSize) })
+      .from(contentItems)
+      .innerJoin(workspaces, eq(contentItems.workspaceId, workspaces.id))
+      .innerJoin(organisations, eq(workspaces.orgId, organisations.id))
+      .where(and(orgScope, isNull(workspaces.deletedAt), isNull(contentItems.deletedAt)));
+
+    const [storageLimitRow] = await db
+      .select({ limit: sum(orgStorageQuotas.limitBytes) })
       .from(orgStorageQuotas)
       .innerJoin(organisations, eq(orgStorageQuotas.orgId, organisations.id))
       .where(orgScope);
@@ -513,9 +517,12 @@ export async function superAdminRoutes(app: FastifyInstance) {
           WHERE u.org_id = o.id AND u.deleted_at IS NULL
         ) AS user_count,
         COALESCE((
-          SELECT q.used_bytes::bigint
-          FROM org_storage_quotas q
-          WHERE q.org_id = o.id
+          SELECT SUM(COALESCE(ci.file_size, 0))::bigint
+          FROM content_items ci
+          INNER JOIN workspaces w2 ON w2.id = ci.workspace_id
+          WHERE w2.org_id = o.id
+            AND w2.deleted_at IS NULL
+            AND ci.deleted_at IS NULL
         ), 0)::text AS storage_used_bytes,
         (
           SELECT COUNT(*)::int
@@ -681,11 +688,14 @@ export async function superAdminRoutes(app: FastifyInstance) {
                 AND d.deleted_at IS NULL
             ) AS device_count,
             COALESCE((
-              SELECT SUM(COALESCE(q.used_bytes, 0))::bigint
-              FROM org_storage_quotas q
-              INNER JOIN organisations o ON o.id = q.org_id
+              SELECT SUM(COALESCE(ci.file_size, 0))::bigint
+              FROM content_items ci
+              INNER JOIN workspaces w ON w.id = ci.workspace_id
+              INNER JOIN organisations o ON o.id = w.org_id
               WHERE o.management_company_id = mc.id
                 AND o.deleted_at IS NULL
+                AND w.deleted_at IS NULL
+                AND ci.deleted_at IS NULL
             ), 0)::text AS storage_used_bytes
           FROM management_companies mc
           WHERE mc.deleted_at IS NULL
@@ -722,8 +732,8 @@ export async function superAdminRoutes(app: FastifyInstance) {
       totalPlaylists: Number(playlistRow?.total ?? 0),
       totalSchedules: Number(scheduleRow?.total ?? 0),
       activeSchedules: Number(scheduleRow?.active ?? 0),
-      totalStorageUsedBytes: Number(storageRow?.used ?? 0),
-      totalStorageLimitBytes: Number(storageRow?.limit ?? 0),
+      totalStorageUsedBytes: Number(storageUsageRow?.used ?? 0),
+      totalStorageLimitBytes: Number(storageLimitRow?.limit ?? 0),
       totalScreenshots: Number(screenshotRow?.total ?? 0),
       totalPendingClientInvites: Number(pendingClientInviteRow?.total ?? 0),
       totalPendingResellerInvites: Number(pendingResellerInviteRow?.total ?? 0),
