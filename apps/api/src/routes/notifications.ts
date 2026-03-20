@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { db, notifications as notifTable } from '@signage/db';
 import { eq, and, isNull, desc, sql, count } from 'drizzle-orm';
 import { z } from 'zod';
+import { registerBrowserClient, unregisterBrowserClient } from '../services/notifications.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -25,6 +26,41 @@ const DEFAULT_PREFS: PrefRow[] = EVENT_KEYS.map((k) => ({
 }));
 
 export async function notificationsRoutes(app: FastifyInstance) {
+
+  // ── GET /notifications/ws ─ browser realtime notification stream ─────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (app as any).get('/ws', { websocket: true }, async (socket: any, req: any) => {
+    const token = (req.query as Record<string, string | undefined>).token;
+    if (!token) {
+      socket.close(4001, 'Missing token');
+      return;
+    }
+
+    let payload: { sub: string; type: string };
+    try {
+      payload = app.jwt.verify<{ sub: string; type: string }>(token);
+    } catch {
+      socket.close(4001, 'Invalid token');
+      return;
+    }
+
+    if (payload.type !== 'user') {
+      socket.close(4003, 'Invalid token type');
+      return;
+    }
+
+    registerBrowserClient(
+      payload.sub,
+      socket as { send: (d: string) => void; close: () => void; readyState: number },
+    );
+
+    socket.on('close', () => {
+      unregisterBrowserClient(
+        payload.sub,
+        socket as { send: (d: string) => void; close: () => void; readyState: number },
+      );
+    });
+  });
 
   // ── GET /notifications?page=&limit= ───────────────────────────────────────
   app.get('/', { onRequest: [app.authenticate] }, async (req, reply) => {

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Activity, Cpu, HardDrive, Server, RefreshCw, Database } from 'lucide-react';
 import { saApi } from '../../lib/superadmin-auth.js';
-import { PageHeader, SectionCard, SectionCardBody, SectionCardHeader } from '../../components/UiPrimitives.js';
+import { PageHeader, SectionCard, SectionCardBody, SectionCardHeader, Skeleton } from '../../components/UiPrimitives.js';
 
 interface SystemHealth {
   process: {
@@ -108,7 +108,9 @@ export default function SystemHealthPage() {
       />
 
       {isLoading && (
-        <div className="p-12 text-center text-[var(--text-muted)]">Loading metrics…</div>
+        <div className="space-y-4">
+          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-2xl" />)}
+        </div>
       )}
 
       {data && (

@@ -23,6 +23,7 @@ import {
   ModalPrimaryButton,
   ModalSecondaryButton,
   PageHeader,
+  Skeleton,
   StatChip,
 } from '../../components/UiPrimitives.js';
 
@@ -429,7 +430,9 @@ export default function SchedulePage() {
         {/* List */}
         <div className="flex-1 overflow-y-auto">
           {isLoading ? (
-            <div className="flex items-center justify-center h-32 text-sm text-[var(--text-muted)]">Loading…</div>
+            <div className="space-y-3 px-4 pb-6 sm:px-6 sm:pb-8 lg:px-8 pt-4">
+              {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-2xl" />)}
+            </div>
           ) : filtered.length === 0 ? (
             <div className="px-8 pb-8">
               <EmptyState

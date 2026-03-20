@@ -14,6 +14,7 @@ import {
   SectionCard,
   SectionCardBody,
   SectionCardHeader,
+  Skeleton,
 } from '../../components/UiPrimitives.js';
 
 interface Org {
@@ -200,7 +201,15 @@ export default function OrgDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="p-8 text-center text-[var(--text-muted)]">Loading…</div>
+      <div className="p-8 max-w-5xl mx-auto space-y-6">
+        <Skeleton className="h-10 w-64" />
+        <div className="space-y-3">
+          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-xl" />)}
+        </div>
+        <div className="space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-xl" />)}
+        </div>
+      </div>
     );
   }
 

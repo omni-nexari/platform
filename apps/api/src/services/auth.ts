@@ -1,4 +1,4 @@
-import { db, users, organisations, orgInvitations, refreshTokens, workspaceMembers, workspaces } from '@signage/db';
+import { db, users, organisations, orgInvitations, refreshTokens, workspaceMembers, workspaces, managementCompanyAdmins, managementCompanyAdminInvitations, clientOrgOwnerInvitations, managementCompanies } from '@signage/db';
 import { eq, and, isNull, gt } from 'drizzle-orm';
 import * as argon2 from 'argon2';
 import { authenticator } from 'otplib';
@@ -199,6 +199,122 @@ export async function acceptInvite(
     await db
       .insert(workspaceMembers)
       .values({ workspaceId: wsId, userId: user.id, role: 'admin', addedBy: user.id })
+      .onConflictDoNothing();
+  }
+
+  return user;
+}
+
+// ── management company admin invite ──────────────────────────────────────────
+
+export async function findValidMgmtAdminInvite(token: string) {
+  return db.query.managementCompanyAdminInvitations.findFirst({
+    where: and(
+      eq(managementCompanyAdminInvitations.token, token),
+      isNull(managementCompanyAdminInvitations.acceptedAt),
+      isNull(managementCompanyAdminInvitations.revokedAt),
+      gt(managementCompanyAdminInvitations.expiresAt, new Date()),
+    ),
+  });
+}
+
+export async function acceptMgmtAdminInvite(
+  inviteId: string,
+  managementCompanyId: string,
+  email: string,
+  role: string,
+  name: string,
+  password: string,
+) {
+  const passwordHash = await argon2.hash(password);
+
+  const [admin] = await db
+    .insert(managementCompanyAdmins)
+    .values({ managementCompanyId, email: email.toLowerCase(), name, passwordHash, role })
+    .returning();
+
+  await db
+    .update(managementCompanyAdminInvitations)
+    .set({ acceptedAt: new Date(), updatedAt: new Date() })
+    .where(eq(managementCompanyAdminInvitations.id, inviteId));
+
+  // Activate management company if still pending
+  await db
+    .update(managementCompanies)
+    .set({ updatedAt: new Date() })
+    .where(eq(managementCompanies.id, managementCompanyId));
+
+  return admin;
+}
+
+// ── client org owner invite ───────────────────────────────────────────────────
+
+export async function findValidClientOrgInvite(token: string) {
+  return db.query.clientOrgOwnerInvitations.findFirst({
+    where: and(
+      eq(clientOrgOwnerInvitations.token, token),
+      isNull(clientOrgOwnerInvitations.acceptedAt),
+      isNull(clientOrgOwnerInvitations.revokedAt),
+      gt(clientOrgOwnerInvitations.expiresAt, new Date()),
+    ),
+  });
+}
+
+export async function acceptClientOrgInvite(
+  inviteId: string,
+  organizationId: string,
+  managementCompanyId: string,
+  originatingAdminId: string,
+  email: string,
+  name: string,
+  password: string,
+  orgSetup: { orgName: string; orgSlug: string; workspaceName: string; workspaceTimezone: string },
+) {
+  // Finalise the pending org
+  await db
+    .update(organisations)
+    .set({
+      name: orgSetup.orgName,
+      slug: orgSetup.orgSlug,
+      status: 'active',
+      managementCompanyId,
+      originatingAdminId,
+      primaryAccountManagerId: originatingAdminId,
+      billingOwnerCompanyId: managementCompanyId,
+      updatedAt: new Date(),
+    })
+    .where(eq(organisations.id, organizationId));
+
+  // Create the default workspace
+  const wsSlug = orgSetup.workspaceName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  const [ws] = await db
+    .insert(workspaces)
+    .values({
+      orgId: organizationId,
+      name: orgSetup.workspaceName,
+      slug: wsSlug,
+      timezone: orgSetup.workspaceTimezone,
+    })
+    .returning();
+
+  const passwordHash = await argon2.hash(password);
+  const [user] = await db
+    .insert(users)
+    .values({ orgId: organizationId, email: email.toLowerCase(), name, passwordHash, orgRole: 'owner' })
+    .returning();
+
+  await db
+    .update(clientOrgOwnerInvitations)
+    .set({ acceptedAt: new Date(), updatedAt: new Date() })
+    .where(eq(clientOrgOwnerInvitations.id, inviteId));
+
+  if (user && ws) {
+    await db
+      .insert(workspaceMembers)
+      .values({ workspaceId: ws.id, userId: user.id, role: 'admin', addedBy: user.id })
       .onConflictDoNothing();
   }
 

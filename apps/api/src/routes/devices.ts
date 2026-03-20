@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { createReadStream, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
-import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, schedules, scheduleSlots, playlists, playlistItems, contentItems } from '@signage/db';
+import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, schedules, playlists, playlistItems, contentItems } from '@signage/db';
 import { eq, and, isNull, desc, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -17,6 +17,7 @@ import {
   unregisterDevice,
   handleDeviceMessage,
 } from '../services/ws.js';
+import { notifyDeviceStatusChange } from '../services/notifications.js';
 
 /** 6-char uppercase code avoiding confusable chars (0,O,I,1) */
 function generatePairingCode(): string {
@@ -474,6 +475,16 @@ export async function deviceRoutes(app: FastifyInstance) {
       .set({ status: 'online', lastSeen: new Date(), updatedAt: new Date() })
       .where(eq(devices.id, deviceId));
 
+    if (device.orgId && device.workspaceId && device.status !== 'online') {
+      await notifyDeviceStatusChange({
+        orgId: device.orgId,
+        workspaceId: device.workspaceId,
+        deviceId,
+        deviceName: device.name,
+        status: 'online',
+      });
+    }
+
     app.log.info({ deviceId }, 'Device connected via WS');
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -487,6 +498,16 @@ export async function deviceRoutes(app: FastifyInstance) {
         .update(devices)
         .set({ status: 'offline', updatedAt: new Date() })
         .where(eq(devices.id, deviceId));
+
+      if (device.orgId && device.workspaceId) {
+        await notifyDeviceStatusChange({
+          orgId: device.orgId,
+          workspaceId: device.workspaceId,
+          deviceId,
+          deviceName: device.name,
+          status: 'offline',
+        });
+      }
       app.log.info({ deviceId }, 'Device disconnected');
     });
 

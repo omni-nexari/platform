@@ -16,7 +16,7 @@ import ConfirmDialog from '../../components/ConfirmDialog.js';
 import BulkTagModal from '../../components/BulkTagModal.js';
 import SmartViewsBar from '../../components/SmartViewsBar.js';
 import TagFilterBar from '../../components/TagFilterBar.js';
-import { Badge, EmptyState, FilterChip, Modal, ModalBody, ModalFooter, ModalHeader, ModalPrimaryButton, ModalSecondaryButton, PageHeader } from '../../components/UiPrimitives.js';
+import { Badge, EmptyState, FilterChip, Modal, ModalBody, ModalFooter, ModalHeader, ModalPrimaryButton, ModalSecondaryButton, PageHeader, Skeleton } from '../../components/UiPrimitives.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ContentItem {
@@ -619,7 +619,9 @@ export default function ContentPage() {
           </div>
 
           {isLoading ? (
-            <div className="flex items-center justify-center py-24 text-[var(--text-muted)]">Loading…</div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
+              {Array.from({ length: 12 }).map((_, i) => <Skeleton key={i} className="aspect-video rounded-xl" />)}
+            </div>
           ) : items.length === 0 ? (
             <EmptyState
               icon={<Image size={40} />}

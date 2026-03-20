@@ -85,6 +85,41 @@
       "when": 1773957283609,
       "tag": "0011_smart_views",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1773957283610,
+      "tag": "0012_management_companies",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1773957283611,
+      "tag": "0013_management_company_logo",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1773960000000,
+      "tag": "0014_analytics_notifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1774046400000,
+      "tag": "0015_management_company_branding",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1774048200000,
+      "tag": "0016_management_company_branding_extras",
+      "breakpoints": true
     }
   ]
 }

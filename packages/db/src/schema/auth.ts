@@ -6,7 +6,8 @@ import {
   inet,
 } from 'drizzle-orm/pg-core';
 
-export const superAdmins = pgTable('super_admins', {
+// Renamed from super_admins in migration 0012
+export const platformOwners = pgTable('platform_owners', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: text('email').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
@@ -22,6 +23,12 @@ export const organisations = pgTable('organisations', {
   slug: text('slug').notNull().unique(),
   plan: text('plan').notNull().default('starter'),
   settings: text('settings').notNull().default('{}'), // stored as JSON string
+  status: text('status').notNull().default('active'), // pending | active | suspended
+  // management company ownership — bare UUIDs to avoid circular schema import
+  managementCompanyId: uuid('management_company_id'),
+  originatingAdminId: uuid('originating_admin_id'),
+  primaryAccountManagerId: uuid('primary_account_manager_id'),
+  billingOwnerCompanyId: uuid('billing_owner_company_id'),
   suspendedAt: timestamp('suspended_at', { withTimezone: true }),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

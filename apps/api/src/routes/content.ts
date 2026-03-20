@@ -8,6 +8,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import sharp from 'sharp';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
+import { notifyContentFailed, notifyStorageThresholdCrossing } from '../services/notifications.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -460,6 +461,14 @@ export async function contentRoutes(app: FastifyInstance) {
       await db.update(orgStorageQuotas)
         .set({ usedBytes: quota.usedBytes + fileSize, updatedAt: new Date() })
         .where(eq(orgStorageQuotas.orgId, user.orgId));
+
+      await notifyStorageThresholdCrossing({
+        orgId: user.orgId,
+        actorUserId: user.sub,
+        previousUsedBytes: quota.usedBytes,
+        nextUsedBytes: quota.usedBytes + fileSize,
+        limitBytes: quota.limitBytes,
+      });
     }
 
     return reply.status(201).send(item);
@@ -771,6 +780,18 @@ export async function contentRoutes(app: FastifyInstance) {
         await generateVideoThumb(absPath, thumbAbs);
       }
     } catch (e) {
+      await db.update(contentItems)
+        .set({ status: 'error', updatedAt: new Date() })
+        .where(eq(contentItems.id, id));
+
+      await notifyContentFailed({
+        orgId: user.orgId,
+        userId: item.uploadedBy,
+        contentId: item.id,
+        contentName: item.name,
+        reason: 'Thumbnail generation failed',
+      });
+
       return reply.status(500).send({ error: 'Thumbnail generation failed', detail: String(e) });
     }
 

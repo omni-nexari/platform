@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { Stage, Layer, Rect, Circle, Text, Line, Transformer, Group } from 'react-konva';
+import { Stage, Layer, Rect, Circle, Text, Line, Transformer } from 'react-konva';
 import type Konva from 'konva';
 import { useCanvasStore } from '../../lib/canvasStore.js';
 import type { CanvasElement } from '../../lib/canvasTypes.js';

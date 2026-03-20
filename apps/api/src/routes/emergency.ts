@@ -4,6 +4,7 @@ import { db, emergencyOverrides, devices } from '@signage/db';
 import { eq, and, isNull, desc } from 'drizzle-orm';
 import { broadcastToDevices } from '../services/ws.js';
 import { writeAuditLog } from '../services/audit.js';
+import { notifyEmergencyActivated } from '../services/notifications.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -70,6 +71,14 @@ export async function emergencyRoutes(app: FastifyInstance) {
       entityId: override!.id,
       meta: { scope: body.data.scope, affectedDevices: affectedDevices.length },
       ipAddress: req.ip,
+    });
+
+    await notifyEmergencyActivated({
+      orgId: user.orgId,
+      scope: body.data.scope,
+      ...(body.data.scopeId ? { scopeId: body.data.scopeId } : {}),
+      workspaceIds: [...new Set(affectedDevices.map((device) => device.workspaceId).filter(Boolean) as string[])],
+      emergencyId: override!.id,
     });
 
     return reply.status(201).send(override);

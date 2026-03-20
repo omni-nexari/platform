@@ -16,6 +16,7 @@ import { notificationsRoutes } from './notifications.js';
 import { searchRoutes } from './search.js';
 import { canvasRoutes } from './canvas.js';
 import { smartViewsRoutes } from './smart-views.js';
+import { analyticsRoutes } from './analytics.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoute);
@@ -35,5 +36,6 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(searchRoutes, { prefix: '/search' });
   await app.register(canvasRoutes, { prefix: '/canvas' });
   await app.register(smartViewsRoutes, { prefix: '/smart-views' });
+  await app.register(analyticsRoutes, { prefix: '/analytics' });
 }
 

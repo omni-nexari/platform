@@ -5,9 +5,8 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { Plus, Users, Calendar, Search } from 'lucide-react';
-import { CreateOrgSchema } from '@signage/shared';
-import type { CreateOrgInput } from '@signage/shared';
-import { saApi } from '../../lib/superadmin-auth.js';
+import { z } from 'zod';
+import { saApi, useIsPlatformOwner } from '../../lib/superadmin-auth.js';
 import {
   Badge,
   InlineActionButton,
@@ -18,17 +17,33 @@ import {
   ModalPrimaryButton,
   ModalSecondaryButton,
   PageHeader,
+  Skeleton,
 } from '../../components/UiPrimitives.js';
+
+// The superadmin org creation endpoint accepts ownerEmail + ownerName + optional managementCompanyId
+const CreateOrgFormSchema = z.object({
+  ownerName: z.string().min(1, 'Full name is required').max(120),
+  ownerEmail: z.string().email('Enter a valid email'),
+  managementCompanyId: z.string().uuid('Select a management company').optional(),
+});
+type CreateOrgFormData = z.infer<typeof CreateOrgFormSchema>;
 
 interface OrgRow {
   id: string;
   name: string;
   slug: string;
   plan: 'starter' | 'pro' | 'enterprise';
+  status: 'pending' | 'active' | 'suspended';
   suspendedAt: string | null;
   deletedAt: string | null;
   createdAt: string;
   memberCount: number;
+  managementCompanyId: string | null;
+}
+
+interface CompanyOption {
+  id: string;
+  name: string;
 }
 
 const PLAN_TONES = {
@@ -40,14 +55,18 @@ const PLAN_TONES = {
 const ORG_STATUS_TONES = {
   active: 'success',
   suspended: 'warning',
+  pending: 'neutral',
 } as const;
 
 function getOrgStatus(org: OrgRow) {
-  return org.suspendedAt ? 'suspended' : 'active';
-};
+  if (org.suspendedAt) return 'suspended';
+  if (org.status === 'pending') return 'pending';
+  return 'active';
+}
 
 export default function OrgsListPage() {
   const qc = useQueryClient();
+  const isPO = useIsPlatformOwner();
   const [showCreate, setShowCreate] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -56,18 +75,26 @@ export default function OrgsListPage() {
     queryFn: () => saApi.get<OrgRow[]>('/superadmin/orgs'),
   });
 
+  // Only needed for platform owners who must pick a management company
+  const { data: companies = [] } = useQuery({
+    queryKey: ['sa-companies-options'],
+    queryFn: () => saApi.get<CompanyOption[]>('/superadmin/management-companies'),
+    enabled: !!isPO,
+    select: (rows: CompanyOption[]) => rows,
+  });
+
   const {
     register,
     handleSubmit,
     reset,
     formState: { errors, isSubmitting },
-  } = useForm<CreateOrgInput>({ resolver: zodResolver(CreateOrgSchema) });
+  } = useForm<CreateOrgFormData>({ resolver: zodResolver(CreateOrgFormSchema) });
 
   const createOrg = useMutation({
-    mutationFn: (data: CreateOrgInput) =>
+    mutationFn: (data: CreateOrgFormData) =>
       saApi.post<{ org: OrgRow }>('/superadmin/orgs', data),
-    onSuccess: (res) => {
-      toast.success(`Invite sent to ${res.org.name === '(pending)' ? 'owner' : res.org.name}`);
+    onSuccess: () => {
+      toast.success('Invite sent to organization owner');
       void qc.invalidateQueries({ queryKey: ['sa-orgs'] });
       reset();
       setShowCreate(false);
@@ -129,7 +156,9 @@ export default function OrgsListPage() {
       {/* Table */}
       <div className="ui-data-surface">
         {isLoading ? (
-          <div className="p-12 text-center text-[var(--text-muted)]">Loading…</div>
+          <div className="p-4 space-y-2">
+            {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}
+          </div>
         ) : filtered.length === 0 ? (
           <div className="p-12 text-center text-[var(--text-muted)]">No organizations found</div>
         ) : (
@@ -227,6 +256,20 @@ export default function OrgsListPage() {
                 <input {...register('ownerEmail')} type="email" placeholder="jane@acme.com" className="input w-full" />
                 {errors.ownerEmail && <p className="text-xs text-[var(--danger)] mt-1">{errors.ownerEmail.message}</p>}
               </div>
+              {isPO && (
+                <div>
+                  <label className="block text-sm font-medium mb-1">Management Company</label>
+                  <select {...register('managementCompanyId')} className="input w-full">
+                    <option value="">None (direct client)</option>
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  {errors.managementCompanyId && (
+                    <p className="text-xs text-[var(--danger)] mt-1">{errors.managementCompanyId.message}</p>
+                  )}
+                </div>
+              )}
             </form>
           </ModalBody>
 

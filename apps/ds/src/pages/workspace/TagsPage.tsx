@@ -109,9 +109,9 @@ function ColorPicker({
             />
           </div>
         </div>
-          <div
-            className="w-full max-w-md rounded-2xl border shadow-2xl overflow-hidden"
-            style={{ background: 'var(--modal-bg)', borderColor: 'var(--card-border)' }}
+      )}
+    </div>
+  );
 }
 
 // ── Tag usage modal ───────────────────────────────────────────────────────────

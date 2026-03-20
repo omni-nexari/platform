@@ -12,7 +12,7 @@ import AuthImg from '../../components/AuthImg.js';
 import ContentPickerModal, { type PickedItem } from '../../components/ContentPickerModal.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
 import WorkspaceTagPicker from '../../components/WorkspaceTagPicker.js';
-import { ToggleSwitch } from '../../components/UiPrimitives.js';
+import { Skeleton, ToggleSwitch } from '../../components/UiPrimitives.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -679,7 +679,19 @@ export default function ScheduleEditorPage() {
   const typeMeta = TYPE_META[editType] ?? TYPE_META['general']!;
 
   if (!isNew && isLoading) {
-    return <div className="flex items-center justify-center h-full text-sm text-[var(--text-muted)]">Loading…</div>;
+    return (
+      <div className="flex flex-col h-full bg-[var(--surface)] overflow-hidden">
+        <div className="h-14 border-b border-[var(--border)] bg-[var(--card)] shrink-0 flex items-center gap-3 px-6">
+          <Skeleton className="h-7 w-48" />
+          <Skeleton className="h-7 w-24 ml-auto" />
+        </div>
+        <div className="flex-1 p-6 space-y-4">
+          <div className="grid grid-cols-7 gap-2">
+            {Array.from({ length: 7 }).map((_, i) => <Skeleton key={i} className="h-64 rounded-xl" />)}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

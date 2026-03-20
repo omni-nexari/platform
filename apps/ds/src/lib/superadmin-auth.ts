@@ -1,10 +1,34 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export type SACallerType = 'platform_owner' | 'management_company_admin';
+
+export interface SAUser {
+  id: string;
+  email: string;
+  name: string | null;
+  type: SACallerType;
+  /** Only set when type === 'management_company_admin' */
+  managementCompanyId?: string;
+  role?: string;
+  companyName?: string | null;
+  companySlug?: string | null;
+  companyLogoUrl?: string | null;
+  companyPortalTitle?: string | null;
+  companyFaviconUrl?: string | null;
+  companyPrimaryColor?: string | null;
+  companyAccentColor?: string | null;
+  companySidebarBg?: string | null;
+  companyHeadingFontPreset?: 'modern' | 'editorial' | 'geometric' | 'mono' | null;
+  companyBodyFontPreset?: 'modern' | 'editorial' | 'geometric' | 'mono' | null;
+  companyLoginBackgroundUrl?: string | null;
+}
+
 interface SAAuthState {
   accessToken: string | null;
-  user: { id: string; email: string; name: string | null } | null;
-  setAuth: (token: string, user: SAAuthState['user']) => void;
+  user: SAUser | null;
+  setAuth: (token: string, user: SAUser) => void;
+  updateUser: (patch: Partial<SAUser>) => void;
   clearAuth: () => void;
 }
 
@@ -14,11 +38,20 @@ export const useSAStore = create<SAAuthState>()(
       accessToken: null,
       user: null,
       setAuth: (accessToken, user) => set({ accessToken, user }),
+      updateUser: (patch) =>
+        set((state) => ({
+          user: state.user ? { ...state.user, ...patch } : null,
+        })),
       clearAuth: () => set({ accessToken: null, user: null }),
     }),
     { name: 'sa-auth', partialize: (s) => ({ user: s.user }) },
   ),
 );
+
+/** Returns true if the currently authenticated admin is a Platform Owner */
+export function useIsPlatformOwner() {
+  return useSAStore((s) => s.user?.type === 'platform_owner');
+}
 
 // ── SA API client ─────────────────────────────────────────────────────────────
 
@@ -26,8 +59,9 @@ const BASE = '/api';
 
 export async function saFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = useSAStore.getState().accessToken;
+  const isFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers: Record<string, string> = {
-    ...(options.body != null ? { 'Content-Type': 'application/json' } : {}),
+    ...(!isFormDataBody && options.body != null ? { 'Content-Type': 'application/json' } : {}),
     ...(options.headers as Record<string, string>),
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -35,8 +69,15 @@ export async function saFetch<T>(path: string, options: RequestInit = {}): Promi
   const res = await fetch(`${BASE}${path}`, { ...options, headers, credentials: 'include' });
 
   if (res.status === 401) {
+    const storeUser = useSAStore.getState().user;
     useSAStore.getState().clearAuth();
-    window.location.href = '/superadmin/login';
+    if (storeUser?.type === 'management_company_admin') {
+      window.location.href = storeUser.companySlug
+        ? `/m/${storeUser.companySlug}`
+        : '/management/login';
+    } else {
+      window.location.href = '/superadmin/login';
+    }
     throw new Error('Session expired');
   }
 

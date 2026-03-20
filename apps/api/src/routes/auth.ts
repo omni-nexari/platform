@@ -1,6 +1,17 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { db, users, organisations, refreshTokens, orgStorageQuotas } from '@signage/db';
+import { randomBytes } from 'node:crypto';
+import { createWriteStream } from 'node:fs';
+import * as fs from 'node:fs/promises';
+import path from 'node:path';
+import {
+  db,
+  users,
+  organisations,
+  refreshTokens,
+  orgStorageQuotas,
+  managementCompanies,
+} from '@signage/db';
 import { eq, and, isNull } from 'drizzle-orm';
 import { totp } from 'otplib';
 import QRCode from 'qrcode';
@@ -11,6 +22,8 @@ import {
   ResetPasswordSchema,
   AcceptInviteSchema,
   AcceptOwnerInviteSchema,
+  AcceptManagementCompanyInviteSchema,
+  AcceptClientOrgInviteSchema,
 } from '@signage/shared';
 import {
   verifyLogin,
@@ -24,11 +37,44 @@ import {
   verifyBackupCode,
   findValidInvite,
   acceptInvite,
+  findValidMgmtAdminInvite,
+  acceptMgmtAdminInvite,
+  findValidClientOrgInvite,
+  acceptClientOrgInvite,
 } from '../services/auth.js';
 import { sendPasswordResetEmail } from '../services/email.js';
 import { writeAuditLog } from '../services/audit.js';
 
 const REFRESH_COOKIE = 'refresh_token';
+const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
+const BRANDING_ASSET_TYPES = new Set(['logo', 'favicon', 'login-background']);
+
+function randomToken(bytes = 32): string {
+  return randomBytes(bytes).toString('hex');
+}
+
+function getBrandAssetExtension(filename: string, mime: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  if (ext) return ext;
+
+  switch (mime) {
+    case 'image/png':
+      return '.png';
+    case 'image/jpeg':
+      return '.jpg';
+    case 'image/webp':
+      return '.webp';
+    case 'image/svg+xml':
+      return '.svg';
+    case 'image/gif':
+      return '.gif';
+    case 'image/x-icon':
+    case 'image/vnd.microsoft.icon':
+      return '.ico';
+    default:
+      return '';
+  }
+}
 
 function setRefreshCookie(reply: FastifyReply, token: string) {
   void reply.setCookie(REFRESH_COOKIE, token, {
@@ -224,6 +270,229 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     return reply.status(201).send({ id: user?.id });
+  });
+
+  // ── GET/POST /auth/accept-management-company-invite/:token ──────────────────
+  app.get('/accept-management-company-invite/:token', async (req, reply) => {
+    const { token } = req.params as { token: string };
+    const invite = await findValidMgmtAdminInvite(token);
+    if (!invite) return reply.status(410).send({ error: 'Invite not found or expired' });
+
+    const company = await db.query.managementCompanies.findFirst({
+      where: eq(managementCompanies.id, invite.managementCompanyId),
+    });
+
+    return reply.send({
+      email: invite.email,
+      role: invite.role,
+      companyName: company?.name ?? '',
+      // true when the company still has a pending-generated slug (first admin onboarding)
+      isFirstSetup: company?.slug?.startsWith('pending-') ?? false,
+      logoUrl: company?.logoUrl ?? null,
+      portalTitle: company?.portalTitle ?? null,
+      faviconUrl: company?.faviconUrl ?? null,
+      primaryColor: company?.primaryColor ?? null,
+      accentColor: company?.accentColor ?? null,
+      sidebarBg: company?.sidebarBg ?? null,
+      headingFontPreset: company?.headingFontPreset ?? null,
+      bodyFontPreset: company?.bodyFontPreset ?? null,
+      loginBackgroundUrl: company?.loginBackgroundUrl ?? null,
+    });
+  });
+
+  app.post('/accept-management-company-invite/:token/branding-assets/:assetType', async (req, reply) => {
+    const { token, assetType } = req.params as { token: string; assetType: string };
+
+    if (!BRANDING_ASSET_TYPES.has(assetType)) {
+      return reply.status(400).send({ error: 'Unsupported branding asset type' });
+    }
+
+    const invite = await findValidMgmtAdminInvite(token);
+    if (!invite) return reply.status(410).send({ error: 'Invite not found or expired' });
+
+    const company = await db.query.managementCompanies.findFirst({
+      where: eq(managementCompanies.id, invite.managementCompanyId),
+      columns: { id: true, slug: true },
+    });
+    if (!company) return reply.status(404).send({ error: 'Company not found' });
+    if (!company.slug.startsWith('pending-')) {
+      return reply.status(403).send({ error: 'Branding uploads are only available during initial company setup' });
+    }
+
+    const file = await req.file();
+    if (!file) return reply.status(400).send({ error: 'No file provided' });
+    if (!file.mimetype.startsWith('image/')) {
+      return reply.status(400).send({ error: 'Branding assets must be image files' });
+    }
+
+    const ext = getBrandAssetExtension(file.filename, file.mimetype);
+    const relDir = path.join('management_branding', company.id);
+    const relFile = `${assetType}-${randomToken(8)}${ext}`;
+    const absDir = path.resolve(STORAGE_ROOT, relDir);
+    const absPath = path.resolve(absDir, relFile);
+
+    await fs.mkdir(absDir, { recursive: true });
+
+    let fileSize = 0;
+    const writeStream = createWriteStream(absPath);
+    for await (const chunk of file.file) {
+      writeStream.write(chunk);
+      fileSize += chunk.length;
+      if (fileSize > 10 * 1024 * 1024) {
+        writeStream.destroy();
+        await fs.unlink(absPath).catch(() => undefined);
+        return reply.status(413).send({ error: 'Branding asset exceeds 10 MB limit' });
+      }
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      writeStream.end();
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+
+    const url = `/api/superadmin/auth/company-assets/${company.id}/${relFile}`;
+
+    await writeAuditLog({
+      actorId: invite.id,
+      actorType: 'system',
+      action: 'MGMT_ADMIN_INVITE_BRANDING_ASSET_UPLOADED',
+      entityType: 'management_company',
+      entityId: company.id,
+      meta: { assetType, url, inviteId: invite.id },
+      ipAddress: req.ip,
+    });
+
+    return reply.status(201).send({ assetType, url });
+  });
+
+  app.post('/accept-management-company-invite/:token', async (req, reply) => {
+    const { token } = req.params as { token: string };
+
+    const invite = await findValidMgmtAdminInvite(token);
+    if (!invite) return reply.status(410).send({ error: 'Invite not found or expired' });
+
+    const body = AcceptManagementCompanyInviteSchema.safeParse(req.body);
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    // If this is the first-setup invite, persist company details before creating account
+    const company = await db.query.managementCompanies.findFirst({
+      where: eq(managementCompanies.id, invite.managementCompanyId),
+    });
+
+    if (company?.slug?.startsWith('pending-') && body.data.companyName && body.data.companyPortalUrl) {
+      const slugTaken = await db.query.managementCompanies.findFirst({
+        where: eq(managementCompanies.slug, body.data.companyPortalUrl),
+      });
+      if (slugTaken && slugTaken.id !== company.id) {
+        return reply.status(409).send({ error: 'This portal address is already taken, please choose another' });
+      }
+      await db
+        .update(managementCompanies)
+        .set({
+          name: body.data.companyName,
+          slug: body.data.companyPortalUrl,
+          billingEmail: body.data.billingEmail || null,
+          logoUrl: body.data.logoUrl || null,
+          portalTitle: body.data.portalTitle || null,
+          faviconUrl: body.data.faviconUrl || null,
+          primaryColor: body.data.primaryColor || null,
+          accentColor: body.data.accentColor || null,
+          sidebarBg: body.data.sidebarBg || null,
+          headingFontPreset: body.data.headingFontPreset || null,
+          bodyFontPreset: body.data.bodyFontPreset || null,
+          loginBackgroundUrl: body.data.loginBackgroundUrl || null,
+          updatedAt: new Date(),
+        })
+        .where(eq(managementCompanies.id, company.id));
+    }
+
+    const admin = await acceptMgmtAdminInvite(
+      invite.id,
+      invite.managementCompanyId,
+      invite.email,
+      invite.role,
+      body.data.name,
+      body.data.password,
+    );
+    if (!admin) return reply.status(500).send({ error: 'Failed to create admin account' });
+
+    await writeAuditLog({
+      actorId: admin.id,
+      actorType: 'system',
+      action: 'MGMT_ADMIN_INVITE_ACCEPTED',
+      entityType: 'management_company_admin',
+      entityId: admin.id,
+      ipAddress: req.ip,
+    });
+
+    // Return companySlug so the frontend can redirect to /m/:slug
+    const updatedCompany = await db.query.managementCompanies.findFirst({
+      where: eq(managementCompanies.id, invite.managementCompanyId),
+    });
+
+    return reply.status(201).send({ id: admin.id, companySlug: updatedCompany?.slug ?? null });
+  });
+
+  // ── GET/POST /auth/accept-client-org-invite/:token ──────────────────────────
+  app.get('/accept-client-org-invite/:token', async (req, reply) => {
+    const { token } = req.params as { token: string };
+    const invite = await findValidClientOrgInvite(token);
+    if (!invite) return reply.status(410).send({ error: 'Invite not found or expired' });
+
+    const company = await db.query.managementCompanies.findFirst({
+      where: eq(managementCompanies.id, invite.managementCompanyId),
+    });
+
+    return reply.send({
+      email: invite.email,
+      managingCompanyName: company?.name ?? '',
+    });
+  });
+
+  app.post('/accept-client-org-invite/:token', async (req, reply) => {
+    const { token } = req.params as { token: string };
+
+    const invite = await findValidClientOrgInvite(token);
+    if (!invite) return reply.status(410).send({ error: 'Invite not found or expired' });
+
+    const body = AcceptClientOrgInviteSchema.safeParse(req.body);
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    // Ensure org slug is not already taken
+    const slugTaken = await db.query.organisations.findFirst({
+      where: and(eq(organisations.slug, body.data.orgSlug), isNull(organisations.deletedAt)),
+    });
+    if (slugTaken) return reply.status(409).send({ error: 'Org slug already taken' });
+
+    const user = await acceptClientOrgInvite(
+      invite.id,
+      invite.organizationId,
+      invite.managementCompanyId,
+      invite.invitedByAdminId ?? '',
+      invite.email,
+      body.data.name,
+      body.data.password,
+      {
+        orgName: body.data.orgName,
+        orgSlug: body.data.orgSlug,
+        workspaceName: body.data.workspaceName,
+        workspaceTimezone: body.data.workspaceTimezone,
+      },
+    );
+    if (!user) return reply.status(500).send({ error: 'Failed to create user account' });
+
+    await writeAuditLog({
+      orgId: invite.organizationId,
+      actorId: user.id,
+      actorType: 'system',
+      action: 'CLIENT_ORG_INVITE_ACCEPTED',
+      entityType: 'user',
+      entityId: user.id,
+      ipAddress: req.ip,
+    });
+
+    return reply.status(201).send({ id: user.id, orgId: invite.organizationId });
   });
 
   // ── 2FA setup ───────────────────────────────────────────────────────────────

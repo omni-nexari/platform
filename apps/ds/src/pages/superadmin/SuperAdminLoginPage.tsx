@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { saFetch, useSAStore } from '../../lib/superadmin-auth.js';
+import type { SAUser } from '../../lib/superadmin-auth.js';
 
 const schema = z.object({
   email: z.string().email('Enter a valid email'),
@@ -23,16 +24,13 @@ export default function SuperAdminLoginPage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      const res = await saFetch<{
-        accessToken: string;
-        user: { id: string; email: string; name: string | null };
-      }>('/superadmin/auth/login', {
+      const res = await saFetch<{ accessToken: string; user: SAUser }>('/superadmin/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
       setAuth(res.accessToken, res.user);
-      navigate('/superadmin/orgs');
+      navigate('/superadmin');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Login failed');
     }
@@ -43,8 +41,8 @@ export default function SuperAdminLoginPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <img src="/logo/nexari.png" alt="OmniHub" className="h-10 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold">Super Admin</h1>
-          <p className="text-sm text-[var(--text-muted)] mt-1">Platform administration</p>
+          <h1 className="text-2xl font-bold">Platform Owner Portal</h1>
+          <p className="text-sm text-[var(--text-muted)] mt-1">Sign in with your platform owner credentials</p>
         </div>
 
         <form
@@ -57,7 +55,7 @@ export default function SuperAdminLoginPage() {
             <input
               {...register('email')}
               type="email"
-              placeholder="admin@signage.local"
+              placeholder="owner@signage.local"
               className="input w-full"
             />
             {errors.email && (

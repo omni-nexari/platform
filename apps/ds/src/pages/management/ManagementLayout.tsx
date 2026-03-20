@@ -1,41 +1,54 @@
+import { useEffect } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router';
-import { Building2, BarChart2, Activity, LogOut, Layers, LayoutDashboard } from 'lucide-react';
+import { Building2, BarChart2, LogOut, LayoutDashboard, Palette } from 'lucide-react';
 import { useSAStore } from '../../lib/superadmin-auth.js';
+import {
+  applyManagementBrandingDocument,
+  getManagementBrandingStyle,
+} from '../../lib/management-branding.js';
 
 const NAV = [
-  { to: '/superadmin', icon: LayoutDashboard, label: 'Dashboard', end: true as const },
-  { to: '/superadmin/companies', icon: Layers, label: 'Management Companies', end: false as const },
-  { to: '/superadmin/orgs', icon: Building2, label: 'Organizations', end: false as const },
-  { to: '/superadmin/system', icon: Activity, label: 'System Health', end: false as const },
-  { to: '/superadmin/analytics', icon: BarChart2, label: 'Analytics', end: false as const },
+  { to: '/management', icon: LayoutDashboard, label: 'Dashboard', end: true as const },
+  { to: '/management/orgs', icon: Building2, label: 'Client Organisations', end: false as const },
+  { to: '/management/analytics', icon: BarChart2, label: 'Analytics', end: false as const },
+  { to: '/management/settings/branding', icon: Palette, label: 'Branding', end: false as const },
 ];
 
-export default function SuperAdminLayout() {
+export default function ManagementLayout() {
   const { user, clearAuth } = useSAStore();
   const navigate = useNavigate();
 
+  useEffect(() => {
+    return applyManagementBrandingDocument(user ?? undefined);
+  }, [user]);
+
   const handleLogout = () => {
+    const slug = user?.companySlug;
     clearAuth();
-    navigate('/superadmin/login');
+    navigate(slug ? `/m/${slug}` : '/management/login');
   };
 
-  const portalLabel = 'Platform Owner';
-
   return (
-    <div className="flex min-h-dvh">
+    <div className="management-portal flex min-h-dvh" style={getManagementBrandingStyle(user)}>
       {/* Sidebar */}
       <aside
         className="w-60 flex-shrink-0 flex flex-col border-r"
-        style={{
-          background: 'var(--bg2)',
-          borderColor: 'var(--card-border)',
-        }}
+        style={{ background: 'var(--management-sidebar-bg, var(--bg2))', borderColor: 'var(--card-border)' }}
       >
         {/* Logo / brand */}
-        <div className="flex items-center gap-2 px-5 py-5 border-b" style={{ borderColor: 'var(--card-border)' }}>
-          <img src="/logo/nexari.png" alt="OmniHub" className="h-7" />
-          <span className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-            {portalLabel}
+        <div
+          className="flex items-center gap-2 px-5 py-5 border-b"
+          style={{ borderColor: 'var(--card-border)' }}
+        >
+          <img
+            src={user?.companyLogoUrl ?? '/logo/nexari.png'}
+            alt={user?.companyName ?? 'OmniHub'}
+            className="h-7 object-contain flex-shrink-0"
+          />
+          <span className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider truncate">
+            {user?.companyName && !user.companyName.startsWith('(pending')
+              ? user.companyName
+              : 'Management Co.'}
           </span>
         </div>
 
@@ -64,7 +77,7 @@ export default function SuperAdminLayout() {
         <div className="p-3 border-t" style={{ borderColor: 'var(--card-border)' }}>
           <div className="flex items-center gap-3 px-3 py-2">
             <div className="w-8 h-8 rounded-full bg-[var(--blue)] flex items-center justify-center text-white text-xs font-bold">
-              {user?.email?.[0]?.toUpperCase() ?? 'S'}
+              {user?.email?.[0]?.toUpperCase() ?? 'M'}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium truncate">{user?.name ?? user?.email}</p>

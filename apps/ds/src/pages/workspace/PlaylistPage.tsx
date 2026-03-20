@@ -22,6 +22,7 @@ import {
   ModalPrimaryButton,
   ModalSecondaryButton,
   PageHeader,
+  Skeleton,
 } from '../../components/UiPrimitives.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -279,7 +280,9 @@ export default function PlaylistPage() {
         )}
 
         {isLoading ? (
-          <div className="flex items-center justify-center h-48 text-sm text-[var(--text-muted)]">Loading…</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+            {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-36 rounded-2xl" />)}
+          </div>
         ) : items.length === 0 ? (
           <EmptyState
             icon={<Layers size={40} />}

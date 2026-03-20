@@ -10,6 +10,8 @@ import { renderer } from '../renderer/index.js';
 // ── play-log buffer (flushed every 5 min) ────────────────────────────────────
 interface PlayLogEntry {
   contentId: string | null;
+  playlistId?: string | null;
+  scheduleId?: string | null;
   zoneId?: string;
   startedAt: string;
   endedAt: string;
@@ -64,8 +66,13 @@ async function tick(): Promise<void> {
   if (!scheduleData) return; // not loaded yet
 
   const now = new Date();
-  const allSlots: unknown[] = (scheduleData.schedules as Array<{ slots: unknown[] }>)
-    .flatMap((s) => s.slots);
+  const allSlots: unknown[] = (scheduleData.schedules as Array<{ id: string; slots: unknown[] }>)
+    .flatMap((schedule) =>
+      schedule.slots.map((slot) => ({
+        ...(slot as Record<string, unknown>),
+        scheduleId: schedule.id,
+      })),
+    );
 
   const activeSlot = evaluateSlots(allSlots as Parameters<typeof evaluateSlots>[0], now);
 
@@ -75,7 +82,12 @@ async function tick(): Promise<void> {
     if (activeSlot.playlistId) {
       if (currentRunner?.playlistId !== activeSlot.playlistId) {
         currentRunner?.stop();
-        currentRunner = new PlaylistRunner(activeSlot.playlistId, activeSlot.playlist, 'schedule');
+        currentRunner = new PlaylistRunner(
+          activeSlot.playlistId,
+          activeSlot.playlist,
+          'schedule',
+          (activeSlot as { scheduleId?: string | null }).scheduleId ?? null,
+        );
         currentRunner.start();
       }
     } else if (activeSlot.contentId) {

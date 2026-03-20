@@ -48,6 +48,7 @@
   --color-danger: var(--danger);
   --radius-default: var(--radius);
   --font-sans: "Inter", system-ui, sans-serif;
+  --font-heading: var(--font-sans);
 }
 
 html,
@@ -56,6 +57,18 @@ body {
   color: var(--text);
   font-family: var(--font-sans);
   min-height: 100dvh;
+}
+
+.management-portal {
+  font-family: var(--management-font-body, var(--font-sans));
+}
+
+.management-portal h1,
+.management-portal h2,
+.management-portal h3,
+.management-portal h4,
+.management-heading {
+  font-family: var(--management-font-heading, var(--font-heading, var(--font-sans)));
 }
 
 /* Radial gradient background blobs */

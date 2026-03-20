@@ -140,6 +140,8 @@ export type HeartbeatPayload = z.infer<typeof HeartbeatSchema>;
 
 export const PlayLogEntrySchema = z.object({
   contentId: z.string().uuid().nullable(),
+  playlistId: z.string().uuid().nullable().optional(),
+  scheduleId: z.string().uuid().nullable().optional(),
   zoneId: z.string().optional(),
   startedAt: z.string().datetime(),
   endedAt: z.string().datetime(),

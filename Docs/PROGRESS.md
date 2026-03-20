@@ -1,6 +1,6 @@
 # OmniHub Signage — Build Progress Tracker
 
-> Last updated: March 20, 2026 (smart views + responsive pass)  
+> Last updated: March 20, 2026 (migration applied + repo typecheck clean)  
 > Codebase: `apps/ds` (React frontend) + `apps/api` (Fastify backend) + `apps/tizen` (Samsung LFD player)
 
 ---
@@ -20,6 +20,11 @@
 
 | Date | Milestone | Status | Notes |
 |---|---|---|---|
+| March 20, 2026 | Management company white-labeling expanded | ✅ | Management companies now support branded login at `/m/:slug`, company sidebar theming, typography presets, login background art, direct logo/favicon/background uploads from the portal and first-time invite acceptance flow, platform-owner branding override tools, and branded management invite / client-onboarding email templates |
+| March 20, 2026 | Smart Views migration applied + repo validation clean | ✅ | `pnpm db:migrate` applied the new Smart Views migration in the target environment; `TagsPage.tsx` `ColorPicker` JSX was repaired; `ZoneLayoutEditor.tsx` drag nullability fixed; fresh `@signage/ds`, `@signage/db`, and `@signage/api` typechecks all pass |
+| March 20, 2026 | Notification Center | ✅ | `NotificationTray` component — bell icon with unread badge, dropdown tray polling `GET /notifications` every 30 s (15 s when open), mark-read/dismiss/mark-all-read mutations, 8 event-type icons, footer link to Settings notifications section; wired into AppLayout header |
+| March 20, 2026 | Analytics / Proof of Play | ✅ | `GET /analytics/summary`, `/analytics/play-events`, `/analytics/export.csv` routes + `AnalyticsPage` at `/workspaces/:wsId/analytics`; date-range picker, 4 stat cards, plays-per-day bar chart, top-content table, paginated event log, CSV export with Bearer auth; Analytics nav link in sidebar |
+| March 20, 2026 | Management Company layer | ✅ | Migration `0012_management_companies`; Drizzle schema; superadmin CRUD + invite routes; `ManagementCompaniesListPage`, `ManagementCompanyDetailPage`, `AcceptManagementCompanyInvitePage`; SuperAdminLayout scoped nav; OrgsListPage company picker |
 | March 20, 2026 | Smart Views + responsive workspace shell | ✅ | Added `smart_views` migration/schema/API/UI; content, playlist, schedule, and device list pages can now save/apply workspace smart views; sidebar now collapses into a mobile drawer and list pages use responsive spacing/grids/toolbars |
 | March 20, 2026 | Drizzle migration metadata reconciled | ✅ | `0008_snapshot.json` and `0009_snapshot.json` regenerated from schema via Drizzle Kit API; `_journal.json` extended through 0009; `telemetry.ts`, `workspaces.ts`, `content.ts`, `playlists.ts` aligned with already-applied SQL; `packages/db/tools/rebuild-migration-meta.mjs` helper added |
 | March 20, 2026 | Smoke test harness promoted | ✅ | `tools/tmp-smoke-test.mjs` → `tools/smoke-test.mjs`; host, credentials, org slug configurable via env vars (`SMOKE_BASE_URL`, `SMOKE_SUPERADMIN_*`, `SMOKE_OWNER_*`, `SMOKE_ORG_SLUG`); `pnpm smoke:test` root script added |
@@ -43,6 +48,7 @@
 | Forgot / reset password | ✅ | Email-based reset flow |
 | Accept invite page | ✅ | Org owner setup (org name, slug, workspace, timezone) + member setup |
 | Super Admin login | ✅ | Separate `/superadmin/login` |
+| Management company onboarding | ✅ | First MCA invite can configure company name, portal URL, billing email, logo, title, favicon, colors, font presets, and login background, including direct asset uploads before first login, before redirecting to `/m/:slug` |
 
 ---
 
@@ -53,6 +59,7 @@
 | Orgs list + search | ✅ | Create, suspend/unsuspend |
 | Org detail page | ✅ | Members, pending invites, quota management |
 | Invite org owner | ✅ | Sends email invite |
+| Management company branding override | ✅ | Platform Owner can edit and upload company branding assets from the management company detail page |
 | Storage quota management | ✅ | Set per-org GB cap, view usage bar |
 | Platform analytics dashboard | ❌ | Phase 2+ |
 | System health dashboard | ✅ | `/superadmin/system` — process memory, OS metrics, DB pool stats |
@@ -205,11 +212,13 @@
 
 | Feature | Status | Notes |
 |---|---|---|
-| Device analytics (uptime %, connectivity) | ❌ | Not started |
-| Content analytics (play count, duration played) | ❌ | Not started |
-| Playlist analytics (completion rate) | ❌ | Not started |
-| Org-level report (storage, devices, schedules) | ❌ | Not started |
-| Proof of Play export (signed CSV/PDF) | ❌ | Not started |
+| Device analytics (uptime %, connectivity) | ✅ | `GET /analytics/summary` now returns `deviceUptime` and `connectivityEvents`; workspace Analytics page renders uptime and offline/online reporting |
+| Content analytics (play count, duration played) | ✅ | `GET /analytics/summary` — `byContent` top-20 table + `byDay` breakdown; Tizen player populates `play_events` via WS `play_log` flush |
+| Playlist analytics (completion rate) | ✅ | `play_events` now stores `playlist_id` / `schedule_id`; Analytics page shows playlist completion rates |
+| Org-level report (storage, devices, schedules) | ✅ | `GET /analytics/summary` now returns `orgSummary` with storage, device, and schedule counts |
+| Proof of Play — date-range report page | ✅ | `AnalyticsPage` at `/workspaces/:wsId/analytics`; stat cards, day chart, top-content breakdown, paginated event log |
+| Proof of Play export (CSV) | ✅ | `GET /analytics/export.csv` — up to 50 k rows, Bearer-authenticated blob download |
+| Proof of Play export (signed PDF) | ✅ | `GET /analytics/export.pdf` — signed PDF export with RSA-SHA256 signature block; requires `PROOF_OF_PLAY_SIGNING_PRIVATE_KEY` |
 
 ---
 
@@ -217,15 +226,15 @@
 
 | Feature | Status | Notes |
 |---|---|---|
-| Bell icon in AppLayout nav | ❌ | Not started |
-| Unread count badge | ❌ | Not started |
-| Notification tray dropdown | ❌ | Not started |
-| Read / unread state + "Mark all read" | ❌ | Not started |
-| WebSocket push delivery | ❌ | Not started |
-| Device offline / online alerts | ❌ | Not started |
-| Content processing failed alerts | ❌ | Not started |
-| Storage quota 80% / 100% alerts | ❌ | Not started |
-| Emergency override alerts | ❌ | Not started |
+| Bell icon in AppLayout nav | ✅ | `NotificationTray` mounted in AppLayout header |
+| Unread count badge | ✅ | Badge capped at "99+"; count from `unreadCount` field in API response |
+| Notification tray dropdown | ✅ | 10 most-recent notifications; outside-click close; type icons for all 8 event types |
+| Read / unread state + "Mark all read" | ✅ | Click row → mark read; X → dismiss; "Mark all read" header button |
+| WebSocket push delivery | ✅ | Browser clients connect to `/api/notifications/ws`; AppLayout invalidates notification queries on push |
+| Device offline / online alerts | ✅ | Device WS connect/disconnect now writes `device_online` / `device_offline` notifications |
+| Content processing failed alerts | ✅ | Thumbnail regeneration failure now marks content `error` and creates `content_failed` notification |
+| Storage quota 80% / 100% alerts | ✅ | Upload flow now emits `storage_warning` notifications when thresholds are crossed |
+| Emergency override alerts | ✅ | Emergency activation route now creates `emergency_activated` notifications |
 
 ---
 
@@ -256,6 +265,19 @@
 
 ---
 
+## Management Company Branding
+
+| Feature | Status | Notes |
+|---|---|---|
+| Branded company login URL | ✅ | `/m/:slug` public login page with company branding payload from API |
+| Sidebar company branding | ✅ | Company name, logo, custom sidebar background, theme colors, and font presets apply across the management portal |
+| Self-service branding page | ✅ | MCA admins can edit title, logo, favicon, primary/accent/sidebar colors, heading/body fonts, and login background art |
+| Managed branding asset uploads | ✅ | Logo, favicon, and login background can be uploaded directly during first-time invite acceptance, in the management portal, and from the PO company detail page |
+| Branded invite/onboarding emails | ✅ | Management admin and client org owner invites inherit stored company logo/title/colors when available |
+| Custom domains | ❌ | Not started |
+
+---
+
 ## UI Polish / Cross-Cutting
 
 | Feature | Status | Notes |
@@ -274,6 +296,9 @@
 
 | Date | Status | Notes |
 |---|---|---|
+| March 20, 2026 | ✅ | Notification event triggers + browser WS push + analytics expansion shipped; `@signage/db` and `@signage/shared` rebuilt; fresh `@signage/api`, `@signage/ds`, and Tizen TS checks clean |
+| March 20, 2026 | ✅ | Smart Views migration applied in target DB via `pnpm db:migrate`; fresh `@signage/ds`, `@signage/db`, and `@signage/api` TypeScript checks all clean after repairing `TagsPage.tsx` and `ZoneLayoutEditor.tsx` |
+| March 20, 2026 | ✅ | Notification Center + Analytics shipped; Management Company layer; API + DS TypeScript 0 errors |
 | March 20, 2026 | ✅ | Smart Views shipped end-to-end (`0011_smart_views.sql`, snapshots/journal rebuilt through 0011, Fastify `/smart-views` routes, reusable DS SmartViewsBar); responsive pass completed for AppLayout, content, playlist, schedule, and device pages; changed files validate clean via editor diagnostics |
 | March 20, 2026 | ✅ | Drizzle metadata reconciled (0008+0009 snapshots + journal chain); DB schema aligned with live SQL (`telemetry.ts`, `workspaces.ts`, `content.ts`, `playlists.ts`); smoke harness promoted to `tools/smoke-test.mjs` with env-configurable target; `pnpm smoke:test` script added; DB package typecheck 0 errors |
 | March 20, 2026 | ✅ | API + DS + Tizen TypeScript 0 errors; live smoke tests passing for impersonation, `Cmd/Ctrl+K` search, bulk tagging, device replacement, zone save/push, and content folder flows; duplicate `/devices/:id/replace` route removed |
@@ -288,8 +313,7 @@
 
 | # | Area | Task |
 |---|---|---|
-| 1 | Notifications | Bell icon + unread badge + tray dropdown; real-time WS push |
-| 2 | Analytics | Proof of Play report page + signed CSV/PDF export (RSA-2048) |
-| 3 | VideoWall / SyncPlay | Multi-device sync groups; FFmpeg tile crop; `syncplay` module |
-| 4 | Sensors | Frontend UI for sensor sources and trigger rules |
-| 5 | Super Admin | Platform analytics dashboard (Phase 2+) |
+| 1 | Billing | Organization billing / plan management UI and ownership workflows |
+| 2 | VideoWall / SyncPlay | Multi-device sync groups; FFmpeg tile crop; `syncplay` module |
+| 3 | Sensors | Frontend UI for sensor sources and trigger rules |
+| 4 | Super Admin | Platform analytics dashboard (Phase 2+) |

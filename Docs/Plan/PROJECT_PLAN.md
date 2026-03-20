@@ -34,7 +34,8 @@ A **multi-tenant digital signage SaaS platform** where organizations manage flee
 
 | Role | Scope | Capabilities |
 |---|---|---|
-| **Super Admin** | Platform-wide | Manage orgs, invite org owners, view global analytics, billing |
+| **Platform Owner** | Platform-wide | Manage management companies, assign client portfolios, view global analytics, override billing ownership |
+| **Management Company Admin** | Management company portfolio | Create and manage only their client orgs, send onboarding invites, view billing for their own clients |
 | **Org Owner** | Organization | Invite & manage users, manage all workspaces/devices, billing |
 | **Org Admin** | Organization | Manage workspaces, devices, content; cannot change billing |
 | **Workspace Admin** | Workspace | Full CRUD on content, playlists, schedules, devices in workspace |
@@ -47,23 +48,87 @@ A **multi-tenant digital signage SaaS platform** where organizations manage flee
 
 ```
 Platform
-└── Organizations  (tenants)
-    ├── Users          (invited per org, have an org-level role)
-    └── Workspaces     (logical grouping inside an org)
-        ├── WorkspaceMembers  (user ↔ workspace role mapping)
-        ├── Devices
-        ├── ContentItems
-        ├── Playlists
-        └── Schedules
+└── Management Companies
+  ├── Management Company Admins
+  └── Client Organizations  (tenants)
+    ├── Users              (invited per org, have an org-level role)
+    └── Workspaces         (logical grouping inside an org)
+      ├── WorkspaceMembers  (user ↔ workspace role mapping)
+      ├── Devices
+      ├── ContentItems
+      ├── Playlists
+      └── Schedules
 ```
+
+### Platform ownership model
+
+- A **management company** is a reseller / agency / service-provider account that owns a portfolio of client organizations.
+- A **client organization** is the actual tenant using the signage dashboard and devices.
+- A **management company admin** can only create, onboard, manage, and bill for client organizations assigned to their management company.
+- The **platform owner** can see all management companies, all client organizations, and reassign portfolio ownership when needed.
+- The current `/superadmin` route prefix can remain as a technical implementation detail, but the business model is platform owner + management company portfolio ownership.
 
 ### Key rules
 
-- An **organization** is a paying tenant. All data is isolated per `org_id`.
+- A **client organization** is a paying tenant. All tenant data is isolated per `org_id`.
+- A **management company** owns many client organizations; a client organization belongs to exactly one management company at a time.
+- The **initial management company admin invite** is issued by the platform owner.
+- An existing **management company admin** may invite additional admins, but only within the same management company.
+- The **management company admin who sends the successful onboarding invite** becomes the default originating account manager for that client org.
+- **Billing ownership defaults to the inviter's management company**, not to an individual user account. Ownership can be reassigned only by the platform owner (with audit logging).
 - A **workspace** is a project/brand/location group — e.g. "Dubai Mall", "Head Office".
 - A user can belong to **multiple workspaces** with different roles in each.
-- **Invitation flow**: Super Admin invites Org Owner → Org Owner/Admin invites org members → each member can then be assigned to one or more workspaces.
+- **Invitation flow**: Management Company Admin invites Client Org Owner → Client Org Owner/Admin invites org members → each member can then be assigned to one or more workspaces.
 - A device belongs to **one workspace** at a time but can be reassigned.
+
+### Permission matrix
+
+| Role | Can create management companies | Can invite initial management company admin | Can invite same-company admins | Can create client orgs | Can invite client org owners | Can view billing | Can reassign client ownership | Scope |
+|---|---|---|---|---|---|---|---|---|
+| **Platform Owner** | Yes | Yes | Yes | Yes | Yes | All management companies and client orgs | Yes | Entire platform |
+| **Management Company Admin** | No | No | Yes, same company only | Yes | Yes | Only for their own client orgs | No | Their management company portfolio |
+| **Org Owner** | No | No | No | No | No | Their own organization | No | Their organization |
+| **Org Admin** | No | No | No | No | No | No | No | Their organization |
+
+### Onboarding & billing ownership flow
+
+1. A **management company admin** creates a pending client org record.
+2. That admin sends the **client org owner onboarding invite**.
+3. The invitation stores:
+   - the sending management company admin,
+   - the target management company,
+   - the target client org,
+   - the invited owner email,
+   - the expiration window.
+4. When the client accepts the invite:
+   - the client org becomes active,
+   - the inviter becomes the **originating account manager**,
+   - billing ownership defaults to the inviter's **management company**,
+   - the client org is attached to that management company's portfolio.
+5. Reassignment of client ownership or billing ownership is a platform-owner-only action and must be audit-logged.
+
+### Management company onboarding flow
+
+1. The **platform owner** enters only the initial admin's **name and email** in the "New Company" form at `/superadmin`. No company name, slug, or billing details required at this stage.
+2. The server auto-generates a temporary `pending-{token}` slug for the company record and immediately sends the invite email.
+3. The invitation stores:
+   - the target management company (in `pending` state with placeholder name `"(pending setup)"`),
+   - the invited admin email and name,
+   - the inviter platform owner,
+   - the expiration window (7 days),
+   - the initial role (`owner`).
+4. When the management company admin accepts the invite they see two sections:
+   - **Account setup** — their full name + password.
+  - **Company setup** (first-setup only, shown when `slug.startsWith('pending-')`) — company name, portal address (`/m/<slug>`), billing email (optional), logo, portal title, favicon, primary/accent/sidebar colors, heading/body font presets, and optional login background art.
+  - Branding assets can be uploaded immediately from the invite acceptance screen through a token-scoped upload endpoint, so the first admin does not need to host image URLs elsewhere before the first login.
+5. On submission:
+   - the server updates the company record with the real name and slug, replacing the `pending-` placeholder,
+   - the user account is created and attached to the company,
+   - the browser redirects to `/m/<their-slug>` with a toast "Account created! Sign in here."
+6. After activation the management company admin can create client orgs, send client-owner invites, and view only their portfolio's billing and analytics.
+7. Additional management company admins can be invited later by the platform owner or by an existing management company admin within the same company — they see only the name + password fields (no company setup section).
+
+**First-setup detection**: `company.slug.startsWith('pending-')` is the sentinel — no extra DB column needed.
 
 ---
 
@@ -131,15 +196,39 @@ Platform
 - **Clone / Duplicate**: Copy a schedule with all its fields pre-filled; cloned schedule is inactive by default.
 - The **Scheduling Engine** computes a resolved "what plays now and next" manifest per device (see §12).
 
-### 3.5 Super Admin Portal
+### 3.5 Platform Admin Portal
 
-- Separate UI at `/superadmin`.
-- Create / suspend / delete organizations.
-- Invite org owners by email.
-- View platform-wide analytics: total devices online, content storage usage, active orgs.
-- Impersonate any org for support (audit-logged).
-- System health dashboard (CPU, RAM, disk, active WS connections).
-- **Storage quota management**: set per-org storage cap (GB). API enforces the cap on every upload; returns `507 Insufficient Storage` when exceeded. Dashboard shows a usage bar per org.
+Two separate URL trees serve the two administrative roles:
+
+#### `/superadmin/*` — Platform Owner portal
+- Accessible only after a Platform Owner JWT is issued at `/superadmin/login`.
+- **Dashboard** (`/superadmin`) — stat cards (management companies, client orgs, total users) + company grid with suspend/activate actions.
+- Create management company: PO enters **admin name + admin email only**. The admin sets up the company (name, slug, billing email, logo) when they accept the invite.
+- Suspend / unsuspend management companies, view all client orgs, reassign portfolio ownership, impersonate any org (audit-logged), system health dashboard.
+
+#### `/management/*` — Management Company Admin portal
+- Accessible only after a Management Company Admin JWT is issued at the company's branded login URL.
+- **Branded login URL**: each company has a unique login page at `/m/<slug>` (e.g. `/m/acme-corp`). The page fetches `GET /superadmin/auth/company/<slug>` and renders the company name + logo. A generic fallback lives at `/management/login`.
+- On session expiry, the 401 handler redirects back to `/m/<slug>` (stored in the Zustand user object) rather than the generic login.
+- **Sidebar** shows the company's own logo, title, font choices, custom sidebar colour, and accent palette instead of platform branding.
+- **Branding settings**: MCA admins can upload logo/favicon/background assets directly in the portal and configure title, favicon, primary/accent/sidebar colours, heading/body font presets, and login background art.
+- **Invite-time setup uploads**: the first MCA invite acceptance flow exposes the same logo/favicon/background upload capability before authentication so a company can finish setup with hosted assets in place before its first branded login.
+- Functions: create and manage their client orgs, invite client org owners, view their portfolio analytics / quotas / billing.
+
+#### White-labeling scope (current)
+- ✅ Company-branded login URL (`/m/<slug>`)
+- ✅ Company name + logo in the management portal sidebar
+- ✅ Primary/accent/sidebar theme colours
+- ✅ Typography presets (heading + body fonts)
+- ✅ Login background art
+- ✅ Managed branding asset uploads (logo / favicon / background)
+- ✅ Token-scoped pre-auth branding uploads during first MCA invite acceptance
+- ✅ Branded management admin + client owner invite emails
+- ✅ Platform-owner branding override/support UI
+- ❌ Custom domain (future)
+
+#### Storage quota management
+Set per-org storage cap (GB). API enforces the cap on every upload; returns `507 Insufficient Storage` when exceeded. Dashboard shows a usage bar per org.
 
 ### 3.6 Analytics
 
@@ -240,10 +329,10 @@ Immutable append-only record of all significant actions in the platform. Require
 | Playlists | Created, edited (items changed), cloned, deleted |
 | Schedules | Created, activated, deactivated, cloned, deleted |
 | Emergency | Override activated, override cleared |
-| Quotas | Quota limit reached (blocked upload), quota changed by super admin |
+| Quotas | Quota limit reached (blocked upload), quota changed by platform owner or authorized management company admin |
 
 - Log entries are **never deleted** — no `deleted_at`; archive to cold storage after 2 years.
-- Viewable by Org Owner/Admin at `/:wsSlug/audit` (filtered to their org); Super Admin sees all.
+- Viewable by Org Owner/Admin at `/:wsSlug/audit` (filtered to their org); Platform Owner sees all; Management Company Admin sees only orgs in their portfolio.
 - API returns paginated log with filters: actor, entity type, entity ID, date range, action type.
 
 ### 3.10 Proof of Play
@@ -382,7 +471,7 @@ Optional, toggled per workspace in workspace settings.
 │  ┌─────────────────────────────────────────────────────────┐    │
 │  │                    Nginx (port 80/443)                   │    │
 │  │  / → Web Dashboard     /api → API Server                │    │
-│  │  /superadmin → SA UI   /ws  → WebSocket Server          │    │
+│  │  /superadmin → Platform Admin UI   /ws  → WebSocket Server │ │
 │  │  /uploads   → Static files (media)                      │    │
 │  └──────────────────────────┬──────────────────────────────┘    │
 │                             │                                    │
@@ -410,7 +499,7 @@ Optional, toggled per workspace in workspace settings.
        │ HTTPS + WSS          │ HTTPS + WS       │ MQTT / HTTP
   Web Browsers         Samsung Tizen Apps    ESP32 Gateways
   (Org Dashboard,      (Player on           (Sensor nodes
-   Super Admin UI)      commercial TV)       on local LAN)
+   Platform Admin UI)   commercial TV)       on local LAN)
 ```
 
 ### Communication flows
@@ -520,7 +609,7 @@ Optional, toggled per workspace in workspace settings.
 │   │   │   └── index.ts
 │   │   └── package.json
 │   │
-│   ├── web/                  # React dashboard (Org users + Super Admin)
+│   ├── web/                  # React dashboard (Org users + Platform Admin)
 │   │   ├── src/
 │   │   │   ├── pages/
 │   │   │   │   ├── auth/     # Login, accept-invite, reset-password
@@ -606,27 +695,79 @@ Optional, toggled per workspace in workspace settings.
 
 All tables include `created_at TIMESTAMPTZ DEFAULT now()` and `updated_at TIMESTAMPTZ`. Soft-deletes via `deleted_at` where applicable.
 
-### 7.1 Platform & Auth
+### 7.1 Platform, Management Companies & Auth
 
 ```sql
--- Super admins (platform operators)
-super_admins (
-  id           UUID PK,
-  email        TEXT UNIQUE NOT NULL,
+-- Platform owners (global operators)
+platform_owners (
+  id            UUID PK,
+  email         TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
-  name         TEXT,
-  last_login   TIMESTAMPTZ
+  name          TEXT,
+  last_login    TIMESTAMPTZ
 )
 
--- Organizations (tenants)
+-- Management companies / resellers / agencies
+management_companies (
+  id                 UUID PK,
+  name               TEXT NOT NULL,
+  slug               TEXT UNIQUE NOT NULL,
+  billing_email      TEXT,
+  suspended_at       TIMESTAMPTZ,
+  deleted_at         TIMESTAMPTZ,
+  created_by_owner_id UUID FK platform_owners
+)
+
+-- Internal admins belonging to a management company
+management_company_admins (
+  id                    UUID PK,
+  management_company_id UUID FK management_companies,
+  email                 TEXT UNIQUE NOT NULL,
+  password_hash         TEXT NOT NULL,
+  name                  TEXT,
+  role                  TEXT NOT NULL,   -- owner | admin | billing
+  last_login            TIMESTAMPTZ,
+  suspended_at          TIMESTAMPTZ
+)
+
+management_company_admin_invitations (
+  id                    UUID PK,
+  management_company_id UUID FK management_companies,
+  invited_by_owner_id   UUID FK platform_owners,
+  invited_by_admin_id   UUID FK management_company_admins NULL,
+  email                 TEXT NOT NULL,
+  role                  TEXT NOT NULL,   -- owner | admin | billing
+  token                 TEXT UNIQUE NOT NULL,
+  expires_at            TIMESTAMPTZ NOT NULL,
+  accepted_at           TIMESTAMPTZ,
+  revoked_at            TIMESTAMPTZ
+)
+
+-- Client organizations (tenants)
 organizations (
-  id           UUID PK,
-  name         TEXT NOT NULL,
-  slug         TEXT UNIQUE NOT NULL,   -- used in subpath/subdomain
-  plan         TEXT DEFAULT 'starter', -- starter | pro | enterprise
-  settings     JSONB DEFAULT '{}',     -- logo_url, timezone, max_devices, etc.
-  suspended_at TIMESTAMPTZ,
-  deleted_at   TIMESTAMPTZ
+  id                          UUID PK,
+  management_company_id       UUID FK management_companies,
+  originating_admin_id        UUID FK management_company_admins,
+  primary_account_manager_id  UUID FK management_company_admins,
+  billing_owner_company_id    UUID FK management_companies,
+  name                        TEXT NOT NULL,
+  slug                        TEXT UNIQUE NOT NULL,   -- used in subpath/subdomain
+  plan                        TEXT DEFAULT 'starter', -- starter | pro | enterprise
+  settings                    JSONB DEFAULT '{}',     -- logo_url, timezone, max_devices, etc.
+  suspended_at                TIMESTAMPTZ,
+  deleted_at                  TIMESTAMPTZ
+)
+
+client_org_owner_invitations (
+  id                    UUID PK,
+  organization_id       UUID FK organizations,
+  management_company_id UUID FK management_companies,
+  invited_by_admin_id   UUID FK management_company_admins,
+  email                 TEXT NOT NULL,
+  token                 TEXT UNIQUE NOT NULL,
+  expires_at            TIMESTAMPTZ NOT NULL,
+  accepted_at           TIMESTAMPTZ,
+  revoked_at            TIMESTAMPTZ
 )
 ```
 
@@ -1226,8 +1367,13 @@ POST   /auth/logout
 POST   /auth/refresh
 POST   /auth/forgot-password
 POST   /auth/reset-password
-GET    /auth/accept-invite/:token
-POST   /auth/accept-invite/:token
+GET    /auth/accept-management-company-invite/:token
+POST   /auth/accept-management-company-invite/:token
+POST   /auth/accept-management-company-invite/:token/branding-assets/:assetType
+GET    /auth/accept-client-org-invite/:token
+POST   /auth/accept-client-org-invite/:token
+GET    /auth/accept-org-invite/:token
+POST   /auth/accept-org-invite/:token
 
 -- Two-factor authentication
 POST   /auth/2fa/setup        generate TOTP secret + QR code URI
@@ -1237,18 +1383,33 @@ GET    /auth/2fa/backup-codes  regenerate backup codes
 POST   /auth/login/2fa        submit TOTP code after successful password step
 ```
 
-### Super Admin (prefix: `/superadmin`)
+### Platform Admin (prefix: `/superadmin`)
 
 ```
-GET    /superadmin/orgs               list all organizations
-POST   /superadmin/orgs               create organization
-PATCH  /superadmin/orgs/:id           update / suspend
+GET    /superadmin/management-companies           list management companies (platform owner only)
+POST   /superadmin/management-companies           create management company (platform owner only)
+PATCH  /superadmin/management-companies/:id       update / suspend / reassign portfolio
+GET    /superadmin/management-companies/:id/admins      list admins for a management company
+POST   /superadmin/management-companies/:id/admins      invite initial or additional management company admin
+PATCH  /superadmin/management-companies/:id/admins/:adminId   suspend / reactivate / change role
+GET    /superadmin/orgs                           list organizations in caller scope
+POST   /superadmin/orgs                           create organization in caller scope
+PATCH  /superadmin/orgs/:id                       update / suspend within caller scope
 DELETE /superadmin/orgs/:id
-POST   /superadmin/orgs/:id/invite    invite an org owner
+POST   /superadmin/orgs/:id/invite                invite a client org owner
 GET    /superadmin/analytics          platform-wide stats
 GET    /superadmin/system             server health (CPU, RAM, disk, WS connections)
 POST   /superadmin/impersonate/:orgId  issue short-lived impersonation token
 ```
+
+Rules:
+- `POST /superadmin/management-companies/:id/admins` is allowed for the platform owner for any management company.
+- The same endpoint is allowed for a management company admin only when `:id` matches their own management company.
+- The initial admin invite for a brand-new management company is always sent by the platform owner.
+- Management company admin invites are stored in `management_company_admin_invitations` and accepted through `GET/POST /auth/accept-management-company-invite/:token`.
+- While the company is still in first-time setup (`pending-*` slug), the invite token also authorizes `POST /auth/accept-management-company-invite/:token/branding-assets/:assetType` for logo, favicon, and login-background uploads.
+- Client org owner invites are stored in `client_org_owner_invitations` and accepted through `GET/POST /auth/accept-client-org-invite/:token`.
+- Internal organization member invites remain in `org_invitations` and are accepted through `GET/POST /auth/accept-org-invite/:token`.
 
 ### Organization
 
@@ -1416,7 +1577,7 @@ GET    /org/audit              paginated log for this org
   ?actor=<userId>  &entity_type=content|playlist|...  &entity_id=<id>
   &action=<text>   &from=<ISO>  &to=<ISO>  &page=1&limit=50
 
-GET    /superadmin/audit       platform-wide log (super admin only)
+GET    /superadmin/audit       platform-wide log (platform owner only)
 ```
 
 ### Proof of Play
@@ -1463,7 +1624,7 @@ POST   /workspaces/:wsId/report-schedules/:id/run  trigger immediately (test sen
 
 ```
 GET    /org/storage            used_bytes, quota_bytes, percentage, per-workspace breakdown
-PATCH  /superadmin/orgs/:id/quota  set quota_bytes for an org (super admin only)
+PATCH  /superadmin/orgs/:id/quota  set quota_bytes for an org (platform owner or authorized management company admin)
 POST   /workspaces/:wsId/content/purge-orphans  delete all content not in any playlist (dry-run mode available)
 ```
 
@@ -1535,9 +1696,10 @@ GET    /workspaces/:wsId/sensors/live          latest reading for every active s
 
 /account/security                         User 2FA setup + backup codes
 
-/superadmin/                              SA overview
-/superadmin/orgs                          Org list + create
-/superadmin/orgs/:id                      Org detail
+/superadmin/                              Platform admin overview
+/superadmin/management-companies          Management company list + create
+/superadmin/orgs                          Client org list + create
+/superadmin/orgs/:id                      Client org detail
 /superadmin/system                        System health
 /superadmin/analytics                     Platform analytics
 ```
@@ -1977,8 +2139,8 @@ The Tizen `.wgt` player app needs a mechanism to update itself without manual ph
 - The API exposes a **player version endpoint**: `GET /devices/player-version` returns the current required `.wgt` version + download URL.
 - On every boot and every 6-hour polling cycle, the Tizen app compares `config.xml` version to the server's required version.
 - If a newer version exists: download the `.wgt` from the server, call `tizen.application.install()` to side-load, then relaunch.
-- The Super Admin uploads a new `.wgt` via `POST /superadmin/player-releases` (versioned, with release notes). Rollout can be gated by `rollout_pct` (0–100%) to canary-test on a subset of devices before full deployment.
-- Version history is kept in a `player_releases` table; super admin can pin an org to a specific version.
+- The Platform Owner uploads a new `.wgt` via `POST /superadmin/player-releases` (versioned, with release notes). Rollout can be gated by `rollout_pct` (0–100%) to canary-test on a subset of devices before full deployment.
+- Version history is kept in a `player_releases` table; the Platform Owner can pin a management company's client orgs to a specific version when needed.
 
 ```sql
 player_releases (
@@ -2557,7 +2719,9 @@ The Pi 5 is a single host. A backup strategy is essential before going to produc
 - [ ] `apps/api` — Fastify skeleton, auth routes (login / refresh / invite flow), JWT middleware
 - [ ] Two-factor authentication: TOTP setup (`/auth/2fa/setup`), verify, disable, backup codes; login 2FA step
 - [ ] `apps/web` — Vite + React + Router scaffold, login page, 2FA login step, account security page, theme system
-- [ ] Super admin UI: org list, create org, invite org owner, storage quota management
+- [ ] Platform admin UI: management company list, client org list, create org, invite client org owner, storage quota management
+- [ ] Permission matrix enforcement: platform owner vs management company admin scope restrictions
+- [ ] Onboarding ownership flow: inviter management company becomes billing owner by default
 - [ ] Org user invite + accept flow
 - [ ] Audit log middleware (hook on all mutating routes; write to `audit_log`)
 
@@ -2660,7 +2824,7 @@ The Pi 5 is a single host. A backup strategy is essential before going to produc
 - [ ] Analytics pages (org + workspace + device + content)
 - [ ] Proof of Play report page + signed CSV/PDF export
 - [ ] Audit log page (`/audit`) with actor/entity/date filters
-- [ ] Super admin system health page
+- [ ] Platform admin system health page
 
 ### Phase 7 — Polish & Hardening (Weeks 18–20)
 - [ ] Multi-workspace switcher UX

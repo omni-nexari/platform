@@ -2,6 +2,7 @@
 import { useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api.js';
+import { Skeleton } from '../components/UiPrimitives.js';
 import {
   Monitor,
   Image,
@@ -491,7 +492,7 @@ export default function OrgDashboardPage() {
 
   const selectedWs = workspaces.find((w) => w.id === selectedWsId);
 
-  const { data: summary } = useQuery<WsSummary>({
+  const { data: summary, isLoading: loadingSummary } = useQuery<WsSummary>({
     queryKey: ['ws-summary', selectedWsId],
     queryFn: () => api.get(`/workspaces/${selectedWsId}/summary`),
     enabled: !!selectedWsId,
@@ -588,30 +589,36 @@ export default function OrgDashboardPage() {
       {/* Main content */}
       <div className="p-8 max-w-6xl mx-auto w-full">
         {/* Module cards */}
-        <div className="grid grid-cols-4 gap-4 mb-5">
-          <DeviceCard
-            total={summary?.deviceTotal ?? 0}
-            online={summary?.deviceOnline ?? 0}
-            offline={summary?.deviceOffline ?? 0}
-            error={summary?.deviceError ?? 0}
-            onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}`)}
-            onAdd={() => selectedWsId && navigate(`/workspaces/${selectedWsId}`)}
-          />
-          <ContentCard
-            stats={summary?.contentStats ?? []}
-            onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/content`)}
-          />
-          <PlaylistCard
-            total={summary?.playlistTotal ?? 0}
-            active={summary?.playlistActive ?? 0}
-            onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/playlist`)}
-          />
-          <ScheduleCard
-            total={summary?.scheduleTotal ?? 0}
-            active={summary?.scheduleActive ?? 0}
-            onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/schedule`)}
-          />
-        </div>
+        {loadingSummary ? (
+          <div className="grid grid-cols-4 gap-4 mb-5">
+            {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-44 rounded-2xl" />)}
+          </div>
+        ) : (
+          <div className="grid grid-cols-4 gap-4 mb-5">
+            <DeviceCard
+              total={summary?.deviceTotal ?? 0}
+              online={summary?.deviceOnline ?? 0}
+              offline={summary?.deviceOffline ?? 0}
+              error={summary?.deviceError ?? 0}
+              onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}`)}
+              onAdd={() => selectedWsId && navigate(`/workspaces/${selectedWsId}`)}
+            />
+            <ContentCard
+              stats={summary?.contentStats ?? []}
+              onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/content`)}
+            />
+            <PlaylistCard
+              total={summary?.playlistTotal ?? 0}
+              active={summary?.playlistActive ?? 0}
+              onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/playlist`)}
+            />
+            <ScheduleCard
+              total={summary?.scheduleTotal ?? 0}
+              active={summary?.scheduleActive ?? 0}
+              onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/schedule`)}
+            />
+          </div>
+        )}
 
         {/* Bottom row: stat tiles + storage */}
         <div className="grid grid-cols-3 gap-4">

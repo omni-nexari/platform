@@ -16,6 +16,8 @@ import { desc } from 'drizzle-orm';
 import { organisations } from './auth.js';
 import { devices } from './devices.js';
 import { contentItems } from './content.js';
+import { playlists } from './playlists.js';
+import { schedules } from './schedules.js';
 import { workspaces } from './workspaces.js';
 
 /**
@@ -51,6 +53,8 @@ export const playEvents = pgTable('play_events', {
   id: uuid('id').notNull().defaultRandom(),
   deviceId: uuid('device_id').notNull().references(() => devices.id, { onDelete: 'cascade' }),
   contentId: uuid('content_id').references(() => contentItems.id, { onDelete: 'set null' }),
+  playlistId: uuid('playlist_id').references(() => playlists.id, { onDelete: 'set null' }),
+  scheduleId: uuid('schedule_id').references(() => schedules.id, { onDelete: 'set null' }),
   zoneId: text('zone_id'),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
   endedAt: timestamp('ended_at', { withTimezone: true }).notNull(),

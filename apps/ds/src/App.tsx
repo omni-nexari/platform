@@ -11,6 +11,15 @@ import SuperAdminLayout from './pages/superadmin/SuperAdminLayout.js';
 import OrgsListPage from './pages/superadmin/OrgsListPage.js';
 import OrgDetailPage from './pages/superadmin/OrgDetailPage.js';
 import SystemHealthPage from './pages/superadmin/SystemHealthPage.js';
+import ManagementCompaniesListPage from './pages/superadmin/ManagementCompaniesListPage.js';
+import ManagementCompanyDetailPage from './pages/superadmin/ManagementCompanyDetailPage.js';
+import PlatformOwnerDashboardPage from './pages/superadmin/PlatformOwnerDashboardPage.js';
+import ManagementLoginPage from './pages/management/ManagementLoginPage.js';
+import ManagementLayout from './pages/management/ManagementLayout.js';
+import ManagementDashboardPage from './pages/management/ManagementDashboardPage.js';
+import ManagementBrandingPage from './pages/management/ManagementBrandingPage.js';
+import AcceptManagementCompanyInvitePage from './pages/auth/AcceptManagementCompanyInvitePage.js';
+import AcceptClientOrgInvitePage from './pages/auth/AcceptClientOrgInvitePage.js';
 import SettingsPage from './pages/account/SettingsPage.js';
 import AppLayout from './components/AppLayout.js';
 import OrgDashboardPage from './pages/OrgDashboardPage.js';
@@ -23,15 +32,28 @@ import SchedulePage from './pages/workspace/SchedulePage.js';
 import ScheduleEditorPage from './pages/workspace/ScheduleEditorPage.js';
 import TagsPage from './pages/workspace/TagsPage.js';
 import CanvasEditorPage from './pages/workspace/CanvasEditorPage.js';
+import AnalyticsPage from './pages/workspace/AnalyticsPage.js';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.accessToken);
   return token ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
-function RequireSuperAdmin({ children }: { children: React.ReactNode }) {
-  const token = useSAStore((s) => s.accessToken);
-  return token ? <>{children}</> : <Navigate to="/superadmin/login" replace />;
+function RequirePlatformOwner({ children }: { children: React.ReactNode }) {
+  const { accessToken, user } = useSAStore();
+  if (!accessToken) return <Navigate to="/superadmin/login" replace />;
+  if (user?.type !== 'platform_owner') return <Navigate to="/management" replace />;
+  return <>{children}</>;
+}
+
+function RequireManagementAdmin({ children }: { children: React.ReactNode }) {
+  const { accessToken, user } = useSAStore();
+  if (!accessToken) {
+    const slug = user?.companySlug;
+    return <Navigate to={slug ? `/m/${slug}` : '/management/login'} replace />;
+  }
+  if (user?.type !== 'management_company_admin') return <Navigate to="/superadmin" replace />;
+  return <>{children}</>;
 }
 
 export default function App() {
@@ -41,23 +63,48 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/login/2fa" element={<TwoFactorPage />} />
       <Route path="/accept-invite/:token" element={<AcceptInvitePage />} />
+      <Route path="/accept-management-company-invite/:token" element={<AcceptManagementCompanyInvitePage />} />
+      <Route path="/accept-client-org-invite/:token" element={<AcceptClientOrgInvitePage />} />
       <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
-      {/* Super Admin */}
+      {/* Platform Owner portal */}
       <Route path="/superadmin/login" element={<SuperAdminLoginPage />} />
       <Route
         path="/superadmin"
         element={
-          <RequireSuperAdmin>
+          <RequirePlatformOwner>
             <SuperAdminLayout />
-          </RequireSuperAdmin>
+          </RequirePlatformOwner>
         }
       >
-        <Route index element={<Navigate to="/superadmin/orgs" replace />} />
+        <Route index element={<PlatformOwnerDashboardPage />} />
         <Route path="orgs" element={<OrgsListPage />} />
         <Route path="orgs/:id" element={<OrgDetailPage />} />
+        <Route path="companies" element={<ManagementCompaniesListPage />} />
+        <Route path="companies/:id" element={<ManagementCompanyDetailPage />} />
         <Route path="system" element={<SystemHealthPage />} />
+        <Route
+          path="analytics"
+          element={<div className="p-8 text-[var(--text-muted)]">Analytics — Phase 2+</div>}
+        />
+      </Route>
+
+      {/* Management Company portal */}
+      <Route path="/m/:slug" element={<ManagementLoginPage />} />
+      <Route path="/management/login" element={<ManagementLoginPage />} />
+      <Route
+        path="/management"
+        element={
+          <RequireManagementAdmin>
+            <ManagementLayout />
+          </RequireManagementAdmin>
+        }
+      >
+        <Route index element={<ManagementDashboardPage />} />
+        <Route path="orgs" element={<OrgsListPage />} />
+        <Route path="orgs/:id" element={<OrgDetailPage />} />
+        <Route path="settings/branding" element={<ManagementBrandingPage />} />
         <Route
           path="analytics"
           element={<div className="p-8 text-[var(--text-muted)]">Analytics — Phase 2+</div>}
@@ -89,6 +136,7 @@ export default function App() {
         <Route path="/workspaces/:wsId/schedule/:id" element={<ScheduleEditorPage />} />
         <Route path="/workspaces/:wsId/tags" element={<TagsPage />} />
         <Route path="/workspaces/:wsId/canvas/:id" element={<CanvasEditorPage />} />
+        <Route path="/workspaces/:wsId/analytics" element={<AnalyticsPage />} />
       </Route>
 
       {/* Root redirect */}

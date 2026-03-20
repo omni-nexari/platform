@@ -25,6 +25,7 @@ type PlaySource = 'schedule' | 'playlist' | 'default' | 'emergency';
 
 export class PlaylistRunner {
   readonly playlistId: string;
+  private scheduleId: string | null;
   private data: PlaylistData;
   private source: PlaySource;
   private index = 0;
@@ -32,8 +33,9 @@ export class PlaylistRunner {
   private running = false;
   private itemStartedAt = new Date();
 
-  constructor(playlistId: string, data: unknown, source: PlaySource) {
+  constructor(playlistId: string, data: unknown, source: PlaySource, scheduleId: string | null = null) {
     this.playlistId = playlistId;
+    this.scheduleId = scheduleId;
     this.data = data as PlaylistData;
     this.source = source;
   }
@@ -57,6 +59,8 @@ export class PlaylistRunner {
     const endedAt = new Date();
     logPlay({
       contentId: item.contentId ?? null,
+      playlistId: this.playlistId,
+      scheduleId: this.scheduleId,
       startedAt: this.itemStartedAt.toISOString(),
       endedAt: endedAt.toISOString(),
       durationMs: endedAt.getTime() - this.itemStartedAt.getTime(),

@@ -6,6 +6,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { toast } from 'sonner';
 import { useTheme } from '../contexts/ThemeContext.js';
 import SearchModal from './SearchModal.js';
+import NotificationTray from './NotificationTray.js';
 import {
   Modal,
   ModalBody,
@@ -34,6 +35,7 @@ import {
   Search,
   Paintbrush,
   Menu,
+  BarChart2,
 } from 'lucide-react';
 
 interface Workspace {
@@ -92,6 +94,51 @@ export default function AppLayout() {
   useEffect(() => {
     setSidebarOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+
+    let cancelled = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let socket: WebSocket | null = null;
+
+    const connect = () => {
+      if (cancelled) return;
+      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      socket = new WebSocket(
+        `${protocol}://${window.location.host}/api/notifications/ws?token=${encodeURIComponent(accessToken)}`,
+      );
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data) as { type?: string };
+          if (payload.type === 'notifications.invalidate') {
+            void queryClient.invalidateQueries({ queryKey: ['notifications-tray'] });
+            void queryClient.invalidateQueries({ queryKey: ['notifications'] });
+          }
+        } catch {
+          // Ignore malformed realtime payloads.
+        }
+      };
+
+      socket.onclose = () => {
+        if (cancelled) return;
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+
+      socket.onerror = () => {
+        socket?.close();
+      };
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      socket?.close();
+    };
+  }, [accessToken, queryClient]);
 
   const { data: workspaces = [] } = useQuery<Workspace[]>({
     queryKey: ['workspaces'],
@@ -261,6 +308,19 @@ export default function AppLayout() {
                 <Tag className="w-4 h-4" />
                 Tags
               </NavLink>
+              <NavLink
+                to={`/workspaces/${currentWsId}/analytics`}
+                className={({ isActive }) =>
+                  `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                    isActive
+                      ? 'bg-[var(--blue)] text-white'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                  }`
+                }
+              >
+                <BarChart2 className="w-4 h-4" />
+                Analytics
+              </NavLink>
             </>
           )}
 
@@ -375,6 +435,7 @@ export default function AppLayout() {
                 <Zap className="w-3.5 h-3.5" />
               </button>
             </div>
+            <NotificationTray />
             <button
               onClick={() => navigate('/settings')}
               className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors"

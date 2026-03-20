@@ -78,12 +78,57 @@ export async function registerPlugins(app: FastifyInstance) {
     }
   });
 
-  // Decorate with super-admin gate
+  // Platform owner — strict (was 'super_admin', now 'platform_owner')
+  app.decorate('authenticatePlatformOwner', async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      await req.jwtVerify();
+      const payload = req.user as { type?: string };
+      if (payload.type !== 'platform_owner') {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+    } catch {
+      return reply.status(401).send({ error: 'Unauthorized' });
+    }
+  });
+
+  // Management company admin — strict
+  app.decorate(
+    'authenticateManagementCompanyAdmin',
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      try {
+        await req.jwtVerify();
+        const payload = req.user as { type?: string };
+        if (payload.type !== 'management_company_admin') {
+          return reply.status(403).send({ error: 'Forbidden' });
+        }
+      } catch {
+        return reply.status(401).send({ error: 'Unauthorized' });
+      }
+    },
+  );
+
+  // Platform admin — accepts platform_owner OR management_company_admin
+  app.decorate('authenticatePlatformAdmin', async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      await req.jwtVerify();
+      const payload = req.user as { type?: string };
+      if (
+        payload.type !== 'platform_owner' &&
+        payload.type !== 'management_company_admin'
+      ) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+    } catch {
+      return reply.status(401).send({ error: 'Unauthorized' });
+    }
+  });
+
+  // Backward-compat alias (used by existing routes before rename)
   app.decorate('authenticateSuperAdmin', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       await req.jwtVerify();
       const payload = req.user as { type?: string };
-      if (payload.type !== 'super_admin') {
+      if (payload.type !== 'platform_owner') {
         return reply.status(403).send({ error: 'Forbidden' });
       }
     } catch {

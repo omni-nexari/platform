@@ -177,6 +177,8 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
       entries.map((e) => ({
         deviceId,
         contentId: e.contentId ?? null,
+        playlistId: e.playlistId ?? null,
+        scheduleId: e.scheduleId ?? null,
         zoneId: e.zoneId ?? null,
         startedAt: new Date(e.startedAt),
         endedAt: new Date(e.endedAt),

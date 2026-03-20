@@ -291,3 +291,7 @@ export function SectionCardHeader({ className, children }: { className?: string;
 export function SectionCardBody({ className, children }: { className?: string; children: ReactNode }) {
   return <div className={joinClasses('ui-section-card-body', className)}>{children}</div>;
 }
+
+export function Skeleton({ className }: { className?: string }) {
+  return <div className={joinClasses('animate-pulse rounded-lg bg-[var(--surface)]', className)} />;
+}
