@@ -25,7 +25,7 @@ export default function ManagementLayout() {
   const handleLogout = () => {
     const slug = user?.companySlug;
     clearAuth();
-    navigate(slug ? `/m/${slug}` : '/management/login');
+    navigate(slug ? `/m/${slug}/login` : '/management/login');
   };
 
   return (

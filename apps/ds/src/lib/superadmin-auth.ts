@@ -73,7 +73,7 @@ export async function saFetch<T>(path: string, options: RequestInit = {}): Promi
     useSAStore.getState().clearAuth();
     if (storeUser?.type === 'management_company_admin') {
       window.location.href = storeUser.companySlug
-        ? `/m/${storeUser.companySlug}`
+        ? `/m/${storeUser.companySlug}/login`
         : '/management/login';
     } else {
       window.location.href = '/superadmin/login';

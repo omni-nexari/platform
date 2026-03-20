@@ -50,7 +50,7 @@ function RequireManagementAdmin({ children }: { children: React.ReactNode }) {
   const { accessToken, user } = useSAStore();
   if (!accessToken) {
     const slug = user?.companySlug;
-    return <Navigate to={slug ? `/m/${slug}` : '/management/login'} replace />;
+    return <Navigate to={slug ? `/m/${slug}/login` : '/management/login'} replace />;
   }
   if (user?.type !== 'management_company_admin') return <Navigate to="/superadmin" replace />;
   return <>{children}</>;
@@ -91,7 +91,8 @@ export default function App() {
       </Route>
 
       {/* Management Company portal */}
-      <Route path="/m/:slug" element={<ManagementLoginPage />} />
+      <Route path="/m/:slug" element={<Navigate to="login" replace />} />
+      <Route path="/m/:slug/login" element={<ManagementLoginPage />} />
       <Route path="/management/login" element={<ManagementLoginPage />} />
       <Route
         path="/management"

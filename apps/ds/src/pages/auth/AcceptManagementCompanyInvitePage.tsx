@@ -167,7 +167,7 @@ export default function AcceptManagementCompanyInvitePage() {
       );
       toast.success('Account created! Sign in to your portal.');
       if (res.companySlug && !res.companySlug.startsWith('pending-')) {
-        navigate(`/m/${res.companySlug}`);
+        navigate(`/m/${res.companySlug}/login`);
       } else {
         navigate('/management/login');
       }
