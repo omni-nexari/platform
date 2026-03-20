@@ -114,42 +114,6 @@ async function getDirectorySize(absPath: string): Promise<number> {
   return total;
 }
 
-async function getWorkspaceUploadUsage(absStorageRoot: string): Promise<Array<{ workspaceId: string; bytes: number }>> {
-  const orgEntries = await fs.readdir(absStorageRoot, { withFileTypes: true, encoding: 'utf8' }).catch(() => [] as Dirent[]);
-  const usage: Array<{ workspaceId: string; bytes: number }> = [];
-
-  for (const orgEntry of orgEntries) {
-    if (!orgEntry.isDirectory() || orgEntry.name === 'management_branding') continue;
-
-    const orgPath = path.join(absStorageRoot, orgEntry.name);
-    const workspaceEntries = await fs.readdir(orgPath, { withFileTypes: true, encoding: 'utf8' }).catch(() => [] as Dirent[]);
-
-    for (const workspaceEntry of workspaceEntries) {
-      if (!workspaceEntry.isDirectory()) continue;
-      const workspacePath = path.join(orgPath, workspaceEntry.name);
-      const bytes = await getDirectorySize(workspacePath);
-      usage.push({ workspaceId: workspaceEntry.name, bytes });
-    }
-  }
-
-  return usage.sort((left, right) => right.bytes - left.bytes);
-}
-
-async function getManagementBrandingUsage(absStorageRoot: string): Promise<Array<{ managementCompanyId: string; bytes: number }>> {
-  const brandingRoot = path.join(absStorageRoot, 'management_branding');
-  const companyEntries = await fs.readdir(brandingRoot, { withFileTypes: true, encoding: 'utf8' }).catch(() => [] as Dirent[]);
-  const usage: Array<{ managementCompanyId: string; bytes: number }> = [];
-
-  for (const companyEntry of companyEntries) {
-    if (!companyEntry.isDirectory()) continue;
-    const companyPath = path.join(brandingRoot, companyEntry.name);
-    const bytes = await getDirectorySize(companyPath);
-    usage.push({ managementCompanyId: companyEntry.name, bytes });
-  }
-
-  return usage.sort((left, right) => right.bytes - left.bytes);
-}
-
 function getBrandAssetExtension(filename: string, mime: string): string {
   const ext = path.extname(filename).toLowerCase();
   if (ext) return ext;
@@ -1279,8 +1243,6 @@ export async function superAdminRoutes(app: FastifyInstance) {
       const storageTotal = storageStats.bsize * storageStats.blocks;
       const storageFree = storageStats.bsize * storageStats.bavail;
       const storageUsed = Math.max(0, storageTotal - storageFree);
-      const workspaceUploadUsage = await getWorkspaceUploadUsage(resolvedStorageRoot);
-      const managementBrandingUsage = await getManagementBrandingUsage(resolvedStorageRoot);
       const databaseConnection = parseConnectionLabel(process.env['DATABASE_URL']);
       const redisConnection = parseConnectionLabel(process.env['REDIS_URL']);
 
@@ -1342,32 +1304,124 @@ export async function superAdminRoutes(app: FastifyInstance) {
         .from(managementCompanies)
         .where(isNull(managementCompanies.deletedAt));
 
-      const workspaceUsageRows = workspaceUploadUsage.length
-        ? await db
-            .select({
-              id: workspaces.id,
-              name: workspaces.name,
-              orgId: workspaces.orgId,
-              orgName: organisations.name,
-            })
-            .from(workspaces)
-            .innerJoin(organisations, eq(organisations.id, workspaces.orgId))
-            .where(inArray(workspaces.id, workspaceUploadUsage.map((entry) => entry.workspaceId)))
-        : [];
+      const workspaceRows = await db
+        .select({
+          id: workspaces.id,
+          name: workspaces.name,
+          orgId: workspaces.orgId,
+          orgName: organisations.name,
+        })
+        .from(workspaces)
+        .innerJoin(organisations, eq(organisations.id, workspaces.orgId))
+        .where(and(isNull(workspaces.deletedAt), isNull(organisations.deletedAt)));
 
-      const managementBrandingRows = managementBrandingUsage.length
-        ? await db
-            .select({
-              id: managementCompanies.id,
-              name: managementCompanies.name,
-              slug: managementCompanies.slug,
-            })
-            .from(managementCompanies)
-            .where(inArray(managementCompanies.id, managementBrandingUsage.map((entry) => entry.managementCompanyId)))
-        : [];
+      const deviceRows = await db
+        .select({
+          id: devices.id,
+          name: devices.name,
+          orgId: devices.orgId,
+          workspaceId: devices.workspaceId,
+          orgName: organisations.name,
+          workspaceName: workspaces.name,
+        })
+        .from(devices)
+        .leftJoin(organisations, eq(organisations.id, devices.orgId))
+        .leftJoin(workspaces, eq(workspaces.id, devices.workspaceId))
+        .where(isNull(devices.deletedAt));
 
-      const workspaceUsageById = new Map(workspaceUsageRows.map((row) => [row.id, row]));
-      const managementBrandingById = new Map(managementBrandingRows.map((row) => [row.id, row]));
+      const managementBrandingRows = await db
+        .select({
+          id: managementCompanies.id,
+          name: managementCompanies.name,
+          slug: managementCompanies.slug,
+        })
+        .from(managementCompanies)
+        .where(isNull(managementCompanies.deletedAt));
+
+      const workspaceUploadUsage = (
+        await Promise.all(
+          workspaceRows.map(async (row) => ({
+            workspaceId: row.id,
+            workspaceName: row.name,
+            orgId: row.orgId,
+            orgName: row.orgName,
+            bytes: await getDirectorySize(path.join(resolvedStorageRoot, row.orgId, row.id)),
+          })),
+        )
+      ).sort((left, right) => right.bytes - left.bytes);
+
+      const screenshotUsage = (
+        await Promise.all(
+          deviceRows.map(async (row) => ({
+            deviceId: row.id,
+            deviceName: row.name,
+            orgId: row.orgId,
+            workspaceId: row.workspaceId,
+            orgName: row.orgName,
+            workspaceName: row.workspaceName,
+            bytes: await getDirectorySize(path.join(resolvedStorageRoot, row.id)),
+          })),
+        )
+      ).sort((left, right) => right.bytes - left.bytes);
+
+      const managementBrandingUsage = (
+        await Promise.all(
+          managementBrandingRows.map(async (row) => ({
+            managementCompanyId: row.id,
+            companyName: row.name,
+            companySlug: row.slug,
+            bytes: await getDirectorySize(path.join(resolvedStorageRoot, 'management_branding', row.id)),
+          })),
+        )
+      ).sort((left, right) => right.bytes - left.bytes);
+
+      const orgStorageTotalsMap = new Map<
+        string,
+        {
+          orgId: string;
+          orgName: string | null;
+          workspaceUploadBytes: number;
+          screenshotBytes: number;
+          totalBytes: number;
+        }
+      >();
+
+      for (const entry of workspaceUploadUsage) {
+        const existing = orgStorageTotalsMap.get(entry.orgId) ?? {
+          orgId: entry.orgId,
+          orgName: entry.orgName,
+          workspaceUploadBytes: 0,
+          screenshotBytes: 0,
+          totalBytes: 0,
+        };
+        existing.orgName = existing.orgName ?? entry.orgName;
+        existing.workspaceUploadBytes += entry.bytes;
+        existing.totalBytes += entry.bytes;
+        orgStorageTotalsMap.set(entry.orgId, existing);
+      }
+
+      for (const entry of screenshotUsage) {
+        if (!entry.orgId) continue;
+        const existing = orgStorageTotalsMap.get(entry.orgId) ?? {
+          orgId: entry.orgId,
+          orgName: entry.orgName,
+          workspaceUploadBytes: 0,
+          screenshotBytes: 0,
+          totalBytes: 0,
+        };
+        existing.orgName = existing.orgName ?? entry.orgName;
+        existing.screenshotBytes += entry.bytes;
+        existing.totalBytes += entry.bytes;
+        orgStorageTotalsMap.set(entry.orgId, existing);
+      }
+
+      const orgStorageTotals = Array.from(orgStorageTotalsMap.values()).sort(
+        (left, right) => right.totalBytes - left.totalBytes,
+      );
+
+      const totalWorkspaceUploadBytes = workspaceUploadUsage.reduce((sum, entry) => sum + entry.bytes, 0);
+      const totalScreenshotBytes = screenshotUsage.reduce((sum, entry) => sum + entry.bytes, 0);
+      const totalManagementBrandingBytes = managementBrandingUsage.reduce((sum, entry) => sum + entry.bytes, 0);
 
       return reply.send({
         process: {
@@ -1408,25 +1462,13 @@ export async function superAdminRoutes(app: FastifyInstance) {
           totalBytes: storageTotal,
           freeBytes: storageFree,
           usedBytes: storageUsed,
-          workspaceUploads: workspaceUploadUsage.map((entry) => {
-            const row = workspaceUsageById.get(entry.workspaceId);
-            return {
-              workspaceId: entry.workspaceId,
-              workspaceName: row?.name ?? entry.workspaceId,
-              orgId: row?.orgId ?? null,
-              orgName: row?.orgName ?? null,
-              bytes: entry.bytes,
-            };
-          }),
-          managementBranding: managementBrandingUsage.map((entry) => {
-            const row = managementBrandingById.get(entry.managementCompanyId);
-            return {
-              managementCompanyId: entry.managementCompanyId,
-              companyName: row?.name ?? entry.managementCompanyId,
-              companySlug: row?.slug ?? null,
-              bytes: entry.bytes,
-            };
-          }),
+          workspaceUploadBytes: totalWorkspaceUploadBytes,
+          screenshotBytes: totalScreenshotBytes,
+          managementBrandingBytes: totalManagementBrandingBytes,
+          workspaceUploads: workspaceUploadUsage,
+          screenshotUsage,
+          orgTotals: orgStorageTotals,
+          managementBranding: managementBrandingUsage,
         },
         services: {
           postgres: {
