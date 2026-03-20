@@ -5,6 +5,8 @@ import {
   platformOwners,
   organisations,
   users,
+  workspaces,
+  devices,
   orgStorageQuotas,
   managementCompanies,
   managementCompanyAdmins,
@@ -13,7 +15,9 @@ import {
 } from '@signage/db';
 import { eq, isNull, count, sql, desc, and, inArray } from 'drizzle-orm';
 import * as argon2 from 'argon2';
+import Redis from 'ioredis';
 import { randomBytes } from 'node:crypto';
+import type { Dirent } from 'node:fs';
 import { createWriteStream } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
@@ -29,6 +33,122 @@ import { writeAuditLog } from '../services/audit.js';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 const BRANDING_ASSET_TYPES = new Set(['logo', 'favicon', 'login-background']);
+
+async function findExistingPath(startPath: string): Promise<{ path: string; exact: boolean }> {
+  let currentPath = path.resolve(startPath);
+
+  while (true) {
+    try {
+      await fs.stat(currentPath);
+      return { path: currentPath, exact: currentPath === path.resolve(startPath) };
+    } catch {
+      const parentPath = path.dirname(currentPath);
+      if (parentPath === currentPath) {
+        return { path: path.resolve(startPath), exact: false };
+      }
+      currentPath = parentPath;
+    }
+  }
+}
+
+function parseConnectionLabel(value: string | undefined): { host: string | null; database: string | null } {
+  if (!value) return { host: null, database: null };
+
+  try {
+    const parsed = new URL(value);
+    return {
+      host: parsed.hostname || null,
+      database: parsed.pathname ? parsed.pathname.replace(/^\//, '') || null : null,
+    };
+  } catch {
+    return { host: null, database: null };
+  }
+}
+
+function getCpuSnapshot() {
+  const cpus = os.cpus();
+  let idle = 0;
+  let total = 0;
+
+  for (const cpu of cpus) {
+    idle += cpu.times.idle;
+    total += cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.idle + cpu.times.irq;
+  }
+
+  return { idle, total };
+}
+
+async function sampleCpuUsagePercent(delayMs = 125): Promise<number> {
+  const start = getCpuSnapshot();
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+  const end = getCpuSnapshot();
+
+  const idleDelta = end.idle - start.idle;
+  const totalDelta = end.total - start.total;
+  if (totalDelta <= 0) return 0;
+  return Math.max(0, Math.min(100, ((totalDelta - idleDelta) / totalDelta) * 100));
+}
+
+async function getDirectorySize(absPath: string): Promise<number> {
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(absPath, { withFileTypes: true, encoding: 'utf8' }) as Dirent[];
+  } catch {
+    return 0;
+  }
+
+  let total = 0;
+  for (const entry of entries) {
+    const entryPath = path.join(absPath, entry.name);
+    if (entry.isDirectory()) {
+      total += await getDirectorySize(entryPath);
+      continue;
+    }
+
+    if (entry.isFile()) {
+      const stats = await fs.stat(entryPath).catch(() => null);
+      total += stats?.size ?? 0;
+    }
+  }
+
+  return total;
+}
+
+async function getWorkspaceUploadUsage(absStorageRoot: string): Promise<Array<{ workspaceId: string; bytes: number }>> {
+  const orgEntries = await fs.readdir(absStorageRoot, { withFileTypes: true, encoding: 'utf8' }).catch(() => [] as Dirent[]);
+  const usage: Array<{ workspaceId: string; bytes: number }> = [];
+
+  for (const orgEntry of orgEntries) {
+    if (!orgEntry.isDirectory() || orgEntry.name === 'management_branding') continue;
+
+    const orgPath = path.join(absStorageRoot, orgEntry.name);
+    const workspaceEntries = await fs.readdir(orgPath, { withFileTypes: true, encoding: 'utf8' }).catch(() => [] as Dirent[]);
+
+    for (const workspaceEntry of workspaceEntries) {
+      if (!workspaceEntry.isDirectory()) continue;
+      const workspacePath = path.join(orgPath, workspaceEntry.name);
+      const bytes = await getDirectorySize(workspacePath);
+      usage.push({ workspaceId: workspaceEntry.name, bytes });
+    }
+  }
+
+  return usage.sort((left, right) => right.bytes - left.bytes);
+}
+
+async function getManagementBrandingUsage(absStorageRoot: string): Promise<Array<{ managementCompanyId: string; bytes: number }>> {
+  const brandingRoot = path.join(absStorageRoot, 'management_branding');
+  const companyEntries = await fs.readdir(brandingRoot, { withFileTypes: true, encoding: 'utf8' }).catch(() => [] as Dirent[]);
+  const usage: Array<{ managementCompanyId: string; bytes: number }> = [];
+
+  for (const companyEntry of companyEntries) {
+    if (!companyEntry.isDirectory()) continue;
+    const companyPath = path.join(brandingRoot, companyEntry.name);
+    const bytes = await getDirectorySize(companyPath);
+    usage.push({ managementCompanyId: companyEntry.name, bytes });
+  }
+
+  return usage.sort((left, right) => right.bytes - left.bytes);
+}
 
 function getBrandAssetExtension(filename: string, mime: string): string {
   const ext = path.extname(filename).toLowerCase();
@@ -1150,8 +1270,52 @@ export async function superAdminRoutes(app: FastifyInstance) {
     async (_req, reply) => {
       const mem = process.memoryUsage();
       const load = os.loadavg();
+      const cpuUsagePercent = await sampleCpuUsagePercent();
       const totalMem = os.totalmem();
       const freeMem = os.freemem();
+      const resolvedStorageRoot = path.resolve(STORAGE_ROOT);
+      const { path: storageStatsPath, exact: storagePathExists } = await findExistingPath(resolvedStorageRoot);
+      const storageStats = await fs.statfs(storageStatsPath);
+      const storageTotal = storageStats.bsize * storageStats.blocks;
+      const storageFree = storageStats.bsize * storageStats.bavail;
+      const storageUsed = Math.max(0, storageTotal - storageFree);
+      const workspaceUploadUsage = await getWorkspaceUploadUsage(resolvedStorageRoot);
+      const managementBrandingUsage = await getManagementBrandingUsage(resolvedStorageRoot);
+      const databaseConnection = parseConnectionLabel(process.env['DATABASE_URL']);
+      const redisConnection = parseConnectionLabel(process.env['REDIS_URL']);
+
+      const postgresStartedAt = Date.now();
+      let postgresError: string | null = null;
+      try {
+        await db.execute(sql`select 1`);
+      } catch (error) {
+        postgresError = error instanceof Error ? error.message : 'Unknown PostgreSQL error';
+      }
+      const postgresLatencyMs = Date.now() - postgresStartedAt;
+
+      const redisUrl = process.env['REDIS_URL'];
+      let redisLatencyMs: number | null = null;
+      let redisError: string | null = null;
+      if (redisUrl) {
+        const redisClient = new Redis(redisUrl, {
+          lazyConnect: true,
+          maxRetriesPerRequest: 0,
+          enableOfflineQueue: false,
+        });
+
+        const redisStartedAt = Date.now();
+        try {
+          await redisClient.connect();
+          await redisClient.ping();
+          redisLatencyMs = Date.now() - redisStartedAt;
+        } catch (error) {
+          redisError = error instanceof Error ? error.message : 'Unknown Redis error';
+        } finally {
+          await redisClient.quit().catch(async () => {
+            await redisClient.disconnect();
+          });
+        }
+      }
 
       const [orgsRow] = await db
         .select({ total: count() })
@@ -1163,20 +1327,67 @@ export async function superAdminRoutes(app: FastifyInstance) {
         .from(users)
         .where(isNull(users.deletedAt));
 
+      const [workspacesRow] = await db
+        .select({ total: count() })
+        .from(workspaces)
+        .where(isNull(workspaces.deletedAt));
+
+      const [devicesRow] = await db
+        .select({ total: count() })
+        .from(devices)
+        .where(isNull(devices.deletedAt));
+
+      const [managementCompaniesRow] = await db
+        .select({ total: count() })
+        .from(managementCompanies)
+        .where(isNull(managementCompanies.deletedAt));
+
+      const workspaceUsageRows = workspaceUploadUsage.length
+        ? await db
+            .select({
+              id: workspaces.id,
+              name: workspaces.name,
+              orgId: workspaces.orgId,
+              orgName: organisations.name,
+            })
+            .from(workspaces)
+            .innerJoin(organisations, eq(organisations.id, workspaces.orgId))
+            .where(inArray(workspaces.id, workspaceUploadUsage.map((entry) => entry.workspaceId)))
+        : [];
+
+      const managementBrandingRows = managementBrandingUsage.length
+        ? await db
+            .select({
+              id: managementCompanies.id,
+              name: managementCompanies.name,
+              slug: managementCompanies.slug,
+            })
+            .from(managementCompanies)
+            .where(inArray(managementCompanies.id, managementBrandingUsage.map((entry) => entry.managementCompanyId)))
+        : [];
+
+      const workspaceUsageById = new Map(workspaceUsageRows.map((row) => [row.id, row]));
+      const managementBrandingById = new Map(managementBrandingRows.map((row) => [row.id, row]));
+
       return reply.send({
         process: {
           heapUsed: mem.heapUsed,
           heapTotal: mem.heapTotal,
           rss: mem.rss,
+          external: mem.external,
           uptime: process.uptime(),
           nodeVersion: process.version,
+          pid: process.pid,
         },
         os: {
+          hostname: os.hostname(),
           platform: os.platform(),
           arch: os.arch(),
+          release: os.release(),
           totalMem,
           freeMem,
           usedMem: totalMem - freeMem,
+          cpuUsagePercent,
           loadAvg1: load[0],
           loadAvg5: load[1],
           loadAvg15: load[2],
@@ -1186,6 +1397,52 @@ export async function superAdminRoutes(app: FastifyInstance) {
         db: {
           totalOrgs: Number(orgsRow?.total ?? 0),
           totalUsers: Number(usersRow?.total ?? 0),
+          totalWorkspaces: Number(workspacesRow?.total ?? 0),
+          totalDevices: Number(devicesRow?.total ?? 0),
+          totalManagementCompanies: Number(managementCompaniesRow?.total ?? 0),
+        },
+        storage: {
+          rootPath: resolvedStorageRoot,
+          statsPath: storageStatsPath,
+          exactPathExists: storagePathExists,
+          totalBytes: storageTotal,
+          freeBytes: storageFree,
+          usedBytes: storageUsed,
+          workspaceUploads: workspaceUploadUsage.map((entry) => {
+            const row = workspaceUsageById.get(entry.workspaceId);
+            return {
+              workspaceId: entry.workspaceId,
+              workspaceName: row?.name ?? entry.workspaceId,
+              orgId: row?.orgId ?? null,
+              orgName: row?.orgName ?? null,
+              bytes: entry.bytes,
+            };
+          }),
+          managementBranding: managementBrandingUsage.map((entry) => {
+            const row = managementBrandingById.get(entry.managementCompanyId);
+            return {
+              managementCompanyId: entry.managementCompanyId,
+              companyName: row?.name ?? entry.managementCompanyId,
+              companySlug: row?.slug ?? null,
+              bytes: entry.bytes,
+            };
+          }),
+        },
+        services: {
+          postgres: {
+            ok: postgresError === null,
+            latencyMs: postgresLatencyMs,
+            host: databaseConnection.host,
+            database: databaseConnection.database,
+            error: postgresError,
+          },
+          redis: {
+            configured: Boolean(redisUrl),
+            ok: Boolean(redisUrl) && redisError === null,
+            latencyMs: redisLatencyMs,
+            host: redisConnection.host,
+            error: redisError,
+          },
         },
       });
     },
