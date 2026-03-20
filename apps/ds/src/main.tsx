@@ -5,14 +5,9 @@ import { BrowserRouter } from 'react-router';
 import { Toaster } from 'sonner';
 import { ThemeProvider } from './contexts/ThemeContext.js';
 import App from './App.js';
+import { queryClient } from './lib/query-client.js';
 import './styles/globals.css';
 import './styles/cyberpunk.css';
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { staleTime: 30_000, retry: 1 },
-  },
-});
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

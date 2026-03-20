@@ -1,8 +1,13 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { X, Upload, Globe, Code2, CloudUpload } from 'lucide-react';
 import { api } from '../lib/api.js';
+import {
+  startBackgroundDeviceUpload,
+  subscribeBackgroundUploadTask,
+  type BackgroundUploadTask,
+} from '../lib/background-uploads.js';
 
 interface Props {
   workspaceId: string;
@@ -17,14 +22,37 @@ interface ContentItem {
   type: string;
 }
 
+interface QueuedFile {
+  id: string;
+  file: File;
+  progress: number;
+  status: 'pending' | 'uploading' | 'uploaded' | 'failed';
+}
+
 const ACCEPT = 'image/*,video/*,.pdf,.zip,.pptx,.ppt';
+
+function queueFiles(selectedFiles: File[]): QueuedFile[] {
+  return selectedFiles.map((file) => ({
+    id: `${file.name}-${file.size}-${file.lastModified}-${crypto.randomUUID()}`,
+    file,
+    progress: 0,
+    status: 'pending',
+  }));
+}
+
+function uploadStatusLabel(status: QueuedFile['status'], progress: number): string {
+  if (status === 'uploaded') return 'Uploaded';
+  if (status === 'failed') return 'Failed';
+  if (status === 'uploading') return `${Math.max(1, Math.round(progress * 100))}%`;
+  return 'Waiting';
+}
 
 export default function UploadModal({ workspaceId, onClose }: Props) {
   const [tab, setTab] = useState<Tab>('device');
   const queryClient = useQueryClient();
 
   // ── Device tab state ──────────────────────────────────────────────────────
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<QueuedFile[]>([]);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -41,7 +69,15 @@ export default function UploadModal({ workspaceId, onClose }: Props) {
   const [wRefresh, setWRefresh] = useState(3600);
 
   // ── Upload progress (simple per-file state) ───────────────────────────────
-  const [uploading, setUploading] = useState(false);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [backgroundTask, setBackgroundTask] = useState<BackgroundUploadTask | null>(null);
+
+  useEffect(() => {
+    if (!activeTaskId) return;
+    return subscribeBackgroundUploadTask(activeTaskId, (task) => {
+      setBackgroundTask(task);
+    });
+  }, [activeTaskId]);
 
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ['content', workspaceId] });
@@ -51,24 +87,8 @@ export default function UploadModal({ workspaceId, onClose }: Props) {
   // ── Device upload ──────────────────────────────────────────────────────────
   const uploadDevice = async () => {
     if (!files.length) return;
-    setUploading(true);
-    let success = 0;
-    for (const file of files) {
-      try {
-        const form = new FormData();
-        form.append('file', file);
-        await api.postForm<ContentItem>(`/content/upload?workspaceId=${workspaceId}`, form);
-        success++;
-      } catch (e) {
-        toast.error(`Failed: ${file.name}`);
-      }
-    }
-    setUploading(false);
-    if (success) {
-      toast.success(`Uploaded ${success} file${success > 1 ? 's' : ''}`);
-      void invalidate();
-      onClose();
-    }
+    const taskId = startBackgroundDeviceUpload(workspaceId, files.map((entry) => entry.file));
+    setActiveTaskId(taskId);
   };
 
   // ── HTML5 upload ───────────────────────────────────────────────────────────
@@ -113,15 +133,18 @@ export default function UploadModal({ workspaceId, onClose }: Props) {
     e.preventDefault();
     setDragging(false);
     const dropped = Array.from(e.dataTransfer.files);
-    setFiles((prev) => [...prev, ...dropped]);
+    setFiles((prev) => [...prev, ...queueFiles(dropped)]);
   }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) setFiles((prev) => [...prev, ...Array.from(e.target.files!)]);
+    const selectedFiles = e.target.files ? Array.from(e.target.files) : [];
+    if (selectedFiles.length) {
+      setFiles((prev) => [...prev, ...queueFiles(selectedFiles)]);
+    }
   };
 
-  const removeFile = (idx: number) =>
-    setFiles((prev) => prev.filter((_, i) => i !== idx));
+  const removeFile = (id: string) =>
+    setFiles((prev) => prev.filter((item) => item.id !== id));
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'device', label: 'MY DEVICE', icon: <Upload size={14} /> },
@@ -129,17 +152,44 @@ export default function UploadModal({ workspaceId, onClose }: Props) {
     { id: 'weburl', label: 'WEB (URL)', icon: <Globe size={14} /> },
   ];
 
-  const busy = uploading || uploadHtml5Mut.isPending || addWebUrlMut.isPending;
+  const displayedFiles = backgroundTask
+    ? backgroundTask.items.map((item, index) => ({
+        id: item.id,
+        file: files[index]?.file ?? new File([], item.name),
+        progress: item.progress,
+        status: item.status,
+      }))
+    : files;
+
+  const deviceUploading = backgroundTask?.status === 'running';
+  const busy = deviceUploading || uploadHtml5Mut.isPending || addWebUrlMut.isPending;
+  const overallProgress = displayedFiles.length
+    ? Math.round(displayedFiles.reduce((sum, item) => sum + item.progress, 0) / displayedFiles.length * 100)
+    : 0;
+
+  const handleClose = () => {
+    if (deviceUploading) {
+      toast.message('Upload will continue in the background. You will be notified when it finishes.');
+    }
+    onClose();
+  };
+
+  useEffect(() => {
+    if (!backgroundTask) return;
+    if (backgroundTask.status === 'completed') {
+      onClose();
+    }
+  }, [backgroundTask, onClose]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="modal-backdrop" onClick={onClose} />
+      <div className="modal-backdrop" onClick={handleClose} />
       <div className="modal-shell modal-shell-md">
         {/* Header */}
         <div className="modal-header">
           <h2 className="modal-title">Add Content</h2>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="modal-close"
           >
             <X size={20} />
@@ -187,28 +237,55 @@ export default function UploadModal({ workspaceId, onClose }: Props) {
               <input ref={fileInputRef} type="file" multiple accept={ACCEPT} className="hidden" onChange={handleFileChange} />
 
               {/* File list */}
-              {files.length > 0 && (
+              {displayedFiles.length > 0 && (
                 <ul className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                  {files.map((f, i) => (
-                    <li key={i} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--surface-raised)]">
-                      <span className="text-xs text-[var(--text)] truncate flex-1">{f.name}</span>
-                      <span className="text-xs text-[var(--text-muted)] shrink-0">
-                        {(f.size / 1024 / 1024).toFixed(1)} MB
-                      </span>
-                      <button onClick={() => removeFile(i)} className="text-[var(--text-muted)] hover:text-red-400 shrink-0">
+                  {displayedFiles.map((entry) => (
+                    <li key={entry.id} className="px-3 py-2 rounded-lg bg-[var(--surface-raised)]">
+                      <div className="flex items-center gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs text-[var(--text)] truncate flex-1">{entry.file.name}</span>
+                            <span className={`text-[11px] shrink-0 ${entry.status === 'failed' ? 'text-red-400' : entry.status === 'uploaded' ? 'text-emerald-400' : 'text-[var(--text-muted)]'}`}>
+                              {uploadStatusLabel(entry.status, entry.progress)}
+                            </span>
+                          </div>
+                          <div className="mt-2 h-1.5 rounded-full bg-black/20 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-[width] duration-200 ${entry.status === 'failed' ? 'bg-red-400' : 'bg-[var(--accent)]'}`}
+                              style={{ width: `${Math.max(entry.progress * 100, entry.status === 'failed' ? 100 : 0)}%` }}
+                            />
+                          </div>
+                        </div>
+                        <span className="text-xs text-[var(--text-muted)] shrink-0">
+                          {(entry.file.size / 1024 / 1024).toFixed(1)} MB
+                        </span>
+                        <button onClick={() => removeFile(entry.id)} disabled={busy || !!backgroundTask} className="text-[var(--text-muted)] hover:text-red-400 shrink-0 disabled:opacity-40">
                         <X size={14} />
-                      </button>
+                        </button>
+                      </div>
                     </li>
                   ))}
                 </ul>
               )}
 
+              {deviceUploading && displayedFiles.length > 0 && (
+                <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-2">
+                  <div className="flex items-center justify-between gap-3 text-xs text-[var(--text-muted)]">
+                    <span>Uploading files</span>
+                    <span>{overallProgress}%</span>
+                  </div>
+                  <div className="mt-2 h-2 rounded-full bg-black/20 overflow-hidden">
+                    <div className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-200" style={{ width: `${overallProgress}%` }} />
+                  </div>
+                </div>
+              )}
+
               <button
                 onClick={uploadDevice}
-                disabled={!files.length || busy}
+                disabled={!files.length || busy || !!backgroundTask}
                 className="w-full py-2.5 rounded-lg text-sm font-semibold bg-[var(--accent)] text-white disabled:opacity-40 hover:opacity-90 transition-opacity"
               >
-                {uploading ? 'Uploading…' : `Upload ${files.length || ''} File${files.length !== 1 ? 's' : ''}`}
+                {deviceUploading ? `Uploading… ${overallProgress}%` : `Upload ${files.length || ''} File${files.length !== 1 ? 's' : ''}`}
               </button>
             </>
           )}

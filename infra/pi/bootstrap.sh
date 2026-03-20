@@ -13,6 +13,17 @@ ENV_DIR="${ENV_DIR:-/etc/signage}"
 
 export DEBIAN_FRONTEND=noninteractive
 
+LIBREOFFICE_PACKAGES=()
+if apt-cache show libreoffice-headless >/dev/null 2>&1; then
+  LIBREOFFICE_PACKAGES=(libreoffice-core libreoffice-headless)
+elif apt-cache show libreoffice-core-nogui >/dev/null 2>&1; then
+  LIBREOFFICE_PACKAGES=(libreoffice-core-nogui)
+elif apt-cache show libreoffice-core >/dev/null 2>&1; then
+  LIBREOFFICE_PACKAGES=(libreoffice-core)
+else
+  LIBREOFFICE_PACKAGES=(libreoffice)
+fi
+
 apt-get update
 apt-get install -y \
   ca-certificates \
@@ -25,8 +36,7 @@ apt-get install -y \
   redis-server \
   ffmpeg \
   ghostscript \
-  libreoffice-core \
-  libreoffice-headless
+  "${LIBREOFFICE_PACKAGES[@]}"
 
 # Install snapd & certbot (via snap) for Let's Encrypt
 apt-get install -y snapd || true
