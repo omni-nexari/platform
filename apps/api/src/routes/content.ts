@@ -11,6 +11,15 @@ import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from
 import { notifyContentFailed, notifyStorageThresholdCrossing } from '../services/notifications.js';
 
 const execFileAsync = promisify(execFile);
+const FFMPEG_BIN = process.env['FFMPEG_PATH'] ?? 'ffmpeg';
+const FFPROBE_BIN = (() => {
+  const configured = process.env['FFPROBE_PATH'];
+  if (configured) return configured;
+  if (/ffmpeg(\.exe)?$/i.test(FFMPEG_BIN)) {
+    return FFMPEG_BIN.replace(/ffmpeg(\.exe)?$/i, (_match, ext: string | undefined) => `ffprobe${ext ?? ''}`);
+  }
+  return 'ffprobe';
+})();
 
 /** Resize any image to a 400-wide JPEG thumbnail. */
 async function generateImageThumb(srcAbs: string, thumbAbs: string): Promise<void> {
@@ -24,13 +33,13 @@ async function generateImageThumb(srcAbs: string, thumbAbs: string): Promise<voi
 async function generateVideoThumb(srcAbs: string, thumbAbs: string): Promise<void> {
   // Try seeking to 1 second first, then fall back to the very first frame
   try {
-    await execFileAsync('ffmpeg', [
+    await execFileAsync(FFMPEG_BIN, [
       '-ss', '1', '-i', srcAbs,
       '-vframes', '1', '-s', '400x225',
       '-y', thumbAbs,
     ]);
   } catch {
-    await execFileAsync('ffmpeg', [
+    await execFileAsync(FFMPEG_BIN, [
       '-i', srcAbs,
       '-vframes', '1', '-s', '400x225',
       '-y', thumbAbs,
@@ -47,7 +56,7 @@ interface VideoMeta {
 
 async function probeVideo(absPath: string): Promise<VideoMeta> {
   try {
-    const { stdout } = await execFileAsync('ffprobe', [
+    const { stdout } = await execFileAsync(FFPROBE_BIN, [
       '-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_format', absPath,
     ]);
     const d = JSON.parse(stdout) as {
