@@ -497,7 +497,7 @@ export default function SystemHealthPage() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">{data.db.totalOrgs.toLocaleString()}</p>
-                    <p className="text-xs text-[var(--text-muted)]">Active Organizations</p>
+                    <p className="text-xs text-[var(--text-muted)]">Active Client Organisations</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-4">

@@ -5,7 +5,7 @@ import { useSAStore } from '../../lib/superadmin-auth.js';
 const NAV = [
   { to: '/superadmin', icon: LayoutDashboard, label: 'Dashboard', end: true as const },
   { to: '/superadmin/companies', icon: Layers, label: 'Management Companies', end: false as const },
-  { to: '/superadmin/orgs', icon: Building2, label: 'Organizations', end: false as const },
+  { to: '/superadmin/orgs', icon: Building2, label: 'Client Organisations', end: false as const },
   { to: '/superadmin/system', icon: Activity, label: 'System Health', end: false as const },
   { to: '/superadmin/analytics', icon: BarChart2, label: 'Analytics', end: false as const },
 ];

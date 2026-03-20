@@ -132,7 +132,7 @@ export default function OrgsListPage() {
     <div className="p-8 max-w-7xl mx-auto">
       <PageHeader
         className="workspace-page-header"
-        title="Organizations"
+        title="Client Organisations"
         subtitle={`${orgs.length} total`}
         trailing={(
           <label className="workspace-page-search w-full max-w-sm">
@@ -148,7 +148,7 @@ export default function OrgsListPage() {
         action={(
           <button onClick={() => setShowCreate(true)} className="workspace-page-action">
             <Plus size={16} />
-            New Organization
+            New Client Organisation
           </button>
         )}
       />
@@ -160,12 +160,12 @@ export default function OrgsListPage() {
             {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="p-12 text-center text-[var(--text-muted)]">No organizations found</div>
+          <div className="p-12 text-center text-[var(--text-muted)]">No client organisations found</div>
         ) : (
           <table className="ui-data-table">
             <thead>
               <tr>
-                <th>Organization</th>
+                <th>Client Organisation</th>
                 <th>Plan</th>
                 <th>
                   <span className="flex items-center gap-1">
