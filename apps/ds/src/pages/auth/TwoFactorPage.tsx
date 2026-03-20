@@ -44,7 +44,7 @@ export default function TwoFactorPage() {
           queryKey: ['me'],
           queryFn: () => api.get('/auth/me'),
           staleTime: 30_000,
-          retry: 2,
+          retry: false,
         });
       } catch {
         // Let the dashboard attempt its own recovery path if bootstrap still races.

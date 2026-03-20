@@ -10,6 +10,17 @@ function resolveApiBase() {
 
 const BASE = resolveApiBase();
 
+function isAuthMeNotFound(text: string) {
+  return text.includes('User not found') || text.includes('Org not found');
+}
+
+function clearInvalidSession() {
+  useAuthStore.getState().clearAuth();
+  if (window.location.pathname !== '/login' && window.location.pathname !== '/login/2fa') {
+    window.location.href = '/login';
+  }
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -117,14 +128,27 @@ async function request<T>(
   const res = await fetch(buildApiUrl(path), { ...options, headers, credentials: 'include' });
 
   if (path === '/auth/me' && res.status === 404) {
+    const notFoundText = await res.text();
+    if (isAuthMeNotFound(notFoundText)) {
+      clearInvalidSession();
+      throw new Error(notFoundText);
+    }
+
     await sleep(150);
     const retryAfterDelay = await fetch(buildApiUrl(path), { ...options, headers, credentials: 'include' });
     if (retryAfterDelay.ok) {
       if (retryAfterDelay.status === 204) return undefined as T;
       return retryAfterDelay.json() as Promise<T>;
     }
+
+    const retryAfterDelayText = await retryAfterDelay.text();
+    if (retryAfterDelay.status === 404 && isAuthMeNotFound(retryAfterDelayText)) {
+      clearInvalidSession();
+      throw new Error(retryAfterDelayText);
+    }
+
     if (retryAfterDelay.status !== 404 && retryAfterDelay.status !== 401) {
-      throw new Error(await retryAfterDelay.text());
+      throw new Error(retryAfterDelayText);
     }
   }
 
@@ -132,7 +156,13 @@ async function request<T>(
     const refreshedAccessToken = await refreshAccessToken();
     headers['Authorization'] = `Bearer ${refreshedAccessToken}`;
     const retry = await fetch(buildApiUrl(path), { ...options, headers, credentials: 'include' });
-    if (!retry.ok) throw new Error(await retry.text());
+    if (!retry.ok) {
+      const retryText = await retry.text();
+      if (path === '/auth/me' && retry.status === 404 && isAuthMeNotFound(retryText)) {
+        clearInvalidSession();
+      }
+      throw new Error(retryText);
+    }
     if (retry.status === 204) return undefined as T;
     return retry.json() as Promise<T>;
   }

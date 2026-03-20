@@ -98,6 +98,7 @@ export default function AppLayout() {
   useEffect(() => {
     if (!accessToken) return;
 
+    const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let connectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -108,6 +109,11 @@ export default function AppLayout() {
       const wsUrl = new URL(buildWebSocketUrl('/notifications/ws'));
       wsUrl.searchParams.set('token', accessToken);
       socket = new WebSocket(wsUrl.toString());
+
+      socket.onopen = () => {
+        if (!cancelled) return;
+        socket?.close();
+      };
 
       socket.onmessage = (event) => {
         try {
@@ -133,13 +139,15 @@ export default function AppLayout() {
 
     // Delay the initial connect so React Strict Mode's dev-only mount/unmount
     // cycle does not create a noisy "closed before established" warning.
-    connectTimer = setTimeout(connect, 0);
+    connectTimer = setTimeout(connect, isLocalDev ? 250 : 0);
 
     return () => {
       cancelled = true;
       if (connectTimer) clearTimeout(connectTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      socket?.close();
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.close();
+      }
     };
   }, [accessToken, queryClient]);
 

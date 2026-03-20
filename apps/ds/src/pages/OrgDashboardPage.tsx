@@ -452,6 +452,7 @@ export default function OrgDashboardPage() {
     queryKey: ['me'],
     queryFn: () => api.get('/auth/me'),
     enabled: !!accessToken,
+    retry: false,
   });
 
   const { data: workspaces = [] } = useQuery<Workspace[]>({
