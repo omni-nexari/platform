@@ -228,7 +228,7 @@ export default function OrgDetailPage() {
         to="/superadmin/orgs"
         className="inline-flex items-center gap-2 text-sm text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
       >
-        <ArrowLeft size={15} /> All Client Organisations
+        <ArrowLeft size={15} /> All Client Organizations
       </Link>
 
       <PageHeader

@@ -125,25 +125,25 @@ function PlatformOwnerView() {
           <div>
             <h1 className="text-2xl font-bold">Platform Dashboard</h1>
             <p className="text-sm text-[var(--text-muted)] mt-0.5">
-              Overview of all management companies and client organisations
+              Overview of all resellers and client organizations
             </p>
           </div>
           <button onClick={() => setShowCreate(true)} className="workspace-page-action">
             <Plus size={16} />
-            New Company
+            New Reseller
           </button>
         </div>
 
         {/* Stat cards */}
         <div className="grid grid-cols-3 gap-4">
           <StatCard
-            label="Management Companies"
+            label="Resellers"
             value={analytics?.totalManagementCompanies}
             loading={analyticsLoading}
             icon={Layers}
           />
           <StatCard
-            label="Client Organisations"
+            label="Client Organizations"
             value={analytics?.totalOrgs}
             loading={analyticsLoading}
             icon={Building2}
@@ -159,7 +159,7 @@ function PlatformOwnerView() {
         {/* Companies grid */}
         <div>
           <h2 className="text-sm font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-4">
-            Management Companies
+            Resellers
           </h2>
           {companiesLoading ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -172,7 +172,7 @@ function PlatformOwnerView() {
               className="rounded-xl border p-12 text-center text-[var(--text-muted)]"
               style={{ borderColor: 'var(--card-border)', background: 'var(--bg2)' }}
             >
-              No management companies yet — create one to get started.
+              No resellers yet - create one to get started.
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

@@ -20,6 +20,8 @@
 
 | Date | Milestone | Status | Notes |
 |---|---|---|---|
+| March 20, 2026 | Analytics exports + drilldowns + period comparison | ✅ | Platform Owner and reseller analytics now support CSV export, click-through navigation from top reseller / organization tables into detail pages, and previous-period comparison with quick 7/30/90-day presets |
+| March 20, 2026 | Platform Owner + reseller analytics dashboards | ✅ | `/superadmin/analytics` and `/management/analytics` now render real dashboards backed by a shared role-scoped analytics payload with date filters, growth charts, proof-of-play trend, top reseller / top organization tables, recent organizations, storage totals, invite counts, and device/content/workspace rollups |
 | March 20, 2026 | Management company white-labeling expanded | ✅ | Management companies now support branded login at `/m/:slug`, company sidebar theming, typography presets, login background art, direct logo/favicon/background uploads from the portal and first-time invite acceptance flow, platform-owner branding override tools, and branded management invite / client-onboarding email templates |
 | March 20, 2026 | Smart Views migration applied + repo validation clean | ✅ | `pnpm db:migrate` applied the new Smart Views migration in the target environment; `TagsPage.tsx` `ColorPicker` JSX was repaired; `ZoneLayoutEditor.tsx` drag nullability fixed; fresh `@signage/ds`, `@signage/db`, and `@signage/api` typechecks all pass |
 | March 20, 2026 | Notification Center | ✅ | `NotificationTray` component — bell icon with unread badge, dropdown tray polling `GET /notifications` every 30 s (15 s when open), mark-read/dismiss/mark-all-read mutations, 8 event-type icons, footer link to Settings notifications section; wired into AppLayout header |
@@ -61,7 +63,7 @@
 | Invite org owner | ✅ | Sends email invite |
 | Management company branding override | ✅ | Platform Owner can edit and upload company branding assets from the management company detail page |
 | Storage quota management | ✅ | Set per-org GB cap, view usage bar |
-| Platform analytics dashboard | ❌ | Phase 2+ |
+| Platform analytics dashboard | ✅ | `/superadmin/analytics` — date-filtered cross-platform analytics for resellers, organizations, storage, devices, and proof-of-play activity |
 | System health dashboard | ✅ | `/superadmin/system` — process memory, OS metrics, DB pool stats |
 | Impersonate org | ✅ | Audit-logged; SA gets a scoped JWT; banner shown in UI |
 
@@ -219,6 +221,10 @@
 | Proof of Play — date-range report page | ✅ | `AnalyticsPage` at `/workspaces/:wsId/analytics`; stat cards, day chart, top-content breakdown, paginated event log |
 | Proof of Play export (CSV) | ✅ | `GET /analytics/export.csv` — up to 50 k rows, Bearer-authenticated blob download |
 | Proof of Play export (signed PDF) | ✅ | `GET /analytics/export.pdf` — signed PDF export with RSA-SHA256 signature block; requires `PROOF_OF_PLAY_SIGNING_PRIVATE_KEY` |
+| Platform/Reseller analytics export (CSV) | ✅ | `/superadmin/analytics/export.csv` — role-scoped CSV export for Platform Owner and reseller dashboards |
+| Platform/Reseller analytics drilldowns | ✅ | Top reseller and top/recent organization tables link directly into Platform Owner or reseller detail pages |
+| Platform/Reseller period comparison | ✅ | Previous-period comparison with quick 7/30/90-day presets and per-metric delta badges |
+| Platform/Reseller analytics charting + alerts | ✅ | Platform Owner and reseller analytics now use hoverable trend charts, threshold-based storage/device/play alerts, workspace-level rollups, and direct drilldowns into filtered workspace/device/content views via scoped org impersonation |
 
 ---
 
@@ -316,4 +322,4 @@
 | 1 | Billing | Organization billing / plan management UI and ownership workflows |
 | 2 | VideoWall / SyncPlay | Multi-device sync groups; FFmpeg tile crop; `syncplay` module |
 | 3 | Sensors | Frontend UI for sensor sources and trigger rules |
-| 4 | Super Admin | Platform analytics dashboard (Phase 2+) |
+| 4 | Analytics | Persisted anomaly rules / notification routing for platform and reseller analytics alerts |

@@ -11,7 +11,7 @@ const transporter = nodemailer.createTransport({
 });
 
 const FROM = `"OmniHub Signage" <${process.env['SMTP_FROM'] ?? process.env['SMTP_USER'] ?? 'noreply@signage.local'}>`;
-const APP_URL = process.env['APP_URL'] ?? 'http://localhost:5173';
+const APP_URL = (process.env['APP_URL'] ?? 'https://ds.chiho.app').replace(/\/+$/, '');
 
 function absoluteUrl(url: string | null | undefined): string | null {
   if (!url) return null;

@@ -497,7 +497,7 @@ export default function SystemHealthPage() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">{data.db.totalOrgs.toLocaleString()}</p>
-                    <p className="text-xs text-[var(--text-muted)]">Active Client Organisations</p>
+                    <p className="text-xs text-[var(--text-muted)]">Active Client Organizations</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-4">
@@ -515,7 +515,7 @@ export default function SystemHealthPage() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">{data.db.totalManagementCompanies.toLocaleString()}</p>
-                    <p className="text-xs text-[var(--text-muted)]">Management Companies</p>
+                    <p className="text-xs text-[var(--text-muted)]">Resellers</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-4">

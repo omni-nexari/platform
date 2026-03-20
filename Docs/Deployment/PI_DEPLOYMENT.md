@@ -81,11 +81,14 @@ bash infra/pi/rebuild-after-pull.sh
 
 What it does:
 
+- stashes local tracked and untracked changes if the Pi checkout is dirty
 - removes stale `dist` output for `packages/db`, `packages/shared`, `apps/api`, and `apps/ds`
 - runs `pnpm install --frozen-lockfile`
 - rebuilds DB, shared, API, and dashboard packages
 - restarts `signage-api`
 - reloads nginx
+
+If local changes were stashed, the script prints the stash name at the end. You can inspect it with `git stash list` and reapply it later with `git stash pop`.
 
 If your checkout lives somewhere else, override the app directory:
 

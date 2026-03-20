@@ -14,9 +14,11 @@ import SystemHealthPage from './pages/superadmin/SystemHealthPage.js';
 import ManagementCompaniesListPage from './pages/superadmin/ManagementCompaniesListPage.js';
 import ManagementCompanyDetailPage from './pages/superadmin/ManagementCompanyDetailPage.js';
 import PlatformOwnerDashboardPage from './pages/superadmin/PlatformOwnerDashboardPage.js';
+import PlatformAnalyticsPage from './pages/superadmin/PlatformAnalyticsPage.js';
 import ManagementLoginPage from './pages/management/ManagementLoginPage.js';
 import ManagementLayout from './pages/management/ManagementLayout.js';
 import ManagementDashboardPage from './pages/management/ManagementDashboardPage.js';
+import ManagementAnalyticsPage from './pages/management/ManagementAnalyticsPage.js';
 import ManagementBrandingPage from './pages/management/ManagementBrandingPage.js';
 import AcceptManagementCompanyInvitePage from './pages/auth/AcceptManagementCompanyInvitePage.js';
 import AcceptClientOrgInvitePage from './pages/auth/AcceptClientOrgInvitePage.js';
@@ -84,10 +86,7 @@ export default function App() {
         <Route path="companies" element={<ManagementCompaniesListPage />} />
         <Route path="companies/:id" element={<ManagementCompanyDetailPage />} />
         <Route path="system" element={<SystemHealthPage />} />
-        <Route
-          path="analytics"
-          element={<div className="p-8 text-[var(--text-muted)]">Analytics — Phase 2+</div>}
-        />
+        <Route path="analytics" element={<PlatformAnalyticsPage />} />
       </Route>
 
       {/* Management Company portal */}
@@ -106,10 +105,7 @@ export default function App() {
         <Route path="orgs" element={<OrgsListPage />} />
         <Route path="orgs/:id" element={<OrgDetailPage />} />
         <Route path="settings/branding" element={<ManagementBrandingPage />} />
-        <Route
-          path="analytics"
-          element={<div className="p-8 text-[var(--text-muted)]">Analytics — Phase 2+</div>}
-        />
+        <Route path="analytics" element={<ManagementAnalyticsPage />} />
       </Route>
 
       {/* Authenticated user shell */}

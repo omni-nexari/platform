@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { useAuthStore } from './auth.js';
 
 export type SACallerType = 'platform_owner' | 'management_company_admin';
 
@@ -97,3 +98,44 @@ export const saApi = {
     saFetch<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
   delete: <T>(path: string) => saFetch<T>(path, { method: 'DELETE' }),
 };
+
+export async function saDownloadBlob(path: string): Promise<Blob> {
+  const token = useSAStore.getState().accessToken;
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(`${BASE}${path}`, { headers, credentials: 'include' });
+  if (res.status === 401) {
+    const storeUser = useSAStore.getState().user;
+    useSAStore.getState().clearAuth();
+    if (storeUser?.type === 'management_company_admin') {
+      window.location.href = storeUser.companySlug
+        ? `/m/${storeUser.companySlug}/login`
+        : '/management/login';
+    } else {
+      window.location.href = '/superadmin/login';
+    }
+    throw new Error('Session expired');
+  }
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+  return res.blob();
+}
+
+export async function saImpersonateOrg(orgId: string) {
+  const result = await saApi.post<{
+    accessToken: string;
+    org: { id: string; name: string; slug: string };
+    user: { id: string; email: string; name: string | null; role: string };
+  }>(`/superadmin/orgs/${orgId}/impersonate`);
+
+  useAuthStore.getState().setAuth(result.accessToken, {
+    id: result.user.id,
+    name: result.user.name ?? result.user.email,
+    email: result.user.email,
+    orgRole: result.user.role,
+  });
+
+  return result;
+}

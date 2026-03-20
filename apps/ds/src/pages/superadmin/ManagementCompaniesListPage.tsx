@@ -57,13 +57,13 @@ export default function ManagementCompaniesListPage() {
         data,
       ),
     onSuccess: () => {
-      toast.success('Management company created and invite sent');
+      toast.success('Reseller created and invite sent');
       void qc.invalidateQueries({ queryKey: ['sa-companies'] });
       reset();
       setShowCreate(false);
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to create management company');
+      toast.error(err instanceof Error ? err.message : 'Failed to create reseller');
     },
   });
 
@@ -87,7 +87,7 @@ export default function ManagementCompaniesListPage() {
     <div className="p-8 max-w-7xl mx-auto">
       <PageHeader
         className="workspace-page-header"
-        title="Management Companies"
+        title="Resellers"
         subtitle={`${companies.length} total`}
         trailing={(
           <label className="workspace-page-search w-full max-w-sm">
@@ -103,7 +103,7 @@ export default function ManagementCompaniesListPage() {
         action={(
           <button onClick={() => setShowCreate(true)} className="workspace-page-action">
             <Plus size={16} />
-            New Company
+            New Reseller
           </button>
         )}
       />
@@ -114,12 +114,12 @@ export default function ManagementCompaniesListPage() {
             {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="p-12 text-center text-[var(--text-muted)]">No management companies found</div>
+          <div className="p-12 text-center text-[var(--text-muted)]">No resellers found</div>
         ) : (
           <table className="ui-data-table">
             <thead>
               <tr>
-                <th>Company</th>
+                <th>Reseller</th>
                 <th>
                   <span className="flex items-center gap-1">
                     <Users size={13} /> Admins
@@ -182,7 +182,7 @@ export default function ManagementCompaniesListPage() {
       {showCreate && (
         <Modal onClose={() => setShowCreate(false)} size="sm">
           <ModalHeader
-            title="New Management Company"
+            title="New Reseller"
             subtitle="An invite will be sent to the initial admin immediately."
             onClose={() => setShowCreate(false)}
           />
@@ -216,7 +216,7 @@ export default function ManagementCompaniesListPage() {
               </div>
 
               <p className="text-xs text-[var(--text-muted)]">
-                The invited admin will set the company name, portal address, billing email, and logo during first-time setup.
+                The invited admin will set the reseller name, portal address, billing email, and logo during first-time setup.
               </p>
             </form>
           </ModalBody>
@@ -230,7 +230,7 @@ export default function ManagementCompaniesListPage() {
               disabled={createCompany.isPending}
               className="flex-1"
             >
-              {createCompany.isPending ? 'Creating…' : 'Create & Send Invite'}
+              {createCompany.isPending ? 'Creating…' : 'Create Reseller & Send Invite'}
             </ModalPrimaryButton>
           </ModalFooter>
         </Modal>

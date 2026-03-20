@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api.js';
 import { Skeleton } from '../components/UiPrimitives.js';
@@ -471,8 +471,9 @@ function StatTile({
 
 export default function OrgDashboardPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [wsOpen, setWsOpen] = useState(false);
-  const [selectedWsId, setSelectedWsId] = useState<string | null>(null);
+  const [selectedWsId, setSelectedWsId] = useState<string | null>(searchParams.get('workspaceId'));
 
   const { data: me } = useQuery<OrgInfo>({
     queryKey: ['me'],
@@ -489,6 +490,21 @@ export default function OrgDashboardPage() {
       setSelectedWsId(workspaces[0]!.id);
     }
   }, [workspaces, selectedWsId]);
+
+  useEffect(() => {
+    const requestedWorkspaceId = searchParams.get('workspaceId');
+    if (requestedWorkspaceId && requestedWorkspaceId !== selectedWsId) {
+      setSelectedWsId(requestedWorkspaceId);
+    }
+  }, [searchParams, selectedWsId]);
+
+  useEffect(() => {
+    if (!selectedWsId) return;
+    const next = new URLSearchParams(searchParams);
+    if (next.get('workspaceId') === selectedWsId) return;
+    next.set('workspaceId', selectedWsId);
+    setSearchParams(next, { replace: true });
+  }, [searchParams, selectedWsId, setSearchParams]);
 
   const selectedWs = workspaces.find((w) => w.id === selectedWsId);
 

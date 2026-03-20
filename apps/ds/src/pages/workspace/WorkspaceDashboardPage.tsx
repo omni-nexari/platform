@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useParams, useNavigate } from 'react-router';
-import { useState } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
@@ -51,9 +51,15 @@ function StatusBadge({ status }: { status: Device['status'] }) {
 export default function WorkspaceDashboardPage() {
   const { wsId } = useParams<{ wsId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [pairOpen, setPairOpen] = useState(false);
-  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>(
+    (searchParams.get('tagIds') ?? '').split(',').map((value) => value.trim()).filter(Boolean),
+  );
+  const [selectedStatus, setSelectedStatus] = useState<'all' | Device['status']>(
+    (searchParams.get('status') as 'all' | Device['status'] | null) ?? 'all',
+  );
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
 
@@ -66,6 +72,34 @@ export default function WorkspaceDashboardPage() {
     queryFn: () => api.get(`/devices?workspaceId=${wsId}${tagIdsParam}`),
     refetchInterval: 30_000, // poll for live status
   });
+
+  const filteredDevices = selectedStatus === 'all'
+    ? devices
+    : devices.filter((device) => device.status === selectedStatus);
+
+  useEffect(() => {
+    const requestedTagIds = (searchParams.get('tagIds') ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+    const requestedStatus = (searchParams.get('status') as 'all' | Device['status'] | null) ?? 'all';
+
+    if (requestedTagIds.join(',') !== selectedTagIds.join(',')) {
+      setSelectedTagIds(requestedTagIds);
+    }
+    if (requestedStatus !== selectedStatus) {
+      setSelectedStatus(requestedStatus);
+    }
+  }, [searchParams, selectedStatus, selectedTagIds]);
+
+  useEffect(() => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (selectedTagIds.length > 0) nextParams.set('tagIds', selectedTagIds.join(','));
+    else nextParams.delete('tagIds');
+    if (selectedStatus !== 'all') nextParams.set('status', selectedStatus);
+    else nextParams.delete('status');
+
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [searchParams, selectedStatus, selectedTagIds, setSearchParams]);
 
   const {
     register,
@@ -93,7 +127,7 @@ export default function WorkspaceDashboardPage() {
     <div className="max-w-6xl mx-auto p-4 sm:p-6 lg:p-8">
       <PageHeader
         title="Devices"
-        subtitle={`${devices.length} display${devices.length !== 1 ? 's' : ''} in this workspace`}
+        subtitle={`${filteredDevices.length} display${filteredDevices.length !== 1 ? 's' : ''} in this workspace`}
         action={(
           <button onClick={() => setPairOpen(true)} className="workspace-page-action">
             <Plus className="w-4 h-4" />
@@ -126,22 +160,35 @@ export default function WorkspaceDashboardPage() {
         </div>
       )}
 
+      <div className="mb-5 flex flex-wrap gap-2">
+        {(['all', 'online', 'offline', 'error', 'unclaimed'] as const).map((status) => (
+          <button
+            key={status}
+            type="button"
+            onClick={() => setSelectedStatus(status)}
+            className={`ui-filter-chip ${selectedStatus === status ? 'ui-filter-chip-active' : ''}`}
+          >
+            {status === 'all' ? 'All statuses' : status.charAt(0).toUpperCase() + status.slice(1)}
+          </button>
+        ))}
+      </div>
+
       {isLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="h-44 rounded-2xl bg-[var(--card)] border border-[var(--border)] animate-pulse" />
           ))}
         </div>
-      ) : devices.length === 0 ? (
+      ) : filteredDevices.length === 0 ? (
         <EmptyState
           icon={<Monitor className="w-12 h-12" />}
-          title="No devices yet"
-          description="Pair a Samsung display to start showing content"
+          title={selectedStatus === 'all' ? 'No devices yet' : `No ${selectedStatus} devices`}
+          description={selectedStatus === 'all' ? 'Pair a Samsung display to start showing content' : 'Adjust filters or choose another workspace status slice.'}
           action={<button onClick={() => setPairOpen(true)} className="workspace-page-action">Pair first device</button>}
         />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {devices.map((device) => (
+          {filteredDevices.map((device) => (
             <button
               key={device.id}
               onClick={() => navigate(`/workspaces/${wsId}/devices/${device.id}`)}

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useParams, useNavigate } from 'react-router';
+import { useParams, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import {
   Plus, Grid3X3, Grid2X2, List, Image, Video,
@@ -381,23 +381,60 @@ function ListRow({ item, selected, onSelect, onDelete, checked, onCheck }: {
 export default function ContentPage() {
   const { wsId } = useParams<{ wsId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
 
-  const [filterType, setFilterType] = useState<FilterType>('all');
-  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
-  const [sort, setSort] = useState<'created_at' | 'name' | 'size'>('created_at');
-  const [view, setView] = useState<ViewMode>('grid-lg');
+  const [filterType, setFilterType] = useState<FilterType>((searchParams.get('type') as FilterType | null) ?? 'all');
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>((searchParams.get('tagIds') ?? '').split(',').map((value) => value.trim()).filter(Boolean));
+  const [sort, setSort] = useState<'created_at' | 'name' | 'size'>((searchParams.get('sort') as 'created_at' | 'name' | 'size' | null) ?? 'created_at');
+  const [view, setView] = useState<ViewMode>((searchParams.get('view') as ViewMode | null) ?? 'grid-lg');
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(Number(searchParams.get('page') ?? '1') || 1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmDeleteName, setConfirmDeleteName] = useState('');
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
-  const [selectedFolderId, setSelectedFolderId] = useState<'all' | 'root' | string>('all');
+  const [selectedFolderId, setSelectedFolderId] = useState<'all' | 'root' | string>(searchParams.get('folderId') ?? 'all');
   const [moveFolderOpen, setMoveFolderOpen] = useState(false);
   const [moveFolderId, setMoveFolderId] = useState<string>('root');
+
+  useEffect(() => {
+    const requestedType = (searchParams.get('type') as FilterType | null) ?? 'all';
+    const requestedTagIds = (searchParams.get('tagIds') ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+    const requestedSort = (searchParams.get('sort') as 'created_at' | 'name' | 'size' | null) ?? 'created_at';
+    const requestedView = (searchParams.get('view') as ViewMode | null) ?? 'grid-lg';
+    const requestedPage = Number(searchParams.get('page') ?? '1') || 1;
+    const requestedFolderId = searchParams.get('folderId') ?? 'all';
+
+    if (requestedType !== filterType) setFilterType(requestedType);
+    if (requestedTagIds.join(',') !== selectedTagIds.join(',')) setSelectedTagIds(requestedTagIds);
+    if (requestedSort !== sort) setSort(requestedSort);
+    if (requestedView !== view) setView(requestedView);
+    if (requestedPage !== page) setPage(requestedPage);
+    if (requestedFolderId !== selectedFolderId) setSelectedFolderId(requestedFolderId);
+  }, [filterType, page, searchParams, selectedFolderId, selectedTagIds, sort, view]);
+
+  useEffect(() => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (filterType !== 'all') nextParams.set('type', filterType);
+    else nextParams.delete('type');
+    if (selectedTagIds.length > 0) nextParams.set('tagIds', selectedTagIds.join(','));
+    else nextParams.delete('tagIds');
+    if (sort !== 'created_at') nextParams.set('sort', sort);
+    else nextParams.delete('sort');
+    if (view !== 'grid-lg') nextParams.set('view', view);
+    else nextParams.delete('view');
+    if (page > 1) nextParams.set('page', String(page));
+    else nextParams.delete('page');
+    if (selectedFolderId !== 'all') nextParams.set('folderId', selectedFolderId);
+    else nextParams.delete('folderId');
+
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [filterType, page, searchParams, selectedFolderId, selectedTagIds, setSearchParams, sort, view]);
 
   const currentFilters = {
     filterType,

@@ -172,6 +172,15 @@ export default function ManagementCompanyDetailPage() {
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Action failed'),
   });
 
+  const revokeInvite = useMutation({
+    mutationFn: (inviteId: string) => saApi.delete(`/superadmin/management-companies/${id}/invites/${inviteId}`),
+    onSuccess: () => {
+      toast.success('Invitation deleted');
+      void qc.invalidateQueries({ queryKey: ['sa-company-admins', id] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to delete invite'),
+  });
+
   const patchBranding = useMutation({
     mutationFn: (values: BrandingFormData) =>
       saApi.patch(`/superadmin/management-companies/${id}/branding`, {
@@ -233,7 +242,7 @@ export default function ManagementCompanyDetailPage() {
     <div className="p-8 max-w-5xl mx-auto space-y-6">
       <PageHeader
         className="workspace-page-header"
-        title="Management Company Admins"
+        title="Reseller Admins"
         subtitle={`${admins.length} active · ${pendingInvites.length} pending`}
         action={(
           <button onClick={() => setShowInvite(true)} className="workspace-page-action">
@@ -386,7 +395,7 @@ export default function ManagementCompanyDetailPage() {
                     </div>
                     <div className="mt-4 space-y-2">
                       <div className="px-3 py-2 rounded-lg text-white text-sm font-medium" style={{ background: 'var(--blue)' }}>Dashboard</div>
-                      <div className="px-3 py-2 rounded-lg text-sm text-[var(--text-muted)]">Client Organisations</div>
+                      <div className="px-3 py-2 rounded-lg text-sm text-[var(--text-muted)]">Client Organizations</div>
                       <div className="px-3 py-2 rounded-lg text-sm text-[var(--text-muted)]">Branding</div>
                     </div>
                   </div>
@@ -466,6 +475,7 @@ export default function ManagementCompanyDetailPage() {
                   <th>Email</th>
                   <th>Role</th>
                   <th>Expires</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -480,6 +490,15 @@ export default function ManagementCompanyDetailPage() {
                     </td>
                     <td className="text-[var(--text-muted)] text-sm">
                       {new Date(invite.expiresAt).toLocaleDateString()}
+                    </td>
+                    <td className="text-right">
+                      <button
+                        onClick={() => revokeInvite.mutate(invite.id)}
+                        disabled={revokeInvite.isPending}
+                        className="ui-inline-action-btn ui-inline-action-btn-danger"
+                      >
+                        Delete
+                      </button>
                     </td>
                   </tr>
                 ))}

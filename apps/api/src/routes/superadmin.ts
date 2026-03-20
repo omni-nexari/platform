@@ -13,8 +13,12 @@ import {
   managementCompanyAdmins,
   managementCompanyAdminInvitations,
   clientOrgOwnerInvitations,
+  contentItems,
+  playlists,
+  schedules,
+  playEvents,
 } from '@signage/db';
-import { eq, isNull, count, sql, desc, and, inArray } from 'drizzle-orm';
+import { eq, isNull, count, sql, desc, and, inArray, asc, sum, gte, lte } from 'drizzle-orm';
 import * as argon2 from 'argon2';
 import Redis from 'ioredis';
 import { randomBytes } from 'node:crypto';
@@ -176,6 +180,27 @@ function inviteExpiry(days = 7): Date {
   return d;
 }
 
+function parseDate(input: string | undefined, fallback: Date): Date {
+  if (!input) return fallback;
+  const value = new Date(input);
+  return Number.isNaN(value.getTime()) ? fallback : value;
+}
+
+function buildSummaryDeltas(
+  currentSummary: Record<string, number>,
+  previousSummary: Record<string, number>,
+) {
+  return Object.fromEntries(
+    Object.keys(currentSummary).map((key) => {
+      const current = Number(currentSummary[key] ?? 0);
+      const previous = Number(previousSummary[key] ?? 0);
+      const change = current - previous;
+      const percentChange = previous === 0 ? null : Number((((change) / previous) * 100).toFixed(1));
+      return [key, { current, previous, change, percentChange }];
+    }),
+  );
+}
+
 type PlatformAdminCaller =
   | { sub: string; type: 'platform_owner'; email: string; name: string }
   | {
@@ -194,6 +219,516 @@ function isOwnerCaller(
 }
 
 export async function superAdminRoutes(app: FastifyInstance) {
+
+  async function buildPortalAnalyticsPayload(
+    caller: PlatformAdminCaller,
+    from: Date,
+    to: Date,
+  ) {
+    const companyId = isOwnerCaller(caller) ? null : caller.managementCompanyId;
+
+    const orgScope = companyId
+      ? and(isNull(organisations.deletedAt), eq(organisations.managementCompanyId, companyId))
+      : isNull(organisations.deletedAt);
+
+    const [orgRow] = await db
+      .select({
+        total: count(),
+        suspended: sql<number>`COUNT(*) FILTER (WHERE ${organisations.suspendedAt} IS NOT NULL)::int`,
+      })
+      .from(organisations)
+      .where(orgScope);
+
+    const [userRow] = await db
+      .select({ total: count() })
+      .from(users)
+      .innerJoin(organisations, eq(users.orgId, organisations.id))
+      .where(
+        and(
+          orgScope,
+          isNull(users.deletedAt),
+        ),
+      );
+
+    const [workspaceRow] = await db
+      .select({ total: count() })
+      .from(workspaces)
+      .innerJoin(organisations, eq(workspaces.orgId, organisations.id))
+      .where(and(orgScope, isNull(workspaces.deletedAt)));
+
+    const [deviceRow] = await db
+      .select({
+        total: count(),
+        online: sql<number>`COUNT(*) FILTER (WHERE ${devices.status} = 'online')::int`,
+      })
+      .from(devices)
+      .innerJoin(organisations, eq(devices.orgId, organisations.id))
+      .where(and(orgScope, isNull(devices.deletedAt)));
+
+    const [contentRow] = await db
+      .select({ total: count() })
+      .from(contentItems)
+      .innerJoin(workspaces, eq(contentItems.workspaceId, workspaces.id))
+      .innerJoin(organisations, eq(workspaces.orgId, organisations.id))
+      .where(and(orgScope, isNull(workspaces.deletedAt), isNull(contentItems.deletedAt)));
+
+    const [playlistRow] = await db
+      .select({ total: count() })
+      .from(playlists)
+      .innerJoin(workspaces, eq(playlists.workspaceId, workspaces.id))
+      .innerJoin(organisations, eq(workspaces.orgId, organisations.id))
+      .where(and(orgScope, isNull(workspaces.deletedAt), isNull(playlists.deletedAt)));
+
+    const [scheduleRow] = await db
+      .select({
+        total: count(),
+        active: sql<number>`COUNT(*) FILTER (WHERE ${schedules.isActive} = true)::int`,
+      })
+      .from(schedules)
+      .innerJoin(workspaces, eq(schedules.workspaceId, workspaces.id))
+      .innerJoin(organisations, eq(workspaces.orgId, organisations.id))
+      .where(and(orgScope, isNull(workspaces.deletedAt), isNull(schedules.deletedAt)));
+
+    const [storageRow] = await db
+      .select({
+        used: sum(orgStorageQuotas.usedBytes),
+        limit: sum(orgStorageQuotas.limitBytes),
+      })
+      .from(orgStorageQuotas)
+      .innerJoin(organisations, eq(orgStorageQuotas.orgId, organisations.id))
+      .where(orgScope);
+
+    const [screenshotRow] = await db
+      .select({ total: count() })
+      .from(deviceScreenshots)
+      .innerJoin(devices, eq(deviceScreenshots.deviceId, devices.id))
+      .innerJoin(organisations, eq(devices.orgId, organisations.id))
+      .where(and(orgScope, isNull(devices.deletedAt)));
+
+    const [playTotalsRow] = await db
+      .select({
+        total: count(),
+        durationMs: sum(playEvents.durationMs),
+      })
+      .from(playEvents)
+      .innerJoin(devices, eq(playEvents.deviceId, devices.id))
+      .innerJoin(organisations, eq(devices.orgId, organisations.id))
+      .where(and(orgScope, isNull(devices.deletedAt), gte(playEvents.startedAt, from), lte(playEvents.startedAt, to)));
+
+    const playsByDayRows = await db
+      .select({
+        date: sql<string>`DATE_TRUNC('day', ${playEvents.startedAt})::DATE::TEXT`,
+        plays: count(),
+        durationMs: sum(playEvents.durationMs),
+      })
+      .from(playEvents)
+      .innerJoin(devices, eq(playEvents.deviceId, devices.id))
+      .innerJoin(organisations, eq(devices.orgId, organisations.id))
+      .where(and(orgScope, isNull(devices.deletedAt), gte(playEvents.startedAt, from), lte(playEvents.startedAt, to)))
+      .groupBy(sql`DATE_TRUNC('day', ${playEvents.startedAt})`)
+      .orderBy(asc(sql`DATE_TRUNC('day', ${playEvents.startedAt})`));
+
+    const monthWindow = new Date(to);
+    monthWindow.setUTCDate(1);
+    monthWindow.setUTCHours(0, 0, 0, 0);
+    monthWindow.setUTCMonth(monthWindow.getUTCMonth() - 5);
+
+    const organizationsByMonthRows = await db
+      .select({
+        month: sql<string>`DATE_TRUNC('month', ${organisations.createdAt})::DATE::TEXT`,
+        organizations: count(),
+      })
+      .from(organisations)
+      .where(and(orgScope, gte(organisations.createdAt, monthWindow), lte(organisations.createdAt, to)))
+      .groupBy(sql`DATE_TRUNC('month', ${organisations.createdAt})`)
+      .orderBy(asc(sql`DATE_TRUNC('month', ${organisations.createdAt})`));
+
+    const planBreakdownRows = await db
+      .select({ plan: organisations.plan, total: count() })
+      .from(organisations)
+      .where(orgScope)
+      .groupBy(organisations.plan)
+      .orderBy(desc(count()));
+
+    const [pendingClientInviteRow] = await db
+      .select({ total: count() })
+      .from(clientOrgOwnerInvitations)
+      .innerJoin(organisations, eq(clientOrgOwnerInvitations.organizationId, organisations.id))
+      .where(
+        and(
+          orgScope,
+          isNull(clientOrgOwnerInvitations.acceptedAt),
+          isNull(clientOrgOwnerInvitations.revokedAt),
+        ),
+      );
+
+    const [pendingResellerInviteRow] = await db
+      .select({ total: count() })
+      .from(managementCompanyAdminInvitations)
+      .where(
+        and(
+          companyId ? eq(managementCompanyAdminInvitations.managementCompanyId, companyId) : undefined,
+          isNull(managementCompanyAdminInvitations.acceptedAt),
+          isNull(managementCompanyAdminInvitations.revokedAt),
+        ),
+      );
+
+    const [resellerAdminRow] = await db
+      .select({ total: count() })
+      .from(managementCompanyAdmins)
+      .where(
+        and(
+          companyId ? eq(managementCompanyAdmins.managementCompanyId, companyId) : undefined,
+          isNull(managementCompanyAdmins.suspendedAt),
+        ),
+      );
+
+    const topOrganizations = await db.execute(sql`
+      SELECT
+        o.id AS org_id,
+        o.name,
+        o.slug,
+        ${isOwnerCaller(caller) ? sql`mc.name AS reseller_name,` : sql``}
+        (
+          SELECT COUNT(*)::int
+          FROM workspaces w
+          WHERE w.org_id = o.id AND w.deleted_at IS NULL
+        ) AS workspace_count,
+        (
+          SELECT COUNT(*)::int
+          FROM devices d
+          WHERE d.org_id = o.id AND d.deleted_at IS NULL
+        ) AS device_count,
+        (
+          SELECT COUNT(*)::int
+          FROM users u
+          WHERE u.org_id = o.id AND u.deleted_at IS NULL
+        ) AS user_count,
+        COALESCE((
+          SELECT q.used_bytes::bigint
+          FROM org_storage_quotas q
+          WHERE q.org_id = o.id
+        ), 0)::text AS storage_used_bytes,
+        (
+          SELECT COUNT(*)::int
+          FROM play_events pe
+          INNER JOIN devices d2 ON d2.id = pe.device_id
+          WHERE d2.org_id = o.id
+            AND pe.started_at >= ${from}
+            AND pe.started_at <= ${to}
+        ) AS play_count,
+        o.created_at::text AS created_at,
+        CASE WHEN o.suspended_at IS NULL THEN 'active' ELSE 'suspended' END AS status
+      FROM organisations o
+      ${isOwnerCaller(caller) ? sql`LEFT JOIN management_companies mc ON mc.id = o.management_company_id` : sql``}
+      WHERE o.deleted_at IS NULL
+      ${companyId ? sql`AND o.management_company_id = ${companyId}` : sql``}
+      ORDER BY play_count DESC, device_count DESC, o.created_at DESC
+      LIMIT 10
+    `) as unknown as Array<{
+      org_id: string;
+      name: string;
+      slug: string;
+      reseller_name?: string | null;
+      workspace_count: number;
+      device_count: number;
+      user_count: number;
+      storage_used_bytes: string;
+      play_count: number;
+      created_at: string;
+      status: string;
+    }>;
+
+    const recentOrganizations = await db.execute(sql`
+      SELECT
+        o.id AS org_id,
+        o.name,
+        o.slug,
+        ${isOwnerCaller(caller) ? sql`mc.name AS reseller_name,` : sql``}
+        o.created_at::text AS created_at,
+        CASE WHEN o.suspended_at IS NULL THEN 'active' ELSE 'suspended' END AS status
+      FROM organisations o
+      ${isOwnerCaller(caller) ? sql`LEFT JOIN management_companies mc ON mc.id = o.management_company_id` : sql``}
+      WHERE o.deleted_at IS NULL
+      ${companyId ? sql`AND o.management_company_id = ${companyId}` : sql``}
+      ORDER BY o.created_at DESC
+      LIMIT 8
+    `) as unknown as Array<{
+      org_id: string;
+      name: string;
+      slug: string;
+      reseller_name?: string | null;
+      created_at: string;
+      status: string;
+    }>;
+
+    const topWorkspaces = await db.execute(sql`
+      SELECT
+        w.id AS workspace_id,
+        w.name,
+        w.slug,
+        o.id AS org_id,
+        o.name AS org_name,
+        o.slug AS org_slug,
+        ${isOwnerCaller(caller) ? sql`mc.name AS reseller_name,` : sql``}
+        (
+          SELECT COUNT(*)::int
+          FROM devices d
+          WHERE d.workspace_id = w.id
+            AND d.deleted_at IS NULL
+        ) AS device_count,
+        (
+          SELECT COUNT(*)::int
+          FROM devices d
+          WHERE d.workspace_id = w.id
+            AND d.deleted_at IS NULL
+            AND d.status = 'online'
+        ) AS online_device_count,
+        (
+          SELECT COUNT(*)::int
+          FROM devices d
+          WHERE d.workspace_id = w.id
+            AND d.deleted_at IS NULL
+            AND d.status IN ('offline', 'error')
+        ) AS offline_device_count,
+        (
+          SELECT COUNT(*)::int
+          FROM content_items ci
+          WHERE ci.workspace_id = w.id
+            AND ci.deleted_at IS NULL
+        ) AS content_count,
+        (
+          SELECT COUNT(*)::int
+          FROM play_events pe
+          INNER JOIN devices d2 ON d2.id = pe.device_id
+          WHERE d2.workspace_id = w.id
+            AND pe.started_at >= ${from}
+            AND pe.started_at <= ${to}
+        ) AS play_count,
+        w.created_at::text AS created_at
+      FROM workspaces w
+      INNER JOIN organisations o ON o.id = w.org_id
+      ${isOwnerCaller(caller) ? sql`LEFT JOIN management_companies mc ON mc.id = o.management_company_id` : sql``}
+      WHERE w.deleted_at IS NULL
+        AND o.deleted_at IS NULL
+      ${companyId ? sql`AND o.management_company_id = ${companyId}` : sql``}
+      ORDER BY play_count DESC, device_count DESC, content_count DESC, w.created_at DESC
+      LIMIT 10
+    `) as unknown as Array<{
+      workspace_id: string;
+      name: string;
+      slug: string;
+      org_id: string;
+      org_name: string;
+      org_slug: string;
+      reseller_name?: string | null;
+      device_count: number;
+      online_device_count: number;
+      offline_device_count: number;
+      content_count: number;
+      play_count: number;
+      created_at: string;
+    }>;
+
+    const topResellers = isOwnerCaller(caller)
+      ? (await db.execute(sql`
+          SELECT
+            mc.id AS company_id,
+            mc.name,
+            (
+              SELECT COUNT(*)::int
+              FROM organisations o
+              WHERE o.management_company_id = mc.id
+                AND o.deleted_at IS NULL
+            ) AS org_count,
+            (
+              SELECT COUNT(*)::int
+              FROM organisations o
+              WHERE o.management_company_id = mc.id
+                AND o.deleted_at IS NULL
+                AND o.suspended_at IS NOT NULL
+            ) AS suspended_org_count,
+            (
+              SELECT COUNT(*)::int
+              FROM users u
+              INNER JOIN organisations o ON o.id = u.org_id
+              WHERE o.management_company_id = mc.id
+                AND o.deleted_at IS NULL
+                AND u.deleted_at IS NULL
+            ) AS user_count,
+            (
+              SELECT COUNT(*)::int
+              FROM workspaces w
+              INNER JOIN organisations o ON o.id = w.org_id
+              WHERE o.management_company_id = mc.id
+                AND o.deleted_at IS NULL
+                AND w.deleted_at IS NULL
+            ) AS workspace_count,
+            (
+              SELECT COUNT(*)::int
+              FROM devices d
+              INNER JOIN organisations o ON o.id = d.org_id
+              WHERE o.management_company_id = mc.id
+                AND o.deleted_at IS NULL
+                AND d.deleted_at IS NULL
+            ) AS device_count,
+            COALESCE((
+              SELECT SUM(COALESCE(q.used_bytes, 0))::bigint
+              FROM org_storage_quotas q
+              INNER JOIN organisations o ON o.id = q.org_id
+              WHERE o.management_company_id = mc.id
+                AND o.deleted_at IS NULL
+            ), 0)::text AS storage_used_bytes
+          FROM management_companies mc
+          WHERE mc.deleted_at IS NULL
+          ORDER BY org_count DESC, device_count DESC, mc.created_at DESC
+          LIMIT 10
+        `) as unknown as Array<{
+          company_id: string;
+          name: string;
+          org_count: number;
+          suspended_org_count: number;
+          user_count: number;
+          workspace_count: number;
+          device_count: number;
+          storage_used_bytes: string;
+        }>)
+      : [];
+
+    const [resellerCountRow] = isOwnerCaller(caller)
+      ? await db
+          .select({ total: count() })
+          .from(managementCompanies)
+          .where(isNull(managementCompanies.deletedAt))
+      : [{ total: 0 }];
+
+    const summary = {
+      totalResellers: Number(resellerCountRow?.total ?? 0),
+      totalOrganizations: Number(orgRow?.total ?? 0),
+      suspendedOrganizations: Number(orgRow?.suspended ?? 0),
+      totalUsers: Number(userRow?.total ?? 0),
+      totalWorkspaces: Number(workspaceRow?.total ?? 0),
+      totalDevices: Number(deviceRow?.total ?? 0),
+      onlineDevices: Number(deviceRow?.online ?? 0),
+      totalContentItems: Number(contentRow?.total ?? 0),
+      totalPlaylists: Number(playlistRow?.total ?? 0),
+      totalSchedules: Number(scheduleRow?.total ?? 0),
+      activeSchedules: Number(scheduleRow?.active ?? 0),
+      totalStorageUsedBytes: Number(storageRow?.used ?? 0),
+      totalStorageLimitBytes: Number(storageRow?.limit ?? 0),
+      totalScreenshots: Number(screenshotRow?.total ?? 0),
+      totalPendingClientInvites: Number(pendingClientInviteRow?.total ?? 0),
+      totalPendingResellerInvites: Number(pendingResellerInviteRow?.total ?? 0),
+      resellerAdminCount: Number(resellerAdminRow?.total ?? 0),
+      totalPlays: Number(playTotalsRow?.total ?? 0),
+      totalPlayDurationMs: Number(playTotalsRow?.durationMs ?? 0),
+    };
+
+    return {
+      scope: isOwnerCaller(caller) ? 'platform_owner' : 'reseller',
+      from: from.toISOString(),
+      to: to.toISOString(),
+      summary,
+      totalManagementCompanies: summary.totalResellers,
+      totalResellers: summary.totalResellers,
+      totalOrgs: summary.totalOrganizations,
+      totalOrganizations: summary.totalOrganizations,
+      suspendedOrgs: summary.suspendedOrganizations,
+      suspendedOrganizations: summary.suspendedOrganizations,
+      totalUsers: summary.totalUsers,
+      playsByDay: playsByDayRows.map((row) => ({
+        date: row.date,
+        plays: Number(row.plays ?? 0),
+        durationMs: Number(row.durationMs ?? 0),
+      })),
+      organizationsByMonth: organizationsByMonthRows.map((row) => ({
+        month: row.month,
+        organizations: Number(row.organizations ?? 0),
+      })),
+      planBreakdown: planBreakdownRows.map((row) => ({
+        plan: row.plan,
+        count: Number(row.total ?? 0),
+      })),
+      topOrganizations: topOrganizations.map((row) => ({
+        orgId: row.org_id,
+        name: row.name,
+        slug: row.slug,
+        resellerName: row.reseller_name ?? null,
+        workspaceCount: Number(row.workspace_count ?? 0),
+        deviceCount: Number(row.device_count ?? 0),
+        userCount: Number(row.user_count ?? 0),
+        storageUsedBytes: Number(row.storage_used_bytes ?? 0),
+        playCount: Number(row.play_count ?? 0),
+        createdAt: row.created_at,
+        status: row.status,
+      })),
+      recentOrganizations: recentOrganizations.map((row) => ({
+        orgId: row.org_id,
+        name: row.name,
+        slug: row.slug,
+        resellerName: row.reseller_name ?? null,
+        createdAt: row.created_at,
+        status: row.status,
+      })),
+      topWorkspaces: topWorkspaces.map((row) => ({
+        workspaceId: row.workspace_id,
+        name: row.name,
+        slug: row.slug,
+        orgId: row.org_id,
+        orgName: row.org_name,
+        orgSlug: row.org_slug,
+        resellerName: row.reseller_name ?? null,
+        deviceCount: Number(row.device_count ?? 0),
+        onlineDeviceCount: Number(row.online_device_count ?? 0),
+        offlineDeviceCount: Number(row.offline_device_count ?? 0),
+        contentCount: Number(row.content_count ?? 0),
+        playCount: Number(row.play_count ?? 0),
+        createdAt: row.created_at,
+      })),
+      topResellers: topResellers.map((row) => ({
+        companyId: row.company_id,
+        name: row.name,
+        orgCount: Number(row.org_count ?? 0),
+        suspendedOrgCount: Number(row.suspended_org_count ?? 0),
+        userCount: Number(row.user_count ?? 0),
+        workspaceCount: Number(row.workspace_count ?? 0),
+        deviceCount: Number(row.device_count ?? 0),
+        storageUsedBytes: Number(row.storage_used_bytes ?? 0),
+      })),
+    };
+  }
+
+  async function buildPortalAnalyticsResponse(
+    caller: PlatformAdminCaller,
+    from: Date,
+    to: Date,
+    compareMode: 'none' | 'previous_period' = 'previous_period',
+  ) {
+    const current = await buildPortalAnalyticsPayload(caller, from, to);
+
+    if (compareMode !== 'previous_period') {
+      return { ...current, comparison: null };
+    }
+
+    const rangeMs = Math.max(1, to.getTime() - from.getTime());
+    const previousTo = new Date(from.getTime() - 1);
+    const previousFrom = new Date(previousTo.getTime() - rangeMs);
+    const previous = await buildPortalAnalyticsPayload(caller, previousFrom, previousTo);
+
+    return {
+      ...current,
+      comparison: {
+        mode: 'previous_period' as const,
+        previousFrom: previous.from,
+        previousTo: previous.to,
+        previousSummary: previous.summary,
+        deltas: buildSummaryDeltas(
+          current.summary as Record<string, number>,
+          previous.summary as Record<string, number>,
+        ),
+      },
+    };
+  }
 
   async function buildSystemHealthPayload() {
       const mem = process.memoryUsage();
@@ -1053,6 +1588,41 @@ export async function superAdminRoutes(app: FastifyInstance) {
         .safeParse(req.body);
       if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
+
+          // ── DELETE /superadmin/management-companies/:id/invites/:inviteId ─────────
+          app.delete(
+            '/management-companies/:id/invites/:inviteId',
+            { onRequest: [app.authenticatePlatformAdmin] },
+            async (req, reply) => {
+              const { id, inviteId } = req.params as { id: string; inviteId: string };
+              const caller = req.user as PlatformAdminCaller;
+
+              if (!isOwnerCaller(caller) && caller.managementCompanyId !== id) {
+                return reply.status(403).send({ error: 'Forbidden' });
+              }
+
+              const company = await db.query.managementCompanies.findFirst({
+                where: eq(managementCompanies.id, id),
+              });
+              if (!company || company.deletedAt) return reply.status(404).send({ error: 'Company not found' });
+
+              const invite = await db.query.managementCompanyAdminInvitations.findFirst({
+                where: and(
+                  eq(managementCompanyAdminInvitations.id, inviteId),
+                  eq(managementCompanyAdminInvitations.managementCompanyId, id),
+                ),
+              });
+              if (!invite) return reply.status(404).send({ error: 'Invitation not found' });
+              if (invite.acceptedAt) return reply.status(409).send({ error: 'Invitation already accepted' });
+
+              await db
+                .update(managementCompanyAdminInvitations)
+                .set({ revokedAt: new Date(), updatedAt: new Date() })
+                .where(eq(managementCompanyAdminInvitations.id, inviteId));
+
+              return reply.status(204).send();
+            },
+          );
       const admin = await db.query.managementCompanyAdmins.findFirst({
         where: and(
           eq(managementCompanyAdmins.id, adminId),
@@ -1386,44 +1956,178 @@ export async function superAdminRoutes(app: FastifyInstance) {
   // ── GET /superadmin/analytics ───────────────────────────────────────────────
   app.get('/analytics', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
     const caller = req.user as PlatformAdminCaller;
-    const companyId = isOwnerCaller(caller) ? null : caller.managementCompanyId;
+    const q = req.query as { from?: string; to?: string; compare?: 'none' | 'previous_period' };
+    const to = parseDate(q.to, new Date());
+    const from = parseDate(q.from, new Date(to.getTime() - 30 * 86_400_000));
 
-    const orgWhere = companyId
-      ? and(isNull(organisations.deletedAt), eq(organisations.managementCompanyId, companyId))
-      : isNull(organisations.deletedAt);
+    return reply.send(await buildPortalAnalyticsResponse(caller, from, to, q.compare ?? 'previous_period'));
+  });
 
-    const [orgsRow] = await db.select({ total: count() }).from(organisations).where(orgWhere);
-    const [suspRow] = await db
-      .select({ suspended: count() })
-      .from(organisations)
-      .where(
-        companyId
-          ? and(
-              sql`${organisations.suspendedAt} IS NOT NULL AND ${organisations.deletedAt} IS NULL`,
-              eq(organisations.managementCompanyId, companyId),
-            )
-          : sql`${organisations.suspendedAt} IS NOT NULL AND ${organisations.deletedAt} IS NULL`,
-      );
-    const [usersRow] = await db
-      .select({ total: count() })
-      .from(users)
-      .where(isNull(users.deletedAt));
+  app.get('/analytics/export.csv', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const caller = req.user as PlatformAdminCaller;
+    const q = req.query as { from?: string; to?: string; compare?: 'none' | 'previous_period' };
+    const to = parseDate(q.to, new Date());
+    const from = parseDate(q.from, new Date(to.getTime() - 30 * 86_400_000));
+    const payload = await buildPortalAnalyticsResponse(caller, from, to, q.compare ?? 'previous_period');
 
-    const result: Record<string, unknown> = {
-      totalOrgs: Number(orgsRow?.total ?? 0),
-      suspendedOrgs: Number(suspRow?.suspended ?? 0),
-      totalUsers: Number(usersRow?.total ?? 0),
-    };
+    const rows: Array<Record<string, string | number | null>> = [];
 
-    if (isOwnerCaller(caller)) {
-      const [companiesRow] = await db
-        .select({ total: count() })
-        .from(managementCompanies)
-        .where(isNull(managementCompanies.deletedAt));
-      result.totalManagementCompanies = Number(companiesRow?.total ?? 0);
+    rows.push({
+      section: 'meta',
+      label: 'scope',
+      value: payload.scope,
+      previousValue: payload.comparison?.mode === 'previous_period' ? 'previous_period' : null,
+      delta: null,
+      percentChange: null,
+      name: null,
+      slug: null,
+      resellerName: null,
+      organizations: null,
+      devices: null,
+      users: null,
+      plays: null,
+      storageUsedBytes: null,
+      createdAt: payload.from,
+      date: payload.to,
+      durationMs: null,
+      status: null,
+      href: null,
+    });
+
+    for (const [key, value] of Object.entries(payload.summary)) {
+      const delta = payload.comparison?.deltas[key] ?? null;
+      rows.push({
+        section: 'summary',
+        label: key,
+        value,
+        previousValue: delta?.previous ?? null,
+        delta: delta?.change ?? null,
+        percentChange: delta?.percentChange ?? null,
+        name: null,
+        slug: null,
+        resellerName: null,
+        organizations: null,
+        devices: null,
+        users: null,
+        plays: null,
+        storageUsedBytes: null,
+        createdAt: null,
+        date: null,
+        durationMs: null,
+        status: null,
+        href: null,
+      });
     }
 
-    return reply.send(result);
+    for (const row of payload.playsByDay) {
+      rows.push({
+        section: 'plays_by_day',
+        label: row.date,
+        value: row.plays,
+        previousValue: null,
+        delta: null,
+        percentChange: null,
+        name: null,
+        slug: null,
+        resellerName: null,
+        organizations: null,
+        devices: null,
+        users: null,
+        plays: row.plays,
+        storageUsedBytes: null,
+        createdAt: null,
+        date: row.date,
+        durationMs: row.durationMs,
+        status: null,
+        href: null,
+      });
+    }
+
+    for (const row of payload.topResellers) {
+      rows.push({
+        section: 'top_resellers',
+        label: row.name,
+        value: row.orgCount,
+        previousValue: null,
+        delta: null,
+        percentChange: null,
+        name: row.name,
+        slug: null,
+        resellerName: row.name,
+        organizations: row.orgCount,
+        devices: row.deviceCount,
+        users: row.userCount,
+        plays: null,
+        storageUsedBytes: row.storageUsedBytes,
+        createdAt: null,
+        date: null,
+        durationMs: null,
+        status: null,
+        href: `/superadmin/companies/${row.companyId}`,
+      });
+    }
+
+    for (const row of payload.topOrganizations) {
+      rows.push({
+        section: 'top_organizations',
+        label: row.name,
+        value: row.playCount,
+        previousValue: null,
+        delta: null,
+        percentChange: null,
+        name: row.name,
+        slug: row.slug,
+        resellerName: row.resellerName,
+        organizations: row.workspaceCount,
+        devices: row.deviceCount,
+        users: row.userCount,
+        plays: row.playCount,
+        storageUsedBytes: row.storageUsedBytes,
+        createdAt: row.createdAt,
+        date: null,
+        durationMs: null,
+        status: row.status,
+        href: payload.scope === 'platform_owner' ? `/superadmin/orgs/${row.orgId}` : `/management/orgs/${row.orgId}`,
+      });
+    }
+
+    for (const row of payload.recentOrganizations) {
+      rows.push({
+        section: 'recent_organizations',
+        label: row.name,
+        value: row.status,
+        previousValue: null,
+        delta: null,
+        percentChange: null,
+        name: row.name,
+        slug: row.slug,
+        resellerName: row.resellerName,
+        organizations: null,
+        devices: null,
+        users: null,
+        plays: null,
+        storageUsedBytes: null,
+        createdAt: row.createdAt,
+        date: null,
+        durationMs: null,
+        status: row.status,
+        href: payload.scope === 'platform_owner' ? `/superadmin/orgs/${row.orgId}` : `/management/orgs/${row.orgId}`,
+      });
+    }
+
+    const headers = [
+      'section', 'label', 'value', 'previousValue', 'delta', 'percentChange', 'name', 'slug',
+      'resellerName', 'organizations', 'devices', 'users', 'plays', 'storageUsedBytes',
+      'createdAt', 'date', 'durationMs', 'status', 'href',
+    ];
+    const csv = [
+      headers.join(','),
+      ...rows.map((row) => headers.map((header) => csvEscape(row[header])).join(',')),
+    ].join('\r\n');
+
+    reply.header('Content-Type', 'text/csv; charset=utf-8');
+    reply.header('Content-Disposition', `attachment; filename="${payload.scope}-analytics-${from.toISOString().slice(0, 10)}-to-${to.toISOString().slice(0, 10)}.csv"`);
+    return reply.send(csv);
   });
 
   // ── GET /superadmin/orgs/:id/quota ─────────────────────────────────────────
@@ -1586,16 +2290,19 @@ export async function superAdminRoutes(app: FastifyInstance) {
     },
   );
 
-  // ── POST /superadmin/orgs/:id/impersonate  (platform owner only) ────────────
+  // ── POST /superadmin/orgs/:id/impersonate  (platform owner or scoped MCA) ───
   app.post(
     '/orgs/:id/impersonate',
-    { onRequest: [app.authenticatePlatformOwner] },
+    { onRequest: [app.authenticatePlatformAdmin] },
     async (req, reply) => {
       const caller = req.user as PlatformAdminCaller;
       const { id } = req.params as { id: string };
 
       const org = await db.query.organisations.findFirst({ where: eq(organisations.id, id) });
       if (!org || org.deletedAt) return reply.status(404).send({ error: 'Organization not found' });
+      if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
       if (org.suspendedAt) return reply.status(409).send({ error: 'Organization is suspended' });
 
       const owner = await db.query.users.findFirst({
