@@ -218,8 +218,20 @@ export async function analyticsRoutes(app: FastifyInstance) {
       .orderBy(desc(count()))
       .limit(15);
 
+    const [storageUsageRow] = await db
+      .select({ usedBytes: sum(contentItems.fileSize) })
+      .from(contentItems)
+      .innerJoin(workspaces, eq(contentItems.workspaceId, workspaces.id))
+      .where(
+        and(
+          eq(workspaces.orgId, actor.orgId),
+          isNull(workspaces.deletedAt),
+          isNull(contentItems.deletedAt),
+        ),
+      );
+
     const [quotaRow] = await db
-      .select({ usedBytes: orgStorageQuotas.usedBytes, limitBytes: orgStorageQuotas.limitBytes })
+      .select({ limitBytes: orgStorageQuotas.limitBytes })
       .from(orgStorageQuotas)
       .where(eq(orgStorageQuotas.orgId, actor.orgId));
 
@@ -274,7 +286,7 @@ export async function analyticsRoutes(app: FastifyInstance) {
             : 0,
       })),
       orgSummary: {
-        storageUsedBytes: Number(quotaRow?.usedBytes ?? 0),
+        storageUsedBytes: Number(storageUsageRow?.usedBytes ?? 0),
         storageLimitBytes: Number(quotaRow?.limitBytes ?? 0),
         deviceCount: Number(deviceCountRow?.total ?? 0),
         scheduleCount: Number(scheduleCountRow?.total ?? 0),
