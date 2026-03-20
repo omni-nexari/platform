@@ -7,13 +7,46 @@ import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyMultipart from '@fastify/multipart';
 
+function normalizeOrigin(origin: string): string {
+  return origin.replace(/\/$/, '');
+}
+
+function getAllowedOrigins(): Set<string> {
+  const configuredAppUrl = process.env['APP_URL'] ?? 'https://ds.chiho.app';
+  const extraOrigins = (process.env['APP_EXTRA_ORIGINS'] ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return new Set([
+    normalizeOrigin(configuredAppUrl),
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    ...extraOrigins.map(normalizeOrigin),
+  ]);
+}
+
 export async function registerPlugins(app: FastifyInstance) {
+  const allowedOrigins = getAllowedOrigins();
+
   await app.register(fastifyHelmet, {
     contentSecurityPolicy: false, // API-only; CSP handled by web app
   });
 
   await app.register(fastifyCors, {
-    origin: process.env['APP_URL'] ?? 'http://localhost:5173',
+    origin(origin, callback) {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      if (allowedOrigins.has(normalizeOrigin(origin))) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error('Origin not allowed by CORS'), false);
+    },
     credentials: true,
   });
 
