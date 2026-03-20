@@ -15,10 +15,12 @@ import ManagementCompaniesListPage from './pages/superadmin/ManagementCompaniesL
 import ManagementCompanyDetailPage from './pages/superadmin/ManagementCompanyDetailPage.js';
 import PlatformOwnerDashboardPage from './pages/superadmin/PlatformOwnerDashboardPage.js';
 import PlatformAnalyticsPage from './pages/superadmin/PlatformAnalyticsPage.js';
+import PlatformNotificationsPage from './pages/superadmin/PlatformNotificationsPage.js';
 import ManagementLoginPage from './pages/management/ManagementLoginPage.js';
 import ManagementLayout from './pages/management/ManagementLayout.js';
 import ManagementDashboardPage from './pages/management/ManagementDashboardPage.js';
 import ManagementAnalyticsPage from './pages/management/ManagementAnalyticsPage.js';
+import ManagementNotificationsPage from './pages/management/ManagementNotificationsPage.js';
 import ManagementBrandingPage from './pages/management/ManagementBrandingPage.js';
 import AcceptManagementCompanyInvitePage from './pages/auth/AcceptManagementCompanyInvitePage.js';
 import AcceptClientOrgInvitePage from './pages/auth/AcceptClientOrgInvitePage.js';
@@ -87,6 +89,7 @@ export default function App() {
         <Route path="companies/:id" element={<ManagementCompanyDetailPage />} />
         <Route path="system" element={<SystemHealthPage />} />
         <Route path="analytics" element={<PlatformAnalyticsPage />} />
+        <Route path="notifications" element={<PlatformNotificationsPage />} />
       </Route>
 
       {/* Management Company portal */}
@@ -106,6 +109,7 @@ export default function App() {
         <Route path="orgs/:id" element={<OrgDetailPage />} />
         <Route path="settings/branding" element={<ManagementBrandingPage />} />
         <Route path="analytics" element={<ManagementAnalyticsPage />} />
+        <Route path="notifications" element={<ManagementNotificationsPage />} />
       </Route>
 
       {/* Authenticated user shell */}

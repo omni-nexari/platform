@@ -227,6 +227,7 @@
 | Platform/Reseller period comparison | ✅ | Previous-period comparison with quick 7/30/90-day presets and per-metric delta badges |
 | Platform/Reseller analytics charting + alerts | ✅ | Platform Owner and reseller analytics now use hoverable trend charts, threshold-based storage/device/play alerts, workspace-level rollups, and direct drilldowns into filtered workspace/device/content views via scoped org impersonation |
 | Platform/Reseller alert tuning + saved presets | ✅ | Both portal analytics pages now persist alert thresholds, repeat cadence, and inbox routing, and can save named workspace drilldown presets for repeat monitoring flows |
+| Platform/Reseller notifications page | ✅ | Platform Owner and reseller portals now expose full-page `/superadmin/notifications` and `/management/notifications` inbox screens backed by the same portal notification endpoints as the tray, with refresh, unread filtering, pagination, and read/dismiss controls |
 
 ---
 

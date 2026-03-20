@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router';
-import { Building2, BarChart2, LogOut, LayoutDashboard, Palette } from 'lucide-react';
+import { Building2, BarChart2, Bell, LogOut, LayoutDashboard, Palette } from 'lucide-react';
 import { useSAStore } from '../../lib/superadmin-auth.js';
 import {
   applyManagementBrandingDocument,
@@ -12,6 +12,7 @@ const NAV = [
   { to: '/management', icon: LayoutDashboard, label: 'Dashboard', end: true as const },
   { to: '/management/orgs', icon: Building2, label: 'Client Organisations', end: false as const },
   { to: '/management/analytics', icon: BarChart2, label: 'Analytics', end: false as const },
+  { to: '/management/notifications', icon: Bell, label: 'Notifications', end: false as const },
   { to: '/management/settings/branding', icon: Palette, label: 'Branding', end: false as const },
 ];
 
@@ -84,7 +85,7 @@ export default function ManagementLayout() {
               <p className="text-xs font-medium truncate">{user?.name ?? user?.email}</p>
               <p className="text-xs text-[var(--text-muted)] truncate">{user?.email}</p>
             </div>
-            <PortalNotificationTray analyticsPath="/management/analytics" />
+            <PortalNotificationTray notificationsPath="/management/notifications" />
             <button
               onClick={handleLogout}
               className="text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors"

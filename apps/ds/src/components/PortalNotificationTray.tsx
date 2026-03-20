@@ -1,26 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
-import { AlertTriangle, Bell, HardDrive, TrendingDown, X } from 'lucide-react';
+import { Bell, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { saApi } from '../lib/superadmin-auth.js';
 import type { PlatformAdminNotificationResponse } from '../lib/portal-analytics.js';
+import { formatPortalNotificationAge, getPortalNotificationIcon } from '../lib/portal-notifications.js';
 
-const TYPE_ICONS: Record<string, React.ReactNode> = {
-  analytics_storage_growth: <HardDrive size={13} className="text-amber-400" />,
-  analytics_device_drop: <AlertTriangle size={13} className="text-[var(--danger)]" />,
-  analytics_play_anomaly: <TrendingDown size={13} className="text-[var(--blue)]" />,
-};
-
-function timeAgo(d: string) {
-  const seconds = Math.floor((Date.now() - new Date(d).getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86400)}d ago`;
-}
-
-export default function PortalNotificationTray({ analyticsPath }: { analyticsPath: string }) {
+export default function PortalNotificationTray({ notificationsPath }: { notificationsPath: string }) {
   const [open, setOpen] = useState(false);
   const trayRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -130,7 +117,7 @@ export default function PortalNotificationTray({ analyticsPath }: { analyticsPat
                 onClick={() => { if (!notification.readAt) markRead.mutate(notification.id); }}
               >
                 <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ background: 'var(--surface)' }}>
-                  {TYPE_ICONS[notification.type] ?? <Bell size={13} className="text-[var(--text-muted)]" />}
+                  {getPortalNotificationIcon(notification.type)}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start gap-1.5">
@@ -140,7 +127,7 @@ export default function PortalNotificationTray({ analyticsPath }: { analyticsPat
                     {notification.readAt ? null : <div className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--blue)]" />}
                   </div>
                   <p className="mt-0.5 line-clamp-2 text-[11px] text-[var(--text-muted)]">{notification.body}</p>
-                  <p className="mt-1 text-[10px] text-[var(--text-muted)] opacity-60">{timeAgo(notification.createdAt)}</p>
+                  <p className="mt-1 text-[10px] text-[var(--text-muted)] opacity-60">{formatPortalNotificationAge(notification.createdAt)}</p>
                 </div>
                 <button
                   type="button"
@@ -161,12 +148,12 @@ export default function PortalNotificationTray({ analyticsPath }: { analyticsPat
             <button
               type="button"
               onClick={() => {
-                navigate(analyticsPath);
+                navigate(notificationsPath);
                 setOpen(false);
               }}
               className="text-xs font-medium text-[var(--blue)] hover:underline"
             >
-              Open analytics workspace
+              Open notifications inbox
             </button>
           </div>
         </div>
