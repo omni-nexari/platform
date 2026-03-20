@@ -129,7 +129,7 @@ export default function OrgsListPage() {
   );
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
+    <div className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">
       <PageHeader
         className="workspace-page-header"
         title="Client Organizations"
@@ -162,72 +162,130 @@ export default function OrgsListPage() {
         ) : filtered.length === 0 ? (
           <div className="p-12 text-center text-[var(--text-muted)]">No client organizations found</div>
         ) : (
-          <table className="ui-data-table">
-            <thead>
-              <tr>
-                <th>Client Organization</th>
-                <th>Plan</th>
-                <th>
-                  <span className="flex items-center gap-1">
-                    <Users size={13} /> Members
-                  </span>
-                </th>
-                <th>Status</th>
-                <th>
-                  <span className="flex items-center gap-1">
-                    <Calendar size={13} /> Created
-                  </span>
-                </th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((org, i) => (
-                <tr key={org.id}>
-                  <td>
-                    <Link
-                      to={`/superadmin/orgs/${org.id}`}
-                      className="font-medium hover:text-[var(--blue)] transition-colors"
-                    >
-                      {displayOrgName(org)}
-                    </Link>
-                    <p className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">{org.name === '(pending)' ? '' : org.slug}</p>
-                  </td>
-                  <td>
-                    <Badge tone={PLAN_TONES[org.plan as keyof typeof PLAN_TONES] ?? 'neutral'} className="capitalize">
-                      {org.plan}
-                    </Badge>
-                  </td>
-                  <td className="tabular-nums">{org.memberCount}</td>
-                  <td>
-                    <Badge tone={ORG_STATUS_TONES[getOrgStatus(org)]}>
-                      {getOrgStatus(org)}
-                    </Badge>
-                  </td>
-                  <td className="text-[var(--text-muted)]">
-                    {new Date(org.createdAt).toLocaleDateString()}
-                  </td>
-                  <td>
-                    <div className="flex items-center gap-2 justify-end">
-                      <InlineActionButton
-                        onClick={() =>
-                          suspendOrg.mutate({ id: org.id, suspended: !org.suspendedAt })
-                        }
-                      >
-                        {org.suspendedAt ? 'Unsuspend' : 'Suspend'}
-                      </InlineActionButton>
+          <>
+            <div className="space-y-3 p-3 md:hidden">
+              {filtered.map((org) => (
+                <div
+                  key={org.id}
+                  className="rounded-2xl border p-4"
+                  style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
                       <Link
                         to={`/superadmin/orgs/${org.id}`}
-                        className="ui-inline-action-btn"
+                        className="font-medium transition-colors hover:text-[var(--blue)]"
                       >
-                        View
+                        {displayOrgName(org)}
                       </Link>
+                      <p className="mt-0.5 truncate font-mono text-xs text-[var(--text-muted)]">
+                        {org.name === '(pending)' ? '' : org.slug}
+                      </p>
                     </div>
-                  </td>
-                </tr>
+                    <Badge tone={ORG_STATUS_TONES[getOrgStatus(org)]}>{getOrgStatus(org)}</Badge>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Plan</p>
+                      <div className="mt-1">
+                        <Badge tone={PLAN_TONES[org.plan as keyof typeof PLAN_TONES] ?? 'neutral'} className="capitalize">
+                          {org.plan}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Members</p>
+                      <p className="mt-1 tabular-nums text-[var(--text)]">{org.memberCount}</p>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Created</p>
+                      <p className="mt-1 text-[var(--text-muted)]">{new Date(org.createdAt).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <InlineActionButton
+                      onClick={() => suspendOrg.mutate({ id: org.id, suspended: !org.suspendedAt })}
+                      className="justify-center"
+                    >
+                      {org.suspendedAt ? 'Unsuspend' : 'Suspend'}
+                    </InlineActionButton>
+                    <Link to={`/superadmin/orgs/${org.id}`} className="ui-inline-action-btn justify-center text-center">
+                      View
+                    </Link>
+                  </div>
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+
+            <div className="hidden md:block">
+              <table className="ui-data-table">
+                <thead>
+                  <tr>
+                    <th>Client Organization</th>
+                    <th>Plan</th>
+                    <th>
+                      <span className="flex items-center gap-1">
+                        <Users size={13} /> Members
+                      </span>
+                    </th>
+                    <th>Status</th>
+                    <th>
+                      <span className="flex items-center gap-1">
+                        <Calendar size={13} /> Created
+                      </span>
+                    </th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((org) => (
+                    <tr key={org.id}>
+                      <td>
+                        <Link
+                          to={`/superadmin/orgs/${org.id}`}
+                          className="font-medium hover:text-[var(--blue)] transition-colors"
+                        >
+                          {displayOrgName(org)}
+                        </Link>
+                        <p className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">{org.name === '(pending)' ? '' : org.slug}</p>
+                      </td>
+                      <td>
+                        <Badge tone={PLAN_TONES[org.plan as keyof typeof PLAN_TONES] ?? 'neutral'} className="capitalize">
+                          {org.plan}
+                        </Badge>
+                      </td>
+                      <td className="tabular-nums">{org.memberCount}</td>
+                      <td>
+                        <Badge tone={ORG_STATUS_TONES[getOrgStatus(org)]}>
+                          {getOrgStatus(org)}
+                        </Badge>
+                      </td>
+                      <td className="text-[var(--text-muted)]">
+                        {new Date(org.createdAt).toLocaleDateString()}
+                      </td>
+                      <td>
+                        <div className="flex items-center gap-2 justify-end">
+                          <InlineActionButton
+                            onClick={() => suspendOrg.mutate({ id: org.id, suspended: !org.suspendedAt })}
+                          >
+                            {org.suspendedAt ? 'Unsuspend' : 'Suspend'}
+                          </InlineActionButton>
+                          <Link
+                            to={`/superadmin/orgs/${org.id}`}
+                            className="ui-inline-action-btn"
+                          >
+                            View
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 

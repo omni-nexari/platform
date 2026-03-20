@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { useParams } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { Plus, Mail } from 'lucide-react';
+import { CircleHelp, Plus, Mail } from 'lucide-react';
 import { InviteManagementCompanyAdminSchema } from '@signage/shared';
 import type { InviteManagementCompanyAdminInput } from '@signage/shared';
 import { saApi } from '../../lib/superadmin-auth.js';
@@ -110,8 +110,10 @@ const ROLE_TONES = {
 
 export default function ManagementCompanyDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const [showInvite, setShowInvite] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['sa-company-admins', id],
@@ -222,6 +224,18 @@ export default function ManagementCompanyDetailPage() {
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to upload branding asset'),
   });
 
+  const deleteCompany = useMutation({
+    mutationFn: () => saApi.delete(`/superadmin/management-companies/${id}`),
+    onSuccess: async () => {
+      toast.success('Reseller deleted');
+      await qc.invalidateQueries({ queryKey: ['sa-companies'] });
+      navigate('/superadmin/companies');
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to delete reseller'),
+  });
+
+  const deleteBlockedReason = 'Remove client orgs before delete';
+
   if (isLoading) {
     return (
       <div className="p-8 max-w-5xl mx-auto space-y-6">
@@ -239,16 +253,41 @@ export default function ManagementCompanyDetailPage() {
   const { admins = [], pendingInvites = [] } = data ?? {};
 
   return (
-    <div className="p-8 max-w-5xl mx-auto space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto space-y-6">
       <PageHeader
         className="workspace-page-header"
         title="Reseller Admins"
         subtitle={`${admins.length} active · ${pendingInvites.length} pending`}
         action={(
-          <button onClick={() => setShowInvite(true)} className="workspace-page-action">
-            <Plus size={16} />
-            Invite Admin
-          </button>
+          <div className="flex flex-col items-stretch gap-2 sm:items-end">
+            <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => setShowInvite(true)} className="workspace-page-action">
+              <Plus size={16} />
+              Invite Admin
+            </button>
+            <InlineActionButton
+              tone="danger"
+              onClick={() => setShowDelete(true)}
+              disabled={(company?.orgCount ?? 0) > 0}
+              title={(company?.orgCount ?? 0) > 0 ? deleteBlockedReason : 'Delete reseller'}
+            >
+              Delete Reseller
+            </InlineActionButton>
+            {(company?.orgCount ?? 0) > 0 ? (
+              <span className="inline-flex items-center justify-center rounded-full border border-[var(--card-border)] p-1 text-[var(--text-muted)]" title={deleteBlockedReason} aria-label={deleteBlockedReason}>
+                <CircleHelp size={13} />
+              </span>
+            ) : null}
+            </div>
+            {(company?.orgCount ?? 0) > 0 ? (
+              <div className="flex items-center gap-1 text-xs text-[var(--text-muted)] sm:justify-end">
+                <span title={deleteBlockedReason} aria-label={deleteBlockedReason}>
+                  <CircleHelp size={13} />
+                </span>
+                <p>{deleteBlockedReason}.</p>
+              </div>
+            ) : null}
+          </div>
         )}
       />
 
@@ -265,40 +304,44 @@ export default function ManagementCompanyDetailPage() {
                 <div className="grid gap-4 md:grid-cols-2">
                   <div>
                     <label className="block text-sm font-medium mb-1">Logo URL</label>
-                    <div className="flex gap-2">
-                      <input {...brandingForm.register('logoUrl')} className="input flex-1" placeholder="https://cdn.example.com/logo.svg" />
-                      <label className="workspace-page-action cursor-pointer">
-                        Upload
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(event) => {
-                            const file = event.target.files?.[0];
-                            if (file) uploadBrandAsset.mutate({ assetType: 'logo', file });
-                            event.currentTarget.value = '';
-                          }}
-                        />
-                      </label>
+                    <div className="space-y-2">
+                      <input {...brandingForm.register('logoUrl')} className="input w-full" placeholder="https://cdn.example.com/logo.svg" />
+                      <div className="flex justify-end">
+                        <label className="workspace-page-action inline-flex cursor-pointer items-center justify-center whitespace-nowrap">
+                          Upload
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              if (file) uploadBrandAsset.mutate({ assetType: 'logo', file });
+                              event.currentTarget.value = '';
+                            }}
+                          />
+                        </label>
+                      </div>
                     </div>
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Favicon URL</label>
-                    <div className="flex gap-2">
-                      <input {...brandingForm.register('faviconUrl')} className="input flex-1" placeholder="https://cdn.example.com/favicon.png" />
-                      <label className="workspace-page-action cursor-pointer">
-                        Upload
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(event) => {
-                            const file = event.target.files?.[0];
-                            if (file) uploadBrandAsset.mutate({ assetType: 'favicon', file });
-                            event.currentTarget.value = '';
-                          }}
-                        />
-                      </label>
+                    <div className="space-y-2">
+                      <input {...brandingForm.register('faviconUrl')} className="input w-full" placeholder="https://cdn.example.com/favicon.png" />
+                      <div className="flex justify-end">
+                        <label className="workspace-page-action inline-flex cursor-pointer items-center justify-center whitespace-nowrap">
+                          Upload
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              if (file) uploadBrandAsset.mutate({ assetType: 'favicon', file });
+                              event.currentTarget.value = '';
+                            }}
+                          />
+                        </label>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -338,21 +381,23 @@ export default function ManagementCompanyDetailPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">Login background art URL</label>
-                  <div className="flex gap-2">
-                    <input {...brandingForm.register('loginBackgroundUrl')} className="input flex-1" placeholder="https://cdn.example.com/login-bg.jpg" />
-                    <label className="workspace-page-action cursor-pointer">
-                      Upload
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          if (file) uploadBrandAsset.mutate({ assetType: 'login-background', file });
-                          event.currentTarget.value = '';
-                        }}
-                      />
-                    </label>
+                  <div className="space-y-2">
+                    <input {...brandingForm.register('loginBackgroundUrl')} className="input w-full" placeholder="https://cdn.example.com/login-bg.jpg" />
+                    <div className="flex justify-end">
+                      <label className="workspace-page-action inline-flex cursor-pointer items-center justify-center whitespace-nowrap">
+                        Upload
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) uploadBrandAsset.mutate({ assetType: 'login-background', file });
+                            event.currentTarget.value = '';
+                          }}
+                        />
+                      </label>
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -417,49 +462,95 @@ export default function ManagementCompanyDetailPage() {
           {admins.length === 0 ? (
             <p className="text-sm text-[var(--text-muted)] p-4">No active admins yet.</p>
           ) : (
-            <table className="ui-data-table">
-              <thead>
-                <tr>
-                  <th>Admin</th>
-                  <th>Role</th>
-                  <th>Last login</th>
-                  <th>Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
+            <>
+              <div className="space-y-3 md:hidden">
                 {admins.map((admin) => (
-                  <tr key={admin.id}>
-                    <td>
-                      <p className="font-medium">{admin.name ?? admin.email}</p>
-                      <p className="text-xs text-[var(--text-muted)]">{admin.email}</p>
-                    </td>
-                    <td>
-                      <Badge tone={ROLE_TONES[admin.role] ?? 'neutral'} className="capitalize">
-                        {admin.role}
-                      </Badge>
-                    </td>
-                    <td className="text-[var(--text-muted)] text-sm">
-                      {admin.lastLogin ? new Date(admin.lastLogin).toLocaleDateString() : 'Never'}
-                    </td>
-                    <td>
+                  <div
+                    key={admin.id}
+                    className="rounded-2xl border p-4"
+                    style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium break-words">{admin.name ?? admin.email}</p>
+                        <p className="text-xs text-[var(--text-muted)] break-all">{admin.email}</p>
+                      </div>
                       <Badge tone={admin.suspendedAt ? 'warning' : 'success'}>
                         {admin.suspendedAt ? 'Suspended' : 'Active'}
                       </Badge>
-                    </td>
-                    <td>
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Role</p>
+                        <div className="mt-1">
+                          <Badge tone={ROLE_TONES[admin.role] ?? 'neutral'} className="capitalize">
+                            {admin.role}
+                          </Badge>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Last login</p>
+                        <p className="mt-1 text-[var(--text-muted)]">
+                          {admin.lastLogin ? new Date(admin.lastLogin).toLocaleDateString() : 'Never'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-4">
                       <InlineActionButton
-                        onClick={() =>
-                          patchAdmin.mutate({ adminId: admin.id, suspended: !admin.suspendedAt })
-                        }
+                        onClick={() => patchAdmin.mutate({ adminId: admin.id, suspended: !admin.suspendedAt })}
+                        className="justify-center w-full"
                       >
                         {admin.suspendedAt ? 'Unsuspend' : 'Suspend'}
                       </InlineActionButton>
-                    </td>
-                  </tr>
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+
+              <div className="hidden md:block">
+                <table className="ui-data-table">
+                  <thead>
+                    <tr>
+                      <th>Admin</th>
+                      <th>Role</th>
+                      <th>Last login</th>
+                      <th>Status</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {admins.map((admin) => (
+                      <tr key={admin.id}>
+                        <td>
+                          <p className="font-medium">{admin.name ?? admin.email}</p>
+                          <p className="text-xs text-[var(--text-muted)]">{admin.email}</p>
+                        </td>
+                        <td>
+                          <Badge tone={ROLE_TONES[admin.role] ?? 'neutral'} className="capitalize">
+                            {admin.role}
+                          </Badge>
+                        </td>
+                        <td className="text-[var(--text-muted)] text-sm">
+                          {admin.lastLogin ? new Date(admin.lastLogin).toLocaleDateString() : 'Never'}
+                        </td>
+                        <td>
+                          <Badge tone={admin.suspendedAt ? 'warning' : 'success'}>
+                            {admin.suspendedAt ? 'Suspended' : 'Active'}
+                          </Badge>
+                        </td>
+                        <td>
+                          <InlineActionButton
+                            onClick={() => patchAdmin.mutate({ adminId: admin.id, suspended: !admin.suspendedAt })}
+                          >
+                            {admin.suspendedAt ? 'Unsuspend' : 'Suspend'}
+                          </InlineActionButton>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </SectionCardBody>
       </SectionCard>
@@ -469,41 +560,78 @@ export default function ManagementCompanyDetailPage() {
         <SectionCard>
           <SectionCardHeader>Pending Invites</SectionCardHeader>
           <SectionCardBody>
-            <table className="ui-data-table">
-              <thead>
-                <tr>
-                  <th>Email</th>
-                  <th>Role</th>
-                  <th>Expires</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
+            <>
+              <div className="space-y-3 md:hidden">
                 {pendingInvites.map((invite) => (
-                  <tr key={invite.id}>
-                    <td className="flex items-center gap-2">
-                      <Mail size={14} className="text-[var(--text-muted)]" />
-                      {invite.email}
-                    </td>
-                    <td>
-                      <Badge tone="neutral" className="capitalize">{invite.role}</Badge>
-                    </td>
-                    <td className="text-[var(--text-muted)] text-sm">
-                      {new Date(invite.expiresAt).toLocaleDateString()}
-                    </td>
-                    <td className="text-right">
+                  <div
+                    key={invite.id}
+                    className="rounded-2xl border p-4"
+                    style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
+                  >
+                    <div className="flex items-start gap-2">
+                      <Mail size={14} className="mt-0.5 shrink-0 text-[var(--text-muted)]" />
+                      <div className="min-w-0">
+                        <p className="break-all font-medium">{invite.email}</p>
+                        <div className="mt-2">
+                          <Badge tone="neutral" className="capitalize">{invite.role}</Badge>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-4 text-sm">
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Expires</p>
+                      <p className="mt-1 text-[var(--text-muted)]">{new Date(invite.expiresAt).toLocaleDateString()}</p>
+                    </div>
+                    <div className="mt-4">
                       <button
                         onClick={() => revokeInvite.mutate(invite.id)}
                         disabled={revokeInvite.isPending}
-                        className="ui-inline-action-btn ui-inline-action-btn-danger"
+                        className="ui-inline-action-btn ui-inline-action-btn-danger w-full justify-center"
                       >
                         Delete
                       </button>
-                    </td>
-                  </tr>
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+
+              <div className="hidden md:block">
+                <table className="ui-data-table">
+                  <thead>
+                    <tr>
+                      <th>Email</th>
+                      <th>Role</th>
+                      <th>Expires</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingInvites.map((invite) => (
+                      <tr key={invite.id}>
+                        <td className="flex items-center gap-2">
+                          <Mail size={14} className="text-[var(--text-muted)]" />
+                          {invite.email}
+                        </td>
+                        <td>
+                          <Badge tone="neutral" className="capitalize">{invite.role}</Badge>
+                        </td>
+                        <td className="text-[var(--text-muted)] text-sm">
+                          {new Date(invite.expiresAt).toLocaleDateString()}
+                        </td>
+                        <td className="text-right">
+                          <button
+                            onClick={() => revokeInvite.mutate(invite.id)}
+                            disabled={revokeInvite.isPending}
+                            className="ui-inline-action-btn ui-inline-action-btn-danger"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           </SectionCardBody>
         </SectionCard>
       )}
@@ -554,6 +682,42 @@ export default function ManagementCompanyDetailPage() {
               className="flex-1"
             >
               {isSubmitting ? 'Sending…' : 'Send Invite'}
+            </ModalPrimaryButton>
+          </ModalFooter>
+        </Modal>
+      )}
+
+      {showDelete && company && (
+        <Modal onClose={() => setShowDelete(false)} size="sm">
+          <ModalHeader
+            title="Delete Reseller"
+            subtitle="This reseller can only be deleted when no client organizations remain."
+            onClose={() => setShowDelete(false)}
+          />
+          <ModalBody>
+            <div className="space-y-3 text-sm text-[var(--text-muted)]">
+              <p>
+                Delete <span className="font-semibold text-[var(--text)]">{company.name}</span>?
+              </p>
+              <p>
+                Client organizations: <span className="font-semibold text-[var(--text)]">{company.orgCount}</span>
+              </p>
+              <p>
+                Pending reseller invites will be revoked and existing reseller admins will be suspended.
+              </p>
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <ModalSecondaryButton type="button" onClick={() => setShowDelete(false)} className="flex-1">
+              Cancel
+            </ModalSecondaryButton>
+            <ModalPrimaryButton
+              type="button"
+              onClick={() => deleteCompany.mutate()}
+              disabled={deleteCompany.isPending || company.orgCount > 0}
+              className="flex-1"
+            >
+              {deleteCompany.isPending ? 'Deleting…' : 'Delete Reseller'}
             </ModalPrimaryButton>
           </ModalFooter>
         </Modal>

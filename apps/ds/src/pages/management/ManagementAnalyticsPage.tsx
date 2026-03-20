@@ -165,30 +165,56 @@ export default function ManagementAnalyticsPage() {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-6">
+    <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
       <PageHeader
         icon={<BarChart2 size={22} />}
         title="Analytics"
         subtitle="Performance across your reseller portfolio of client organizations."
-        action={(
-          <div className="flex items-center gap-2 flex-wrap">
+      />
+
+      <div
+        className="rounded-2xl border p-4 sm:p-5"
+        style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
+      >
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => setRangeDays(setFrom, setTo, 7)} className="workspace-page-action">Last 7</button>
             <button onClick={() => setRangeDays(setFrom, setTo, 30)} className="workspace-page-action">Last 30</button>
             <button onClick={() => setRangeDays(setFrom, setTo, 90)} className="workspace-page-action">Last 90</button>
-            <input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="input text-sm h-9 px-3" />
-            <span className="text-sm text-[var(--text-muted)]">to</span>
-            <input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="input text-sm h-9 px-3" />
-            <select value={compareMode} onChange={(event) => setCompareMode(event.target.value as 'none' | 'previous_period')} className="input text-sm h-9 px-3">
+          </div>
+          <label className="flex w-full flex-col gap-1 xl:max-w-[240px]">
+            <span className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">Compare</span>
+            <select value={compareMode} onChange={(event) => setCompareMode(event.target.value as 'none' | 'previous_period')} className="input h-10 w-full px-3 text-sm">
               <option value="previous_period">vs previous period</option>
               <option value="none">no comparison</option>
             </select>
-            <button onClick={() => void exportCsv()} className="workspace-page-action">
-              <Download size={14} />
-              Export CSV
-            </button>
+          </label>
+        </div>
+        <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div
+            className="rounded-2xl border p-3 sm:p-4"
+            style={{
+              borderColor: 'color-mix(in srgb, var(--blue) 22%, var(--card-border) 78%)',
+              background: 'linear-gradient(180deg, color-mix(in srgb, var(--blue) 7%, var(--bg2) 93%), var(--bg2))',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.03)',
+            }}
+          >
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">Range</span>
+              <span className="text-xs text-[var(--text-muted)]">Custom analytics window</span>
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
+              <input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="input text-sm h-10 w-full px-3" />
+              <span className="text-center text-sm text-[var(--text-muted)]">to</span>
+              <input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="input text-sm h-10 w-full px-3" />
+            </div>
           </div>
-        )}
-      />
+          <button onClick={() => void exportCsv()} className="workspace-page-action w-full justify-center lg:w-auto">
+            <Download size={14} />
+            Export CSV
+          </button>
+        </div>
+      </div>
 
       {data?.comparison ? (
         <div className="rounded-2xl border px-5 py-4 text-sm text-[var(--text-muted)]" style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}>

@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router';
-import { Building2, BarChart2, Bell, LogOut, LayoutDashboard, Palette } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
+import { Building2, BarChart2, Bell, LogOut, LayoutDashboard, Palette, Menu, X } from 'lucide-react';
 import { useSAStore } from '../../lib/superadmin-auth.js';
 import {
   applyManagementBrandingDocument,
@@ -19,10 +19,16 @@ const NAV = [
 export default function ManagementLayout() {
   const { user, clearAuth } = useSAStore();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     return applyManagementBrandingDocument(user ?? undefined);
   }, [user]);
+
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [pathname]);
 
   const handleLogout = () => {
     const slug = user?.companySlug;
@@ -31,10 +37,19 @@ export default function ManagementLayout() {
   };
 
   return (
-    <div className="management-portal flex min-h-dvh" style={getManagementBrandingStyle(user)}>
+    <div className="management-portal flex min-h-dvh overflow-hidden" style={getManagementBrandingStyle(user)}>
+      {sidebarOpen ? (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-40 bg-black/50 lg:hidden"
+        />
+      ) : null}
+
       {/* Sidebar */}
       <aside
-        className="w-60 flex-shrink-0 flex flex-col border-r"
+        className={`fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col border-r transition-transform duration-200 lg:static lg:z-auto lg:w-60 lg:max-w-none lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
         style={{ background: 'var(--management-sidebar-bg, var(--bg2))', borderColor: 'var(--card-border)' }}
       >
         {/* Logo / brand */}
@@ -52,6 +67,14 @@ export default function ManagementLayout() {
               ? user.companyName
               : 'Management Co.'}
           </span>
+          <button
+            type="button"
+            aria-label="Close navigation"
+            onClick={() => setSidebarOpen(false)}
+            className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-white/5 hover:text-[var(--text)] lg:hidden"
+          >
+            <X size={16} />
+          </button>
         </div>
 
         {/* Nav */}
@@ -98,9 +121,30 @@ export default function ManagementLayout() {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-auto">
-        <Outlet />
-      </main>
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b px-3 sm:px-6 lg:hidden" style={{ borderColor: 'var(--card-border)', background: 'var(--management-sidebar-bg, var(--bg2))' }}>
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-white/5 hover:text-[var(--text)]"
+              aria-label="Open navigation"
+            >
+              <Menu size={16} />
+            </button>
+            <span className="truncate text-sm font-medium text-[var(--text)]">
+              {user?.companyName && !user.companyName.startsWith('(pending') ? user.companyName : 'Management Co.'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <PortalNotificationTray notificationsPath="/management/notifications" />
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-auto">
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }

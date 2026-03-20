@@ -320,6 +320,8 @@ export async function superAdminRoutes(app: FastifyInstance) {
     to: Date,
   ) {
     const companyId = isOwnerCaller(caller) ? null : caller.managementCompanyId;
+    const fromIso = from.toISOString();
+    const toIso = to.toISOString();
 
     const orgScope = companyId
       ? and(isNull(organisations.deletedAt), eq(organisations.managementCompanyId, companyId))
@@ -508,8 +510,8 @@ export async function superAdminRoutes(app: FastifyInstance) {
           FROM play_events pe
           INNER JOIN devices d2 ON d2.id = pe.device_id
           WHERE d2.org_id = o.id
-            AND pe.started_at >= ${from}
-            AND pe.started_at <= ${to}
+            AND pe.started_at >= ${fromIso}::timestamptz
+            AND pe.started_at <= ${toIso}::timestamptz
         ) AS play_count,
         o.created_at::text AS created_at,
         CASE WHEN o.suspended_at IS NULL THEN 'active' ELSE 'suspended' END AS status
@@ -596,8 +598,8 @@ export async function superAdminRoutes(app: FastifyInstance) {
           FROM play_events pe
           INNER JOIN devices d2 ON d2.id = pe.device_id
           WHERE d2.workspace_id = w.id
-            AND pe.started_at >= ${from}
-            AND pe.started_at <= ${to}
+            AND pe.started_at >= ${fromIso}::timestamptz
+            AND pe.started_at <= ${toIso}::timestamptz
         ) AS play_count,
         w.created_at::text AS created_at
       FROM workspaces w
@@ -1602,6 +1604,68 @@ export async function superAdminRoutes(app: FastifyInstance) {
     },
   );
 
+  // ── DELETE /superadmin/management-companies/:id  (platform owner only) ───
+  app.delete(
+    '/management-companies/:id',
+    { onRequest: [app.authenticatePlatformOwner] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const caller = req.user as PlatformAdminCaller;
+
+      const company = await db.query.managementCompanies.findFirst({
+        where: eq(managementCompanies.id, id),
+      });
+      if (!company || company.deletedAt) return reply.status(404).send({ error: 'Not found' });
+
+      const [orgsRow] = await db
+        .select({ total: count() })
+        .from(organisations)
+        .where(and(eq(organisations.managementCompanyId, id), isNull(organisations.deletedAt)));
+
+      const activeOrgCount = Number(orgsRow?.total ?? 0);
+      if (activeOrgCount > 0) {
+        return reply.status(409).send({
+          error: 'Delete blocked. Remove or reassign all client organizations first.',
+        });
+      }
+
+      const now = new Date();
+
+      await db
+        .update(managementCompanies)
+        .set({ deletedAt: now, suspendedAt: company.suspendedAt ?? now, updatedAt: now })
+        .where(eq(managementCompanies.id, id));
+
+      await db
+        .update(managementCompanyAdmins)
+        .set({ suspendedAt: now, updatedAt: now })
+        .where(eq(managementCompanyAdmins.managementCompanyId, id));
+
+      await db
+        .update(managementCompanyAdminInvitations)
+        .set({ revokedAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(managementCompanyAdminInvitations.managementCompanyId, id),
+            isNull(managementCompanyAdminInvitations.acceptedAt),
+            isNull(managementCompanyAdminInvitations.revokedAt),
+          ),
+        );
+
+      await writeAuditLog({
+        actorId: caller.sub,
+        actorType: 'system',
+        action: 'MANAGEMENT_COMPANY_DELETED',
+        entityType: 'management_company',
+        entityId: id,
+        meta: { name: company.name },
+        ipAddress: req.ip,
+      });
+
+      return reply.status(204).send();
+    },
+  );
+
   // ── PATCH /superadmin/management-companies/:id/branding  ──────────────────
   app.patch(
     '/management-companies/:id/branding',
@@ -1863,42 +1927,6 @@ export async function superAdminRoutes(app: FastifyInstance) {
         })
         .safeParse(req.body);
       if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
-
-
-          // ── DELETE /superadmin/management-companies/:id/invites/:inviteId ─────────
-          app.delete(
-            '/management-companies/:id/invites/:inviteId',
-            { onRequest: [app.authenticatePlatformAdmin] },
-            async (req, reply) => {
-              const { id, inviteId } = req.params as { id: string; inviteId: string };
-              const caller = req.user as PlatformAdminCaller;
-
-              if (!isOwnerCaller(caller) && caller.managementCompanyId !== id) {
-                return reply.status(403).send({ error: 'Forbidden' });
-              }
-
-              const company = await db.query.managementCompanies.findFirst({
-                where: eq(managementCompanies.id, id),
-              });
-              if (!company || company.deletedAt) return reply.status(404).send({ error: 'Company not found' });
-
-              const invite = await db.query.managementCompanyAdminInvitations.findFirst({
-                where: and(
-                  eq(managementCompanyAdminInvitations.id, inviteId),
-                  eq(managementCompanyAdminInvitations.managementCompanyId, id),
-                ),
-              });
-              if (!invite) return reply.status(404).send({ error: 'Invitation not found' });
-              if (invite.acceptedAt) return reply.status(409).send({ error: 'Invitation already accepted' });
-
-              await db
-                .update(managementCompanyAdminInvitations)
-                .set({ revokedAt: new Date(), updatedAt: new Date() })
-                .where(eq(managementCompanyAdminInvitations.id, inviteId));
-
-              return reply.status(204).send();
-            },
-          );
       const admin = await db.query.managementCompanyAdmins.findFirst({
         where: and(
           eq(managementCompanyAdmins.id, adminId),
@@ -1925,6 +1953,41 @@ export async function superAdminRoutes(app: FastifyInstance) {
         .returning();
 
       return reply.send(updated);
+    },
+  );
+
+  // ── DELETE /superadmin/management-companies/:id/invites/:inviteId ─────────
+  app.delete(
+    '/management-companies/:id/invites/:inviteId',
+    { onRequest: [app.authenticatePlatformAdmin] },
+    async (req, reply) => {
+      const { id, inviteId } = req.params as { id: string; inviteId: string };
+      const caller = req.user as PlatformAdminCaller;
+
+      if (!isOwnerCaller(caller) && caller.managementCompanyId !== id) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
+      const company = await db.query.managementCompanies.findFirst({
+        where: eq(managementCompanies.id, id),
+      });
+      if (!company || company.deletedAt) return reply.status(404).send({ error: 'Company not found' });
+
+      const invite = await db.query.managementCompanyAdminInvitations.findFirst({
+        where: and(
+          eq(managementCompanyAdminInvitations.id, inviteId),
+          eq(managementCompanyAdminInvitations.managementCompanyId, id),
+        ),
+      });
+      if (!invite) return reply.status(404).send({ error: 'Invitation not found' });
+      if (invite.acceptedAt) return reply.status(409).send({ error: 'Invitation already accepted' });
+
+      await db
+        .update(managementCompanyAdminInvitations)
+        .set({ revokedAt: new Date(), updatedAt: new Date() })
+        .where(eq(managementCompanyAdminInvitations.id, inviteId));
+
+      return reply.status(204).send();
     },
   );
 

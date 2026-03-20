@@ -222,7 +222,7 @@ export default function OrgDetailPage() {
   const { org, members, pendingInvites } = data;
 
   return (
-    <div className="p-8 max-w-5xl mx-auto space-y-8">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto space-y-8">
       {/* Back */}
       <Link
         to="/superadmin/orgs"
@@ -237,7 +237,7 @@ export default function OrgDetailPage() {
         subtitle={<span className="font-mono">{org.slug}</span>}
         trailing={<Badge tone={getOrgStatusTone(org.suspendedAt)}>{org.suspendedAt ? 'Suspended' : 'Active'}</Badge>}
         action={(
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <InlineActionButton
               onClick={() => setShowImpersonateConfirm(true)}
               disabled={impersonateMut.isPending}
@@ -262,7 +262,7 @@ export default function OrgDetailPage() {
 
       {/* Details card */}
       <SectionCard>
-        <SectionCardBody className="grid grid-cols-3 gap-6">
+        <SectionCardBody className="grid grid-cols-1 gap-6 sm:grid-cols-3">
           <div>
           <p className="text-xs text-[var(--text-muted)] mb-1">Plan</p>
           <Badge tone={ORG_PLAN_TONES[org.plan as keyof typeof ORG_PLAN_TONES] ?? 'neutral'} className="capitalize">{org.plan}</Badge>
@@ -286,7 +286,7 @@ export default function OrgDetailPage() {
           </h2>
         </SectionCardHeader>
         <SectionCardBody>
-          <div className="flex gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row">
           <input
             value={inviteEmail}
             onChange={(e) => setInviteEmail(e.target.value)}
@@ -307,7 +307,7 @@ export default function OrgDetailPage() {
           <button
             onClick={() => inviteMut.mutate()}
             disabled={!inviteEmail || inviteMut.isPending}
-            className="btn-primary whitespace-nowrap"
+            className="btn-primary whitespace-nowrap w-full sm:w-auto"
           >
             {inviteMut.isPending ? 'Sending…' : 'Send Invite'}
           </button>
@@ -324,36 +324,68 @@ export default function OrgDetailPage() {
               <h2>Pending Invitations ({pendingInvites.length})</h2>
             </div>
           </div>
-          <table className="ui-data-table">
-            <tbody>
-              {pendingInvites.map((inv) => (
-                  <tr key={inv.id}>
-                    <td>{inv.email}</td>
-                    <td>
-                      <Badge tone={getRoleTone(inv.orgRole)} className="capitalize">
-                      {inv.orgRole}
-                      </Badge>
-                  </td>
-                  <td className="text-[var(--text-muted)] text-xs">
-                    {inv.acceptedAt
-                      ? `Accepted ${new Date(inv.acceptedAt).toLocaleDateString()}`
-                      : `Expires ${new Date(inv.expiresAt).toLocaleDateString()}`}
-                  </td>
-                  <td className="text-right">
-                    {!inv.acceptedAt && (
-                      <button
-                        onClick={() => revokeInviteMut.mutate(inv.id)}
-                        disabled={revokeInviteMut.isPending}
-                        className="ui-inline-action-btn ui-inline-action-btn-danger"
-                      >
-                        Cancel
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="space-y-3 p-3 md:hidden">
+            {pendingInvites.map((inv) => (
+              <div
+                key={inv.id}
+                className="rounded-2xl border p-4"
+                style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
+              >
+                <p className="break-all font-medium">{inv.email}</p>
+                <div className="mt-3">
+                  <Badge tone={getRoleTone(inv.orgRole)} className="capitalize">
+                    {inv.orgRole}
+                  </Badge>
+                </div>
+                <p className="mt-3 text-xs text-[var(--text-muted)]">
+                  {inv.acceptedAt
+                    ? `Accepted ${new Date(inv.acceptedAt).toLocaleDateString()}`
+                    : `Expires ${new Date(inv.expiresAt).toLocaleDateString()}`}
+                </p>
+                {!inv.acceptedAt ? (
+                  <button
+                    onClick={() => revokeInviteMut.mutate(inv.id)}
+                    disabled={revokeInviteMut.isPending}
+                    className="ui-inline-action-btn ui-inline-action-btn-danger mt-4 w-full justify-center"
+                  >
+                    Cancel
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block">
+            <table className="ui-data-table">
+              <tbody>
+                {pendingInvites.map((inv) => (
+                    <tr key={inv.id}>
+                      <td>{inv.email}</td>
+                      <td>
+                        <Badge tone={getRoleTone(inv.orgRole)} className="capitalize">
+                        {inv.orgRole}
+                        </Badge>
+                    </td>
+                    <td className="text-[var(--text-muted)] text-xs">
+                      {inv.acceptedAt
+                        ? `Accepted ${new Date(inv.acceptedAt).toLocaleDateString()}`
+                        : `Expires ${new Date(inv.expiresAt).toLocaleDateString()}`}
+                    </td>
+                    <td className="text-right">
+                      {!inv.acceptedAt && (
+                        <button
+                          onClick={() => revokeInviteMut.mutate(inv.id)}
+                          disabled={revokeInviteMut.isPending}
+                          className="ui-inline-action-btn ui-inline-action-btn-danger"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -390,7 +422,7 @@ export default function OrgDetailPage() {
               </p>
             </div>
             {/* Set new limit */}
-            <div className="flex gap-3 items-end">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
               <div className="flex-1">
                 <label className="block text-xs text-[var(--text-muted)] mb-1">
                   New limit (e.g. 50 GB, 200 GB)
@@ -409,7 +441,7 @@ export default function OrgDetailPage() {
                   quotaMut.mutate(bytes);
                 }}
                 disabled={!quotaInput || quotaMut.isPending}
-                className="btn-primary whitespace-nowrap"
+                className="btn-primary whitespace-nowrap w-full sm:w-auto"
               >
                 {quotaMut.isPending ? 'Saving…' : 'Update Quota'}
               </button>
@@ -431,38 +463,76 @@ export default function OrgDetailPage() {
         {members.length === 0 ? (
           <p className="px-5 py-6 text-sm text-[var(--text-muted)]">No members yet.</p>
         ) : (
-          <table className="ui-data-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th>Joined</th>
-              </tr>
-            </thead>
-            <tbody>
+          <>
+            <div className="space-y-3 p-3 md:hidden">
               {members.map((m) => (
-                <tr key={m.id}>
-                  <td className="font-medium">{m.name || '—'}</td>
-                  <td className="text-[var(--text-muted)]">{m.email}</td>
-                  <td>
-                    <Badge tone={getRoleTone(m.orgRole)} className="capitalize">
-                      {m.orgRole}
-                    </Badge>
-                  </td>
-                  <td>
-                    <Badge tone={getMemberStatusTone(m.status)} className="capitalize">
-                      {m.status}
-                    </Badge>
-                  </td>
-                  <td className="text-[var(--text-muted)]">
-                    {new Date(m.createdAt).toLocaleDateString()}
-                  </td>
-                </tr>
+                <div
+                  key={m.id}
+                  className="rounded-2xl border p-4"
+                  style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
+                >
+                  <p className="font-medium break-words">{m.name || '—'}</p>
+                  <p className="mt-1 break-all text-sm text-[var(--text-muted)]">{m.email}</p>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Role</p>
+                      <div className="mt-1">
+                        <Badge tone={getRoleTone(m.orgRole)} className="capitalize">
+                          {m.orgRole}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Status</p>
+                      <div className="mt-1">
+                        <Badge tone={getMemberStatusTone(m.status)} className="capitalize">
+                          {m.status}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Joined</p>
+                      <p className="mt-1 text-[var(--text-muted)]">{new Date(m.createdAt).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+            <div className="hidden md:block">
+              <table className="ui-data-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Joined</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {members.map((m) => (
+                    <tr key={m.id}>
+                      <td className="font-medium">{m.name || '—'}</td>
+                      <td className="text-[var(--text-muted)]">{m.email}</td>
+                      <td>
+                        <Badge tone={getRoleTone(m.orgRole)} className="capitalize">
+                          {m.orgRole}
+                        </Badge>
+                      </td>
+                      <td>
+                        <Badge tone={getMemberStatusTone(m.status)} className="capitalize">
+                          {m.status}
+                        </Badge>
+                      </td>
+                      <td className="text-[var(--text-muted)]">
+                        {new Date(m.createdAt).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 

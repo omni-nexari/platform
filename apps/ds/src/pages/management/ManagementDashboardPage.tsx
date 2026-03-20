@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { Plus, Building2, Users, Layers, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { z } from 'zod';
 import { saApi, useSAStore } from '../../lib/superadmin-auth.js';
+import type { PortalAnalyticsResponse } from '../../lib/portal-analytics.js';
 import {
   Badge,
   Modal,
@@ -17,13 +18,6 @@ import {
   ModalSecondaryButton,
   Skeleton,
 } from '../../components/UiPrimitives.js';
-
-// ── Types ────────────────────────────────────────────────────────────────────
-interface SAAnalytics {
-  totalOrgs: number;
-  suspendedOrgs: number;
-  totalUsers: number;
-}
 
 interface CompanyRow {
   id: string;
@@ -89,7 +83,7 @@ export default function ManagementDashboardPage() {
 
   const { data: analytics, isLoading: analyticsLoading } = useQuery({
     queryKey: ['mca-analytics'],
-    queryFn: () => saApi.get<SAAnalytics>('/superadmin/analytics'),
+    queryFn: () => saApi.get<PortalAnalyticsResponse>('/superadmin/analytics'),
   });
 
   const inviteForm = useForm<InviteClientData>({ resolver: zodResolver(InviteClientSchema) });
@@ -107,13 +101,15 @@ export default function ManagementDashboardPage() {
   });
 
   const { errors: inviteErrors } = inviteForm.formState;
+  const summary = analytics?.summary;
+  const activeAlerts = analytics?.alerts ?? [];
 
   return (
     <>
-      <div className="p-8 max-w-5xl mx-auto space-y-8">
+      <div className="mx-auto max-w-5xl space-y-8 p-4 sm:p-6 lg:p-8">
         {/* Company header card */}
         <div
-          className="rounded-xl border p-6 flex items-center gap-5"
+          className="rounded-xl border p-5 sm:p-6 flex flex-col items-start gap-5 sm:flex-row sm:items-center"
           style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
         >
           <div className="w-12 h-12 rounded-xl bg-[var(--blue)]/10 flex items-center justify-center flex-shrink-0">
@@ -140,7 +136,7 @@ export default function ManagementDashboardPage() {
           </div>
           <button
             onClick={() => setShowInvite(true)}
-            className="workspace-page-action flex-shrink-0"
+            className="workspace-page-action w-full justify-center sm:w-auto sm:flex-shrink-0"
           >
             <Plus size={16} />
             Invite New Client
@@ -148,29 +144,41 @@ export default function ManagementDashboardPage() {
         </div>
 
         {/* Stat cards */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <StatCard
             label="Client Organisations"
-            value={analytics?.totalOrgs}
+            value={summary?.totalOrganizations}
             loading={analyticsLoading}
             icon={Building2}
           />
           <StatCard
             label="Suspended"
-            value={analytics?.suspendedOrgs}
+            value={summary?.suspendedOrganizations}
             loading={analyticsLoading}
             icon={AlertTriangle}
           />
           <StatCard
             label="Total Users"
-            value={analytics?.totalUsers}
+            value={summary?.totalUsers}
             loading={analyticsLoading}
             icon={Users}
           />
         </div>
 
+        {!analyticsLoading && activeAlerts.length > 0 && (
+          <div
+            className="rounded-xl border p-4 flex flex-wrap items-center gap-3"
+            style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
+          >
+            <Badge tone="warning">{activeAlerts.length} active alert{activeAlerts.length === 1 ? '' : 's'}</Badge>
+            <p className="text-sm text-[var(--text-muted)]">
+              {activeAlerts.map((alert) => alert.title).join(' · ')}
+            </p>
+          </div>
+        )}
+
         {/* Quick action tiles */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <Link
             to="/management/orgs"
             className="rounded-xl border p-5 flex items-center gap-4 hover:bg-white/5 transition-colors"

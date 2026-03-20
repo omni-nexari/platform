@@ -164,30 +164,56 @@ export default function PlatformAnalyticsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 p-8">
+    <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
       <PageHeader
         icon={<BarChart2 size={22} />}
         title="Platform Analytics"
         subtitle="Cross-platform visibility across resellers, client organizations, usage, and growth."
-        action={(
+      />
+
+      <div
+        className="rounded-2xl border p-4 sm:p-5"
+        style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
+      >
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => setRangeDays(setFrom, setTo, 7)} className="workspace-page-action">Last 7</button>
             <button onClick={() => setRangeDays(setFrom, setTo, 30)} className="workspace-page-action">Last 30</button>
             <button onClick={() => setRangeDays(setFrom, setTo, 90)} className="workspace-page-action">Last 90</button>
-            <input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="input h-9 px-3 text-sm" />
-            <span className="text-sm text-[var(--text-muted)]">to</span>
-            <input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="input h-9 px-3 text-sm" />
-            <select value={compareMode} onChange={(event) => setCompareMode(event.target.value as 'none' | 'previous_period')} className="input h-9 px-3 text-sm">
+          </div>
+          <label className="flex w-full flex-col gap-1 xl:max-w-[240px]">
+            <span className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">Compare</span>
+            <select value={compareMode} onChange={(event) => setCompareMode(event.target.value as 'none' | 'previous_period')} className="input h-10 w-full px-3 text-sm">
               <option value="previous_period">vs previous period</option>
               <option value="none">no comparison</option>
             </select>
-            <button onClick={() => void exportCsv()} className="workspace-page-action">
-              <Download size={14} />
-              Export CSV
-            </button>
+          </label>
+        </div>
+        <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div
+            className="rounded-2xl border p-3 sm:p-4"
+            style={{
+              borderColor: 'color-mix(in srgb, var(--blue) 22%, var(--card-border) 78%)',
+              background: 'linear-gradient(180deg, color-mix(in srgb, var(--blue) 7%, var(--bg2) 93%), var(--bg2))',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.03)',
+            }}
+          >
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">Range</span>
+              <span className="text-xs text-[var(--text-muted)]">Custom analytics window</span>
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
+              <input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="input h-10 w-full px-3 text-sm" />
+              <span className="text-center text-sm text-[var(--text-muted)]">to</span>
+              <input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="input h-10 w-full px-3 text-sm" />
+            </div>
           </div>
-        )}
-      />
+          <button onClick={() => void exportCsv()} className="workspace-page-action w-full justify-center lg:w-auto">
+            <Download size={14} />
+            Export CSV
+          </button>
+        </div>
+      </div>
 
       {data?.comparison ? (
         <div className="rounded-2xl border px-5 py-4 text-sm text-[var(--text-muted)]" style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}>
@@ -312,26 +338,252 @@ export default function PlatformAnalyticsPage() {
               <div className="border-b px-5 py-4" style={{ borderColor: 'var(--card-border)' }}>
                 <p className="text-sm font-semibold">Top Resellers</p>
               </div>
+              <div className="space-y-3 p-3 md:hidden">
+                {data.topResellers.map((entry) => (
+                  <div
+                    key={entry.companyId}
+                    className="rounded-2xl border p-4"
+                    style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
+                  >
+                    <Link to={`/superadmin/companies/${entry.companyId}`} className="font-medium transition-colors hover:text-[var(--blue)]">{entry.name}</Link>
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">{entry.suspendedOrgCount} suspended orgs</p>
+                    <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Organizations</p>
+                        <p className="mt-1 tabular-nums">{entry.orgCount}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Devices</p>
+                        <p className="mt-1 tabular-nums">{entry.deviceCount}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Users</p>
+                        <p className="mt-1 tabular-nums">{entry.userCount}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Storage</p>
+                        <p className="mt-1 tabular-nums">{formatBytes(entry.storageUsedBytes)}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block">
+                <table className="ui-data-table">
+                  <thead>
+                    <tr>
+                      <th>Reseller</th>
+                      <th>Organizations</th>
+                      <th>Devices</th>
+                      <th>Users</th>
+                      <th>Storage</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.topResellers.map((entry) => (
+                      <tr key={entry.companyId}>
+                        <td>
+                          <Link to={`/superadmin/companies/${entry.companyId}`} className="font-medium transition-colors hover:text-[var(--blue)]">{entry.name}</Link>
+                          <p className="text-xs text-[var(--text-muted)]">{entry.suspendedOrgCount} suspended orgs</p>
+                        </td>
+                        <td className="tabular-nums">{entry.orgCount}</td>
+                        <td className="tabular-nums">{entry.deviceCount}</td>
+                        <td className="tabular-nums">{entry.userCount}</td>
+                        <td className="tabular-nums">{formatBytes(entry.storageUsedBytes)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border" style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}>
+            <div className="border-b px-5 py-4" style={{ borderColor: 'var(--card-border)' }}>
+              <p className="text-sm font-semibold">Workspace Drilldowns</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Jump straight into live org workspace views with filters applied.</p>
+            </div>
+            <div className="space-y-3 p-3 md:hidden">
+              {data.topWorkspaces.map((entry) => (
+                <div
+                  key={entry.workspaceId}
+                  className="rounded-2xl border p-4"
+                  style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
+                >
+                  <div className="font-medium">{entry.name}</div>
+                  <p className="text-xs text-[var(--text-muted)]">{entry.slug}</p>
+                  <div className="mt-3">
+                    <Link to={`/superadmin/orgs/${entry.orgId}`} className="font-medium transition-colors hover:text-[var(--blue)]">{entry.orgName}</Link>
+                    <p className="text-xs text-[var(--text-muted)]">{entry.resellerName ?? 'Direct'}</p>
+                  </div>
+                  <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Devices</p>
+                      <p className="mt-1 tabular-nums">{entry.onlineDeviceCount}/{entry.deviceCount}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Content</p>
+                      <p className="mt-1 tabular-nums">{entry.contentCount}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Plays</p>
+                      <p className="mt-1 tabular-nums">{entry.playCount.toLocaleString()}</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <button
+                      type="button"
+                      onClick={() => void openWorkspaceDrilldown(`workspace-${entry.workspaceId}`, entry.orgId, entry.workspaceId, 'workspace')}
+                      disabled={openingDrilldownId === `workspace-${entry.workspaceId}`}
+                      className="workspace-page-action justify-center"
+                    >
+                      Overview
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void openWorkspaceDrilldown(`devices-${entry.workspaceId}`, entry.orgId, entry.workspaceId, 'devices', entry.offlineDeviceCount > 0 ? { status: 'offline' } : undefined)}
+                      disabled={openingDrilldownId === `devices-${entry.workspaceId}`}
+                      className="workspace-page-action justify-center"
+                    >
+                      Devices
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void openWorkspaceDrilldown(`content-${entry.workspaceId}`, entry.orgId, entry.workspaceId, 'content', { sort: 'size' })}
+                      disabled={openingDrilldownId === `content-${entry.workspaceId}`}
+                      className="workspace-page-action justify-center"
+                    >
+                      Content
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="hidden md:block">
               <table className="ui-data-table">
                 <thead>
                   <tr>
+                    <th>Workspace</th>
+                    <th>Organization</th>
+                    <th>Devices</th>
+                    <th>Content</th>
+                    <th>Plays</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.topWorkspaces.map((entry) => (
+                    <tr key={entry.workspaceId}>
+                      <td>
+                        <div className="font-medium">{entry.name}</div>
+                        <p className="text-xs text-[var(--text-muted)]">{entry.slug}</p>
+                      </td>
+                      <td>
+                        <Link to={`/superadmin/orgs/${entry.orgId}`} className="font-medium transition-colors hover:text-[var(--blue)]">{entry.orgName}</Link>
+                        <p className="text-xs text-[var(--text-muted)]">{entry.resellerName ?? 'Direct'}</p>
+                      </td>
+                      <td className="tabular-nums">{entry.onlineDeviceCount}/{entry.deviceCount}</td>
+                      <td className="tabular-nums">{entry.contentCount}</td>
+                      <td className="tabular-nums">{entry.playCount.toLocaleString()}</td>
+                      <td>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void openWorkspaceDrilldown(`workspace-${entry.workspaceId}`, entry.orgId, entry.workspaceId, 'workspace')}
+                            disabled={openingDrilldownId === `workspace-${entry.workspaceId}`}
+                            className="workspace-page-action"
+                          >
+                            Overview
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void openWorkspaceDrilldown(`devices-${entry.workspaceId}`, entry.orgId, entry.workspaceId, 'devices', entry.offlineDeviceCount > 0 ? { status: 'offline' } : undefined)}
+                            disabled={openingDrilldownId === `devices-${entry.workspaceId}`}
+                            className="workspace-page-action"
+                          >
+                            Devices
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void openWorkspaceDrilldown(`content-${entry.workspaceId}`, entry.orgId, entry.workspaceId, 'content', { sort: 'size' })}
+                            disabled={openingDrilldownId === `content-${entry.workspaceId}`}
+                            className="workspace-page-action"
+                          >
+                            Content
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border" style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}>
+            <div className="border-b px-5 py-4" style={{ borderColor: 'var(--card-border)' }}>
+              <p className="text-sm font-semibold">Top Client Organizations</p>
+            </div>
+            <div className="space-y-3 p-3 md:hidden">
+              {data.topOrganizations.map((entry) => (
+                <div
+                  key={entry.orgId}
+                  className="rounded-2xl border p-4"
+                  style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
+                >
+                  <Link to={`/superadmin/orgs/${entry.orgId}`} className="font-medium transition-colors hover:text-[var(--blue)]">{entry.name}</Link>
+                  <p className="text-xs text-[var(--text-muted)]">{entry.slug}</p>
+                  <p className="mt-2 text-sm text-[var(--text-muted)]">{entry.resellerName ?? 'Direct'}</p>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Workspaces</p>
+                      <p className="mt-1 tabular-nums">{entry.workspaceCount}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Devices</p>
+                      <p className="mt-1 tabular-nums">{entry.deviceCount}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Users</p>
+                      <p className="mt-1 tabular-nums">{entry.userCount}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Plays</p>
+                      <p className="mt-1 tabular-nums">{entry.playCount.toLocaleString()}</p>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Storage</p>
+                      <p className="mt-1 tabular-nums">{formatBytes(entry.storageUsedBytes)}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="hidden md:block">
+              <table className="ui-data-table">
+                <thead>
+                  <tr>
+                    <th>Organization</th>
                     <th>Reseller</th>
-                    <th>Organizations</th>
+                    <th>Workspaces</th>
                     <th>Devices</th>
                     <th>Users</th>
+                    <th>Plays</th>
                     <th>Storage</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.topResellers.map((entry) => (
-                    <tr key={entry.companyId}>
+                  {data.topOrganizations.map((entry) => (
+                    <tr key={entry.orgId}>
                       <td>
-                        <Link to={`/superadmin/companies/${entry.companyId}`} className="font-medium transition-colors hover:text-[var(--blue)]">{entry.name}</Link>
-                        <p className="text-xs text-[var(--text-muted)]">{entry.suspendedOrgCount} suspended orgs</p>
+                        <Link to={`/superadmin/orgs/${entry.orgId}`} className="font-medium transition-colors hover:text-[var(--blue)]">{entry.name}</Link>
+                        <p className="text-xs text-[var(--text-muted)]">{entry.slug}</p>
                       </td>
-                      <td className="tabular-nums">{entry.orgCount}</td>
+                      <td>{entry.resellerName ?? 'Direct'}</td>
+                      <td className="tabular-nums">{entry.workspaceCount}</td>
                       <td className="tabular-nums">{entry.deviceCount}</td>
                       <td className="tabular-nums">{entry.userCount}</td>
+                      <td className="tabular-nums">{entry.playCount.toLocaleString()}</td>
                       <td className="tabular-nums">{formatBytes(entry.storageUsedBytes)}</td>
                     </tr>
                   ))}
@@ -342,134 +594,56 @@ export default function PlatformAnalyticsPage() {
 
           <div className="overflow-hidden rounded-2xl border" style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}>
             <div className="border-b px-5 py-4" style={{ borderColor: 'var(--card-border)' }}>
-              <p className="text-sm font-semibold">Workspace Drilldowns</p>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">Jump straight into live org workspace views with filters applied.</p>
-            </div>
-            <table className="ui-data-table">
-              <thead>
-                <tr>
-                  <th>Workspace</th>
-                  <th>Organization</th>
-                  <th>Devices</th>
-                  <th>Content</th>
-                  <th>Plays</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.topWorkspaces.map((entry) => (
-                  <tr key={entry.workspaceId}>
-                    <td>
-                      <div className="font-medium">{entry.name}</div>
-                      <p className="text-xs text-[var(--text-muted)]">{entry.slug}</p>
-                    </td>
-                    <td>
-                      <Link to={`/superadmin/orgs/${entry.orgId}`} className="font-medium transition-colors hover:text-[var(--blue)]">{entry.orgName}</Link>
-                      <p className="text-xs text-[var(--text-muted)]">{entry.resellerName ?? 'Direct'}</p>
-                    </td>
-                    <td className="tabular-nums">{entry.onlineDeviceCount}/{entry.deviceCount}</td>
-                    <td className="tabular-nums">{entry.contentCount}</td>
-                    <td className="tabular-nums">{entry.playCount.toLocaleString()}</td>
-                    <td>
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => void openWorkspaceDrilldown(`workspace-${entry.workspaceId}`, entry.orgId, entry.workspaceId, 'workspace')}
-                          disabled={openingDrilldownId === `workspace-${entry.workspaceId}`}
-                          className="workspace-page-action"
-                        >
-                          Overview
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void openWorkspaceDrilldown(`devices-${entry.workspaceId}`, entry.orgId, entry.workspaceId, 'devices', entry.offlineDeviceCount > 0 ? { status: 'offline' } : undefined)}
-                          disabled={openingDrilldownId === `devices-${entry.workspaceId}`}
-                          className="workspace-page-action"
-                        >
-                          Devices
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void openWorkspaceDrilldown(`content-${entry.workspaceId}`, entry.orgId, entry.workspaceId, 'content', { sort: 'size' })}
-                          disabled={openingDrilldownId === `content-${entry.workspaceId}`}
-                          className="workspace-page-action"
-                        >
-                          Content
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="overflow-hidden rounded-2xl border" style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}>
-            <div className="border-b px-5 py-4" style={{ borderColor: 'var(--card-border)' }}>
-              <p className="text-sm font-semibold">Top Client Organizations</p>
-            </div>
-            <table className="ui-data-table">
-              <thead>
-                <tr>
-                  <th>Organization</th>
-                  <th>Reseller</th>
-                  <th>Workspaces</th>
-                  <th>Devices</th>
-                  <th>Users</th>
-                  <th>Plays</th>
-                  <th>Storage</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.topOrganizations.map((entry) => (
-                  <tr key={entry.orgId}>
-                    <td>
-                      <Link to={`/superadmin/orgs/${entry.orgId}`} className="font-medium transition-colors hover:text-[var(--blue)]">{entry.name}</Link>
-                      <p className="text-xs text-[var(--text-muted)]">{entry.slug}</p>
-                    </td>
-                    <td>{entry.resellerName ?? 'Direct'}</td>
-                    <td className="tabular-nums">{entry.workspaceCount}</td>
-                    <td className="tabular-nums">{entry.deviceCount}</td>
-                    <td className="tabular-nums">{entry.userCount}</td>
-                    <td className="tabular-nums">{entry.playCount.toLocaleString()}</td>
-                    <td className="tabular-nums">{formatBytes(entry.storageUsedBytes)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="overflow-hidden rounded-2xl border" style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}>
-            <div className="border-b px-5 py-4" style={{ borderColor: 'var(--card-border)' }}>
               <p className="text-sm font-semibold">Recent Organizations</p>
             </div>
-            <table className="ui-data-table">
-              <thead>
-                <tr>
-                  <th>Organization</th>
-                  <th>Reseller</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.recentOrganizations.map((entry) => (
-                  <tr key={entry.orgId}>
-                    <td>
-                      <Link to={`/superadmin/orgs/${entry.orgId}`} className="font-medium transition-colors hover:text-[var(--blue)]">{entry.name}</Link>
-                      <p className="text-xs text-[var(--text-muted)]">{entry.slug}</p>
-                    </td>
-                    <td>{entry.resellerName ?? 'Direct'}</td>
-                    <td>
-                      <Badge tone={entry.status === 'active' ? 'success' : 'warning'}>
-                        {entry.status === 'active' ? 'Active' : 'Suspended'}
-                      </Badge>
-                    </td>
-                    <td className="text-[var(--text-muted)]">{new Date(entry.createdAt).toLocaleDateString()}</td>
+            <div className="space-y-3 p-3 md:hidden">
+              {data.recentOrganizations.map((entry) => (
+                <div
+                  key={entry.orgId}
+                  className="rounded-2xl border p-4"
+                  style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
+                >
+                  <Link to={`/superadmin/orgs/${entry.orgId}`} className="font-medium transition-colors hover:text-[var(--blue)]">{entry.name}</Link>
+                  <p className="text-xs text-[var(--text-muted)]">{entry.slug}</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Badge tone={entry.status === 'active' ? 'success' : 'warning'}>
+                      {entry.status === 'active' ? 'Active' : 'Suspended'}
+                    </Badge>
+                    <span className="text-sm text-[var(--text-muted)]">{entry.resellerName ?? 'Direct'}</span>
+                  </div>
+                  <p className="mt-3 text-sm text-[var(--text-muted)]">Created {new Date(entry.createdAt).toLocaleDateString()}</p>
+                </div>
+              ))}
+            </div>
+            <div className="hidden md:block">
+              <table className="ui-data-table">
+                <thead>
+                  <tr>
+                    <th>Organization</th>
+                    <th>Reseller</th>
+                    <th>Status</th>
+                    <th>Created</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {data.recentOrganizations.map((entry) => (
+                    <tr key={entry.orgId}>
+                      <td>
+                        <Link to={`/superadmin/orgs/${entry.orgId}`} className="font-medium transition-colors hover:text-[var(--blue)]">{entry.name}</Link>
+                        <p className="text-xs text-[var(--text-muted)]">{entry.slug}</p>
+                      </td>
+                      <td>{entry.resellerName ?? 'Direct'}</td>
+                      <td>
+                        <Badge tone={entry.status === 'active' ? 'success' : 'warning'}>
+                          {entry.status === 'active' ? 'Active' : 'Suspended'}
+                        </Badge>
+                      </td>
+                      <td className="text-[var(--text-muted)]">{new Date(entry.createdAt).toLocaleDateString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}

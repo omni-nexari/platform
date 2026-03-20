@@ -8,6 +8,7 @@ import { Plus, Building2, Users, Layers } from 'lucide-react';
 import { CreateManagementCompanySchema } from '@signage/shared';
 import type { CreateManagementCompanyInput } from '@signage/shared';
 import { saApi } from '../../lib/superadmin-auth.js';
+import type { PortalAnalyticsResponse } from '../../lib/portal-analytics.js';
 import {
   Badge,
   Modal,
@@ -18,14 +19,6 @@ import {
   ModalSecondaryButton,
   Skeleton,
 } from '../../components/UiPrimitives.js';
-
-// ── shared types ────────────────────────────────────────────────────────────
-interface SAAnalytics {
-  totalOrgs: number;
-  suspendedOrgs: number;
-  totalUsers: number;
-  totalManagementCompanies?: number;
-}
 
 interface CompanyRow {
   id: string;
@@ -77,7 +70,7 @@ function PlatformOwnerView() {
 
   const { data: analytics, isLoading: analyticsLoading } = useQuery({
     queryKey: ['sa-analytics'],
-    queryFn: () => saApi.get<SAAnalytics>('/superadmin/analytics'),
+    queryFn: () => saApi.get<PortalAnalyticsResponse>('/superadmin/analytics'),
   });
 
   const { data: companies = [], isLoading: companiesLoading } = useQuery({
@@ -116,6 +109,8 @@ function PlatformOwnerView() {
   });
 
   const { errors, isSubmitting } = form.formState;
+  const summary = analytics?.summary;
+  const activeAlerts = analytics?.alerts ?? [];
 
   return (
     <>
@@ -138,23 +133,35 @@ function PlatformOwnerView() {
         <div className="grid grid-cols-3 gap-4">
           <StatCard
             label="Resellers"
-            value={analytics?.totalManagementCompanies}
+            value={summary?.totalResellers}
             loading={analyticsLoading}
             icon={Layers}
           />
           <StatCard
             label="Client Organizations"
-            value={analytics?.totalOrgs}
+            value={summary?.totalOrganizations}
             loading={analyticsLoading}
             icon={Building2}
           />
           <StatCard
             label="Total Users"
-            value={analytics?.totalUsers}
+            value={summary?.totalUsers}
             loading={analyticsLoading}
             icon={Users}
           />
         </div>
+
+        {!analyticsLoading && activeAlerts.length > 0 && (
+          <div
+            className="rounded-xl border p-4 flex flex-wrap items-center gap-3"
+            style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
+          >
+            <Badge tone="warning">{activeAlerts.length} active alert{activeAlerts.length === 1 ? '' : 's'}</Badge>
+            <p className="text-sm text-[var(--text-muted)]">
+              {activeAlerts.map((alert) => alert.title).join(' · ')}
+            </p>
+          </div>
+        )}
 
         {/* Companies grid */}
         <div>

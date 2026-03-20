@@ -208,25 +208,27 @@ export default function ManagementBrandingPage() {
 
           <div>
             <label className="ui-label">Logo URL</label>
-            <div className="flex gap-2">
+            <div className="space-y-2">
               <input
                 {...form.register('logoUrl')}
-                className="ui-input flex-1"
+                className="ui-input w-full"
                 placeholder="https://cdn.example.com/brand/logo.svg"
               />
-              <label className="workspace-page-action cursor-pointer">
-                Upload
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) uploadBrandAsset.mutate({ assetType: 'logo', file });
-                    event.currentTarget.value = '';
-                  }}
-                />
-              </label>
+              <div className="flex justify-end">
+                <label className="workspace-page-action inline-flex cursor-pointer items-center justify-center whitespace-nowrap">
+                  Upload
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) uploadBrandAsset.mutate({ assetType: 'logo', file });
+                      event.currentTarget.value = '';
+                    }}
+                  />
+                </label>
+              </div>
             </div>
             {form.formState.errors.logoUrl ? (
               <p className="ui-field-error">{form.formState.errors.logoUrl.message}</p>
@@ -235,25 +237,27 @@ export default function ManagementBrandingPage() {
 
           <div>
             <label className="ui-label">Favicon URL</label>
-            <div className="flex gap-2">
+            <div className="space-y-2">
               <input
                 {...form.register('faviconUrl')}
-                className="ui-input flex-1"
+                className="ui-input w-full"
                 placeholder="https://cdn.example.com/brand/favicon.png"
               />
-              <label className="workspace-page-action cursor-pointer">
-                Upload
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) uploadBrandAsset.mutate({ assetType: 'favicon', file });
-                    event.currentTarget.value = '';
-                  }}
-                />
-              </label>
+              <div className="flex justify-end">
+                <label className="workspace-page-action inline-flex cursor-pointer items-center justify-center whitespace-nowrap">
+                  Upload
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) uploadBrandAsset.mutate({ assetType: 'favicon', file });
+                      event.currentTarget.value = '';
+                    }}
+                  />
+                </label>
+              </div>
             </div>
             {form.formState.errors.faviconUrl ? (
               <p className="ui-field-error">{form.formState.errors.faviconUrl.message}</p>
@@ -346,25 +350,27 @@ export default function ManagementBrandingPage() {
 
           <div>
             <label className="ui-label">Login background art URL</label>
-            <div className="flex gap-2">
+            <div className="space-y-2">
               <input
                 {...form.register('loginBackgroundUrl')}
-                className="ui-input flex-1"
+                className="ui-input w-full"
                 placeholder="https://cdn.example.com/brand/login-background.jpg"
               />
-              <label className="workspace-page-action cursor-pointer">
-                Upload
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) uploadBrandAsset.mutate({ assetType: 'login-background', file });
-                    event.currentTarget.value = '';
-                  }}
-                />
-              </label>
+              <div className="flex justify-end">
+                <label className="workspace-page-action inline-flex cursor-pointer items-center justify-center whitespace-nowrap">
+                  Upload
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) uploadBrandAsset.mutate({ assetType: 'login-background', file });
+                      event.currentTarget.value = '';
+                    }}
+                  />
+                </label>
+              </div>
             </div>
             {form.formState.errors.loginBackgroundUrl ? (
               <p className="ui-field-error">{form.formState.errors.loginBackgroundUrl.message}</p>
