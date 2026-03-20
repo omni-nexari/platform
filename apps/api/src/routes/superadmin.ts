@@ -7,6 +7,7 @@ import {
   users,
   workspaces,
   devices,
+  deviceScreenshots,
   orgStorageQuotas,
   managementCompanies,
   managementCompanyAdmins,
@@ -161,6 +162,14 @@ function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString('hex');
 }
 
+function csvEscape(value: string | number | null | undefined): string {
+  const normalized = value == null ? '' : String(value);
+  if (/[",\n]/.test(normalized)) {
+    return `"${normalized.replace(/"/g, '""')}"`;
+  }
+  return normalized;
+}
+
 function inviteExpiry(days = 7): Date {
   const d = new Date();
   d.setDate(d.getDate() + days);
@@ -185,6 +194,287 @@ function isOwnerCaller(
 }
 
 export async function superAdminRoutes(app: FastifyInstance) {
+
+  async function buildSystemHealthPayload() {
+      const mem = process.memoryUsage();
+      const load = os.loadavg();
+      const cpuUsagePercent = await sampleCpuUsagePercent();
+      const totalMem = os.totalmem();
+      const freeMem = os.freemem();
+      const resolvedStorageRoot = path.resolve(STORAGE_ROOT);
+      const { path: storageStatsPath, exact: storagePathExists } = await findExistingPath(resolvedStorageRoot);
+      const storageStats = await fs.statfs(storageStatsPath);
+      const storageTotal = storageStats.bsize * storageStats.blocks;
+      const storageFree = storageStats.bsize * storageStats.bavail;
+      const storageUsed = Math.max(0, storageTotal - storageFree);
+      const databaseConnection = parseConnectionLabel(process.env['DATABASE_URL']);
+      const redisConnection = parseConnectionLabel(process.env['REDIS_URL']);
+
+      const postgresStartedAt = Date.now();
+      let postgresError: string | null = null;
+      try {
+        await db.execute(sql`select 1`);
+      } catch (error) {
+        postgresError = error instanceof Error ? error.message : 'Unknown PostgreSQL error';
+      }
+      const postgresLatencyMs = Date.now() - postgresStartedAt;
+
+      const redisUrl = process.env['REDIS_URL'];
+      let redisLatencyMs: number | null = null;
+      let redisError: string | null = null;
+      if (redisUrl) {
+        const redisClient = new Redis(redisUrl, {
+          lazyConnect: true,
+          maxRetriesPerRequest: 0,
+          enableOfflineQueue: false,
+        });
+
+        const redisStartedAt = Date.now();
+        try {
+          await redisClient.connect();
+          await redisClient.ping();
+          redisLatencyMs = Date.now() - redisStartedAt;
+        } catch (error) {
+          redisError = error instanceof Error ? error.message : 'Unknown Redis error';
+        } finally {
+          await redisClient.quit().catch(async () => {
+            await redisClient.disconnect();
+          });
+        }
+      }
+
+      const [orgsRow] = await db
+        .select({ total: count() })
+        .from(organisations)
+        .where(isNull(organisations.deletedAt));
+
+      const [usersRow] = await db
+        .select({ total: count() })
+        .from(users)
+        .where(isNull(users.deletedAt));
+
+      const [workspacesRow] = await db
+        .select({ total: count() })
+        .from(workspaces)
+        .where(isNull(workspaces.deletedAt));
+
+      const [devicesRow] = await db
+        .select({ total: count() })
+        .from(devices)
+        .where(isNull(devices.deletedAt));
+
+      const [managementCompaniesRow] = await db
+        .select({ total: count() })
+        .from(managementCompanies)
+        .where(isNull(managementCompanies.deletedAt));
+
+      const workspaceRows = await db
+        .select({
+          id: workspaces.id,
+          name: workspaces.name,
+          orgId: workspaces.orgId,
+          orgName: organisations.name,
+        })
+        .from(workspaces)
+        .innerJoin(organisations, eq(organisations.id, workspaces.orgId))
+        .where(and(isNull(workspaces.deletedAt), isNull(organisations.deletedAt)));
+
+      const deviceRows = await db
+        .select({
+          id: devices.id,
+          name: devices.name,
+          orgId: devices.orgId,
+          workspaceId: devices.workspaceId,
+          orgName: organisations.name,
+          workspaceName: workspaces.name,
+        })
+        .from(devices)
+        .leftJoin(organisations, eq(organisations.id, devices.orgId))
+        .leftJoin(workspaces, eq(workspaces.id, devices.workspaceId))
+        .where(isNull(devices.deletedAt));
+
+      const managementBrandingRows = await db
+        .select({
+          id: managementCompanies.id,
+          name: managementCompanies.name,
+          slug: managementCompanies.slug,
+        })
+        .from(managementCompanies)
+        .where(isNull(managementCompanies.deletedAt));
+
+      const screenshotMetaRows = await db
+        .select({
+          deviceId: deviceScreenshots.deviceId,
+          screenshotCount: count(deviceScreenshots.id),
+          lastTakenAt: sql<string | null>`max(${deviceScreenshots.takenAt})`,
+        })
+        .from(deviceScreenshots)
+        .groupBy(deviceScreenshots.deviceId);
+      const screenshotMetaByDeviceId = new Map(
+        screenshotMetaRows.map((row) => [row.deviceId, row]),
+      );
+
+      const workspaceUploadUsage = (
+        await Promise.all(
+          workspaceRows.map(async (row) => ({
+            workspaceId: row.id,
+            workspaceName: row.name,
+            orgId: row.orgId,
+            orgName: row.orgName,
+            bytes: await getDirectorySize(path.join(resolvedStorageRoot, row.orgId, row.id)),
+          })),
+        )
+      ).sort((left, right) => right.bytes - left.bytes);
+
+      const screenshotUsage = (
+        await Promise.all(
+          deviceRows.map(async (row) => {
+            const meta = screenshotMetaByDeviceId.get(row.id);
+            return {
+              deviceId: row.id,
+              deviceName: row.name,
+              orgId: row.orgId,
+              workspaceId: row.workspaceId,
+              orgName: row.orgName,
+              workspaceName: row.workspaceName,
+              bytes: await getDirectorySize(path.join(resolvedStorageRoot, row.id)),
+              screenshotCount: Number(meta?.screenshotCount ?? 0),
+              lastScreenshotAt: meta?.lastTakenAt ?? null,
+            };
+          }),
+        )
+      ).sort((left, right) => right.bytes - left.bytes);
+
+      const managementBrandingUsage = (
+        await Promise.all(
+          managementBrandingRows.map(async (row) => ({
+            managementCompanyId: row.id,
+            companyName: row.name,
+            companySlug: row.slug,
+            bytes: await getDirectorySize(path.join(resolvedStorageRoot, 'management_branding', row.id)),
+          })),
+        )
+      ).sort((left, right) => right.bytes - left.bytes);
+
+      const orgStorageTotalsMap = new Map<
+        string,
+        {
+          orgId: string;
+          orgName: string | null;
+          workspaceUploadBytes: number;
+          screenshotBytes: number;
+          screenshotCount: number;
+          totalBytes: number;
+        }
+      >();
+
+      for (const entry of workspaceUploadUsage) {
+        const existing = orgStorageTotalsMap.get(entry.orgId) ?? {
+          orgId: entry.orgId,
+          orgName: entry.orgName,
+          workspaceUploadBytes: 0,
+          screenshotBytes: 0,
+          screenshotCount: 0,
+          totalBytes: 0,
+        };
+        existing.orgName = existing.orgName ?? entry.orgName;
+        existing.workspaceUploadBytes += entry.bytes;
+        existing.totalBytes += entry.bytes;
+        orgStorageTotalsMap.set(entry.orgId, existing);
+      }
+
+      for (const entry of screenshotUsage) {
+        if (!entry.orgId) continue;
+        const existing = orgStorageTotalsMap.get(entry.orgId) ?? {
+          orgId: entry.orgId,
+          orgName: entry.orgName,
+          workspaceUploadBytes: 0,
+          screenshotBytes: 0,
+          screenshotCount: 0,
+          totalBytes: 0,
+        };
+        existing.orgName = existing.orgName ?? entry.orgName;
+        existing.screenshotBytes += entry.bytes;
+        existing.screenshotCount += entry.screenshotCount;
+        existing.totalBytes += entry.bytes;
+        orgStorageTotalsMap.set(entry.orgId, existing);
+      }
+
+      const orgStorageTotals = Array.from(orgStorageTotalsMap.values()).sort(
+        (left, right) => right.totalBytes - left.totalBytes,
+      );
+
+      const totalWorkspaceUploadBytes = workspaceUploadUsage.reduce((sum, entry) => sum + entry.bytes, 0);
+      const totalScreenshotBytes = screenshotUsage.reduce((sum, entry) => sum + entry.bytes, 0);
+      const totalScreenshotCount = screenshotUsage.reduce((sum, entry) => sum + entry.screenshotCount, 0);
+      const totalManagementBrandingBytes = managementBrandingUsage.reduce((sum, entry) => sum + entry.bytes, 0);
+
+      return {
+        process: {
+          heapUsed: mem.heapUsed,
+          heapTotal: mem.heapTotal,
+          rss: mem.rss,
+          external: mem.external,
+          uptime: process.uptime(),
+          nodeVersion: process.version,
+          pid: process.pid,
+        },
+        os: {
+          hostname: os.hostname(),
+          platform: os.platform(),
+          arch: os.arch(),
+          release: os.release(),
+          totalMem,
+          freeMem,
+          usedMem: totalMem - freeMem,
+          cpuUsagePercent,
+          loadAvg1: load[0],
+          loadAvg5: load[1],
+          loadAvg15: load[2],
+          uptime: os.uptime(),
+          cpus: os.cpus().length,
+        },
+        db: {
+          totalOrgs: Number(orgsRow?.total ?? 0),
+          totalUsers: Number(usersRow?.total ?? 0),
+          totalWorkspaces: Number(workspacesRow?.total ?? 0),
+          totalDevices: Number(devicesRow?.total ?? 0),
+          totalManagementCompanies: Number(managementCompaniesRow?.total ?? 0),
+        },
+        storage: {
+          rootPath: resolvedStorageRoot,
+          statsPath: storageStatsPath,
+          exactPathExists: storagePathExists,
+          totalBytes: storageTotal,
+          freeBytes: storageFree,
+          usedBytes: storageUsed,
+          workspaceUploadBytes: totalWorkspaceUploadBytes,
+          screenshotBytes: totalScreenshotBytes,
+          screenshotCount: totalScreenshotCount,
+          managementBrandingBytes: totalManagementBrandingBytes,
+          workspaceUploads: workspaceUploadUsage,
+          screenshotUsage,
+          orgTotals: orgStorageTotals,
+          managementBranding: managementBrandingUsage,
+        },
+        services: {
+          postgres: {
+            ok: postgresError === null,
+            latencyMs: postgresLatencyMs,
+            host: databaseConnection.host,
+            database: databaseConnection.database,
+            error: postgresError,
+          },
+          redis: {
+            configured: Boolean(redisUrl),
+            ok: Boolean(redisUrl) && redisError === null,
+            latencyMs: redisLatencyMs,
+            host: redisConnection.host,
+            error: redisError,
+          },
+        },
+      };
+  }
 
   // ── GET /superadmin/auth/company-assets/:companyId/:fileName  (public) ─────
   app.get('/auth/company-assets/:companyId/:fileName', async (req, reply) => {
@@ -1232,261 +1522,67 @@ export async function superAdminRoutes(app: FastifyInstance) {
     '/system/health',
     { onRequest: [app.authenticatePlatformOwner] },
     async (_req, reply) => {
-      const mem = process.memoryUsage();
-      const load = os.loadavg();
-      const cpuUsagePercent = await sampleCpuUsagePercent();
-      const totalMem = os.totalmem();
-      const freeMem = os.freemem();
-      const resolvedStorageRoot = path.resolve(STORAGE_ROOT);
-      const { path: storageStatsPath, exact: storagePathExists } = await findExistingPath(resolvedStorageRoot);
-      const storageStats = await fs.statfs(storageStatsPath);
-      const storageTotal = storageStats.bsize * storageStats.blocks;
-      const storageFree = storageStats.bsize * storageStats.bavail;
-      const storageUsed = Math.max(0, storageTotal - storageFree);
-      const databaseConnection = parseConnectionLabel(process.env['DATABASE_URL']);
-      const redisConnection = parseConnectionLabel(process.env['REDIS_URL']);
+      return reply.send(await buildSystemHealthPayload());
+    },
+  );
 
-      const postgresStartedAt = Date.now();
-      let postgresError: string | null = null;
-      try {
-        await db.execute(sql`select 1`);
-      } catch (error) {
-        postgresError = error instanceof Error ? error.message : 'Unknown PostgreSQL error';
-      }
-      const postgresLatencyMs = Date.now() - postgresStartedAt;
-
-      const redisUrl = process.env['REDIS_URL'];
-      let redisLatencyMs: number | null = null;
-      let redisError: string | null = null;
-      if (redisUrl) {
-        const redisClient = new Redis(redisUrl, {
-          lazyConnect: true,
-          maxRetriesPerRequest: 0,
-          enableOfflineQueue: false,
-        });
-
-        const redisStartedAt = Date.now();
-        try {
-          await redisClient.connect();
-          await redisClient.ping();
-          redisLatencyMs = Date.now() - redisStartedAt;
-        } catch (error) {
-          redisError = error instanceof Error ? error.message : 'Unknown Redis error';
-        } finally {
-          await redisClient.quit().catch(async () => {
-            await redisClient.disconnect();
-          });
-        }
-      }
-
-      const [orgsRow] = await db
-        .select({ total: count() })
-        .from(organisations)
-        .where(isNull(organisations.deletedAt));
-
-      const [usersRow] = await db
-        .select({ total: count() })
-        .from(users)
-        .where(isNull(users.deletedAt));
-
-      const [workspacesRow] = await db
-        .select({ total: count() })
-        .from(workspaces)
-        .where(isNull(workspaces.deletedAt));
-
-      const [devicesRow] = await db
-        .select({ total: count() })
-        .from(devices)
-        .where(isNull(devices.deletedAt));
-
-      const [managementCompaniesRow] = await db
-        .select({ total: count() })
-        .from(managementCompanies)
-        .where(isNull(managementCompanies.deletedAt));
-
-      const workspaceRows = await db
-        .select({
-          id: workspaces.id,
-          name: workspaces.name,
-          orgId: workspaces.orgId,
-          orgName: organisations.name,
-        })
-        .from(workspaces)
-        .innerJoin(organisations, eq(organisations.id, workspaces.orgId))
-        .where(and(isNull(workspaces.deletedAt), isNull(organisations.deletedAt)));
-
-      const deviceRows = await db
-        .select({
-          id: devices.id,
-          name: devices.name,
-          orgId: devices.orgId,
-          workspaceId: devices.workspaceId,
-          orgName: organisations.name,
-          workspaceName: workspaces.name,
-        })
-        .from(devices)
-        .leftJoin(organisations, eq(organisations.id, devices.orgId))
-        .leftJoin(workspaces, eq(workspaces.id, devices.workspaceId))
-        .where(isNull(devices.deletedAt));
-
-      const managementBrandingRows = await db
-        .select({
-          id: managementCompanies.id,
-          name: managementCompanies.name,
-          slug: managementCompanies.slug,
-        })
-        .from(managementCompanies)
-        .where(isNull(managementCompanies.deletedAt));
-
-      const workspaceUploadUsage = (
-        await Promise.all(
-          workspaceRows.map(async (row) => ({
-            workspaceId: row.id,
-            workspaceName: row.name,
-            orgId: row.orgId,
-            orgName: row.orgName,
-            bytes: await getDirectorySize(path.join(resolvedStorageRoot, row.orgId, row.id)),
-          })),
-        )
-      ).sort((left, right) => right.bytes - left.bytes);
-
-      const screenshotUsage = (
-        await Promise.all(
-          deviceRows.map(async (row) => ({
-            deviceId: row.id,
-            deviceName: row.name,
-            orgId: row.orgId,
-            workspaceId: row.workspaceId,
-            orgName: row.orgName,
-            workspaceName: row.workspaceName,
-            bytes: await getDirectorySize(path.join(resolvedStorageRoot, row.id)),
-          })),
-        )
-      ).sort((left, right) => right.bytes - left.bytes);
-
-      const managementBrandingUsage = (
-        await Promise.all(
-          managementBrandingRows.map(async (row) => ({
-            managementCompanyId: row.id,
-            companyName: row.name,
-            companySlug: row.slug,
-            bytes: await getDirectorySize(path.join(resolvedStorageRoot, 'management_branding', row.id)),
-          })),
-        )
-      ).sort((left, right) => right.bytes - left.bytes);
-
-      const orgStorageTotalsMap = new Map<
-        string,
-        {
+  app.get(
+    '/system/storage-report.csv',
+    { onRequest: [app.authenticatePlatformOwner] },
+    async (_req, reply) => {
+      const report = await buildSystemHealthPayload();
+      const lines = [
+        ['section', 'label', 'sub_label', 'bytes', 'count', 'last_timestamp'],
+        ...report.storage.orgTotals.map((row: {
           orgId: string;
           orgName: string | null;
           workspaceUploadBytes: number;
           screenshotBytes: number;
+          screenshotCount: number;
           totalBytes: number;
-        }
-      >();
+        }) => [
+          'org_total',
+          row.orgName ?? row.orgId,
+          `${row.orgId} | uploads=${row.workspaceUploadBytes} | screenshots=${row.screenshotBytes}`,
+          row.totalBytes,
+          row.screenshotCount,
+          '',
+        ]),
+        ...report.storage.workspaceUploads.map((row) => [
+          'workspace_upload',
+          row.workspaceName,
+          row.orgName ? `${row.orgName} | ${row.workspaceId}` : row.workspaceId,
+          row.bytes,
+          '',
+          '',
+        ]),
+        ...report.storage.screenshotUsage.map((row) => [
+          'device_screenshot',
+          row.deviceName,
+          row.workspaceName
+            ? `${row.orgName ?? ''} | ${row.workspaceName} | ${row.deviceId}`
+            : `${row.orgName ?? ''} | ${row.deviceId}`,
+          row.bytes,
+          row.screenshotCount,
+          row.lastScreenshotAt ?? '',
+        ]),
+        ...report.storage.managementBranding.map((row) => [
+          'management_branding',
+          row.companyName,
+          row.companySlug ? `${row.companySlug} | ${row.managementCompanyId}` : row.managementCompanyId,
+          row.bytes,
+          '',
+          '',
+        ]),
+      ];
 
-      for (const entry of workspaceUploadUsage) {
-        const existing = orgStorageTotalsMap.get(entry.orgId) ?? {
-          orgId: entry.orgId,
-          orgName: entry.orgName,
-          workspaceUploadBytes: 0,
-          screenshotBytes: 0,
-          totalBytes: 0,
-        };
-        existing.orgName = existing.orgName ?? entry.orgName;
-        existing.workspaceUploadBytes += entry.bytes;
-        existing.totalBytes += entry.bytes;
-        orgStorageTotalsMap.set(entry.orgId, existing);
-      }
+      const csv = lines
+        .map((line) => line.map((value: string | number | null | undefined) => csvEscape(value)).join(','))
+        .join('\n');
 
-      for (const entry of screenshotUsage) {
-        if (!entry.orgId) continue;
-        const existing = orgStorageTotalsMap.get(entry.orgId) ?? {
-          orgId: entry.orgId,
-          orgName: entry.orgName,
-          workspaceUploadBytes: 0,
-          screenshotBytes: 0,
-          totalBytes: 0,
-        };
-        existing.orgName = existing.orgName ?? entry.orgName;
-        existing.screenshotBytes += entry.bytes;
-        existing.totalBytes += entry.bytes;
-        orgStorageTotalsMap.set(entry.orgId, existing);
-      }
-
-      const orgStorageTotals = Array.from(orgStorageTotalsMap.values()).sort(
-        (left, right) => right.totalBytes - left.totalBytes,
-      );
-
-      const totalWorkspaceUploadBytes = workspaceUploadUsage.reduce((sum, entry) => sum + entry.bytes, 0);
-      const totalScreenshotBytes = screenshotUsage.reduce((sum, entry) => sum + entry.bytes, 0);
-      const totalManagementBrandingBytes = managementBrandingUsage.reduce((sum, entry) => sum + entry.bytes, 0);
-
-      return reply.send({
-        process: {
-          heapUsed: mem.heapUsed,
-          heapTotal: mem.heapTotal,
-          rss: mem.rss,
-          external: mem.external,
-          uptime: process.uptime(),
-          nodeVersion: process.version,
-          pid: process.pid,
-        },
-        os: {
-          hostname: os.hostname(),
-          platform: os.platform(),
-          arch: os.arch(),
-          release: os.release(),
-          totalMem,
-          freeMem,
-          usedMem: totalMem - freeMem,
-          cpuUsagePercent,
-          loadAvg1: load[0],
-          loadAvg5: load[1],
-          loadAvg15: load[2],
-          uptime: os.uptime(),
-          cpus: os.cpus().length,
-        },
-        db: {
-          totalOrgs: Number(orgsRow?.total ?? 0),
-          totalUsers: Number(usersRow?.total ?? 0),
-          totalWorkspaces: Number(workspacesRow?.total ?? 0),
-          totalDevices: Number(devicesRow?.total ?? 0),
-          totalManagementCompanies: Number(managementCompaniesRow?.total ?? 0),
-        },
-        storage: {
-          rootPath: resolvedStorageRoot,
-          statsPath: storageStatsPath,
-          exactPathExists: storagePathExists,
-          totalBytes: storageTotal,
-          freeBytes: storageFree,
-          usedBytes: storageUsed,
-          workspaceUploadBytes: totalWorkspaceUploadBytes,
-          screenshotBytes: totalScreenshotBytes,
-          managementBrandingBytes: totalManagementBrandingBytes,
-          workspaceUploads: workspaceUploadUsage,
-          screenshotUsage,
-          orgTotals: orgStorageTotals,
-          managementBranding: managementBrandingUsage,
-        },
-        services: {
-          postgres: {
-            ok: postgresError === null,
-            latencyMs: postgresLatencyMs,
-            host: databaseConnection.host,
-            database: databaseConnection.database,
-            error: postgresError,
-          },
-          redis: {
-            configured: Boolean(redisUrl),
-            ok: Boolean(redisUrl) && redisError === null,
-            latencyMs: redisLatencyMs,
-            host: redisConnection.host,
-            error: redisError,
-          },
-        },
-      });
+      reply.header('content-type', 'text/csv; charset=utf-8');
+      reply.header('content-disposition', `attachment; filename="system-storage-report-${new Date().toISOString().slice(0, 10)}.csv"`);
+      return reply.send(csv);
     },
   );
 

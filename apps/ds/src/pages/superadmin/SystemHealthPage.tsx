@@ -1,6 +1,8 @@
+import { useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Activity, Cpu, HardDrive, Server, RefreshCw, Database, Wifi, FolderKanban } from 'lucide-react';
+import { Activity, Cpu, HardDrive, Server, RefreshCw, Database, Wifi, FolderKanban, Download } from 'lucide-react';
 import { saApi } from '../../lib/superadmin-auth.js';
+import { useSAStore } from '../../lib/superadmin-auth.js';
 import { Badge, PageHeader, SectionCard, SectionCardBody, SectionCardHeader, Skeleton } from '../../components/UiPrimitives.js';
 
 interface SystemHealth {
@@ -44,6 +46,7 @@ interface SystemHealth {
     usedBytes: number;
     workspaceUploadBytes: number;
     screenshotBytes: number;
+    screenshotCount: number;
     managementBrandingBytes: number;
     workspaceUploads: Array<{
       workspaceId: string;
@@ -60,12 +63,15 @@ interface SystemHealth {
       orgName: string | null;
       workspaceName: string | null;
       bytes: number;
+      screenshotCount: number;
+      lastScreenshotAt: string | null;
     }>;
     orgTotals: Array<{
       orgId: string;
       orgName: string | null;
       workspaceUploadBytes: number;
       screenshotBytes: number;
+      screenshotCount: number;
       totalBytes: number;
     }>;
     managementBranding: Array<{
@@ -116,6 +122,21 @@ function formatUptime(seconds: number): string {
   if (h > 0) parts.push(`${h}h`);
   parts.push(`${m}m`);
   return parts.join(' ');
+}
+
+function formatAgeFromNow(isoString: string | null): string {
+  if (!isoString) return 'Never';
+
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  if (!Number.isFinite(diffMs) || diffMs < 0) return 'Just now';
+
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
 function MetricRow({ label, value }: { label: string; value: string | number }) {
@@ -179,6 +200,7 @@ function UsageBar({ used, total, label }: { used: number; total: number; label: 
 }
 
 export default function SystemHealthPage() {
+  const token = useSAStore((s) => s.accessToken);
   const { data, isLoading, dataUpdatedAt, refetch, isFetching } = useQuery({
     queryKey: ['sa-system-health'],
     queryFn: () => saApi.get<SystemHealth>('/superadmin/system/health'),
@@ -188,6 +210,25 @@ export default function SystemHealthPage() {
   const topWorkspaceRows = data?.storage.workspaceUploads.slice(0, TOP_WORKSPACES_LIMIT) ?? [];
   const hiddenWorkspaceRows = data?.storage.workspaceUploads.slice(TOP_WORKSPACES_LIMIT) ?? [];
   const hiddenWorkspaceBytes = hiddenWorkspaceRows.reduce((sum, row) => sum + row.bytes, 0);
+
+  const exportStorageReport = useCallback(async () => {
+    try {
+      const res = await fetch('/api/superadmin/system/storage-report.csv', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `system-storage-report-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      throw error;
+    }
+  }, [token]);
 
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-8">
@@ -203,14 +244,27 @@ export default function SystemHealthPage() {
           ) : null
         }
         action={
-          <button
-            onClick={() => void refetch()}
-            disabled={isFetching}
-            className="btn-secondary flex items-center gap-2 text-sm"
-          >
-            <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => {
+                void exportStorageReport().catch((error) => {
+                  console.error(error);
+                });
+              }}
+              className="btn-secondary flex items-center gap-2 text-sm"
+            >
+              <Download size={14} />
+              Export Storage CSV
+            </button>
+            <button
+              onClick={() => void refetch()}
+              disabled={isFetching}
+              className="btn-secondary flex items-center gap-2 text-sm"
+            >
+              <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
+              Refresh
+            </button>
+          </div>
         }
       />
 
@@ -345,6 +399,7 @@ export default function SystemHealthPage() {
               <MetricRow label="Exact storage path exists" value={data.storage.exactPathExists ? 'Yes' : 'No'} />
               <MetricRow label="Workspace uploads" value={formatBytes(data.storage.workspaceUploadBytes)} />
               <MetricRow label="Screenshot storage" value={formatBytes(data.storage.screenshotBytes)} />
+              <MetricRow label="Screenshot count" value={data.storage.screenshotCount.toLocaleString()} />
               <MetricRow label="Management branding" value={formatBytes(data.storage.managementBrandingBytes)} />
               <MetricRow label="Free space" value={formatBytes(data.storage.freeBytes)} />
             </SectionCardBody>
@@ -381,9 +436,9 @@ export default function SystemHealthPage() {
                   rows={data.storage.screenshotUsage.map((row) => ({
                     label: row.deviceName,
                     sublabel: row.workspaceName
-                      ? `${row.orgName ?? 'Unknown org'} · ${row.workspaceName} · ${row.deviceId}`
+                      ? `${row.orgName ?? 'Unknown org'} · ${row.workspaceName} · ${row.screenshotCount} shots · ${formatAgeFromNow(row.lastScreenshotAt)} · ${row.deviceId}`
                       : row.orgName
-                        ? `${row.orgName} · ${row.deviceId}`
+                        ? `${row.orgName} · ${row.screenshotCount} shots · ${formatAgeFromNow(row.lastScreenshotAt)} · ${row.deviceId}`
                         : row.deviceId,
                     bytes: row.bytes,
                   }))}
@@ -402,7 +457,7 @@ export default function SystemHealthPage() {
                 <UsageTable
                   rows={data.storage.orgTotals.map((row) => ({
                     label: row.orgName ?? row.orgId,
-                    sublabel: `${formatBytes(row.workspaceUploadBytes)} uploads · ${formatBytes(row.screenshotBytes)} screenshots`,
+                    sublabel: `${formatBytes(row.workspaceUploadBytes)} uploads · ${formatBytes(row.screenshotBytes)} screenshots · ${row.screenshotCount.toLocaleString()} shots`,
                     bytes: row.totalBytes,
                   }))}
                   emptyMessage="No per-org storage usage found."
