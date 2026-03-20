@@ -137,6 +137,7 @@ export default function ManagementLoginPage() {
               <input
                 {...register('email')}
                 type="email"
+                autoComplete="username"
                 placeholder="admin@company.com"
                 className="input w-full"
               />
@@ -150,6 +151,7 @@ export default function ManagementLoginPage() {
               <input
                 {...register('password')}
                 type="password"
+                autoComplete="current-password"
                 placeholder="••••••••"
                 className="input w-full"
               />

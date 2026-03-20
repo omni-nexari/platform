@@ -7,7 +7,7 @@ import {
   Image as ImageIcon, Video, Code2, FileText, Presentation,
   Globe, Film, Tag as TagIcon, Calendar,
 } from 'lucide-react';
-import { api } from '../lib/api.js';
+import { api, buildApiUrl } from '../lib/api.js';
 import { useAuthStore } from '../lib/auth.js';
 import AuthImg from './AuthImg.js';
 import AssignedTagPills, { type AssignedTag } from './AssignedTagPills.js';
@@ -744,7 +744,7 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
     if (!item) return;
     const token = useAuthStore.getState().accessToken;
     try {
-      const res = await fetch(`/api/content/${item.id}/file`, {
+      const res = await fetch(buildApiUrl(`/content/${item.id}/file`), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         credentials: 'include',
       });
@@ -830,7 +830,7 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
               onClick={async () => {
                 if (!item) return;
                 const token = useAuthStore.getState().accessToken;
-                const res = await fetch(`/api/content/${item.id}/file`, {
+                const res = await fetch(buildApiUrl(`/content/${item.id}/file`), {
                   headers: token ? { Authorization: `Bearer ${token}` } : {},
                   credentials: 'include',
                 });

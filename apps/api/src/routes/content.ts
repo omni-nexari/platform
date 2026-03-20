@@ -783,6 +783,12 @@ export async function contentRoutes(app: FastifyInstance) {
     const thumbAbs = path.resolve(STORAGE_ROOT, thumbRel);
 
     try {
+      await fs.access(absPath);
+    } catch {
+      return reply.status(404).send({ error: 'Source file not found on disk' });
+    }
+
+    try {
       if (item.type === 'image') {
         await generateImageThumb(absPath, thumbAbs);
       } else {

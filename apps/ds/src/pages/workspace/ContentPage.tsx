@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
@@ -80,6 +80,9 @@ const TYPE_META: Record<ContentItem['type'], { label: string; color: string; ico
   web_url: { label: 'Web URL', color: 'bg-emerald-500/80', icon: <Globe size={10} /> },
 };
 
+const attemptedThumbnailRegenerationIds = new Set<string>();
+const missingThumbnailSourceIds = new Set<string>();
+
 function formatDuration(s: number) {
   if (s < 60) return `${s.toFixed(1)} s`;
   const m = Math.floor(s / 60), sec = s % 60;
@@ -136,17 +139,25 @@ function Thumb({ item, large = false }: { item: ContentItem; large?: boolean }) 
     return iconMap[item.type];
   };
 
-  const hasThumbnail = (item.type === 'image' || item.type === 'video') && !imgFailed;
+  const hasThumbnail =
+    (item.type === 'image' || item.type === 'video') &&
+    !imgFailed &&
+    !missingThumbnailSourceIds.has(item.id);
 
   async function handleThumbError(status: number) {
     // 404 = no thumbnail generated yet (e.g. uploaded before this feature)
     // Auto-regenerate once, then retry the AuthImg
-    if (status === 404 && !regenerating) {
+    if (status === 404 && !regenerating && !attemptedThumbnailRegenerationIds.has(item.id)) {
+      attemptedThumbnailRegenerationIds.add(item.id);
       setRegenerating(true);
       try {
         await api.post(`/content/${item.id}/regenerate-thumbnail`);
         setThumbRev((r) => r + 1); // triggers AuthImg re-fetch
-      } catch {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (message.includes('Source file not found on disk') || message.includes('"error":"Source file not found on disk"')) {
+          missingThumbnailSourceIds.add(item.id);
+        }
         setImgFailed(true); // regeneration failed too, show placeholder
       } finally {
         setRegenerating(false);
@@ -384,57 +395,36 @@ export default function ContentPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
 
-  const [filterType, setFilterType] = useState<FilterType>((searchParams.get('type') as FilterType | null) ?? 'all');
-  const [selectedTagIds, setSelectedTagIds] = useState<string[]>((searchParams.get('tagIds') ?? '').split(',').map((value) => value.trim()).filter(Boolean));
-  const [sort, setSort] = useState<'created_at' | 'name' | 'size'>((searchParams.get('sort') as 'created_at' | 'name' | 'size' | null) ?? 'created_at');
-  const [view, setView] = useState<ViewMode>((searchParams.get('view') as ViewMode | null) ?? 'grid-lg');
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [page, setPage] = useState(Number(searchParams.get('page') ?? '1') || 1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmDeleteName, setConfirmDeleteName] = useState('');
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
-  const [selectedFolderId, setSelectedFolderId] = useState<'all' | 'root' | string>(searchParams.get('folderId') ?? 'all');
   const [moveFolderOpen, setMoveFolderOpen] = useState(false);
   const [moveFolderId, setMoveFolderId] = useState<string>('root');
 
-  useEffect(() => {
-    const requestedType = (searchParams.get('type') as FilterType | null) ?? 'all';
-    const requestedTagIds = (searchParams.get('tagIds') ?? '').split(',').map((value) => value.trim()).filter(Boolean);
-    const requestedSort = (searchParams.get('sort') as 'created_at' | 'name' | 'size' | null) ?? 'created_at';
-    const requestedView = (searchParams.get('view') as ViewMode | null) ?? 'grid-lg';
-    const requestedPage = Number(searchParams.get('page') ?? '1') || 1;
-    const requestedFolderId = searchParams.get('folderId') ?? 'all';
+  const filterType = (searchParams.get('type') as FilterType | null) ?? 'all';
+  const selectedTagIds = (searchParams.get('tagIds') ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+  const sort = (searchParams.get('sort') as 'created_at' | 'name' | 'size' | null) ?? 'created_at';
+  const view = (searchParams.get('view') as ViewMode | null) ?? 'grid-lg';
+  const page = Math.max(Number(searchParams.get('page') ?? '1') || 1, 1);
+  const selectedFolderId = (searchParams.get('folderId') ?? 'all') as 'all' | 'root' | string;
 
-    if (requestedType !== filterType) setFilterType(requestedType);
-    if (requestedTagIds.join(',') !== selectedTagIds.join(',')) setSelectedTagIds(requestedTagIds);
-    if (requestedSort !== sort) setSort(requestedSort);
-    if (requestedView !== view) setView(requestedView);
-    if (requestedPage !== page) setPage(requestedPage);
-    if (requestedFolderId !== selectedFolderId) setSelectedFolderId(requestedFolderId);
-  }, [filterType, page, searchParams, selectedFolderId, selectedTagIds, sort, view]);
-
-  useEffect(() => {
+  const updateBrowseParams = (updater: (params: URLSearchParams) => void) => {
     const nextParams = new URLSearchParams(searchParams);
-    if (filterType !== 'all') nextParams.set('type', filterType);
-    else nextParams.delete('type');
-    if (selectedTagIds.length > 0) nextParams.set('tagIds', selectedTagIds.join(','));
-    else nextParams.delete('tagIds');
-    if (sort !== 'created_at') nextParams.set('sort', sort);
-    else nextParams.delete('sort');
-    if (view !== 'grid-lg') nextParams.set('view', view);
-    else nextParams.delete('view');
-    if (page > 1) nextParams.set('page', String(page));
-    else nextParams.delete('page');
-    if (selectedFolderId !== 'all') nextParams.set('folderId', selectedFolderId);
-    else nextParams.delete('folderId');
-
+    updater(nextParams);
+    if (nextParams.get('type') === 'all') nextParams.delete('type');
+    if (!nextParams.get('tagIds')) nextParams.delete('tagIds');
+    if (nextParams.get('sort') === 'created_at') nextParams.delete('sort');
+    if (nextParams.get('view') === 'grid-lg') nextParams.delete('view');
+    if (nextParams.get('page') === '1') nextParams.delete('page');
+    if (nextParams.get('folderId') === 'all') nextParams.delete('folderId');
     if (nextParams.toString() !== searchParams.toString()) {
       setSearchParams(nextParams, { replace: true });
     }
-  }, [filterType, page, searchParams, selectedFolderId, selectedTagIds, setSearchParams, sort, view]);
+  };
 
   const currentFilters = {
     filterType,
@@ -523,7 +513,10 @@ export default function ContentPage() {
     return children.map((folder) => (
       <div key={folder.id}>
         <button
-          onClick={() => { setSelectedFolderId(folder.id); setPage(1); }}
+          onClick={() => updateBrowseParams((params) => {
+            params.set('folderId', folder.id);
+            params.set('page', '1');
+          })}
           className={`w-full flex items-center rounded-lg px-3 py-2 text-sm text-left transition-colors ${selectedFolderId === folder.id ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'}`}
           style={{ paddingLeft: `${12 + depth * 16}px` }}
         >
@@ -564,12 +557,14 @@ export default function ContentPage() {
             currentFilters={currentFilters}
             onApplyFilters={(filters) => {
               const next = filters as Partial<typeof currentFilters>;
-              setFilterType(next.filterType === undefined ? 'all' : next.filterType as FilterType);
-              setSelectedTagIds(Array.isArray(next.selectedTagIds) ? next.selectedTagIds.filter((value): value is string => typeof value === 'string') : []);
-              setSort(next.sort === 'name' || next.sort === 'size' ? next.sort : 'created_at');
-              setView(next.view === 'grid-sm' || next.view === 'list' ? next.view : 'grid-lg');
-              setSelectedFolderId(typeof next.selectedFolderId === 'string' ? next.selectedFolderId : 'all');
-              setPage(1);
+              updateBrowseParams((params) => {
+                params.set('type', next.filterType === undefined ? 'all' : next.filterType as FilterType);
+                params.set('tagIds', Array.isArray(next.selectedTagIds) ? next.selectedTagIds.filter((value): value is string => typeof value === 'string').join(',') : '');
+                params.set('sort', next.sort === 'name' || next.sort === 'size' ? next.sort : 'created_at');
+                params.set('view', next.view === 'grid-sm' || next.view === 'list' ? next.view : 'grid-lg');
+                params.set('folderId', typeof next.selectedFolderId === 'string' ? next.selectedFolderId : 'all');
+                params.set('page', '1');
+              });
             }}
           />
         </div>
@@ -591,13 +586,19 @@ export default function ContentPage() {
           </div>
           <div className="space-y-1">
             <button
-              onClick={() => { setSelectedFolderId('all'); setPage(1); }}
+              onClick={() => updateBrowseParams((params) => {
+                params.set('folderId', 'all');
+                params.set('page', '1');
+              })}
               className={`w-full flex items-center rounded-lg px-3 py-2 text-sm text-left transition-colors ${selectedFolderId === 'all' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'}`}
             >
               All Content
             </button>
             <button
-              onClick={() => { setSelectedFolderId('root'); setPage(1); }}
+              onClick={() => updateBrowseParams((params) => {
+                params.set('folderId', 'root');
+                params.set('page', '1');
+              })}
               className={`w-full flex items-center rounded-lg px-3 py-2 text-sm text-left transition-colors ${selectedFolderId === 'root' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'}`}
             >
               Unfiled
@@ -613,7 +614,10 @@ export default function ContentPage() {
               {TYPE_FILTERS.map((f) => (
                 <FilterChip
                   key={f.id}
-                  onClick={() => { setFilterType(f.id); setPage(1); }}
+                  onClick={() => updateBrowseParams((params) => {
+                    params.set('type', f.id);
+                    params.set('page', '1');
+                  })}
                   active={filterType === f.id}
                 >
                   {f.label}
@@ -626,15 +630,19 @@ export default function ContentPage() {
                 workspaceId={wsId}
                 selectedTagIds={selectedTagIds}
                 onTagIdsChange={(ids) => {
-                  setSelectedTagIds(ids);
-                  setPage(1);
+                  updateBrowseParams((params) => {
+                    params.set('tagIds', ids.join(','));
+                    params.set('page', '1');
+                  });
                 }}
               />
             )}
 
             <select
               value={sort}
-              onChange={(e) => setSort(e.target.value as typeof sort)}
+              onChange={(e) => updateBrowseParams((params) => {
+                params.set('sort', e.target.value as typeof sort);
+              })}
               className="input px-3 py-1.5 text-xs text-[var(--text-muted)]"
             >
               <option value="created_at">Date Added</option>
@@ -646,7 +654,9 @@ export default function ContentPage() {
               {([ ['grid-lg', <Grid2X2 size={15} />], ['grid-sm', <Grid3X3 size={15} />], ['list', <List size={15} />] ] as const).map(([mode, icon]) => (
                 <button
                   key={mode}
-                  onClick={() => setView(mode)}
+                  onClick={() => updateBrowseParams((params) => {
+                    params.set('view', mode);
+                  })}
                   className={`ui-icon-toggle ${view === mode ? 'ui-icon-toggle-active' : ''}`}
                 >
                   {icon}
@@ -716,7 +726,9 @@ export default function ContentPage() {
             <div className="flex items-center justify-center gap-2 mt-8">
               <button
                 disabled={page <= 1}
-                onClick={() => setPage((p) => p - 1)}
+                onClick={() => updateBrowseParams((params) => {
+                  params.set('page', String(page - 1));
+                })}
                 className="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-muted)] disabled:opacity-40 hover:text-[var(--text)] transition-colors"
               >
                 Previous
@@ -726,7 +738,9 @@ export default function ContentPage() {
               </span>
               <button
                 disabled={page >= Math.ceil(total / 50)}
-                onClick={() => setPage((p) => p + 1)}
+                onClick={() => updateBrowseParams((params) => {
+                  params.set('page', String(page + 1));
+                })}
                 className="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-muted)] disabled:opacity-40 hover:text-[var(--text)] transition-colors"
               >
                 Next

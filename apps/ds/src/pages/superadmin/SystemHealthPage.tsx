@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, Cpu, HardDrive, Server, RefreshCw, Database, Wifi, FolderKanban, Download } from 'lucide-react';
+import { buildApiUrl } from '../../lib/api.js';
 import { saApi } from '../../lib/superadmin-auth.js';
 import { useSAStore } from '../../lib/superadmin-auth.js';
 import { Badge, PageHeader, SectionCard, SectionCardBody, SectionCardHeader, Skeleton } from '../../components/UiPrimitives.js';
@@ -213,7 +214,7 @@ export default function SystemHealthPage() {
 
   const exportStorageReport = useCallback(async () => {
     try {
-      const res = await fetch('/api/superadmin/system/storage-report.csv', {
+      const res = await fetch(buildApiUrl('/superadmin/system/storage-report.csv'), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         credentials: 'include',
       });

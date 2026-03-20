@@ -1,7 +1,7 @@
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router';
 import { useAuthStore } from '../lib/auth.js';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api.js';
+import { api, buildWebSocketUrl } from '../lib/api.js';
 import { useState, useMemo, useEffect } from 'react';
 import { toast } from 'sonner';
 import { useTheme } from '../contexts/ThemeContext.js';
@@ -100,14 +100,14 @@ export default function AppLayout() {
 
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let connectTimer: ReturnType<typeof setTimeout> | null = null;
     let socket: WebSocket | null = null;
 
     const connect = () => {
       if (cancelled) return;
-      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      socket = new WebSocket(
-        `${protocol}://${window.location.host}/api/notifications/ws?token=${encodeURIComponent(accessToken)}`,
-      );
+      const wsUrl = new URL(buildWebSocketUrl('/notifications/ws'));
+      wsUrl.searchParams.set('token', accessToken);
+      socket = new WebSocket(wsUrl.toString());
 
       socket.onmessage = (event) => {
         try {
@@ -131,10 +131,13 @@ export default function AppLayout() {
       };
     };
 
-    connect();
+    // Delay the initial connect so React Strict Mode's dev-only mount/unmount
+    // cycle does not create a noisy "closed before established" warning.
+    connectTimer = setTimeout(connect, 0);
 
     return () => {
       cancelled = true;
+      if (connectTimer) clearTimeout(connectTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       socket?.close();
     };

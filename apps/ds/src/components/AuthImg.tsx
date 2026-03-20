@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../lib/auth.js';
+import { buildApiUrl } from '../lib/api.js';
 
 interface Props {
   /** Content item ID — used to build the /thumbnail URL */
@@ -13,7 +14,7 @@ interface Props {
 }
 
 /**
- * Fetches `/api/content/:itemId/thumbnail` with the Bearer token, converts
+ * Fetches `/content/:itemId/thumbnail` with the Bearer token, converts
  * the response to a blob URL, and renders an <img>.  The blob URL is revoked
  * on unmount to avoid memory leaks.
  */
@@ -27,7 +28,7 @@ export default function AuthImg({ itemId, alt = '', className, onError, revision
     let cancelled = false;
     setSrc(null); // reset while re-fetching
 
-    fetch(`/api/content/${itemId}/thumbnail`, {
+    fetch(buildApiUrl(`/content/${itemId}/thumbnail`), {
       headers: { Authorization: `Bearer ${token ?? ''}` },
       credentials: 'include',
     })

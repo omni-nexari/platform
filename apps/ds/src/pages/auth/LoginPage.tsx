@@ -5,6 +5,7 @@ import { useNavigate, Link } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
 import { useAuthStore } from '../../lib/auth.js';
+import { queryClient } from '../../lib/query-client.js';
 
 const schema = z.object({
   email: z.string().email('Enter a valid email'),
@@ -34,6 +35,16 @@ export default function LoginPage() {
         navigate('/login/2fa');
       } else if ('accessToken' in res) {
         setAuth(res.accessToken, res.user);
+        try {
+          await queryClient.fetchQuery({
+            queryKey: ['me'],
+            queryFn: () => api.get('/auth/me'),
+            staleTime: 30_000,
+            retry: 2,
+          });
+        } catch {
+          // Let the dashboard attempt its own recovery path if bootstrap still races.
+        }
         navigate('/');
       }
     } catch (err) {
@@ -60,6 +71,7 @@ export default function LoginPage() {
             <input
               {...register('email')}
               type="email"
+              autoComplete="username"
               placeholder="you@example.com"
               className="input w-full"
             />
@@ -71,6 +83,7 @@ export default function LoginPage() {
             <input
               {...register('password')}
               type="password"
+              autoComplete="current-password"
               placeholder="••••••••"
               className="input w-full"
             />

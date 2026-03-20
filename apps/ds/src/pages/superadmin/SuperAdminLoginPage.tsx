@@ -55,6 +55,7 @@ export default function SuperAdminLoginPage() {
             <input
               {...register('email')}
               type="email"
+              autoComplete="username"
               placeholder="owner@signage.local"
               className="input w-full"
             />
@@ -68,6 +69,7 @@ export default function SuperAdminLoginPage() {
             <input
               {...register('password')}
               type="password"
+              autoComplete="current-password"
               placeholder="••••••••"
               className="input w-full"
             />

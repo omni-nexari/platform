@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { useEffect } from 'react';
 import { api } from '../../lib/api.js';
 import { useAuthStore } from '../../lib/auth.js';
+import { queryClient } from '../../lib/query-client.js';
 
 const schema = z.object({
   token: z
@@ -38,6 +39,16 @@ export default function TwoFactorPage() {
       );
       sessionStorage.removeItem('2fa_temp');
       setAuth(res.accessToken, res.user);
+      try {
+        await queryClient.fetchQuery({
+          queryKey: ['me'],
+          queryFn: () => api.get('/auth/me'),
+          staleTime: 30_000,
+          retry: 2,
+        });
+      } catch {
+        // Let the dashboard attempt its own recovery path if bootstrap still races.
+      }
       navigate('/');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Invalid code');

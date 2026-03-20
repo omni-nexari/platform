@@ -1,6 +1,46 @@
 import { useAuthStore } from './auth.js';
 
-const BASE = '/api';
+function resolveApiBase() {
+  const host = window.location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1') {
+    return 'http://localhost:3000';
+  }
+  return '/api';
+}
+
+const BASE = resolveApiBase();
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function buildApiUrl(path: string) {
+  return `${BASE}${path}`;
+}
+
+export function buildWebSocketUrl(path: string) {
+  if (BASE.startsWith('http://') || BASE.startsWith('https://')) {
+    const httpUrl = new URL(buildApiUrl(path));
+    httpUrl.protocol = httpUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    return httpUrl.toString();
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}://${window.location.host}${buildApiUrl(path)}`;
+}
+
+async function refreshAccessToken(): Promise<string> {
+  const refreshed = await fetch(buildApiUrl('/auth/refresh'), { method: 'POST', credentials: 'include' });
+  if (!refreshed.ok) {
+    useAuthStore.getState().clearAuth();
+    window.location.href = '/login';
+    throw new Error('Unauthorized');
+  }
+
+  const data = (await refreshed.json()) as { accessToken: string };
+  useAuthStore.getState().setAuth(data.accessToken, useAuthStore.getState().user);
+  return data.accessToken;
+}
 
 type FormRequestOptions = {
   onUploadProgress?: (progress: number | null) => void;
@@ -24,7 +64,7 @@ function performFormRequest(
 ): Promise<FormRequestResult> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${BASE}${path}`);
+    xhr.open('POST', buildApiUrl(path));
     xhr.withCredentials = true;
 
     if (token) {
@@ -51,16 +91,8 @@ async function postFormRequest<T>(
   let result = await performFormRequest(path, form, token, options);
 
   if (result.status === 401) {
-    const refreshed = await fetch(`${BASE}/auth/refresh`, { method: 'POST', credentials: 'include' });
-    if (refreshed.ok) {
-      const data = (await refreshed.json()) as { accessToken: string };
-      useAuthStore.getState().setAuth(data.accessToken, useAuthStore.getState().user);
-      result = await performFormRequest(path, form, data.accessToken, options);
-    } else {
-      useAuthStore.getState().clearAuth();
-      window.location.href = '/login';
-      throw new Error('Unauthorized');
-    }
+    const refreshedAccessToken = await refreshAccessToken();
+    result = await performFormRequest(path, form, refreshedAccessToken, options);
   }
 
   if (result.status < 200 || result.status >= 300) {
@@ -82,22 +114,27 @@ async function request<T>(
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${BASE}${path}`, { ...options, headers, credentials: 'include' });
+  const res = await fetch(buildApiUrl(path), { ...options, headers, credentials: 'include' });
 
-  if (res.status === 401) {
-    // Try token refresh
-    const refreshed = await fetch(`${BASE}/auth/refresh`, { method: 'POST', credentials: 'include' });
-    if (refreshed.ok) {
-      const data = (await refreshed.json()) as { accessToken: string };
-      useAuthStore.getState().setAuth(data.accessToken, useAuthStore.getState().user);
-      headers['Authorization'] = `Bearer ${data.accessToken}`;
-      const retry = await fetch(`${BASE}${path}`, { ...options, headers, credentials: 'include' });
-      if (!retry.ok) throw new Error(await retry.text());
-      return retry.json() as Promise<T>;
-    } else {
-      useAuthStore.getState().clearAuth();
-      window.location.href = '/login';
+  if (path === '/auth/me' && res.status === 404) {
+    await sleep(150);
+    const retryAfterDelay = await fetch(buildApiUrl(path), { ...options, headers, credentials: 'include' });
+    if (retryAfterDelay.ok) {
+      if (retryAfterDelay.status === 204) return undefined as T;
+      return retryAfterDelay.json() as Promise<T>;
     }
+    if (retryAfterDelay.status !== 404 && retryAfterDelay.status !== 401) {
+      throw new Error(await retryAfterDelay.text());
+    }
+  }
+
+  if (res.status === 401 || (path === '/auth/me' && res.status === 404)) {
+    const refreshedAccessToken = await refreshAccessToken();
+    headers['Authorization'] = `Bearer ${refreshedAccessToken}`;
+    const retry = await fetch(buildApiUrl(path), { ...options, headers, credentials: 'include' });
+    if (!retry.ok) throw new Error(await retry.text());
+    if (retry.status === 204) return undefined as T;
+    return retry.json() as Promise<T>;
   }
 
   if (!res.ok) {

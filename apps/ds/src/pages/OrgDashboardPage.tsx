@@ -2,6 +2,7 @@
 import { useNavigate, useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api.js';
+import { useAuthStore } from '../lib/auth.js';
 import { Skeleton } from '../components/UiPrimitives.js';
 import {
   Monitor,
@@ -442,6 +443,7 @@ function ModuleCard({
 
 export default function OrgDashboardPage() {
   const navigate = useNavigate();
+  const accessToken = useAuthStore((s) => s.accessToken);
   const [searchParams, setSearchParams] = useSearchParams();
   const [wsOpen, setWsOpen] = useState(false);
   const [selectedWsId, setSelectedWsId] = useState<string | null>(searchParams.get('workspaceId'));
@@ -449,6 +451,7 @@ export default function OrgDashboardPage() {
   const { data: me } = useQuery<OrgInfo>({
     queryKey: ['me'],
     queryFn: () => api.get('/auth/me'),
+    enabled: !!accessToken,
   });
 
   const { data: workspaces = [] } = useQuery<Workspace[]>({
