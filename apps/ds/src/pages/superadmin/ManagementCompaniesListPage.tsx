@@ -33,6 +33,11 @@ interface CompanyRow {
   orgCount: number;
 }
 
+function getResellerPortalPath(slug: string): string | null {
+  if (!slug || slug.startsWith('pending-')) return null;
+  return `/m/${slug}/login`;
+}
+
 export default function ManagementCompaniesListPage() {
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
@@ -95,6 +100,10 @@ export default function ManagementCompaniesListPage() {
       c.name.toLowerCase().includes(search.toLowerCase()) ||
       c.slug.toLowerCase().includes(search.toLowerCase()),
   );
+  const filteredWithPortal = filtered.map((company) => ({
+    ...company,
+    portalPath: getResellerPortalPath(company.slug),
+  }));
 
   const deleteBlockedReason = 'Remove client orgs before delete';
 
@@ -133,7 +142,7 @@ export default function ManagementCompaniesListPage() {
         ) : (
           <>
             <div className="space-y-3 p-3 md:hidden">
-              {filtered.map((company) => (
+              {filteredWithPortal.map((company) => (
                 <div
                   key={company.id}
                   className="rounded-2xl border p-4"
@@ -148,6 +157,18 @@ export default function ManagementCompaniesListPage() {
                         {company.name}
                       </Link>
                       <p className="mt-0.5 truncate font-mono text-xs text-[var(--text-muted)]">{company.slug}</p>
+                      {company.portalPath ? (
+                        <Link
+                          to={company.portalPath}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-1 block truncate text-xs text-[var(--blue)] hover:underline"
+                        >
+                          {company.portalPath}
+                        </Link>
+                      ) : (
+                        <p className="mt-1 truncate text-xs text-[var(--text-muted)]">Portal link appears after first-time setup</p>
+                      )}
                     </div>
                     <Badge tone={company.suspendedAt ? 'warning' : 'success'}>
                       {company.suspendedAt ? 'Suspended' : 'Active'}
@@ -233,7 +254,7 @@ export default function ManagementCompaniesListPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((company) => (
+                  {filteredWithPortal.map((company) => (
                     <tr key={company.id}>
                       <td>
                         <Link
@@ -243,6 +264,18 @@ export default function ManagementCompaniesListPage() {
                           {company.name}
                         </Link>
                         <p className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">{company.slug}</p>
+                        {company.portalPath ? (
+                          <Link
+                            to={company.portalPath}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-1 block text-xs text-[var(--blue)] hover:underline"
+                          >
+                            {company.portalPath}
+                          </Link>
+                        ) : (
+                          <p className="mt-1 text-xs text-[var(--text-muted)]">Portal link appears after first-time setup</p>
+                        )}
                       </td>
                       <td className="tabular-nums">{company.adminCount}</td>
                       <td className="tabular-nums">{company.orgCount}</td>

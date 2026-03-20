@@ -42,7 +42,7 @@ import {
   findValidClientOrgInvite,
   acceptClientOrgInvite,
 } from '../services/auth.js';
-import { sendPasswordResetEmail } from '../services/email.js';
+import { sendPasswordResetEmail, sendResellerOnboardingConfirmationEmail } from '../services/email.js';
 import { writeAuditLog } from '../services/audit.js';
 
 const REFRESH_COOKIE = 'refresh_token';
@@ -465,6 +465,36 @@ export async function authRoutes(app: FastifyInstance) {
     const updatedCompany = await db.query.managementCompanies.findFirst({
       where: eq(managementCompanies.id, invite.managementCompanyId),
     });
+
+    if (
+      updatedCompany &&
+      updatedCompany.slug &&
+      !updatedCompany.slug.startsWith('pending-') &&
+      result.ownerOrg &&
+      result.ownerUser &&
+      result.ownerWorkspace
+    ) {
+      const appUrl = (process.env['APP_URL'] ?? 'https://ds.chiho.app').replace(/\/+$/, '');
+      const resellerPortalLink = `${appUrl}/m/${updatedCompany.slug}/login`;
+      const dashboardLink = `${appUrl}/login`;
+
+      try {
+        await sendResellerOnboardingConfirmationEmail(invite.email, {
+          recipientName: body.data.name,
+          companyName: updatedCompany.name,
+          resellerPortalLink,
+          dashboardLink,
+          branding: {
+            portalTitle: updatedCompany.portalTitle ?? updatedCompany.name,
+            logoUrl: updatedCompany.logoUrl ?? null,
+            primaryColor: updatedCompany.primaryColor ?? null,
+            accentColor: updatedCompany.accentColor ?? null,
+          },
+        });
+      } catch (err) {
+        req.log.error({ err, managementCompanyId: updatedCompany.id }, 'Failed to send reseller onboarding confirmation email');
+      }
+    }
 
     return reply.status(201).send({
       id: admin.id,

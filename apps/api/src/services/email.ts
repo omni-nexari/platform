@@ -207,3 +207,50 @@ export async function sendPasswordResetEmail(
     text: `Reset your OmniHub Signage password:\n${link}\n\nExpires in 1 hour.`,
   });
 }
+
+export async function sendResellerOnboardingConfirmationEmail(
+  to: string,
+  ctx: {
+    recipientName?: string;
+    companyName: string;
+    resellerPortalLink: string;
+    dashboardLink: string;
+    branding?: InviteEmailBranding;
+  },
+): Promise<void> {
+  const greeting = ctx.recipientName ? `Hi ${ctx.recipientName},` : 'Hi there,';
+
+  const bodyHtml = `
+    <p style="color:#444;line-height:1.6;margin:0 0 16px;">${greeting}</p>
+    <p style="color:#444;line-height:1.6;margin:0 0 20px;">
+      Your reseller account for <strong>${ctx.companyName}</strong> is ready. You can now sign in to both your reseller portal and your client dashboard using the same email and password you just created.
+    </p>
+    <table cellpadding="0" cellspacing="0" style="width:100%;background:#f8f9fc;border-radius:8px;padding:16px;margin-bottom:16px;">
+      <tr><td style="padding:4px 0;">
+        <span style="color:#888;font-size:13px;">Reseller portal</span><br>
+        <a href="${ctx.resellerPortalLink}" style="color:${ctx.branding?.primaryColor ?? '#3a7bff'};word-break:break-all;">${ctx.resellerPortalLink}</a>
+      </td></tr>
+      <tr><td style="padding:12px 0 4px;">
+        <span style="color:#888;font-size:13px;">Client dashboard</span><br>
+        <a href="${ctx.dashboardLink}" style="color:${ctx.branding?.primaryColor ?? '#3a7bff'};word-break:break-all;">${ctx.dashboardLink}</a>
+      </td></tr>
+    </table>
+    <p style="color:#444;line-height:1.6;margin:0;">
+      Save these links for your team. You can manage reseller operations from the reseller portal and access your newly provisioned dashboard organization from the main dashboard login.
+    </p>`;
+
+  const bodyText = `${greeting}\n\nYour reseller account for ${ctx.companyName} is ready.\n\nReseller portal: ${ctx.resellerPortalLink}\nClient dashboard: ${ctx.dashboardLink}\n\nUse the same email and password you just created to sign in to both.`;
+
+  await transporter.sendMail({
+    from: FROM,
+    to,
+    subject: `${ctx.companyName} is ready on OmniHub Signage`,
+    html: card(
+      'Your reseller setup is complete',
+      bodyHtml,
+      { text: 'Open Reseller Portal', href: ctx.resellerPortalLink },
+      ctx.branding,
+    ),
+    text: bodyText,
+  });
+}

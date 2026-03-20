@@ -1,8 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Palette, Sparkles } from 'lucide-react';
+import { ChevronDown, ChevronUp, Palette, Sparkles } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { BrandingFontPreset } from '@signage/shared';
@@ -66,6 +66,7 @@ function normalizeNullable(value: string): string | null {
 export default function ManagementBrandingPage() {
   const user = useSAStore((s) => s.user);
   const updateUser = useSAStore((s) => s.updateUser);
+  const [showBrandingOptions, setShowBrandingOptions] = useState(false);
 
   const form = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -94,7 +95,14 @@ export default function ManagementBrandingPage() {
       bodyFontPreset: user?.companyBodyFontPreset ?? '',
       loginBackgroundUrl: user?.companyLoginBackgroundUrl ?? '',
     });
+    setShowBrandingOptions(false);
   }, [form, user]);
+
+  useEffect(() => {
+    if (Object.keys(form.formState.errors).length > 0) {
+      setShowBrandingOptions(true);
+    }
+  }, [form.formState.errors]);
 
   const saveBranding = useMutation({
     mutationFn: async (values: FormData) => {
@@ -185,12 +193,29 @@ export default function ManagementBrandingPage() {
         This updates the branded login page, management sidebar, browser title, favicon, and all portal accents that use the company theme tokens.
       </Callout>
 
-      <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-        <form
-          onSubmit={form.handleSubmit((values) => saveBranding.mutate(values))}
-          className="rounded-2xl border p-6 space-y-5"
-          style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}
+      <div className="rounded-2xl border p-4 sm:p-6" style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}>
+        <button
+          type="button"
+          onClick={() => setShowBrandingOptions((value) => !value)}
+          className="flex w-full items-start justify-between gap-4 text-left"
         >
+          <div>
+            <p className="text-base font-semibold text-[var(--text)]">Portal Branding</p>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              Logo, title, colors, fonts, and login artwork are optional. Open this section only when you want to customize the portal.
+            </p>
+          </div>
+          <span className="mt-1 inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--card-border)] text-[var(--text-muted)]">
+            {showBrandingOptions ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </span>
+        </button>
+
+        {showBrandingOptions ? (
+          <div className="mt-6 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+            <form
+              onSubmit={form.handleSubmit((values) => saveBranding.mutate(values))}
+              className="space-y-5"
+            >
           <div>
             <label className="ui-label">Portal title</label>
             <input
@@ -406,23 +431,23 @@ export default function ManagementBrandingPage() {
               Clear Form
             </button>
           </div>
-        </form>
+            </form>
 
-        <div
-          className="rounded-2xl border overflow-hidden"
-          style={{
-            background: 'var(--card)',
-            borderColor: 'var(--card-border)',
-            ...getManagementLoginShellStyle({
-              companyPrimaryColor: normalizeNullable(preview.primaryColor),
-              companyAccentColor: normalizeNullable(preview.accentColor),
-              companySidebarBg: normalizeNullable(preview.sidebarBg),
-              companyHeadingFontPreset: normalizeNullable(preview.headingFontPreset) as BrandingFontPreset | null,
-              companyBodyFontPreset: normalizeNullable(preview.bodyFontPreset) as BrandingFontPreset | null,
-              companyLoginBackgroundUrl: normalizeNullable(preview.loginBackgroundUrl),
-            }),
-          }}
-        >
+            <div
+              className="rounded-2xl border overflow-hidden"
+              style={{
+                background: 'var(--card)',
+                borderColor: 'var(--card-border)',
+                ...getManagementLoginShellStyle({
+                  companyPrimaryColor: normalizeNullable(preview.primaryColor),
+                  companyAccentColor: normalizeNullable(preview.accentColor),
+                  companySidebarBg: normalizeNullable(preview.sidebarBg),
+                  companyHeadingFontPreset: normalizeNullable(preview.headingFontPreset) as BrandingFontPreset | null,
+                  companyBodyFontPreset: normalizeNullable(preview.bodyFontPreset) as BrandingFontPreset | null,
+                  companyLoginBackgroundUrl: normalizeNullable(preview.loginBackgroundUrl),
+                }),
+              }}
+            >
           <div className="px-5 py-4 border-b" style={{ borderColor: 'var(--card-border)' }}>
             <p className="text-sm font-semibold">Live Preview</p>
             <p className="text-xs text-[var(--text-muted)] mt-1">
@@ -480,7 +505,9 @@ export default function ManagementBrandingPage() {
               </div>
             </div>
           </div>
-        </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

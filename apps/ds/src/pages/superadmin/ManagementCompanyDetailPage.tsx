@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { CircleHelp, Plus, Mail } from 'lucide-react';
+import { ChevronDown, ChevronUp, CircleHelp, ExternalLink, Plus, Mail } from 'lucide-react';
 import { InviteManagementCompanyAdminSchema } from '@signage/shared';
 import type { InviteManagementCompanyAdminInput } from '@signage/shared';
 import { saApi } from '../../lib/superadmin-auth.js';
@@ -102,6 +102,11 @@ function normalizeNullable(value: string): string | null {
   return trimmed ? trimmed : null;
 }
 
+function getResellerPortalPath(slug: string): string | null {
+  if (!slug || slug.startsWith('pending-')) return null;
+  return `/m/${slug}/login`;
+}
+
 const ROLE_TONES = {
   owner: 'accent',
   admin: 'neutral',
@@ -114,6 +119,7 @@ export default function ManagementCompanyDetailPage() {
   const qc = useQueryClient();
   const [showInvite, setShowInvite] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [showBrandingOptions, setShowBrandingOptions] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['sa-company-admins', id],
@@ -235,6 +241,18 @@ export default function ManagementCompanyDetailPage() {
   });
 
   const deleteBlockedReason = 'Remove client orgs before delete';
+  const resellerPortalPath = company ? getResellerPortalPath(company.slug) : null;
+  const dashboardLoginPath = '/login';
+
+  useEffect(() => {
+    if (Object.keys(brandingForm.formState.errors).length > 0) {
+      setShowBrandingOptions(true);
+    }
+  }, [brandingForm.formState.errors]);
+
+  useEffect(() => {
+    setShowBrandingOptions(false);
+  }, [company?.id]);
 
   if (isLoading) {
     return (
@@ -291,12 +309,54 @@ export default function ManagementCompanyDetailPage() {
         )}
       />
 
+      {company ? (
+        <SectionCard>
+          <SectionCardHeader>Portal Access</SectionCardHeader>
+          <SectionCardBody className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-2xl border p-4" style={{ borderColor: 'var(--card-border)', background: 'var(--bg2)' }}>
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Reseller Portal</p>
+              {resellerPortalPath ? (
+                <a href={resellerPortalPath} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-2 text-sm font-medium text-[var(--blue)] hover:underline">
+                  <span>{resellerPortalPath}</span>
+                  <ExternalLink size={14} />
+                </a>
+              ) : (
+                <p className="mt-2 text-sm text-[var(--text-muted)]">Portal link appears after the reseller completes first-time setup.</p>
+              )}
+            </div>
+            <div className="rounded-2xl border p-4" style={{ borderColor: 'var(--card-border)', background: 'var(--bg2)' }}>
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Client Dashboard Login</p>
+              <a href={dashboardLoginPath} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-2 text-sm font-medium text-[var(--blue)] hover:underline">
+                <span>{dashboardLoginPath}</span>
+                <ExternalLink size={14} />
+              </a>
+            </div>
+          </SectionCardBody>
+        </SectionCard>
+      ) : null}
+
       {company && (
         <SectionCard>
           <SectionCardHeader>Portal Branding</SectionCardHeader>
           <SectionCardBody className="space-y-6">
-            <form onSubmit={brandingForm.handleSubmit((values) => patchBranding.mutate(values))} className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-              <div className="space-y-4">
+            <button
+              type="button"
+              onClick={() => setShowBrandingOptions((value) => !value)}
+              className="flex w-full items-start justify-between gap-4 rounded-2xl border p-4 text-left"
+              style={{ borderColor: 'var(--card-border)', background: 'var(--bg2)' }}
+            >
+              <div>
+                <p className="text-base font-semibold text-[var(--text)]">Optional portal branding</p>
+                <p className="mt-1 text-sm text-[var(--text-muted)]">Keep this collapsed unless the reseller needs custom title, artwork, colors, or fonts.</p>
+              </div>
+              <span className="mt-1 inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--card-border)] text-[var(--text-muted)]">
+                {showBrandingOptions ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </span>
+            </button>
+
+            {showBrandingOptions ? (
+              <form onSubmit={brandingForm.handleSubmit((values) => patchBranding.mutate(values))} className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+                <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium mb-1">Portal title</label>
                   <input {...brandingForm.register('portalTitle')} className="input w-full" placeholder="Acme Media Portal" />
@@ -406,23 +466,23 @@ export default function ManagementCompanyDetailPage() {
                   </button>
                   <span className="text-xs text-[var(--text-muted)]">Support override for branded login and management portal UI.</span>
                 </div>
-              </div>
+                </div>
 
-              <div
-                className="management-portal rounded-2xl border overflow-hidden"
-                style={{
-                  background: 'var(--card)',
-                  borderColor: 'var(--card-border)',
-                  ...getManagementLoginShellStyle({
-                    companyPrimaryColor: normalizeNullable(brandingForm.watch('primaryColor')),
-                    companyAccentColor: normalizeNullable(brandingForm.watch('accentColor')),
-                    companySidebarBg: normalizeNullable(brandingForm.watch('sidebarBg')),
-                    companyHeadingFontPreset: normalizeNullable(brandingForm.watch('headingFontPreset')) as BrandingFontPreset | null,
-                    companyBodyFontPreset: normalizeNullable(brandingForm.watch('bodyFontPreset')) as BrandingFontPreset | null,
-                    companyLoginBackgroundUrl: normalizeNullable(brandingForm.watch('loginBackgroundUrl')),
-                  }),
-                }}
-              >
+                <div
+                  className="management-portal rounded-2xl border overflow-hidden"
+                  style={{
+                    background: 'var(--card)',
+                    borderColor: 'var(--card-border)',
+                    ...getManagementLoginShellStyle({
+                      companyPrimaryColor: normalizeNullable(brandingForm.watch('primaryColor')),
+                      companyAccentColor: normalizeNullable(brandingForm.watch('accentColor')),
+                      companySidebarBg: normalizeNullable(brandingForm.watch('sidebarBg')),
+                      companyHeadingFontPreset: normalizeNullable(brandingForm.watch('headingFontPreset')) as BrandingFontPreset | null,
+                      companyBodyFontPreset: normalizeNullable(brandingForm.watch('bodyFontPreset')) as BrandingFontPreset | null,
+                      companyLoginBackgroundUrl: normalizeNullable(brandingForm.watch('loginBackgroundUrl')),
+                    }),
+                  }}
+                >
                 <div className="p-5 border-b" style={{ borderColor: 'var(--card-border)' }}>
                   <p className="text-sm font-semibold">Preview</p>
                   <p className="text-xs text-[var(--text-muted)] mt-1">What the management login and portal theme will look like.</p>
@@ -449,8 +509,9 @@ export default function ManagementCompanyDetailPage() {
                     <p className="text-sm text-[var(--text-muted)] mt-2">Platform Owner support preview for login artwork, typography, and theme accents.</p>
                   </div>
                 </div>
-              </div>
-            </form>
+                </div>
+              </form>
+            ) : null}
           </SectionCardBody>
         </SectionCard>
       )}
