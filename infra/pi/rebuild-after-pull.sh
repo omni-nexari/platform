@@ -39,3 +39,6 @@ if [[ -n "${STASH_NAME}" ]]; then
 	echo "Review with: git stash list"
 	echo "Reapply with: git stash pop"
 fi
+
+curl http://127.0.0.1:3000/health
+sudo systemctl status signage-api --no-pager
