@@ -57,3 +57,4 @@ systemctl enable nginx
 
 echo "Bootstrap complete."
 echo "Next: copy repository into ${APP_DIR}, create ${ENV_DIR}/api.env, install nginx/systemd files, then deploy."
+echo "Deploy will auto-detect and write FFMPEG_PATH, LIBREOFFICE_PATH, and GHOSTSCRIPT_PATH into ${ENV_DIR}/api.env."

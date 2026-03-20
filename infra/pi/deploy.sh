@@ -9,6 +9,30 @@ DS_HOSTNAME="${DS_HOSTNAME:-ds.chiho.app}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"    # required for certbot; set in env or export before running
 CERTBOT_STAGING="${CERTBOT_STAGING:-0}"
 
+upsert_env_var() {
+  local key="$1"
+  local value="$2"
+
+  if sudo grep -q "^${key}=" "${API_ENV_FILE}"; then
+    sudo sed -i "s|^${key}=.*|${key}=${value}|" "${API_ENV_FILE}"
+  else
+    printf '%s=%s\n' "${key}" "${value}" | sudo tee -a "${API_ENV_FILE}" >/dev/null
+  fi
+}
+
+resolve_binary_path() {
+  local command_name="$1"
+  local fallback="$2"
+  local resolved
+
+  resolved="$(command -v "${command_name}" 2>/dev/null || true)"
+  if [[ -n "${resolved}" ]]; then
+    printf '%s\n' "${resolved}"
+  else
+    printf '%s\n' "${fallback}"
+  fi
+}
+
 if [[ -z "${GIT_REPO}" && ! -d "${APP_DIR}/.git" ]]; then
   echo "GIT_REPO is not set and ${APP_DIR} is not a git repo. Set GIT_REPO to clone from."
   exit 1
@@ -30,6 +54,15 @@ if [[ ! -f "${API_ENV_FILE}" ]]; then
   echo "Missing API env file: ${API_ENV_FILE}"
   exit 1
 fi
+
+FFMPEG_PATH_VALUE="$(resolve_binary_path ffmpeg ffmpeg)"
+LIBREOFFICE_PATH_VALUE="$(resolve_binary_path soffice soffice)"
+GHOSTSCRIPT_PATH_VALUE="$(resolve_binary_path gs gs)"
+
+echo "Configuring media/tool binary paths in ${API_ENV_FILE}"
+upsert_env_var "FFMPEG_PATH" "${FFMPEG_PATH_VALUE}"
+upsert_env_var "LIBREOFFICE_PATH" "${LIBREOFFICE_PATH_VALUE}"
+upsert_env_var "GHOSTSCRIPT_PATH" "${GHOSTSCRIPT_PATH_VALUE}"
 
 cd "${APP_DIR}"
 
