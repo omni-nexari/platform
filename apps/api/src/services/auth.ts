@@ -23,6 +23,14 @@ function refreshExpiry(): Date {
   return d;
 }
 
+function deletedEmailTombstone(email: string, uniquePart: string): string {
+  const [localPart, domainPart] = email.split('@');
+  if (!localPart || !domainPart) {
+    return `${email}--deleted-${uniquePart}`;
+  }
+  return `${localPart}+deleted-${uniquePart}@${domainPart}`;
+}
+
 // ── auth service ─────────────────────────────────────────────────────────────
 
 export async function verifyLogin(
@@ -234,6 +242,28 @@ export async function acceptMgmtAdminInvite(
 ) {
   const normalizedEmail = email.toLowerCase();
   const passwordHash = await argon2.hash(password);
+
+  const existingAdmin = await db.query.managementCompanyAdmins.findFirst({
+    where: eq(managementCompanyAdmins.email, normalizedEmail),
+  });
+
+  if (existingAdmin) {
+    const existingCompany = await db.query.managementCompanies.findFirst({
+      where: eq(managementCompanies.id, existingAdmin.managementCompanyId),
+      columns: { id: true, deletedAt: true },
+    });
+
+    if (existingCompany?.deletedAt) {
+      await db
+        .update(managementCompanyAdmins)
+        .set({
+          email: deletedEmailTombstone(existingAdmin.email, existingAdmin.id),
+          suspendedAt: existingAdmin.suspendedAt ?? new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(managementCompanyAdmins.id, existingAdmin.id));
+    }
+  }
 
   return db.transaction(async (tx) => {
     const [admin] = await tx

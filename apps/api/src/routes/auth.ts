@@ -12,7 +12,7 @@ import {
   orgStorageQuotas,
   managementCompanies,
 } from '@signage/db';
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq, and, isNull, isNotNull } from 'drizzle-orm';
 import { totp } from 'otplib';
 import QRCode from 'qrcode';
 import {
@@ -51,6 +51,10 @@ const BRANDING_ASSET_TYPES = new Set(['logo', 'favicon', 'login-background']);
 
 function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString('hex');
+}
+
+function deletedSlugTombstone(slug: string): string {
+  return `${slug}--deleted-${randomToken(4)}`;
 }
 
 function getBrandAssetExtension(filename: string, mime: string): string {
@@ -381,8 +385,23 @@ export async function authRoutes(app: FastifyInstance) {
     });
 
     if (company?.slug?.startsWith('pending-') && body.data.companyName && body.data.companyPortalUrl) {
+      const deletedSlugMatch = await db.query.managementCompanies.findFirst({
+        where: and(
+          eq(managementCompanies.slug, body.data.companyPortalUrl),
+          isNotNull(managementCompanies.deletedAt),
+        ),
+      });
+      if (deletedSlugMatch && deletedSlugMatch.id !== company.id) {
+        await db
+          .update(managementCompanies)
+          .set({ slug: deletedSlugTombstone(deletedSlugMatch.slug), updatedAt: new Date() })
+          .where(eq(managementCompanies.id, deletedSlugMatch.id));
+      }
       const slugTaken = await db.query.managementCompanies.findFirst({
-        where: eq(managementCompanies.slug, body.data.companyPortalUrl),
+        where: and(
+          eq(managementCompanies.slug, body.data.companyPortalUrl),
+          isNull(managementCompanies.deletedAt),
+        ),
       });
       if (slugTaken && slugTaken.id !== company.id) {
         return reply.status(409).send({ error: 'This portal address is already taken, please choose another' });
@@ -408,6 +427,15 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     if (body.data.createOwnerDashboardAccount && body.data.ownerOrgSlug) {
+      const softDeletedOrgSlugMatch = await db.query.organisations.findFirst({
+        where: and(eq(organisations.slug, body.data.ownerOrgSlug), isNotNull(organisations.deletedAt)),
+      });
+      if (softDeletedOrgSlugMatch && softDeletedOrgSlugMatch.deletedAt) {
+        await db
+          .update(organisations)
+          .set({ slug: deletedSlugTombstone(softDeletedOrgSlugMatch.slug), updatedAt: new Date() })
+          .where(eq(organisations.id, softDeletedOrgSlugMatch.id));
+      }
       const slugTaken = await db.query.organisations.findFirst({
         where: and(eq(organisations.slug, body.data.ownerOrgSlug), isNull(organisations.deletedAt)),
       });
@@ -529,6 +557,15 @@ export async function authRoutes(app: FastifyInstance) {
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
     // Ensure org slug is not already taken
+    const softDeletedOrgSlugMatch = await db.query.organisations.findFirst({
+      where: eq(organisations.slug, body.data.orgSlug),
+    });
+    if (softDeletedOrgSlugMatch && softDeletedOrgSlugMatch.deletedAt) {
+      await db
+        .update(organisations)
+        .set({ slug: deletedSlugTombstone(softDeletedOrgSlugMatch.slug), updatedAt: new Date() })
+        .where(eq(organisations.id, softDeletedOrgSlugMatch.id));
+    }
     const slugTaken = await db.query.organisations.findFirst({
       where: and(eq(organisations.slug, body.data.orgSlug), isNull(organisations.deletedAt)),
     });

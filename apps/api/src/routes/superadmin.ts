@@ -170,6 +170,18 @@ function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString('hex');
 }
 
+function deletedSlugTombstone(slug: string): string {
+  return `${slug}--deleted-${randomToken(4)}`;
+}
+
+function deletedEmailTombstone(email: string, uniquePart: string): string {
+  const [localPart, domainPart] = email.split('@');
+  if (!localPart || !domainPart) {
+    return `${email}--deleted-${uniquePart}`;
+  }
+  return `${localPart}+deleted-${uniquePart}@${domainPart}`;
+}
+
 function csvEscape(value: string | number | null | undefined): string {
   const normalized = value == null ? '' : String(value);
   if (/[",\n]/.test(normalized)) {
@@ -1630,16 +1642,31 @@ export async function superAdminRoutes(app: FastifyInstance) {
       }
 
       const now = new Date();
+      const companyAdmins = await db.query.managementCompanyAdmins.findMany({
+        where: eq(managementCompanyAdmins.managementCompanyId, id),
+        columns: { id: true, email: true, suspendedAt: true },
+      });
 
       await db
         .update(managementCompanies)
-        .set({ deletedAt: now, suspendedAt: company.suspendedAt ?? now, updatedAt: now })
+        .set({
+          slug: deletedSlugTombstone(company.slug),
+          deletedAt: now,
+          suspendedAt: company.suspendedAt ?? now,
+          updatedAt: now,
+        })
         .where(eq(managementCompanies.id, id));
 
-      await db
-        .update(managementCompanyAdmins)
-        .set({ suspendedAt: now, updatedAt: now })
-        .where(eq(managementCompanyAdmins.managementCompanyId, id));
+      for (const admin of companyAdmins) {
+        await db
+          .update(managementCompanyAdmins)
+          .set({
+            email: deletedEmailTombstone(admin.email, admin.id),
+            suspendedAt: admin.suspendedAt ?? now,
+            updatedAt: now,
+          })
+          .where(eq(managementCompanyAdmins.id, admin.id));
+      }
 
       await db
         .update(managementCompanyAdminInvitations)
@@ -2182,7 +2209,11 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
     await db
       .update(organisations)
-      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .set({
+        slug: deletedSlugTombstone(org.slug),
+        deletedAt: new Date(),
+        updatedAt: new Date(),
+      })
       .where(eq(organisations.id, id));
 
     await writeAuditLog({
