@@ -40,6 +40,21 @@ const assetUrl = z.string().refine((value) => {
   }
 }, 'Enter a valid URL');
 
+const optionalPortalTitle = z.preprocess(
+  (value) => (typeof value === 'string' ? value.trim() : value),
+  z.union([z.literal(''), z.string().min(2, 'Portal title must contain at least 2 letters').max(120)]),
+);
+
+const optionalHexColor = z.union([
+  z.literal(''),
+  z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a hex color like #1f6feb'),
+]);
+
+const optionalFontPreset = z.union([
+  z.literal(''),
+  z.enum(['modern', 'editorial', 'geometric', 'mono']),
+]);
+
 // Dynamic schema: require company fields only on first setup
 function makeSchema(isFirstSetup: boolean) {
   const base = z.object({
@@ -54,13 +69,13 @@ function makeSchema(isFirstSetup: boolean) {
       .optional(),
     billingEmail: z.string().email('Enter a valid email').or(z.literal('')).optional(),
     logoUrl: z.union([z.literal(''), assetUrl]).optional(),
-    portalTitle: z.string().max(120).optional(),
+    portalTitle: optionalPortalTitle.optional(),
     faviconUrl: z.union([z.literal(''), assetUrl]).optional(),
-    primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a hex color like #1f6feb').optional(),
-    accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a hex color like #4ff2d1').optional(),
-    sidebarBg: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a hex color like #0b0d11').optional(),
-    headingFontPreset: z.enum(['modern', 'editorial', 'geometric', 'mono']).optional(),
-    bodyFontPreset: z.enum(['modern', 'editorial', 'geometric', 'mono']).optional(),
+    primaryColor: optionalHexColor.optional(),
+    accentColor: optionalHexColor.optional(),
+    sidebarBg: optionalHexColor.optional(),
+    headingFontPreset: optionalFontPreset.optional(),
+    bodyFontPreset: optionalFontPreset.optional(),
     loginBackgroundUrl: z.union([z.literal(''), assetUrl]).optional(),
     createOwnerDashboardAccount: z.boolean().optional(),
     ownerOrgName: z.string().min(2, 'Organization name is required').max(120).optional(),
@@ -104,6 +119,7 @@ export default function AcceptManagementCompanyInvitePage() {
   const navigate = useNavigate();
   const [inviteInfo, setInviteInfo] = useState<InviteInfo | null>(null);
   const [loadError, setLoadError] = useState('');
+  const [showBrandingOptions, setShowBrandingOptions] = useState(false);
 
   useEffect(() => {
     api
@@ -146,6 +162,7 @@ export default function AcceptManagementCompanyInvitePage() {
       ownerWorkspaceName: '',
       ownerWorkspaceTimezone: 'UTC',
     });
+    setShowBrandingOptions(false);
   }, [inviteInfo, reset]);
 
   const [uploadingAsset, setUploadingAsset] = useState<null | 'logo' | 'favicon' | 'login-background'>(null);
@@ -156,6 +173,22 @@ export default function AcceptManagementCompanyInvitePage() {
   const companyName = watch('companyName');
   const companyPortalUrl = watch('companyPortalUrl');
   const createOwnerDashboardAccount = watch('createOwnerDashboardAccount');
+
+  useEffect(() => {
+    if (
+      errors.logoUrl ||
+      errors.portalTitle ||
+      errors.faviconUrl ||
+      errors.primaryColor ||
+      errors.accentColor ||
+      errors.sidebarBg ||
+      errors.headingFontPreset ||
+      errors.bodyFontPreset ||
+      errors.loginBackgroundUrl
+    ) {
+      setShowBrandingOptions(true);
+    }
+  }, [errors.accentColor, errors.bodyFontPreset, errors.faviconUrl, errors.headingFontPreset, errors.loginBackgroundUrl, errors.logoUrl, errors.portalTitle, errors.primaryColor, errors.sidebarBg]);
 
   useEffect(() => {
     if (!inviteInfo?.isFirstSetup || !createOwnerDashboardAccount) return;
@@ -363,146 +396,6 @@ export default function AcceptManagementCompanyInvitePage() {
                 )}
               </div>
 
-              <div>
-                <label className="block text-sm font-medium mb-1">
-                  Logo URL <span className="text-[var(--text-muted)]">(optional)</span>
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    {...register('logoUrl')}
-                    type="url"
-                    placeholder="https://acme.com/logo.png"
-                    className="input flex-1"
-                  />
-                  <label className="btn-secondary cursor-pointer whitespace-nowrap">
-                    {uploadingAsset === 'logo' ? 'Uploading…' : 'Upload'}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      disabled={uploadingAsset !== null}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) void handleAssetUpload('logo', file);
-                        event.currentTarget.value = '';
-                      }}
-                    />
-                  </label>
-                </div>
-                {errors.logoUrl && (
-                  <p className="text-xs text-[var(--danger)] mt-1">{errors.logoUrl.message}</p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">
-                  Portal title <span className="text-[var(--text-muted)]">(optional)</span>
-                </label>
-                <input
-                  {...register('portalTitle')}
-                  placeholder="Acme Media Portal"
-                  className="input w-full"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">
-                  Favicon URL <span className="text-[var(--text-muted)]">(optional)</span>
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    {...register('faviconUrl')}
-                    type="url"
-                    placeholder="https://acme.com/favicon.png"
-                    className="input flex-1"
-                  />
-                  <label className="btn-secondary cursor-pointer whitespace-nowrap">
-                    {uploadingAsset === 'favicon' ? 'Uploading…' : 'Upload'}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      disabled={uploadingAsset !== null}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) void handleAssetUpload('favicon', file);
-                        event.currentTarget.value = '';
-                      }}
-                    />
-                  </label>
-                </div>
-                {errors.faviconUrl && (
-                  <p className="text-xs text-[var(--danger)] mt-1">{errors.faviconUrl.message}</p>
-                )}
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-sm font-medium mb-1">Primary</label>
-                  <input {...register('primaryColor')} placeholder="#3a7bff" className="input w-full" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Accent</label>
-                  <input {...register('accentColor')} placeholder="#4ff2d1" className="input w-full" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Sidebar</label>
-                  <input {...register('sidebarBg')} placeholder="#0b0d11" className="input w-full" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium mb-1">Heading font</label>
-                  <select {...register('headingFontPreset')} className="input w-full">
-                    <option value="">Default</option>
-                    {BRANDING_FONT_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Body font</label>
-                  <select {...register('bodyFontPreset')} className="input w-full">
-                    <option value="">Default</option>
-                    {BRANDING_FONT_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">
-                  Login background art URL <span className="text-[var(--text-muted)]">(optional)</span>
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    {...register('loginBackgroundUrl')}
-                    type="url"
-                    placeholder="https://acme.com/login-background.jpg"
-                    className="input flex-1"
-                  />
-                  <label className="btn-secondary cursor-pointer whitespace-nowrap">
-                    {uploadingAsset === 'login-background' ? 'Uploading…' : 'Upload'}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      disabled={uploadingAsset !== null}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) void handleAssetUpload('login-background', file);
-                        event.currentTarget.value = '';
-                      }}
-                    />
-                  </label>
-                </div>
-                {errors.loginBackgroundUrl && (
-                  <p className="text-xs text-[var(--danger)] mt-1">{errors.loginBackgroundUrl.message}</p>
-                )}
-              </div>
-
               <hr style={{ borderColor: 'var(--card-border)' }} />
               <div className="space-y-3 rounded-2xl border p-4" style={{ borderColor: 'var(--card-border)', background: 'color-mix(in srgb, var(--blue) 6%, var(--bg2) 94%)' }}>
                 <label className="flex items-start gap-3">
@@ -552,6 +445,168 @@ export default function AcceptManagementCompanyInvitePage() {
                         <input {...register('ownerWorkspaceTimezone')} placeholder="UTC" className="input w-full" />
                         {errors.ownerWorkspaceTimezone && <p className="text-xs text-[var(--danger)] mt-1">{errors.ownerWorkspaceTimezone.message}</p>}
                       </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <hr style={{ borderColor: 'var(--card-border)' }} />
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={() => setShowBrandingOptions((value) => !value)}
+                  className="w-full rounded-2xl border px-4 py-3 text-left transition"
+                  style={{ borderColor: 'var(--card-border)', background: 'var(--bg2)' }}
+                >
+                  <span className="block text-sm font-medium text-[var(--text)]">Optional portal branding and theme</span>
+                  <span className="mt-1 block text-xs text-[var(--text-muted)]">
+                    Logo, portal title, colors, fonts, and login artwork can all be skipped now and configured later.
+                  </span>
+                  <span className="mt-2 block text-xs font-semibold text-[var(--blue)]">
+                    {showBrandingOptions ? 'Hide branding options' : 'Show branding options'}
+                  </span>
+                </button>
+
+                {showBrandingOptions ? (
+                  <div className="space-y-4 rounded-2xl border p-4" style={{ borderColor: 'var(--card-border)', background: 'var(--bg2)' }}>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">
+                        Logo URL <span className="text-[var(--text-muted)]">(optional)</span>
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          {...register('logoUrl')}
+                          type="url"
+                          placeholder="https://acme.com/logo.png"
+                          className="input flex-1"
+                        />
+                        <label className="btn-secondary cursor-pointer whitespace-nowrap">
+                          {uploadingAsset === 'logo' ? 'Uploading…' : 'Upload'}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            disabled={uploadingAsset !== null}
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              if (file) void handleAssetUpload('logo', file);
+                              event.currentTarget.value = '';
+                            }}
+                          />
+                        </label>
+                      </div>
+                      {errors.logoUrl && <p className="text-xs text-[var(--danger)] mt-1">{errors.logoUrl.message}</p>}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-1">
+                        Portal title <span className="text-[var(--text-muted)]">(optional)</span>
+                      </label>
+                      <input
+                        {...register('portalTitle')}
+                        placeholder="Acme Media Portal"
+                        className="input w-full"
+                      />
+                      {errors.portalTitle && <p className="text-xs text-[var(--danger)] mt-1">{errors.portalTitle.message}</p>}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-1">
+                        Favicon URL <span className="text-[var(--text-muted)]">(optional)</span>
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          {...register('faviconUrl')}
+                          type="url"
+                          placeholder="https://acme.com/favicon.png"
+                          className="input flex-1"
+                        />
+                        <label className="btn-secondary cursor-pointer whitespace-nowrap">
+                          {uploadingAsset === 'favicon' ? 'Uploading…' : 'Upload'}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            disabled={uploadingAsset !== null}
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              if (file) void handleAssetUpload('favicon', file);
+                              event.currentTarget.value = '';
+                            }}
+                          />
+                        </label>
+                      </div>
+                      {errors.faviconUrl && <p className="text-xs text-[var(--danger)] mt-1">{errors.faviconUrl.message}</p>}
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Primary</label>
+                        <input {...register('primaryColor')} placeholder="#3a7bff" className="input w-full" />
+                        {errors.primaryColor && <p className="text-xs text-[var(--danger)] mt-1">{errors.primaryColor.message}</p>}
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Accent</label>
+                        <input {...register('accentColor')} placeholder="#4ff2d1" className="input w-full" />
+                        {errors.accentColor && <p className="text-xs text-[var(--danger)] mt-1">{errors.accentColor.message}</p>}
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Sidebar</label>
+                        <input {...register('sidebarBg')} placeholder="#0b0d11" className="input w-full" />
+                        {errors.sidebarBg && <p className="text-xs text-[var(--danger)] mt-1">{errors.sidebarBg.message}</p>}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Heading font</label>
+                        <select {...register('headingFontPreset')} className="input w-full">
+                          <option value="">Default</option>
+                          {BRANDING_FONT_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                        {errors.headingFontPreset && <p className="text-xs text-[var(--danger)] mt-1">{errors.headingFontPreset.message}</p>}
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Body font</label>
+                        <select {...register('bodyFontPreset')} className="input w-full">
+                          <option value="">Default</option>
+                          {BRANDING_FONT_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                        {errors.bodyFontPreset && <p className="text-xs text-[var(--danger)] mt-1">{errors.bodyFontPreset.message}</p>}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-1">
+                        Login background art URL <span className="text-[var(--text-muted)]">(optional)</span>
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          {...register('loginBackgroundUrl')}
+                          type="url"
+                          placeholder="https://acme.com/login-background.jpg"
+                          className="input flex-1"
+                        />
+                        <label className="btn-secondary cursor-pointer whitespace-nowrap">
+                          {uploadingAsset === 'login-background' ? 'Uploading…' : 'Upload'}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            disabled={uploadingAsset !== null}
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              if (file) void handleAssetUpload('login-background', file);
+                              event.currentTarget.value = '';
+                            }}
+                          />
+                        </label>
+                      </div>
+                      {errors.loginBackgroundUrl && <p className="text-xs text-[var(--danger)] mt-1">{errors.loginBackgroundUrl.message}</p>}
                     </div>
                   </div>
                 ) : null}

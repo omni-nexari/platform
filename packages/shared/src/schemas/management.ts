@@ -33,16 +33,25 @@ export type ManagementCompany = z.infer<typeof ManagementCompanySchema>;
 
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a 6-digit hex color like #1f6feb');
 
+const optionalPortalTitle = z.preprocess(
+  (value) => (typeof value === 'string' ? value.trim() : value),
+  z.union([z.literal(''), z.string().min(2, 'Portal title must contain at least 2 letters').max(120)]),
+);
+
+const optionalAssetUrl = z.union([z.literal(''), assetUrl]);
+const optionalHexColor = z.union([z.literal(''), hexColor]);
+const optionalFontPreset = z.union([z.literal(''), BrandingFontPresetSchema]);
+
 export const ManagementCompanyBrandingSchema = z.object({
-  portalTitle: z.string().min(2).max(120).nullable().optional(),
-  logoUrl: assetUrl.nullable().optional(),
-  faviconUrl: assetUrl.nullable().optional(),
-  primaryColor: hexColor.nullable().optional(),
-  accentColor: hexColor.nullable().optional(),
-  sidebarBg: hexColor.nullable().optional(),
-  headingFontPreset: BrandingFontPresetSchema.nullable().optional(),
-  bodyFontPreset: BrandingFontPresetSchema.nullable().optional(),
-  loginBackgroundUrl: assetUrl.nullable().optional(),
+  portalTitle: optionalPortalTitle.nullable().optional(),
+  logoUrl: optionalAssetUrl.nullable().optional(),
+  faviconUrl: optionalAssetUrl.nullable().optional(),
+  primaryColor: optionalHexColor.nullable().optional(),
+  accentColor: optionalHexColor.nullable().optional(),
+  sidebarBg: optionalHexColor.nullable().optional(),
+  headingFontPreset: optionalFontPreset.nullable().optional(),
+  bodyFontPreset: optionalFontPreset.nullable().optional(),
+  loginBackgroundUrl: optionalAssetUrl.nullable().optional(),
 });
 export type ManagementCompanyBrandingInput = z.infer<typeof ManagementCompanyBrandingSchema>;
 
@@ -89,15 +98,15 @@ export const AcceptManagementCompanyInviteSchema = z.object({
     .regex(/^[a-z0-9-]+$/, 'Use lowercase letters, numbers and hyphens only')
     .optional(),
   billingEmail: z.string().email().optional().or(z.literal('')),
-  logoUrl: assetUrl.optional().or(z.literal('')),
-  portalTitle: z.string().min(2).max(120).optional(),
-  faviconUrl: assetUrl.optional().or(z.literal('')),
-  primaryColor: hexColor.optional(),
-  accentColor: hexColor.optional(),
-  sidebarBg: hexColor.optional(),
-  headingFontPreset: BrandingFontPresetSchema.optional(),
-  bodyFontPreset: BrandingFontPresetSchema.optional(),
-  loginBackgroundUrl: assetUrl.optional().or(z.literal('')),
+  logoUrl: optionalAssetUrl.optional(),
+  portalTitle: optionalPortalTitle.optional(),
+  faviconUrl: optionalAssetUrl.optional(),
+  primaryColor: optionalHexColor.optional(),
+  accentColor: optionalHexColor.optional(),
+  sidebarBg: optionalHexColor.optional(),
+  headingFontPreset: optionalFontPreset.optional(),
+  bodyFontPreset: optionalFontPreset.optional(),
+  loginBackgroundUrl: optionalAssetUrl.optional(),
   createOwnerDashboardAccount: z.boolean().optional(),
   ownerOrgName: z.string().min(2).max(120).optional().or(z.literal('')),
   ownerOrgSlug: z

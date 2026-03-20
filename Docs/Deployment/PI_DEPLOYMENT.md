@@ -36,6 +36,18 @@ sudo nano /etc/signage/api.env
 ```
 
 Set strong JWT secrets and correct DB/SMTP values.
+For the Pi host, keep these application-level values in place:
+
+```dotenv
+FFMPEG_PATH=ffmpeg
+LIBREOFFICE_PATH=soffice
+GHOSTSCRIPT_PATH=gs
+APP_URL=https://ds.chiho.app
+APP_EXTRA_ORIGINS=http://192.168.1.17,http://localhost:5173
+API_PORT=3000
+```
+
+Set `APP_URL=https://ds.chiho.app` so invite and password-reset emails generate production links instead of localhost URLs.
 
 ## 3.1 TLS / Certbot
 
