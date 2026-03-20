@@ -10,6 +10,7 @@ import {
   getManagementLoginShellStyle,
   uploadInvitedManagementBrandAsset,
 } from '../../lib/management-branding.js';
+import { assetUrlSchema } from '../../lib/url-validation.js';
 import { Skeleton } from '../../components/UiPrimitives.js';
 
 type BrandingFontPreset = 'modern' | 'editorial' | 'geometric' | 'mono';
@@ -29,16 +30,6 @@ interface InviteInfo {
   bodyFontPreset: BrandingFontPreset | null;
   loginBackgroundUrl: string | null;
 }
-
-const assetUrl = z.string().refine((value) => {
-  if (value.startsWith('/')) return true;
-  try {
-    new URL(value);
-    return true;
-  } catch {
-    return false;
-  }
-}, 'Enter a valid URL');
 
 const optionalPortalTitle = z.preprocess(
   (value) => (typeof value === 'string' ? value.trim() : value),
@@ -68,15 +59,15 @@ function makeSchema(isFirstSetup: boolean) {
       .regex(/^[a-z0-9-]+$/, 'Use lowercase letters, numbers and hyphens only')
       .optional(),
     billingEmail: z.string().email('Enter a valid email').or(z.literal('')).optional(),
-    logoUrl: z.union([z.literal(''), assetUrl]).optional(),
+    logoUrl: z.union([z.literal(''), assetUrlSchema]).optional(),
     portalTitle: optionalPortalTitle.optional(),
-    faviconUrl: z.union([z.literal(''), assetUrl]).optional(),
+    faviconUrl: z.union([z.literal(''), assetUrlSchema]).optional(),
     primaryColor: optionalHexColor.optional(),
     accentColor: optionalHexColor.optional(),
     sidebarBg: optionalHexColor.optional(),
     headingFontPreset: optionalFontPreset.optional(),
     bodyFontPreset: optionalFontPreset.optional(),
-    loginBackgroundUrl: z.union([z.literal(''), assetUrl]).optional(),
+    loginBackgroundUrl: z.union([z.literal(''), assetUrlSchema]).optional(),
     createOwnerDashboardAccount: z.boolean().optional(),
     ownerOrgName: z.string().min(2, 'Organization name is required').max(120).optional(),
     ownerOrgSlug: z

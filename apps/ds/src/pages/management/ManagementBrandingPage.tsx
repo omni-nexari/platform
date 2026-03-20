@@ -14,22 +14,14 @@ import {
   getManagementLoginShellStyle,
   uploadManagementBrandAsset,
 } from '../../lib/management-branding.js';
+import { assetUrlSchema } from '../../lib/url-validation.js';
 
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a 6-digit hex color like #1f6feb');
-const assetUrl = z.string().refine((value) => {
-  if (value.startsWith('/')) return true;
-  try {
-    new URL(value);
-    return true;
-  } catch {
-    return false;
-  }
-}, 'Enter a valid URL');
 
 const schema = z.object({
   portalTitle: z.string().max(120, 'Keep the title under 120 characters'),
-  logoUrl: z.union([z.literal(''), assetUrl]),
-  faviconUrl: z.union([z.literal(''), assetUrl]),
+  logoUrl: z.union([z.literal(''), assetUrlSchema]),
+  faviconUrl: z.union([z.literal(''), assetUrlSchema]),
   primaryColor: z.union([z.literal(''), hexColor]),
   accentColor: z.union([z.literal(''), hexColor]),
   sidebarBg: z.union([z.literal(''), hexColor]),
@@ -41,7 +33,7 @@ const schema = z.object({
     z.literal(''),
     z.enum(['modern', 'editorial', 'geometric', 'mono']),
   ]),
-  loginBackgroundUrl: z.union([z.literal(''), assetUrl]),
+  loginBackgroundUrl: z.union([z.literal(''), assetUrlSchema]),
 });
 
 type FormData = z.infer<typeof schema>;
