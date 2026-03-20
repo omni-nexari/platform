@@ -2,8 +2,18 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { Stage, Layer, Rect, Circle, Text, Line, Transformer } from 'react-konva';
 import type Konva from 'konva';
 import { useCanvasStore } from '../../lib/canvasStore.js';
+import { sanitizeCanvasElement } from '../../lib/canvasTypes.js';
 import type { CanvasElement } from '../../lib/canvasTypes.js';
 import type { ReactNode } from 'react';
+
+function finite(value: number, fallback = 0) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function positive(value: number, fallback = 1) {
+  const next = finite(value, fallback);
+  return next > 0 ? next : fallback;
+}
 
 /** Renders the Konva stage with all elements for the current page */
 export default function CanvasStage() {
@@ -147,48 +157,51 @@ export default function CanvasStage() {
   // ── Render element by type ──────────────────────────────────────────────
 
   function renderElement(el: CanvasElement) {
+    const safeElement = sanitizeCanvasElement(el);
+    if (!safeElement) return null;
+
     const common = {
-      id: el.id,
-      x: el.x,
-      y: el.y,
-      rotation: el.rotation,
-      opacity: el.opacity,
-      draggable: !el.locked,
-      visible: el.visible,
-      onClick: (e: Konva.KonvaEventObject<MouseEvent>) => handleElementClick(el.id, e),
-      onTap: (e: Konva.KonvaEventObject<Event>) => handleElementClick(el.id, e as unknown as Konva.KonvaEventObject<MouseEvent>),
-      onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => handleDragEnd(el.id, e),
-      onTransformEnd: (e: Konva.KonvaEventObject<Event>) => handleTransformEnd(el.id, e),
+      id: safeElement.id,
+      x: finite(safeElement.x),
+      y: finite(safeElement.y),
+      rotation: finite(safeElement.rotation),
+      opacity: Math.min(1, Math.max(0, finite(safeElement.opacity, 1))),
+      draggable: !safeElement.locked,
+      visible: safeElement.visible,
+      onClick: (e: Konva.KonvaEventObject<MouseEvent>) => handleElementClick(safeElement.id, e),
+      onTap: (e: Konva.KonvaEventObject<Event>) => handleElementClick(safeElement.id, e as unknown as Konva.KonvaEventObject<MouseEvent>),
+      onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => handleDragEnd(safeElement.id, e),
+      onTransformEnd: (e: Konva.KonvaEventObject<Event>) => handleTransformEnd(safeElement.id, e),
     };
 
-    switch (el.type) {
+    switch (safeElement.type) {
       case 'rect':
         return (
           <Rect
-            key={el.id}
+            key={safeElement.id}
             {...common}
-            width={el.width}
-            height={el.height}
-            fill={el.fill}
-            stroke={el.stroke || ''}
-            strokeWidth={el.strokeWidth}
-            cornerRadius={el.cornerRadius}
+            width={positive(safeElement.width)}
+            height={positive(safeElement.height)}
+            fill={safeElement.fill}
+            stroke={safeElement.stroke || ''}
+            strokeWidth={finite(safeElement.strokeWidth)}
+            cornerRadius={finite(safeElement.cornerRadius)}
           />
         );
 
       case 'circle':
         return (
           <Circle
-            key={el.id}
+            key={safeElement.id}
             {...common}
             // Konva Circle uses radius, so we center it
-            x={el.x + el.width / 2}
-            y={el.y + el.height / 2}
-            radiusX={el.width / 2}
-            radiusY={el.height / 2}
-            fill={el.fill}
-            stroke={el.stroke || ''}
-            strokeWidth={el.strokeWidth}
+            x={finite(safeElement.x) + positive(safeElement.width) / 2}
+            y={finite(safeElement.y) + positive(safeElement.height) / 2}
+            radiusX={positive(safeElement.width) / 2}
+            radiusY={positive(safeElement.height) / 2}
+            fill={safeElement.fill}
+            stroke={safeElement.stroke || ''}
+            strokeWidth={finite(safeElement.strokeWidth)}
             // Override for transformer compatibility
             offsetX={0}
             offsetY={0}
@@ -200,21 +213,21 @@ export default function CanvasStage() {
       case 'text':
         return (
           <Text
-            key={el.id}
+            key={safeElement.id}
             {...common}
-            width={el.width}
-            height={el.height}
-            text={el.text}
-            fontSize={el.fontSize}
-            fontFamily={el.fontFamily}
-            fontStyle={el.fontStyle || 'normal'}
-            textDecoration={el.textDecoration || ''}
-            fill={el.fill}
-            align={el.align}
-            verticalAlign={el.verticalAlign}
-            lineHeight={el.lineHeight}
-            letterSpacing={el.letterSpacing}
-            padding={el.padding}
+            width={positive(safeElement.width)}
+            height={positive(safeElement.height)}
+            text={safeElement.text}
+            fontSize={positive(safeElement.fontSize, 12)}
+            fontFamily={safeElement.fontFamily}
+            fontStyle={safeElement.fontStyle || 'normal'}
+            textDecoration={safeElement.textDecoration || ''}
+            fill={safeElement.fill}
+            align={safeElement.align}
+            verticalAlign={safeElement.verticalAlign}
+            lineHeight={positive(safeElement.lineHeight, 1)}
+            letterSpacing={finite(safeElement.letterSpacing)}
+            padding={Math.max(0, finite(safeElement.padding))}
             wrap="word"
           />
         );
@@ -222,13 +235,13 @@ export default function CanvasStage() {
       case 'line':
         return (
           <Line
-            key={el.id}
+            key={safeElement.id}
             {...common}
-            points={el.points}
-            stroke={el.stroke}
-            strokeWidth={el.strokeWidth}
-            lineCap={el.lineCap}
-            lineJoin={el.lineJoin}
+            points={safeElement.points.map((point) => finite(point))}
+            stroke={safeElement.stroke}
+            strokeWidth={finite(safeElement.strokeWidth)}
+            lineCap={safeElement.lineCap}
+            lineJoin={safeElement.lineJoin}
           />
         );
 

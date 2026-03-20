@@ -6,6 +6,7 @@ import type {
   SceneData,
   CanvasProject,
 } from './canvasTypes.js';
+import { sanitizeCanvasElement, sanitizeCanvasPage, sanitizeCanvasSettings } from './canvasTypes.js';
 
 // ── History (undo / redo) ─────────────────────────────────────────────────
 
@@ -161,15 +162,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   loadProject: (project) => {
     const scene = project.sceneData as SceneData;
-    const settings = project.settings as CanvasSettings;
-    const pages = scene.pages?.length ? scene.pages : [defaultPage];
+    const settings = sanitizeCanvasSettings(project.settings as CanvasSettings);
+    const pages = scene.pages?.length ? scene.pages.map(sanitizeCanvasPage) : [sanitizeCanvasPage(defaultPage)];
     set({
       projectId: project.id,
       projectName: project.name,
       projectVersion: project.version,
       workspaceId: project.workspaceId,
       pages,
-      settings: { ...defaultSettings, ...settings },
+      settings,
       selectedPageId: pages[0]!.id,
       selectedElementIds: [],
       zoom: 1,
@@ -264,15 +265,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   // ── Element actions ─────────────────────────────────────────────────
 
   addElement: (element) => set((s) => {
+    const sanitizedElement = sanitizeCanvasElement(element);
+    if (!sanitizedElement) return s;
     const hist = pushHistory(s);
     return {
       ...hist,
       pages: s.pages.map((p) =>
         p.id === s.selectedPageId
-          ? { ...p, elements: [...p.elements, element] }
+          ? { ...p, elements: [...p.elements, sanitizedElement] }
           : p,
       ),
-      selectedElementIds: [element.id],
+      selectedElementIds: [sanitizedElement.id],
     };
   }),
 
@@ -284,8 +287,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         p.id === s.selectedPageId
           ? {
               ...p,
-              elements: p.elements.map((el): CanvasElement =>
-                el.id === elementId ? ({ ...el, ...changes } as CanvasElement) : el,
+              elements: p.elements.map((el): CanvasElement => {
+                if (el.id !== elementId) return el;
+                return sanitizeCanvasElement({ ...el, ...changes } as CanvasElement) ?? el;
+              },
               ),
             }
           : p,
@@ -393,14 +398,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   // ── Settings ────────────────────────────────────────────────────────
 
   updateSettings: (changes) => set((s) => ({
-    settings: { ...s.settings, ...changes },
+    settings: sanitizeCanvasSettings({ ...s.settings, ...changes }),
     dirty: true,
   })),
 
   // ── Viewport ────────────────────────────────────────────────────────
 
-  setZoom: (zoom) => set({ zoom: Math.max(0.1, Math.min(5, zoom)) }),
-  setStagePosition: (x, y) => set({ stageX: x, stageY: y }),
+  setZoom: (zoom) => set({ zoom: Math.max(0.1, Math.min(5, Number.isFinite(zoom) ? zoom : 1)) }),
+  setStagePosition: (x, y) => set({ stageX: Number.isFinite(x) ? x : 0, stageY: Number.isFinite(y) ? y : 0 }),
 
   // ── Sidebar ─────────────────────────────────────────────────────────
 

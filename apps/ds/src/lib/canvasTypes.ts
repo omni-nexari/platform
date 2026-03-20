@@ -132,6 +132,157 @@ export const SIZE_PRESETS = [
   { label: 'Ultra-wide', width: 3840, height: 1080 },
 ] as const;
 
+function toFiniteNumber(value: unknown, fallback: number) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function isElementType(value: unknown): value is ElementType {
+  return value === 'text'
+    || value === 'rect'
+    || value === 'circle'
+    || value === 'line'
+    || value === 'image'
+    || value === 'group';
+}
+
+function sanitizeBaseElement<T extends BaseElement>(element: T): T {
+  return {
+    ...element,
+    x: toFiniteNumber(element.x, 0),
+    y: toFiniteNumber(element.y, 0),
+    width: Math.max(1, toFiniteNumber(element.width, 1)),
+    height: Math.max(1, toFiniteNumber(element.height, 1)),
+    rotation: toFiniteNumber(element.rotation, 0),
+    opacity: clamp(toFiniteNumber(element.opacity, 1), 0, 1),
+    locked: Boolean(element.locked),
+    visible: element.visible !== false,
+    name: typeof element.name === 'string' && element.name.trim() ? element.name : 'Element',
+  };
+}
+
+export function sanitizeCanvasElement(element: CanvasElement): CanvasElement | null {
+  if (!isElementType(element?.type)) return null;
+
+  switch (element.type) {
+    case 'text': {
+      const base = sanitizeBaseElement(element);
+      return {
+        ...base,
+        text: typeof element.text === 'string' ? element.text : '',
+        fontSize: Math.max(1, toFiniteNumber(element.fontSize, 32)),
+        fontFamily: typeof element.fontFamily === 'string' && element.fontFamily.trim() ? element.fontFamily : 'Inter',
+        fontStyle: element.fontStyle ?? '',
+        textDecoration: element.textDecoration ?? '',
+        fill: typeof element.fill === 'string' && element.fill.trim() ? element.fill : '#ffffff',
+        align: element.align ?? 'left',
+        verticalAlign: element.verticalAlign ?? 'top',
+        lineHeight: Math.max(0.1, toFiniteNumber(element.lineHeight, 1.4)),
+        letterSpacing: toFiniteNumber(element.letterSpacing, 0),
+        padding: Math.max(0, toFiniteNumber(element.padding, 0)),
+      };
+    }
+
+    case 'rect': {
+      const base = sanitizeBaseElement(element);
+      return {
+        ...base,
+        fill: typeof element.fill === 'string' ? element.fill : '#3b82f6',
+        stroke: typeof element.stroke === 'string' ? element.stroke : '',
+        strokeWidth: Math.max(0, toFiniteNumber(element.strokeWidth, 0)),
+        cornerRadius: Math.max(0, toFiniteNumber(element.cornerRadius, 0)),
+      };
+    }
+
+    case 'circle': {
+      const base = sanitizeBaseElement(element);
+      return {
+        ...base,
+        fill: typeof element.fill === 'string' ? element.fill : '#8b5cf6',
+        stroke: typeof element.stroke === 'string' ? element.stroke : '',
+        strokeWidth: Math.max(0, toFiniteNumber(element.strokeWidth, 0)),
+      };
+    }
+
+    case 'line': {
+      const base = sanitizeBaseElement(element);
+      const rawPoints = Array.isArray(element.points) ? element.points : [];
+      const points = rawPoints.map((value) => toFiniteNumber(value, 0));
+      return {
+        ...base,
+        points: points.length >= 4 ? points : [0, 0, Math.max(1, base.width), 0],
+        stroke: typeof element.stroke === 'string' ? element.stroke : '#ffffff',
+        strokeWidth: Math.max(0, toFiniteNumber(element.strokeWidth, 2)),
+        lineCap: element.lineCap ?? 'round',
+        lineJoin: element.lineJoin ?? 'round',
+      };
+    }
+
+    case 'image': {
+      const base = sanitizeBaseElement(element);
+      return {
+        ...base,
+        contentItemId: typeof element.contentItemId === 'string' ? element.contentItemId : null,
+        src: typeof element.src === 'string' ? element.src : '',
+        objectFit: element.objectFit ?? 'cover',
+      };
+    }
+
+    case 'group': {
+      const base = sanitizeBaseElement(element);
+      return {
+        ...base,
+        children: Array.isArray(element.children)
+          ? element.children
+              .map((child) => sanitizeCanvasElement(child))
+              .filter((child): child is CanvasElement => child != null)
+          : [],
+      };
+    }
+  }
+}
+
+export function sanitizeCanvasPage(page: CanvasPage): CanvasPage {
+  return {
+    ...page,
+    title: typeof page.title === 'string' && page.title.trim() ? page.title : 'Untitled Page',
+    duration: Math.max(1, toFiniteNumber(page.duration, 10)),
+    transition: page.transition ?? 'none',
+    elements: Array.isArray(page.elements)
+      ? page.elements
+          .map((element) => sanitizeCanvasElement(element))
+          .filter((element): element is CanvasElement => element != null)
+      : [],
+  };
+}
+
+export function sanitizeCanvasSettings(settings: Partial<CanvasSettings> | null | undefined): CanvasSettings {
+  return {
+    width: Math.max(1, toFiniteNumber(settings?.width, 1920)),
+    height: Math.max(1, toFiniteNumber(settings?.height, 1080)),
+    background: typeof settings?.background === 'string' && settings.background.trim() ? settings.background : '#1a1a2e',
+    gridEnabled: settings?.gridEnabled !== false,
+    gridSize: Math.max(5, toFiniteNumber(settings?.gridSize, 20)),
+    snapToGrid: settings?.snapToGrid !== false,
+    guides: {
+      horizontal: Array.isArray(settings?.guides?.horizontal)
+        ? settings.guides.horizontal.map((value) => toFiniteNumber(value, 0))
+        : [],
+      vertical: Array.isArray(settings?.guides?.vertical)
+        ? settings.guides.vertical.map((value) => toFiniteNumber(value, 0))
+        : [],
+    },
+  };
+}
+
 // ── Default element factories ─────────────────────────────────────────────
 
 export function createTextElement(overrides?: Partial<TextElement>): TextElement {

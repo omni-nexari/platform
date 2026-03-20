@@ -22,7 +22,7 @@ import { Badge, EmptyState, FilterChip, Modal, ModalBody, ModalFooter, ModalHead
 interface ContentItem {
   id: string;
   name: string;
-  type: 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url';
+  type: string;
   mimeType: string | null;
   fileSize: number | null;
   duration: number | null;
@@ -60,6 +60,7 @@ interface ContentList {
 // ── Constants ─────────────────────────────────────────────────────────────────
 type FilterType = 'all' | ContentItem['type'];
 type ViewMode = 'grid-lg' | 'grid-sm' | 'list';
+type KnownContentType = 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url';
 
 const TYPE_FILTERS: { id: FilterType; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -71,7 +72,7 @@ const TYPE_FILTERS: { id: FilterType; label: string }[] = [
   { id: 'presentation', label: 'PPTX' },
 ];
 
-const TYPE_META: Record<ContentItem['type'], { label: string; color: string; icon: React.ReactNode }> = {
+const TYPE_META: Record<KnownContentType, { label: string; color: string; icon: React.ReactNode }> = {
   image: { label: 'Image', color: 'bg-sky-500/80', icon: <Image size={10} /> },
   video: { label: 'Video', color: 'bg-violet-500/80', icon: <Video size={10} /> },
   html5: { label: 'HTML5', color: 'bg-amber-500/80', icon: <Code2 size={10} /> },
@@ -79,6 +80,16 @@ const TYPE_META: Record<ContentItem['type'], { label: string; color: string; ico
   presentation: { label: 'PPTX', color: 'bg-orange-500/80', icon: <Presentation size={10} /> },
   web_url: { label: 'Web URL', color: 'bg-emerald-500/80', icon: <Globe size={10} /> },
 };
+
+const UNKNOWN_TYPE_META = {
+  label: 'Unknown',
+  color: 'bg-slate-500/80',
+  icon: <FileText size={10} />,
+};
+
+function getTypeMeta(type: string) {
+  return TYPE_META[type as KnownContentType] ?? UNKNOWN_TYPE_META;
+}
 
 const attemptedThumbnailRegenerationIds = new Set<string>();
 const missingThumbnailSourceIds = new Set<string>();
@@ -128,15 +139,13 @@ function Thumb({ item, large = false }: { item: ContentItem; large?: boolean }) 
         </div>
       );
     }
-    const iconMap = {
-      image: <Image size={28} className="text-sky-400" />,
-      video: <Film size={28} className="text-violet-400" />,
-      html5: <Code2 size={28} className="text-amber-400" />,
-      pdf: <FileText size={28} className="text-red-400" />,
-      presentation: <Presentation size={28} className="text-orange-400" />,
-      web_url: <Globe size={28} className="text-emerald-400" />,
-    };
-    return iconMap[item.type];
+    const iconMeta = getTypeMeta(item.type);
+    if (item.type === 'image') return <Image size={28} className="text-sky-400" />;
+    if (item.type === 'video') return <Film size={28} className="text-violet-400" />;
+    if (item.type === 'pdf') return <FileText size={28} className="text-red-400" />;
+    if (item.type === 'presentation') return <Presentation size={28} className="text-orange-400" />;
+    if (item.type === 'web_url') return <Globe size={28} className="text-emerald-400" />;
+    return <span className="text-slate-300">{iconMeta.icon}</span>;
   };
 
   const hasThumbnail =
@@ -203,7 +212,7 @@ function GridCard({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
-  const meta = TYPE_META[item.type];
+  const meta = getTypeMeta(item.type);
 
   const isExpired = item.validUntil ? new Date(item.validUntil).getTime() < Date.now() : false;
   const isExpiringSoon = item.validUntil && !isExpired
@@ -315,7 +324,7 @@ function ListRow({ item, selected, onSelect, onDelete, checked, onCheck }: {
   item: ContentItem; selected: boolean; onSelect: () => void; onDelete: () => void;
   checked: boolean; onCheck: () => void;
 }) {
-  const meta = TYPE_META[item.type];
+  const meta = getTypeMeta(item.type);
   const isExpired = item.validUntil ? new Date(item.validUntil).getTime() < Date.now() : false;
   const isExpiringSoon = item.validUntil && !isExpired
     ? new Date(item.validUntil).getTime() - Date.now() < 7 * 24 * 60 * 60 * 1000
