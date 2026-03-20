@@ -70,6 +70,29 @@ This runs:
 - systemd service refresh/restart
 - nginx config install/reload
 
+## 4.1 Rebuild after git pull on the Pi
+
+If you already have the repo on the Pi and just pulled new commits, use the lightweight rebuild script instead of the full bootstrap/deploy flow:
+
+```bash
+cd /opt/signage
+bash infra/pi/rebuild-after-pull.sh
+```
+
+What it does:
+
+- removes stale `dist` output for `packages/db`, `packages/shared`, `apps/api`, and `apps/ds`
+- runs `pnpm install --frozen-lockfile`
+- rebuilds DB, shared, API, and dashboard packages
+- restarts `signage-api`
+- reloads nginx
+
+If your checkout lives somewhere else, override the app directory:
+
+```bash
+APP_DIR=/some/other/path bash /opt/signage/infra/pi/rebuild-after-pull.sh
+```
+
 ## 5. Validation
 
 On Pi:
