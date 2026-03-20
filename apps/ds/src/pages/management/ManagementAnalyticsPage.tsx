@@ -37,23 +37,23 @@ function StatCard({
   delta,
   icon: Icon,
 }: {
-  label: string;
+  label: React.ReactNode;
   value: string;
-  detail?: string;
+  detail?: React.ReactNode;
   delta?: { change: number; percentChange: number | null } | null;
   icon: React.ElementType;
 }) {
   return (
-    <div className="rounded-2xl border p-5" style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}>
-      <div className="flex items-center justify-between gap-3 mb-3">
+    <div className="rounded-2xl border p-4 sm:p-5" style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}>
+      <div className="mb-2 flex items-center justify-between gap-2 sm:mb-3 sm:gap-3">
         <div className="flex items-center gap-2 text-[var(--text-muted)]">
           <Icon size={16} />
-          <span className="text-xs font-medium uppercase tracking-wide">{label}</span>
+          <span className="text-[11px] font-medium uppercase tracking-wide sm:text-xs">{label}</span>
         </div>
         {delta ? <Badge tone={getDeltaTone(delta.change)}>{formatDelta(delta.change, delta.percentChange)}</Badge> : null}
       </div>
-      <p className="text-3xl font-bold tabular-nums">{value}</p>
-      {detail ? <p className="text-xs text-[var(--text-muted)] mt-2">{detail}</p> : null}
+      <p className="text-2xl font-bold tabular-nums sm:text-3xl">{value}</p>
+      {detail ? <p className="mt-1 text-[11px] leading-5 text-[var(--text-muted)] sm:mt-2 sm:text-xs">{detail}</p> : null}
     </div>
   );
 }
@@ -249,7 +249,7 @@ export default function ManagementAnalyticsPage() {
               {alerts.map((alert) => {
                 const drilldown = alert.drilldown;
                 return (
-                  <Callout key={alert.id} tone={alert.tone} className="flex items-start justify-between gap-4 rounded-2xl px-5 py-4">
+                  <Callout key={alert.id} tone={alert.tone} className="flex items-start justify-between gap-3 rounded-2xl px-4 py-3 sm:gap-4 sm:px-5 sm:py-4">
                     <div>
                       <p className="text-sm font-semibold">{alert.title}</p>
                       <p className="mt-1 text-sm text-[var(--text-muted)]">{alert.description}</p>
@@ -271,13 +271,74 @@ export default function ManagementAnalyticsPage() {
             </div>
           ) : null}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            <StatCard label="Client Organizations" value={data.summary.totalOrganizations.toLocaleString()} detail={`${data.summary.suspendedOrganizations} suspended`} delta={data.comparison?.deltas.totalOrganizations ?? null} icon={Building2} />
-            <StatCard label="Total Users" value={data.summary.totalUsers.toLocaleString()} detail={`${data.summary.resellerAdminCount} reseller admins`} delta={data.comparison?.deltas.totalUsers ?? null} icon={Users} />
-            <StatCard label="Devices" value={data.summary.totalDevices.toLocaleString()} detail={`${data.summary.onlineDevices} online`} delta={data.comparison?.deltas.totalDevices ?? null} icon={Monitor} />
-            <StatCard label="Plays In Range" value={data.summary.totalPlays.toLocaleString()} detail={formatDuration(data.summary.totalPlayDurationMs)} delta={data.comparison?.deltas.totalPlays ?? null} icon={Play} />
-            <StatCard label="Pending Invites" value={data.summary.totalPendingClientInvites.toLocaleString()} detail={`${data.summary.totalPendingResellerInvites} pending reseller admin invites`} delta={data.comparison?.deltas.totalPendingClientInvites ?? null} icon={Clock3} />
-            <StatCard label="Storage" value={formatBytes(data.summary.totalStorageUsedBytes)} detail={`${formatBytes(data.summary.totalStorageLimitBytes)} provisioned`} delta={data.comparison?.deltas.totalStorageUsedBytes ?? null} icon={HardDrive} />
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <StatCard
+              label={
+                <>
+                  <span className="sm:hidden">Client Orgs</span>
+                  <span className="hidden sm:inline">Client Organizations</span>
+                </>
+              }
+              value={data.summary.totalOrganizations.toLocaleString()}
+              detail={`${data.summary.suspendedOrganizations} suspended`}
+              delta={data.comparison?.deltas.totalOrganizations ?? null}
+              icon={Building2}
+            />
+            <StatCard
+              label="Total Users"
+              value={data.summary.totalUsers.toLocaleString()}
+              detail={`${data.summary.resellerAdminCount} reseller admins`}
+              delta={data.comparison?.deltas.totalUsers ?? null}
+              icon={Users}
+            />
+            <StatCard
+              label="Devices"
+              value={data.summary.totalDevices.toLocaleString()}
+              detail={`${data.summary.onlineDevices} online`}
+              delta={data.comparison?.deltas.totalDevices ?? null}
+              icon={Monitor}
+            />
+            <StatCard
+              label={
+                <>
+                  <span className="sm:hidden">Plays</span>
+                  <span className="hidden sm:inline">Plays In Range</span>
+                </>
+              }
+              value={data.summary.totalPlays.toLocaleString()}
+              detail={formatDuration(data.summary.totalPlayDurationMs)}
+              delta={data.comparison?.deltas.totalPlays ?? null}
+              icon={Play}
+            />
+            <StatCard
+              label={
+                <>
+                  <span className="sm:hidden">Invites</span>
+                  <span className="hidden sm:inline">Pending Invites</span>
+                </>
+              }
+              value={data.summary.totalPendingClientInvites.toLocaleString()}
+              detail={
+                <>
+                  <span className="sm:hidden">{data.summary.totalPendingResellerInvites} reseller admin invites</span>
+                  <span className="hidden sm:inline">{data.summary.totalPendingResellerInvites} pending reseller admin invites</span>
+                </>
+              }
+              delta={data.comparison?.deltas.totalPendingClientInvites ?? null}
+              icon={Clock3}
+            />
+            <StatCard
+              label="Storage"
+              value={formatBytes(data.summary.totalStorageUsedBytes)}
+              detail={
+                <>
+                  <span className="sm:hidden">{formatBytes(data.summary.totalStorageLimitBytes)} cap</span>
+                  <span className="hidden sm:inline">{formatBytes(data.summary.totalStorageLimitBytes)} provisioned</span>
+                </>
+              }
+              delta={data.comparison?.deltas.totalStorageUsedBytes ?? null}
+              icon={HardDrive}
+            />
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">

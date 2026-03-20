@@ -1,6 +1,6 @@
 # OmniHub Signage — Build Progress Tracker
 
-> Last updated: March 20, 2026 (migration applied + repo typecheck clean)  
+> Last updated: March 20, 2026 (portal mobile polish + docs status refresh)  
 > Codebase: `apps/ds` (React frontend) + `apps/api` (Fastify backend) + `apps/tizen` (Samsung LFD player)
 
 ---
@@ -20,6 +20,8 @@
 
 | Date | Milestone | Status | Notes |
 |---|---|---|---|
+| March 20, 2026 | Reseller onboarding provisions client dashboard owner | ✅ | First-time reseller portal setup can now optionally create an active client-facing dashboard org/workspace owned by the same invited reseller email/password, so resellers can operate their own dashboard immediately and invite clients later |
+| March 20, 2026 | Portal mobile UX polish + guarded reseller deletion | ✅ | Platform Owner, reseller, and client shells now use foldable mobile drawers; portal analytics tables/cards were tightened for small screens; and resellers can be soft-deleted only when no active client organizations remain |
 | March 20, 2026 | Portal analytics persistence + notification routing | ✅ | Platform Owner and reseller analytics now persist alert thresholds and routing preferences, sync threshold-based analytics alerts into a platform-admin notification inbox, and support saved workspace drilldown presets for repeat operational views |
 | March 20, 2026 | Analytics exports + drilldowns + period comparison | ✅ | Platform Owner and reseller analytics now support CSV export, click-through navigation from top reseller / organization tables into detail pages, and previous-period comparison with quick 7/30/90-day presets |
 | March 20, 2026 | Platform Owner + reseller analytics dashboards | ✅ | `/superadmin/analytics` and `/management/analytics` now render real dashboards backed by a shared role-scoped analytics payload with date filters, growth charts, proof-of-play trend, top reseller / top organization tables, recent organizations, storage totals, invite counts, and device/content/workspace rollups |
@@ -51,7 +53,7 @@
 | Forgot / reset password | ✅ | Email-based reset flow |
 | Accept invite page | ✅ | Org owner setup (org name, slug, workspace, timezone) + member setup |
 | Super Admin login | ✅ | Separate `/superadmin/login` |
-| Management company onboarding | ✅ | First MCA invite can configure company name, portal URL, billing email, logo, title, favicon, colors, font presets, and login background, including direct asset uploads before first login, before redirecting to `/m/:slug` |
+| Management company onboarding | ✅ | First MCA invite can configure company name, portal URL, billing email, logo, title, favicon, colors, font presets, and login background, including direct asset uploads before first login, and can optionally provision a same-email client dashboard owner + initial workspace during setup before redirecting to `/m/:slug` |
 
 ---
 
@@ -59,6 +61,7 @@
 
 | Feature | Status | Notes |
 |---|---|---|
+| Reseller management | ✅ | Create, suspend/unsuspend, branding override, invite admins, and guarded delete when the reseller has no active client organizations |
 | Orgs list + search | ✅ | Create, suspend/unsuspend |
 | Org detail page | ✅ | Members, pending invites, quota management |
 | Invite org owner | ✅ | Sends email invite |
@@ -244,7 +247,7 @@
 | Content processing failed alerts | ✅ | Thumbnail regeneration failure now marks content `error` and creates `content_failed` notification |
 | Storage quota 80% / 100% alerts | ✅ | Upload flow now emits `storage_warning` notifications when thresholds are crossed |
 | Emergency override alerts | ✅ | Emergency activation route now creates `emergency_activated` notifications |
-| Platform-admin analytics inbox | ✅ | Platform Owner and reseller layouts now mount a dedicated analytics notification tray backed by `/superadmin/notifications`, with mark-read, dismiss, and mark-all-read actions for persisted analytics alerts |
+| Platform-admin analytics inbox | ✅ | Platform Owner and reseller layouts now mount a dedicated analytics notification tray backed by `/superadmin/notifications` and `/management/notifications`, with mark-read, dismiss, and mark-all-read actions for persisted analytics alerts |
 
 ---
 
@@ -294,11 +297,11 @@
 |---|---|---|
 | CSS theme system (Dark / Light / Cyberpunk) | ✅ | CSS custom properties |
 | Select dropdown backgrounds | ✅ | Fixed with `select.input` CSS rules |
-| Mobile / responsive layout | ✅ | App shell uses a mobile drawer; page headers, grids, calendar split view, and bulk toolbars now adapt to small screens |
+| Mobile / responsive layout | ✅ | Client, Platform Owner, and reseller shells all use foldable mobile drawers; admin tables switch to mobile cards where needed; analytics and list pages now fit small screens more cleanly, including drawer safe-area padding polish |
 | Empty states | ✅ | EmptyState component in UiPrimitives |
 | Confirm dialogs | ✅ | ConfirmDialog component |
 | Toast notifications | ✅ | Sonner |
-| Loading skeletons | 🔄 | Some pages have pulse skeletons |
+| Loading skeletons | ✅ | Shared skeleton states now cover dashboards, analytics, notifications, invite acceptance flows, major list/detail views, and editor loading shells |
 
 ---
 
@@ -326,4 +329,3 @@
 | 1 | Billing | Organization billing / plan management UI and ownership workflows |
 | 2 | VideoWall / SyncPlay | Multi-device sync groups; FFmpeg tile crop; `syncplay` module |
 | 3 | Sensors | Frontend UI for sensor sources and trigger rules |
-| 4 | Analytics | Persisted anomaly rules / notification routing for platform and reseller analytics alerts |

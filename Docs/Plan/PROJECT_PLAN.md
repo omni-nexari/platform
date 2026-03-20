@@ -3,6 +3,7 @@
 > **Codename**: OmniHub Signage  
 > **Target Host**: Raspberry Pi 5 · Ubuntu · 16 GB RAM · NVMe · Nginx · systemd  
 > **Date**: March 2026
+> **Implementation note**: This file is the long-range product plan. Current shipped status and completed milestones are tracked in `Docs/PROGRESS.md`.
 
 ---
 
@@ -120,12 +121,14 @@ Platform
 4. When the management company admin accepts the invite they see two sections:
    - **Account setup** — their full name + password.
   - **Company setup** (first-setup only, shown when `slug.startsWith('pending-')`) — company name, portal address (`/m/<slug>`), billing email (optional), logo, portal title, favicon, primary/accent/sidebar colors, heading/body font presets, and optional login background art.
+  - **Optional client dashboard bootstrap** — can provision an active client-facing organization/workspace owned by the same invited email/password so the reseller can immediately operate the standard dashboard and later invite client users into it.
   - Branding assets can be uploaded immediately from the invite acceptance screen through a token-scoped upload endpoint, so the first admin does not need to host image URLs elsewhere before the first login.
 5. On submission:
    - the server updates the company record with the real name and slug, replacing the `pending-` placeholder,
    - the user account is created and attached to the company,
    - the browser redirects to `/m/<their-slug>` with a toast "Account created! Sign in here."
 6. After activation the management company admin can create client orgs, send client-owner invites, and view only their portfolio's billing and analytics.
+  - If they enabled the optional dashboard bootstrap during onboarding, they also land with a ready-to-use client-facing owner account under their own reseller-owned organization/workspace.
 7. Additional management company admins can be invited later by the platform owner or by an existing management company admin within the same company — they see only the name + password fields (no company setup section).
 
 **First-setup detection**: `company.slug.startsWith('pending-')` is the sentinel — no extra DB column needed.
@@ -236,6 +239,7 @@ Set per-org storage cap (GB). API enforces the cap on every upload; returns `507
 - **Content analytics**: play-count per content item, total duration played.
 - **Playlist analytics**: completion rate, skip events (when schedule switches mid-playlist).
 - **Org-level report**: storage quota used, device count, active schedule count.
+- **Portal analytics**: Platform Owner and Management Company Admin portals now ship role-scoped analytics dashboards with date filters, CSV export, previous-period comparison, drilldowns, hoverable charts, threshold-based alerts, persisted alert routing/preferences, saved drilldown presets, and dedicated notifications pages.
 - Data stored in `analytics_events` table; aggregated nightly by a worker job.
 
 ### 3.7 Tagging & Discovery
@@ -414,6 +418,8 @@ ESP32 / Cloud API / Webhook
 ### 3.12 In-App Notification Center
 
 A persistent notification tray (bell icon in the nav bar) delivers real-time and historical alerts inside the dashboard, complementing email.
+
+- Platform Owner and Management Company Admin users also have a portal-specific analytics inbox and full-page notifications views separate from the org-user notification center.
 
 **Event types**:
 
@@ -2835,7 +2841,7 @@ The Pi 5 is a single host. A backup strategy is essential before going to produc
 - [ ] Recent items — Redis sorted set per user; sidebar "Recent" section
 - [ ] Global cross-entity search (`Cmd/Ctrl+K` command palette)
 - [ ] Orphan content purge tool (`POST /content/purge-orphans` with dry-run mode)
-- [ ] In-app notification center: bell tray, unread badge, WS push, `notifications` table; browser Web Notifications for high-priority alerts
+- [x] In-app notification center: bell tray, unread badge, WS push, `notifications` table; browser Web Notifications for high-priority alerts
 - [ ] API key management UI (`/:wsSlug/settings/api-keys`): create, rotate, revoke
 - [ ] Scheduled reports (`/:wsSlug/settings/report-schedules`): cron-triggered analytics/PoP email + BullMQ job
 - [ ] Email notifications: invite, device offline alert, storage quota warning, content expiry warning

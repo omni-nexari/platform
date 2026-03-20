@@ -225,26 +225,94 @@ export async function acceptMgmtAdminInvite(
   role: string,
   name: string,
   password: string,
+  ownerDashboard?: {
+    orgName: string;
+    orgSlug: string;
+    workspaceName: string;
+    workspaceTimezone: string;
+  },
 ) {
+  const normalizedEmail = email.toLowerCase();
   const passwordHash = await argon2.hash(password);
 
-  const [admin] = await db
-    .insert(managementCompanyAdmins)
-    .values({ managementCompanyId, email: email.toLowerCase(), name, passwordHash, role })
-    .returning();
+  return db.transaction(async (tx) => {
+    const [admin] = await tx
+      .insert(managementCompanyAdmins)
+      .values({ managementCompanyId, email: normalizedEmail, name, passwordHash, role })
+      .returning();
 
-  await db
-    .update(managementCompanyAdminInvitations)
-    .set({ acceptedAt: new Date(), updatedAt: new Date() })
-    .where(eq(managementCompanyAdminInvitations.id, inviteId));
+    await tx
+      .update(managementCompanyAdminInvitations)
+      .set({ acceptedAt: new Date(), updatedAt: new Date() })
+      .where(eq(managementCompanyAdminInvitations.id, inviteId));
 
-  // Activate management company if still pending
-  await db
-    .update(managementCompanies)
-    .set({ updatedAt: new Date() })
-    .where(eq(managementCompanies.id, managementCompanyId));
+    await tx
+      .update(managementCompanies)
+      .set({ updatedAt: new Date() })
+      .where(eq(managementCompanies.id, managementCompanyId));
 
-  return admin;
+    let ownerUser: typeof users.$inferSelect | null = null;
+    let ownerOrg: typeof organisations.$inferSelect | null = null;
+    let ownerWorkspace: typeof workspaces.$inferSelect | null = null;
+
+    if (ownerDashboard && admin) {
+      const [org] = await tx
+        .insert(organisations)
+        .values({
+          name: ownerDashboard.orgName,
+          slug: ownerDashboard.orgSlug,
+          plan: 'starter',
+          status: 'active',
+          managementCompanyId,
+          originatingAdminId: admin.id,
+          primaryAccountManagerId: admin.id,
+          billingOwnerCompanyId: managementCompanyId,
+        })
+        .returning();
+      if (!org) {
+        throw new Error('Failed to create onboarding organization');
+      }
+
+      const workspaceSlug = ownerDashboard.workspaceName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+
+      const [workspace] = await tx
+        .insert(workspaces)
+        .values({
+          orgId: org.id,
+          name: ownerDashboard.workspaceName,
+          slug: workspaceSlug,
+          timezone: ownerDashboard.workspaceTimezone,
+        })
+        .returning();
+
+      const [user] = await tx
+        .insert(users)
+        .values({
+          orgId: org.id,
+          email: normalizedEmail,
+          name,
+          passwordHash,
+          orgRole: 'owner',
+        })
+        .returning();
+
+      if (workspace && user) {
+        await tx
+          .insert(workspaceMembers)
+          .values({ workspaceId: workspace.id, userId: user.id, role: 'admin', addedBy: user.id })
+          .onConflictDoNothing();
+      }
+
+      ownerUser = user ?? null;
+      ownerOrg = org ?? null;
+      ownerWorkspace = workspace ?? null;
+    }
+
+    return { admin, ownerUser, ownerOrg, ownerWorkspace };
+  });
 }
 
 // ── client org owner invite ───────────────────────────────────────────────────

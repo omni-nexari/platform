@@ -52,6 +52,7 @@ import {
   SectionCard,
   SectionCardHeader,
   SectionCardBody,
+  Skeleton,
   ToggleSwitch,
 } from '../../components/UiPrimitives.js';
 import { useTheme } from '../../contexts/ThemeContext.js';
@@ -780,7 +781,7 @@ function OrganizationSection() {
               {isLoading && (
                 <div className="space-y-2 p-5">
                   {[...Array(3)].map((_, i) => (
-                    <div key={i} className="h-12 rounded-lg bg-[var(--surface)] animate-pulse" />
+                    <Skeleton key={i} className="h-12 rounded-lg" />
                   ))}
                 </div>
               )}
@@ -1037,7 +1038,12 @@ function WorkspaceSection({ selectedWsId }: { selectedWsId: string | null }) {
   }
 
   if (isLoading) {
-    return <div className="text-sm text-[var(--text-muted)]">Loading…</div>;
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-24 rounded-2xl" />
+        <Skeleton className="h-64 rounded-2xl" />
+      </div>
+    );
   }
 
   const roleColor: Record<string, string> = {
@@ -1474,7 +1480,7 @@ function TagUsageModalInline({
         <div className="p-4 min-h-[100px] max-h-60 overflow-y-auto">
           {isLoading && (
             <div className="space-y-2">{[...Array(2)].map((_, i) => (
-              <div key={i} className="h-8 rounded-lg bg-[var(--surface)] animate-pulse" />
+              <Skeleton key={i} className="h-8 rounded-lg" />
             ))}</div>
           )}
           {!isLoading && data && data[tab].length === 0 && (
@@ -1755,7 +1761,7 @@ function TagsSection({ selectedWsId }: { selectedWsId: string | null }) {
       {isLoading && (
         <div className="space-y-3">
           {[...Array(2)].map((_, i) => (
-            <div key={i} className="h-20 rounded-xl bg-[var(--surface)] border border-[var(--border)] animate-pulse" />
+            <Skeleton key={i} className="h-20 rounded-xl" />
           ))}
         </div>
       )}
@@ -1990,7 +1996,11 @@ function AuditSection() {
           {/* Entry list */}
           <div className="space-y-0">
             {isFetching && entries.length === 0 && (
-              <div className="py-8 text-center text-xs text-[var(--text-muted)]">Loading…</div>
+              <div className="space-y-3 py-3">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <Skeleton key={index} className="h-14 rounded-xl" />
+                ))}
+              </div>
             )}
             {!isFetching && entries.length === 0 && (
               <div className="py-8 text-center text-sm text-[var(--text-muted)]">No audit entries found.</div>
@@ -2474,7 +2484,11 @@ function NotificationsSection() {
           {tab === 'inbox' && (
             <div>
               {isFetching && notifs.length === 0 && (
-                <div className="py-8 text-center text-xs text-[var(--text-muted)]">Loading…</div>
+                <div className="space-y-3 py-3">
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <Skeleton key={index} className="h-16 rounded-xl" />
+                  ))}
+                </div>
               )}
               {!isFetching && notifs.length === 0 && (
                 <div className="py-10 flex flex-col items-center gap-2 text-[var(--text-muted)]">

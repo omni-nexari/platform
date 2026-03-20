@@ -23,6 +23,7 @@ import {
   ModalPrimaryButton,
   ModalSecondaryButton,
   PageHeader,
+  Skeleton,
 } from '../../components/UiPrimitives.js';
 
 interface Device {
@@ -175,8 +176,8 @@ export default function WorkspaceDashboardPage() {
 
       {isLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-44 rounded-2xl bg-[var(--card)] border border-[var(--border)] animate-pulse" />
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-44 rounded-2xl" />
           ))}
         </div>
       ) : filteredDevices.length === 0 ? (

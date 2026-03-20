@@ -198,7 +198,7 @@ export default function AppLayout() {
       )}
 
       {/* ---------- Sidebar ---------- */}
-      <aside className={`fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col border-r border-[var(--border)] bg-[var(--card)] transition-transform duration-200 lg:static lg:z-auto lg:w-56 lg:max-w-none lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`ui-mobile-drawer fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col border-r border-[var(--border)] bg-[var(--card)] transition-transform duration-200 lg:static lg:z-auto lg:w-56 lg:max-w-none lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {/* Logo */}
         <div className="px-4 py-5 border-b border-[var(--border)]">
           <span className="text-lg font-bold tracking-tight text-[var(--text)]">OmniHub</span>
@@ -206,7 +206,7 @@ export default function AppLayout() {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
+        <nav className="ui-mobile-drawer-nav flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
           <NavLink
             to="/dashboard"
             className={({ isActive }) =>
@@ -345,7 +345,7 @@ export default function AppLayout() {
         </nav>
 
         {/* Bottom: user + logout */}
-        <div className="border-t border-[var(--border)] p-3 space-y-1">
+        <div className="ui-mobile-drawer-footer border-t border-[var(--border)] p-3 space-y-1">
           <NavLink
             to="/settings"
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors"

@@ -13,7 +13,7 @@ import ContentPickerModal, { type PickedItem } from '../../components/ContentPic
 import PlaylistPreviewModal from '../../components/PlaylistPreviewModal.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
 import WorkspaceTagPicker from '../../components/WorkspaceTagPicker.js';
-import { StatChip, ToggleSwitch } from '../../components/UiPrimitives.js';
+import { Skeleton, StatChip, ToggleSwitch } from '../../components/UiPrimitives.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -489,8 +489,21 @@ export default function PlaylistEditorPage() {
 
   if (!isNew && isLoading) {
     return (
-      <div className="flex items-center justify-center h-full text-sm text-[var(--text-muted)]">
-        Loading…
+      <div className="flex h-full flex-col overflow-hidden bg-[var(--surface)] p-4 sm:p-6">
+        <div className="mb-4 flex items-center gap-3 border-b border-[var(--border)] pb-4">
+          <Skeleton className="h-8 w-8 rounded-lg" />
+          <Skeleton className="h-8 flex-1 rounded-lg" />
+          <Skeleton className="h-8 w-20 rounded-full" />
+          <Skeleton className="h-8 w-24 rounded-lg" />
+        </div>
+        <div className="grid flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-3">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <Skeleton key={index} className="h-28 rounded-2xl" />
+            ))}
+          </div>
+          <Skeleton className="min-h-[18rem] rounded-2xl" />
+        </div>
       </div>
     );
   }

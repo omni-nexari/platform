@@ -407,14 +407,32 @@ export async function authRoutes(app: FastifyInstance) {
         .where(eq(managementCompanies.id, company.id));
     }
 
-    const admin = await acceptMgmtAdminInvite(
+    if (body.data.createOwnerDashboardAccount && body.data.ownerOrgSlug) {
+      const slugTaken = await db.query.organisations.findFirst({
+        where: and(eq(organisations.slug, body.data.ownerOrgSlug), isNull(organisations.deletedAt)),
+      });
+      if (slugTaken) {
+        return reply.status(409).send({ error: 'This dashboard organization slug is already taken, please choose another' });
+      }
+    }
+
+    const result = await acceptMgmtAdminInvite(
       invite.id,
       invite.managementCompanyId,
       invite.email,
       invite.role,
       body.data.name,
       body.data.password,
+      body.data.createOwnerDashboardAccount
+        ? {
+            orgName: body.data.ownerOrgName ?? '',
+            orgSlug: body.data.ownerOrgSlug ?? '',
+            workspaceName: body.data.ownerWorkspaceName ?? '',
+            workspaceTimezone: body.data.ownerWorkspaceTimezone ?? 'UTC',
+          }
+        : undefined,
     );
+    const admin = result.admin;
     if (!admin) return reply.status(500).send({ error: 'Failed to create admin account' });
 
     await writeAuditLog({
@@ -426,12 +444,33 @@ export async function authRoutes(app: FastifyInstance) {
       ipAddress: req.ip,
     });
 
+    if (result.ownerOrg && result.ownerUser && result.ownerWorkspace) {
+      await writeAuditLog({
+        orgId: result.ownerOrg.id,
+        actorId: result.ownerUser.id,
+        actorType: 'system',
+        action: 'RESELLER_OWNER_DASHBOARD_PROVISIONED',
+        entityType: 'organisation',
+        entityId: result.ownerOrg.id,
+        meta: {
+          managementCompanyId: invite.managementCompanyId,
+          workspaceId: result.ownerWorkspace.id,
+          sourceInviteId: invite.id,
+        },
+        ipAddress: req.ip,
+      });
+    }
+
     // Return companySlug so the frontend can redirect to /m/:slug
     const updatedCompany = await db.query.managementCompanies.findFirst({
       where: eq(managementCompanies.id, invite.managementCompanyId),
     });
 
-    return reply.status(201).send({ id: admin.id, companySlug: updatedCompany?.slug ?? null });
+    return reply.status(201).send({
+      id: admin.id,
+      companySlug: updatedCompany?.slug ?? null,
+      ownerDashboardProvisioned: Boolean(result.ownerOrg && result.ownerUser && result.ownerWorkspace),
+    });
   });
 
   // ── GET/POST /auth/accept-client-org-invite/:token ──────────────────────────

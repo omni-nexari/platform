@@ -98,6 +98,32 @@ export const AcceptManagementCompanyInviteSchema = z.object({
   headingFontPreset: BrandingFontPresetSchema.optional(),
   bodyFontPreset: BrandingFontPresetSchema.optional(),
   loginBackgroundUrl: assetUrl.optional().or(z.literal('')),
+  createOwnerDashboardAccount: z.boolean().optional(),
+  ownerOrgName: z.string().min(2).max(120).optional().or(z.literal('')),
+  ownerOrgSlug: z
+    .string()
+    .min(2)
+    .max(60)
+    .regex(/^[a-z0-9-]+$/, 'Use lowercase letters, numbers and hyphens only')
+    .optional()
+    .or(z.literal('')),
+  ownerWorkspaceName: z.string().min(2).max(120).optional().or(z.literal('')),
+  ownerWorkspaceTimezone: z.string().min(1).optional().or(z.literal('')),
+}).superRefine((value, ctx) => {
+  if (!value.createOwnerDashboardAccount) return;
+
+  if (!value.ownerOrgName) {
+    ctx.addIssue({ code: 'custom', path: ['ownerOrgName'], message: 'Organization name is required' });
+  }
+  if (!value.ownerOrgSlug) {
+    ctx.addIssue({ code: 'custom', path: ['ownerOrgSlug'], message: 'Organization slug is required' });
+  }
+  if (!value.ownerWorkspaceName) {
+    ctx.addIssue({ code: 'custom', path: ['ownerWorkspaceName'], message: 'Workspace name is required' });
+  }
+  if (!value.ownerWorkspaceTimezone) {
+    ctx.addIssue({ code: 'custom', path: ['ownerWorkspaceTimezone'], message: 'Workspace timezone is required' });
+  }
 });
 export type AcceptManagementCompanyInviteInput = z.infer<
   typeof AcceptManagementCompanyInviteSchema

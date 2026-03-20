@@ -10,6 +10,7 @@ import {
   getManagementLoginShellStyle,
   uploadInvitedManagementBrandAsset,
 } from '../../lib/management-branding.js';
+import { Skeleton } from '../../components/UiPrimitives.js';
 
 type BrandingFontPreset = 'modern' | 'editorial' | 'geometric' | 'mono';
 
@@ -61,14 +62,37 @@ function makeSchema(isFirstSetup: boolean) {
     headingFontPreset: z.enum(['modern', 'editorial', 'geometric', 'mono']).optional(),
     bodyFontPreset: z.enum(['modern', 'editorial', 'geometric', 'mono']).optional(),
     loginBackgroundUrl: z.union([z.literal(''), assetUrl]).optional(),
+    createOwnerDashboardAccount: z.boolean().optional(),
+    ownerOrgName: z.string().min(2, 'Organization name is required').max(120).optional(),
+    ownerOrgSlug: z
+      .string()
+      .min(2, 'Organization slug is required')
+      .max(60, 'Organization slug is too long')
+      .regex(/^[a-z0-9-]+$/, 'Use lowercase letters, numbers and hyphens only')
+      .optional(),
+    ownerWorkspaceName: z.string().min(2, 'Workspace name is required').max(120).optional(),
+    ownerWorkspaceTimezone: z.string().min(1, 'Workspace timezone is required').optional(),
   });
-  if (!isFirstSetup) return base;
   return base.superRefine((val, ctx) => {
-    if (!val.companyName) {
+    if (isFirstSetup && !val.companyName) {
       ctx.addIssue({ code: 'custom', path: ['companyName'], message: 'Company name is required' });
     }
-    if (!val.companyPortalUrl) {
+    if (isFirstSetup && !val.companyPortalUrl) {
       ctx.addIssue({ code: 'custom', path: ['companyPortalUrl'], message: 'Portal address is required' });
+    }
+    if (isFirstSetup && val.createOwnerDashboardAccount) {
+      if (!val.ownerOrgName) {
+        ctx.addIssue({ code: 'custom', path: ['ownerOrgName'], message: 'Organization name is required' });
+      }
+      if (!val.ownerOrgSlug) {
+        ctx.addIssue({ code: 'custom', path: ['ownerOrgSlug'], message: 'Organization slug is required' });
+      }
+      if (!val.ownerWorkspaceName) {
+        ctx.addIssue({ code: 'custom', path: ['ownerWorkspaceName'], message: 'Workspace name is required' });
+      }
+      if (!val.ownerWorkspaceTimezone) {
+        ctx.addIssue({ code: 'custom', path: ['ownerWorkspaceTimezone'], message: 'Workspace timezone is required' });
+      }
     }
   });
 }
@@ -94,7 +118,7 @@ export default function AcceptManagementCompanyInvitePage() {
     reset,
     setValue,
     watch,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, dirtyFields },
   } = useForm<FormData>({
     resolver: zodResolver(makeSchema(inviteInfo?.isFirstSetup ?? false)),
   });
@@ -104,7 +128,7 @@ export default function AcceptManagementCompanyInvitePage() {
     reset({
       name: '',
       password: '',
-      companyName: inviteInfo.companyName ?? '',
+      companyName: inviteInfo.isFirstSetup ? '' : (inviteInfo.companyName ?? ''),
       companyPortalUrl: '',
       billingEmail: '',
       logoUrl: inviteInfo.logoUrl ?? '',
@@ -116,6 +140,11 @@ export default function AcceptManagementCompanyInvitePage() {
       headingFontPreset: inviteInfo.headingFontPreset ?? undefined,
       bodyFontPreset: inviteInfo.bodyFontPreset ?? undefined,
       loginBackgroundUrl: inviteInfo.loginBackgroundUrl ?? '',
+      createOwnerDashboardAccount: inviteInfo.isFirstSetup,
+      ownerOrgName: '',
+      ownerOrgSlug: '',
+      ownerWorkspaceName: '',
+      ownerWorkspaceTimezone: 'UTC',
     });
   }, [inviteInfo, reset]);
 
@@ -124,6 +153,29 @@ export default function AcceptManagementCompanyInvitePage() {
   const primaryColor = watch('primaryColor');
   const accentColor = watch('accentColor');
   const loginBackgroundUrl = watch('loginBackgroundUrl');
+  const companyName = watch('companyName');
+  const companyPortalUrl = watch('companyPortalUrl');
+  const createOwnerDashboardAccount = watch('createOwnerDashboardAccount');
+
+  useEffect(() => {
+    if (!inviteInfo?.isFirstSetup || !createOwnerDashboardAccount) return;
+
+    const nameSeed = companyName?.trim() ?? '';
+    const slugSeed = companyPortalUrl?.trim() ?? '';
+
+    if (!dirtyFields.ownerOrgName) {
+      setValue('ownerOrgName', nameSeed, { shouldValidate: false, shouldDirty: false });
+    }
+    if (!dirtyFields.ownerWorkspaceName) {
+      setValue('ownerWorkspaceName', nameSeed, { shouldValidate: false, shouldDirty: false });
+    }
+    if (!dirtyFields.ownerOrgSlug) {
+      setValue('ownerOrgSlug', slugSeed, { shouldValidate: false, shouldDirty: false });
+    }
+    if (!dirtyFields.ownerWorkspaceTimezone) {
+      setValue('ownerWorkspaceTimezone', 'UTC', { shouldValidate: false, shouldDirty: false });
+    }
+  }, [companyName, companyPortalUrl, createOwnerDashboardAccount, dirtyFields.ownerOrgName, dirtyFields.ownerOrgSlug, dirtyFields.ownerWorkspaceName, dirtyFields.ownerWorkspaceTimezone, inviteInfo?.isFirstSetup, setValue]);
 
   const loginShellStyle = getManagementLoginShellStyle(
     inviteInfo
@@ -161,11 +213,15 @@ export default function AcceptManagementCompanyInvitePage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      const res = await api.post<{ id: string; companySlug: string | null }>(
+      const res = await api.post<{ id: string; companySlug: string | null; ownerDashboardProvisioned?: boolean }>(
         `/auth/accept-management-company-invite/${token}`,
         data,
       );
-      toast.success('Account created! Sign in to your portal.');
+      toast.success(
+        res.ownerDashboardProvisioned
+          ? 'Account created and client dashboard owner provisioned.'
+          : 'Account created! Sign in to your portal.',
+      );
       if (res.companySlug && !res.companySlug.startsWith('pending-')) {
         navigate(`/m/${res.companySlug}/login`);
       } else {
@@ -185,7 +241,21 @@ export default function AcceptManagementCompanyInvitePage() {
   }
 
   if (!inviteInfo) {
-    return <div className="min-h-dvh flex items-center justify-center p-4">Loading…</div>;
+    return (
+      <div className="management-portal min-h-dvh flex items-center justify-center p-4" style={loginShellStyle}>
+        <div className="w-full max-w-sm rounded-2xl border p-6 space-y-4" style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}>
+          <div className="space-y-2 text-center">
+            <Skeleton className="mx-auto h-7 w-56 rounded-lg" />
+            <Skeleton className="mx-auto h-4 w-64 rounded" />
+            <Skeleton className="mx-auto h-3 w-40 rounded" />
+          </div>
+          <Skeleton className="h-11 rounded-xl" />
+          <Skeleton className="h-11 rounded-xl" />
+          <Skeleton className="h-11 rounded-xl" />
+          <Skeleton className="h-11 rounded-xl" />
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -431,6 +501,60 @@ export default function AcceptManagementCompanyInvitePage() {
                 {errors.loginBackgroundUrl && (
                   <p className="text-xs text-[var(--danger)] mt-1">{errors.loginBackgroundUrl.message}</p>
                 )}
+              </div>
+
+              <hr style={{ borderColor: 'var(--card-border)' }} />
+              <div className="space-y-3 rounded-2xl border p-4" style={{ borderColor: 'var(--card-border)', background: 'color-mix(in srgb, var(--blue) 6%, var(--bg2) 94%)' }}>
+                <label className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    {...register('createOwnerDashboardAccount')}
+                    className="mt-1 h-4 w-4 rounded border"
+                    style={{ accentColor: 'var(--blue)' }}
+                  />
+                  <span className="space-y-1">
+                    <span className="block text-sm font-medium text-[var(--text)]">Create your client-facing dashboard owner now</span>
+                    <span className="block text-xs text-[var(--text-muted)]">
+                      This uses the same email and password from this reseller admin setup so you can operate the client dashboard immediately and later invite clients into it.
+                    </span>
+                  </span>
+                </label>
+
+                {createOwnerDashboardAccount ? (
+                  <div className="space-y-4 pt-1">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Dashboard owner email</label>
+                      <input value={inviteInfo.email} readOnly className="input w-full opacity-80" />
+                    </div>
+
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Organization name</label>
+                        <input {...register('ownerOrgName')} placeholder="Acme Corp" className="input w-full" />
+                        {errors.ownerOrgName && <p className="text-xs text-[var(--danger)] mt-1">{errors.ownerOrgName.message}</p>}
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Organization slug</label>
+                        <input {...register('ownerOrgSlug')} placeholder="acme-corp" className="input w-full" />
+                        <p className="text-xs text-[var(--text-muted)] mt-1">Defaults to the reseller portal slug exactly and is used for the client dashboard org URL.</p>
+                        {errors.ownerOrgSlug && <p className="text-xs text-[var(--danger)] mt-1">{errors.ownerOrgSlug.message}</p>}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="block text-sm font-medium mb-1">First workspace name</label>
+                        <input {...register('ownerWorkspaceName')} placeholder="Acme Corp" className="input w-full" />
+                        {errors.ownerWorkspaceName && <p className="text-xs text-[var(--danger)] mt-1">{errors.ownerWorkspaceName.message}</p>}
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Workspace timezone</label>
+                        <input {...register('ownerWorkspaceTimezone')} placeholder="UTC" className="input w-full" />
+                        {errors.ownerWorkspaceTimezone && <p className="text-xs text-[var(--danger)] mt-1">{errors.ownerWorkspaceTimezone.message}</p>}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </>
           )}

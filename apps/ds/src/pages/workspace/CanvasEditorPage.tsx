@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowLeft, Paintbrush } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useCanvasStore } from '../../lib/canvasStore.js';
 import type { CanvasProject } from '../../lib/canvasTypes.js';
@@ -13,6 +13,7 @@ import CanvasPropertyPanel from '../../components/canvas/CanvasPropertyPanel.js'
 import CanvasPageBar from '../../components/canvas/CanvasPageBar.js';
 import { useCanvasShortcuts } from '../../components/canvas/useCanvasShortcuts.js';
 import { useAutoSave } from '../../components/canvas/useAutoSave.js';
+import { Skeleton } from '../../components/UiPrimitives.js';
 
 export default function CanvasEditorPage() {
   const { wsId, id } = useParams<{ wsId: string; id: string }>();
@@ -67,11 +68,18 @@ export default function CanvasEditorPage() {
   // Loading state
   if (id === 'new' || isLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="flex flex-col items-center gap-3">
-          <Paintbrush size={32} className="text-[var(--blue)] animate-pulse" />
-          <p className="text-sm text-[var(--text-muted)]">Setting up your canvas…</p>
+      <div className="flex h-full flex-col bg-[var(--surface)] p-4 sm:p-6">
+        <div className="mb-4 flex items-center gap-3 border-b border-[var(--border)] pb-4">
+          <Skeleton className="h-9 w-24 rounded-lg" />
+          <Skeleton className="h-9 flex-1 rounded-lg" />
+          <Skeleton className="h-9 w-28 rounded-lg" />
         </div>
+        <div className="grid flex-1 min-h-0 gap-4 lg:grid-cols-[220px_minmax(0,1fr)_260px]">
+          <Skeleton className="h-full min-h-[18rem] rounded-2xl" />
+          <Skeleton className="h-full min-h-[18rem] rounded-2xl" />
+          <Skeleton className="h-full min-h-[18rem] rounded-2xl" />
+        </div>
+        <Skeleton className="mt-4 h-12 rounded-2xl" />
       </div>
     );
   }

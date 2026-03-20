@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { api } from '../../lib/api.js';
+import { Skeleton } from '../../components/UiPrimitives.js';
 
 const baseSchema = z.object({
   name: z.string().min(1, 'Full name is required'),
@@ -87,7 +88,21 @@ export default function AcceptInvitePage() {
   }
 
   if (!inviteInfo) {
-    return <div className="min-h-dvh flex items-center justify-center p-4">Loading…</div>;
+    return (
+      <div className="min-h-dvh flex items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-2xl border p-6 space-y-5" style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}>
+          <div className="space-y-2 text-center">
+            <Skeleton className="mx-auto h-7 w-56 rounded-lg" />
+            <Skeleton className="mx-auto h-4 w-72 rounded" />
+            <Skeleton className="mx-auto h-3 w-40 rounded" />
+          </div>
+          <Skeleton className="h-20 rounded-xl" />
+          <Skeleton className="h-11 rounded-xl" />
+          <Skeleton className="h-11 rounded-xl" />
+          <Skeleton className="h-11 rounded-xl" />
+        </div>
+      </div>
+    );
   }
 
   if (isPendingSetup) {

@@ -49,6 +49,7 @@ import {
   SectionCard,
   SectionCardBody,
   SectionCardHeader,
+  Skeleton,
   ToggleSwitch,
 } from '../../components/UiPrimitives.js';
 
@@ -313,9 +314,13 @@ export default function DeviceDetailPage() {
   if (isLoading) {
     return (
       <div className="p-8 max-w-5xl mx-auto space-y-4">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="h-32 rounded-xl bg-[var(--card)] border border-[var(--border)] animate-pulse" />
-        ))}
+        <Skeleton className="h-10 w-40 rounded-xl" />
+        <Skeleton className="h-24 rounded-2xl" />
+        <div className="grid gap-4 md:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-40 rounded-2xl" />
+          ))}
+        </div>
       </div>
     );
   }

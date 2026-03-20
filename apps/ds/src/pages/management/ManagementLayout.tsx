@@ -49,7 +49,7 @@ export default function ManagementLayout() {
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col border-r transition-transform duration-200 lg:static lg:z-auto lg:w-60 lg:max-w-none lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        className={`ui-mobile-drawer fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col border-r transition-transform duration-200 lg:static lg:z-auto lg:w-60 lg:max-w-none lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
         style={{ background: 'var(--management-sidebar-bg, var(--bg2))', borderColor: 'var(--card-border)' }}
       >
         {/* Logo / brand */}
@@ -78,7 +78,7 @@ export default function ManagementLayout() {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 p-3 space-y-1">
+        <nav className="ui-mobile-drawer-nav flex-1 overflow-y-auto p-3 space-y-1">
           {NAV.map(({ to, icon: Icon, label, end }) => (
             <NavLink
               key={to}
@@ -99,7 +99,7 @@ export default function ManagementLayout() {
         </nav>
 
         {/* User / logout */}
-        <div className="p-3 border-t" style={{ borderColor: 'var(--card-border)' }}>
+        <div className="ui-mobile-drawer-footer border-t p-3" style={{ borderColor: 'var(--card-border)' }}>
           <div className="flex items-center gap-3 px-3 py-2">
             <div className="w-8 h-8 rounded-full bg-[var(--blue)] flex items-center justify-center text-white text-xs font-bold">
               {user?.email?.[0]?.toUpperCase() ?? 'M'}
