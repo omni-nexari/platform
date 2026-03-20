@@ -286,7 +286,7 @@ export async function contentRoutes(app: FastifyInstance) {
       if (matchingIds.length === 0) {
         return reply.send({ items: [], total: 0, page: Number(q['page'] ?? 1), limit });
       }
-      conditions.push(sql`${contentItems.id} = ANY(${matchingIds})` as ReturnType<typeof and>);
+      conditions.push(inArray(contentItems.id, matchingIds) as ReturnType<typeof and>);
     }
 
     if (q['q']) {
@@ -294,7 +294,7 @@ export async function contentRoutes(app: FastifyInstance) {
     }
     if (q['type']) {
       const types = q['type'].split(',').map((t) => t.trim());
-      conditions.push(sql`${contentItems.type} = ANY(${types})`);
+      conditions.push(inArray(contentItems.type, types) as ReturnType<typeof and>);
     }
     if (q['status']) {
       conditions.push(eq(contentItems.status, q['status']));

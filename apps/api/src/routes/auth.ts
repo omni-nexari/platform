@@ -11,8 +11,10 @@ import {
   refreshTokens,
   orgStorageQuotas,
   managementCompanies,
+  contentItems,
+  workspaces,
 } from '@signage/db';
-import { eq, and, isNull, isNotNull } from 'drizzle-orm';
+import { eq, and, isNull, isNotNull, sum } from 'drizzle-orm';
 import { totp } from 'otplib';
 import QRCode from 'qrcode';
 import {
@@ -738,9 +740,21 @@ export async function authRoutes(app: FastifyInstance) {
     });
     if (!org) return reply.status(404).send({ error: 'Org not found' });
 
+    const [storageUsageRow] = await db
+      .select({ usedBytes: sum(contentItems.fileSize) })
+      .from(contentItems)
+      .innerJoin(workspaces, eq(contentItems.workspaceId, workspaces.id))
+      .where(
+        and(
+          eq(workspaces.orgId, orgId),
+          isNull(workspaces.deletedAt),
+          isNull(contentItems.deletedAt),
+        ),
+      );
+
     const quota = await db.query.orgStorageQuotas.findFirst({
       where: eq(orgStorageQuotas.orgId, orgId),
-      columns: { limitBytes: true, usedBytes: true },
+      columns: { limitBytes: true },
     });
 
     const planDefaults: Record<string, number> = {
@@ -753,7 +767,7 @@ export async function authRoutes(app: FastifyInstance) {
       user,
       org,
       storage: {
-        usedBytes: quota?.usedBytes ?? 0,
+        usedBytes: Number(storageUsageRow?.usedBytes ?? 0),
         limitBytes: quota?.limitBytes ?? planDefaults[org.plan] ?? planDefaults.starter,
       },
     });

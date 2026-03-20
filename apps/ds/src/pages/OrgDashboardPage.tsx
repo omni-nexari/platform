@@ -11,9 +11,6 @@ import {
   Plus,
   ChevronDown,
   HardDrive,
-  CheckCircle2,
-  AlertCircle,
-  XCircle,
   Lock,
 } from 'lucide-react';
 
@@ -441,32 +438,6 @@ function ModuleCard({
   );
 }
 
-// ── Stat Tile ──────────────────────────────────────────────────────────────────
-
-function StatTile({
-  icon, label, value, subLabel, labelColor, bgColor, borderColor,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: number;
-  subLabel: string;
-  labelColor: string;
-  bgColor: string;
-  borderColor: string;
-}) {
-  return (
-    <div className="rounded-2xl border p-4 flex flex-col gap-2" style={{ borderColor, background: bgColor }}>
-      <div className="flex items-center gap-2">
-        {icon}
-        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: labelColor }}>{label}</span>
-      </div>
-      <span className="text-3xl font-bold" style={{ color: 'var(--text)' }}>{value}</span>
-      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{subLabel}</span>
-    </div>
-  );
-}
-
-
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function OrgDashboardPage() {
@@ -636,39 +607,8 @@ export default function OrgDashboardPage() {
           </div>
         )}
 
-        {/* Bottom row: stat tiles + storage */}
-        <div className="grid grid-cols-3 gap-4">
-          <div className="col-span-2 grid grid-cols-3 gap-4">
-            <StatTile
-              icon={<CheckCircle2 className="w-4 h-4" style={{ color: '#34d399' }} />}
-              label="Normal"
-              value={summary?.deviceOnline ?? 0}
-              subLabel="running fine"
-              labelColor="#34d399"
-              bgColor="rgba(52,211,153,0.06)"
-              borderColor="rgba(52,211,153,0.22)"
-            />
-            <StatTile
-              icon={<AlertCircle className="w-4 h-4" style={{ color: '#fbbf24' }} />}
-              label="Warning"
-              value={summary?.deviceError ?? 0}
-              subLabel="need attention"
-              labelColor="#fbbf24"
-              bgColor="rgba(251,191,36,0.06)"
-              borderColor="rgba(251,191,36,0.22)"
-            />
-            <StatTile
-              icon={<XCircle className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />}
-              label="Offline"
-              value={summary?.deviceOffline ?? 0}
-              subLabel="unreachable"
-              labelColor="var(--text-muted)"
-              bgColor="var(--card)"
-              borderColor="var(--card-border)"
-            />
-          </div>
-
-          {/* Storage */}
+        {/* Storage */}
+        <div className="grid grid-cols-1 gap-4">
           <div
             className="rounded-2xl border p-5 flex flex-col justify-between"
             style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
