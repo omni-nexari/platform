@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router';
 import { useAuthStore } from './lib/auth.js';
 import { useSAStore } from './lib/superadmin-auth.js';
@@ -37,10 +38,50 @@ import ScheduleEditorPage from './pages/workspace/ScheduleEditorPage.js';
 import TagsPage from './pages/workspace/TagsPage.js';
 import CanvasEditorPage from './pages/workspace/CanvasEditorPage.js';
 import AnalyticsPage from './pages/workspace/AnalyticsPage.js';
+import { api } from './lib/api.js';
+
+function AuthBootstrap({ children }: { children: React.ReactNode }) {
+  const { user, setUser, clearAuth, bootstrapped, markBootstrapped } = useAuthStore();
+
+  useEffect(() => {
+    if (bootstrapped) return;
+    let cancelled = false;
+
+    async function bootstrap() {
+      if (user) {
+        markBootstrapped();
+        return;
+      }
+
+      try {
+        const me = await api.get<{ user: { id: string; name: string; email: string; orgRole: string } }>('/auth/me');
+        if (!cancelled) {
+          setUser(me.user);
+        }
+      } catch {
+        if (!cancelled) {
+          clearAuth();
+        }
+      } finally {
+        if (!cancelled) {
+          markBootstrapped();
+        }
+      }
+    }
+
+    void bootstrap();
+    return () => {
+      cancelled = true;
+    };
+  }, [bootstrapped, user, setUser, clearAuth, markBootstrapped]);
+
+  if (!bootstrapped) return null;
+  return <>{children}</>;
+}
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const token = useAuthStore((s) => s.accessToken);
-  return token ? <>{children}</> : <Navigate to="/login" replace />;
+  const user = useAuthStore((s) => s.user);
+  return user ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
 function RequirePlatformOwner({ children }: { children: React.ReactNode }) {
@@ -62,7 +103,8 @@ function RequireManagementAdmin({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <Routes>
+    <AuthBootstrap>
+      <Routes>
       {/* Public auth */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/login/2fa" element={<TwoFactorPage />} />
@@ -143,6 +185,7 @@ export default function App() {
       {/* Root redirect */}
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
-    </Routes>
+      </Routes>
+    </AuthBootstrap>
   );
 }

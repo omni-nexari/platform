@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { useAuthStore } from '../lib/auth.js';
 import { buildApiUrl } from '../lib/api.js';
 
 interface Props {
@@ -20,7 +19,6 @@ interface Props {
  */
 export default function AuthImg({ itemId, alt = '', className, onError, revision = 0 }: Props) {
   const [src, setSrc] = useState<string | null>(null);
-  const token = useAuthStore((s) => s.accessToken);
 
   useEffect(() => {
     if (!itemId) return;
@@ -29,7 +27,6 @@ export default function AuthImg({ itemId, alt = '', className, onError, revision
     setSrc(null); // reset while re-fetching
 
     fetch(buildApiUrl(`/content/${itemId}/thumbnail`), {
-      headers: { Authorization: `Bearer ${token ?? ''}` },
       credentials: 'include',
     })
       .then(async (res) => {
@@ -51,7 +48,7 @@ export default function AuthImg({ itemId, alt = '', className, onError, revision
       cancelled = true;
       if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
-  }, [itemId, token, revision]);
+  }, [itemId, revision]);
 
   if (!src) return null;
   return <img src={src} alt={alt} className={className} />;

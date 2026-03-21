@@ -30,22 +30,17 @@ export async function notificationsRoutes(app: FastifyInstance) {
   // ── GET /notifications/ws ─ browser realtime notification stream ─────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (app as any).get('/ws', { websocket: true }, async (socket: any, req: any) => {
-    const token = (req.query as Record<string, string | undefined>).token;
+    const token = req.cookies?.access_token as string | undefined;
     if (!token) {
-      socket.close(4001, 'Missing token');
+      socket.close(4001, 'Missing auth cookie');
       return;
     }
 
-    let payload: { sub: string; type: string };
+    let payload: { sub: string; orgId: string; role: string };
     try {
-      payload = app.jwt.verify<{ sub: string; type: string }>(token);
+      payload = app.jwt.verify<{ sub: string; orgId: string; role: string }>(token);
     } catch {
       socket.close(4001, 'Invalid token');
-      return;
-    }
-
-    if (payload.type !== 'user') {
-      socket.close(4003, 'Invalid token type');
       return;
     }
 

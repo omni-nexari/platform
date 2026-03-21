@@ -48,6 +48,8 @@ import { sendPasswordResetEmail, sendResellerOnboardingConfirmationEmail } from 
 import { writeAuditLog } from '../services/audit.js';
 
 const REFRESH_COOKIE = 'refresh_token';
+const ACCESS_COOKIE = 'access_token';
+const CSRF_COOKIE = 'csrf_token';
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 const BRANDING_ASSET_TYPES = new Set(['logo', 'favicon', 'login-background']);
 
@@ -92,7 +94,41 @@ function setRefreshCookie(reply: FastifyReply, token: string) {
   });
 }
 
+function setAccessCookie(reply: FastifyReply, token: string) {
+  void reply.setCookie(ACCESS_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env['NODE_ENV'] === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 15,
+  });
+}
+
+function setCsrfCookie(reply: FastifyReply, token = randomToken(24)) {
+  void reply.setCookie(CSRF_COOKIE, token, {
+    httpOnly: false,
+    secure: process.env['NODE_ENV'] === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 24 * 30,
+  });
+  return token;
+}
+
+function clearAccessCookie(reply: FastifyReply) {
+  reply.clearCookie(ACCESS_COOKIE, { path: '/' });
+}
+
+function clearCsrfCookie(reply: FastifyReply) {
+  reply.clearCookie(CSRF_COOKIE, { path: '/' });
+}
+
 export async function authRoutes(app: FastifyInstance) {
+  app.get('/csrf', async (_req, reply) => {
+    setCsrfCookie(reply);
+    return reply.status(204).send();
+  });
+
   // ── POST /auth/login ────────────────────────────────────────────────────────
   app.post('/login', {
     config: {
@@ -122,6 +158,8 @@ export async function authRoutes(app: FastifyInstance) {
       req.ip,
       req.headers['user-agent'] ?? undefined,
     );
+    setAccessCookie(reply, accessToken);
+    setCsrfCookie(reply);
     setRefreshCookie(reply, refreshToken);
 
     await db.update(users).set({ lastLogin: new Date() }).where(eq(users.id, user.id));
@@ -169,6 +207,8 @@ export async function authRoutes(app: FastifyInstance) {
 
     const accessToken = app.jwt.sign({ sub: user.id, orgId: user.orgId, role: user.orgRole });
     const refreshToken = await createRefreshToken(user.id, req.ip, req.headers['user-agent'] ?? undefined);
+    setAccessCookie(reply, accessToken);
+    setCsrfCookie(reply);
     setRefreshCookie(reply, refreshToken);
     await db.update(users).set({ lastLogin: new Date() }).where(eq(users.id, user.id));
 
@@ -193,11 +233,18 @@ export async function authRoutes(app: FastifyInstance) {
       },
     },
   }, async (req, reply) => {
+    const csrfResult = await (app as FastifyInstance & {
+      verifyCsrf: (req: unknown, reply: unknown) => Promise<unknown> | unknown;
+    }).verifyCsrf(req, reply);
+    if (csrfResult) return csrfResult;
+
     const raw = req.cookies[REFRESH_COOKIE];
     if (!raw) return reply.status(401).send({ error: 'No refresh token' });
 
     const result = await rotateRefreshToken(raw, req.ip, req.headers['user-agent'] ?? undefined);
     if ('error' in result) {
+      clearAccessCookie(reply);
+      clearCsrfCookie(reply);
       reply.clearCookie(REFRESH_COOKIE, { path: '/auth/refresh' });
       return reply.status(401).send({ error: result.error });
     }
@@ -206,14 +253,23 @@ export async function authRoutes(app: FastifyInstance) {
     if (!user) return reply.status(401).send({ error: 'User not found' });
 
     const accessToken = app.jwt.sign({ sub: user.id, orgId: user.orgId, role: user.orgRole });
+    setAccessCookie(reply, accessToken);
+    setCsrfCookie(reply);
     setRefreshCookie(reply, result.newRefreshToken);
     return reply.send({ accessToken });
   });
 
   // ── POST /auth/logout ───────────────────────────────────────────────────────
   app.post('/logout', async (req, reply) => {
+    const csrfResult = await (app as FastifyInstance & {
+      verifyCsrf: (req: unknown, reply: unknown) => Promise<unknown> | unknown;
+    }).verifyCsrf(req, reply);
+    if (csrfResult) return csrfResult;
+
     const raw = req.cookies[REFRESH_COOKIE];
     if (raw) await revokeRefreshToken(raw);
+    clearAccessCookie(reply);
+    clearCsrfCookie(reply);
     reply.clearCookie(REFRESH_COOKIE, { path: '/auth/refresh' });
     return reply.status(204).send();
   });
@@ -829,6 +885,10 @@ export async function authRoutes(app: FastifyInstance) {
       pro: 53_687_091_200,
       enterprise: 536_870_912_000,
     };
+
+    if (!req.cookies[CSRF_COOKIE]) {
+      setCsrfCookie(reply);
+    }
 
     return reply.send({
       user,

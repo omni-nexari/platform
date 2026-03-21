@@ -7,6 +7,8 @@ import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyMultipart from '@fastify/multipart';
 
+const CSRF_COOKIE = 'csrf_token';
+
 function normalizeOrigin(origin: string): string {
   return origin.replace(/\/$/, '');
 }
@@ -74,10 +76,32 @@ export async function registerPlugins(app: FastifyInstance) {
     limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2 GB max
   });
 
+  function requiresCsrf(req: FastifyRequest) {
+    const method = req.method.toUpperCase();
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false;
+    const hasCookieSession = Boolean(req.cookies?.['access_token'] || req.cookies?.['refresh_token']);
+    const hasAuthorizationHeader = Boolean(req.headers.authorization);
+    return hasCookieSession && !hasAuthorizationHeader;
+  }
+
+  async function verifyCsrf(req: FastifyRequest, reply: FastifyReply) {
+    if (!requiresCsrf(req)) return;
+    const cookieToken = req.cookies?.[CSRF_COOKIE];
+    const headerToken = req.headers['x-csrf-token'];
+    const normalizedHeader = Array.isArray(headerToken) ? headerToken[0] : headerToken;
+    if (!cookieToken || !normalizedHeader || cookieToken !== normalizedHeader) {
+      return reply.status(403).send({ error: 'Invalid CSRF token' });
+    }
+  }
+
+  app.decorate('verifyCsrf', verifyCsrf);
+
   // Decorate with authenticate hook used by protected routes
   app.decorate('authenticate', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       await req.jwtVerify();
+      const csrfResult = await verifyCsrf(req, reply);
+      if (csrfResult) return csrfResult;
     } catch {
       return reply.status(401).send({ error: 'Unauthorized' });
     }
@@ -87,6 +111,8 @@ export async function registerPlugins(app: FastifyInstance) {
   app.decorate('authenticatePlatformOwner', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       await req.jwtVerify();
+      const csrfResult = await verifyCsrf(req, reply);
+      if (csrfResult) return csrfResult;
       const payload = req.user as { type?: string };
       if (payload.type !== 'platform_owner') {
         return reply.status(403).send({ error: 'Forbidden' });
@@ -102,6 +128,8 @@ export async function registerPlugins(app: FastifyInstance) {
     async (req: FastifyRequest, reply: FastifyReply) => {
       try {
         await req.jwtVerify();
+        const csrfResult = await verifyCsrf(req, reply);
+        if (csrfResult) return csrfResult;
         const payload = req.user as { type?: string };
         if (payload.type !== 'management_company_admin') {
           return reply.status(403).send({ error: 'Forbidden' });
@@ -116,6 +144,8 @@ export async function registerPlugins(app: FastifyInstance) {
   app.decorate('authenticatePlatformAdmin', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       await req.jwtVerify();
+      const csrfResult = await verifyCsrf(req, reply);
+      if (csrfResult) return csrfResult;
       const payload = req.user as { type?: string };
       if (
         payload.type !== 'platform_owner' &&
@@ -132,6 +162,8 @@ export async function registerPlugins(app: FastifyInstance) {
   app.decorate('authenticateSuperAdmin', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       await req.jwtVerify();
+      const csrfResult = await verifyCsrf(req, reply);
+      if (csrfResult) return csrfResult;
       const payload = req.user as { type?: string };
       if (payload.type !== 'platform_owner') {
         return reply.status(403).send({ error: 'Forbidden' });

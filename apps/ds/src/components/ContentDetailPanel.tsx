@@ -742,10 +742,8 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
 
   const handleDownload = async () => {
     if (!item) return;
-    const token = useAuthStore.getState().accessToken;
     try {
       const res = await fetch(buildApiUrl(`/content/${item.id}/file`), {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
         credentials: 'include',
       });
       if (!res.ok) throw new Error('Download failed');
@@ -829,9 +827,7 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
               title="Preview"
               onClick={async () => {
                 if (!item) return;
-                const token = useAuthStore.getState().accessToken;
                 const res = await fetch(buildApiUrl(`/content/${item.id}/file`), {
-                  headers: token ? { Authorization: `Bearer ${token}` } : {},
                   credentials: 'include',
                 });
                 const blob = await res.blob();

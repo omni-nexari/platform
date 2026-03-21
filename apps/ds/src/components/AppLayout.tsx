@@ -96,7 +96,7 @@ export default function AppLayout() {
   }, [pathname]);
 
   useEffect(() => {
-    if (!accessToken) return;
+    if (!user) return;
 
     const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     let cancelled = false;
@@ -106,9 +106,7 @@ export default function AppLayout() {
 
     const connect = () => {
       if (cancelled) return;
-      const wsUrl = new URL(buildWebSocketUrl('/notifications/ws'));
-      wsUrl.searchParams.set('token', accessToken);
-      socket = new WebSocket(wsUrl.toString());
+      socket = new WebSocket(buildWebSocketUrl('/notifications/ws'));
 
       socket.onopen = () => {
         if (!cancelled) return;
@@ -149,7 +147,7 @@ export default function AppLayout() {
         socket.close();
       }
     };
-  }, [accessToken, queryClient]);
+  }, [user, queryClient]);
 
   const { data: workspaces = [] } = useQuery<Workspace[]>({
     queryKey: ['workspaces'],

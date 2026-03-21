@@ -14,6 +14,17 @@ function normalizePath(path: string) {
   return path.startsWith('/') ? path : `/${path}`;
 }
 
+function readCookie(name: string) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = document.cookie.match(new RegExp(`(?:^|; )${escaped}=([^;]*)`));
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+function isMutationMethod(method: string | undefined) {
+  const normalized = (method ?? 'GET').toUpperCase();
+  return normalized !== 'GET' && normalized !== 'HEAD' && normalized !== 'OPTIONS';
+}
+
 function resolveBaseUrl() {
   if (BASE.startsWith('http://') || BASE.startsWith('https://')) {
     return BASE.endsWith('/') ? BASE : `${BASE}/`;
@@ -37,6 +48,12 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function ensureCsrfToken() {
+  if (readCookie('csrf_token')) return readCookie('csrf_token');
+  await fetch(buildApiUrl('/auth/csrf'), { credentials: 'include' });
+  return readCookie('csrf_token');
+}
+
 export function buildApiUrl(path: string) {
   return new URL(normalizePath(path).slice(1), resolveBaseUrl()).toString();
 }
@@ -48,14 +65,19 @@ export function buildWebSocketUrl(path: string) {
 }
 
 async function refreshAccessToken(): Promise<string> {
-  const refreshed = await fetch(buildApiUrl('/auth/refresh'), { method: 'POST', credentials: 'include' });
-  if (!refreshed.ok) {
+  const csrfToken = await ensureCsrfToken();
+  const refreshedWithCsrf = await fetch(buildApiUrl('/auth/refresh'), {
+    method: 'POST',
+    credentials: 'include',
+    headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
+  });
+  if (!refreshedWithCsrf.ok) {
     useAuthStore.getState().clearAuth();
     window.location.href = '/login';
     throw new Error('Unauthorized');
   }
 
-  const data = (await refreshed.json()) as { accessToken: string };
+  const data = (await refreshedWithCsrf.json()) as { accessToken: string };
   useAuthStore.getState().setAuth(data.accessToken, useAuthStore.getState().user);
   return data.accessToken;
 }
@@ -77,7 +99,7 @@ function parseResponseText<T>(status: number, text: string): T {
 function performFormRequest(
   path: string,
   form: FormData,
-  token: string | null | undefined,
+  csrfToken: string | null | undefined,
   options: FormRequestOptions = {},
 ): Promise<FormRequestResult> {
   return new Promise((resolve, reject) => {
@@ -85,8 +107,8 @@ function performFormRequest(
     xhr.open('POST', buildApiUrl(path));
     xhr.withCredentials = true;
 
-    if (token) {
-      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    if (csrfToken) {
+      xhr.setRequestHeader('X-CSRF-Token', csrfToken);
     }
 
     xhr.upload.onprogress = (event) => {
@@ -105,12 +127,13 @@ async function postFormRequest<T>(
   form: FormData,
   options: FormRequestOptions = {},
 ): Promise<T> {
-  const token = useAuthStore.getState().accessToken;
-  let result = await performFormRequest(path, form, token, options);
+  const csrfToken = await ensureCsrfToken();
+  let result = await performFormRequest(path, form, csrfToken, options);
 
   if (result.status === 401) {
-    const refreshedAccessToken = await refreshAccessToken();
-    result = await performFormRequest(path, form, refreshedAccessToken, options);
+    await refreshAccessToken();
+    const nextCsrfToken = await ensureCsrfToken();
+    result = await performFormRequest(path, form, nextCsrfToken, options);
   }
 
   if (result.status < 200 || result.status >= 300) {
@@ -124,13 +147,16 @@ async function request<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = useAuthStore.getState().accessToken;
   const headers: Record<string, string> = {
     // Only set JSON content-type for string bodies; FormData sets its own boundary.
     ...(typeof options.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
     ...(options.headers as Record<string, string>),
   };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  if (isMutationMethod(options.method)) {
+    const csrfToken = await ensureCsrfToken();
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  }
 
   const res = await fetch(buildApiUrl(path), { ...options, headers, credentials: 'include' });
 
@@ -160,8 +186,11 @@ async function request<T>(
   }
 
   if (res.status === 401 || (path === '/auth/me' && res.status === 404)) {
-    const refreshedAccessToken = await refreshAccessToken();
-    headers['Authorization'] = `Bearer ${refreshedAccessToken}`;
+    await refreshAccessToken();
+    if (isMutationMethod(options.method)) {
+      const nextCsrfToken = await ensureCsrfToken();
+      if (nextCsrfToken) headers['X-CSRF-Token'] = nextCsrfToken;
+    }
     const retry = await fetch(buildApiUrl(path), { ...options, headers, credentials: 'include' });
     if (!retry.ok) {
       const retryText = await retry.text();

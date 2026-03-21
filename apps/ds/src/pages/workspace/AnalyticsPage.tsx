@@ -16,7 +16,7 @@ import {
   Wifi,
   HardDrive,
 } from 'lucide-react';
-import { api } from '../../lib/api.js';
+import { api, buildApiUrl } from '../../lib/api.js';
 import { useAuthStore } from '../../lib/auth.js';
 import { PageHeader, Skeleton } from '../../components/UiPrimitives.js';
 
@@ -106,7 +106,6 @@ function toDateInput(d: Date) {
 
 export default function AnalyticsPage() {
   const { wsId } = useParams<{ wsId: string }>();
-  const token = useAuthStore((s) => s.accessToken);
 
   const defaultTo = new Date();
   const defaultFrom = new Date(defaultTo.getTime() - 30 * 86_400_000);
@@ -140,9 +139,8 @@ export default function AnalyticsPage() {
 
   const exportReport = useCallback(async (kind: 'csv' | 'pdf') => {
     try {
-      const url = `/api/analytics/export.${kind}?${params}`;
+      const url = buildApiUrl(`/analytics/export.${kind}?${params}`);
       const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
         credentials: 'include',
       });
       if (!res.ok) throw new Error(await res.text());
@@ -156,7 +154,7 @@ export default function AnalyticsPage() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : `Export ${kind.toUpperCase()} failed`);
     }
-  }, [from, to, token, params]);
+  }, [from, to, params]);
 
   const maxDayPlays = Math.max(1, ...(summary?.byDay.map((d) => d.plays) ?? [1]));
   const totalEvents = eventsData?.total ?? 0;

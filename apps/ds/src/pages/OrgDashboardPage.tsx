@@ -443,7 +443,7 @@ function ModuleCard({
 
 export default function OrgDashboardPage() {
   const navigate = useNavigate();
-  const accessToken = useAuthStore((s) => s.accessToken);
+  const user = useAuthStore((s) => s.user);
   const [searchParams, setSearchParams] = useSearchParams();
   const [wsOpen, setWsOpen] = useState(false);
   const [selectedWsId, setSelectedWsId] = useState<string | null>(searchParams.get('workspaceId'));
@@ -451,7 +451,7 @@ export default function OrgDashboardPage() {
   const { data: me } = useQuery<OrgInfo>({
     queryKey: ['me'],
     queryFn: () => api.get('/auth/me'),
-    enabled: !!accessToken,
+    enabled: !!user,
     retry: false,
   });
 
