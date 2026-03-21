@@ -93,6 +93,12 @@ window.RemoteControl = {
       event.stopPropagation();
     }
 
+    // INFO button always closes the log panel if it is open
+    if (keyCode === this.KEYS.INFO && typeof UiLog !== 'undefined' && UiLog._visible) {
+      UiLog.toggle();
+      return;
+    }
+
     // Handle key presses based on current screen
     const activeScreen = this.getCurrentScreen();
 
@@ -114,7 +120,7 @@ window.RemoteControl = {
       return 'pairing';
     } else if (!document.getElementById('player-screen').classList.contains('hidden')) {
       return 'player';
-    } else if (!document.getElementById('error-screen').classList.classList.contains('hidden')) {
+    } else if (!document.getElementById('error-screen').classList.contains('hidden')) {
       return 'error';
     }
     return 'unknown';
@@ -132,6 +138,11 @@ window.RemoteControl = {
       case this.KEYS.INFO:
         // Show debug info
         this.toggleDebugMode();
+        break;
+
+      case this.KEYS.MENU:
+        // Menu button - toggle on-screen log console
+        if (typeof UiLog !== 'undefined') UiLog.toggle();
         break;
 
       case this.KEYS.RED:
@@ -231,9 +242,9 @@ window.RemoteControl = {
         this.toggleDebugMode();
         break;
 
-      case this.KEYS.BLUE:
-        // Blue button - show connection status
-        this.showConnectionStatus();
+      case this.KEYS.MENU:
+        // Menu button - toggle on-screen log console
+        if (typeof UiLog !== 'undefined') UiLog.toggle();
         break;
     }
   },

@@ -3,7 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Digital Signage Player</title>
+    <title>Nexari Signage Player</title>
+    <!-- Early error banner: catches any JS crash before logger/UiLog are ready -->
+    <script>
+    (function() {
+      function showErr(msg) {
+        var show = function() {
+          var b = document.getElementById('_jserr');
+          if (!b) {
+            b = document.createElement('div');
+            b.id = '_jserr';
+            b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#b00040;color:#fff;padding:10px 16px;font:13px monospace;word-break:break-all;white-space:pre-line;max-height:35vh;overflow-y:auto;';
+            (document.body || document.documentElement).appendChild(b);
+          }
+          b.textContent += msg + '\n';
+        };
+        if (document.body) show(); else document.addEventListener('DOMContentLoaded', show);
+      }
+      window.onerror = function(msg, src, line) {
+        showErr('[JS ERROR] ' + msg + '\n  ' + src + ':' + line);
+        return false;
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        var r = e.reason;
+        showErr('[REJECTION] ' + (r && r.message ? r.message : String(r)));
+      });
+    })();
+    </script>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -11,9 +37,9 @@
     <div id="pairing-screen" class="screen">
         <div class="pairing-container">
             <div class="logo">
-                <img src="icon.png" alt="Digital Signage" />
+                <img src="logo.png" alt="Nexari" />
             </div>
-            <h1>Digital Signage Player</h1>
+            <h1>Nexari Signage</h1>
             <div class="pairing-code-container">
                 <p class="pairing-label">Enter this code in your dashboard:</p>
                 <div id="pairing-code" class="pairing-code">------</div>
@@ -127,6 +153,16 @@
             <p id="error-message">Unable to connect to server</p>
             <button id="retry-button" class="retry-button">Retry</button>
         </div>
+    </div>
+
+    <!-- On-screen Log Console (toggle: MENU remote button or press M key) -->
+    <div id="ui-log-panel">
+        <div class="ui-log-header">
+            <span>Log Console</span>
+            <span class="ui-log-hint">MENU button to close &nbsp;|&nbsp; keyboard: M</span>
+            <button class="ui-log-clear" onclick="UiLog.clear()">Clear</button>
+        </div>
+        <div id="ui-log-list"></div>
     </div>
 
     <script src="js/config.js"></script>

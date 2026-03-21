@@ -89,6 +89,7 @@ const Player = {
   isSyncStarting: false,
   syncPlayMode: 'none' as 'none' | 'native',
   syncPlayListener: null as ((data: any) => void) | null,
+  deviceToken: null as string | null,
   
   // NTP time synchronization
   ntpOffset: 0, // Offset in milliseconds from server time
@@ -106,6 +107,7 @@ const Player = {
   async init(device: Device): Promise<void> {
     this.deviceId = device.id;
     this.deviceName = device.name;
+    this.deviceToken = (device as any).deviceToken || localStorage.getItem('deviceToken') || '';
 
     try {
       const deployVersion = (window as any)?.PLAYER_DEPLOY_VERSION;
@@ -162,7 +164,8 @@ const Player = {
   // Connect to WebSocket
   connectWebSocket(): void {
     try {
-      const wsUrl = `${CONFIG.WS_URL}/api/v1/stream/${this.deviceId}?type=player`;
+      const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
+      const wsUrl = `${CONFIG.WS_URL}/api/v1/devices/ws/device?token=${encodeURIComponent(token)}`;
       logger.info('Connecting to WebSocket:', wsUrl);
       
       this.wsConnection = new WebSocket(wsUrl);
@@ -170,12 +173,6 @@ const Player = {
       this.wsConnection.onopen = () => {
         logger.info('WebSocket connected');
         this.updateConnectionStatus(true);
-        
-        // Send device ID to subscribe to device-specific updates
-        this.wsConnection.send(JSON.stringify({
-          type: 'subscribe',
-          deviceId: this.deviceId
-        }));
       };
       
       this.wsConnection.onmessage = (event) => {
@@ -286,6 +283,62 @@ const Player = {
           }
           break;
           
+        // ── Our API WS commands (snake_case from server → ws.ts) ──────────────
+        case 'refresh_schedule':
+          logger.info('refresh_schedule received - reloading content');
+          this.loadContent();
+          break;
+        case 'reboot':
+          logger.info('reboot command received');
+          this.executeCommand({ type: 'REBOOT' });
+          break;
+        case 'power_off':
+          logger.info('power_off command received');
+          this.executeCommand({ type: 'POWER_OFF' });
+          break;
+        case 'clear_cache':
+          logger.info('clear_cache command received');
+          this.executeCommand({ type: 'CLEAR_CACHE' });
+          break;
+        case 'dump_logs':
+          logger.info('dump_logs command received');
+          this.executeCommand({ type: 'REQUEST_LOG_BURST' });
+          break;
+        case 'screenshot':
+          logger.info('screenshot command received');
+          this.executeCommand({ type: 'SCREENSHOT' });
+          break;
+        case 'update_player':
+          logger.info('update_player command received:', message.payload);
+          if (typeof AppUpdater !== 'undefined') {
+            AppUpdater.handle({ type: 'APP_UPDATE', ...message }, (statusType: string, data?: Record<string, unknown>) => {
+              if (this.wsConnection && this.wsConnection.readyState === (this.wsConnection as any).OPEN) {
+                this.wsConnection.send(JSON.stringify({ type: statusType, deviceId: this.deviceId, ...(data || {}) }));
+              }
+            });
+          }
+          break;
+        case 'emergency_start':
+          logger.info('emergency_start received:', message.payload);
+          this.loadContent();
+          break;
+        case 'emergency_clear':
+          logger.info('emergency_clear received');
+          this.loadContent();
+          break;
+        case 'set_ntp':
+        case 'set_ir_lock':
+        case 'set_button_lock':
+        case 'set_on_timer':
+        case 'set_off_timer':
+        case 'clear_on_timer':
+        case 'clear_off_timer':
+        case 'set_screenshot_interval':
+        case 'set_zones':
+        case 'update_tv_firmware':
+          logger.info(`Command received: ${messageType}`, message.payload);
+          this.executeCommand({ type: messageType.toUpperCase().replace(/-/g, '_'), payload: message.payload });
+          break;
         default:
           logger.debug('Unknown message type:', messageType);
       }
@@ -305,22 +358,9 @@ const Player = {
 
   // Start heartbeat
   startHeartbeat(): void {
-    this.heartbeatInterval = setInterval(async () => {
-      try {
-        await API.heartbeat(this.deviceId);
-        logger.debug('Heartbeat sent');
-
-        // Push richer heartbeat over WebSocket when available
-        this.sendWebSocketHeartbeat();
-      } catch (error) {
-        // If device was deleted (404), return to pairing
-        if (error.message && error.message.includes('404')) {
-          logger.warn('Device not found during heartbeat (deleted). Returning to pairing...');
-          this.handleDeviceDeleted();
-          return;
-        }
-        logger.warn('Heartbeat failed:', error);
-      }
+    // Heartbeat is sent via WebSocket only — no HTTP call
+    this.heartbeatInterval = setInterval(() => {
+      this.sendWebSocketHeartbeat();
     }, CONFIG.HEARTBEAT_INTERVAL);
   },
 
@@ -428,23 +468,8 @@ const Player = {
 
   // Start command polling
   startCommandPolling() {
-    this.commandPollInterval = setInterval(async () => {
-      try {
-        const commands = await API.getCommands(this.deviceId);
-        if (commands && commands.length > 0) {
-          logger.info('Commands received:', commands);
-          commands.forEach(cmd => this.executeCommand(cmd));
-        }
-      } catch (error) {
-        // If device was deleted (404), return to pairing
-        if (error.message && error.message.includes('404')) {
-          logger.warn('Device not found (deleted). Returning to pairing...');
-          this.handleDeviceDeleted();
-          return;
-        }
-        logger.warn('Command polling failed:', error);
-      }
-    }, CONFIG.COMMAND_POLL_INTERVAL);
+    // Commands arrive via WebSocket — HTTP polling is disabled
+    logger.debug('Command polling disabled; commands arrive via WebSocket');
   },
 
   // Start content refresh
@@ -556,7 +581,7 @@ const Player = {
     this._loadInFlight = true;
     try {
       logger.info('Loading content...');
-      const content = await API.getCurrentContent(this.deviceId);
+      const content = await API.getCurrentContent(this.deviceId, this.deviceToken);
       
       if (content && content.items && content.items.length > 0) {
         const newSignature = this.getContentSignature(content);

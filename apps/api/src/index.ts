@@ -13,7 +13,7 @@ async function start() {
   });
 
   await registerPlugins(app);
-  await registerRoutes(app);
+  await app.register(registerRoutes, { prefix: '/api/v1' });
 
   try {
     await app.listen({ port: PORT, host: '0.0.0.0' });

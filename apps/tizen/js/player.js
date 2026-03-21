@@ -30,6 +30,7 @@ const Player = {
     lastReadinessPayload: null,
     lastReadinessAt: 0,
     _loadInFlight: false,
+    deviceToken: null,
     currentAvPlayProfileKey: null,
     isSyncPlaying: false,
     isSyncStarting: false,
@@ -49,6 +50,7 @@ const Player = {
         return __awaiter(this, void 0, void 0, function* () {
             this.deviceId = device.id;
             this.deviceName = device.name;
+            this.deviceToken = device.deviceToken || localStorage.getItem('deviceToken') || '';
             try {
                 const deployVersion = window === null || window === void 0 ? void 0 : window.PLAYER_DEPLOY_VERSION;
                 const buildInfo = window === null || window === void 0 ? void 0 : window.PLAYER_BUILD_INFO;
@@ -94,17 +96,13 @@ const Player = {
     // Connect to WebSocket
     connectWebSocket() {
         try {
-            const wsUrl = `${CONFIG.WS_URL}/api/v1/stream/${this.deviceId}?type=player`;
+            const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
+            const wsUrl = `${CONFIG.WS_URL}/api/v1/devices/ws/device?token=${encodeURIComponent(token)}`;
             logger.info('Connecting to WebSocket:', wsUrl);
             this.wsConnection = new WebSocket(wsUrl);
             this.wsConnection.onopen = () => {
                 logger.info('WebSocket connected');
                 this.updateConnectionStatus(true);
-                // Send device ID to subscribe to device-specific updates
-                this.wsConnection.send(JSON.stringify({
-                    type: 'subscribe',
-                    deviceId: this.deviceId
-                }));
             };
             this.wsConnection.onmessage = (event) => {
                 this.handleWebSocketMessage(event.data);
@@ -134,6 +132,63 @@ const Player = {
             // Support both 'type' and 'event' field names
             const messageType = message.type || message.event;
             switch (messageType) {
+                // ── Our API WS commands (snake_case from server → ws.ts) ───────────
+                case 'refresh_schedule':
+                    logger.info('refresh_schedule received - reloading content');
+                    this.loadContent();
+                    break;
+                case 'reboot':
+                    logger.info('reboot command received');
+                    this.executeCommand({ type: 'REBOOT' });
+                    break;
+                case 'power_off':
+                    logger.info('power_off command received');
+                    this.executeCommand({ type: 'POWER_OFF' });
+                    break;
+                case 'clear_cache':
+                    logger.info('clear_cache command received');
+                    this.executeCommand({ type: 'CLEAR_CACHE' });
+                    break;
+                case 'dump_logs':
+                    logger.info('dump_logs command received');
+                    this.executeCommand({ type: 'REQUEST_LOG_BURST' });
+                    break;
+                case 'screenshot':
+                    logger.info('screenshot command received');
+                    this.executeCommand({ type: 'SCREENSHOT' });
+                    break;
+                case 'update_player':
+                    logger.info('update_player command received:', message.payload);
+                    if (typeof AppUpdater !== 'undefined') {
+                        AppUpdater.handle(message, (statusType, data) => {
+                            if (this.wsConnection && this.wsConnection.readyState === this.wsConnection.OPEN) {
+                                this.wsConnection.send(JSON.stringify(Object.assign({ type: statusType, deviceId: this.deviceId }, (data || {}))));
+                            }
+                        });
+                    }
+                    break;
+                case 'emergency_start':
+                    logger.info('emergency_start received:', message.payload);
+                    this.loadContent();
+                    break;
+                case 'emergency_clear':
+                    logger.info('emergency_clear received');
+                    this.loadContent();
+                    break;
+                case 'set_ntp':
+                case 'set_ir_lock':
+                case 'set_button_lock':
+                case 'set_on_timer':
+                case 'set_off_timer':
+                case 'clear_on_timer':
+                case 'clear_off_timer':
+                case 'set_screenshot_interval':
+                case 'set_zones':
+                case 'update_tv_firmware':
+                    logger.info(`Command received: ${messageType}`, message.payload);
+                    this.executeCommand({ type: messageType.toUpperCase().replace(/-/g, '_'), payload: message.payload });
+                    break;
+                // ── Legacy event names (kept for compatibility) ────────────────────
                 case 'content-update':
                 case 'schedule.updated':
                 case 'schedule.created':
@@ -218,10 +273,9 @@ const Player = {
     startHeartbeat() {
         this.heartbeatInterval = setInterval(() => __awaiter(this, void 0, void 0, function* () {
             try {
-                yield API.heartbeat(this.deviceId);
-                logger.debug('Heartbeat sent');
-                // Push richer heartbeat over WebSocket when available
+                // Heartbeat is sent via WebSocket only
                 this.sendWebSocketHeartbeat();
+                logger.debug('WS heartbeat sent');
             }
             catch (error) {
                 // If device was deleted (404), return to pairing
@@ -325,24 +379,8 @@ const Player = {
     },
     // Start command polling
     startCommandPolling() {
-        this.commandPollInterval = setInterval(() => __awaiter(this, void 0, void 0, function* () {
-            try {
-                const commands = yield API.getCommands(this.deviceId);
-                if (commands && commands.length > 0) {
-                    logger.info('Commands received:', commands);
-                    commands.forEach(cmd => this.executeCommand(cmd));
-                }
-            }
-            catch (error) {
-                // If device was deleted (404), return to pairing
-                if (error.message && error.message.includes('404')) {
-                    logger.warn('Device not found (deleted). Returning to pairing...');
-                    this.handleDeviceDeleted();
-                    return;
-                }
-                logger.warn('Command polling failed:', error);
-            }
-        }), CONFIG.COMMAND_POLL_INTERVAL);
+        // Commands arrive via WebSocket — no HTTP polling needed
+        logger.debug('Command polling disabled (using WebSocket)');
     },
     // Start content refresh
     startContentRefresh() {
@@ -441,7 +479,7 @@ const Player = {
             this._loadInFlight = true;
             try {
                 logger.info('Loading content...');
-                const content = yield API.getCurrentContent(this.deviceId);
+                const content = yield API.getCurrentContent(this.deviceId, this.deviceToken);
                 if (content && content.items && content.items.length > 0) {
                     const newSignature = this.getContentSignature(content);
                     const isLegacyPlaying = this.currentPlaylistController && !this.currentPlaylistController.cancelled;

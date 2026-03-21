@@ -4,13 +4,21 @@ window.API = {
   // ── POST /devices/pair/request ────────────────────────────────────────────
   async requestPairing(deviceInfo) {
     try {
-      const body = {
-        duid: deviceInfo.duid || deviceInfo.serialNumber || null,
-        modelName: deviceInfo.model || deviceInfo.modelName || null,
-        modelCode: deviceInfo.modelCode || null,
-        serialNumber: deviceInfo.serialNumber || null,
-        firmwareVersion: deviceInfo.firmwareVersion || null,
-      };
+      // duid is required by server (min 1 char); fall back to a persistent random ID
+      var duid = deviceInfo.duid || deviceInfo.serialNumber || null;
+      if (!duid) {
+        duid = localStorage.getItem('DEVICE_FALLBACK_DUID');
+        if (!duid) {
+          duid = 'SBB-' + Math.random().toString(36).slice(2, 10).toUpperCase() + '-' + Date.now().toString(36).toUpperCase();
+          localStorage.setItem('DEVICE_FALLBACK_DUID', duid);
+        }
+        logger.warn('No DUID from system info, using fallback:', duid);
+      }
+      const body = { duid: duid };
+      if (deviceInfo.model    || deviceInfo.modelName)  body.modelName      = deviceInfo.model || deviceInfo.modelName;
+      if (deviceInfo.modelCode)                          body.modelCode      = deviceInfo.modelCode;
+      if (deviceInfo.serialNumber)                       body.serialNumber   = deviceInfo.serialNumber;
+      if (deviceInfo.firmwareVersion)                    body.firmwareVersion = deviceInfo.firmwareVersion;
       const response = await fetch(`${CONFIG.API_BASE}/devices/pair/request`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

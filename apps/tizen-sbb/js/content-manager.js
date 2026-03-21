@@ -575,15 +575,13 @@ window.ContentManager = {
           try {
             const localHtml = await this.prepareHtmlPackage(content);
             if (localHtml && localHtml.url) {
-              downloadedItems.push({
-                ...item,
-                content: {
-                  ...content,
+              downloadedItems.push(Object.assign({}, item, {
+                content: Object.assign({}, content, {
                   url: localHtml.url,
                   originalUrl: content.url,
                   metadata: localHtml.metadata || content.metadata,
-                }
-              });
+                })
+              }));
               continue;
             }
           } catch (htmlError) {
@@ -623,14 +621,12 @@ window.ContentManager = {
         }
         
         if (localUrl) {
-          downloadedItems.push({
-            ...item,
-            content: {
-              ...content,
+          downloadedItems.push(Object.assign({}, item, {
+            content: Object.assign({}, content, {
               url: localUrl, // Use local file URL
               originalUrl: content.url // Keep original for reference
-            }
-          });
+            })
+          }));
         } else {
           logger.error(`Failed to download after retries: ${content.name}, using remote URL`);
           // Keep original item with remote URL as fallback
@@ -643,10 +639,9 @@ window.ContentManager = {
       }
     }
 
-    return {
-      ...playlist,
+    return Object.assign({}, playlist, {
       items: downloadedItems
-    };
+    });
   },
 
   // Generate local filename from content
@@ -870,7 +865,7 @@ window.ContentManager = {
     if (!base || typeof base !== 'object') {
       base = {};
     }
-    return { ...base, ...patch };
+    return Object.assign({}, base, patch);
   },
 
   getBackendBaseUrl() {

@@ -91,6 +91,7 @@ window.Pairing = {
       // Get device info
       const systemInfo = await Telemetry.getSystemInfo();
       const deviceInfo = {
+        duid: systemInfo.duid || systemInfo.serialNumber || null,
         model: systemInfo.model,
         realModel: (systemInfo.systemConfig && systemInfo.systemConfig.realModel) || systemInfo.realModel || null,
         tvName: systemInfo.tvName || null,
@@ -131,8 +132,8 @@ window.Pairing = {
       
       const response = await API.requestPairing(deviceInfo);
       
-      if (response.pairingCode) {
-        this.pairingCode = response.pairingCode;
+      if (response.code) {
+        this.pairingCode = response.code;
         logger.info('Received pairing code:', this.pairingCode);
         
         // Display pairing code
@@ -158,11 +159,27 @@ window.Pairing = {
     this.pairingCheckInterval = setInterval(async () => {
       try {
         const result = await API.checkPairing(this.pairingCode);
-        
-        if (result.paired) {
+
+        if (result.status === 'claimed') {
           logger.info('Pairing confirmed!');
           this.stopPairingCheck();
-          this.onPaired(result.device);
+          // Fetch workspace info to get workspaceId and populate device name
+          const token = result.deviceToken;
+          let workspaceName = '';
+          let workspaceId = '';
+          try {
+            const wsData = await API.getWorkspaceInfo(token);
+            workspaceId = (wsData.workspace && wsData.workspace.id) || '';
+            workspaceName = (wsData.workspace && wsData.workspace.name) || '';
+          } catch (e) {
+            logger.warn('Could not fetch workspace info:', e);
+          }
+          this.onPaired({
+            id: result.deviceId,
+            deviceToken: token,
+            name: workspaceName || 'Signage Player',
+            workspaceId,
+          });
         }
       } catch (error) {
         logger.warn('Pairing check failed:', error);
@@ -184,8 +201,9 @@ window.Pairing = {
     
     // Save device credentials
     localStorage.setItem('deviceId', device.id);
+    localStorage.setItem('deviceToken', device.deviceToken);
     localStorage.setItem('deviceName', device.name);
-    localStorage.setItem('workspaceId', device.workspaceId);
+    localStorage.setItem('workspaceId', device.workspaceId || '');
     localStorage.setItem('isPaired', 'true');
     
     // Debug logging

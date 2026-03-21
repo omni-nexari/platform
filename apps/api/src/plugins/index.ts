@@ -45,7 +45,19 @@ export async function registerPlugins(app: FastifyInstance) {
 
   await app.register(fastifyCors, {
     origin(origin, callback) {
+      // No origin header (server-to-server, curl, etc.)
       if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      // Tizen / packaged .wgt apps send Origin: "null" (file:// equivalent)
+      // Also allow any file:// or app:// scheme used by local TV apps
+      if (
+        origin === 'null' ||
+        origin.startsWith('file://') ||
+        origin.startsWith('app://')
+      ) {
         callback(null, true);
         return;
       }

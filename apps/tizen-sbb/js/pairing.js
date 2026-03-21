@@ -60,10 +60,17 @@ window.PairingSettings = {
   },
 
   reset() {
+    // Clear server config
     localStorage.removeItem('PLAYER_API_BASE');
     localStorage.removeItem('PLAYER_WS_URL');
+    // Clear ALL pairing state so device re-pairs from scratch
+    localStorage.removeItem('isPaired');
+    localStorage.removeItem('deviceId');
+    localStorage.removeItem('deviceToken');
+    localStorage.removeItem('deviceName');
+    localStorage.removeItem('workspaceId');
     const msg = document.getElementById('conn-settings-msg');
-    if (msg) { msg.style.color = ''; msg.textContent = 'Reset to defaults — reconnecting…'; }
+    if (msg) { msg.style.color = ''; msg.textContent = 'Reset — will re-pair on reload…'; }
     setTimeout(() => location.reload(), 800);
   },
 };
@@ -87,41 +94,59 @@ window.Pairing = {
     this.showPairingScreen();
     PairingSettings.init();
 
-    try {
-      // Get device info
-      const systemInfo = await Telemetry.getSystemInfo();
-      const deviceInfo = {
-        duid: systemInfo.duid || systemInfo.serialNumber || null,
-        model: systemInfo.model,
-        realModel: (systemInfo.systemConfig && systemInfo.systemConfig.realModel) || systemInfo.realModel || null,
-        tvName: systemInfo.tvName || null,
-        manufacturer: systemInfo.manufacturer,
-        platform: systemInfo.platform,
-        serialNumber: systemInfo.serialNumber,
-        firmwareVersion: systemInfo.firmwareVersion,
-        capabilities: systemInfo.capabilities
-      };
-      
-      // Display device info on pairing screen - prefer realModel over internal model
-      const displayModel = (systemInfo.systemConfig && systemInfo.systemConfig.realModel) || deviceInfo.model;
-      document.getElementById('device-model').textContent = `Model: ${displayModel}`;
-      
-      if (systemInfo.ipAddress) {
-        document.getElementById('device-ip').textContent = `IP: ${systemInfo.ipAddress}`;
-      }
-      if (systemInfo.serialNumber) {
-        document.getElementById('device-serial').textContent = `Serial: ${systemInfo.serialNumber}`;
-      }
-      if (systemInfo.panelType) {
-        document.getElementById('device-panel').textContent = `Panel: ${systemInfo.panelType}`;
-      }
+    // Show immediate placeholders — visible even if all async calls hang
+    document.getElementById('pairing-status').textContent = 'Initializing...';
+    document.getElementById('device-model').textContent   = 'Model: ...';
+    document.getElementById('device-ip').textContent      = 'IP: ...';
+    document.getElementById('device-serial').textContent  = 'Serial: ...';
+    document.getElementById('device-panel').textContent   = 'Panel: ...';
+    document.getElementById('pairing-code').textContent   = '......';
 
-      // Manual pairing only (serial auto-claim removed)
+    // ── Step 1: gather device info with 5 s timeout ────────────────────────
+    document.getElementById('pairing-status').textContent = 'Reading device info...';
+    let systemInfo = {};
+    try {
+      systemInfo = (await Promise.race([
+        Telemetry.getSystemInfo(),
+        new Promise(function(resolve) { setTimeout(function() { resolve({}); }, 5000); })
+      ])) || {};
+      logger.info('Device info received');
+    } catch (infoErr) {
+      logger.warn('getSystemInfo failed, continuing with empty info:', infoErr);
+    }
+
+    const displayModel = (systemInfo.systemConfig && systemInfo.systemConfig.realModel)
+      || systemInfo.model || 'N/A';
+    document.getElementById('device-model').textContent   = 'Model: ' + displayModel;
+    document.getElementById('device-ip').textContent      = 'IP: ' + (systemInfo.ipAddress || 'N/A');
+    document.getElementById('device-serial').textContent  = 'Serial: ' + (systemInfo.serialNumber || 'N/A');
+    document.getElementById('device-panel').textContent   = 'Panel: ' + (systemInfo.panelType || 'N/A');
+
+    logger.info('Device info — model:', displayModel,
+      'ip:', systemInfo.ipAddress || 'N/A',
+      'serial:', systemInfo.serialNumber || 'N/A');
+
+    // ── Step 2: request pairing code ──────────────────────────────────────
+    document.getElementById('pairing-status').textContent = 'Connecting to server...';
+    logger.info('Requesting pairing code from', CONFIG.API_BASE);
+
+    const deviceInfo = {
+      duid:            systemInfo.duid || systemInfo.serialNumber || null,
+      model:           systemInfo.model || null,
+      realModel:       (systemInfo.systemConfig && systemInfo.systemConfig.realModel) || systemInfo.realModel || null,
+      tvName:          systemInfo.tvName || null,
+      manufacturer:    systemInfo.manufacturer || null,
+      platform:        systemInfo.platform || null,
+      serialNumber:    systemInfo.serialNumber || null,
+      firmwareVersion: systemInfo.firmwareVersion || null,
+      capabilities:    systemInfo.capabilities || null,
+    };
+
+    try {
       await this.requestPairingCode(deviceInfo);
-      
     } catch (error) {
       logger.error('Pairing initialization failed:', error);
-      this.showError('Failed to initialize pairing', error.message);
+      document.getElementById('pairing-status').textContent = 'ERROR: ' + (error.message || error);
     }
   },
 

@@ -30,15 +30,23 @@ window.Telemetry = {
   },
 
   // Helper to promisify tizen.systeminfo.getPropertyValue
+  // 2-second timeout so a missing/broken property never hangs the whole chain
   getPropertyAsync(property) {
-    return new Promise((resolve, reject) => {
+    return new Promise(function(resolve) {
+      var timer = setTimeout(function() { resolve(null); }, 2000);
       try {
-        tizen.systeminfo.getPropertyValue(property, resolve, (error) => {
-          logger.warn(`Failed to get ${property}:`, error);
-          resolve(null); // Return null instead of rejecting
-        });
+        tizen.systeminfo.getPropertyValue(
+          property,
+          function(val) { clearTimeout(timer); resolve(val); },
+          function(error) {
+            clearTimeout(timer);
+            try { logger.warn('Failed to get ' + property + ':', error); } catch(e){}
+            resolve(null);
+          }
+        );
       } catch (error) {
-        logger.warn(`Exception getting ${property}:`, error);
+        clearTimeout(timer);
+        try { logger.warn('Exception getting ' + property + ':', error); } catch(e){}
         resolve(null);
       }
     });
@@ -573,7 +581,7 @@ storageTotal: (storage && storage.units && storage.units[0] && storage.units[0].
   },
 
   updateIptvStats(patch) {
-    this.runtime.iptv = { ...this.runtime.iptv, ...patch };
+    this.runtime.iptv = Object.assign({}, this.runtime.iptv, patch);
   },
   setCastReady(value) {
     this.runtime.castReady = value;
