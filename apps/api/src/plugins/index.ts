@@ -28,6 +28,11 @@ function getAllowedOrigins(): Set<string> {
 
 export async function registerPlugins(app: FastifyInstance) {
   const allowedOrigins = getAllowedOrigins();
+  const jwtSecret = process.env['JWT_SECRET'];
+
+  if (!jwtSecret) {
+    throw new Error('JWT_SECRET is required');
+  }
 
   await app.register(fastifyHelmet, {
     contentSecurityPolicy: false, // API-only; CSP handled by web app
@@ -53,7 +58,7 @@ export async function registerPlugins(app: FastifyInstance) {
   await app.register(fastifyCookie);
 
   await app.register(fastifyJwt, {
-    secret: process.env['JWT_SECRET'] ?? '',
+    secret: jwtSecret,
     cookie: { cookieName: 'access_token', signed: false },
     sign: { expiresIn: '15m' },
   });

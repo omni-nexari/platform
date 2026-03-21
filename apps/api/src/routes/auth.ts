@@ -94,7 +94,14 @@ function setRefreshCookie(reply: FastifyReply, token: string) {
 
 export async function authRoutes(app: FastifyInstance) {
   // ── POST /auth/login ────────────────────────────────────────────────────────
-  app.post('/login', async (req, reply) => {
+  app.post('/login', {
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (req, reply) => {
     const body = LoginSchema.safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
@@ -132,7 +139,14 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   // ── POST /auth/login/2fa ────────────────────────────────────────────────────
-  app.post('/login/2fa', async (req, reply) => {
+  app.post('/login/2fa', {
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '5 minutes',
+      },
+    },
+  }, async (req, reply) => {
     const body = LoginTotpSchema.safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
@@ -171,7 +185,14 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   // ── POST /auth/refresh ──────────────────────────────────────────────────────
-  app.post('/refresh', async (req, reply) => {
+  app.post('/refresh', {
+    config: {
+      rateLimit: {
+        max: 30,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (req, reply) => {
     const raw = req.cookies[REFRESH_COOKIE];
     if (!raw) return reply.status(401).send({ error: 'No refresh token' });
 
@@ -604,7 +625,15 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   // ── 2FA setup ───────────────────────────────────────────────────────────────
-  app.post('/2fa/setup', { onRequest: [app.authenticate] }, async (req, reply) => {
+  app.post('/2fa/setup', {
+    onRequest: [app.authenticate],
+    config: {
+      rateLimit: {
+        max: 5,
+        timeWindow: '10 minutes',
+      },
+    },
+  }, async (req, reply) => {
     const userId = (req.user as { sub: string }).sub;
     const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
     if (!user) return reply.status(404).send({ error: 'User not found' });
@@ -620,7 +649,15 @@ export async function authRoutes(app: FastifyInstance) {
     return reply.send({ secret, qrDataUrl });
   });
 
-  app.post('/2fa/verify', { onRequest: [app.authenticate] }, async (req, reply) => {
+  app.post('/2fa/verify', {
+    onRequest: [app.authenticate],
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '10 minutes',
+      },
+    },
+  }, async (req, reply) => {
     const userId = (req.user as { sub: string }).sub;
     const body = z.object({ token: z.string().length(6).regex(/^\d+$/) }).safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
@@ -637,7 +674,15 @@ export async function authRoutes(app: FastifyInstance) {
     return reply.send({ backupCodes: raw });
   });
 
-  app.post('/2fa/disable', { onRequest: [app.authenticate] }, async (req, reply) => {
+  app.post('/2fa/disable', {
+    onRequest: [app.authenticate],
+    config: {
+      rateLimit: {
+        max: 5,
+        timeWindow: '10 minutes',
+      },
+    },
+  }, async (req, reply) => {
     const userId = (req.user as { sub: string }).sub;
     const body = z.object({ password: z.string(), token: z.string() }).safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
@@ -660,7 +705,15 @@ export async function authRoutes(app: FastifyInstance) {
     return reply.status(204).send();
   });
 
-  app.get('/2fa/backup-codes', { onRequest: [app.authenticate] }, async (req, reply) => {
+  app.get('/2fa/backup-codes', {
+    onRequest: [app.authenticate],
+    config: {
+      rateLimit: {
+        max: 3,
+        timeWindow: '10 minutes',
+      },
+    },
+  }, async (req, reply) => {
     const userId = (req.user as { sub: string }).sub;
     const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
     if (!user?.totpEnabled) return reply.status(400).send({ error: '2FA not enabled' });
@@ -671,7 +724,14 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   // ── POST /auth/forgot-password ──────────────────────────────────────────────
-  app.post('/forgot-password', async (req, reply) => {
+  app.post('/forgot-password', {
+    config: {
+      rateLimit: {
+        max: 5,
+        timeWindow: '15 minutes',
+      },
+    },
+  }, async (req, reply) => {
     const body = ForgotPasswordSchema.safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
@@ -699,7 +759,14 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   // ── POST /auth/reset-password ───────────────────────────────────────────────
-  app.post('/reset-password', async (req, reply) => {
+  app.post('/reset-password', {
+    config: {
+      rateLimit: {
+        max: 5,
+        timeWindow: '15 minutes',
+      },
+    },
+  }, async (req, reply) => {
     const body = ResetPasswordSchema.safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
