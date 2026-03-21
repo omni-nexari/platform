@@ -941,21 +941,40 @@ body::before {
 }
 
 .ui-log-hint {
-  margin-left: auto;
   font-size: 12px;
   font-weight: 400;
   color: var(--text-muted);
 }
 
-.ui-log-clear {
-  margin-left: 16px;
+.ui-log-controls {
+  display: -webkit-flex;
+  display: flex;
+  gap: 8px;
+  margin-left: 18px;
+}
+
+.ui-log-btn {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--card-border);
   border-radius: 4px;
   color: var(--text-muted);
   font-size: 12px;
-  padding: 2px 10px;
+  padding: 3px 10px;
   cursor: pointer;
+}
+
+.ui-log-btn.is-active {
+  color: var(--text-primary);
+  border-color: var(--aqua);
+  box-shadow: 0 0 0 1px rgba(79, 242, 209, 0.35) inset;
+  background: rgba(79, 242, 209, 0.10);
+}
+
+.ui-log-status {
+  margin-left: auto;
+  margin-right: 14px;
+  font-size: 12px;
+  color: var(--aqua);
 }
 
 #ui-log-list {

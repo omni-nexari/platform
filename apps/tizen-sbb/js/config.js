@@ -61,8 +61,11 @@ if (typeof window !== 'undefined') {
 // ── On-screen Log Console (shows all log entries as a UI panel) ──────────────
 const UiLog = {
   _entries: [],
-  _max: 80,
+  _max: 300,
   _visible: false,
+  _followTail: true,
+  _controlIndex: 0,
+  _controls: ['ui-log-top', 'ui-log-older', 'ui-log-newer', 'ui-log-latest', 'ui-log-clear'],
 
   append(level, args) {
     const time = new Date().toTimeString().slice(0, 8);
@@ -82,6 +85,7 @@ const UiLog = {
   _render() {
     const el = document.getElementById('ui-log-list');
     if (!el) return;
+    const previousTop = el.scrollTop;
     const colors = { debug: '#7a8299', info: '#4ff2d1', warn: '#f59e0b', error: '#ff3ea5' };
     let html = '';
     for (let i = 0; i < this._entries.length; i++) {
@@ -93,7 +97,13 @@ const UiLog = {
               '<span class="ul-msg">' + msg + '</span></div>';
     }
     el.innerHTML = html;
-    el.scrollTop = el.scrollHeight;
+    if (this._followTail) {
+      el.scrollTop = el.scrollHeight;
+    } else {
+      el.scrollTop = previousTop;
+    }
+    this._updateStatus();
+    this._syncControls();
   },
 
   toggle() {
@@ -101,13 +111,90 @@ const UiLog = {
     if (!panel) return;
     this._visible = !this._visible;
     panel.style.display = this._visible ? 'flex' : 'none';
-    if (this._visible) this._render();
+    if (this._visible) {
+      this._syncControls();
+      this._render();
+    }
   },
 
   clear() {
     this._entries = [];
+    this._followTail = true;
     const el = document.getElementById('ui-log-list');
     if (el) el.innerHTML = '';
+    this._updateStatus();
+  },
+
+  scrollToTop() {
+    const el = document.getElementById('ui-log-list');
+    if (!el) return;
+    this._followTail = false;
+    el.scrollTop = 0;
+    this._updateStatus();
+  },
+
+  scrollToBottom() {
+    const el = document.getElementById('ui-log-list');
+    if (!el) return;
+    this._followTail = true;
+    el.scrollTop = el.scrollHeight;
+    this._updateStatus();
+  },
+
+  scrollOlder() {
+    const el = document.getElementById('ui-log-list');
+    if (!el) return;
+    this._followTail = false;
+    el.scrollTop = Math.max(0, el.scrollTop - Math.max(120, Math.floor(el.clientHeight * 0.75)));
+    this._updateStatus();
+  },
+
+  scrollNewer() {
+    const el = document.getElementById('ui-log-list');
+    if (!el) return;
+    el.scrollTop = Math.min(el.scrollHeight, el.scrollTop + Math.max(120, Math.floor(el.clientHeight * 0.75)));
+    this._followTail = (el.scrollTop + el.clientHeight >= el.scrollHeight - 8);
+    this._updateStatus();
+  },
+
+  moveControl(direction) {
+    if (!this._controls.length) return;
+    this._controlIndex = (this._controlIndex + direction + this._controls.length) % this._controls.length;
+    this._syncControls();
+  },
+
+  activateControl() {
+    const controlId = this._controls[this._controlIndex];
+    if (controlId === 'ui-log-top') this.scrollToTop();
+    else if (controlId === 'ui-log-older') this.scrollOlder();
+    else if (controlId === 'ui-log-newer') this.scrollNewer();
+    else if (controlId === 'ui-log-latest') this.scrollToBottom();
+    else if (controlId === 'ui-log-clear') this.clear();
+  },
+
+  _syncControls() {
+    for (var i = 0; i < this._controls.length; i++) {
+      var button = document.getElementById(this._controls[i]);
+      if (!button) continue;
+      if (i === this._controlIndex) button.classList.add('is-active');
+      else button.classList.remove('is-active');
+    }
+  },
+
+  _updateStatus() {
+    const el = document.getElementById('ui-log-list');
+    const status = document.getElementById('ui-log-status');
+    if (!status) return;
+    var mode = this._followTail ? 'Live' : 'History';
+    var count = this._entries.length;
+    if (!el) {
+      status.textContent = mode + ' | ' + count + ' logs';
+      return;
+    }
+    var percent = el.scrollHeight > el.clientHeight
+      ? Math.round((el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight)) * 100)
+      : 100;
+    status.textContent = mode + ' | ' + count + ' logs | ' + percent + '%';
   },
 };
 

@@ -100,17 +100,22 @@ window.RemoteControl = {
       return;
     }
 
-    // When log console is open, UP/DOWN scroll it and INFO closes it
+    // When log console is open, INFO closes it and LEFT/RIGHT/ENTER control history actions
     if (typeof UiLog !== 'undefined' && UiLog._visible) {
-      if (keyCode === this.KEYS.UP || keyCode === this.KEYS.DOWN) {
-        var logList = document.getElementById('ui-log-list');
-        if (logList) {
-          logList.scrollTop += keyCode === this.KEYS.DOWN ? 120 : -120;
-        }
-        return;
-      }
       if (keyCode === this.KEYS.INFO) {
         UiLog.toggle();
+        return;
+      }
+      if (keyCode === this.KEYS.LEFT) {
+        UiLog.moveControl(-1);
+        return;
+      }
+      if (keyCode === this.KEYS.RIGHT) {
+        UiLog.moveControl(1);
+        return;
+      }
+      if (keyCode === this.KEYS.ENTER) {
+        UiLog.activateControl();
         return;
       }
     }

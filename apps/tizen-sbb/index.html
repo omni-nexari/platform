@@ -130,8 +130,15 @@
     <div id="ui-log-panel">
         <div class="ui-log-header">
             <span>Log Console</span>
-            <span class="ui-log-hint">INFO button to close &nbsp;|&nbsp; keyboard: M</span>
-            <button class="ui-log-clear" onclick="UiLog.clear()">Clear</button>
+            <div class="ui-log-controls">
+                <button id="ui-log-top" class="ui-log-btn" onclick="UiLog.scrollToTop()">Top</button>
+                <button id="ui-log-older" class="ui-log-btn" onclick="UiLog.scrollOlder()">Older</button>
+                <button id="ui-log-newer" class="ui-log-btn" onclick="UiLog.scrollNewer()">Newer</button>
+                <button id="ui-log-latest" class="ui-log-btn" onclick="UiLog.scrollToBottom()">Latest</button>
+                <button id="ui-log-clear" class="ui-log-btn" onclick="UiLog.clear()">Clear</button>
+            </div>
+            <span id="ui-log-status" class="ui-log-status">Live</span>
+            <span class="ui-log-hint">LEFT/RIGHT select &nbsp;|&nbsp; ENTER run &nbsp;|&nbsp; INFO close</span>
         </div>
         <div id="ui-log-list"></div>
     </div>
@@ -147,10 +154,10 @@
                 <div class="tools-section-title">Remote Control</div>
                 <div class="tools-row"><span class="tools-key">TOOLS</span><span class="tools-desc">Open / close this panel</span></div>
                 <div class="tools-row"><span class="tools-key">INFO</span><span class="tools-desc">Open / close log console</span></div>
-                <div class="tools-row"><span class="tools-key">UP</span><span class="tools-desc">Scroll log console up</span></div>
-                <div class="tools-row"><span class="tools-key">DOWN</span><span class="tools-desc">Scroll log console down</span></div>
-                <div class="tools-row"><span class="tools-key">LEFT</span><span class="tools-desc">Navigation / previous option</span></div>
-                <div class="tools-row"><span class="tools-key">RIGHT</span><span class="tools-desc">Navigation / next option</span></div>
+                <div class="tools-row"><span class="tools-key">UP</span><span class="tools-desc">Navigation key</span></div>
+                <div class="tools-row"><span class="tools-key">DOWN</span><span class="tools-desc">Navigation key</span></div>
+                <div class="tools-row"><span class="tools-key">LEFT</span><span class="tools-desc">Navigation key</span></div>
+                <div class="tools-row"><span class="tools-key">RIGHT</span><span class="tools-desc">Navigation key</span></div>
                 <div class="tools-row"><span class="tools-key">RETURN</span><span class="tools-desc">Back / device info</span></div>
             </div>
             <div class="tools-section">
