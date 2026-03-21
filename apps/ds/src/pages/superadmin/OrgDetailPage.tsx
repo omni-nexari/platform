@@ -4,8 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { ArrowLeft, Mail, Users, Clock, Trash2, HardDrive, LogIn } from 'lucide-react';
-import { saApi } from '../../lib/superadmin-auth.js';
-import { useAuthStore } from '../../lib/auth.js';
+import { saApi, saImpersonateOrg } from '../../lib/superadmin-auth.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
 import {
   Badge,
@@ -116,8 +115,6 @@ export default function OrgDetailPage() {
   const [quotaInput, setQuotaInput] = useState('');
   const [showImpersonateConfirm, setShowImpersonateConfirm] = useState(false);
 
-  const setAuth = useAuthStore((s) => s.setAuth);
-
   const { data, isLoading } = useQuery({
     queryKey: ['sa-org', id],
     queryFn: () => saApi.get<OrgDetail>(`/superadmin/orgs/${id}`),
@@ -182,17 +179,11 @@ export default function OrgDetailPage() {
   });
 
   const impersonateMut = useMutation({
-    mutationFn: () =>
-      saApi.post<{ accessToken: string; org: { id: string; name: string; slug: string }; user: { id: string; email: string; name: string | null; role: string } }>(
-        `/superadmin/orgs/${id}/impersonate`,
-      ),
+    mutationFn: () => {
+      if (!id) throw new Error('Organization not found');
+      return saImpersonateOrg(id);
+    },
     onSuccess: (result) => {
-      setAuth(result.accessToken, {
-        id: result.user.id,
-        name: result.user.name ?? result.user.email,
-        email: result.user.email,
-        orgRole: result.user.role,
-      });
       toast.success(`Impersonating ${result.org.name} as ${result.user.email}`);
       navigate('/dashboard');
     },

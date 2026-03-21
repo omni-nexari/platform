@@ -18,7 +18,7 @@ type FormData = z.infer<typeof schema>;
 
 export default function TwoFactorPage() {
   const navigate = useNavigate();
-  const setAuth = useAuthStore((s) => s.setAuth);
+  const setUser = useAuthStore((s) => s.setUser);
 
   useEffect(() => {
     if (!sessionStorage.getItem('2fa_temp')) navigate('/login', { replace: true });
@@ -33,12 +33,12 @@ export default function TwoFactorPage() {
   const onSubmit = async (data: FormData) => {
     const tempToken = sessionStorage.getItem('2fa_temp') ?? '';
     try {
-      const res = await api.post<{ accessToken: string; user: { id: string; name: string; email: string; orgRole: string } }>(
+      const res = await api.post<{ user: { id: string; name: string; email: string; orgRole: string } }>(
         '/auth/login/2fa',
         { token: data.token, tempToken },
       );
       sessionStorage.removeItem('2fa_temp');
-      setAuth(res.accessToken, res.user);
+      setUser(res.user);
       try {
         await queryClient.fetchQuery({
           queryKey: ['me'],

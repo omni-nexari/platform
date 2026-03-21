@@ -2,7 +2,7 @@ import { Outlet, NavLink, useNavigate, useLocation } from 'react-router';
 import { useAuthStore } from '../lib/auth.js';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, buildWebSocketUrl } from '../lib/api.js';
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { useTheme } from '../contexts/ThemeContext.js';
 import SearchModal from './SearchModal.js';
@@ -52,22 +52,13 @@ interface EmergencyOverride {
 }
 
 export default function AppLayout() {
-  const { user, clearAuth, accessToken } = useAuthStore();
+  const { user, clearAuth } = useAuthStore();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const queryClient = useQueryClient();
   const { theme, setTheme } = useTheme();
 
-  // Detect impersonation by peeking at JWT payload (no crypto needed — just display)
-  const isImpersonating = useMemo(() => {
-    if (!accessToken) return false;
-    try {
-      const payload = JSON.parse(atob(accessToken.split('.')[1]!));
-      return !!payload.impersonatedBy;
-    } catch {
-      return false;
-    }
-  }, [accessToken]);
+  const isImpersonating = Boolean(user?.impersonatedBy);
 
   // Detect current workspace from URL
   const wsMatch = pathname.match(/^\/workspaces\/([^/]+)/);

@@ -201,7 +201,6 @@ function UsageBar({ used, total, label }: { used: number; total: number; label: 
 }
 
 export default function SystemHealthPage() {
-  const token = useSAStore((s) => s.accessToken);
   const { data, isLoading, dataUpdatedAt, refetch, isFetching } = useQuery({
     queryKey: ['sa-system-health'],
     queryFn: () => saApi.get<SystemHealth>('/superadmin/system/health'),
@@ -215,7 +214,6 @@ export default function SystemHealthPage() {
   const exportStorageReport = useCallback(async () => {
     try {
       const res = await fetch(buildApiUrl('/superadmin/system/storage-report.csv'), {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
         credentials: 'include',
       });
       if (!res.ok) throw new Error(await res.text());
@@ -229,7 +227,7 @@ export default function SystemHealthPage() {
     } catch (error) {
       throw error;
     }
-  }, [token]);
+  }, []);
 
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-8">

@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   db,
@@ -42,6 +42,11 @@ import { writeAuditLog } from '../services/audit.js';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 const BRANDING_ASSET_TYPES = new Set(['logo', 'favicon', 'login-background']);
+const MAIN_ACCESS_COOKIE = 'access_token';
+const MAIN_REFRESH_COOKIE = 'refresh_token';
+const MAIN_CSRF_COOKIE = 'csrf_token';
+const SA_ACCESS_COOKIE = 'sa_access_token';
+const SA_CSRF_COOKIE = 'sa_csrf_token';
 
 async function findExistingPath(startPath: string): Promise<{ path: string; exact: boolean }> {
   let currentPath = path.resolve(startPath);
@@ -170,6 +175,60 @@ function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString('hex');
 }
 
+function setPortalAccessCookie(reply: FastifyReply, token: string) {
+  void reply.setCookie(SA_ACCESS_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env['NODE_ENV'] === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 8,
+  });
+}
+
+function setPortalCsrfCookie(reply: FastifyReply, token = randomToken(24)) {
+  void reply.setCookie(SA_CSRF_COOKIE, token, {
+    httpOnly: false,
+    secure: process.env['NODE_ENV'] === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 8,
+  });
+  return token;
+}
+
+function clearPortalAccessCookie(reply: FastifyReply) {
+  reply.clearCookie(SA_ACCESS_COOKIE, { path: '/' });
+}
+
+function clearPortalCsrfCookie(reply: FastifyReply) {
+  reply.clearCookie(SA_CSRF_COOKIE, { path: '/' });
+}
+
+function setMainAccessCookie(reply: FastifyReply, token: string) {
+  void reply.setCookie(MAIN_ACCESS_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env['NODE_ENV'] === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 2,
+  });
+}
+
+function setMainCsrfCookie(reply: FastifyReply, token = randomToken(24)) {
+  void reply.setCookie(MAIN_CSRF_COOKIE, token, {
+    httpOnly: false,
+    secure: process.env['NODE_ENV'] === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 2,
+  });
+  return token;
+}
+
+function clearMainRefreshCookie(reply: FastifyReply) {
+  reply.clearCookie(MAIN_REFRESH_COOKIE, { path: '/auth/refresh' });
+}
+
 function deletedSlugTombstone(slug: string): string {
   return `${slug}--deleted-${randomToken(4)}`;
 }
@@ -232,6 +291,74 @@ function isOwnerCaller(
   caller: PlatformAdminCaller,
 ): caller is Extract<PlatformAdminCaller, { type: 'platform_owner' }> {
   return caller.type === 'platform_owner';
+}
+
+function readPortalAccessToken(req: FastifyRequest): string | null {
+  const authorization = req.headers.authorization;
+  if (authorization?.startsWith('Bearer ')) {
+    return authorization.slice('Bearer '.length).trim();
+  }
+
+  return req.cookies?.[SA_ACCESS_COOKIE] ?? null;
+}
+
+function getPortalCaller(app: FastifyInstance, req: FastifyRequest): PlatformAdminCaller | null {
+  const token = readPortalAccessToken(req);
+  if (!token) return null;
+
+  try {
+    return app.jwt.verify<PlatformAdminCaller>(token);
+  } catch {
+    return null;
+  }
+}
+
+async function buildPortalAuthUser(caller: PlatformAdminCaller) {
+  if (caller.type === 'platform_owner') {
+    const owner = await db.query.platformOwners.findFirst({
+      where: eq(platformOwners.id, caller.sub),
+    });
+    if (!owner) return null;
+
+    return {
+      id: owner.id,
+      email: owner.email,
+      name: owner.name,
+      type: 'platform_owner' as const,
+    };
+  }
+
+  const admin = await db.query.managementCompanyAdmins.findFirst({
+    where: eq(managementCompanyAdmins.id, caller.sub),
+  });
+  if (!admin || admin.suspendedAt) return null;
+
+  const company = await db.query.managementCompanies.findFirst({
+    where: and(
+      eq(managementCompanies.id, admin.managementCompanyId),
+      isNull(managementCompanies.deletedAt),
+    ),
+  });
+
+  return {
+    id: admin.id,
+    email: admin.email,
+    name: admin.name,
+    role: admin.role,
+    managementCompanyId: admin.managementCompanyId,
+    type: 'management_company_admin' as const,
+    companyName: company?.name ?? null,
+    companySlug: company?.slug ?? null,
+    companyLogoUrl: company?.logoUrl ?? null,
+    companyPortalTitle: company?.portalTitle ?? null,
+    companyFaviconUrl: company?.faviconUrl ?? null,
+    companyPrimaryColor: company?.primaryColor ?? null,
+    companyAccentColor: company?.accentColor ?? null,
+    companySidebarBg: company?.sidebarBg ?? null,
+    companyHeadingFontPreset: company?.headingFontPreset ?? null,
+    companyBodyFontPreset: company?.bodyFontPreset ?? null,
+    companyLoginBackgroundUrl: company?.loginBackgroundUrl ?? null,
+  };
 }
 
 type PortalAnalyticsSettings = {
@@ -1332,8 +1459,49 @@ export async function superAdminRoutes(app: FastifyInstance) {
     }
   });
 
+  app.get('/auth/csrf', async (_req, reply) => {
+    setPortalCsrfCookie(reply);
+    return reply.status(204).send();
+  });
+
+  app.get('/auth/me', async (req, reply) => {
+    const caller = getPortalCaller(app, req);
+    if (!caller) return reply.status(401).send({ error: 'Unauthorized' });
+
+    const user = await buildPortalAuthUser(caller);
+    if (!user) {
+      clearPortalAccessCookie(reply);
+      clearPortalCsrfCookie(reply);
+      return reply.status(401).send({ error: 'Unauthorized' });
+    }
+
+    if (!req.cookies?.[SA_CSRF_COOKIE]) {
+      setPortalCsrfCookie(reply);
+    }
+
+    return reply.send({ user });
+  });
+
+  app.post('/auth/logout', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const csrfResult = await (app as FastifyInstance & {
+      verifyCsrf: (req: unknown, reply: unknown) => Promise<unknown> | unknown;
+    }).verifyCsrf(req, reply);
+    if (csrfResult) return csrfResult;
+
+    clearPortalAccessCookie(reply);
+    clearPortalCsrfCookie(reply);
+    return reply.status(204).send();
+  });
+
   // ── POST /superadmin/auth/login  (platform owner) ──────────────────────────
-  app.post('/auth/login', async (req, reply) => {
+  app.post('/auth/login', {
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (req, reply) => {
     const body = z
       .object({ email: z.string().email(), password: z.string().min(1) })
       .safeParse(req.body);
@@ -1357,8 +1525,10 @@ export async function superAdminRoutes(app: FastifyInstance) {
       { expiresIn: '8h' },
     );
 
+    setPortalAccessCookie(reply, accessToken);
+    setPortalCsrfCookie(reply);
+
     return reply.send({
-      accessToken,
       user: { id: owner.id, email: owner.email, name: owner.name, type: 'platform_owner' },
     });
   });
@@ -1389,7 +1559,14 @@ export async function superAdminRoutes(app: FastifyInstance) {
   });
 
   // ── POST /superadmin/auth/company-login  (management company admin) ─────────
-  app.post('/auth/company-login', async (req, reply) => {
+  app.post('/auth/company-login', {
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (req, reply) => {
     const body = z
       .object({ email: z.string().email(), password: z.string().min(1) })
       .safeParse(req.body);
@@ -1425,8 +1602,10 @@ export async function superAdminRoutes(app: FastifyInstance) {
       { expiresIn: '8h' },
     );
 
+    setPortalAccessCookie(reply, accessToken);
+    setPortalCsrfCookie(reply);
+
     return reply.send({
-      accessToken,
       user: {
         id: admin.id,
         email: admin.email,
@@ -2908,6 +3087,10 @@ export async function superAdminRoutes(app: FastifyInstance) {
         { expiresIn: '2h' },
       );
 
+      setMainAccessCookie(reply, accessToken);
+      setMainCsrfCookie(reply);
+      clearMainRefreshCookie(reply);
+
       await writeAuditLog({
         orgId: id,
         actorId: caller.sub,
@@ -2920,9 +3103,14 @@ export async function superAdminRoutes(app: FastifyInstance) {
       });
 
       return reply.send({
-        accessToken,
         org: { id: org.id, name: org.name, slug: org.slug },
-        user: { id: owner.id, email: owner.email, name: owner.name, role: owner.orgRole },
+        user: {
+          id: owner.id,
+          email: owner.email,
+          name: owner.name,
+          role: owner.orgRole,
+          impersonatedBy: caller.sub,
+        },
       });
     },
   );

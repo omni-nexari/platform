@@ -64,22 +64,18 @@ export function buildWebSocketUrl(path: string) {
   return httpUrl.toString();
 }
 
-async function refreshAccessToken(): Promise<string> {
+async function refreshSession(): Promise<void> {
   const csrfToken = await ensureCsrfToken();
-  const refreshedWithCsrf = await fetch(buildApiUrl('/auth/refresh'), {
+  const refreshResponse = await fetch(buildApiUrl('/auth/refresh'), {
     method: 'POST',
     credentials: 'include',
     headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
   });
-  if (!refreshedWithCsrf.ok) {
+  if (!refreshResponse.ok) {
     useAuthStore.getState().clearAuth();
     window.location.href = '/login';
     throw new Error('Unauthorized');
   }
-
-  const data = (await refreshedWithCsrf.json()) as { accessToken: string };
-  useAuthStore.getState().setAuth(data.accessToken, useAuthStore.getState().user);
-  return data.accessToken;
 }
 
 type FormRequestOptions = {
@@ -131,7 +127,7 @@ async function postFormRequest<T>(
   let result = await performFormRequest(path, form, csrfToken, options);
 
   if (result.status === 401) {
-    await refreshAccessToken();
+    await refreshSession();
     const nextCsrfToken = await ensureCsrfToken();
     result = await performFormRequest(path, form, nextCsrfToken, options);
   }
@@ -186,7 +182,7 @@ async function request<T>(
   }
 
   if (res.status === 401 || (path === '/auth/me' && res.status === 404)) {
-    await refreshAccessToken();
+    await refreshSession();
     if (isMutationMethod(options.method)) {
       const nextCsrfToken = await ensureCsrfToken();
       if (nextCsrfToken) headers['X-CSRF-Token'] = nextCsrfToken;

@@ -15,7 +15,7 @@ type FormData = z.infer<typeof schema>;
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const setAuth = useAuthStore((s) => s.setAuth);
+  const setUser = useAuthStore((s) => s.setUser);
 
   const {
     register,
@@ -27,14 +27,14 @@ export default function LoginPage() {
     try {
       const res = await api.post<
         | { requiresTwoFactor: true; tempToken: string }
-        | { accessToken: string; user: { id: string; name: string; email: string; orgRole: string } }
+        | { user: { id: string; name: string; email: string; orgRole: string } }
       >('/auth/login', data);
 
       if ('requiresTwoFactor' in res && res.requiresTwoFactor) {
         sessionStorage.setItem('2fa_temp', res.tempToken);
         navigate('/login/2fa');
-      } else if ('accessToken' in res) {
-        setAuth(res.accessToken, res.user);
+      } else if ('user' in res) {
+        setUser(res.user);
         try {
           await queryClient.fetchQuery({
             queryKey: ['me'],

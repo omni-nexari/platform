@@ -36,7 +36,7 @@ interface CompanyBrand {
 export default function ManagementLoginPage() {
   const { slug } = useParams<{ slug?: string }>();
   const navigate = useNavigate();
-  const setAuth = useSAStore((s) => s.setAuth);
+  const setUser = useSAStore((s) => s.setUser);
   const [brand, setBrand] = useState<CompanyBrand | null>(null);
 
   // Fetch company branding when a slug is in the URL
@@ -74,7 +74,7 @@ export default function ManagementLoginPage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      const res = await saFetch<{ accessToken: string; user: SAUser }>(
+      const res = await saFetch<{ user: SAUser }>(
         '/superadmin/auth/company-login',
         {
           method: 'POST',
@@ -82,7 +82,7 @@ export default function ManagementLoginPage() {
           body: JSON.stringify(data),
         },
       );
-      setAuth(res.accessToken, res.user);
+      setUser(res.user);
       navigate('/management');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Login failed');

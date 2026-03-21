@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router';
+import { Routes, Route, Navigate, useLocation } from 'react-router';
 import { useAuthStore } from './lib/auth.js';
-import { useSAStore } from './lib/superadmin-auth.js';
+import { useSAStore, type SAUser } from './lib/superadmin-auth.js';
 import LoginPage from './pages/auth/LoginPage.js';
 import TwoFactorPage from './pages/auth/TwoFactorPage.js';
 import AcceptInvitePage from './pages/auth/AcceptInvitePage.js';
@@ -38,7 +38,7 @@ import ScheduleEditorPage from './pages/workspace/ScheduleEditorPage.js';
 import TagsPage from './pages/workspace/TagsPage.js';
 import CanvasEditorPage from './pages/workspace/CanvasEditorPage.js';
 import AnalyticsPage from './pages/workspace/AnalyticsPage.js';
-import { api } from './lib/api.js';
+import { api, buildApiUrl } from './lib/api.js';
 
 function AuthBootstrap({ children }: { children: React.ReactNode }) {
   const { user, setUser, clearAuth, bootstrapped, markBootstrapped } = useAuthStore();
@@ -54,7 +54,15 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        const me = await api.get<{ user: { id: string; name: string; email: string; orgRole: string } }>('/auth/me');
+        const me = await api.get<{
+          user: {
+            id: string;
+            name: string;
+            email: string;
+            orgRole: string;
+            impersonatedBy?: string | null;
+          };
+        }>('/auth/me');
         if (!cancelled) {
           setUser(me.user);
         }
@@ -85,26 +93,72 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 }
 
 function RequirePlatformOwner({ children }: { children: React.ReactNode }) {
-  const { accessToken, user } = useSAStore();
-  if (!accessToken) return <Navigate to="/superadmin/login" replace />;
+  const { bootstrapped, user } = useSAStore();
+  if (!bootstrapped) return null;
+  if (!user) return <Navigate to="/superadmin/login" replace />;
   if (user?.type !== 'platform_owner') return <Navigate to="/management" replace />;
   return <>{children}</>;
 }
 
 function RequireManagementAdmin({ children }: { children: React.ReactNode }) {
-  const { accessToken, user } = useSAStore();
-  if (!accessToken) {
-    const slug = user?.companySlug;
-    return <Navigate to={slug ? `/m/${slug}/login` : '/management/login'} replace />;
-  }
+  const { bootstrapped, user } = useSAStore();
+  if (!bootstrapped) return null;
+  if (!user) return <Navigate to="/management/login" replace />;
   if (user?.type !== 'management_company_admin') return <Navigate to="/superadmin" replace />;
+  return <>{children}</>;
+}
+
+function isPortalPath(pathname: string) {
+  return pathname.startsWith('/superadmin') || pathname.startsWith('/management') || pathname.startsWith('/m/');
+}
+
+function PortalAuthBootstrap({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  const { user, setUser, clearAuth, bootstrapped, markBootstrapped } = useSAStore();
+
+  useEffect(() => {
+    if (!isPortalPath(location.pathname) || bootstrapped) return;
+    let cancelled = false;
+
+    async function bootstrap() {
+      if (user) {
+        markBootstrapped();
+        return;
+      }
+
+      try {
+        const response = await fetch(buildApiUrl('/superadmin/auth/me'), { credentials: 'include' });
+        if (!response.ok) throw new Error('Unauthorized');
+        const data = await response.json() as { user: SAUser };
+        if (!cancelled) {
+          setUser(data.user);
+        }
+      } catch {
+        if (!cancelled) {
+          clearAuth();
+        }
+      } finally {
+        if (!cancelled) {
+          markBootstrapped();
+        }
+      }
+    }
+
+    void bootstrap();
+    return () => {
+      cancelled = true;
+    };
+  }, [bootstrapped, clearAuth, location.pathname, markBootstrapped, setUser, user]);
+
+  if (isPortalPath(location.pathname) && !bootstrapped) return null;
   return <>{children}</>;
 }
 
 export default function App() {
   return (
     <AuthBootstrap>
-      <Routes>
+      <PortalAuthBootstrap>
+        <Routes>
       {/* Public auth */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/login/2fa" element={<TwoFactorPage />} />
@@ -184,8 +238,9 @@ export default function App() {
 
       {/* Root redirect */}
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Routes>
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
+      </PortalAuthBootstrap>
     </AuthBootstrap>
   );
 }

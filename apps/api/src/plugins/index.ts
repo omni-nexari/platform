@@ -8,6 +8,8 @@ import fastifyWebsocket from '@fastify/websocket';
 import fastifyMultipart from '@fastify/multipart';
 
 const CSRF_COOKIE = 'csrf_token';
+const SA_ACCESS_COOKIE = 'sa_access_token';
+const SA_CSRF_COOKIE = 'sa_csrf_token';
 
 function normalizeOrigin(origin: string): string {
   return origin.replace(/\/$/, '');
@@ -76,21 +78,65 @@ export async function registerPlugins(app: FastifyInstance) {
     limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2 GB max
   });
 
+  function getSessionCookieNames(req: FastifyRequest) {
+    if (req.url.startsWith('/superadmin')) {
+      return {
+        accessCookie: SA_ACCESS_COOKIE,
+        refreshCookie: null,
+        csrfCookie: SA_CSRF_COOKIE,
+      };
+    }
+
+    return {
+      accessCookie: 'access_token',
+      refreshCookie: 'refresh_token',
+      csrfCookie: CSRF_COOKIE,
+    };
+  }
+
   function requiresCsrf(req: FastifyRequest) {
     const method = req.method.toUpperCase();
     if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false;
-    const hasCookieSession = Boolean(req.cookies?.['access_token'] || req.cookies?.['refresh_token']);
+    const sessionCookies = getSessionCookieNames(req);
+    const hasCookieSession = Boolean(
+      req.cookies?.[sessionCookies.accessCookie]
+      || (sessionCookies.refreshCookie ? req.cookies?.[sessionCookies.refreshCookie] : undefined),
+    );
     const hasAuthorizationHeader = Boolean(req.headers.authorization);
     return hasCookieSession && !hasAuthorizationHeader;
   }
 
   async function verifyCsrf(req: FastifyRequest, reply: FastifyReply) {
     if (!requiresCsrf(req)) return;
-    const cookieToken = req.cookies?.[CSRF_COOKIE];
+    const { csrfCookie } = getSessionCookieNames(req);
+    const cookieToken = req.cookies?.[csrfCookie];
     const headerToken = req.headers['x-csrf-token'];
     const normalizedHeader = Array.isArray(headerToken) ? headerToken[0] : headerToken;
     if (!cookieToken || !normalizedHeader || cookieToken !== normalizedHeader) {
       return reply.status(403).send({ error: 'Invalid CSRF token' });
+    }
+  }
+
+  async function verifyPortalJwt(req: FastifyRequest, reply: FastifyReply) {
+    const authorization = req.headers.authorization;
+    const bearerToken = authorization?.startsWith('Bearer ')
+      ? authorization.slice('Bearer '.length).trim()
+      : null;
+    const cookieToken = req.cookies?.[SA_ACCESS_COOKIE];
+    const token = bearerToken || cookieToken;
+
+    if (!token) {
+      reply.status(401).send({ error: 'Unauthorized' });
+      return null;
+    }
+
+    try {
+      const payload = app.jwt.verify(token);
+      (req as FastifyRequest & { user: unknown }).user = payload;
+      return payload as { type?: string };
+    } catch {
+      reply.status(401).send({ error: 'Unauthorized' });
+      return null;
     }
   }
 
@@ -109,16 +155,12 @@ export async function registerPlugins(app: FastifyInstance) {
 
   // Platform owner — strict (was 'super_admin', now 'platform_owner')
   app.decorate('authenticatePlatformOwner', async (req: FastifyRequest, reply: FastifyReply) => {
-    try {
-      await req.jwtVerify();
-      const csrfResult = await verifyCsrf(req, reply);
-      if (csrfResult) return csrfResult;
-      const payload = req.user as { type?: string };
-      if (payload.type !== 'platform_owner') {
-        return reply.status(403).send({ error: 'Forbidden' });
-      }
-    } catch {
-      return reply.status(401).send({ error: 'Unauthorized' });
+    const payload = await verifyPortalJwt(req, reply);
+    if (!payload) return;
+    const csrfResult = await verifyCsrf(req, reply);
+    if (csrfResult) return csrfResult;
+    if (payload.type !== 'platform_owner') {
+      return reply.status(403).send({ error: 'Forbidden' });
     }
   });
 
@@ -126,50 +168,38 @@ export async function registerPlugins(app: FastifyInstance) {
   app.decorate(
     'authenticateManagementCompanyAdmin',
     async (req: FastifyRequest, reply: FastifyReply) => {
-      try {
-        await req.jwtVerify();
-        const csrfResult = await verifyCsrf(req, reply);
-        if (csrfResult) return csrfResult;
-        const payload = req.user as { type?: string };
-        if (payload.type !== 'management_company_admin') {
-          return reply.status(403).send({ error: 'Forbidden' });
-        }
-      } catch {
-        return reply.status(401).send({ error: 'Unauthorized' });
+      const payload = await verifyPortalJwt(req, reply);
+      if (!payload) return;
+      const csrfResult = await verifyCsrf(req, reply);
+      if (csrfResult) return csrfResult;
+      if (payload.type !== 'management_company_admin') {
+        return reply.status(403).send({ error: 'Forbidden' });
       }
     },
   );
 
   // Platform admin — accepts platform_owner OR management_company_admin
   app.decorate('authenticatePlatformAdmin', async (req: FastifyRequest, reply: FastifyReply) => {
-    try {
-      await req.jwtVerify();
-      const csrfResult = await verifyCsrf(req, reply);
-      if (csrfResult) return csrfResult;
-      const payload = req.user as { type?: string };
-      if (
-        payload.type !== 'platform_owner' &&
-        payload.type !== 'management_company_admin'
-      ) {
-        return reply.status(403).send({ error: 'Forbidden' });
-      }
-    } catch {
-      return reply.status(401).send({ error: 'Unauthorized' });
+    const payload = await verifyPortalJwt(req, reply);
+    if (!payload) return;
+    const csrfResult = await verifyCsrf(req, reply);
+    if (csrfResult) return csrfResult;
+    if (
+      payload.type !== 'platform_owner' &&
+      payload.type !== 'management_company_admin'
+    ) {
+      return reply.status(403).send({ error: 'Forbidden' });
     }
   });
 
   // Backward-compat alias (used by existing routes before rename)
   app.decorate('authenticateSuperAdmin', async (req: FastifyRequest, reply: FastifyReply) => {
-    try {
-      await req.jwtVerify();
-      const csrfResult = await verifyCsrf(req, reply);
-      if (csrfResult) return csrfResult;
-      const payload = req.user as { type?: string };
-      if (payload.type !== 'platform_owner') {
-        return reply.status(403).send({ error: 'Forbidden' });
-      }
-    } catch {
-      return reply.status(401).send({ error: 'Unauthorized' });
+    const payload = await verifyPortalJwt(req, reply);
+    if (!payload) return;
+    const csrfResult = await verifyCsrf(req, reply);
+    if (csrfResult) return csrfResult;
+    if (payload.type !== 'platform_owner') {
+      return reply.status(403).send({ error: 'Forbidden' });
     }
   });
 }

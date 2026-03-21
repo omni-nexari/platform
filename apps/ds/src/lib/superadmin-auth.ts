@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useAuthStore } from './auth.js';
+import { buildApiUrl } from './api.js';
 
 export type SACallerType = 'platform_owner' | 'management_company_admin';
 
@@ -26,9 +27,10 @@ export interface SAUser {
 }
 
 interface SAAuthState {
-  accessToken: string | null;
   user: SAUser | null;
-  setAuth: (token: string, user: SAUser) => void;
+  bootstrapped: boolean;
+  setUser: (user: SAUser | null) => void;
+  markBootstrapped: () => void;
   updateUser: (patch: Partial<SAUser>) => void;
   clearAuth: () => void;
 }
@@ -36,14 +38,15 @@ interface SAAuthState {
 export const useSAStore = create<SAAuthState>()(
   persist(
     (set) => ({
-      accessToken: null,
       user: null,
-      setAuth: (accessToken, user) => set({ accessToken, user }),
+      bootstrapped: false,
+      setUser: (user) => set({ user, bootstrapped: true }),
+      markBootstrapped: () => set({ bootstrapped: true }),
       updateUser: (patch) =>
         set((state) => ({
           user: state.user ? { ...state.user, ...patch } : null,
         })),
-      clearAuth: () => set({ accessToken: null, user: null }),
+      clearAuth: () => set({ user: null, bootstrapped: true }),
     }),
     { name: 'sa-auth', partialize: (s) => ({ user: s.user }) },
   ),
@@ -56,29 +59,69 @@ export function useIsPlatformOwner() {
 
 // ── SA API client ─────────────────────────────────────────────────────────────
 
-const BASE = '/api';
+const CSRF_COOKIE = 'sa_csrf_token';
+
+function buildPortalApiUrl(path: string) {
+  return buildApiUrl(path);
+}
+
+function readCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null;
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = document.cookie.match(new RegExp(`(?:^|; )${escapedName}=([^;]*)`));
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+function isMutationMethod(method: string | undefined) {
+  const normalized = (method ?? 'GET').toUpperCase();
+  return normalized !== 'GET' && normalized !== 'HEAD' && normalized !== 'OPTIONS';
+}
+
+async function ensurePortalCsrfToken() {
+  const existing = readCookie(CSRF_COOKIE);
+  if (existing) return existing;
+
+  const response = await fetch(buildPortalApiUrl('/superadmin/auth/csrf'), {
+    method: 'GET',
+    credentials: 'include',
+  });
+  if (!response.ok && response.status !== 204) {
+    throw new Error('Failed to initialize portal session');
+  }
+
+  return readCookie(CSRF_COOKIE);
+}
+
+function getPortalLoginPath() {
+  const storeUser = useSAStore.getState().user;
+  if (storeUser?.type === 'management_company_admin') {
+    return storeUser.companySlug ? `/m/${storeUser.companySlug}/login` : '/management/login';
+  }
+
+  return '/superadmin/login';
+}
+
+function handlePortalUnauthorized() {
+  useSAStore.getState().clearAuth();
+  window.location.href = getPortalLoginPath();
+}
 
 export async function saFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = useSAStore.getState().accessToken;
   const isFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers: Record<string, string> = {
     ...(!isFormDataBody && options.body != null ? { 'Content-Type': 'application/json' } : {}),
     ...(options.headers as Record<string, string>),
   };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${BASE}${path}`, { ...options, headers, credentials: 'include' });
+  if (isMutationMethod(options.method)) {
+    const csrfToken = await ensurePortalCsrfToken();
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  }
+
+  const res = await fetch(buildPortalApiUrl(path), { ...options, headers, credentials: 'include' });
 
   if (res.status === 401) {
-    const storeUser = useSAStore.getState().user;
-    useSAStore.getState().clearAuth();
-    if (storeUser?.type === 'management_company_admin') {
-      window.location.href = storeUser.companySlug
-        ? `/m/${storeUser.companySlug}/login`
-        : '/management/login';
-    } else {
-      window.location.href = '/superadmin/login';
-    }
+    handlePortalUnauthorized();
     throw new Error('Session expired');
   }
 
@@ -102,21 +145,9 @@ export const saApi = {
 };
 
 export async function saDownloadBlob(path: string): Promise<Blob> {
-  const token = useSAStore.getState().accessToken;
-  const headers: Record<string, string> = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-
-  const res = await fetch(`${BASE}${path}`, { headers, credentials: 'include' });
+  const res = await fetch(buildPortalApiUrl(path), { credentials: 'include' });
   if (res.status === 401) {
-    const storeUser = useSAStore.getState().user;
-    useSAStore.getState().clearAuth();
-    if (storeUser?.type === 'management_company_admin') {
-      window.location.href = storeUser.companySlug
-        ? `/m/${storeUser.companySlug}/login`
-        : '/management/login';
-    } else {
-      window.location.href = '/superadmin/login';
-    }
+    handlePortalUnauthorized();
     throw new Error('Session expired');
   }
   if (!res.ok) {
@@ -127,16 +158,22 @@ export async function saDownloadBlob(path: string): Promise<Blob> {
 
 export async function saImpersonateOrg(orgId: string) {
   const result = await saApi.post<{
-    accessToken: string;
     org: { id: string; name: string; slug: string };
-    user: { id: string; email: string; name: string | null; role: string };
+    user: {
+      id: string;
+      email: string;
+      name: string | null;
+      role: string;
+      impersonatedBy?: string | null;
+    };
   }>(`/superadmin/orgs/${orgId}/impersonate`);
 
-  useAuthStore.getState().setAuth(result.accessToken, {
+  useAuthStore.getState().setUser({
     id: result.user.id,
     name: result.user.name ?? result.user.email,
     email: result.user.email,
     orgRole: result.user.role,
+    impersonatedBy: result.user.impersonatedBy ?? null,
   });
 
   return result;

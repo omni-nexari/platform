@@ -13,9 +13,9 @@ interface Props {
 }
 
 /**
- * Fetches `/content/:itemId/thumbnail` with the Bearer token, converts
- * the response to a blob URL, and renders an <img>.  The blob URL is revoked
- * on unmount to avoid memory leaks.
+ * Fetches `/content/:itemId/thumbnail` with the browser session cookie,
+ * converts the response to a blob URL, and renders an <img>. The blob URL
+ * is revoked on unmount to avoid memory leaks.
  */
 export default function AuthImg({ itemId, alt = '', className, onError, revision = 0 }: Props) {
   const [src, setSrc] = useState<string | null>(null);

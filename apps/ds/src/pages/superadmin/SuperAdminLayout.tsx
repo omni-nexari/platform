@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { Building2, BarChart2, Activity, Bell, LogOut, Layers, LayoutDashboard, Menu, X } from 'lucide-react';
-import { useSAStore } from '../../lib/superadmin-auth.js';
+import { saApi, useSAStore } from '../../lib/superadmin-auth.js';
 import PortalNotificationTray from '../../components/PortalNotificationTray.js';
 
 const NAV = [
@@ -23,7 +23,12 @@ export default function SuperAdminLayout() {
     setSidebarOpen(false);
   }, [pathname]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await saApi.post('/superadmin/auth/logout');
+    } catch {
+      // Clear local state even if the server-side cookie is already gone.
+    }
     clearAuth();
     navigate('/superadmin/login');
   };
@@ -98,7 +103,9 @@ export default function SuperAdminLayout() {
             </div>
             <PortalNotificationTray notificationsPath="/superadmin/notifications" />
             <button
-              onClick={handleLogout}
+              onClick={() => {
+                void handleLogout();
+              }}
               className="text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors"
               title="Sign out"
             >

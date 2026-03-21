@@ -173,7 +173,7 @@ export async function authRoutes(app: FastifyInstance) {
       ipAddress: req.ip,
     });
 
-    return reply.send({ accessToken, user: { id: user.id, name: user.name, email: user.email, orgRole: user.orgRole } });
+    return reply.send({ user: { id: user.id, name: user.name, email: user.email, orgRole: user.orgRole } });
   });
 
   // ── POST /auth/login/2fa ────────────────────────────────────────────────────
@@ -221,7 +221,7 @@ export async function authRoutes(app: FastifyInstance) {
       ipAddress: req.ip,
     });
 
-    return reply.send({ accessToken, user: { id: user.id, name: user.name, email: user.email, orgRole: user.orgRole } });
+    return reply.send({ user: { id: user.id, name: user.name, email: user.email, orgRole: user.orgRole } });
   });
 
   // ── POST /auth/refresh ──────────────────────────────────────────────────────
@@ -256,7 +256,7 @@ export async function authRoutes(app: FastifyInstance) {
     setAccessCookie(reply, accessToken);
     setCsrfCookie(reply);
     setRefreshCookie(reply, result.newRefreshToken);
-    return reply.send({ accessToken });
+    return reply.status(204).send();
   });
 
   // ── POST /auth/logout ───────────────────────────────────────────────────────
@@ -849,7 +849,11 @@ export async function authRoutes(app: FastifyInstance) {
 
   // ── GET /auth/me ──────────────────────────────────────────────────────────
   app.get('/me', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const { sub, orgId } = req.user as { sub: string; orgId: string };
+    const { sub, orgId, impersonatedBy } = req.user as {
+      sub: string;
+      orgId: string;
+      impersonatedBy?: string;
+    };
 
     const user = await db.query.users.findFirst({
       where: and(eq(users.id, sub), isNull(users.deletedAt)),
@@ -891,7 +895,10 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     return reply.send({
-      user,
+      user: {
+        ...user,
+        impersonatedBy: impersonatedBy ?? null,
+      },
       org,
       storage: {
         usedBytes: Number(storageUsageRow?.usedBytes ?? 0),

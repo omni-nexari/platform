@@ -14,7 +14,7 @@ type FormData = z.infer<typeof schema>;
 
 export default function SuperAdminLoginPage() {
   const navigate = useNavigate();
-  const setAuth = useSAStore((s) => s.setAuth);
+  const setUser = useSAStore((s) => s.setUser);
 
   const {
     register,
@@ -24,12 +24,12 @@ export default function SuperAdminLoginPage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      const res = await saFetch<{ accessToken: string; user: SAUser }>('/superadmin/auth/login', {
+      const res = await saFetch<{ user: SAUser }>('/superadmin/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      setAuth(res.accessToken, res.user);
+      setUser(res.user);
       navigate('/superadmin');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Login failed');
