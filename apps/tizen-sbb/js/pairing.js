@@ -97,9 +97,8 @@ window.Pairing = {
     // Show immediate placeholders — visible even if all async calls hang
     document.getElementById('pairing-status').textContent = 'Initializing...';
     document.getElementById('device-model').textContent   = 'Model: ...';
+    document.getElementById('device-tvname').textContent  = 'Name: ...';
     document.getElementById('device-ip').textContent      = 'IP: ...';
-    document.getElementById('device-serial').textContent  = 'Serial: ...';
-    document.getElementById('device-panel').textContent   = 'Panel: ...';
     document.getElementById('pairing-code').textContent   = '......';
 
     // ── Step 1: gather device info with 5 s timeout ────────────────────────
@@ -118,13 +117,12 @@ window.Pairing = {
     const displayModel = (systemInfo.systemConfig && systemInfo.systemConfig.realModel)
       || systemInfo.model || 'N/A';
     document.getElementById('device-model').textContent   = 'Model: ' + displayModel;
+    document.getElementById('device-tvname').textContent  = 'Name: ' + (systemInfo.tvName || 'N/A');
     document.getElementById('device-ip').textContent      = 'IP: ' + (systemInfo.ipAddress || 'N/A');
-    document.getElementById('device-serial').textContent  = 'Serial: ' + (systemInfo.serialNumber || 'N/A');
-    document.getElementById('device-panel').textContent   = 'Panel: ' + (systemInfo.panelType || 'N/A');
 
     logger.info('Device info — model:', displayModel,
       'ip:', systemInfo.ipAddress || 'N/A',
-      'serial:', systemInfo.serialNumber || 'N/A');
+      'tvName:', systemInfo.tvName || 'N/A');
 
     // ── Step 2: request pairing code ──────────────────────────────────────
     document.getElementById('pairing-status').textContent = 'Connecting to server...';

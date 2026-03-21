@@ -47,39 +47,10 @@
             </div>
             <div class="device-info">
                 <div id="device-model" class="info-item">Model: Detecting...</div>
+                <div id="device-tvname" class="info-item">Name: Detecting...</div>
                 <div id="device-ip" class="info-item">IP: Connecting...</div>
-                <div id="device-serial" class="info-item">Serial: Detecting...</div>
-                <div id="device-panel" class="info-item">Panel: Detecting...</div>
             </div>
 
-            <!-- Connection Settings (collapsible) -->
-            <div class="conn-settings-wrap">
-                <button id="conn-settings-toggle" class="conn-settings-toggle" onclick="PairingSettings.toggle()">
-                    &#9881; Connection settings <span id="conn-settings-arrow">&#9660;</span>
-                </button>
-                <div id="conn-settings-panel" class="conn-settings-panel hidden">
-                    <p class="conn-settings-hint">
-                        Enter the <strong>backend server</strong> address the device should connect to.
-                    </p>
-                    <div class="conn-field">
-                        <label for="input-api-base">CMS / API Base URL</label>
-                        <input id="input-api-base" type="url" spellcheck="false"
-                               placeholder="http://192.168.1.10:3000" />
-                        <span class="conn-hint">e.g. http://192.168.1.10:3000 — no trailing slash</span>
-                    </div>
-                    <div class="conn-field">
-                        <label for="input-ws-url">WebSocket URL</label>
-                        <input id="input-ws-url" type="url" spellcheck="false"
-                               placeholder="ws://192.168.1.10:3000" />
-                        <span class="conn-hint">Auto-derived from CMS URL — change http → ws (or https → wss)</span>
-                    </div>
-                    <div class="conn-actions">
-                        <button class="conn-btn conn-btn-apply" onclick="PairingSettings.apply()">Save &amp; Reconnect</button>
-                        <button class="conn-btn conn-btn-reset" onclick="PairingSettings.reset()">Reset to Default</button>
-                    </div>
-                    <div id="conn-settings-msg" class="conn-settings-msg"></div>
-                </div>
-            </div>
         </div>
     </div>
 
@@ -155,14 +126,40 @@
         </div>
     </div>
 
-    <!-- On-screen Log Console (toggle: MENU remote button or press M key) -->
+    <!-- On-screen Log Console (INFO button or keyboard M) -->
     <div id="ui-log-panel">
         <div class="ui-log-header">
             <span>Log Console</span>
-            <span class="ui-log-hint">MENU button to close &nbsp;|&nbsp; keyboard: M</span>
+            <span class="ui-log-hint">INFO button to close &nbsp;|&nbsp; keyboard: M</span>
             <button class="ui-log-clear" onclick="UiLog.clear()">Clear</button>
         </div>
         <div id="ui-log-list"></div>
+    </div>
+
+    <!-- Tools Overlay (TOOLS button toggles, works on any screen) -->
+    <div id="tools-overlay" class="tools-overlay hidden">
+        <div class="tools-header">
+            <span class="tools-title">&#9881; Remote &amp; Status</span>
+            <span class="tools-close">TOOLS to close</span>
+        </div>
+        <div class="tools-body">
+            <div class="tools-section">
+                <div class="tools-section-title">Remote Control</div>
+                <div class="tools-row"><span class="tools-key">TOOLS</span><span class="tools-desc">Open / close this panel</span></div>
+                <div class="tools-row"><span class="tools-key">INFO</span><span class="tools-desc">Open / close log console</span></div>
+                <div class="tools-row"><span class="tools-key">UP</span><span class="tools-desc">Scroll log console up</span></div>
+                <div class="tools-row"><span class="tools-key">DOWN</span><span class="tools-desc">Scroll log console down</span></div>
+                <div class="tools-row"><span class="tools-key">LEFT</span><span class="tools-desc">Navigation / previous option</span></div>
+                <div class="tools-row"><span class="tools-key">RIGHT</span><span class="tools-desc">Navigation / next option</span></div>
+                <div class="tools-row"><span class="tools-key">RETURN</span><span class="tools-desc">Back / device info</span></div>
+            </div>
+            <div class="tools-section">
+                <div class="tools-section-title">Server Connectivity</div>
+                <div class="tools-row"><span class="tools-key">API</span><span class="tools-desc" id="tools-api-url">--</span></div>
+                <div class="tools-row"><span class="tools-key">Status</span><span class="tools-desc" id="tools-api-status">Checking...</span></div>
+                <div class="tools-row"><span class="tools-key">WS</span><span class="tools-desc" id="tools-ws-status">--</span></div>
+            </div>
+        </div>
     </div>
 
     <script src="js/config.js"></script>

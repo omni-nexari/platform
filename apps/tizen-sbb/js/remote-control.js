@@ -18,6 +18,7 @@ window.RemoteControl = {
     FAST_FORWARD: 417,
     MENU: 18,
     INFO: 457,
+    TOOLS: 10135,
     RED: 403,
     GREEN: 404,
     YELLOW: 405,
@@ -93,9 +94,30 @@ window.RemoteControl = {
       event.stopPropagation();
     }
 
-    // INFO button always closes the log panel if it is open
-    if (keyCode === this.KEYS.INFO && typeof UiLog !== 'undefined' && UiLog._visible) {
-      UiLog.toggle();
+    // TOOLS button toggles the tools/status overlay on any screen
+    if (keyCode === this.KEYS.TOOLS) {
+      this.toggleToolsOverlay();
+      return;
+    }
+
+    // When log console is open, UP/DOWN scroll it and INFO closes it
+    if (typeof UiLog !== 'undefined' && UiLog._visible) {
+      if (keyCode === this.KEYS.UP || keyCode === this.KEYS.DOWN) {
+        var logList = document.getElementById('ui-log-list');
+        if (logList) {
+          logList.scrollTop += keyCode === this.KEYS.DOWN ? 120 : -120;
+        }
+        return;
+      }
+      if (keyCode === this.KEYS.INFO) {
+        UiLog.toggle();
+        return;
+      }
+    }
+
+    // INFO button opens the log console when it is closed
+    if (keyCode === this.KEYS.INFO) {
+      if (typeof UiLog !== 'undefined') UiLog.toggle();
       return;
     }
 
@@ -134,24 +156,6 @@ window.RemoteControl = {
         event.preventDefault();
         this.confirmExit();
         break;
-        
-      case this.KEYS.INFO:
-        // Show debug info
-        this.toggleDebugMode();
-        break;
-
-      case this.KEYS.MENU:
-        // Menu button - toggle on-screen log console
-        if (typeof UiLog !== 'undefined') UiLog.toggle();
-        break;
-
-      case this.KEYS.RED:
-        // Force retry pairing
-        if (typeof Pairing !== 'undefined' && Pairing.init) {
-          logger.info('Manual pairing retry triggered');
-          Pairing.init();
-        }
-        break;
     }
   },
 
@@ -167,12 +171,6 @@ window.RemoteControl = {
         // Exit button - confirm exit
         event.preventDefault();
         this.confirmExit();
-        break;
-
-      case this.KEYS.INFO:
-        // Info button - toggle debug overlay with telemetry
-        event.preventDefault();
-        this.toggleDebugOverlay();
         break;
 
       case this.KEYS.ENTER:
@@ -220,39 +218,12 @@ window.RemoteControl = {
         logger.info('Fast forward button pressed');
         this.sendRemoteCommand('FAST_FORWARD');
         break;
-
-      case this.KEYS.RED:
-        // Red button - force content refresh
-        logger.info('Force content refresh');
-        if (typeof Player !== 'undefined' && Player.loadContent) {
-          Player.loadContent();
-        }
-        break;
-
-      case this.KEYS.GREEN:
-        // Green button - send heartbeat
-        logger.info('Manual heartbeat');
-        if (typeof Player !== 'undefined' && Player.sendHeartbeat) {
-          Player.sendHeartbeat();
-        }
-        break;
-
-      case this.KEYS.YELLOW:
-        // Yellow button - toggle debug mode
-        this.toggleDebugMode();
-        break;
-
-      case this.KEYS.MENU:
-        // Menu button - toggle on-screen log console
-        if (typeof UiLog !== 'undefined') UiLog.toggle();
-        break;
     }
   },
 
   handleErrorScreenKeys(keyCode, event) {
     switch (keyCode) {
       case this.KEYS.ENTER:
-      case this.KEYS.RED:
         // Retry button
         const retryBtn = document.getElementById('retry-button');
         if (retryBtn) {
@@ -302,118 +273,50 @@ window.RemoteControl = {
   },
 
   toggleDebugOverlay() {
-    let debugOverlay = document.getElementById('debug-overlay');
-    
-    if (!debugOverlay) {
-      // Create debug overlay
-      debugOverlay = document.createElement('div');
-      debugOverlay.id = 'debug-overlay';
-      debugOverlay.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.95);
-        color: #00ff00;
-        padding: 40px;
-        font-family: monospace;
-        font-size: 16px;
-        z-index: 9999;
-        overflow-y: auto;
-        display: none;
-      `;
-      document.body.appendChild(debugOverlay);
-    }
+    this.toggleToolsOverlay();
+  },
 
-    // Toggle visibility
-    if (debugOverlay.style.display === 'none') {
-      debugOverlay.style.display = 'block';
-      this.updateDebugOverlay(debugOverlay);
-      
-      // Auto-refresh every 2 seconds while visible
-      if (this.debugUpdateInterval) {
-        clearInterval(this.debugUpdateInterval);
-      }
-      this.debugUpdateInterval = setInterval(() => {
-        if (debugOverlay.style.display !== 'none') {
-          this.updateDebugOverlay(debugOverlay);
-        }
-      }, 2000);
-    } else {
-      debugOverlay.style.display = 'none';
-      if (this.debugUpdateInterval) {
-        clearInterval(this.debugUpdateInterval);
-        this.debugUpdateInterval = null;
-      }
+  updateDebugOverlay() {
+    this.updateToolsOverlay();
+  },
+
+  toggleToolsOverlay() {
+    var overlay = document.getElementById('tools-overlay');
+    if (!overlay) return;
+
+    overlay.classList.toggle('hidden');
+    if (!overlay.classList.contains('hidden')) {
+      this.updateToolsOverlay();
+      if (this.toolsUpdateInterval) clearInterval(this.toolsUpdateInterval);
+      this.toolsUpdateInterval = setInterval(this.updateToolsOverlay.bind(this), 3000);
+    } else if (this.toolsUpdateInterval) {
+      clearInterval(this.toolsUpdateInterval);
+      this.toolsUpdateInterval = null;
     }
   },
 
-  updateDebugOverlay(overlay) {
-    const now = new Date().toISOString();
-    let html = `
-      <h2 style="color: #ffff00; margin-bottom: 20px;">📊 DEBUG INFORMATION</h2>
-      <p style="color: #888; margin-bottom: 30px;">Updated: ${now}</p>
-      <p style="color: #888; margin-bottom: 30px;">Press ENTER or INFO to close</p>
-    `;
+  updateToolsOverlay() {
+    var apiUrl = document.getElementById('tools-api-url');
+    var apiStatus = document.getElementById('tools-api-status');
+    var wsStatus = document.getElementById('tools-ws-status');
+    if (apiUrl) apiUrl.textContent = CONFIG.API_BASE || '--';
 
-    // Device Info
-    if (typeof Player !== 'undefined') {
-      html += `<h3 style="color: #00ffff;">Device Information</h3>`;
-      html += `<p>Device ID: ${Player.deviceId || 'Not set'}</p>`;
-      html += `<p>Paired: ${Player.deviceId ? 'Yes' : 'No'}</p>`;
-      
-      if (Player.lastTelemetry) {
-        const t = Player.lastTelemetry;
-        html += `<p>Model: ${(t.systemConfig && t.systemConfig.realModel) || (t.systemInfo && t.systemInfo.realModel) || t.model || 'Unknown'}</p>`;
-        html += `<p>Serial: ${t.serialNumber || 'Unknown'}</p>`;
-        html += `<p>Firmware: ${(t.systemInfo && t.systemInfo.firmwareVersion) || 'Unknown'}</p>`;
-        html += `<p>MAC Address: ${t.macAddress || 'Unknown'}</p>`;
+    if (wsStatus) {
+      var state = 'DISCONNECTED';
+      if (typeof Player !== 'undefined' && Player.wsConnection) {
+        var states = ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'];
+        state = states[Player.wsConnection.readyState] || 'UNKNOWN';
       }
+      wsStatus.textContent = state;
     }
 
-    // Connection Status
-    html += `<h3 style="color: #00ffff; margin-top: 20px;">Connection Status</h3>`;
-    if (typeof Player !== 'undefined' && Player.wsConnection) {
-      const states = ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'];
-      const state = states[Player.wsConnection.readyState] || 'UNKNOWN';
-      html += `<p>WebSocket: <span style="color: ${state === 'OPEN' ? '#00ff00' : '#ff0000'}">${state}</span></p>`;
+    if (apiStatus) {
+      var connected = false;
+      if (typeof navigator !== 'undefined' && typeof navigator.onLine === 'boolean') {
+        connected = navigator.onLine;
+      }
+      apiStatus.textContent = connected ? 'Network reachable' : 'Network offline';
     }
-    
-    // Network Status
-    if (typeof Network !== 'undefined' && Network.status) {
-      html += `<p>Network: ${Network.status.connected ? '✅ Connected' : '❌ Disconnected'}</p>`;
-      html += `<p>IP Address: ${Network.status.ipAddress || 'Unknown'}</p>`;
-      html += `<p>Gateway: ${Network.status.gateway || 'Unknown'}</p>`;
-    }
-
-    // Content Status
-    html += `<h3 style="color: #00ffff; margin-top: 20px;">Content Status</h3>`;
-    if (typeof Player !== 'undefined') {
-      html += `<p>Current Playlist: ${(Player.currentContent && Player.currentContent.playlistName) || 'None'}</p>`;
-      html += `<p>Items: ${(Player.currentContent && Player.currentContent.items && Player.currentContent.items.length) || 0}</p>`;
-      html += `<p>Content Signature: ${Player.lastContentSignature || 'None'}</p>`;
-      html += `<p>Pending Playlist: ${Player.pendingPlaylist ? 'Yes' : 'No'}</p>`;
-      html += `<p>Downloading: ${Player.isDownloadingContent ? 'Yes' : 'No'}</p>`;
-    }
-
-    // Memory Usage
-    if (performance && performance.memory) {
-      const memMB = (performance.memory.usedJSHeapSize / 1024 / 1024).toFixed(2);
-      const limitMB = (performance.memory.jsHeapSizeLimit / 1024 / 1024).toFixed(2);
-      html += `<h3 style="color: #00ffff; margin-top: 20px;">Memory</h3>`;
-      html += `<p>Used: ${memMB} MB / ${limitMB} MB</p>`;
-    }
-
-    // Key Controls
-    html += `<h3 style="color: #00ffff; margin-top: 20px;">Remote Control</h3>`;
-    html += `<p>↑ ↓ ← → : Navigation</p>`;
-    html += `<p>ENTER : Select / Close Debug</p>`;
-    html += `<p>INFO : Toggle this debug overlay</p>`;
-    html += `<p>RETURN : Toggle status bar</p>`;
-    html += `<p>EXIT : Exit application</p>`;
-
-    overlay.innerHTML = html;
   },
 
   toggleStatusOverlay() {

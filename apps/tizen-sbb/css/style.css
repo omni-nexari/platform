@@ -692,6 +692,91 @@ body::before {
   font-weight: 600;
 }
 
+.tools-overlay {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  width: 520px;
+  max-width: calc(100vw - 40px);
+  background: rgba(6, 10, 18, 0.94);
+  border: 1px solid rgba(79, 242, 209, 0.28);
+  border-radius: 18px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(20px) saturate(150%);
+  z-index: 1200;
+  overflow: hidden;
+}
+
+.tools-overlay.hidden {
+  display: none;
+}
+
+.tools-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: linear-gradient(90deg, rgba(58, 123, 255, 0.22), rgba(79, 242, 209, 0.12));
+  border-bottom: 1px solid rgba(79, 242, 209, 0.18);
+}
+
+.tools-title {
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.tools-close {
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.tools-body {
+  padding: 18px 20px 20px;
+}
+
+.tools-section + .tools-section {
+  margin-top: 18px;
+}
+
+.tools-section-title {
+  color: var(--aqua);
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 10px;
+}
+
+.tools-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tools-row:last-child {
+  border-bottom: none;
+}
+
+.tools-key {
+  min-width: 96px;
+  color: var(--blue);
+  font-family: 'Courier New', monospace;
+  font-weight: 700;
+}
+
+.tools-desc {
+  flex: 1;
+  text-align: right;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
 /* ========================================
    RESPONSIVE DESIGN
    ======================================== */
