@@ -29,6 +29,15 @@ interface CreateNotificationsInput {
 
 type PrefRow = { user_id: string; in_app: boolean };
 
+function isMissingNotificationPrefsTable(error: unknown): boolean {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && 'code' in error
+    && (error as { code?: string }).code === '42P01',
+  );
+}
+
 const browserConnections = new Map<string, Set<BrowserConn>>();
 
 function uniqueIds(userIds: string[]): string[] {
@@ -49,12 +58,18 @@ async function filterUsersByInAppPreference(
   const ids = uniqueIds(userIds);
   if (ids.length === 0) return [];
 
-  const rows = (await db.execute(sql`
-    SELECT user_id, in_app
-    FROM notification_prefs
-    WHERE event_key = ${eventKey}
-      AND user_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
-  `)) as unknown as PrefRow[];
+  let rows: PrefRow[] = [];
+  try {
+    rows = (await db.execute(sql`
+      SELECT user_id, in_app
+      FROM notification_prefs
+      WHERE event_key = ${eventKey}
+        AND user_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+    `)) as unknown as PrefRow[];
+  } catch (error) {
+    if (!isMissingNotificationPrefsTable(error)) throw error;
+    return ids;
+  }
 
   const prefMap = new Map(rows.map((row) => [row.user_id, row.in_app]));
   return ids.filter((id) => prefMap.get(id) ?? true);

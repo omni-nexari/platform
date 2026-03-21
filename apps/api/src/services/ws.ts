@@ -89,6 +89,8 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
         lastSeen: new Date(),
         ...(hb.playerVersion != null ? { playerVersion: hb.playerVersion } : {}),
         ...(hb.firmwareVersion != null ? { firmwareVersion: hb.firmwareVersion } : {}),
+        ...(hb.timezone != null ? { timezone: hb.timezone } : {}),
+        ...(hb.resolution != null ? { resolution: hb.resolution } : {}),
         ...(hb.powerState != null ? { powerState: hb.powerState } : {}),
         ...(hb.clockDriftMs != null ? { clockDriftMs: hb.clockDriftMs } : {}),
         ...(hb.irLock != null ? { irLock: hb.irLock } : {}),

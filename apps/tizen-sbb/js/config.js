@@ -64,8 +64,9 @@ const UiLog = {
   _max: 300,
   _visible: false,
   _followTail: true,
+  _filter: 'all',
   _controlIndex: 0,
-  _controls: ['ui-log-top', 'ui-log-older', 'ui-log-newer', 'ui-log-latest', 'ui-log-clear'],
+  _controls: ['ui-log-filter-all', 'ui-log-filter-error', 'ui-log-filter-warn', 'ui-log-filter-info', 'ui-log-filter-debug', 'ui-log-top', 'ui-log-older', 'ui-log-newer', 'ui-log-latest', 'ui-log-clear'],
 
   append(level, args) {
     const time = new Date().toTimeString().slice(0, 8);
@@ -87,9 +88,10 @@ const UiLog = {
     if (!el) return;
     const previousTop = el.scrollTop;
     const colors = { debug: '#7a8299', info: '#4ff2d1', warn: '#f59e0b', error: '#ff3ea5' };
+    const filteredEntries = this._getFilteredEntries();
     let html = '';
-    for (let i = 0; i < this._entries.length; i++) {
-      const e = this._entries[i];
+    for (let i = 0; i < filteredEntries.length; i++) {
+      const e = filteredEntries[i];
       const c = colors[e.level] || '#e8eaf0';
       const msg = String(e.text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       html += '<div class="ul-row"><span class="ul-time">' + e.time + '</span>' +
@@ -123,6 +125,13 @@ const UiLog = {
     const el = document.getElementById('ui-log-list');
     if (el) el.innerHTML = '';
     this._updateStatus();
+    this._syncControls();
+  },
+
+  setFilter(filter) {
+    this._filter = filter || 'all';
+    this._followTail = true;
+    this._render();
   },
 
   scrollToTop() {
@@ -165,11 +174,23 @@ const UiLog = {
 
   activateControl() {
     const controlId = this._controls[this._controlIndex];
-    if (controlId === 'ui-log-top') this.scrollToTop();
+    if (controlId === 'ui-log-filter-all') this.setFilter('all');
+    else if (controlId === 'ui-log-filter-error') this.setFilter('error');
+    else if (controlId === 'ui-log-filter-warn') this.setFilter('warn');
+    else if (controlId === 'ui-log-filter-info') this.setFilter('info');
+    else if (controlId === 'ui-log-filter-debug') this.setFilter('debug');
+    else if (controlId === 'ui-log-top') this.scrollToTop();
     else if (controlId === 'ui-log-older') this.scrollOlder();
     else if (controlId === 'ui-log-newer') this.scrollNewer();
     else if (controlId === 'ui-log-latest') this.scrollToBottom();
     else if (controlId === 'ui-log-clear') this.clear();
+  },
+
+  _getFilteredEntries() {
+    if (this._filter === 'all') return this._entries;
+    return this._entries.filter(function(entry) {
+      return entry.level === UiLog._filter;
+    });
   },
 
   _syncControls() {
@@ -178,6 +199,9 @@ const UiLog = {
       if (!button) continue;
       if (i === this._controlIndex) button.classList.add('is-active');
       else button.classList.remove('is-active');
+
+      if (this._controls[i] === 'ui-log-filter-' + this._filter) button.classList.add('is-on');
+      else if (this._controls[i].indexOf('ui-log-filter-') === 0) button.classList.remove('is-on');
     }
   },
 
@@ -186,15 +210,18 @@ const UiLog = {
     const status = document.getElementById('ui-log-status');
     if (!status) return;
     var mode = this._followTail ? 'Live' : 'History';
-    var count = this._entries.length;
+    var filteredEntries = this._getFilteredEntries();
+    var count = filteredEntries.length;
+    var total = this._entries.length;
+    var filterLabel = this._filter === 'all' ? 'All' : this._filter.toUpperCase();
     if (!el) {
-      status.textContent = mode + ' | ' + count + ' logs';
+      status.textContent = mode + ' | ' + filterLabel + ' | ' + count + '/' + total + ' logs';
       return;
     }
     var percent = el.scrollHeight > el.clientHeight
       ? Math.round((el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight)) * 100)
       : 100;
-    status.textContent = mode + ' | ' + count + ' logs | ' + percent + '%';
+    status.textContent = mode + ' | ' + filterLabel + ' | ' + count + '/' + total + ' logs | ' + percent + '%';
   },
 };
 
@@ -315,15 +342,4 @@ const logger = {
 // Export for use in other modules
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { CONFIG, logger };
-}
-
-// Auto-show log panel immediately when DEBUG is on
-if (typeof document !== 'undefined') {
-  document.addEventListener('DOMContentLoaded', function() {
-    if (CONFIG.DEBUG && typeof UiLog !== 'undefined') {
-      UiLog._visible = true;
-      var p = document.getElementById('ui-log-panel');
-      if (p) p.style.display = 'flex';
-    }
-  });
 }

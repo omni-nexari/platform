@@ -123,6 +123,8 @@ export type DeviceCommandInput = z.infer<typeof DeviceCommandSchema>;
 export const HeartbeatSchema = z.object({
   playerVersion: z.string().optional(),
   firmwareVersion: z.string().optional(),
+  timezone: z.string().optional(),
+  resolution: z.string().optional(),
   powerState: z.enum(['on', 'off', 'standby']).optional(),
   clockDriftMs: z.number().int().optional(),
   irLock: z.boolean().optional(),

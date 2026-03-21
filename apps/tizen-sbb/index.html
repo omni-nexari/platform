@@ -131,6 +131,11 @@
         <div class="ui-log-header">
             <span>Log Console</span>
             <div class="ui-log-controls">
+                <button id="ui-log-filter-all" class="ui-log-btn" onclick="UiLog.setFilter('all')">All</button>
+                <button id="ui-log-filter-error" class="ui-log-btn" onclick="UiLog.setFilter('error')">Error</button>
+                <button id="ui-log-filter-warn" class="ui-log-btn" onclick="UiLog.setFilter('warn')">Warn</button>
+                <button id="ui-log-filter-info" class="ui-log-btn" onclick="UiLog.setFilter('info')">Info</button>
+                <button id="ui-log-filter-debug" class="ui-log-btn" onclick="UiLog.setFilter('debug')">Debug</button>
                 <button id="ui-log-top" class="ui-log-btn" onclick="UiLog.scrollToTop()">Top</button>
                 <button id="ui-log-older" class="ui-log-btn" onclick="UiLog.scrollOlder()">Older</button>
                 <button id="ui-log-newer" class="ui-log-btn" onclick="UiLog.scrollNewer()">Newer</button>

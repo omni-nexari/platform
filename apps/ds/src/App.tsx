@@ -68,7 +68,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (bootstrapped) return;
-    if (!pendingBootstrap && isMainPublicAuthPath(location.pathname)) {
+    if (!pendingBootstrap && (isMainPublicAuthPath(location.pathname) || isPortalPath(location.pathname))) {
       markBootstrapped();
       return;
     }

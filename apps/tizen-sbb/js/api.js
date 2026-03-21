@@ -56,6 +56,9 @@ window.API = {
     try {
       const ws = window.Player && window.Player.wsConnection;
       if (ws && ws.readyState === 1) {
+        var buildInfo = window && window.PLAYER_BUILD_INFO;
+        var playerVersion = (buildInfo && (buildInfo.version + ' ' + buildInfo.buildId)) || window.PLAYER_DEPLOY_VERSION || undefined;
+
         // network_info message
         if (data.macAddress || data.ipAddress) {
           ws.send(JSON.stringify({
@@ -75,7 +78,10 @@ window.API = {
           ws.send(JSON.stringify({
             type: 'heartbeat',
             payload: {
+              playerVersion: playerVersion,
               firmwareVersion: data.firmwareVersion || undefined,
+              timezone: data.timezone || undefined,
+              resolution: data.resolution || undefined,
               powerState: 'on',
               cpuLoad: data.cpuLoad != null ? data.cpuLoad : undefined,
               storageFreeBytes: data.storageFreeBytes || data.storageFree || undefined,

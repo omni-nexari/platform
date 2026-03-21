@@ -19,6 +19,15 @@ const EVENT_KEYS = [
 
 type PrefRow = { event_key: string; in_app: boolean; email_notify: boolean };
 
+function isMissingNotificationPrefsTable(error: unknown): boolean {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && 'code' in error
+    && (error as { code?: string }).code === '42P01',
+  );
+}
+
 const DEFAULT_PREFS: PrefRow[] = EVENT_KEYS.map((k) => ({
   event_key: k,
   in_app: true,
@@ -145,11 +154,17 @@ export async function notificationsRoutes(app: FastifyInstance) {
   app.get('/prefs', { onRequest: [app.authenticate] }, async (req, reply) => {
     const actor = req.user as AuthUser;
 
-    const rows = await db.execute(sql`
-      SELECT event_key, in_app, email_notify
-      FROM notification_prefs
-      WHERE user_id = ${actor.sub}
-    `) as unknown as PrefRow[];
+    let rows: PrefRow[] = [];
+    try {
+      rows = await db.execute(sql`
+        SELECT event_key, in_app, email_notify
+        FROM notification_prefs
+        WHERE user_id = ${actor.sub}
+      `) as unknown as PrefRow[];
+    } catch (error) {
+      if (!isMissingNotificationPrefsTable(error)) throw error;
+      return reply.send({ prefs: DEFAULT_PREFS });
+    }
 
     const prefMap = new Map(rows.map((r) => [r.event_key, r]));
     const prefs = EVENT_KEYS.map(
@@ -178,14 +193,20 @@ export async function notificationsRoutes(app: FastifyInstance) {
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
     for (const pref of body.data.prefs) {
-      await db.execute(sql`
-        INSERT INTO notification_prefs (user_id, event_key, in_app, email_notify, updated_at)
-        VALUES (${actor.sub}, ${pref.eventKey}, ${pref.inApp}, ${pref.email}, NOW())
-        ON CONFLICT (user_id, event_key) DO UPDATE
-          SET in_app = ${pref.inApp}, email_notify = ${pref.email}, updated_at = NOW()
-      `);
+      try {
+        await db.execute(sql`
+          INSERT INTO notification_prefs (user_id, event_key, in_app, email_notify, updated_at)
+          VALUES (${actor.sub}, ${pref.eventKey}, ${pref.inApp}, ${pref.email}, NOW())
+          ON CONFLICT (user_id, event_key) DO UPDATE
+            SET in_app = ${pref.inApp}, email_notify = ${pref.email}, updated_at = NOW()
+        `);
+      } catch (error) {
+        if (!isMissingNotificationPrefsTable(error)) throw error;
+        return reply.status(503).send({ error: 'notification_prefs table is missing; run DB migrations' });
+      }
     }
 
     return reply.send({ ok: true });
   });
 }
+

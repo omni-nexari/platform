@@ -103,6 +103,11 @@ const Player = {
             this.wsConnection.onopen = () => {
                 logger.info('WebSocket connected');
                 this.updateConnectionStatus(true);
+                Telemetry.send(this.deviceId).then(() => {
+                    logger.info('Telemetry sent after WebSocket connect');
+                }).catch((error) => {
+                    logger.warn('Telemetry after WebSocket connect failed:', error);
+                });
             };
             this.wsConnection.onmessage = (event) => {
                 this.handleWebSocketMessage(event.data);
@@ -324,7 +329,7 @@ const Player = {
         if (serialized === this.lastReadinessPayload && now - this.lastReadinessAt < CONFIG.HEARTBEAT_INTERVAL) {
             return;
         }
-        this.wsConnection.send(JSON.stringify({ type: 'HEARTBEAT', payload }));
+        this.wsConnection.send(JSON.stringify({ type: 'heartbeat', payload }));
         this.lastReadinessPayload = serialized;
         this.lastReadinessAt = now;
     },

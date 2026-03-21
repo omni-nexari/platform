@@ -12,13 +12,21 @@ import * as argon2 from 'argon2';
 import { db, organisations, users, workspaces, workspaceMembers } from '@signage/db';
 import { eq } from 'drizzle-orm';
 
-const ORG_SLUG = 'acme';
-const ORG_NAME = 'Acme Digital';
-const OWNER_EMAIL = 'owner@acme.local';
-const OWNER_PASSWORD = 'Test@1234!';
-const OWNER_NAME = 'Acme Owner';
-const WS_NAME = 'Main Display';
-const WS_SLUG = 'main-display';
+function toSlug(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'default';
+}
+
+const ORG_NAME = process.env.TEST_ORG_NAME ?? 'Acme Digital';
+const ORG_SLUG = process.env.TEST_ORG_SLUG ?? toSlug(ORG_NAME);
+const OWNER_EMAIL = process.env.TEST_OWNER_EMAIL ?? 'owner@acme.local';
+const OWNER_PASSWORD = process.env.TEST_OWNER_PASS ?? 'Test@1234!';
+const OWNER_NAME = process.env.TEST_OWNER_NAME ?? 'Acme Owner';
+const WS_NAME = process.env.TEST_WORKSPACE_NAME ?? 'Main Display';
+const WS_SLUG = process.env.TEST_WORKSPACE_SLUG ?? toSlug(WS_NAME);
 
 // ── 1. Org ────────────────────────────────────────────────────────────────────
 

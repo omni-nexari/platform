@@ -127,6 +127,13 @@
       "when": 1774050000000,
       "tag": "0017_portal_analytics_preferences",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1774060200000,
+      "tag": "0018_notification_prefs",
+      "breakpoints": true
     }
   ]
 }
