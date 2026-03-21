@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router';
 import { useForm } from 'react-hook-form';
@@ -39,6 +39,7 @@ import ZoneLayoutEditor, { type ZoneConfig } from '../../components/ZoneLayoutEd
 import {
   ActionButton,
   Badge,
+  Callout,
   Modal,
   ModalBody,
   ModalFooter,
@@ -120,6 +121,56 @@ interface Device {
   screenshotIntervalMin: number | null;
   defaultPlaylistId: string | null;
   zones: ZoneConfig[] | null;
+}
+
+interface DeviceLogEntry {
+  id: string;
+  level: 'debug' | 'info' | 'warn' | 'error';
+  line: string;
+  createdAt: string;
+}
+
+interface DeviceLogsResponse {
+  deviceId: string;
+  online: boolean;
+  logs: DeviceLogEntry[];
+}
+
+interface ObservedSystemInfo {
+  macAddress?: string | null;
+  resolution?: string | null;
+  ipAddress?: string | null;
+  networkType?: string | null;
+  wifiSsid?: string | null;
+  timezone?: string | null;
+  firmwareVersion?: string | null;
+  realModel?: string | null;
+  panelType?: string | null;
+  tvName?: string | null;
+}
+
+function parseObservedSystemInfo(logs: DeviceLogEntry[]): ObservedSystemInfo | null {
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    const line = logs[index]?.line;
+    if (!line || !line.includes('System info collected:')) continue;
+
+    const jsonStart = line.indexOf('{');
+    if (jsonStart < 0) continue;
+
+    try {
+      return JSON.parse(line.slice(jsonStart)) as ObservedSystemInfo;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function preferObservedValue(deviceValue: string | null | undefined, observedValue: string | null | undefined) {
+  if (deviceValue && deviceValue !== 'UTC') return deviceValue;
+  if (observedValue) return observedValue;
+  return deviceValue ?? null;
 }
 
 // ── Small presentational helpers ─────────────────────────────────────────────
@@ -209,11 +260,58 @@ export default function DeviceDetailPage() {
     refetchInterval: 15_000,
   });
 
-  if (data?.device && !ntpInitialised) {
+  const { data: logData } = useQuery<DeviceLogsResponse>({
+    queryKey: ['device-logs', deviceId],
+    queryFn: () => api.get(`/devices/${deviceId}/logs?limit=300`),
+    enabled: !!deviceId,
+    refetchInterval: 5_000,
+  });
+
+  const observedSystemInfo = useMemo(() => parseObservedSystemInfo(logData?.logs ?? []), [logData?.logs]);
+
+  const resolvedTimezone = useMemo(
+    () => preferObservedValue(data?.device.timezone, observedSystemInfo?.timezone),
+    [data?.device.timezone, observedSystemInfo?.timezone],
+  );
+  const resolvedResolution = useMemo(
+    () => data?.device.resolution || observedSystemInfo?.resolution || null,
+    [data?.device.resolution, observedSystemInfo?.resolution],
+  );
+  const resolvedWifiSsid = useMemo(
+    () => data?.device.wifiSsid || observedSystemInfo?.wifiSsid || null,
+    [data?.device.wifiSsid, observedSystemInfo?.wifiSsid],
+  );
+  const resolvedIpAddress = useMemo(
+    () => data?.device.ipAddress || observedSystemInfo?.ipAddress || null,
+    [data?.device.ipAddress, observedSystemInfo?.ipAddress],
+  );
+  const resolvedMacAddress = useMemo(
+    () => data?.device.macAddress || observedSystemInfo?.macAddress || null,
+    [data?.device.macAddress, observedSystemInfo?.macAddress],
+  );
+  const resolvedConnectionType = useMemo(() => {
+    if (data?.device.connectionType) return data.device.connectionType;
+    if (observedSystemInfo?.networkType?.toUpperCase().includes('WIFI')) return 'wifi';
+    if (observedSystemInfo?.networkType?.toUpperCase().includes('ETH')) return 'ethernet';
+    return null;
+  }, [data?.device.connectionType, observedSystemInfo?.networkType]);
+
+  const observedOnlyFields = useMemo(() => {
+    if (!data?.device || !observedSystemInfo) return [] as string[];
+
+    const items: string[] = [];
+    if ((!data.device.timezone || data.device.timezone === 'UTC') && observedSystemInfo.timezone) items.push(`timezone=${observedSystemInfo.timezone}`);
+    if (!data.device.resolution && observedSystemInfo.resolution) items.push(`resolution=${observedSystemInfo.resolution}`);
+    if (!data.device.wifiSsid && observedSystemInfo.wifiSsid) items.push(`ssid=${observedSystemInfo.wifiSsid}`);
+    return items;
+  }, [data?.device, observedSystemInfo]);
+
+  useEffect(() => {
+    if (!data?.device || ntpInitialised) return;
     setNtpServer(data.device.ntpServer ?? 'pool.ntp.org');
-    setNtpTimezone(data.device.ntpTimezone ?? data.device.timezone ?? 'UTC');
+    setNtpTimezone(preferObservedValue(data.device.timezone, observedSystemInfo?.timezone) ?? data.device.ntpTimezone ?? 'UTC');
     setNtpInitialised(true);
-  }
+  }, [data?.device, ntpInitialised, observedSystemInfo?.timezone]);
 
   const {
     register,
@@ -386,6 +484,12 @@ export default function DeviceDetailPage() {
         </SectionCard>
       )}
 
+      {observedOnlyFields.length > 0 && (
+        <Callout tone="accent" icon={<AlertTriangle className="w-4 h-4" />}>
+          Recent device logs already report values not fully reflected in the stored device state: {observedOnlyFields.join(', ')}.
+        </Callout>
+      )}
+
       {/* ── #14 Hardware identity  +  #15 Network ────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <SectionCard>
@@ -395,13 +499,13 @@ export default function DeviceDetailPage() {
             </h2>
           </SectionCardHeader>
           <SectionCardBody className="space-y-3">
-            <InfoRow icon={Monitor}     label="Model"          value={[device.modelName, device.modelCode].filter(Boolean).join(' / ') || null} />
+            <InfoRow icon={Monitor}     label="Model"          value={[device.modelName, device.modelCode, observedSystemInfo?.realModel].filter(Boolean).join(' / ') || null} />
             <InfoRow icon={Fingerprint} label="DUID"           value={device.duid} />
             <InfoRow icon={Settings2}   label="Serial Number"  value={device.serialNumber} />
-            <InfoRow icon={Cpu}         label="Firmware"       value={device.firmwareVersion} />
+            <InfoRow icon={Cpu}         label="Firmware"       value={device.firmwareVersion ?? observedSystemInfo?.firmwareVersion} />
             <InfoRow icon={Cpu}         label="Player version" value={device.playerVersion ? `v${device.playerVersion}` : null} />
-            <InfoRow icon={Monitor}     label="Resolution"     value={device.resolution} />
-            <InfoRow icon={Globe}       label="Timezone"       value={device.timezone} />
+            <InfoRow icon={Monitor}     label="Resolution"     value={resolvedResolution} />
+            <InfoRow icon={Globe}       label="Timezone"       value={resolvedTimezone} />
           </SectionCardBody>
         </SectionCard>
 
@@ -412,21 +516,21 @@ export default function DeviceDetailPage() {
             </h2>
           </SectionCardHeader>
           <SectionCardBody className="space-y-3">
-            <InfoRow icon={Globe}   label="IP Address"  value={device.ipAddress} />
-            <InfoRow icon={Network} label="MAC Address" value={device.macAddress} />
+            <InfoRow icon={Globe}   label="IP Address"  value={resolvedIpAddress} />
+            <InfoRow icon={Network} label="MAC Address" value={resolvedMacAddress} />
             <div className="flex items-center justify-between text-sm">
               <span className="flex items-center gap-2 text-[var(--text-muted)]">
                 <Wifi className="w-3.5 h-3.5" />Connection
               </span>
-              {device.connectionType
-                ? <Badge tone={device.connectionType === 'wifi' ? 'accent' : 'neutral'}>
-                    {device.connectionType.toUpperCase()}
+              {resolvedConnectionType
+                ? <Badge tone={resolvedConnectionType === 'wifi' ? 'accent' : 'neutral'}>
+                    {resolvedConnectionType.toUpperCase()}
                   </Badge>
                 : <span className="text-[var(--text-muted)] text-xs">—</span>}
             </div>
-            {device.connectionType === 'wifi' && (
+            {resolvedConnectionType === 'wifi' && (
               <>
-                <InfoRow icon={Wifi} label="SSID" value={device.wifiSsid} />
+                <InfoRow icon={Wifi} label="SSID" value={resolvedWifiSsid} />
                 {device.wifiStrength != null && (
                   <div className="flex items-center justify-between text-sm">
                     <span className="flex items-center gap-2 text-[var(--text-muted)]">
@@ -693,6 +797,9 @@ export default function DeviceDetailPage() {
               >Apply NTP</ActionButton>
             </div>
           </div>
+          <p className="mt-3 text-xs text-[var(--text-muted)]">
+            Detected device timezone: <span className="font-mono text-[var(--text)]">{resolvedTimezone ?? '—'}</span>
+          </p>
         </SectionCardBody>
       </SectionCard>
 

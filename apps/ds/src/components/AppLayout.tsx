@@ -36,6 +36,7 @@ import {
   Paintbrush,
   Menu,
   BarChart2,
+  Bug,
 } from 'lucide-react';
 
 interface Workspace {
@@ -219,6 +220,19 @@ export default function AppLayout() {
           >
             <LayoutDashboard className="w-4 h-4" />
             Dashboard
+          </NavLink>
+          <NavLink
+            to="/tizen-test"
+            className={({ isActive }) =>
+              `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                isActive
+                  ? 'bg-[var(--blue)] text-white'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+              }`
+            }
+          >
+            <Bug className="w-4 h-4" />
+            Tizen Test
           </NavLink>
 
           {/* Workspace-specific nav */}

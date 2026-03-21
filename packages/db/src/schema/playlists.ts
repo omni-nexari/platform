@@ -1,3 +1,4 @@
+import { relations } from 'drizzle-orm';
 import { pgTable, uuid, text, integer, boolean, timestamp } from 'drizzle-orm/pg-core';
 import { type AnyPgColumn } from 'drizzle-orm/pg-core';
 import { workspaces } from './workspaces.js';
@@ -36,3 +37,35 @@ export const playlistItems = pgTable('playlist_items', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const playlistsRelations = relations(playlists, ({ one, many }) => ({
+  workspace: one(workspaces, {
+    fields: [playlists.workspaceId],
+    references: [workspaces.id],
+  }),
+  creator: one(users, {
+    fields: [playlists.createdBy],
+    references: [users.id],
+  }),
+  thumbnailContent: one(contentItems, {
+    fields: [playlists.thumbnailContentId],
+    references: [contentItems.id],
+  }),
+  items: many(playlistItems),
+}));
+
+export const playlistItemsRelations = relations(playlistItems, ({ one }) => ({
+  playlist: one(playlists, {
+    fields: [playlistItems.playlistId],
+    references: [playlists.id],
+  }),
+  content: one(contentItems, {
+    fields: [playlistItems.contentId],
+    references: [contentItems.id],
+  }),
+  nestedPlaylist: one(playlists, {
+    fields: [playlistItems.nestedPlaylistId],
+    references: [playlists.id],
+    relationName: 'nestedPlaylist',
+  }),
+}));

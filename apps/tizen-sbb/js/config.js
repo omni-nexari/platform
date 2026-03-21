@@ -34,7 +34,7 @@ const defaultConfig = {
 
   // Remote logging
   REMOTE_LOG_ENABLED: true,
-  REMOTE_LOG_LEVEL: 'warn', // debug|info|warn|error
+  REMOTE_LOG_LEVEL: 'debug', // debug|info|warn|error
 };
 
 // Simple in-memory ring buffer for logs (used for remote bursts)
@@ -58,10 +58,75 @@ if (typeof window !== 'undefined') {
   window.LogBuffer = LogBuffer;
 }
 
+const PersistentLogStore = {
+  key: 'nexari.tizen.logs',
+  updatedAtKey: 'nexari.tizen.logs.updatedAt',
+  max: 300,
+
+  load() {
+    try {
+      if (typeof localStorage === 'undefined') return [];
+      const raw = localStorage.getItem(this.key);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.slice(-this.max).map(function(entry) {
+        return {
+          level: entry && entry.level ? String(entry.level) : 'info',
+          time: entry && entry.time ? String(entry.time) : '--:--:--',
+          text: entry && entry.text ? String(entry.text) : '',
+        };
+      });
+    } catch (error) {
+      return [];
+    }
+  },
+
+  save(entries) {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      const safeEntries = Array.isArray(entries) ? entries.slice(-this.max) : [];
+      localStorage.setItem(this.key, JSON.stringify(safeEntries));
+      localStorage.setItem(this.updatedAtKey, String(Date.now()));
+    } catch (error) {}
+  },
+
+  clear() {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      localStorage.removeItem(this.key);
+      localStorage.setItem(this.updatedAtKey, String(Date.now()));
+    } catch (error) {}
+  },
+
+  exportText(entries) {
+    const safeEntries = Array.isArray(entries) ? entries : [];
+    return safeEntries.map(function(entry) {
+      const level = entry && entry.level ? String(entry.level).toUpperCase() : 'INFO';
+      const time = entry && entry.time ? String(entry.time) : '--:--:--';
+      const text = entry && entry.text ? String(entry.text) : '';
+      return '[' + time + '] [' + level + '] ' + text;
+    }).join('\n');
+  },
+
+  getUpdatedAt() {
+    try {
+      if (typeof localStorage === 'undefined') return '0';
+      return localStorage.getItem(this.updatedAtKey) || '0';
+    } catch (error) {
+      return '0';
+    }
+  }
+};
+
+if (typeof window !== 'undefined') {
+  window.PersistentLogStore = PersistentLogStore;
+}
+
 // ── On-screen Log Console (shows all log entries as a UI panel) ──────────────
 const UiLog = {
-  _entries: [],
-  _max: 300,
+  _entries: PersistentLogStore.load(),
+  _max: PersistentLogStore.max,
   _visible: false,
   _followTail: true,
   _filter: 'all',
@@ -80,6 +145,7 @@ const UiLog = {
     } catch (e) { text = String(args); }
     this._entries.push({ level, time, text });
     if (this._entries.length > this._max) this._entries.shift();
+    PersistentLogStore.save(this._entries);
     if (this._visible) this._render();
   },
 
@@ -122,6 +188,7 @@ const UiLog = {
   clear() {
     this._entries = [];
     this._followTail = true;
+    PersistentLogStore.clear();
     const el = document.getElementById('ui-log-list');
     if (el) el.innerHTML = '';
     this._updateStatus();
@@ -164,6 +231,20 @@ const UiLog = {
     el.scrollTop = Math.min(el.scrollHeight, el.scrollTop + Math.max(120, Math.floor(el.clientHeight * 0.75)));
     this._followTail = (el.scrollTop + el.clientHeight >= el.scrollHeight - 8);
     this._updateStatus();
+  },
+
+  getEntries() {
+    return this._entries.slice();
+  },
+
+  getExportText() {
+    return PersistentLogStore.exportText(this._entries);
+  },
+
+  reloadPersisted() {
+    this._entries = PersistentLogStore.load();
+    if (this._visible) this._render();
+    else this._updateStatus();
   },
 
   moveControl(direction) {
@@ -233,6 +314,8 @@ if (typeof window !== 'undefined') {
       document.addEventListener('keydown', function(e) {
         if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.altKey && !e.metaKey) {
           if (typeof UiLog !== 'undefined') UiLog.toggle();
+        } else if ((e.key === 'g' || e.key === 'G') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+          window.location.href = 'logs.html';
         }
       });
     });
@@ -249,7 +332,17 @@ if (typeof window !== 'undefined' && typeof console !== 'undefined') {
     var _origDebug = console.debug ? console.debug.bind(console) : _origLog;
 
     function _toUi(level, args) {
-      try { UiLog.append(level, Array.prototype.slice.call(args)); } catch (e) {}
+      try {
+        var entries = Array.prototype.slice.call(args);
+        UiLog.append(level, entries);
+        if (typeof API !== 'undefined' && logger && logger._deviceId) {
+          var first = entries[0];
+          var isStructuredLoggerLine = typeof first === 'string' && /^\[(DEBUG|INFO|WARN|ERROR)\]$/.test(first);
+          if (!isStructuredLoggerLine) {
+            API.sendLog(logger._deviceId, { level: level, message: entries });
+          }
+        }
+      } catch (e) {}
     }
 
     console.log   = function() { _origLog.apply(console, arguments);   _toUi('info',  arguments); };

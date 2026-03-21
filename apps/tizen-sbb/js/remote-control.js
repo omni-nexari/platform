@@ -59,6 +59,7 @@ window.RemoteControl = {
         // Try to register Info/Tools key for debug display
         const keysToRegister = [
           'Info',      // Info button
+          'Menu',      // Menu button
           'Tools',     // Tools/Settings button  
           'Exit',      // Exit button
         ];
@@ -100,10 +101,23 @@ window.RemoteControl = {
       return;
     }
 
-    // When log console is open, INFO closes it and LEFT/RIGHT/ENTER control history actions
+    if (keyCode === this.KEYS.MENU) {
+      this.openLogPage();
+      return;
+    }
+
+    // When log console is open, INFO closes it, UP/DOWN scroll, and LEFT/RIGHT/ENTER control history actions
     if (typeof UiLog !== 'undefined' && UiLog._visible) {
       if (keyCode === this.KEYS.INFO) {
         UiLog.toggle();
+        return;
+      }
+      if (keyCode === this.KEYS.UP) {
+        UiLog.scrollOlder();
+        return;
+      }
+      if (keyCode === this.KEYS.DOWN) {
+        UiLog.scrollNewer();
         return;
       }
       if (keyCode === this.KEYS.LEFT) {
@@ -253,6 +267,14 @@ window.RemoteControl = {
         command: command,
         timestamp: Date.now(),
       }));
+    }
+  },
+
+  openLogPage() {
+    try {
+      window.location.href = 'logs.html';
+    } catch (error) {
+      logger.error('Failed to open log page:', error);
     }
   },
 

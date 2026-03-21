@@ -45,6 +45,8 @@ const Player = {
     avPlayer2: null,
     currentAvPlayer: null,
     seamlessPlaylistActive: false,
+    requestedScreenshotIntervalMin: null,
+    requestedZones: null,
     // Initialize player
     init(device) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -2774,6 +2776,36 @@ const Player = {
             case 'REFRESH_CONTENT':
                 this.loadContent();
                 break;
+            case 'SET_NTP':
+                this.applyNtpSettings(payload || {});
+                break;
+            case 'SET_IR_LOCK':
+                this.applyLockSetting('irLock', payload === null || payload === void 0 ? void 0 : payload.lock);
+                break;
+            case 'SET_BUTTON_LOCK':
+                this.applyLockSetting('buttonLock', payload === null || payload === void 0 ? void 0 : payload.lock);
+                break;
+            case 'SET_ON_TIMER':
+                this.applyTimerCommand('on', payload || {});
+                break;
+            case 'SET_OFF_TIMER':
+                this.applyTimerCommand('off', payload || {});
+                break;
+            case 'CLEAR_ON_TIMER':
+                this.clearTimerCommand('on', payload || {});
+                break;
+            case 'CLEAR_OFF_TIMER':
+                this.clearTimerCommand('off', payload || {});
+                break;
+            case 'SET_SCREENSHOT_INTERVAL':
+                this.applyScreenshotInterval(payload || {});
+                break;
+            case 'SET_ZONES':
+                this.applyZoneLayout(payload || {});
+                break;
+            case 'UPDATE_TV_FIRMWARE':
+                logger.warn('TV firmware update requested, but this device build does not implement Samsung firmware automation');
+                break;
             case 'CLEAR_CACHE':
                 this.clearCache();
                 break;
@@ -2783,6 +2815,84 @@ const Player = {
             default:
                 logger.warn('Unknown command:', command);
         }
+    },
+    applyNtpSettings(payload) {
+        try {
+            const server = (payload && payload.server) || 'pool.ntp.org';
+            const timezone = (payload && payload.timezone) || 'UTC';
+            localStorage.setItem('PLAYER_NTP_SERVER', server);
+            localStorage.setItem('PLAYER_NTP_TIMEZONE', timezone);
+            logger.info('Stored requested NTP settings', { server, timezone });
+            this.syncTimeWithServer();
+        }
+        catch (error) {
+            logger.warn('Failed to store NTP settings:', error);
+        }
+    },
+    applyLockSetting(kind, enabled) {
+        const value = !!enabled;
+        try {
+            localStorage.setItem(kind === 'irLock' ? 'PLAYER_IR_LOCK' : 'PLAYER_BUTTON_LOCK', value ? 'true' : 'false');
+        }
+        catch (error) {
+            logger.debug('Failed to persist lock state:', error);
+        }
+        logger.info(kind + ' updated', { enabled: value });
+        if (this.wsConnection && this.wsConnection.readyState === this.wsConnection.OPEN) {
+            this.wsConnection.send(JSON.stringify({
+                type: 'system_state',
+                payload: {
+                    irLock: kind === 'irLock' ? value : localStorage.getItem('PLAYER_IR_LOCK') === 'true',
+                    buttonLock: kind === 'buttonLock' ? value : localStorage.getItem('PLAYER_BUTTON_LOCK') === 'true',
+                    autoPowerOn: false,
+                },
+            }));
+        }
+    },
+    applyTimerCommand(kind, payload) {
+        logger.info('Timer command received', { kind, payload });
+        try {
+            localStorage.setItem(kind === 'on' ? 'PLAYER_ON_TIMER' : 'PLAYER_OFF_TIMER', JSON.stringify(payload || {}));
+        }
+        catch (error) {
+            logger.debug('Failed to persist timer payload:', error);
+        }
+    },
+    clearTimerCommand(kind, payload) {
+        logger.info('Timer clear command received', { kind, payload });
+        try {
+            localStorage.removeItem(kind === 'on' ? 'PLAYER_ON_TIMER' : 'PLAYER_OFF_TIMER');
+        }
+        catch (error) {
+            logger.debug('Failed to clear timer payload:', error);
+        }
+    },
+    applyScreenshotInterval(payload) {
+        var minutes = Number((payload && payload.minutes) || 0);
+        if (!Number.isFinite(minutes) || minutes <= 0) {
+            logger.warn('Invalid screenshot interval payload:', payload);
+            return;
+        }
+        this.requestedScreenshotIntervalMin = minutes;
+        try {
+            localStorage.setItem('PLAYER_SCREENSHOT_INTERVAL_MIN', String(minutes));
+        }
+        catch (error) {
+            logger.debug('Failed to persist screenshot interval:', error);
+        }
+        logger.info('Screenshot interval updated', { minutes: minutes });
+    },
+    applyZoneLayout(payload) {
+        var zones = (payload && payload.zones) || [];
+        this.requestedZones = zones;
+        try {
+            localStorage.setItem('PLAYER_ZONES', JSON.stringify(zones));
+        }
+        catch (error) {
+            logger.debug('Failed to persist zones:', error);
+        }
+        logger.info('Zone layout updated', { zoneCount: Array.isArray(zones) ? zones.length : 0 });
+        this.loadContent();
     },
     // Handle synchronized playback command
     handleSyncPlayCommand(data) {

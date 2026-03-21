@@ -30,6 +30,7 @@ import AppLayout from './components/AppLayout.js';
 import OrgDashboardPage from './pages/OrgDashboardPage.js';
 import WorkspaceDashboardPage from './pages/workspace/WorkspaceDashboardPage.js';
 import DeviceDetailPage from './pages/workspace/DeviceDetailPage.js';
+import TizenTestPage from './pages/workspace/TizenTestPage.js';
 import ContentPage from './pages/workspace/ContentPage.js';
 import PlaylistPage from './pages/workspace/PlaylistPage.js';
 import PlaylistEditorPage from './pages/workspace/PlaylistEditorPage.js';
@@ -262,6 +263,7 @@ export default function App() {
       >
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/dashboard" element={<OrgDashboardPage />} />
+        <Route path="/tizen-test" element={<TizenTestPage />} />
         <Route path="/workspaces/:wsId" element={<WorkspaceDashboardPage />} />
         <Route path="/workspaces/:wsId/devices/:deviceId" element={<DeviceDetailPage />} />
         <Route path="/workspaces/:wsId/content" element={<ContentPage />} />

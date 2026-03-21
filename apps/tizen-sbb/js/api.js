@@ -60,7 +60,7 @@ window.API = {
         var playerVersion = (buildInfo && (buildInfo.version + ' ' + buildInfo.buildId)) || window.PLAYER_DEPLOY_VERSION || undefined;
 
         // network_info message
-        if (data.macAddress || data.ipAddress) {
+        if (data.macAddress || data.ipAddress || data.wifiSsid || data.gateway || data.networkType) {
           ws.send(JSON.stringify({
             type: 'network_info',
             payload: {
@@ -74,7 +74,7 @@ window.API = {
           }));
         }
         // heartbeat extras (cpu, storage, firmware)
-        if (data.cpuLoad != null || data.storageFree != null || data.firmwareVersion) {
+        if (data.cpuLoad != null || data.storageFree != null || data.storageFreeBytes != null || data.firmwareVersion || data.timezone || data.resolution) {
           ws.send(JSON.stringify({
             type: 'heartbeat',
             payload: {
@@ -95,8 +95,54 @@ window.API = {
     return { ok: true };
   },
 
-  // ── sendLog → no-op; remote logging uses WS heartbeat instead ────────────
+  // ── sendLog → forward Tizen console logs over the device WebSocket ────────
   async sendLog(deviceId, logs) {
+    try {
+      const ws = window.Player && window.Player.wsConnection;
+      if (!ws || ws.readyState !== 1) return { ok: false };
+
+      const entries = Array.isArray(logs) ? logs : [logs];
+      const grouped = {};
+
+      for (var i = 0; i < entries.length; i++) {
+        var entry = entries[i] || {};
+        var level = entry.level || 'info';
+        if (!grouped[level]) grouped[level] = [];
+
+        if (Array.isArray(entry.message)) {
+          grouped[level].push(entry.message.map(function(part) {
+            if (typeof part === 'string') return part;
+            try { return JSON.stringify(part); } catch (error) { return String(part); }
+          }).join(' '));
+        } else if (typeof entry.message === 'string') {
+          grouped[level].push(entry.message);
+        } else if (typeof entry.text === 'string') {
+          grouped[level].push(entry.text);
+        } else {
+          try {
+            grouped[level].push(JSON.stringify(entry));
+          } catch (error) {
+            grouped[level].push(String(entry));
+          }
+        }
+      }
+
+      var levels = Object.keys(grouped);
+      for (var j = 0; j < levels.length; j++) {
+        var groupLevel = levels[j];
+        var lines = grouped[groupLevel].filter(function(line) { return !!line; }).slice(-100);
+        if (!lines.length) continue;
+        ws.send(JSON.stringify({
+          type: 'device_log',
+          payload: {
+            level: groupLevel,
+            lines: lines,
+          },
+        }));
+      }
+    } catch (error) {
+      return { ok: false };
+    }
     return { ok: true };
   },
 

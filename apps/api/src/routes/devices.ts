@@ -16,6 +16,8 @@ import {
   registerDevice,
   unregisterDevice,
   handleDeviceMessage,
+  getDeviceLogs,
+  clearDeviceLogs,
 } from '../services/ws.js';
 import { notifyDeviceStatusChange } from '../services/notifications.js';
 
@@ -258,6 +260,39 @@ export async function deviceRoutes(app: FastifyInstance) {
         ? { ...latestHeartbeat, currentContentName, nextContentName }
         : null,
     });
+  });
+
+  // ── GET /devices/:id/logs ─ recent in-memory device console logs ──────────
+  app.get('/:id/logs', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const { limit: rawLimit } = req.query as { limit?: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    const limit = Number.isFinite(Number(rawLimit)) ? Number(rawLimit) : 500;
+    return reply.send({
+      deviceId: id,
+      online: isDeviceOnline(id),
+      logs: getDeviceLogs(id, limit),
+    });
+  });
+
+  // ── DELETE /devices/:id/logs ─ clear recent in-memory device console logs ─
+  app.delete('/:id/logs', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    clearDeviceLogs(id);
+    return reply.status(204).send();
   });
 
   // ── PATCH /devices/:id ─────────────────────────────────────────────────────

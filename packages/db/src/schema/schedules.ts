@@ -1,3 +1,4 @@
+import { relations } from 'drizzle-orm';
 import { pgTable, uuid, text, integer, boolean, timestamp } from 'drizzle-orm/pg-core';
 import { workspaces } from './workspaces.js';
 import { users } from './users.js';
@@ -41,3 +42,30 @@ export const scheduleSlots = pgTable('schedule_slots', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const schedulesRelations = relations(schedules, ({ one, many }) => ({
+  workspace: one(workspaces, {
+    fields: [schedules.workspaceId],
+    references: [workspaces.id],
+  }),
+  creator: one(users, {
+    fields: [schedules.createdBy],
+    references: [users.id],
+  }),
+  slots: many(scheduleSlots),
+}));
+
+export const scheduleSlotsRelations = relations(scheduleSlots, ({ one }) => ({
+  schedule: one(schedules, {
+    fields: [scheduleSlots.scheduleId],
+    references: [schedules.id],
+  }),
+  playlist: one(playlists, {
+    fields: [scheduleSlots.playlistId],
+    references: [playlists.id],
+  }),
+  content: one(contentItems, {
+    fields: [scheduleSlots.contentId],
+    references: [contentItems.id],
+  }),
+}));

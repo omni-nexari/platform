@@ -11,6 +11,14 @@ interface Conn {
   readonly readyState: number; // 0=CONNECTING 1=OPEN 2=CLOSING 3=CLOSED
 }
 
+export interface DeviceConsoleLogEntry {
+  id: string;
+  deviceId: string;
+  level: 'debug' | 'info' | 'warn' | 'error';
+  line: string;
+  createdAt: string;
+}
+
 export type WsCommand =
   | { type: 'reboot' }
   | { type: 'screenshot' }
@@ -33,6 +41,36 @@ export type WsCommand =
   | { type: 'set_zones'; payload: { zones: Array<{ id: string; rect: { x: number; y: number; width: number; height: number }; playlistId?: string }> } };
 
 const connections = new Map<string, Conn>();
+const deviceLogs = new Map<string, DeviceConsoleLogEntry[]>();
+const MAX_DEVICE_LOGS = 2000;
+
+function appendDeviceLogs(deviceId: string, level: DeviceConsoleLogEntry['level'], lines: string[]): void {
+  if (lines.length === 0) return;
+
+  const existing = deviceLogs.get(deviceId) ?? [];
+  const next = existing.concat(
+    lines
+      .filter((line) => typeof line === 'string' && line.trim().length > 0)
+      .map((line) => ({
+        id: randomUUID(),
+        deviceId,
+        level,
+        line,
+        createdAt: new Date().toISOString(),
+      })),
+  );
+
+  deviceLogs.set(deviceId, next.slice(-MAX_DEVICE_LOGS));
+}
+
+export function getDeviceLogs(deviceId: string, limit = 500): DeviceConsoleLogEntry[] {
+  const logs = deviceLogs.get(deviceId) ?? [];
+  return logs.slice(-Math.max(1, Math.min(limit, MAX_DEVICE_LOGS)));
+}
+
+export function clearDeviceLogs(deviceId: string): void {
+  deviceLogs.delete(deviceId);
+}
 
 export function registerDevice(deviceId: string, socket: Conn): void {
   connections.set(deviceId, socket);
@@ -123,11 +161,11 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     await db
       .update(devices)
       .set({
-        ipAddress: ni.ip,
-        macAddress: ni.mac,
-        connectionType: ni.connectionType,
-        wifiSsid: ni.wifiSsid ?? null,
-        wifiStrength: ni.wifiStrength ?? null,
+        ...(ni.ip ? { ipAddress: ni.ip } : {}),
+        ...(ni.mac ? { macAddress: ni.mac } : {}),
+        ...(ni.connectionType ? { connectionType: ni.connectionType } : {}),
+        ...(ni.wifiSsid !== undefined ? { wifiSsid: ni.wifiSsid ?? null } : {}),
+        ...(ni.wifiStrength !== undefined ? { wifiStrength: ni.wifiStrength ?? null } : {}),
         updatedAt: new Date(),
       })
       .where(eq(devices.id, deviceId));
@@ -189,6 +227,12 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
         source: e.source,
       })),
     );
+    return;
+  }
+
+  // ── device_log ─────────────────────────────────────────────────────────────
+  if (msg.type === 'device_log') {
+    appendDeviceLogs(deviceId, msg.payload.level, msg.payload.lines);
     return;
   }
 

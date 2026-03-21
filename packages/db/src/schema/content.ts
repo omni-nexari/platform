@@ -1,4 +1,5 @@
 import {
+  relations,
   pgTable,
   uuid,
   text,
@@ -71,3 +72,39 @@ export const contentItems = pgTable('content_items', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const contentFoldersRelations = relations(contentFolders, ({ one, many }) => ({
+  workspace: one(workspaces, {
+    fields: [contentFolders.workspaceId],
+    references: [workspaces.id],
+  }),
+  parent: one(contentFolders, {
+    fields: [contentFolders.parentId],
+    references: [contentFolders.id],
+    relationName: 'contentFolderParent',
+  }),
+  children: many(contentFolders, {
+    relationName: 'contentFolderParent',
+  }),
+  items: many(contentItems),
+}));
+
+export const contentItemsRelations = relations(contentItems, ({ one }) => ({
+  workspace: one(workspaces, {
+    fields: [contentItems.workspaceId],
+    references: [workspaces.id],
+  }),
+  uploader: one(users, {
+    fields: [contentItems.uploadedBy],
+    references: [users.id],
+  }),
+  folder: one(contentFolders, {
+    fields: [contentItems.folderId],
+    references: [contentFolders.id],
+  }),
+  reviewer: one(users, {
+    fields: [contentItems.reviewedBy],
+    references: [users.id],
+    relationName: 'contentReviewer',
+  }),
+}));
