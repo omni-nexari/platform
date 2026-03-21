@@ -1,7 +1,7 @@
 {
-  "name": "tizen-signage-player",
+  "name": "tizen-sbb-signage-player",
   "version": "1.0.0",
-  "description": "EBD Digital Signage Player — Samsung Smart TV (Tizen 10.0)",
+  "description": "EBD Digital Signage Player — Samsung SBB/SSSP (Tizen 4.0)",
   "scripts": {
     "build": "node scripts/generate-build-info.cjs && tsc",
     "watch": "node scripts/generate-build-info.cjs && tsc --watch",
