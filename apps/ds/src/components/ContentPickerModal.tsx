@@ -106,7 +106,17 @@ function ContentCard({
 
       {/* Thumbnail */}
       <div className="relative shrink-0 w-[90px] h-[54px] rounded-lg overflow-hidden bg-[var(--surface-raised)]">
-        <AuthImg itemId={item.id} className="w-full h-full object-cover" />
+        {(item.type === 'image' || item.type === 'video') ? (
+          <AuthImg
+            itemId={item.id}
+            className="w-full h-full object-cover"
+            fallback={<div className="w-full h-full flex items-center justify-center"><span className={`text-[9px] font-bold uppercase text-white px-1.5 py-0.5 rounded ${meta.color}`}>{meta.label}</span></div>}
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <span className={`text-[9px] font-bold uppercase text-white px-1.5 py-0.5 rounded ${meta.color}`}>{meta.label}</span>
+          </div>
+        )}
         {item.duration != null && (
           <span className="absolute bottom-0 left-0 text-white text-[9px] font-mono bg-black/60 px-1 py-0.5 leading-none">
             {formatPickerDuration(item.duration)}
@@ -158,7 +168,11 @@ function PlaylistCard({
       {/* Thumbnail */}
       <div className="relative shrink-0 w-[90px] h-[54px] rounded-lg overflow-hidden bg-[var(--surface-raised)]">
         {item.thumbnailContentId ? (
-          <AuthImg itemId={item.thumbnailContentId} className="w-full h-full object-cover" />
+          <AuthImg
+            itemId={item.thumbnailContentId}
+            className="w-full h-full object-cover"
+            fallback={<div className="w-full h-full flex items-center justify-center text-[var(--text-muted)] text-xs">No preview</div>}
+          />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-[var(--text-muted)] text-xs">
             No preview

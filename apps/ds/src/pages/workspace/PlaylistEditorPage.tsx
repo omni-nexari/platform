@@ -217,7 +217,11 @@ function ItemRow({
       {/* Thumbnail */}
       <div className="shrink-0 relative w-16 h-10 rounded-lg overflow-hidden bg-[var(--surface-raised)]">
         {item.thumbnailContentId ? (
-          <AuthImg itemId={item.thumbnailContentId} className="w-full h-full object-cover" />
+          <AuthImg
+            itemId={item.thumbnailContentId}
+            className="w-full h-full object-cover"
+            fallback={<div className="w-full h-full flex items-center justify-center"><Layers size={14} className="text-[var(--text-muted)]" /></div>}
+          />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <Layers size={14} className="text-[var(--text-muted)]" />

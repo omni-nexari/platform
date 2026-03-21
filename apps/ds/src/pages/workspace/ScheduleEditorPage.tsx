@@ -261,7 +261,11 @@ function SlotDialog({
           {draft.label ? (
             <div className="flex items-center gap-2 p-2 rounded-lg border border-[var(--border)] bg-[var(--surface)]">
               {draft.thumbnailContentId ? (
-                <AuthImg itemId={draft.thumbnailContentId} className="w-14 h-9 object-cover rounded shrink-0" />
+                <AuthImg
+                  itemId={draft.thumbnailContentId}
+                  className="w-14 h-9 object-cover rounded shrink-0"
+                  fallback={<div className="w-14 h-9 rounded bg-[var(--surface-raised)] shrink-0 flex items-center justify-center text-[var(--text-muted)]"><CalendarDays size={16} /></div>}
+                />
               ) : (
                 <div className="w-14 h-9 rounded bg-[var(--surface-raised)] shrink-0 flex items-center justify-center text-[var(--text-muted)]">
                   <CalendarDays size={16} />
@@ -940,7 +944,11 @@ export default function ScheduleEditorPage() {
                       {/* Thumbnail */}
                       {slot.thumbnailContentId ? (
                         <div className="shrink-0 w-16 h-10 rounded-lg overflow-hidden bg-[var(--surface-raised)]">
-                          <AuthImg itemId={slot.thumbnailContentId} className="w-full h-full object-cover" />
+                          <AuthImg
+                            itemId={slot.thumbnailContentId}
+                            className="w-full h-full object-cover"
+                            fallback={<div className="w-full h-full flex items-center justify-center"><CalendarDays size={16} className="text-[var(--text-muted)]" /></div>}
+                          />
                         </div>
                       ) : (
                         <div className="shrink-0 w-16 h-10 rounded-lg bg-[var(--surface-raised)] flex items-center justify-center">

@@ -90,7 +90,11 @@ function PlaylistCard({
           </button>
         )}
         {pl.thumbnailContentId ? (
-          <AuthImg itemId={pl.thumbnailContentId} className="w-full h-full object-cover" />
+          <AuthImg
+            itemId={pl.thumbnailContentId}
+            className="w-full h-full object-cover"
+            fallback={<div className="w-full h-full flex items-center justify-center"><Layers size={28} className="text-[var(--text-muted)]" /></div>}
+          />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <Layers size={28} className="text-[var(--text-muted)]" />

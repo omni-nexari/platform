@@ -827,17 +827,24 @@ export async function contentRoutes(app: FastifyInstance) {
     const item = await db.query.contentItems.findFirst({
       where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)),
     });
-    if (!item) return reply.status(404).send({ error: 'Not found' });
+    if (!item) {
+      if (process.env['NODE_ENV'] !== 'production') req.log.warn({ contentId: id }, '[thumb] item not found in DB');
+      return reply.status(404).send({ error: 'Not found' });
+    }
 
     const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
     if (!member) return reply.status(403).send({ error: 'Forbidden' });
 
     // Use dedicated thumbnail first, fall back to original for images
     const servePath = item.thumbnailPath ?? (item.type === 'image' ? item.filePath : null);
-    if (!servePath) return reply.status(404).send({ error: 'No thumbnail available' });
+    if (!servePath) {
+      if (process.env['NODE_ENV'] !== 'production') req.log.warn({ contentId: id, type: item.type, thumbnailPath: item.thumbnailPath, filePath: item.filePath }, '[thumb] no servePath (no thumbnail and not an image)');
+      return reply.status(404).send({ error: 'No thumbnail available' });
+    }
 
     const absPath = path.resolve(STORAGE_ROOT, servePath);
     try { await fs.access(absPath); } catch {
+      if (process.env['NODE_ENV'] !== 'production') req.log.warn({ contentId: id, servePath, absPath, storageRoot: STORAGE_ROOT }, '[thumb] file not found on disk');
       return reply.status(404).send({ error: 'Thumbnail not found on disk' });
     }
 

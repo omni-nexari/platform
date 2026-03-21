@@ -10,6 +10,8 @@ interface Props {
   onError?: (status: number) => void;
   /** Increment this to force a re-fetch (e.g. after regeneration). */
   revision?: number;
+  /** Rendered when the thumbnail fetch permanently fails (not shown during initial loading). */
+  fallback?: React.ReactNode;
 }
 
 /**
@@ -17,21 +19,26 @@ interface Props {
  * converts the response to a blob URL, and renders an <img>. The blob URL
  * is revoked on unmount to avoid memory leaks.
  */
-export default function AuthImg({ itemId, alt = '', className, onError, revision = 0 }: Props) {
+export default function AuthImg({ itemId, alt = '', className, onError, revision = 0, fallback }: Props) {
   const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (!itemId) return;
     let blobUrl: string | null = null;
     let cancelled = false;
-    setSrc(null); // reset while re-fetching
+    setSrc(null);
+    setFailed(false); // reset on re-fetch (required for re-generation retry)
 
     fetch(buildApiUrl(`/content/${itemId}/thumbnail`), {
       credentials: 'include',
     })
       .then(async (res) => {
         if (!res.ok) {
-          if (!cancelled) onError?.(res.status);
+          if (!cancelled) {
+            setFailed(true);
+            onError?.(res.status);
+          }
           return;
         }
         const blob = await res.blob();
@@ -41,7 +48,10 @@ export default function AuthImg({ itemId, alt = '', className, onError, revision
         }
       })
       .catch(() => {
-        if (!cancelled) onError?.(0);
+        if (!cancelled) {
+          setFailed(true);
+          onError?.(0);
+        }
       });
 
     return () => {
@@ -50,6 +60,7 @@ export default function AuthImg({ itemId, alt = '', className, onError, revision
     };
   }, [itemId, revision]);
 
+  if (failed) return fallback !== undefined ? <>{fallback}</> : null;
   if (!src) return null;
   return <img src={src} alt={alt} className={className} />;
 }
