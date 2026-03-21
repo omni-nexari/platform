@@ -33,6 +33,7 @@ function getAllowedOrigins(): Set<string> {
 export async function registerPlugins(app: FastifyInstance) {
   const allowedOrigins = getAllowedOrigins();
   const jwtSecret = process.env['JWT_SECRET'];
+  const shouldLogAuthDiagnostics = process.env['NODE_ENV'] !== 'production';
 
   if (!jwtSecret) {
     throw new Error('JWT_SECRET is required');
@@ -148,7 +149,19 @@ export async function registerPlugins(app: FastifyInstance) {
       await req.jwtVerify();
       const csrfResult = await verifyCsrf(req, reply);
       if (csrfResult) return csrfResult;
-    } catch {
+    } catch (error) {
+      if (shouldLogAuthDiagnostics && req.url.startsWith('/auth/')) {
+        req.log.warn({
+          url: req.url,
+          method: req.method,
+          hasCookieHeader: Boolean(req.headers.cookie),
+          cookieKeys: Object.keys(req.cookies ?? {}),
+          hasAccessCookie: Boolean(req.cookies?.access_token),
+          hasRefreshCookie: Boolean(req.cookies?.refresh_token),
+          hasAuthorizationHeader: Boolean(req.headers.authorization),
+          authError: error instanceof Error ? error.message : String(error),
+        }, 'Auth cookie verification failed');
+      }
       return reply.status(401).send({ error: 'Unauthorized' });
     }
   });

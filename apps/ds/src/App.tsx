@@ -38,23 +38,45 @@ import ScheduleEditorPage from './pages/workspace/ScheduleEditorPage.js';
 import TagsPage from './pages/workspace/TagsPage.js';
 import CanvasEditorPage from './pages/workspace/CanvasEditorPage.js';
 import AnalyticsPage from './pages/workspace/AnalyticsPage.js';
-import { api, buildApiUrl } from './lib/api.js';
+import { buildApiUrl } from './lib/api.js';
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchSessionUser<T>(path: string, retryCount = 0): Promise<T> {
+  let attempts = 0;
+
+  while (true) {
+    const response = await fetch(buildApiUrl(path), { credentials: 'include' });
+    if (response.ok) {
+      return response.json() as Promise<T>;
+    }
+
+    if (attempts >= retryCount || (response.status !== 401 && response.status !== 404)) {
+      throw new Error('Unauthorized');
+    }
+
+    attempts += 1;
+    await sleep(150);
+  }
+}
 
 function AuthBootstrap({ children }: { children: React.ReactNode }) {
-  const { user, setUser, clearAuth, bootstrapped, markBootstrapped } = useAuthStore();
+  const location = useLocation();
+  const { user, setUser, clearAuth, bootstrapped, pendingBootstrap, markBootstrapped } = useAuthStore();
 
   useEffect(() => {
     if (bootstrapped) return;
+    if (!pendingBootstrap && isMainPublicAuthPath(location.pathname)) {
+      markBootstrapped();
+      return;
+    }
     let cancelled = false;
 
     async function bootstrap() {
-      if (user) {
-        markBootstrapped();
-        return;
-      }
-
       try {
-        const me = await api.get<{
+        const me = await fetchSessionUser<{
           user: {
             id: string;
             name: string;
@@ -62,7 +84,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
             orgRole: string;
             impersonatedBy?: string | null;
           };
-        }>('/auth/me');
+        }>('/auth/me', pendingBootstrap ? 2 : 0);
         if (!cancelled) {
           setUser(me.user);
         }
@@ -81,7 +103,7 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [bootstrapped, user, setUser, clearAuth, markBootstrapped]);
+  }, [bootstrapped, pendingBootstrap, user, setUser, clearAuth, markBootstrapped, location.pathname]);
 
   if (!bootstrapped) return null;
   return <>{children}</>;
@@ -112,24 +134,40 @@ function isPortalPath(pathname: string) {
   return pathname.startsWith('/superadmin') || pathname.startsWith('/management') || pathname.startsWith('/m/');
 }
 
+function isMainPublicAuthPath(pathname: string) {
+  return pathname === '/login'
+    || pathname === '/login/2fa'
+    || pathname === '/forgot-password'
+    || pathname.startsWith('/reset-password/')
+    || pathname.startsWith('/accept-invite/')
+    || pathname.startsWith('/accept-management-company-invite/')
+    || pathname.startsWith('/accept-client-org-invite/');
+}
+
+function isPortalPublicAuthPath(pathname: string) {
+  return pathname === '/superadmin/login'
+    || pathname === '/management/login'
+    || /^\/m\/[^/]+(?:\/login)?$/.test(pathname);
+}
+
 function PortalAuthBootstrap({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const { user, setUser, clearAuth, bootstrapped, markBootstrapped } = useSAStore();
+  const { user, setUser, clearAuth, bootstrapped, pendingBootstrap, markBootstrapped } = useSAStore();
 
   useEffect(() => {
     if (!isPortalPath(location.pathname) || bootstrapped) return;
+    if (!pendingBootstrap && isPortalPublicAuthPath(location.pathname)) {
+      markBootstrapped();
+      return;
+    }
     let cancelled = false;
 
     async function bootstrap() {
-      if (user) {
-        markBootstrapped();
-        return;
-      }
-
       try {
-        const response = await fetch(buildApiUrl('/superadmin/auth/me'), { credentials: 'include' });
-        if (!response.ok) throw new Error('Unauthorized');
-        const data = await response.json() as { user: SAUser };
+        const data = await fetchSessionUser<{ user: SAUser }>(
+          '/superadmin/auth/me',
+          pendingBootstrap ? 2 : 0,
+        );
         if (!cancelled) {
           setUser(data.user);
         }
@@ -148,7 +186,7 @@ function PortalAuthBootstrap({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [bootstrapped, clearAuth, location.pathname, markBootstrapped, setUser, user]);
+  }, [bootstrapped, pendingBootstrap, clearAuth, location.pathname, markBootstrapped, setUser, user]);
 
   if (isPortalPath(location.pathname) && !bootstrapped) return null;
   return <>{children}</>;

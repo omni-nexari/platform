@@ -14,7 +14,7 @@ type FormData = z.infer<typeof schema>;
 
 export default function SuperAdminLoginPage() {
   const navigate = useNavigate();
-  const setUser = useSAStore((s) => s.setUser);
+  const beginBootstrap = useSAStore((s) => s.beginBootstrap);
 
   const {
     register,
@@ -29,7 +29,7 @@ export default function SuperAdminLoginPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      setUser(res.user);
+      beginBootstrap();
       navigate('/superadmin');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Login failed');

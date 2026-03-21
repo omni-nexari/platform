@@ -5,7 +5,6 @@ import { useNavigate, Link } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
 import { useAuthStore } from '../../lib/auth.js';
-import { queryClient } from '../../lib/query-client.js';
 
 const schema = z.object({
   email: z.string().email('Enter a valid email'),
@@ -15,7 +14,7 @@ type FormData = z.infer<typeof schema>;
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const setUser = useAuthStore((s) => s.setUser);
+  const beginBootstrap = useAuthStore((s) => s.beginBootstrap);
 
   const {
     register,
@@ -34,17 +33,8 @@ export default function LoginPage() {
         sessionStorage.setItem('2fa_temp', res.tempToken);
         navigate('/login/2fa');
       } else if ('user' in res) {
-        setUser(res.user);
-        try {
-          await queryClient.fetchQuery({
-            queryKey: ['me'],
-            queryFn: () => api.get('/auth/me'),
-            staleTime: 30_000,
-            retry: false,
-          });
-        } catch {
-          // Let the dashboard attempt its own recovery path if bootstrap still races.
-        }
+        await api.post<void>('/auth/session/bootstrap');
+        beginBootstrap();
         navigate('/');
       }
     } catch (err) {

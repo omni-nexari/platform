@@ -36,7 +36,7 @@ interface CompanyBrand {
 export default function ManagementLoginPage() {
   const { slug } = useParams<{ slug?: string }>();
   const navigate = useNavigate();
-  const setUser = useSAStore((s) => s.setUser);
+  const beginBootstrap = useSAStore((s) => s.beginBootstrap);
   const [brand, setBrand] = useState<CompanyBrand | null>(null);
 
   // Fetch company branding when a slug is in the URL
@@ -82,7 +82,7 @@ export default function ManagementLoginPage() {
           body: JSON.stringify(data),
         },
       );
-      setUser(res.user);
+      beginBootstrap();
       navigate('/management');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Login failed');

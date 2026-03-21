@@ -29,6 +29,8 @@ export interface SAUser {
 interface SAAuthState {
   user: SAUser | null;
   bootstrapped: boolean;
+  pendingBootstrap: boolean;
+  beginBootstrap: () => void;
   setUser: (user: SAUser | null) => void;
   markBootstrapped: () => void;
   updateUser: (patch: Partial<SAUser>) => void;
@@ -40,13 +42,15 @@ export const useSAStore = create<SAAuthState>()(
     (set) => ({
       user: null,
       bootstrapped: false,
-      setUser: (user) => set({ user, bootstrapped: true }),
-      markBootstrapped: () => set({ bootstrapped: true }),
+      pendingBootstrap: false,
+      beginBootstrap: () => set({ user: null, bootstrapped: false, pendingBootstrap: true }),
+      setUser: (user) => set({ user, bootstrapped: true, pendingBootstrap: false }),
+      markBootstrapped: () => set({ bootstrapped: true, pendingBootstrap: false }),
       updateUser: (patch) =>
         set((state) => ({
           user: state.user ? { ...state.user, ...patch } : null,
         })),
-      clearAuth: () => set({ user: null, bootstrapped: true }),
+      clearAuth: () => set({ user: null, bootstrapped: true, pendingBootstrap: false }),
     }),
     { name: 'sa-auth', partialize: (s) => ({ user: s.user }) },
   ),

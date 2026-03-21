@@ -50,6 +50,7 @@ import { writeAuditLog } from '../services/audit.js';
 const REFRESH_COOKIE = 'refresh_token';
 const ACCESS_COOKIE = 'access_token';
 const CSRF_COOKIE = 'csrf_token';
+const BROWSER_REFRESH_PATH = '/api/auth/refresh';
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 const BRANDING_ASSET_TYPES = new Set(['logo', 'favicon', 'login-background']);
 
@@ -89,7 +90,7 @@ function setRefreshCookie(reply: FastifyReply, token: string) {
     httpOnly: true,
     secure: process.env['NODE_ENV'] === 'production',
     sameSite: 'lax',
-    path: '/auth/refresh',
+    path: BROWSER_REFRESH_PATH,
     maxAge: 60 * 60 * 24 * 30,
   });
 }
@@ -123,6 +124,28 @@ function clearCsrfCookie(reply: FastifyReply) {
   reply.clearCookie(CSRF_COOKIE, { path: '/' });
 }
 
+function clearRefreshCookie(reply: FastifyReply) {
+  reply.clearCookie(REFRESH_COOKIE, { path: BROWSER_REFRESH_PATH });
+  reply.clearCookie(REFRESH_COOKIE, { path: '/auth/refresh' });
+}
+
+function getSetCookieDiagnostics(reply: FastifyReply) {
+  const header = reply.getHeader('set-cookie');
+  return {
+    setCookieCount: Array.isArray(header) ? header.length : (typeof header === 'string' ? 1 : 0),
+    setCookie: Array.isArray(header) || typeof header === 'string' ? header : undefined,
+  };
+}
+
+async function hasActiveOrganisation(orgId: string | null | undefined) {
+  if (!orgId) return false;
+  const org = await db.query.organisations.findFirst({
+    where: and(eq(organisations.id, orgId), isNull(organisations.deletedAt)),
+    columns: { id: true },
+  });
+  return Boolean(org);
+}
+
 export async function authRoutes(app: FastifyInstance) {
   app.get('/csrf', async (_req, reply) => {
     setCsrfCookie(reply);
@@ -145,6 +168,12 @@ export async function authRoutes(app: FastifyInstance) {
     if ('error' in result) return reply.status(401).send({ error: result.error });
 
     const { user } = result;
+    if (!(await hasActiveOrganisation(user.orgId))) {
+      if (process.env['NODE_ENV'] !== 'production') {
+        req.log.warn({ userId: user.id, orgId: user.orgId }, 'Login blocked: orgId is missing or deleted. Run pnpm --filter @signage/api seed:test to create the test org.');
+      }
+      return reply.status(401).send({ error: 'Account is not linked to an active organisation' });
+    }
 
     // If 2FA is enabled return a short-lived temp token instead
     if (user.totpEnabled) {
@@ -153,14 +182,11 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     const accessToken = app.jwt.sign({ sub: user.id, orgId: user.orgId, role: user.orgRole });
-    const refreshToken = await createRefreshToken(
-      user.id,
-      req.ip,
-      req.headers['user-agent'] ?? undefined,
-    );
     setAccessCookie(reply, accessToken);
-    setCsrfCookie(reply);
-    setRefreshCookie(reply, refreshToken);
+
+    if (process.env['NODE_ENV'] !== 'production') {
+      req.log.info(getSetCookieDiagnostics(reply), 'Issued auth access cookie');
+    }
 
     await db.update(users).set({ lastLogin: new Date() }).where(eq(users.id, user.id));
 
@@ -198,6 +224,12 @@ export async function authRoutes(app: FastifyInstance) {
 
     const user = await db.query.users.findFirst({ where: eq(users.id, payload.sub) });
     if (!user?.totpSecret) return reply.status(401).send({ error: 'Invalid token' });
+    if (!(await hasActiveOrganisation(user.orgId))) {
+      if (process.env['NODE_ENV'] !== 'production') {
+        req.log.warn({ userId: user.id, orgId: user.orgId }, 'Login (2FA) blocked: orgId is missing or deleted. Run pnpm --filter @signage/api seed:test to create the test org.');
+      }
+      return reply.status(401).send({ error: 'Account is not linked to an active organisation' });
+    }
 
     const valid =
       verifyTotpCode(user.totpSecret, body.data.token) ||
@@ -206,10 +238,12 @@ export async function authRoutes(app: FastifyInstance) {
     if (!valid) return reply.status(401).send({ error: 'Invalid two-factor code' });
 
     const accessToken = app.jwt.sign({ sub: user.id, orgId: user.orgId, role: user.orgRole });
-    const refreshToken = await createRefreshToken(user.id, req.ip, req.headers['user-agent'] ?? undefined);
     setAccessCookie(reply, accessToken);
-    setCsrfCookie(reply);
-    setRefreshCookie(reply, refreshToken);
+
+    if (process.env['NODE_ENV'] !== 'production') {
+      req.log.info(getSetCookieDiagnostics(reply), 'Issued auth access cookie after 2FA');
+    }
+
     await db.update(users).set({ lastLogin: new Date() }).where(eq(users.id, user.id));
 
     await writeAuditLog({
@@ -222,6 +256,18 @@ export async function authRoutes(app: FastifyInstance) {
     });
 
     return reply.send({ user: { id: user.id, name: user.name, email: user.email, orgRole: user.orgRole } });
+  });
+
+  app.post('/session/bootstrap', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { sub } = req.user as { sub: string };
+    const refreshToken = await createRefreshToken(sub, req.ip, req.headers['user-agent'] ?? undefined);
+    setRefreshCookie(reply, refreshToken);
+
+    if (process.env['NODE_ENV'] !== 'production') {
+      req.log.info(getSetCookieDiagnostics(reply), 'Issued auth refresh cookie');
+    }
+
+    return reply.status(204).send();
   });
 
   // ── POST /auth/refresh ──────────────────────────────────────────────────────
@@ -245,12 +291,17 @@ export async function authRoutes(app: FastifyInstance) {
     if ('error' in result) {
       clearAccessCookie(reply);
       clearCsrfCookie(reply);
-      reply.clearCookie(REFRESH_COOKIE, { path: '/auth/refresh' });
+      clearRefreshCookie(reply);
       return reply.status(401).send({ error: result.error });
     }
 
     const user = await db.query.users.findFirst({ where: eq(users.id, result.userId) });
-    if (!user) return reply.status(401).send({ error: 'User not found' });
+    if (!user) {
+      clearAccessCookie(reply);
+      clearCsrfCookie(reply);
+      clearRefreshCookie(reply);
+      return reply.status(401).send({ error: 'Unauthorized' });
+    }
 
     const accessToken = app.jwt.sign({ sub: user.id, orgId: user.orgId, role: user.orgRole });
     setAccessCookie(reply, accessToken);
@@ -270,7 +321,7 @@ export async function authRoutes(app: FastifyInstance) {
     if (raw) await revokeRefreshToken(raw);
     clearAccessCookie(reply);
     clearCsrfCookie(reply);
-    reply.clearCookie(REFRESH_COOKIE, { path: '/auth/refresh' });
+    clearRefreshCookie(reply);
     return reply.status(204).send();
   });
 
@@ -859,13 +910,29 @@ export async function authRoutes(app: FastifyInstance) {
       where: and(eq(users.id, sub), isNull(users.deletedAt)),
       columns: { id: true, name: true, email: true, orgRole: true },
     });
-    if (!user) return reply.status(404).send({ error: 'User not found' });
+    if (!user) {
+      if (process.env['NODE_ENV'] !== 'production') {
+        req.log.warn({ sub, orgId }, 'Authenticated session references a missing user');
+      }
+      clearAccessCookie(reply);
+      clearCsrfCookie(reply);
+      clearRefreshCookie(reply);
+      return reply.status(401).send({ error: 'Unauthorized' });
+    }
 
     const org = await db.query.organisations.findFirst({
       where: and(eq(organisations.id, orgId), isNull(organisations.deletedAt)),
       columns: { id: true, name: true, slug: true, plan: true },
     });
-    if (!org) return reply.status(404).send({ error: 'Org not found' });
+    if (!org) {
+      if (process.env['NODE_ENV'] !== 'production') {
+        req.log.warn({ sub, orgId, userId: user.id }, 'Authenticated session references a missing organisation');
+      }
+      clearAccessCookie(reply);
+      clearCsrfCookie(reply);
+      clearRefreshCookie(reply);
+      return reply.status(401).send({ error: 'Unauthorized' });
+    }
 
     const [storageUsageRow] = await db
       .select({ usedBytes: sum(contentItems.fileSize) })

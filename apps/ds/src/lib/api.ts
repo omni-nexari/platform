@@ -1,10 +1,10 @@
 import { useAuthStore } from './auth.js';
 
+let refreshSessionPromise: Promise<void> | null = null;
+let lastRefreshFailureAt = 0;
+const REFRESH_FAILURE_COOLDOWN_MS = 5_000;
+
 function resolveApiBase() {
-  const host = window.location.hostname;
-  if (host === 'localhost' || host === '127.0.0.1') {
-    return 'http://localhost:3000';
-  }
   return '/api';
 }
 
@@ -65,17 +65,34 @@ export function buildWebSocketUrl(path: string) {
 }
 
 async function refreshSession(): Promise<void> {
-  const csrfToken = await ensureCsrfToken();
-  const refreshResponse = await fetch(buildApiUrl('/auth/refresh'), {
-    method: 'POST',
-    credentials: 'include',
-    headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
-  });
-  if (!refreshResponse.ok) {
-    useAuthStore.getState().clearAuth();
-    window.location.href = '/login';
+  if (refreshSessionPromise) return refreshSessionPromise;
+
+  const now = Date.now();
+  if (lastRefreshFailureAt && now - lastRefreshFailureAt < REFRESH_FAILURE_COOLDOWN_MS) {
+    clearInvalidSession();
     throw new Error('Unauthorized');
   }
+
+  refreshSessionPromise = (async () => {
+    const csrfToken = await ensureCsrfToken();
+    const refreshResponse = await fetch(buildApiUrl('/auth/refresh'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
+    });
+
+    if (!refreshResponse.ok) {
+      lastRefreshFailureAt = Date.now();
+      clearInvalidSession();
+      throw new Error('Unauthorized');
+    }
+
+    lastRefreshFailureAt = 0;
+  })().finally(() => {
+    refreshSessionPromise = null;
+  });
+
+  return refreshSessionPromise;
 }
 
 type FormRequestOptions = {
@@ -181,7 +198,16 @@ async function request<T>(
     }
   }
 
-  if (res.status === 401 || (path === '/auth/me' && res.status === 404)) {
+  // Auth endpoints that establish or teardown sessions should not trigger a
+  // session-refresh retry — they have no active session to recover.
+  const isAuthEndpoint = path === '/auth/login'
+    || path === '/auth/login/2fa'
+    || path === '/auth/refresh'
+    || path === '/auth/logout'
+    || path === '/auth/csrf'
+    || path === '/auth/session/bootstrap';
+
+  if (!isAuthEndpoint && (res.status === 401 || (path === '/auth/me' && res.status === 404))) {
     await refreshSession();
     if (isMutationMethod(options.method)) {
       const nextCsrfToken = await ensureCsrfToken();

@@ -6,7 +6,6 @@ import { toast } from 'sonner';
 import { useEffect } from 'react';
 import { api } from '../../lib/api.js';
 import { useAuthStore } from '../../lib/auth.js';
-import { queryClient } from '../../lib/query-client.js';
 
 const schema = z.object({
   token: z
@@ -18,7 +17,7 @@ type FormData = z.infer<typeof schema>;
 
 export default function TwoFactorPage() {
   const navigate = useNavigate();
-  const setUser = useAuthStore((s) => s.setUser);
+  const beginBootstrap = useAuthStore((s) => s.beginBootstrap);
 
   useEffect(() => {
     if (!sessionStorage.getItem('2fa_temp')) navigate('/login', { replace: true });
@@ -33,22 +32,13 @@ export default function TwoFactorPage() {
   const onSubmit = async (data: FormData) => {
     const tempToken = sessionStorage.getItem('2fa_temp') ?? '';
     try {
-      const res = await api.post<{ user: { id: string; name: string; email: string; orgRole: string } }>(
+      await api.post<{ user: { id: string; name: string; email: string; orgRole: string } }>(
         '/auth/login/2fa',
         { token: data.token, tempToken },
       );
       sessionStorage.removeItem('2fa_temp');
-      setUser(res.user);
-      try {
-        await queryClient.fetchQuery({
-          queryKey: ['me'],
-          queryFn: () => api.get('/auth/me'),
-          staleTime: 30_000,
-          retry: false,
-        });
-      } catch {
-        // Let the dashboard attempt its own recovery path if bootstrap still races.
-      }
+      await api.post<void>('/auth/session/bootstrap');
+      beginBootstrap();
       navigate('/');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Invalid code');

@@ -9,7 +9,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "seed:sa": "tsx --env-file=.env scripts/seed-superadmin.ts",
-    "seed:test": "tsx --env-file=.env scripts/seed-test-org.ts"
+    "seed:test": "tsx --env-file=.env scripts/seed-test-org.ts",
+    "fix:user-org": "tsx --env-file=.env scripts/fix-user-org.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
