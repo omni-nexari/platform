@@ -5,9 +5,10 @@ import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import BulkTagModal from '../../components/BulkTagModal.js';
+import DevicePickerModal from '../../components/DevicePickerModal.js';
 import {
   Plus, Layers, Clock, MoreVertical,
-  Copy, Trash2, Play, Check,
+  Copy, Trash2, Play, Check, Monitor,
 } from 'lucide-react';
 import AuthImg from '../../components/AuthImg.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
@@ -196,6 +197,7 @@ export default function PlaylistPage() {
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
+  const [publishPickerOpen, setPublishPickerOpen] = useState(false);
 
   const currentFilters = { selectedTagIds };
 
@@ -242,6 +244,26 @@ export default function PlaylistPage() {
       void queryClient.invalidateQueries({ queryKey: ['picker-playlists', wsId] });
     },
     onError: () => toast.error('Failed to delete'),
+  });
+
+  const publishSelection = items.filter((item) => selectedItems.has(item.id));
+  const publishCandidate = publishSelection.length === 1 ? publishSelection[0] : null;
+
+  const publishMut = useMutation({
+    mutationFn: (deviceIds: string[]) => {
+      if (!publishCandidate) throw new Error('Select exactly one playlist to publish');
+      return api.post('/devices/publish', {
+        workspaceId: wsId,
+        deviceIds,
+        resourceType: 'playlist',
+        resourceId: publishCandidate.id,
+      });
+    },
+    onSuccess: (_data, deviceIds) => {
+      toast.success(`Published to ${deviceIds.length} screen${deviceIds.length === 1 ? '' : 's'}`);
+      setPublishPickerOpen(false);
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to publish playlist'),
   });
 
   return (
@@ -335,6 +357,13 @@ export default function PlaylistPage() {
             >
               <Check size={12} /> Apply Tags
             </button>
+            <button
+              onClick={() => setPublishPickerOpen(true)}
+              disabled={selectedItems.size !== 1}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--blue)]/15 border border-[var(--blue)]/30 text-[var(--blue)] text-xs font-semibold hover:bg-[var(--blue)]/25 disabled:opacity-40 transition-colors"
+            >
+              <Monitor size={12} /> Publish
+            </button>
           </div>
         )}
       </div>
@@ -349,6 +378,17 @@ export default function PlaylistPage() {
             setSelectedItems(new Set());
             void queryClient.invalidateQueries({ queryKey: ['playlists', wsId] });
           }}
+        />
+      )}
+
+      {publishPickerOpen && wsId && publishCandidate && (
+        <DevicePickerModal
+          open={publishPickerOpen}
+          onClose={() => setPublishPickerOpen(false)}
+          onSelect={(devices) => publishMut.mutate(devices.map((device) => device.id))}
+          workspaceId={wsId}
+          title={`Publish ${publishCandidate.name}`}
+          confirmLabel={publishMut.isPending ? 'Publishing…' : 'Publish'}
         />
       )}
 

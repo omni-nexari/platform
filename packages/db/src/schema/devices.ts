@@ -13,6 +13,7 @@ import { workspaces } from './workspaces.js';
 import { users } from './users.js';
 import { playlists } from './playlists.js';
 import { contentItems } from './content.js';
+import { schedules } from './schedules.js';
 
 export const devices = pgTable('devices', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -67,6 +68,11 @@ export const devices = pgTable('devices', {
 
   // ── Idle fallback playlist ─────────────────────────────────────────────────
   defaultPlaylistId: uuid('default_playlist_id').references(() => playlists.id, { onDelete: 'set null' }),
+
+  // ── Direct per-device publish target override ─────────────────────────────
+  publishedContentId: uuid('published_content_id').references(() => contentItems.id, { onDelete: 'set null' }),
+  publishedPlaylistId: uuid('published_playlist_id').references(() => playlists.id, { onDelete: 'set null' }),
+  publishedScheduleId: uuid('published_schedule_id').references(() => schedules.id, { onDelete: 'set null' }),
 
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

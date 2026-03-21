@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
 import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
-import { Monitor, Plus, Wifi, WifiOff, Clock, ChevronRight, Cpu, Check } from 'lucide-react';
+import { Monitor, Plus, Wifi, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw } from 'lucide-react';
 import { formatDistanceToNow } from '../utils/time.js';
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import BulkTagModal from '../../components/BulkTagModal.js';
@@ -36,6 +36,11 @@ interface Device {
   resolution: string | null;
   ipAddress: string | null;
   timezone: string;
+  publishedTarget: {
+    id: string;
+    type: 'content' | 'playlist' | 'schedule';
+    name: string;
+  } | null;
 }
 
 function StatusBadge({ status }: { status: Device['status'] }) {
@@ -123,6 +128,19 @@ export default function WorkspaceDashboardPage() {
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Pairing failed'),
   });
+
+  const unpublishDevices = useMutation({
+    mutationFn: (deviceIds: string[]) => api.post('/devices/unpublish', { workspaceId: wsId, deviceIds }),
+    onSuccess: (_data, deviceIds) => {
+      toast.success(`Removed published override from ${deviceIds.length} device${deviceIds.length === 1 ? '' : 's'}`);
+      setSelectedItems(new Set());
+      void queryClient.invalidateQueries({ queryKey: ['devices', wsId] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to unpublish devices'),
+  });
+
+  const selectedDevices = filteredDevices.filter((device) => selectedItems.has(device.id));
+  const hasSelectedPublishedTarget = selectedDevices.some((device) => !!device.publishedTarget);
 
   return (
     <div className="max-w-6xl mx-auto p-4 sm:p-6 lg:p-8">
@@ -272,6 +290,18 @@ export default function WorkspaceDashboardPage() {
                 <div className="mt-2">
                   <AssignedTagPills tags={device.assignedTags} />
                 </div>
+                <div className="mt-2 min-h-[1.25rem]">
+                  {device.publishedTarget ? (
+                    <div className="flex items-center gap-2 text-xs min-w-0">
+                      <Badge tone="accent">{device.publishedTarget.type}</Badge>
+                      <span className="text-[var(--text)] truncate" title={device.publishedTarget.name}>
+                        {device.publishedTarget.name}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-[var(--text-muted)]">Following workspace scheduling</span>
+                  )}
+                </div>
               </div>
             </button>
           ))}
@@ -296,6 +326,13 @@ export default function WorkspaceDashboardPage() {
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent)]/15 border border-[var(--accent)]/30 text-[var(--accent)] text-xs font-semibold hover:bg-[var(--accent)]/25 transition-colors"
           >
             <Check className="w-3 h-3" /> Apply Tags
+          </button>
+          <button
+            onClick={() => unpublishDevices.mutate([...selectedItems])}
+            disabled={!hasSelectedPublishedTarget || unpublishDevices.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-semibold hover:bg-amber-500/25 disabled:opacity-40 transition-colors"
+          >
+            <RotateCcw className="w-3 h-3" /> Unpublish
           </button>
         </div>
       )}

@@ -51,6 +51,9 @@ export const DeviceSchema = z.object({
   // Config
   screenshotIntervalMin: z.number().int().nullable(),
   defaultPlaylistId: z.string().uuid().nullable(),
+  publishedContentId: z.string().uuid().nullable(),
+  publishedPlaylistId: z.string().uuid().nullable(),
+  publishedScheduleId: z.string().uuid().nullable(),
 
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

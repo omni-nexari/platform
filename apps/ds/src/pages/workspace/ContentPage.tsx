@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import {
   Plus, Grid3X3, Grid2X2, List, Image, Video,
   Globe, Code2, FileText, Presentation, Clock, Trash2,
-  MoreVertical, Film, AlertTriangle, Check, Paintbrush,
+  MoreVertical, Film, AlertTriangle, Check, Paintbrush, Monitor,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import UploadModal from '../../components/UploadModal.js';
@@ -13,6 +13,7 @@ import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTag
 import AuthImg from '../../components/AuthImg.js';
 import ContentDetailPanel from '../../components/ContentDetailPanel.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
+import DevicePickerModal from '../../components/DevicePickerModal.js';
 import BulkTagModal from '../../components/BulkTagModal.js';
 import SmartViewsBar from '../../components/SmartViewsBar.js';
 import TagFilterBar from '../../components/TagFilterBar.js';
@@ -413,6 +414,7 @@ export default function ContentPage() {
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const [moveFolderOpen, setMoveFolderOpen] = useState(false);
   const [moveFolderId, setMoveFolderId] = useState<string>('root');
+  const [publishPickerOpen, setPublishPickerOpen] = useState(false);
 
   const filterType = (searchParams.get('type') as FilterType | null) ?? 'all';
   const selectedTagIds = (searchParams.get('tagIds') ?? '').split(',').map((value) => value.trim()).filter(Boolean);
@@ -515,6 +517,25 @@ export default function ContentPage() {
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
+  const publishSelection = items.filter((item) => selectedItems.has(item.id));
+  const publishCandidate = publishSelection.length === 1 ? publishSelection[0] : null;
+
+  const publishMut = useMutation({
+    mutationFn: (deviceIds: string[]) => {
+      if (!publishCandidate) throw new Error('Select exactly one content item to publish');
+      return api.post('/devices/publish', {
+        workspaceId: wsId,
+        deviceIds,
+        resourceType: 'content',
+        resourceId: publishCandidate.id,
+      });
+    },
+    onSuccess: (_data, deviceIds) => {
+      toast.success(`Published to ${deviceIds.length} screen${deviceIds.length === 1 ? '' : 's'}`);
+      setPublishPickerOpen(false);
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to publish content'),
+  });
 
   function renderFolderTree(parentId: string | null = null, depth = 0): React.ReactNode {
     const children = folders.filter((folder) => folder.parentId === parentId);
@@ -780,6 +801,13 @@ export default function ContentPage() {
             <Check size={12} /> Apply Tags
           </button>
           <button
+            onClick={() => setPublishPickerOpen(true)}
+            disabled={selectedItems.size !== 1}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--blue)]/15 border border-[var(--blue)]/30 text-[var(--blue)] text-xs font-semibold hover:bg-[var(--blue)]/25 disabled:opacity-40 transition-colors"
+          >
+            <Monitor size={12} /> Publish
+          </button>
+          <button
             onClick={() => setMoveFolderOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--blue)]/15 border border-[var(--blue)]/30 text-[var(--blue)] text-xs font-semibold hover:bg-[var(--blue)]/25 transition-colors"
           >
@@ -812,6 +840,17 @@ export default function ContentPage() {
             setSelectedItems(new Set());
             void queryClient.invalidateQueries({ queryKey: ['content', wsId] });
           }}
+        />
+      )}
+
+      {publishPickerOpen && wsId && publishCandidate && (
+        <DevicePickerModal
+          open={publishPickerOpen}
+          onClose={() => setPublishPickerOpen(false)}
+          onSelect={(devices) => publishMut.mutate(devices.map((device) => device.id))}
+          workspaceId={wsId}
+          title={`Publish ${publishCandidate.name}`}
+          confirmLabel={publishMut.isPending ? 'Publishing…' : 'Publish'}
         />
       )}
 

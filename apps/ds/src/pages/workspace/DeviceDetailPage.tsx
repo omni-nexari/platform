@@ -121,6 +121,11 @@ interface Device {
   screenshotIntervalMin: number | null;
   defaultPlaylistId: string | null;
   zones: ZoneConfig[] | null;
+  publishedTarget: {
+    id: string;
+    type: 'content' | 'playlist' | 'schedule';
+    name: string;
+  } | null;
 }
 
 interface DeviceLogEntry {
@@ -407,6 +412,16 @@ export default function DeviceDetailPage() {
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Device replacement failed'),
   });
 
+  const unpublishDevice = useMutation({
+    mutationFn: () => api.post('/devices/unpublish', { workspaceId: wsId, deviceIds: [deviceId] }),
+    onSuccess: () => {
+      toast.success('Device returned to workspace scheduling');
+      void queryClient.invalidateQueries({ queryKey: ['device', deviceId] });
+      void queryClient.invalidateQueries({ queryKey: ['devices', wsId] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to unpublish device'),
+  });
+
   const sendCmd = (cmd: DeviceCommandInput) => cmdMutation.mutate(cmd);
 
   if (isLoading) {
@@ -489,6 +504,38 @@ export default function DeviceDetailPage() {
           Recent device logs already report values not fully reflected in the stored device state: {observedOnlyFields.join(', ')}.
         </Callout>
       )}
+
+      <SectionCard>
+        <SectionCardHeader>
+          <h2 className="text-sm font-semibold text-[var(--text)]">Published Target</h2>
+          {device.publishedTarget ? <Badge tone="accent">{device.publishedTarget.type}</Badge> : <Badge tone="neutral">Workspace</Badge>}
+        </SectionCardHeader>
+        <SectionCardBody className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          {device.publishedTarget ? (
+            <div className="space-y-1 min-w-0">
+              <p className="text-sm font-medium text-[var(--text)] truncate">{device.publishedTarget.name}</p>
+              <p className="text-xs text-[var(--text-muted)]">
+                This device is currently pinned to a published {device.publishedTarget.type}. Unpublish to resume normal workspace schedule and fallback behavior.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-[var(--text)]">No device-level publish override</p>
+              <p className="text-xs text-[var(--text-muted)]">This device is following workspace schedules and default playlist fallbacks.</p>
+            </div>
+          )}
+          {device.publishedTarget && (
+            <ActionButton
+              onClick={() => unpublishDevice.mutate()}
+              disabled={unpublishDevice.isPending}
+              tone="warning"
+              className="px-4 py-2 text-sm shrink-0"
+            >
+              <RefreshCw className="w-4 h-4" />{unpublishDevice.isPending ? 'Unpublishing…' : 'Unpublish'}
+            </ActionButton>
+          )}
+        </SectionCardBody>
+      </SectionCard>
 
       {/* ── #14 Hardware identity  +  #15 Network ────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

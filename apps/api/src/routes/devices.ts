@@ -32,6 +32,72 @@ function generatePairingCode(): string {
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
+type PublishedTargetSummary = {
+  id: string;
+  type: 'content' | 'playlist' | 'schedule';
+  name: string;
+};
+
+const PublishToDevicesSchema = z.object({
+  workspaceId: z.string().uuid(),
+  deviceIds: z.array(z.string().uuid()).min(1),
+  resourceType: z.enum(['content', 'playlist', 'schedule']),
+  resourceId: z.string().uuid(),
+});
+
+const UnpublishDevicesSchema = z.object({
+  workspaceId: z.string().uuid(),
+  deviceIds: z.array(z.string().uuid()).min(1),
+});
+
+async function resolvePublishedTargetMap(deviceRows: Array<{
+  id: string;
+  publishedContentId: string | null;
+  publishedPlaylistId: string | null;
+  publishedScheduleId: string | null;
+}>) {
+  const contentIds = [...new Set(deviceRows.map((device) => device.publishedContentId).filter((value): value is string => !!value))];
+  const playlistIds = [...new Set(deviceRows.map((device) => device.publishedPlaylistId).filter((value): value is string => !!value))];
+  const scheduleIds = [...new Set(deviceRows.map((device) => device.publishedScheduleId).filter((value): value is string => !!value))];
+
+  const [contentRows, playlistRows, scheduleRows] = await Promise.all([
+    contentIds.length > 0
+      ? db.query.contentItems.findMany({
+          where: and(inArray(contentItems.id, contentIds), isNull(contentItems.deletedAt)),
+          columns: { id: true, name: true },
+        })
+      : Promise.resolve([]),
+    playlistIds.length > 0
+      ? db.query.playlists.findMany({
+          where: and(inArray(playlists.id, playlistIds), isNull(playlists.deletedAt)),
+          columns: { id: true, name: true },
+        })
+      : Promise.resolve([]),
+    scheduleIds.length > 0
+      ? db.query.schedules.findMany({
+          where: and(inArray(schedules.id, scheduleIds), isNull(schedules.deletedAt)),
+          columns: { id: true, name: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const contentMap = Object.fromEntries(contentRows.map((item) => [item.id, item.name]));
+  const playlistMap = Object.fromEntries(playlistRows.map((item) => [item.id, item.name]));
+  const scheduleMap = Object.fromEntries(scheduleRows.map((item) => [item.id, item.name]));
+
+  return Object.fromEntries(deviceRows.map((device) => {
+    let target: PublishedTargetSummary | null = null;
+    if (device.publishedContentId && contentMap[device.publishedContentId]) {
+      target = { id: device.publishedContentId, type: 'content', name: contentMap[device.publishedContentId] };
+    } else if (device.publishedPlaylistId && playlistMap[device.publishedPlaylistId]) {
+      target = { id: device.publishedPlaylistId, type: 'playlist', name: playlistMap[device.publishedPlaylistId] };
+    } else if (device.publishedScheduleId && scheduleMap[device.publishedScheduleId]) {
+      target = { id: device.publishedScheduleId, type: 'schedule', name: scheduleMap[device.publishedScheduleId] };
+    }
+    return [device.id, target];
+  })) as Record<string, PublishedTargetSummary | null>;
+}
+
 export async function deviceRoutes(app: FastifyInstance) {
   // ── POST /devices/pair/request ─ unauthenticated, called by the Tizen device ─
   app.post('/pair/request', async (req, reply) => {
@@ -200,11 +266,13 @@ export async function deviceRoutes(app: FastifyInstance) {
     const assignedTagMap = workspaceId
       ? await getAssignedTagsForEntities(workspaceId, 'device', list.map((device) => device.id))
       : {};
+    const publishedTargetMap = await resolvePublishedTargetMap(list);
 
     // Overlay live WS status
     const enriched = list.map((d) => ({
       ...d,
       assignedTags: assignedTagMap[d.id] ?? [],
+      publishedTarget: publishedTargetMap[d.id] ?? null,
       status: isDeviceOnline(d.id) ? 'online' : d.status === 'online' ? 'offline' : d.status,
     }));
 
@@ -248,11 +316,13 @@ export async function deviceRoutes(app: FastifyInstance) {
     }
 
     const assignedTagMap = await getAssignedTagsForEntities(device.workspaceId ?? '', 'device', [id]);
+    const publishedTargetMap = await resolvePublishedTargetMap([device]);
 
     return reply.send({
       device: {
         ...device,
         assignedTags: assignedTagMap[id] ?? [],
+        publishedTarget: publishedTargetMap[id] ?? null,
         status: isDeviceOnline(id) ? 'online' : device.status === 'online' ? 'offline' : device.status,
       },
       screenshots,
@@ -293,6 +363,171 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     clearDeviceLogs(id);
     return reply.status(204).send();
+  });
+
+  // ── POST /devices/publish ─ assign content / playlist / schedule to devices ─
+  app.post('/publish', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+
+    const body = PublishToDevicesSchema.safeParse(req.body);
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    const workspace = await db.query.workspaces.findFirst({
+      where: and(
+        eq(workspaces.id, body.data.workspaceId),
+        eq(workspaces.orgId, user.orgId),
+        isNull(workspaces.deletedAt),
+      ),
+    });
+    if (!workspace) return reply.status(404).send({ error: 'Workspace not found' });
+
+    const targetDevices = await db.query.devices.findMany({
+      where: and(
+        eq(devices.orgId, user.orgId),
+        eq(devices.workspaceId, body.data.workspaceId),
+        inArray(devices.id, body.data.deviceIds),
+        isNull(devices.deletedAt),
+      ),
+    });
+    if (targetDevices.length !== body.data.deviceIds.length) {
+      return reply.status(404).send({ error: 'One or more devices were not found in this workspace' });
+    }
+
+    if (body.data.resourceType === 'content') {
+      const content = await db.query.contentItems.findFirst({
+        where: and(
+          eq(contentItems.id, body.data.resourceId),
+          eq(contentItems.workspaceId, body.data.workspaceId),
+          isNull(contentItems.deletedAt),
+        ),
+      });
+      if (!content) return reply.status(404).send({ error: 'Content not found' });
+    }
+
+    if (body.data.resourceType === 'playlist') {
+      const playlist = await db.query.playlists.findFirst({
+        where: and(
+          eq(playlists.id, body.data.resourceId),
+          eq(playlists.workspaceId, body.data.workspaceId),
+          isNull(playlists.deletedAt),
+        ),
+      });
+      if (!playlist) return reply.status(404).send({ error: 'Playlist not found' });
+    }
+
+    if (body.data.resourceType === 'schedule') {
+      const schedule = await db.query.schedules.findFirst({
+        where: and(
+          eq(schedules.id, body.data.resourceId),
+          eq(schedules.workspaceId, body.data.workspaceId),
+          isNull(schedules.deletedAt),
+        ),
+      });
+      if (!schedule) return reply.status(404).send({ error: 'Schedule not found' });
+    }
+
+    const publishPatch = {
+      publishedContentId: body.data.resourceType === 'content' ? body.data.resourceId : null,
+      publishedPlaylistId: body.data.resourceType === 'playlist' ? body.data.resourceId : null,
+      publishedScheduleId: body.data.resourceType === 'schedule' ? body.data.resourceId : null,
+      updatedAt: new Date(),
+    };
+
+    await db
+      .update(devices)
+      .set(publishPatch)
+      .where(and(
+        eq(devices.orgId, user.orgId),
+        eq(devices.workspaceId, body.data.workspaceId),
+        inArray(devices.id, body.data.deviceIds),
+        isNull(devices.deletedAt),
+      ));
+
+    const refreshedDeviceIds: string[] = [];
+    for (const device of targetDevices) {
+      if (!isDeviceOnline(device.id)) continue;
+      sendCommand(device.id, { type: 'refresh_schedule' });
+      refreshedDeviceIds.push(device.id);
+    }
+
+    await Promise.all(targetDevices.map((device) => writeAuditLog({
+      orgId: user.orgId,
+      actorId: user.sub,
+      action: 'DEVICE_PUBLISH_TARGET_UPDATED',
+      entityType: 'device',
+      entityId: device.id,
+      meta: { resourceType: body.data.resourceType, resourceId: body.data.resourceId },
+      ipAddress: req.ip,
+    })));
+
+    return reply.send({
+      updated: targetDevices.length,
+      refreshedDeviceIds,
+      resourceType: body.data.resourceType,
+      resourceId: body.data.resourceId,
+    });
+  });
+
+  // ── POST /devices/unpublish ─ clear per-device published override ─────────
+  app.post('/unpublish', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+
+    const body = UnpublishDevicesSchema.safeParse(req.body);
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    const workspace = await db.query.workspaces.findFirst({
+      where: and(
+        eq(workspaces.id, body.data.workspaceId),
+        eq(workspaces.orgId, user.orgId),
+        isNull(workspaces.deletedAt),
+      ),
+    });
+    if (!workspace) return reply.status(404).send({ error: 'Workspace not found' });
+
+    const targetDevices = await db.query.devices.findMany({
+      where: and(
+        eq(devices.orgId, user.orgId),
+        eq(devices.workspaceId, body.data.workspaceId),
+        inArray(devices.id, body.data.deviceIds),
+        isNull(devices.deletedAt),
+      ),
+    });
+    if (targetDevices.length !== body.data.deviceIds.length) {
+      return reply.status(404).send({ error: 'One or more devices were not found in this workspace' });
+    }
+
+    await db
+      .update(devices)
+      .set({
+        publishedContentId: null,
+        publishedPlaylistId: null,
+        publishedScheduleId: null,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(devices.orgId, user.orgId),
+        eq(devices.workspaceId, body.data.workspaceId),
+        inArray(devices.id, body.data.deviceIds),
+        isNull(devices.deletedAt),
+      ));
+
+    const refreshedDeviceIds: string[] = [];
+    for (const device of targetDevices) {
+      if (!isDeviceOnline(device.id)) continue;
+      sendCommand(device.id, { type: 'refresh_schedule' });
+      refreshedDeviceIds.push(device.id);
+    }
+
+    await Promise.all(targetDevices.map((device) => writeAuditLog({
+      orgId: user.orgId,
+      actorId: user.sub,
+      action: 'DEVICE_PUBLISH_TARGET_CLEARED',
+      entityType: 'device',
+      entityId: device.id,
+      ipAddress: req.ip,
+    })));
+
+    return reply.send({ updated: targetDevices.length, refreshedDeviceIds });
   });
 
   // ── PATCH /devices/:id ─────────────────────────────────────────────────────
@@ -604,23 +839,62 @@ export async function deviceRoutes(app: FastifyInstance) {
     const auth = authenticateDevice(req as never, reply as never);
     if (!auth) return;
 
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, auth.deviceId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Device not found' });
+
     const workspace = await db.query.workspaces.findFirst({
       where: and(eq(workspaces.id, auth.workspaceId), isNull(workspaces.deletedAt)),
     });
     if (!workspace) return reply.status(404).send({ error: 'Workspace not found' });
 
-    // Include default playlist if set
+    // Include device-level default playlist override before workspace fallback.
     let defaultPlaylist = null;
-    if (workspace.defaultPlaylistId) {
+    const effectiveDefaultPlaylistId = device.defaultPlaylistId ?? workspace.defaultPlaylistId;
+    if (effectiveDefaultPlaylistId) {
       defaultPlaylist = await db.query.playlists.findFirst({
-        where: and(eq(playlists.id, workspace.defaultPlaylistId), isNull(playlists.deletedAt)),
+        where: and(eq(playlists.id, effectiveDefaultPlaylistId), isNull(playlists.deletedAt)),
         with: {
           items: { with: { content: true }, orderBy: [desc(playlistItems.position)] },
         },
       });
     }
 
-    return reply.send({ workspace, defaultPlaylist });
+    const [publishedContent, publishedPlaylist, publishedSchedule] = await Promise.all([
+      device.publishedContentId
+        ? db.query.contentItems.findFirst({
+          where: and(eq(contentItems.id, device.publishedContentId), isNull(contentItems.deletedAt)),
+        })
+        : Promise.resolve(null),
+      device.publishedPlaylistId
+        ? db.query.playlists.findFirst({
+          where: and(eq(playlists.id, device.publishedPlaylistId), isNull(playlists.deletedAt)),
+          with: {
+            items: { with: { content: true }, orderBy: [desc(playlistItems.position)] },
+          },
+        })
+        : Promise.resolve(null),
+      device.publishedScheduleId
+        ? db.query.schedules.findFirst({
+          where: and(eq(schedules.id, device.publishedScheduleId), isNull(schedules.deletedAt)),
+          with: {
+            slots: {
+              with: {
+                playlist: {
+                  with: {
+                    items: { with: { content: true }, orderBy: [desc(playlistItems.position)] },
+                  },
+                },
+                content: true,
+              },
+            },
+          },
+        })
+        : Promise.resolve(null),
+    ]);
+
+    return reply.send({ workspace, defaultPlaylist, publishedContent, publishedPlaylist, publishedSchedule });
   });
 
   // ── GET /devices/device/content/:id/file ─ stream content file to device ──

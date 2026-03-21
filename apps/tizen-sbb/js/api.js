@@ -182,12 +182,36 @@ window.API = {
     return API._resolveActivePlaylist(
       scheduleData.schedules,
       workspaceData.defaultPlaylist,
-      token
+      token,
+      {
+        publishedContent: workspaceData.publishedContent || null,
+        publishedPlaylist: workspaceData.publishedPlaylist || null,
+        publishedSchedule: workspaceData.publishedSchedule || null,
+      }
     );
   },
 
   // ── Find the currently-active playlist from schedules + workspace default ─
-  _resolveActivePlaylist(schedules, defaultPlaylist, deviceToken) {
+  _resolveActivePlaylist(schedules, defaultPlaylist, deviceToken, publishedTargets) {
+    if (publishedTargets && publishedTargets.publishedContent) {
+      return API._normalizeSingleContent(publishedTargets.publishedContent, 'Published Content', deviceToken);
+    }
+
+    if (publishedTargets && publishedTargets.publishedPlaylist && (publishedTargets.publishedPlaylist.items || []).length > 0) {
+      return API._normalizePlaylist(publishedTargets.publishedPlaylist, deviceToken);
+    }
+
+    if (publishedTargets && publishedTargets.publishedSchedule) {
+      const publishedScheduleResult = API._resolveScheduledPlaylist([
+        { ...publishedTargets.publishedSchedule, isActive: true },
+      ], null, deviceToken);
+      if (publishedScheduleResult) return publishedScheduleResult;
+    }
+
+    return API._resolveScheduledPlaylist(schedules, defaultPlaylist, deviceToken);
+  },
+
+  _resolveScheduledPlaylist(schedules, defaultPlaylist, deviceToken) {
     const now = new Date();
     const dayOfWeek = now.getDay(); // 0=Sun, 6=Sat
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
@@ -196,7 +220,7 @@ window.API = {
       if (!schedule.isActive) continue;
       for (const slot of (schedule.slots || [])) {
         // Day-of-week check (null days = every day)
-        const slotDays = slot.dayOfWeek;
+        const slotDays = slot.daysOfWeek || slot.dayOfWeek;
         if (slotDays && Array.isArray(slotDays) && !slotDays.includes(dayOfWeek)) continue;
 
         // Time-range check

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import AuthImg from '../../components/AuthImg.js';
 import ContentPickerModal, { type PickedItem } from '../../components/ContentPickerModal.js';
+import DevicePickerModal from '../../components/DevicePickerModal.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
 import WorkspaceTagPicker from '../../components/WorkspaceTagPicker.js';
 import { Skeleton, ToggleSwitch } from '../../components/UiPrimitives.js';
@@ -679,6 +680,23 @@ export default function ScheduleEditorPage() {
     onError: (err: Error) => toast.error(err.message || 'Failed to save'),
   });
 
+  const publishMut = useMutation({
+    mutationFn: (deviceIds: string[]) => {
+      if (!id) throw new Error('Save the schedule before publishing');
+      return api.post('/devices/publish', {
+        workspaceId: wsId,
+        deviceIds,
+        resourceType: 'schedule',
+        resourceId: id,
+      });
+    },
+    onSuccess: (_data, deviceIds) => {
+      toast.success(`Published to ${deviceIds.length} screen${deviceIds.length === 1 ? '' : 's'}`);
+      setPublishConfirmOpen(false);
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to publish schedule'),
+  });
+
   // ── Type meta ──
   const typeMeta = TYPE_META[editType] ?? TYPE_META['general']!;
 
@@ -757,6 +775,7 @@ export default function ScheduleEditorPage() {
           {/* Publish */}
           <button
             onClick={() => setPublishConfirmOpen(true)}
+            disabled={!id}
             className="editor-toolbar-btn"
           >
             <Monitor size={13} />
@@ -1023,15 +1042,13 @@ export default function ScheduleEditorPage() {
         onClose={() => setLeaveConfirmOpen(false)}
       />
 
-      <ConfirmDialog
+      <DevicePickerModal
         open={publishConfirmOpen}
-        title="Publish Schedule"
-        message="Publish this schedule to screens? This flow is not implemented yet."
-        confirmLabel="Publish"
-        variant="primary"
-        icon={<Monitor size={16} />}
-        onConfirm={() => toast.info('Publish to screens — coming in the Devices phase')}
         onClose={() => setPublishConfirmOpen(false)}
+        onSelect={(devices) => publishMut.mutate(devices.map((device) => device.id))}
+        workspaceId={wsId!}
+        title={`Publish ${editName || 'Schedule'}`}
+        confirmLabel={publishMut.isPending ? 'Publishing…' : 'Publish'}
       />
     </div>
   );

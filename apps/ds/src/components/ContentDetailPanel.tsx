@@ -11,6 +11,7 @@ import { api, buildApiUrl } from '../lib/api.js';
 import { useAuthStore } from '../lib/auth.js';
 import AuthImg from './AuthImg.js';
 import AssignedTagPills, { type AssignedTag } from './AssignedTagPills.js';
+import DevicePickerModal from './DevicePickerModal.js';
 import WorkspaceTagPicker from './WorkspaceTagPicker.js';
 
 const APPROVE_ROLES = new Set(['prime_owner', 'owner', 'admin', 'a-manager']);
@@ -711,6 +712,23 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
     onError: () => toast.error('Failed to duplicate'),
   });
 
+  const publishMut = useMutation({
+    mutationFn: (deviceIds: string[]) => {
+      if (!itemId) throw new Error('Content is not available');
+      return api.post('/devices/publish', {
+        workspaceId,
+        deviceIds,
+        resourceType: 'content',
+        resourceId: itemId,
+      });
+    },
+    onSuccess: (_data, deviceIds) => {
+      toast.success(`Published to ${deviceIds.length} screen${deviceIds.length === 1 ? '' : 's'}`);
+      setConfirmPublishOpen(false);
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to publish content'),
+  });
+
   const submitReviewMut = useMutation({
     mutationFn: () => api.post(`/content/${itemId}/submit-review`),
     onSuccess: () => { toast.success('Submitted for review'); invalidate(); },
@@ -905,15 +923,13 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
           onClose={() => setConfirmDuplicateOpen(false)}
         />
 
-        <ConfirmDialog
+        <DevicePickerModal
           open={confirmPublishOpen}
-          title="Publish Content"
-          message={`Publish "${item?.name ?? 'this item'}" to screens? This flow is not implemented yet.`}
-          confirmLabel="Publish"
-          variant="primary"
-          icon={<Monitor size={16} />}
-          onConfirm={() => toast.info('Assign to screens — coming soon')}
           onClose={() => setConfirmPublishOpen(false)}
+          onSelect={(devices) => publishMut.mutate(devices.map((device) => device.id))}
+          workspaceId={workspaceId}
+          title={`Publish ${item?.name ?? 'Content'}`}
+          confirmLabel={publishMut.isPending ? 'Publishing…' : 'Publish'}
         />
 
         {/* ── Tabs ── */}
