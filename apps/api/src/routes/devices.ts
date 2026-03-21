@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { createReadStream, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
-import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, schedules, playlists, playlistItems, contentItems } from '@signage/db';
+import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, schedules, scheduleSlots, playlists, playlistItems, contentItems } from '@signage/db';
 import { eq, and, isNull, desc, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -96,6 +96,109 @@ async function resolvePublishedTargetMap(deviceRows: Array<{
     }
     return [device.id, target];
   })) as Record<string, PublishedTargetSummary | null>;
+}
+
+async function loadPlaylistsWithItems(playlistIds: string[]) {
+  const uniquePlaylistIds = [...new Set(playlistIds.filter(Boolean))];
+  if (uniquePlaylistIds.length === 0) return new Map();
+
+  const playlistRows = await db.query.playlists.findMany({
+    where: and(inArray(playlists.id, uniquePlaylistIds), isNull(playlists.deletedAt)),
+  });
+  if (playlistRows.length === 0) return new Map();
+
+  const itemRows = await db.query.playlistItems.findMany({
+    where: inArray(playlistItems.playlistId, playlistRows.map((playlist) => playlist.id)),
+    orderBy: [desc(playlistItems.position)],
+  });
+
+  const contentIds = [...new Set(itemRows.map((item) => item.contentId).filter((value): value is string => !!value))];
+  const contentRows = contentIds.length > 0
+    ? await db.query.contentItems.findMany({
+        where: and(inArray(contentItems.id, contentIds), isNull(contentItems.deletedAt)),
+      })
+    : [];
+
+  const contentMap = Object.fromEntries(contentRows.map((content) => [content.id, content]));
+  const itemsByPlaylistId = new Map<string, Array<typeof itemRows[number] & { content: typeof contentRows[number] | null }>>();
+
+  for (const item of itemRows) {
+    const playlistItemsForRow = itemsByPlaylistId.get(item.playlistId) ?? [];
+    playlistItemsForRow.push({
+      ...item,
+      content: item.contentId ? (contentMap[item.contentId] ?? null) : null,
+    });
+    itemsByPlaylistId.set(item.playlistId, playlistItemsForRow);
+  }
+
+  return new Map(playlistRows.map((playlist) => [
+    playlist.id,
+    {
+      ...playlist,
+      items: itemsByPlaylistId.get(playlist.id) ?? [],
+    },
+  ]));
+}
+
+async function hydrateSchedules(scheduleRows: Array<typeof schedules.$inferSelect>) {
+  if (scheduleRows.length === 0) return [];
+
+  const slotRows = await db.query.scheduleSlots.findMany({
+    where: inArray(scheduleSlots.scheduleId, scheduleRows.map((schedule) => schedule.id)),
+  });
+
+  const playlistMap = await loadPlaylistsWithItems(
+    slotRows.map((slot) => slot.playlistId).filter((value): value is string => !!value),
+  );
+  const contentIds = [...new Set(slotRows.map((slot) => slot.contentId).filter((value): value is string => !!value))];
+  const contentRows = contentIds.length > 0
+    ? await db.query.contentItems.findMany({
+        where: and(inArray(contentItems.id, contentIds), isNull(contentItems.deletedAt)),
+      })
+    : [];
+  const contentMap = Object.fromEntries(contentRows.map((content) => [content.id, content]));
+  const slotsByScheduleId = new Map<string, Array<typeof slotRows[number] & {
+    playlist: Awaited<ReturnType<typeof loadPlaylistsWithItems>> extends Map<string, infer T> ? T | null : null;
+    content: typeof contentRows[number] | null;
+  }>>();
+
+  for (const slot of slotRows) {
+    const scheduleSlotsForRow = slotsByScheduleId.get(slot.scheduleId) ?? [];
+    scheduleSlotsForRow.push({
+      ...slot,
+      playlist: slot.playlistId ? (playlistMap.get(slot.playlistId) ?? null) : null,
+      content: slot.contentId ? (contentMap[slot.contentId] ?? null) : null,
+    });
+    slotsByScheduleId.set(slot.scheduleId, scheduleSlotsForRow);
+  }
+
+  return scheduleRows.map((schedule) => ({
+    ...schedule,
+    slots: slotsByScheduleId.get(schedule.id) ?? [],
+  }));
+}
+
+async function loadScheduleById(scheduleId: string) {
+  const scheduleRow = await db.query.schedules.findFirst({
+    where: and(eq(schedules.id, scheduleId), isNull(schedules.deletedAt)),
+  });
+  if (!scheduleRow) return null;
+
+  const [hydrated] = await hydrateSchedules([scheduleRow]);
+  return hydrated ?? null;
+}
+
+async function loadWorkspaceSchedules(workspaceId: string) {
+  const scheduleRows = await db.query.schedules.findMany({
+    where: and(eq(schedules.workspaceId, workspaceId), eq(schedules.isActive, true), isNull(schedules.deletedAt)),
+  });
+
+  return hydrateSchedules(scheduleRows);
+}
+
+async function loadPlaylistById(playlistId: string) {
+  const playlistMap = await loadPlaylistsWithItems([playlistId]);
+  return playlistMap.get(playlistId) ?? null;
 }
 
 export async function deviceRoutes(app: FastifyInstance) {
@@ -815,21 +918,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!auth) return;
     const { workspaceId } = auth;
 
-    const workspaceSchedules = await db.query.schedules.findMany({
-      where: and(eq(schedules.workspaceId, workspaceId), eq(schedules.isActive, true), isNull(schedules.deletedAt)),
-      with: {
-        slots: {
-          with: {
-            playlist: {
-              with: {
-                items: { with: { content: true }, orderBy: [desc(playlistItems.position)] },
-              },
-            },
-            content: true,
-          },
-        },
-      },
-    });
+    const workspaceSchedules = await loadWorkspaceSchedules(workspaceId);
 
     return reply.send({ schedules: workspaceSchedules });
   });
@@ -853,12 +942,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     let defaultPlaylist = null;
     const effectiveDefaultPlaylistId = device.defaultPlaylistId ?? workspace.defaultPlaylistId;
     if (effectiveDefaultPlaylistId) {
-      defaultPlaylist = await db.query.playlists.findFirst({
-        where: and(eq(playlists.id, effectiveDefaultPlaylistId), isNull(playlists.deletedAt)),
-        with: {
-          items: { with: { content: true }, orderBy: [desc(playlistItems.position)] },
-        },
-      });
+      defaultPlaylist = await loadPlaylistById(effectiveDefaultPlaylistId);
     }
 
     const [publishedContent, publishedPlaylist, publishedSchedule] = await Promise.all([
@@ -868,29 +952,10 @@ export async function deviceRoutes(app: FastifyInstance) {
         })
         : Promise.resolve(null),
       device.publishedPlaylistId
-        ? db.query.playlists.findFirst({
-          where: and(eq(playlists.id, device.publishedPlaylistId), isNull(playlists.deletedAt)),
-          with: {
-            items: { with: { content: true }, orderBy: [desc(playlistItems.position)] },
-          },
-        })
+        ? loadPlaylistById(device.publishedPlaylistId)
         : Promise.resolve(null),
       device.publishedScheduleId
-        ? db.query.schedules.findFirst({
-          where: and(eq(schedules.id, device.publishedScheduleId), isNull(schedules.deletedAt)),
-          with: {
-            slots: {
-              with: {
-                playlist: {
-                  with: {
-                    items: { with: { content: true }, orderBy: [desc(playlistItems.position)] },
-                  },
-                },
-                content: true,
-              },
-            },
-          },
-        })
+        ? loadScheduleById(device.publishedScheduleId)
         : Promise.resolve(null),
     ]);
 
