@@ -71,6 +71,8 @@ const Player = {
   commandPollInterval: null as number | null,
   contentRefreshInterval: null as number | null,
   wsConnection: null as WebSocket | null,
+  wsWatchdogInterval: null as number | null,
+  lastWsMessageAt: 0,
   currentContent: null as Content | null,
   lastContentSignature: null as string | null,
   lastRenderedItemKey: null as string | null,
@@ -138,6 +140,7 @@ const Player = {
     
     // Connect to WebSocket for real-time updates
     this.connectWebSocket();
+    this.startWebSocketWatchdog();
     
     // Start background tasks
     this.startHeartbeat();
@@ -172,10 +175,12 @@ const Player = {
       
       this.wsConnection.onopen = () => {
         logger.info('WebSocket connected');
+        this.lastWsMessageAt = Date.now();
         this.updateConnectionStatus(true);
       };
       
       this.wsConnection.onmessage = (event) => {
+        this.lastWsMessageAt = Date.now();
         this.handleWebSocketMessage(event.data);
       };
       
@@ -186,8 +191,36 @@ const Player = {
       
       this.wsConnection.onclose = () => {
         logger.warn('WebSocket disconnected, reconnecting in 5s...');
+        this.lastWsMessageAt = 0;
         this.updateConnectionStatus(false);
         
+
+        startWebSocketWatchdog(): void {
+          if (this.wsWatchdogInterval) {
+            return;
+          }
+
+          const staleAfterMs = Math.max((CONFIG.HEARTBEAT_INTERVAL || 30000) * 3, 90000);
+          this.wsWatchdogInterval = setInterval(() => {
+            if (!this.wsConnection || this.wsConnection.readyState !== WebSocket.OPEN) {
+              return;
+            }
+            if (!this.lastWsMessageAt) {
+              return;
+            }
+            if (Date.now() - this.lastWsMessageAt <= staleAfterMs) {
+              return;
+            }
+
+            logger.warn('WebSocket appears stale despite open state; forcing reconnect');
+            this.updateConnectionStatus(false);
+            try {
+              this.wsConnection.close();
+            } catch (error) {
+              logger.debug('Failed to close stale WebSocket:', error);
+            }
+          }, CONFIG.HEARTBEAT_INTERVAL || 30000);
+        }
         setTimeout(() => {
           this.connectWebSocket();
         }, 5000);
@@ -203,12 +236,19 @@ const Player = {
   handleWebSocketMessage(data: string): void {
     try {
       const message = JSON.parse(data);
+      const messageType = message.type || message.event;
+
+      if (messageType === 'server_ack') {
+        return;
+      }
+
       logger.debug('WebSocket message:', message);
       
       // Support both 'type' and 'event' field names
-      const messageType = message.type || message.event;
       
       switch (messageType) {
+        case 'server_ack':
+          break;
         case 'content-update':
         case 'schedule.updated':
         case 'schedule.created':
@@ -401,6 +441,40 @@ const Player = {
     };
   },
 
+  setAvPlayVisualMode(active: boolean) {
+    const root = document.documentElement as HTMLElement | null;
+    const body = document.body as HTMLElement | null;
+    const playerScreen = document.getElementById('player-screen') as HTMLElement | null;
+    const contentContainer = document.getElementById('content-container') as HTMLElement | null;
+    const transparent = active ? 'transparent' : '';
+
+    if (body) {
+      body.classList.toggle('avplay-active', active);
+      body.style.background = transparent;
+      body.style.backgroundColor = transparent;
+    }
+
+    if (root) {
+      root.style.background = transparent;
+      root.style.backgroundColor = transparent;
+    }
+
+    if (playerScreen) {
+      playerScreen.style.background = transparent;
+      playerScreen.style.backgroundColor = transparent;
+    }
+
+    if (contentContainer) {
+      contentContainer.style.background = transparent;
+      contentContainer.style.backgroundColor = transparent;
+      contentContainer.style.visibility = active ? 'hidden' : '';
+    }
+
+    if (body) {
+      void body.offsetHeight;
+    }
+  },
+
   // Send lightweight heartbeat over WebSocket with readiness metrics
   sendWebSocketHeartbeat() {
     if (!this.wsConnection || this.wsConnection.readyState !== WebSocket.OPEN) {
@@ -408,7 +482,12 @@ const Player = {
     }
 
     const readiness = this.buildReadinessPayload();
-    const payload = { readiness };
+    const payload = {
+      clockDriftMs: readiness.driftMs,
+      currentContentId: readiness.currentContentId,
+      nextContentId: readiness.nextContentId,
+      nextStartsAt: readiness.nextStartsAt,
+    };
 
     const serialized = JSON.stringify(payload);
     const now = Date.now();
@@ -416,7 +495,7 @@ const Player = {
       return;
     }
 
-    this.wsConnection.send(JSON.stringify({ type: 'HEARTBEAT', payload }));
+    this.wsConnection.send(JSON.stringify({ type: 'heartbeat', payload }));
     this.lastReadinessPayload = serialized;
     this.lastReadinessAt = now;
   },
@@ -1102,14 +1181,14 @@ const Player = {
             }
           }
           if (!handled) {
-            document.body.classList.remove('avplay-active');
+            this.setAvPlayVisualMode(false);
           }
         },
         oncurrentplaytime: (currentTime) => {
           // Optional: track playback time
         },
         onerror: (eventType) => {
-          document.body.classList.remove('avplay-active');
+          this.setAvPlayVisualMode(false);
           fallbackToHtml5(eventType);
         },
         onevent: (eventType, eventData) => {
@@ -1144,9 +1223,8 @@ const Player = {
             logger.warn('AVPlay: setDisplayRect after prepare failed', rectErr);
           }
           
-          // Make body transparent to show AVPlay hardware layer
-          document.body.classList.add('avplay-active');
-          logger.debug('Added avplay-active class to body');
+          this.setAvPlayVisualMode(true);
+          logger.debug('Enabled AVPlay visual mode');
           
           // Start playback
           logger.debug('AVPlay: Calling play()');
@@ -1164,7 +1242,7 @@ const Player = {
               // Only fallback if state is PLAYING but time hasn't progressed at all
               if (state === 'PLAYING' && time === 0) {
                 logger.warn('AVPlay appears stalled (state:', state, 'time:', time, '). Falling back to HTML5');
-                document.body.classList.remove('avplay-active');
+                this.setAvPlayVisualMode(false);
                 fallbackToHtml5('stalled');
               } else {
                 logger.debug('AVPlay watchdog OK - state:', state, 'time:', time);
@@ -1174,11 +1252,11 @@ const Player = {
             }
           }, watchdogDelay);
         } catch (playErr) {
-          document.body.classList.remove('avplay-active');
+          this.setAvPlayVisualMode(false);
           fallbackToHtml5(playErr);
         }
       }, (prepErr) => {
-        document.body.classList.remove('avplay-active');
+        this.setAvPlayVisualMode(false);
         fallbackToHtml5(prepErr);
       });
       
@@ -1509,8 +1587,7 @@ const Player = {
       if (typeof webapis !== 'undefined' && webapis.avplay) {
         try { webapis.avplay.stop(); } catch (e) {}
         try { webapis.avplay.close(); } catch (e) {}
-        // Remove avplay-active class when stopping
-        document.body.classList.remove('avplay-active');
+        this.setAvPlayVisualMode(false);
         this.currentAvPlayProfileKey = null;
       }
     } catch (error) {
@@ -1561,7 +1638,7 @@ const Player = {
     }
 
     this.currentAvPlayer = null;
-    document.body.classList.remove('avplay-active');
+    this.setAvPlayVisualMode(false);
     logger.debug('Seamless AVPlay players stopped');
   },  // Get the active and next player for seamless switching
   getSeamlessPlayers() {

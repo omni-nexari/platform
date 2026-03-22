@@ -88,11 +88,13 @@ window.API = {
             },
           }));
         }
+        return { ok: true };
       }
     } catch (err) {
       logger.warn('sendTelemetry via WS failed:', err);
+      return { ok: false, reason: 'exception' };
     }
-    return { ok: true };
+    return { ok: false, reason: 'ws_unavailable' };
   },
 
   // ── sendLog → forward Tizen console logs over the device WebSocket ────────
@@ -141,7 +143,7 @@ window.API = {
         }));
       }
     } catch (error) {
-      return { ok: false };
+      return { ok: false, reason: 'exception' };
     }
     return { ok: true };
   },

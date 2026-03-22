@@ -38,6 +38,22 @@ type PublishedTargetSummary = {
   name: string;
 };
 
+const DEVICE_RECENT_ACTIVITY_MS = 90_000;
+
+function hasRecentDeviceActivity(lastSeen: Date | string | null | undefined): boolean {
+  if (!lastSeen) return false;
+  const seenAt = lastSeen instanceof Date ? lastSeen.getTime() : new Date(lastSeen).getTime();
+  if (Number.isNaN(seenAt)) return false;
+  return Date.now() - seenAt <= DEVICE_RECENT_ACTIVITY_MS;
+}
+
+function resolveReportedDeviceStatus(device: { id: string; status: string | null; lastSeen?: Date | string | null }): string | null {
+  if (isDeviceOnline(device.id) || hasRecentDeviceActivity(device.lastSeen)) {
+    return 'online';
+  }
+  return device.status === 'online' ? 'offline' : device.status;
+}
+
 const PublishToDevicesSchema = z.object({
   workspaceId: z.string().uuid(),
   deviceIds: z.array(z.string().uuid()).min(1),
@@ -540,7 +556,7 @@ export async function deviceRoutes(app: FastifyInstance) {
       ...d,
       assignedTags: assignedTagMap[d.id] ?? [],
       publishedTarget: publishedTargetMap[d.id] ?? null,
-      status: isDeviceOnline(d.id) ? 'online' : d.status === 'online' ? 'offline' : d.status,
+      status: resolveReportedDeviceStatus(d),
     }));
 
     return reply.send(enriched);
@@ -590,7 +606,7 @@ export async function deviceRoutes(app: FastifyInstance) {
         ...device,
         assignedTags: assignedTagMap[id] ?? [],
         publishedTarget: publishedTargetMap[id] ?? null,
-        status: isDeviceOnline(id) ? 'online' : device.status === 'online' ? 'offline' : device.status,
+        status: resolveReportedDeviceStatus(device),
       },
       screenshots,
       latestHeartbeat: latestHeartbeat
@@ -613,7 +629,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     const limit = Number.isFinite(Number(rawLimit)) ? Number(rawLimit) : 500;
     return reply.send({
       deviceId: id,
-      online: isDeviceOnline(id),
+      online: isDeviceOnline(id) || hasRecentDeviceActivity(device.lastSeen),
       logs: getDeviceLogs(id, limit),
     });
   });
@@ -1023,10 +1039,26 @@ export async function deviceRoutes(app: FastifyInstance) {
     }
 
     app.log.info({ deviceId }, 'Device connected via WS');
+    try {
+      socket.send(JSON.stringify({ type: 'server_ack', payload: { timestamp: new Date().toISOString(), reason: 'connected' } }));
+    } catch {}
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     socket.on('message', async (rawData: any) => {
-      await handleDeviceMessage(deviceId, rawData.toString() as string);
+      const rawText = rawData.toString() as string;
+      let messageType: string | undefined;
+      try {
+        const parsed = JSON.parse(rawText) as { type?: string; event?: string };
+        messageType = parsed.type || parsed.event;
+      } catch {}
+
+      await handleDeviceMessage(deviceId, rawText);
+
+      if (messageType === 'heartbeat') {
+        try {
+          socket.send(JSON.stringify({ type: 'server_ack', payload: { timestamp: new Date().toISOString(), reason: 'heartbeat' } }));
+        } catch {}
+      }
     });
 
     socket.on('close', async () => {

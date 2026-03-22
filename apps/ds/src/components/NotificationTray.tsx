@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '../lib/api.js';
+import { useAuthStore } from '../lib/auth.js';
 
 interface NotifItem {
   id: string;
@@ -51,6 +52,7 @@ export default function NotificationTray() {
   const trayRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { user, bootstrapped } = useAuthStore();
 
   // Close on click outside
   useEffect(() => {
@@ -67,7 +69,9 @@ export default function NotificationTray() {
   const { data } = useQuery<NotifResponse>({
     queryKey: ['notifications-tray'],
     queryFn: () => api.get('/notifications?page=1&limit=10'),
+    enabled: bootstrapped && !!user,
     refetchInterval: open ? 15_000 : 30_000,
+    retry: false,
   });
 
   const unreadCount = data?.unreadCount ?? 0;

@@ -570,7 +570,10 @@ storageTotal: (storage && storage.units && storage.units[0] && storage.units[0].
         cloneStatus: this.runtime.cloneStatus,
       };
 
-      await API.sendTelemetry(deviceId, telemetryData);
+      var result = await API.sendTelemetry(deviceId, telemetryData);
+      if (!result || result.ok === false) {
+        throw new Error((result && result.reason) || 'ws_unavailable');
+      }
       logger.info('Telemetry sent successfully');
       
       return true;

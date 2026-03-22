@@ -450,6 +450,13 @@ export default function DeviceDetailPage() {
   const { device, screenshots, latestHeartbeat: hb } = data;
   const isOnline    = device.status === 'online';
   const cmdDisabled = !isOnline || cmdMutation.isPending;
+  const fallbackNowPlaying = device.publishedTarget?.name ?? null;
+  const fallbackNowPlayingType = device.publishedTarget?.type ?? null;
+  const nowPlayingLabel = hb?.currentContentName
+    ?? (hb?.currentContentId ? '(unknown)' : null)
+    ?? fallbackNowPlaying
+    ?? 'Nothing';
+  const showPublishedTargetBadge = !hb?.currentContentName && !hb?.currentContentId && !!fallbackNowPlayingType;
 
   const storageFreeMb  = hb?.storageFreeBytes != null ? hb.storageFreeBytes / 1_048_576 : null;
   const storageTotalMb = 8192;
@@ -672,9 +679,14 @@ export default function DeviceDetailPage() {
                 <div className="rounded-lg bg-[var(--surface)] border border-[var(--border)] px-4 py-3 space-y-1">
                   <p className="text-xs font-medium text-emerald-400 flex items-center gap-1.5">
                     <Play className="w-3 h-3" />Now Playing
+                    {showPublishedTargetBadge && fallbackNowPlayingType && (
+                      <span className="ml-auto">
+                        <Badge tone="accent">{fallbackNowPlayingType}</Badge>
+                      </span>
+                    )}
                   </p>
                   <p className="text-sm text-[var(--text)] font-medium truncate">
-                    {hb.currentContentName ?? (hb.currentContentId ? '(unknown)' : 'Nothing')}
+                    {nowPlayingLabel}
                   </p>
                 </div>
                 {hb.nextContentId && (

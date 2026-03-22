@@ -119,7 +119,14 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
 
   // ── heartbeat ──────────────────────────────────────────────────────────────
   if (msg.type === 'heartbeat') {
-    const hb = msg.payload;
+    const hb = 'readiness' in msg.payload
+      ? {
+          clockDriftMs: msg.payload.readiness.driftMs,
+          currentContentId: msg.payload.readiness.currentContentId,
+          nextContentId: msg.payload.readiness.nextContentId,
+          nextStartsAt: msg.payload.readiness.nextStartsAt,
+        }
+      : msg.payload;
     await db
       .update(devices)
       .set({

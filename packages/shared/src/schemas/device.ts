@@ -141,6 +141,15 @@ export const HeartbeatSchema = z.object({
 });
 export type HeartbeatPayload = z.infer<typeof HeartbeatSchema>;
 
+const HeartbeatReadinessSchema = z.object({
+  readiness: z.object({
+    driftMs: z.number().optional(),
+    currentContentId: z.string().uuid().nullable().optional(),
+    nextContentId: z.string().uuid().nullable().optional(),
+    nextStartsAt: z.string().datetime().nullable().optional(),
+  }),
+});
+
 // ── Device → Server WS messages ───────────────────────────────────────────────
 
 export const PlayLogEntrySchema = z.object({
@@ -157,7 +166,7 @@ export const PlayLogEntrySchema = z.object({
 export type PlayLogEntry = z.infer<typeof PlayLogEntrySchema>;
 
 export const DeviceMessageSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('heartbeat'), payload: HeartbeatSchema }),
+  z.object({ type: z.literal('heartbeat'), payload: z.union([HeartbeatSchema, HeartbeatReadinessSchema]) }),
   z.object({
     type: z.literal('network_info'),
     payload: z.object({

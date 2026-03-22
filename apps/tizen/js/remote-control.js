@@ -11,17 +11,22 @@ window.RemoteControl = {
     ENTER: 13,
     RETURN: 10009, // Back button
     EXIT: 10182,
-    PLAY: 415,
-    PAUSE: 19,
-    STOP: 413,
-    REWIND: 412,
-    FAST_FORWARD: 417,
     MENU: 18,
     INFO: 457,
-    RED: 403,
-    GREEN: 404,
+    RED: 50,          // Number 2 key
+    GREEN: 51,        // Number 3 key
     YELLOW: 405,
     BLUE: 406,
+    NUM_1: 49,
+    NUM_2: 50,
+    NUM_3: 51,
+    NUM_4: 52,
+    NUM_5: 53,
+    NUM_6: 54,
+    NUM_7: 55,
+    NUM_8: 56,
+    NUM_9: 57,
+    NUM_0: 48,
     CHANNEL_UP: 427,
     CHANNEL_DOWN: 428,
     VOLUME_UP: 447,
@@ -58,8 +63,9 @@ window.RemoteControl = {
         // Try to register Info/Tools key for debug display
         const keysToRegister = [
           'Info',      // Info button
-          'Tools',     // Tools/Settings button  
+          'Tools',     // Tools/Settings button
           'Exit',      // Exit button
+          '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
         ];
 
         keysToRegister.forEach(key => {
@@ -82,6 +88,7 @@ window.RemoteControl = {
     if (!this.enabled) return;
 
     const keyCode = event.keyCode;
+    const activeScreen = this.getCurrentScreen();
     
     if (this.debugMode) {
       logger.debug(`Key pressed: ${keyCode}`);
@@ -93,8 +100,9 @@ window.RemoteControl = {
       event.stopPropagation();
     }
 
-    // Handle key presses based on current screen
-    const activeScreen = this.getCurrentScreen();
+    if (this.handleGlobalShortcut(keyCode, activeScreen, event)) {
+      return;
+    }
 
     switch (activeScreen) {
       case 'pairing':
@@ -114,10 +122,49 @@ window.RemoteControl = {
       return 'pairing';
     } else if (!document.getElementById('player-screen').classList.contains('hidden')) {
       return 'player';
-    } else if (!document.getElementById('error-screen').classList.classList.contains('hidden')) {
+    } else if (!document.getElementById('error-screen').classList.contains('hidden')) {
       return 'error';
     }
     return 'unknown';
+  },
+
+  handleGlobalShortcut(keyCode, activeScreen, event) {
+    switch (keyCode) {
+      case this.KEYS.NUM_1:
+        event.preventDefault();
+        logger.info('Navigating to test-tizen.html');
+        window.location.href = 'test-tizen.html';
+        return true;
+
+      case this.KEYS.NUM_2:
+        event.preventDefault();
+        if (activeScreen === 'pairing') {
+          if (typeof Pairing !== 'undefined' && Pairing.init) {
+            logger.info('Manual pairing retry triggered');
+            Pairing.init();
+          }
+        } else if (typeof Player !== 'undefined' && Player.loadContent) {
+          logger.info('Force content refresh');
+          Player.loadContent();
+        }
+        return true;
+
+      case this.KEYS.NUM_3:
+        event.preventDefault();
+        if (typeof Player !== 'undefined' && Player.sendWebSocketHeartbeat) {
+          logger.info('Manual heartbeat');
+          Player.sendWebSocketHeartbeat();
+        }
+        return true;
+
+      case this.KEYS.YELLOW:
+        event.preventDefault();
+        this.toggleDebugMode();
+        return true;
+
+      default:
+        return false;
+    }
   },
 
   handlePairingScreenKeys(keyCode, event) {
@@ -134,13 +181,6 @@ window.RemoteControl = {
         this.toggleDebugMode();
         break;
 
-      case this.KEYS.RED:
-        // Force retry pairing
-        if (typeof Pairing !== 'undefined' && Pairing.init) {
-          logger.info('Manual pairing retry triggered');
-          Pairing.init();
-        }
-        break;
     }
   },
 
@@ -182,59 +222,6 @@ window.RemoteControl = {
         logger.debug(`Navigation: ${directions[keyCode]}`);
         break;
 
-      case this.KEYS.PLAY:
-        // Play button - resume content if paused
-        logger.info('Play button pressed');
-        this.sendRemoteCommand('PLAY');
-        break;
-
-      case this.KEYS.PAUSE:
-        // Pause button
-        logger.info('Pause button pressed');
-        this.sendRemoteCommand('PAUSE');
-        break;
-
-      case this.KEYS.STOP:
-        // Stop button - reload content
-        logger.info('Stop button pressed');
-        this.sendRemoteCommand('STOP');
-        break;
-
-      case this.KEYS.REWIND:
-        logger.info('Rewind button pressed');
-        this.sendRemoteCommand('REWIND');
-        break;
-
-      case this.KEYS.FAST_FORWARD:
-        logger.info('Fast forward button pressed');
-        this.sendRemoteCommand('FAST_FORWARD');
-        break;
-
-      case this.KEYS.RED:
-        // Red button - force content refresh
-        logger.info('Force content refresh');
-        if (typeof Player !== 'undefined' && Player.loadContent) {
-          Player.loadContent();
-        }
-        break;
-
-      case this.KEYS.GREEN:
-        // Green button - send heartbeat
-        logger.info('Manual heartbeat');
-        if (typeof Player !== 'undefined' && Player.sendHeartbeat) {
-          Player.sendHeartbeat();
-        }
-        break;
-
-      case this.KEYS.YELLOW:
-        // Yellow button - toggle debug mode
-        this.toggleDebugMode();
-        break;
-
-      case this.KEYS.BLUE:
-        // Blue button - show connection status
-        this.showConnectionStatus();
-        break;
     }
   },
 
