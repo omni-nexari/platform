@@ -113,18 +113,24 @@
   const isPaired = localStorage.getItem('isPaired') === 'true';
   const deviceId = localStorage.getItem('deviceId');
   const deviceName = localStorage.getItem('deviceName');
+  const deviceToken = localStorage.getItem('deviceToken');
+  const workspaceId = localStorage.getItem('workspaceId');
 
-  if (isPaired && deviceId) {
+  if (isPaired && deviceId && deviceToken) {
     logger.info('Device already paired:', deviceName);
     
     // Start player directly
     Player.init({
       id: deviceId,
       name: deviceName,
-      workspaceId: localStorage.getItem('workspaceId')
+      deviceToken: deviceToken,
+      workspaceId: workspaceId,
     });
     
   } else {
+    if (isPaired && deviceId && !deviceToken) {
+      logger.warn('Found paired device state without token, falling back to pairing flow');
+    }
     logger.info('Device not paired, starting pairing process');
     
     // Start pairing process

@@ -1,5 +1,5 @@
+import { relations } from 'drizzle-orm';
 import {
-  relations,
   pgTable,
   uuid,
   text,

@@ -51,13 +51,16 @@ export const playlistsRelations = relations(playlists, ({ one, many }) => ({
     fields: [playlists.thumbnailContentId],
     references: [contentItems.id],
   }),
-  items: many(playlistItems),
+  items: many(playlistItems, {
+    relationName: 'playlistItems',
+  }),
 }));
 
 export const playlistItemsRelations = relations(playlistItems, ({ one }) => ({
   playlist: one(playlists, {
     fields: [playlistItems.playlistId],
     references: [playlists.id],
+    relationName: 'playlistItems',
   }),
   content: one(contentItems, {
     fields: [playlistItems.contentId],

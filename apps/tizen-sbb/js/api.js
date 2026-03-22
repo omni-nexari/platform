@@ -25,7 +25,7 @@ window.API = {
         body: JSON.stringify(body),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      return await response.json(); // { deviceId, code, expiresAt }
+      return await response.json(); // { status?, deviceId, code?, expiresAt?, deviceToken? }
     } catch (error) {
       logger.error('Failed to request pairing:', error);
       throw error;
@@ -194,16 +194,20 @@ window.API = {
   // ── Find the currently-active playlist from schedules + workspace default ─
   _resolveActivePlaylist(schedules, defaultPlaylist, deviceToken, publishedTargets) {
     if (publishedTargets && publishedTargets.publishedContent) {
+      logger.info('Using published content override:', publishedTargets.publishedContent.name || publishedTargets.publishedContent.id);
       return API._normalizeSingleContent(publishedTargets.publishedContent, 'Published Content', deviceToken);
     }
 
     if (publishedTargets && publishedTargets.publishedPlaylist && (publishedTargets.publishedPlaylist.items || []).length > 0) {
+      logger.info('Using published playlist override:', publishedTargets.publishedPlaylist.name || publishedTargets.publishedPlaylist.id);
       return API._normalizePlaylist(publishedTargets.publishedPlaylist, deviceToken);
     }
 
     if (publishedTargets && publishedTargets.publishedSchedule) {
+      logger.info('Using published schedule override:', publishedTargets.publishedSchedule.name || publishedTargets.publishedSchedule.id);
+      const publishedSchedule = Object.assign({}, publishedTargets.publishedSchedule, { isActive: true });
       const publishedScheduleResult = API._resolveScheduledPlaylist([
-        { ...publishedTargets.publishedSchedule, isActive: true },
+        publishedSchedule,
       ], null, deviceToken);
       if (publishedScheduleResult) return publishedScheduleResult;
     }
@@ -286,3 +290,7 @@ window.API = {
     };
   },
 };
+
+// Some Tizen/SBB runtimes do not reliably expose window properties as bare globals.
+// Create the API alias explicitly because the rest of the player references API directly.
+var API = window.API;

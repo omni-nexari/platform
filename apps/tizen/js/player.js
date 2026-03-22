@@ -18,6 +18,9 @@ const Player = {
     contentRefreshInterval: null,
     wsConnection: null,
     currentContent: null,
+    currentItem: null,
+    currentPlaylist: null,
+    currentIndex: 0,
     lastContentSignature: null,
     lastRenderedItemKey: null,
     playlistTimeout: null,
@@ -301,6 +304,7 @@ const Player = {
                 : 'IDLE';
         const buffered = downloadPct >= 100 && !this.isDownloadingContent;
         const ready = buffered;
+        const playback = this.getHeartbeatPlaybackState();
         return {
             deviceId: this.deviceId,
             folderId,
@@ -310,7 +314,30 @@ const Player = {
             buffered,
             ready,
             displayRect: this.getDisplayRect(),
+            currentContentId: playback.currentContentId,
+            nextContentId: playback.nextContentId,
+            nextStartsAt: playback.nextStartsAt,
         };
+    },
+    getHeartbeatPlaybackState() {
+        var _a, _b, _c, _d;
+        const currentItem = this.currentItem;
+        const currentContentId = String(((_a = currentItem === null || currentItem === void 0 ? void 0 : currentItem.content) === null || _a === void 0 ? void 0 : _a.id) || (currentItem === null || currentItem === void 0 ? void 0 : currentItem.contentId) || '') || null;
+        const playlistItems = Array.isArray(this.currentPlaylist) ? this.currentPlaylist : [];
+        if (!playlistItems.length || this.currentIndex < 0 || this.currentIndex >= playlistItems.length) {
+            return { currentContentId, nextContentId: null, nextStartsAt: null };
+        }
+        if (playlistItems.length < 2) {
+            return { currentContentId, nextContentId: null, nextStartsAt: null };
+        }
+        const nextIndex = (this.currentIndex + 1) % playlistItems.length;
+        const nextItem = playlistItems[nextIndex];
+        const nextContentId = String(((_b = nextItem === null || nextItem === void 0 ? void 0 : nextItem.content) === null || _b === void 0 ? void 0 : _b.id) || (nextItem === null || nextItem === void 0 ? void 0 : nextItem.contentId) || '') || null;
+        const durationSeconds = Number(((_d = (_c = currentItem === null || currentItem === void 0 ? void 0 : currentItem.duration) !== null && _c !== void 0 ? _c : currentItem === null || currentItem === void 0 ? void 0 : currentItem.content) === null || _d === void 0 ? void 0 : _d.duration) || 0);
+        const nextStartsAt = currentContentId && nextContentId && durationSeconds > 0
+            ? new Date(Date.now() + durationSeconds * 1000).toISOString()
+            : null;
+        return { currentContentId, nextContentId, nextStartsAt };
     },
     // Send lightweight heartbeat over WebSocket with readiness metrics
     sendWebSocketHeartbeat() {
@@ -1800,11 +1827,16 @@ const Player = {
                     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
                     const timeoutId = controller ? setTimeout(() => controller.abort(), 3000) : null;
                     try {
+                        const deviceToken = this.deviceToken || localStorage.getItem('deviceToken') || '';
+                        const headers = {
+                            'Content-Type': 'application/json',
+                        };
+                        if (deviceToken) {
+                            headers.Authorization = `Bearer ${deviceToken}`;
+                        }
                         const response = yield fetch(`${CONFIG.API_BASE}/devices/time`, {
                             method: 'GET',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
+                            headers,
                             signal: controller ? controller.signal : undefined,
                         });
                         const t3 = Date.now(); // Client time after response
@@ -1954,6 +1986,9 @@ const Player = {
         let currentIndex = 0;
         const controller = { cancelled: false };
         this.currentPlaylistController = controller;
+        this.currentPlaylist = playableItems;
+        this.currentIndex = 0;
+        this.currentItem = playableItems[0] ?? null;
         container.innerHTML = ''; // Clear container - AVPlay renders to hardware layer
         // AVPlay setDisplayRect coordinate space is always 1920x1080 per Samsung API docs
         const viewportWidth = Math.max(window.innerWidth || 0, 1920);
@@ -2193,6 +2228,8 @@ const Player = {
                 var _a;
                 // Switch logical current only after next actually starts.
                 currentIndex = nextIndex;
+                this.currentIndex = currentIndex;
+                this.currentItem = playableItems[currentIndex] ?? null;
                 try {
                     this.switchSeamlessPlayer();
                 }
@@ -2242,6 +2279,8 @@ const Player = {
         const isSingleItem = playableItems.length === 1;
         const controller = { cancelled: false };
         this.currentPlaylistController = controller;
+        this.currentPlaylist = playableItems;
+        this.currentIndex = Math.max(0, Math.min(startIndex, Math.max(playableItems.length - 1, 0)));
         const scheduleNext = (delayMs) => {
             if (isSingleItem) {
                 // For single-item playlists, check for pending content before looping
@@ -2289,6 +2328,8 @@ const Player = {
             }
             const item = playableItems[currentIndex];
             const content = item.content;
+            this.currentIndex = currentIndex;
+            this.currentItem = item;
             const duration = item.duration || 10; // Default 10 seconds
             logger.info(`Playing item ${currentIndex + 1}/${playableItems.length}: ${content.name} (${content.type}) - URL: ${content.url}`);
             const itemKey = this.getPlaylistItemKey(content);

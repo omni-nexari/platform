@@ -154,6 +154,29 @@ window.Pairing = {
       document.getElementById('pairing-status').textContent = 'Requesting pairing code...';
       
       const response = await API.requestPairing(deviceInfo);
+
+      if (response && response.status === 'claimed' && response.deviceToken) {
+        logger.info('Device already claimed for this DUID, resuming existing pairing');
+        document.getElementById('pairing-status').textContent = 'Device already paired. Resuming...';
+
+        let workspaceName = '';
+        let workspaceId = '';
+        try {
+          const wsData = await API.getWorkspaceInfo(response.deviceToken);
+          workspaceId = (wsData.workspace && wsData.workspace.id) || '';
+          workspaceName = (wsData.workspace && wsData.workspace.name) || '';
+        } catch (error) {
+          logger.warn('Could not fetch workspace info for existing pairing:', error);
+        }
+
+        this.onPaired({
+          id: response.deviceId,
+          deviceToken: response.deviceToken,
+          name: workspaceName || localStorage.getItem('deviceName') || 'SBB Player',
+          workspaceId,
+        });
+        return;
+      }
       
       if (response.code) {
         this.pairingCode = response.code;

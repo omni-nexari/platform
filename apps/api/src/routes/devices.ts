@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { createReadStream, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, schedules, scheduleSlots, playlists, playlistItems, contentItems } from '@signage/db';
-import { eq, and, isNull, desc, inArray } from 'drizzle-orm';
+import { eq, and, isNull, desc, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
@@ -201,7 +201,149 @@ async function loadPlaylistById(playlistId: string) {
   return playlistMap.get(playlistId) ?? null;
 }
 
+function buildSingleContentPlaylist(content: NonNullable<Awaited<ReturnType<typeof db.query.contentItems.findFirst>>>) {
+  return {
+    id: `published-content-${content.id}`,
+    name: content.name,
+    items: [
+      {
+        id: `published-content-item-${content.id}`,
+        playlistId: `published-content-${content.id}`,
+        position: 0,
+        contentId: content.id,
+        nestedPlaylistId: null,
+        duration: content.duration ?? 10,
+        transitionEffect: 'none',
+        conditions: '{}',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        content,
+      },
+    ],
+  };
+}
+
+function buildLegacyPublishedSchedule(target: {
+  content?: NonNullable<Awaited<ReturnType<typeof db.query.contentItems.findFirst>>> | null;
+  playlist?: Awaited<ReturnType<typeof loadPlaylistById>> | null;
+  schedule?: Awaited<ReturnType<typeof loadScheduleById>> | null;
+}) {
+  if (target.schedule) {
+    return { ...target.schedule, isActive: true };
+  }
+
+  if (target.playlist) {
+    return {
+      id: `published-playlist-schedule-${target.playlist.id}`,
+      workspaceId: target.playlist.workspaceId,
+      createdBy: null,
+      name: target.playlist.name,
+      description: 'Legacy published playlist fallback',
+      type: 'override',
+      isActive: true,
+      deletedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      slots: [
+        {
+          id: `published-playlist-slot-${target.playlist.id}`,
+          scheduleId: `published-playlist-schedule-${target.playlist.id}`,
+          playlistId: target.playlist.id,
+          contentId: null,
+          startTime: null,
+          endTime: null,
+          recurrenceType: 'daily',
+          date: null,
+          daysOfWeek: null,
+          label: null,
+          color: '#3b82f6',
+          priority: 9999,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          playlist: target.playlist,
+          content: null,
+        },
+      ],
+    };
+  }
+
+  if (target.content) {
+    return {
+      id: `published-content-schedule-${target.content.id}`,
+      workspaceId: target.content.workspaceId,
+      createdBy: target.content.uploadedBy,
+      name: target.content.name,
+      description: 'Legacy published content fallback',
+      type: 'override',
+      isActive: true,
+      deletedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      slots: [
+        {
+          id: `published-content-slot-${target.content.id}`,
+          scheduleId: `published-content-schedule-${target.content.id}`,
+          playlistId: null,
+          contentId: target.content.id,
+          startTime: null,
+          endTime: null,
+          recurrenceType: 'daily',
+          date: null,
+          daysOfWeek: null,
+          label: null,
+          color: '#3b82f6',
+          priority: 9999,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          playlist: null,
+          content: target.content,
+        },
+      ],
+    };
+  }
+
+  return null;
+}
+
+async function ensureDevicePublishSchema(): Promise<void> {
+  await db.execute(sql.raw(`
+    ALTER TABLE devices
+    ADD COLUMN IF NOT EXISTS published_content_id uuid REFERENCES content_items(id) ON DELETE SET NULL
+  `));
+
+  await db.execute(sql.raw(`
+    ALTER TABLE devices
+    ADD COLUMN IF NOT EXISTS published_playlist_id uuid REFERENCES playlists(id) ON DELETE SET NULL
+  `));
+
+  await db.execute(sql.raw(`
+    ALTER TABLE devices
+    ADD COLUMN IF NOT EXISTS published_schedule_id uuid REFERENCES schedules(id) ON DELETE SET NULL
+  `));
+
+  await db.execute(sql.raw(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'devices_single_publish_target_chk'
+      ) THEN
+        ALTER TABLE devices
+        ADD CONSTRAINT devices_single_publish_target_chk
+        CHECK (
+          (CASE WHEN published_content_id IS NOT NULL THEN 1 ELSE 0 END) +
+          (CASE WHEN published_playlist_id IS NOT NULL THEN 1 ELSE 0 END) +
+          (CASE WHEN published_schedule_id IS NOT NULL THEN 1 ELSE 0 END) <= 1
+        );
+      END IF;
+    END $$;
+  `));
+}
+
 export async function deviceRoutes(app: FastifyInstance) {
+  await ensureDevicePublishSchema();
+
   // ── POST /devices/pair/request ─ unauthenticated, called by the Tizen device ─
   app.post('/pair/request', async (req, reply) => {
     const body = PairRequestSchema.safeParse(req.body);
@@ -212,6 +354,28 @@ export async function deviceRoutes(app: FastifyInstance) {
     const existing = duid
       ? await db.query.devices.findFirst({ where: eq(devices.duid, duid) })
       : null;
+
+    if (existing?.orgId && existing.deviceToken && !existing.deletedAt) {
+      await db
+        .update(devices)
+        .set({
+          duid: duid ?? existing.duid,
+          modelName: modelName ?? existing.modelName,
+          modelCode: modelCode ?? existing.modelCode,
+          serialNumber: serialNumber ?? existing.serialNumber,
+          firmwareVersion: firmwareVersion ?? existing.firmwareVersion,
+          ipAddress: req.ip ?? null,
+          lastSeen: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(devices.id, existing.id));
+
+      return reply.status(200).send({
+        status: 'claimed',
+        deviceId: existing.id,
+        deviceToken: existing.deviceToken,
+      });
+    }
 
     let code = '';
     for (let i = 0; i < 5; i++) {
@@ -895,6 +1059,11 @@ export async function deviceRoutes(app: FastifyInstance) {
   // Used by the Tizen player app to fetch schedule / content
   // ════════════════════════════════════════════════════════════════════════════
 
+  // ── GET /devices/time ─ lightweight server timestamp for player clock sync ─
+  app.get('/time', async (_req, reply) => {
+    return reply.send({ timestamp: Date.now() });
+  });
+
   /** Decode and verify a device JWT from the Authorization header or ?token= query param */
   function authenticateDevice(req: Parameters<typeof app.authenticate>[0], reply: Parameters<typeof app.authenticate>[1]): { deviceId: string; orgId: string; workspaceId: string } | null {
     const authHeader = req.headers.authorization;
@@ -918,9 +1087,40 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!auth) return;
     const { workspaceId } = auth;
 
-    const workspaceSchedules = await loadWorkspaceSchedules(workspaceId);
+    const [device, workspaceSchedules] = await Promise.all([
+      db.query.devices.findFirst({
+        where: and(eq(devices.id, auth.deviceId), isNull(devices.deletedAt)),
+      }),
+      loadWorkspaceSchedules(workspaceId),
+    ]);
 
-    return reply.send({ schedules: workspaceSchedules });
+    if (!device) return reply.status(404).send({ error: 'Device not found' });
+
+    const [publishedContent, publishedPlaylist, publishedSchedule] = await Promise.all([
+      device.publishedContentId
+        ? db.query.contentItems.findFirst({
+          where: and(eq(contentItems.id, device.publishedContentId), isNull(contentItems.deletedAt)),
+        })
+        : Promise.resolve(null),
+      device.publishedPlaylistId
+        ? loadPlaylistById(device.publishedPlaylistId)
+        : Promise.resolve(null),
+      device.publishedScheduleId
+        ? loadScheduleById(device.publishedScheduleId)
+        : Promise.resolve(null),
+    ]);
+
+    const legacyPublishedSchedule = buildLegacyPublishedSchedule({
+      content: publishedContent,
+      playlist: publishedPlaylist,
+      schedule: publishedSchedule,
+    });
+
+    return reply.send({
+      schedules: legacyPublishedSchedule
+        ? [legacyPublishedSchedule, ...workspaceSchedules]
+        : workspaceSchedules,
+    });
   });
 
   // ── GET /devices/device/workspace ─ workspace info inc. defaults ──────────
@@ -938,7 +1138,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
     if (!workspace) return reply.status(404).send({ error: 'Workspace not found' });
 
-    // Include device-level default playlist override before workspace fallback.
+    // Resolve device-level default playlist override before workspace fallback.
     let defaultPlaylist = null;
     const effectiveDefaultPlaylistId = device.defaultPlaylistId ?? workspace.defaultPlaylistId;
     if (effectiveDefaultPlaylistId) {
@@ -959,7 +1159,17 @@ export async function deviceRoutes(app: FastifyInstance) {
         : Promise.resolve(null),
     ]);
 
-    return reply.send({ workspace, defaultPlaylist, publishedContent, publishedPlaylist, publishedSchedule });
+    const compatibilityDefaultPlaylist = publishedPlaylist
+      ?? (publishedContent ? buildSingleContentPlaylist(publishedContent) : null)
+      ?? defaultPlaylist;
+
+    return reply.send({
+      workspace,
+      defaultPlaylist: compatibilityDefaultPlaylist,
+      publishedContent,
+      publishedPlaylist,
+      publishedSchedule,
+    });
   });
 
   // ── GET /devices/device/content/:id/file ─ stream content file to device ──
