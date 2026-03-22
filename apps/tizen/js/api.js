@@ -62,12 +62,15 @@ window.API = {
             },
           }));
         }
-        // heartbeat extras (cpu, storage, firmware)
-        if (data.cpuLoad != null || data.storageFree != null || data.firmwareVersion) {
+        // heartbeat extras (cpu, storage, firmware, timezone, resolution)
+        if (data.cpuLoad != null || data.storageFree != null || data.storageFreeBytes != null || data.firmwareVersion || data.timezone || data.resolution) {
           ws.send(JSON.stringify({
             type: 'heartbeat',
             payload: {
+              playerVersion: window.PLAYER_DEPLOY_VERSION || undefined,
               firmwareVersion: data.firmwareVersion || undefined,
+              timezone: data.timezone || undefined,
+              resolution: data.resolution || undefined,
               powerState: 'on',
               cpuLoad: data.cpuLoad != null ? data.cpuLoad : undefined,
               storageFreeBytes: data.storageFreeBytes || data.storageFree || undefined,

@@ -30,6 +30,24 @@ export interface PickedDevice {
 type SortKey = 'date-desc' | 'date-asc' | 'name-asc' | 'name-desc';
 type Tab = 'recent' | 'devices';
 
+function formatTimezoneLabel(value: string | null | undefined) {
+  if (!value) return '';
+
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (!trimmed.includes('/')) return trimmed.toUpperCase();
+
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: trimmed,
+      timeZoneName: 'short',
+    }).formatToParts(new Date());
+    return parts.find((part) => part.type === 'timeZoneName')?.value?.trim() || trimmed;
+  } catch {
+    return trimmed;
+  }
+}
+
 function sortLabel(k: SortKey) {
   return { 'date-desc': 'Date ↓', 'date-asc': 'Date ↑', 'name-asc': 'Name A-Z', 'name-desc': 'Name Z-A' }[k];
 }
@@ -57,6 +75,7 @@ function DeviceCard({
     : item.connectionType === 'ethernet'
     ? 'Ethernet'
     : 'Connection unknown';
+  const timezoneLabel = formatTimezoneLabel(item.timezone);
 
   return (
     <div
@@ -92,7 +111,7 @@ function DeviceCard({
           <span className="truncate max-w-[180px]">{subtitle}</span>
           <span>•</span>
           <span>{networkLabel}</span>
-          {item.timezone ? <><span>•</span><span className="font-mono">{item.timezone}</span></> : null}
+          {timezoneLabel ? <><span>•</span><span className="font-mono">{timezoneLabel}</span></> : null}
         </div>
         <div className="mt-1">
           <AssignedTagPills tags={item.assignedTags} />

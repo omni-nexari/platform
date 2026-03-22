@@ -319,6 +319,14 @@ const Player = {
             nextStartsAt: playback.nextStartsAt,
         };
     },
+    getDisplayRect() {
+        return {
+            left: 0,
+            top: 0,
+            width: Math.max(window.innerWidth || 0, 1920),
+            height: Math.max(window.innerHeight || 0, 1080),
+        };
+    },
     getHeartbeatPlaybackState() {
         var _a, _b, _c, _d;
         const currentItem = this.currentItem;
@@ -821,7 +829,11 @@ const Player = {
         if (!value || typeof value !== 'string') {
             return '';
         }
-        const sanitized = value.split('?')[0].split('#')[0];
+        let sanitized = value.split('?')[0].split('#')[0];
+        try {
+            sanitized = (new URL(value)).pathname || sanitized;
+        }
+        catch (_) { }
         if (sanitized.indexOf('.') === -1) {
             return '';
         }
@@ -1988,7 +2000,7 @@ const Player = {
         this.currentPlaylistController = controller;
         this.currentPlaylist = playableItems;
         this.currentIndex = 0;
-        this.currentItem = playableItems[0] ?? null;
+        this.currentItem = playableItems.length > 0 ? playableItems[0] : null;
         container.innerHTML = ''; // Clear container - AVPlay renders to hardware layer
         // AVPlay setDisplayRect coordinate space is always 1920x1080 per Samsung API docs
         const viewportWidth = Math.max(window.innerWidth || 0, 1920);
@@ -2229,7 +2241,7 @@ const Player = {
                 // Switch logical current only after next actually starts.
                 currentIndex = nextIndex;
                 this.currentIndex = currentIndex;
-                this.currentItem = playableItems[currentIndex] ?? null;
+                this.currentItem = playableItems.length > currentIndex ? playableItems[currentIndex] : null;
                 try {
                     this.switchSeamlessPlayer();
                 }
@@ -2886,25 +2898,30 @@ const Player = {
             logger.debug('AVPlay profile unchanged; skipping reapply:', profile.key);
             return;
         }
-        try {
-            webapis.avplay.setStreamingProperty('ADAPTIVE_INFO', profile.settings.adaptive);
+        if (profile.streamType !== 'file') {
+            try {
+                webapis.avplay.setStreamingProperty('ADAPTIVE_INFO', profile.settings.adaptive);
+            }
+            catch (err) {
+                logger.warn('Failed to set ADAPTIVE_INFO:', (err === null || err === void 0 ? void 0 : err.message) || err);
+            }
+            try {
+                webapis.avplay.setStreamingProperty('SET_MODE_4K', profile.settings.mode4k ? 'TRUE' : 'FALSE');
+            }
+            catch (err) {
+                logger.warn('Failed to set SET_MODE_4K:', (err === null || err === void 0 ? void 0 : err.message) || err);
+            }
+            try {
+                webapis.avplay.setBufferingParam('PLAYER_BUFFER_FOR_PLAY', profile.settings.bufferPlay);
+                webapis.avplay.setBufferingParam('PLAYER_BUFFER_FOR_RESUME', profile.settings.bufferResume);
+                webapis.avplay.setBufferingParam('PLAYER_BUFFER_SIZE_IN_SECOND', profile.settings.bufferSeconds);
+            }
+            catch (err) {
+                logger.warn('Failed to set buffering params:', (err === null || err === void 0 ? void 0 : err.message) || err);
+            }
         }
-        catch (err) {
-            logger.warn('Failed to set ADAPTIVE_INFO:', (err === null || err === void 0 ? void 0 : err.message) || err);
-        }
-        try {
-            webapis.avplay.setStreamingProperty('SET_MODE_4K', profile.settings.mode4k ? 'TRUE' : 'FALSE');
-        }
-        catch (err) {
-            logger.warn('Failed to set SET_MODE_4K:', (err === null || err === void 0 ? void 0 : err.message) || err);
-        }
-        try {
-            webapis.avplay.setBufferingParam('PLAYER_BUFFER_FOR_PLAY', profile.settings.bufferPlay);
-            webapis.avplay.setBufferingParam('PLAYER_BUFFER_FOR_RESUME', profile.settings.bufferResume);
-            webapis.avplay.setBufferingParam('PLAYER_BUFFER_SIZE_IN_SECOND', profile.settings.bufferSeconds);
-        }
-        catch (err) {
-            logger.warn('Failed to set buffering params:', (err === null || err === void 0 ? void 0 : err.message) || err);
+        else {
+            logger.debug('Skipping streaming-only AVPlay profile settings for file playback');
         }
         // Avoid setting timeout for local files; AVPlay throws on some firmwares
         if (!url.startsWith('file:///')) {

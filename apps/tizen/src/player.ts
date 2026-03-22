@@ -392,6 +392,15 @@ const Player = {
     };
   },
 
+  getDisplayRect() {
+    return {
+      left: 0,
+      top: 0,
+      width: Math.max(window.innerWidth || 0, 1920),
+      height: Math.max(window.innerHeight || 0, 1080),
+    };
+  },
+
   // Send lightweight heartbeat over WebSocket with readiness metrics
   sendWebSocketHeartbeat() {
     if (!this.wsConnection || this.wsConnection.readyState !== WebSocket.OPEN) {
@@ -943,7 +952,12 @@ const Player = {
       return '';
     }
 
-    const sanitized = value.split('?')[0].split('#')[0];
+    let sanitized = value.split('?')[0].split('#')[0];
+    try {
+      sanitized = new URL(value).pathname || sanitized;
+    } catch (_) {
+      // Keep the existing fallback for non-URL values.
+    }
     if (sanitized.indexOf('.') === -1) {
       return '';
     }
@@ -3120,24 +3134,28 @@ const Player = {
       return;
     }
 
-    try {
-      webapis.avplay.setStreamingProperty('ADAPTIVE_INFO', profile.settings.adaptive);
-    } catch (err) {
-      logger.warn('Failed to set ADAPTIVE_INFO:', err?.message || err);
-    }
+    if (profile.streamType !== 'file') {
+      try {
+        webapis.avplay.setStreamingProperty('ADAPTIVE_INFO', profile.settings.adaptive);
+      } catch (err) {
+        logger.warn('Failed to set ADAPTIVE_INFO:', err?.message || err);
+      }
 
-    try {
-      webapis.avplay.setStreamingProperty('SET_MODE_4K', profile.settings.mode4k ? 'TRUE' : 'FALSE');
-    } catch (err) {
-      logger.warn('Failed to set SET_MODE_4K:', err?.message || err);
-    }
+      try {
+        webapis.avplay.setStreamingProperty('SET_MODE_4K', profile.settings.mode4k ? 'TRUE' : 'FALSE');
+      } catch (err) {
+        logger.warn('Failed to set SET_MODE_4K:', err?.message || err);
+      }
 
-    try {
-      (webapis.avplay as any).setBufferingParam('PLAYER_BUFFER_FOR_PLAY', profile.settings.bufferPlay);
-      (webapis.avplay as any).setBufferingParam('PLAYER_BUFFER_FOR_RESUME', profile.settings.bufferResume);
-      (webapis.avplay as any).setBufferingParam('PLAYER_BUFFER_SIZE_IN_SECOND', profile.settings.bufferSeconds);
-    } catch (err) {
-      logger.warn('Failed to set buffering params:', err?.message || err);
+      try {
+        (webapis.avplay as any).setBufferingParam('PLAYER_BUFFER_FOR_PLAY', profile.settings.bufferPlay);
+        (webapis.avplay as any).setBufferingParam('PLAYER_BUFFER_FOR_RESUME', profile.settings.bufferResume);
+        (webapis.avplay as any).setBufferingParam('PLAYER_BUFFER_SIZE_IN_SECOND', profile.settings.bufferSeconds);
+      } catch (err) {
+        logger.warn('Failed to set buffering params:', err?.message || err);
+      }
+    } else {
+      logger.debug('Skipping streaming-only AVPlay profile settings for file playback');
     }
 
     // Avoid setting timeout for local files; AVPlay throws on some firmwares
