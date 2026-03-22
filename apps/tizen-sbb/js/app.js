@@ -116,6 +116,21 @@
   const deviceToken = localStorage.getItem('deviceToken');
   const workspaceId = localStorage.getItem('workspaceId');
 
+  // Start local MDC bridge — Samsung B2B API launches a real Node.js process
+  // on the TV OS that listens on 127.0.0.1:9615 and forwards MDC commands to
+  // the panel firmware on 127.0.0.1:1515.
+  if (typeof b2bapis !== 'undefined' && b2bapis.b2bcontrol &&
+      typeof b2bapis.b2bcontrol.startNodeServer === 'function') {
+    b2bapis.b2bcontrol.startNodeServer(
+      'server.js.signed',
+      'mdc-bridge',
+      function() { logger.info('[mdc-bridge] Node server started on :9615'); },
+      function(e) { logger.warn('[mdc-bridge] Failed to start Node server:', e && e.message); }
+    );
+  } else {
+    logger.warn('[mdc-bridge] b2bcontrol.startNodeServer not available on this platform');
+  }
+
   if (isPaired && deviceId && deviceToken) {
     logger.info('Device already paired:', deviceName);
     

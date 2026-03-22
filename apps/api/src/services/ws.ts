@@ -19,6 +19,25 @@ export interface DeviceConsoleLogEntry {
   createdAt: string;
 }
 
+export interface MdcStatusResponse {
+  requestId: string;
+  ok: boolean;
+  rawHex?: string;
+  error?: string;
+  status?: {
+    displayId: number;
+    ack: 'A' | 'N';
+    rCmd: number;
+    power?: number;
+    volume?: number;
+    mute?: number;
+    input?: number;
+    aspect?: number;
+    nTime?: number;
+    fTime?: number;
+  };
+}
+
 export type WsCommand =
   | { type: 'reboot' }
   | { type: 'screenshot' }
@@ -40,11 +59,18 @@ export type WsCommand =
   | { type: 'set_screenshot_interval'; payload: { minutes: number } }
   | { type: 'start_live_capture'; payload: { intervalMs: number } }
   | { type: 'stop_live_capture' }
-  | { type: 'set_zones'; payload: { zones: Array<{ id: string; rect: { x: number; y: number; width: number; height: number }; playlistId?: string }> } };
+  | { type: 'set_zones'; payload: { zones: Array<{ id: string; rect: { x: number; y: number; width: number; height: number }; playlistId?: string }> } }
+  | { type: 'remote_key'; payload: { key: string } }
+  | { type: 'remote_status'; payload: { requestId: string } };
 
 const connections = new Map<string, Conn>();
 const deviceLogs = new Map<string, DeviceConsoleLogEntry[]>();
 const MAX_DEVICE_LOGS = 2000;
+const pendingMdcStatus = new Map<string, {
+  resolve: (value: MdcStatusResponse) => void;
+  reject: (reason: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
 
 // ── Live-view SSE relay ────────────────────────────────────────────────────
 type LiveFrame = (dataBase64: string) => void;
@@ -120,6 +146,31 @@ export function sendCommand(deviceId: string, command: WsCommand): boolean {
 
 export function broadcastToDevices(deviceIds: string[], command: WsCommand): void {
   for (const id of deviceIds) sendCommand(id, command);
+}
+
+function getPendingMdcStatusKey(deviceId: string, requestId: string): string {
+  return `${deviceId}:${requestId}`;
+}
+
+export function requestRemoteStatus(deviceId: string, timeoutMs = 5000): Promise<MdcStatusResponse> {
+  const requestId = randomUUID();
+  const pendingKey = getPendingMdcStatusKey(deviceId, requestId);
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingMdcStatus.delete(pendingKey);
+      reject(new Error('Timed out waiting for MDC status response from device'));
+    }, timeoutMs);
+
+    pendingMdcStatus.set(pendingKey, { resolve, reject, timer });
+
+    const delivered = sendCommand(deviceId, { type: 'remote_status', payload: { requestId } });
+    if (!delivered) {
+      clearTimeout(timer);
+      pendingMdcStatus.delete(pendingKey);
+      reject(new Error('Device is offline or not connected via WebSocket'));
+    }
+  });
 }
 
 // ── Storage root for screenshots ──────────────────────────────────────────────
@@ -281,6 +332,18 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
   // ── device_log ─────────────────────────────────────────────────────────────
   if (msg.type === 'device_log') {
     appendDeviceLogs(deviceId, msg.payload.level, msg.payload.lines);
+    return;
+  }
+
+  // ── mdc_status ───────────────────────────────────────────────────────────
+  if (msg.type === 'mdc_status') {
+    const pendingKey = getPendingMdcStatusKey(deviceId, msg.payload.requestId);
+    const pending = pendingMdcStatus.get(pendingKey);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pendingMdcStatus.delete(pendingKey);
+      pending.resolve(msg.payload);
+    }
     return;
   }
 

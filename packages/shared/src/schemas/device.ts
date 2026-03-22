@@ -229,6 +229,27 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
       error: z.string().optional(),
     }),
   }),
+  z.object({
+    type: z.literal('mdc_status'),
+    payload: z.object({
+      requestId: z.string().uuid(),
+      ok: z.boolean(),
+      rawHex: z.string().optional(),
+      error: z.string().optional(),
+      status: z.object({
+        displayId: z.number().int(),
+        ack: z.enum(['A', 'N']),
+        rCmd: z.number().int(),
+        power: z.number().int().optional(),
+        volume: z.number().int().optional(),
+        mute: z.number().int().optional(),
+        input: z.number().int().optional(),
+        aspect: z.number().int().optional(),
+        nTime: z.number().int().optional(),
+        fTime: z.number().int().optional(),
+      }).optional(),
+    }),
+  }),
 ]);
 export type DeviceMessage = z.infer<typeof DeviceMessageSchema>;
 

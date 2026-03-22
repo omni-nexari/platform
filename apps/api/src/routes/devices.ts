@@ -10,9 +10,10 @@ const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 import { ClaimDeviceSchema, UpdateDeviceSchema, DeviceCommandSchema, PairRequestSchema } from '@signage/shared';
 import { writeAuditLog } from '../services/audit.js';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
-import { sendMdcKey, MDC_KEY_CODES, type MdcKeyName } from '../services/mdc.js';
+import { MDC_ALL_COMMAND_NAMES } from '../services/mdc.js';
 import {
   sendCommand,
+  requestRemoteStatus,
   isDeviceOnline,
   registerDevice,
   unregisterDevice,
@@ -1371,22 +1372,45 @@ export async function deviceRoutes(app: FastifyInstance) {
     const body = (req.body ?? {}) as { key?: string };
     const key = body.key ?? '';
 
-    if (!(key in MDC_KEY_CODES)) {
-      return reply.status(400).send({ error: `Unknown key '${key}'. Valid keys: ${Object.keys(MDC_KEY_CODES).join(', ')}` });
+    if (!MDC_ALL_COMMAND_NAMES.has(key)) {
+      return reply.status(400).send({ error: `Unknown command '${key}'. Valid commands: ${[...MDC_ALL_COMMAND_NAMES].join(', ')}` });
     }
 
     const device = await db.query.devices.findFirst({
       where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
     });
     if (!device) return reply.status(404).send({ error: 'Not found' });
-    if (!device.ipAddress) return reply.status(422).send({ error: 'Device IP address not known — send a network_info heartbeat first' });
+
+    // Forward the command to the device via WebSocket. The player app receives
+    // it and calls http://127.0.0.1:9615/remote-key on its local MDC bridge
+    // Node server, which then sends the MDC binary packet to 127.0.0.1:1515.
+    // This works regardless of network topology — no inbound TCP needed.
+    const delivered = sendCommand(device.id, { type: 'remote_key', payload: { key } });
+    if (!delivered) {
+      return reply.status(503).send({ error: 'Device is offline or not connected via WebSocket' });
+    }
+    return reply.send({ ok: true, key });
+  });
+
+  // ── GET /devices/:id/remote-status ─ request real MDC status ack ─────────
+  app.get('/:id/remote-status', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+    if (!isDeviceOnline(device.id)) {
+      return reply.status(503).send({ error: 'Device is offline or not connected via WebSocket' });
+    }
 
     try {
-      await sendMdcKey(device.ipAddress, key as MdcKeyName);
-      return reply.send({ ok: true, key, ip: device.ipAddress });
+      const status = await requestRemoteStatus(device.id, 5000);
+      return reply.send(status);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      return reply.status(502).send({ error: `MDC command failed: ${msg}` });
+      return reply.status(504).send({ error: msg });
     }
   });
 }

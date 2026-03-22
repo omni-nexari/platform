@@ -217,6 +217,66 @@ const Player = {
                 case 'stop_live_capture':
                     this.executeCommand({ type: 'STOP_LIVE_CAPTURE' });
                     break;
+                case 'remote_key': {
+                    var _key = message.payload && message.payload.key;
+                    if (_key) {
+                        fetch('http://127.0.0.1:9615/remote-key', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ key: _key })
+                        }).then(function(r) {
+                            logger.info('[mdc-bridge] remote_key', _key, 'status:', r.status);
+                        }).catch(function(e) {
+                            logger.error('[mdc-bridge] remote_key error:', e && e.message);
+                        });
+                    }
+                    break;
+                }
+                case 'remote_status': {
+                    var _requestId = message.payload && message.payload.requestId;
+                    if (_requestId) {
+                        var _settled = false;
+                        var _reply = function(payload) {
+                            if (_settled) return;
+                            _settled = true;
+                            clearTimeout(_statusTimer);
+                            if (window.Player && window.Player.wsConnection && window.Player.wsConnection.readyState === 1) {
+                                window.Player.wsConnection.send(JSON.stringify({
+                                    type: 'mdc_status',
+                                    payload: Object.assign({ requestId: _requestId }, payload),
+                                }));
+                            }
+                        };
+                        var _statusTimer = setTimeout(function() {
+                            logger.warn('[mdc-bridge] remote_status timed out waiting for localhost bridge');
+                            _reply({ ok: false, error: 'Local MDC bridge timeout' });
+                        }, 4000);
+
+                        logger.info('[mdc-bridge] remote_status request received');
+                        fetch('http://127.0.0.1:9615/status')
+                            .then(function(r) {
+                                return r.text().then(function(text) {
+                                    var payload = null;
+                                    try { payload = JSON.parse(text); } catch (e) { /* ignore */ }
+                                    logger.info('[mdc-bridge] remote_status localhost response', r.status, payload && payload.ok);
+                                    _reply({
+                                        ok: !!(r.ok && payload && payload.ok),
+                                        rawHex: payload && payload.rawHex,
+                                        error: payload && payload.error ? payload.error : (!r.ok ? ('HTTP ' + r.status) : undefined),
+                                        status: payload && payload.status,
+                                    });
+                                });
+                            })
+                            .catch(function(e) {
+                                logger.error('[mdc-bridge] remote_status fetch error:', e && e.message);
+                                _reply({
+                                    ok: false,
+                                    error: e && e.message ? e.message : String(e),
+                                });
+                            });
+                    }
+                    break;
+                }
                 case 'update_player':
                     logger.info('update_player command received:', message.payload);
                     if (typeof AppUpdater !== 'undefined') {

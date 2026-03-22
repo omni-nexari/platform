@@ -1,20 +1,20 @@
 /**
- * Samsung MDC (Multiple Display Control) — LAN TCP key injection.
+ * Samsung MDC (Multiple Display Control) — LAN TCP command sender.
  *
  * Protocol frame: [0xAA] [CMD] [DISPLAY_ID] [DATA_LEN] [DATA…] [CHECKSUM]
- *   Checksum = (CMD + DISPLAY_ID + DATA_LEN + DATA bytes) mod 256
+ *   Checksum = (CMD + DISPLAY_ID + DATA_LEN + sum(DATA bytes)) mod 256
  *
  * Samsung LFD/commercial displays listen on TCP port 1515 for MDC commands.
  * The API server opens a TCP socket directly to the device's LAN IP — no
  * changes are required on the Tizen app side.
  *
- * Key codes are sourced from community reverse-engineering of the Samsung MDC
- * specification. These are consistent across Samsung LFD (QBx/QMx/PMx) series
- * but may need verification on specific model variants.
+ * Key codes sourced from community reverse-engineering of the Samsung MDC
+ * specification (QBx/QMx/PMx series). Verify on your specific model.
  */
 
 import net from 'node:net';
 
+// ── Navigation / function key codes (used with CMD 0x0B) ────────────────────
 export const MDC_KEY_CODES = {
   ARROW_UP:    0x60,
   ARROW_DOWN:  0x61,
@@ -28,24 +28,29 @@ export const MDC_KEY_CODES = {
 
 export type MdcKeyName = keyof typeof MDC_KEY_CODES;
 
-const MDC_PORT = 1515;
-const MDC_CMD_KEY = 0x0B;     // Key Control command
-const CONNECT_TIMEOUT_MS = 3000;
+/** All command names accepted by the /remote-key route. */
+export const MDC_ALL_COMMAND_NAMES = new Set([
+  ...Object.keys(MDC_KEY_CODES),
+  'POWER_ON',
+  'POWER_OFF',
+  'REBOOT',
+]);
 
-function buildKeyPacket(keyCode: number, displayId = 0x01): Buffer {
-  const cmd = MDC_CMD_KEY;
-  const dataLen = 0x01;
-  const checksum = (cmd + displayId + dataLen + keyCode) & 0xff;
-  return Buffer.from([0xaa, cmd, displayId, dataLen, keyCode, checksum]);
+const MDC_PORT           = 1515;
+const CONNECT_TIMEOUT_MS = 3000;
+const MDC_CMD_KEY        = 0x0B; // Key Control
+const MDC_CMD_POWER      = 0x11; // Panel Power On/Off
+const MDC_CMD_RESET      = 0xA1; // Device restart (model-dependent)
+
+/** Build a complete MDC binary packet. */
+function buildPacket(cmd: number, data: number[], displayId = 0x01): Buffer {
+  const len = data.length;
+  const checksum = (cmd + displayId + len + data.reduce((s, b) => s + b, 0)) & 0xff;
+  return Buffer.from([0xaa, cmd, displayId, len, ...data, checksum]);
 }
 
-/**
- * Send a single key press to a Samsung LFD display via MDC over TCP.
- * Connects, sends the 6-byte packet, then immediately closes the socket.
- */
-export async function sendMdcKey(ip: string, key: MdcKeyName): Promise<void> {
-  const packet = buildKeyPacket(MDC_KEY_CODES[key]);
-
+/** Open TCP socket to ip:1515, send packet, close immediately. */
+function sendPacket(ip: string, packet: Buffer): Promise<void> {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: ip, port: MDC_PORT });
 
@@ -68,4 +73,23 @@ export async function sendMdcKey(ip: string, key: MdcKeyName): Promise<void> {
       reject(err);
     });
   });
+}
+
+/** Send a navigation / function key press. */
+export function sendMdcKey(ip: string, key: MdcKeyName): Promise<void> {
+  return sendPacket(ip, buildPacket(MDC_CMD_KEY, [MDC_KEY_CODES[key]]));
+}
+
+/** Power the panel on (true) or off / standby (false). CMD 0x11. */
+export function sendMdcPower(ip: string, on: boolean): Promise<void> {
+  return sendPacket(ip, buildPacket(MDC_CMD_POWER, [on ? 0x01 : 0x00]));
+}
+
+/**
+ * Restart the display OS. Uses CMD 0xA1 / data 0x00 which triggers a
+ * soft-restart on most Samsung QBx / QMx / PMx series.
+ * Behaviour is model-dependent — no response packet is expected.
+ */
+export function sendMdcReboot(ip: string): Promise<void> {
+  return sendPacket(ip, buildPacket(MDC_CMD_RESET, [0x00]));
 }

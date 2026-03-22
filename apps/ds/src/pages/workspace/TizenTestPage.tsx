@@ -13,6 +13,8 @@ import {
   Download,
   Home,
   Monitor,
+  Power,
+  PowerOff,
   RefreshCw,
   Send,
   TerminalSquare,
@@ -621,6 +623,23 @@ function LiveViewOverlay({
   const [isStale, setIsStale] = useState(false);
   const [measuredCadenceMs, setMeasuredCadenceMs] = useState(0);
   const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
+  const [mdcStatusResponse, setMdcStatusResponse] = useState<{
+    ok: boolean;
+    rawHex?: string;
+    error?: string;
+    status?: {
+      displayId: number;
+      ack: 'A' | 'N';
+      rCmd: number;
+      power?: number;
+      volume?: number;
+      mute?: number;
+      input?: number;
+      aspect?: number;
+      nTime?: number;
+      fTime?: number;
+    };
+  } | null>(null);
 
   const esRef = useRef<EventSource | null>(null);
   const statusRef = useRef<LiveStatus>('idle');
@@ -740,6 +759,38 @@ function LiveViewOverlay({
       setRemoteStatus(`✗ ${label}`);
     }
     remoteStatusTimerRef.current = setTimeout(() => setRemoteStatus(null), 2500);
+  }
+
+  async function fetchRemoteStatus() {
+    if (remoteStatusTimerRef.current) clearTimeout(remoteStatusTimerRef.current);
+    try {
+      const result = await api.get(`/devices/${deviceId}/remote-status`) as {
+        ok: boolean;
+        rawHex?: string;
+        error?: string;
+        status?: {
+          displayId: number;
+          ack: 'A' | 'N';
+          rCmd: number;
+          power?: number;
+          volume?: number;
+          mute?: number;
+          input?: number;
+          aspect?: number;
+          nTime?: number;
+          fTime?: number;
+        };
+      };
+      setMdcStatusResponse(result);
+      setRemoteStatus(result.ok ? '✓ status read' : `✗ ${result.error ?? 'status failed'}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      let label = msg;
+      try { label = (JSON.parse(msg) as { error?: string }).error ?? msg; } catch { /* raw text */ }
+      setMdcStatusResponse({ ok: false, error: label });
+      setRemoteStatus(`✗ ${label}`);
+    }
+    remoteStatusTimerRef.current = setTimeout(() => setRemoteStatus(null), 3000);
   }
 
   return (
@@ -863,8 +914,30 @@ function LiveViewOverlay({
         </div>
 
         {/* Remote control panel */}
-        <div className="w-48 flex-shrink-0 border-l border-white/10 flex flex-col items-center justify-center gap-5 p-4 bg-black/40">
+        <div className="w-56 flex-shrink-0 border-l border-white/10 flex flex-col items-center gap-4 p-4 bg-black/40 overflow-y-auto">
           <p className="text-[10px] font-semibold uppercase tracking-widest text-white/30">Remote</p>
+
+          {/* Power */}
+          <div className="flex gap-1.5 w-full">
+            <button onClick={() => sendRemoteKey('POWER_ON')} title="Power On"
+              className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-green-600/20 hover:bg-green-600/40 active:bg-green-600/60 text-green-400 text-xs font-medium transition-colors">
+              <Power className="w-3 h-3" /> On
+            </button>
+            <button onClick={() => sendRemoteKey('POWER_OFF')} title="Power Off"
+              className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/40 active:bg-red-600/60 text-red-400 text-xs font-medium transition-colors">
+              <PowerOff className="w-3 h-3" /> Off
+            </button>
+          </div>
+          <button onClick={() => sendRemoteKey('REBOOT')} title="Reboot display"
+            className="flex items-center justify-center gap-1 w-full py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/40 active:bg-amber-600/60 text-amber-400 text-xs font-medium transition-colors">
+            <RefreshCw className="w-3 h-3" /> Reboot
+          </button>
+          <button onClick={fetchRemoteStatus} title="Read MDC status"
+            className="flex items-center justify-center gap-1 w-full py-1.5 rounded-lg bg-sky-600/20 hover:bg-sky-600/40 active:bg-sky-600/60 text-sky-300 text-xs font-medium transition-colors">
+            <Monitor className="w-3 h-3" /> Status
+          </button>
+
+          <div className="w-full border-t border-white/10" />
 
           {/* D-pad */}
           <div className="grid grid-cols-3 gap-1.5">
@@ -916,6 +989,24 @@ function LiveViewOverlay({
             <span className={`text-[11px] text-center leading-tight ${
               remoteStatus.startsWith('✓') ? 'text-green-400' : 'text-red-400'
             }`}>{remoteStatus}</span>
+          )}
+
+          {mdcStatusResponse && (
+            <div className="w-full rounded-lg border border-white/10 bg-black/30 p-2 text-[10px] leading-4 text-white/70">
+              <div className="font-semibold uppercase tracking-widest text-white/30 mb-1">MDC Status</div>
+              <div>Ack: {mdcStatusResponse.status?.ack ?? (mdcStatusResponse.ok ? 'A' : 'N/A')}</div>
+              <div>ID: {mdcStatusResponse.status?.displayId ?? 1}</div>
+              <div>R-CMD: {mdcStatusResponse.status?.rCmd ?? 0}</div>
+              <div>Power: {mdcStatusResponse.status?.power ?? '—'}</div>
+              <div>Volume: {mdcStatusResponse.status?.volume ?? '—'}</div>
+              <div>Mute: {mdcStatusResponse.status?.mute ?? '—'}</div>
+              <div>Input: {mdcStatusResponse.status?.input ?? '—'}</div>
+              <div>Aspect: {mdcStatusResponse.status?.aspect ?? '—'}</div>
+              <div>N Time NF: {mdcStatusResponse.status?.nTime ?? '—'}</div>
+              <div>F Time NF: {mdcStatusResponse.status?.fTime ?? '—'}</div>
+              {mdcStatusResponse.rawHex ? <div className="mt-1 break-all text-white/40">{mdcStatusResponse.rawHex}</div> : null}
+              {mdcStatusResponse.error ? <div className="mt-1 text-red-300">{mdcStatusResponse.error}</div> : null}
+            </div>
           )}
 
           {!isOnline && (
