@@ -10,6 +10,7 @@ const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 import { ClaimDeviceSchema, UpdateDeviceSchema, DeviceCommandSchema, PairRequestSchema } from '@signage/shared';
 import { writeAuditLog } from '../services/audit.js';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
+import { sendMdcKey, MDC_KEY_CODES, type MdcKeyName } from '../services/mdc.js';
 import {
   sendCommand,
   isDeviceOnline,
@@ -18,6 +19,8 @@ import {
   handleDeviceMessage,
   getDeviceLogs,
   clearDeviceLogs,
+  registerLiveViewer,
+  unregisterLiveViewer,
 } from '../services/ws.js';
 import { notifyDeviceStatusChange } from '../services/notifications.js';
 
@@ -612,6 +615,109 @@ export async function deviceRoutes(app: FastifyInstance) {
       latestHeartbeat: latestHeartbeat
         ? { ...latestHeartbeat, currentContentName, nextContentName }
         : null,
+    });
+  });
+
+  // ── GET /devices/:id/screenshots/:screenshotId ── serve image file ─────────
+  app.get('/:id/screenshots/:screenshotId', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id, screenshotId } = req.params as { id: string; screenshotId: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    const shot = await db.query.deviceScreenshots.findFirst({
+      where: and(eq(deviceScreenshots.id, screenshotId), eq(deviceScreenshots.deviceId, id)),
+    });
+    if (!shot) return reply.status(404).send({ error: 'Screenshot not found' });
+
+    const filePath = path.join(process.cwd(), STORAGE_ROOT, shot.storageKey);
+    try {
+      await fsPromises.access(filePath);
+    } catch {
+      return reply.status(404).send({ error: 'File not found on disk' });
+    }
+
+    reply.header('Content-Type', 'image/jpeg');
+    reply.header('Cache-Control', 'private, max-age=3600');
+    return reply.send(createReadStream(filePath));
+  });
+
+  // ── DELETE /devices/:id/screenshots/:screenshotId ─────────────────────────
+  app.delete('/:id/screenshots/:screenshotId', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id, screenshotId } = req.params as { id: string; screenshotId: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    const shot = await db.query.deviceScreenshots.findFirst({
+      where: and(eq(deviceScreenshots.id, screenshotId), eq(deviceScreenshots.deviceId, id)),
+    });
+    if (!shot) return reply.status(404).send({ error: 'Screenshot not found' });
+
+    await db.delete(deviceScreenshots).where(eq(deviceScreenshots.id, screenshotId));
+    const filePath = path.join(process.cwd(), STORAGE_ROOT, shot.storageKey);
+    await fsPromises.unlink(filePath).catch(() => { /* best-effort */ });
+
+    return reply.send({ ok: true });
+  });
+
+  // ── GET /devices/:id/screenshot/stream ── SSE live-view relay ─────────────
+  // Exempt from rate limiting — one long-lived connection replaces many polls.
+  app.get('/:id/screenshot/stream', { config: { rateLimit: false }, onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    // Take full ownership of the raw socket — Fastify must not send its own response
+    reply.hijack();
+
+    // SSE headers — keep the raw Node response open
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no', // disable nginx buffering
+    });
+    reply.raw.write(':\n\n'); // initial comment keeps the connection alive
+
+    // Kick off live capture on the device. Practical floor is ~3 s/frame on Samsung hardware
+    // but allow 1 s to let the device report its real capability.
+    const rawInterval = (req.query as Record<string, string>).intervalMs;
+    const intervalMs = Math.max(1_000, Math.min(10_000, Number(rawInterval) || 1_000));
+    sendCommand(device.id, { type: 'start_live_capture', payload: { intervalMs } });
+
+    // Register this SSE connection as a live-frame receiver
+    const push = (dataBase64: string) => {
+      reply.raw.write(`data: ${dataBase64}\n\n`);
+    };
+    registerLiveViewer(device.id, push);
+
+    // Send a heartbeat every 15 s so proxies don't close idle connections
+    const heartbeat = setInterval(() => {
+      if (reply.raw.writableEnded) return;
+      reply.raw.write(':\n\n');
+    }, 15_000);
+
+    // Clean up when the client disconnects
+    req.raw.on('close', () => {
+      clearInterval(heartbeat);
+      unregisterLiveViewer(device.id, push);
+      sendCommand(device.id, { type: 'stop_live_capture' });
+    });
+
+    // Fastify must not touch the response after this point
+    await new Promise<void>((resolve) => {
+      req.raw.on('close', resolve);
     });
   });
 
@@ -1256,6 +1362,32 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
 
     return reply.send({ emergency: active ?? null });
+  });
+
+  // ── POST /devices/:id/remote-key ─ MDC key injection via LAN TCP ──────────
+  app.post('/:id/remote-key', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { key?: string };
+    const key = body.key ?? '';
+
+    if (!(key in MDC_KEY_CODES)) {
+      return reply.status(400).send({ error: `Unknown key '${key}'. Valid keys: ${Object.keys(MDC_KEY_CODES).join(', ')}` });
+    }
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+    if (!device.ipAddress) return reply.status(422).send({ error: 'Device IP address not known — send a network_info heartbeat first' });
+
+    try {
+      await sendMdcKey(device.ipAddress, key as MdcKeyName);
+      return reply.send({ ok: true, key, ip: device.ipAddress });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.status(502).send({ error: `MDC command failed: ${msg}` });
+    }
   });
 }
 

@@ -187,9 +187,17 @@ const Player = {
                     logger.info('reboot command received');
                     this.executeCommand({ type: 'REBOOT' });
                     break;
+                case 'relaunch_app':
+                    logger.info('relaunch_app command received');
+                    this.executeCommand({ type: 'RELAUNCH_APP' });
+                    break;
                 case 'power_off':
                     logger.info('power_off command received');
                     this.executeCommand({ type: 'POWER_OFF' });
+                    break;
+                case 'power_on':
+                    logger.info('power_on command received');
+                    this.executeCommand({ type: 'POWER_ON' });
                     break;
                 case 'clear_cache':
                     logger.info('clear_cache command received');
@@ -202,6 +210,12 @@ const Player = {
                 case 'screenshot':
                     logger.info('screenshot command received');
                     this.executeCommand({ type: 'SCREENSHOT' });
+                    break;
+                case 'start_live_capture':
+                    this.executeCommand({ type: 'START_LIVE_CAPTURE', payload: message.payload });
+                    break;
+                case 'stop_live_capture':
+                    this.executeCommand({ type: 'STOP_LIVE_CAPTURE' });
                     break;
                 case 'update_player':
                     logger.info('update_player command received:', message.payload);
@@ -2832,7 +2846,8 @@ const Player = {
                 break;
             }
             case 'POWER_ON':
-                this.invokeTVControl('powerOn');
+                // Power-on from off state is not supported on this device
+                logger.warn('POWER_ON command received but not supported on this device');
                 break;
             case 'SET_VIRTUAL_STANDBY':
                 this.invokeTVControl('setVirtualStandbyMode', (_c = (_b = payload === null || payload === void 0 ? void 0 : payload.enabled) !== null && _b !== void 0 ? _b : payload) !== null && _c !== void 0 ? _c : false);
@@ -2938,6 +2953,27 @@ const Player = {
             case 'UPDATE_TV_FIRMWARE':
                 logger.warn('TV firmware update requested, but this device build does not implement Samsung firmware automation');
                 break;
+            case 'SCREENSHOT':
+                this.takeScreenshot();
+                break;
+            case 'START_LIVE_CAPTURE': {
+                const ms = Math.max(1000, (payload && payload.intervalMs) || 1000);
+                if (this._liveInterval) clearTimeout(this._liveInterval);
+                this._liveCaptureActive = true;
+                this._liveCaptureIntervalMs = ms;
+                this._liveInterval = setTimeout(() => this.takeScreenshotLive(), 0);
+                logger.info('[LiveCapture] started, intervalMs:', ms);
+                break;
+            }
+            case 'STOP_LIVE_CAPTURE':
+                if (this._liveInterval) {
+                    clearTimeout(this._liveInterval);
+                    this._liveInterval = null;
+                }
+                this._liveCaptureActive = false;
+                this._liveCaptureBusy = false;
+                logger.info('[LiveCapture] stopped');
+                break;
             case 'CLEAR_CACHE':
                 this.clearCache();
                 break;
@@ -2947,6 +2983,153 @@ const Player = {
             default:
                 logger.warn('Unknown command:', command);
         }
+    },
+    takeScreenshot() {
+        const ws = this.wsConnection;
+        const deviceId = this.deviceId;
+        if (!ws || ws.readyState !== 1) {
+            logger.warn('[Screenshot] WebSocket not connected, cannot send screenshot');
+            return;
+        }
+        const send = (dataBase64) => {
+            ws.send(JSON.stringify({
+                type: 'screenshot_data',
+                payload: { dataBase64, trigger: 'manual', contentId: null },
+            }));
+            logger.info('[Screenshot] screenshot_data sent, bytes:', dataBase64.length);
+        };
+        // Try b2bcontrol.captureScreen first (returns file path on Samsung LFD)
+        try {
+            const b2b = typeof b2bapis !== 'undefined' ? b2bapis.b2bcontrol : null;
+            if (b2b && typeof b2b.captureScreen === 'function') {
+                b2b.captureScreen(
+                    (filePath) => {
+                        logger.info('[Screenshot] captureScreen succeeded, path:', filePath);
+                        try {
+                            tizen.filesystem.resolve(filePath, (file) => {
+                                file.openStream(
+                                    'r',
+                                    (stream) => {
+                                        try {
+                                            const bytes = stream.readBytes(file.fileSize);
+                                            stream.close();
+                                            let binary = '';
+                                            for (let i = 0; i < bytes.length; i++) {
+                                                binary += String.fromCharCode(bytes[i]);
+                                            }
+                                            send(btoa(binary));
+                                        } catch (e) {
+                                            logger.warn('[Screenshot] Failed to read stream bytes:', e);
+                                        }
+                                    },
+                                    (e) => logger.warn('[Screenshot] openStream error:', e),
+                                    'ISO-8859-1',
+                                );
+                            }, (e) => logger.warn('[Screenshot] filesystem.resolve failed:', e), 'r');
+                        } catch (e) {
+                            logger.warn('[Screenshot] filesystem access failed:', e);
+                        }
+                    },
+                    (e) => logger.warn('[Screenshot] captureScreen error:', (e && e.message) || e),
+                );
+                return;
+            }
+        } catch (e) {
+            logger.warn('[Screenshot] b2b captureScreen threw:', e);
+        }
+        // Fallback: HTML5 canvas DOM capture
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = window.innerWidth || 1920;
+            canvas.height = window.innerHeight || 1080;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) throw new Error('No 2d context');
+            // Draw body background color as best-effort
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            const base64 = dataUrl.split(',')[1];
+            send(base64);
+        } catch (e) {
+            logger.warn('[Screenshot] Canvas fallback failed:', e);
+        }
+    },
+    takeScreenshotLive() {
+        // Samsung captureScreen cannot handle concurrent calls — skip if previous hasn't finished
+        if (this._liveCaptureBusy) return;
+        this._liveCaptureBusy = true;
+        const ws = this.wsConnection;
+        if (!ws || ws.readyState !== 1) { this._liveCaptureBusy = false; return; }
+        const done = () => {
+            this._liveCaptureBusy = false;
+            if (this._liveCaptureActive) {
+                const nextMs = Math.max(1000, this._liveCaptureIntervalMs || 1000);
+                this._liveInterval = setTimeout(() => this.takeScreenshotLive(), nextMs);
+            }
+        };
+        const send = (dataBase64) => {
+            ws.send(JSON.stringify({
+                type: 'screenshot_data',
+                payload: { dataBase64, trigger: 'live', contentId: null },
+            }));
+            done();
+        };
+        try {
+            const b2b = typeof b2bapis !== 'undefined' ? b2bapis.b2bcontrol : null;
+            if (b2b && typeof b2b.captureScreen === 'function') {
+                b2b.captureScreen(
+                    (filePath) => {
+                        logger.info('[LiveCapture] captureScreen cb, path:', filePath);
+                        try {
+                            tizen.filesystem.resolve(filePath, (file) => {
+                                file.openStream(
+                                    'r',
+                                    (stream) => {
+                                        try {
+                                            const bytes = stream.readBytes(file.fileSize);
+                                            stream.close();
+                                            let binary = '';
+                                            for (let i = 0; i < bytes.length; i++) {
+                                                binary += String.fromCharCode(bytes[i]);
+                                            }
+                                            send(btoa(binary));
+                                        } catch (e) {
+                                            logger.warn('[LiveCapture] read stream bytes failed:', e);
+                                            done();
+                                        }
+                                    },
+                                    (e) => { logger.warn('[LiveCapture] openStream error:', e); done(); },
+                                    'ISO-8859-1',
+                                );
+                            }, (e) => { logger.warn('[LiveCapture] filesystem.resolve failed:', e); done(); }, 'r');
+                        } catch (e) {
+                            logger.warn('[LiveCapture] filesystem access failed:', e);
+                            done();
+                        }
+                    },
+                    (e) => { logger.warn('[LiveCapture] captureScreen error:', (e && e.message) || e); done(); },
+                );
+                return;
+            }
+        } catch (e) {
+            logger.warn('[LiveCapture] b2b captureScreen threw:', e);
+        }
+        // Canvas fallback
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = window.innerWidth || 1920;
+            canvas.height = window.innerHeight || 1080;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                send(canvas.toDataURL('image/jpeg', 0.75).split(',')[1]);
+                return;
+            }
+        } catch (e) {
+            logger.warn('[LiveCapture] Canvas fallback failed:', e);
+        }
+        done();
     },
     applyNtpSettings(payload) {
         try {

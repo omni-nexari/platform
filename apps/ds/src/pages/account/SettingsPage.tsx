@@ -2360,6 +2360,8 @@ const NOTIF_EVENT_META: Record<string, { label: string; hint: string }> = {
 
 function NotificationsSection() {
   const qc = useQueryClient();
+  const user = useAuthStore((s) => s.user);
+  const bootstrapped = useAuthStore((s) => s.bootstrapped);
   const [tab, setTab] = useState<'inbox' | 'prefs'>('inbox');
   const [page, setPage] = useState(1);
   const LIMIT = 20;
@@ -2371,7 +2373,8 @@ function NotificationsSection() {
       api.get<{ notifications: NotifItem[]; total: number; unreadCount: number }>(
         `/notifications?page=${page}&limit=${LIMIT}`,
       ),
-    enabled: tab === 'inbox',
+    enabled: bootstrapped && !!user && tab === 'inbox',
+    retry: false,
   });
 
   const notifs: NotifItem[] = notifData?.notifications ?? [];
@@ -2397,7 +2400,8 @@ function NotificationsSection() {
   const { data: prefsData } = useQuery({
     queryKey: ['notif-prefs'],
     queryFn: () => api.get<{ prefs: NotifPref[] }>('/notifications/prefs'),
-    enabled: tab === 'prefs',
+    enabled: bootstrapped && !!user && tab === 'prefs',
+    retry: false,
   });
 
   const prefs: NotifPref[] = prefsData?.prefs ?? [];

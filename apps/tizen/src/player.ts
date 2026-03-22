@@ -299,9 +299,17 @@ const Player = {
           logger.info('reboot command received');
           this.executeCommand({ type: 'REBOOT' });
           break;
+        case 'relaunch_app':
+          logger.info('relaunch_app command received');
+          this.executeCommand({ type: 'RELAUNCH_APP' });
+          break;
         case 'power_off':
           logger.info('power_off command received');
           this.executeCommand({ type: 'POWER_OFF' });
+          break;
+        case 'power_on':
+          logger.info('power_on command received');
+          this.executeCommand({ type: 'POWER_ON' });
           break;
         case 'clear_cache':
           logger.info('clear_cache command received');

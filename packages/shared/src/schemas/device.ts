@@ -104,7 +104,9 @@ export const DeviceCommandSchema = z.discriminatedUnion('command', [
   z.object({ command: z.literal('refresh_schedule') }),
   z.object({ command: z.literal('emergency_start'), payload: z.object({ text: z.string().optional(), contentItemId: z.string().uuid().optional() }) }),
   z.object({ command: z.literal('emergency_clear') }),
+  z.object({ command: z.literal('relaunch_app') }),
   z.object({ command: z.literal('power_off') }),
+  z.object({ command: z.literal('power_on') }),
   z.object({ command: z.literal('set_ntp'), payload: z.object({ server: z.string(), timezone: z.string() }) }),
   z.object({ command: z.literal('set_ir_lock'), payload: z.object({ lock: z.boolean() }) }),
   z.object({ command: z.literal('set_button_lock'), payload: z.object({ lock: z.boolean() }) }),
@@ -188,7 +190,7 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
     payload: z.object({
       dataBase64: z.string(),
       contentId: z.string().uuid().nullable().optional(),
-      trigger: z.enum(['auto_change', 'auto_interval', 'manual']),
+      trigger: z.enum(['auto_change', 'auto_interval', 'manual', 'live']),
     }),
   }),
   z.object({

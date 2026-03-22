@@ -38,11 +38,31 @@ export type WsCommand =
   | { type: 'clear_cache' }
   | { type: 'dump_logs' }
   | { type: 'set_screenshot_interval'; payload: { minutes: number } }
+  | { type: 'start_live_capture'; payload: { intervalMs: number } }
+  | { type: 'stop_live_capture' }
   | { type: 'set_zones'; payload: { zones: Array<{ id: string; rect: { x: number; y: number; width: number; height: number }; playlistId?: string }> } };
 
 const connections = new Map<string, Conn>();
 const deviceLogs = new Map<string, DeviceConsoleLogEntry[]>();
 const MAX_DEVICE_LOGS = 2000;
+
+// ── Live-view SSE relay ────────────────────────────────────────────────────
+type LiveFrame = (dataBase64: string) => void;
+const liveViewers = new Map<string, Set<LiveFrame>>();
+
+export function registerLiveViewer(deviceId: string, cb: LiveFrame): void {
+  if (!liveViewers.has(deviceId)) liveViewers.set(deviceId, new Set());
+  liveViewers.get(deviceId)!.add(cb);
+}
+
+export function unregisterLiveViewer(deviceId: string, cb: LiveFrame): void {
+  liveViewers.get(deviceId)?.delete(cb);
+  if (liveViewers.get(deviceId)?.size === 0) liveViewers.delete(deviceId);
+}
+
+export function hasLiveViewers(deviceId: string): boolean {
+  return (liveViewers.get(deviceId)?.size ?? 0) > 0;
+}
 
 function appendDeviceLogs(deviceId: string, level: DeviceConsoleLogEntry['level'], lines: string[]): void {
   if (lines.length === 0) return;
@@ -114,7 +134,17 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
   }
 
   const parsed = DeviceMessageSchema.safeParse(raw);
-  if (!parsed.success) return;
+  if (!parsed.success) {
+    if (
+      typeof raw === 'object' &&
+      raw !== null &&
+      'type' in raw &&
+      (raw as { type?: unknown }).type === 'screenshot_data'
+    ) {
+      console.warn('[ws] screenshot_data parse failed', parsed.error.issues);
+    }
+    return;
+  }
   const msg = parsed.data;
 
   // ── heartbeat ──────────────────────────────────────────────────────────────
@@ -197,6 +227,17 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
   // ── screenshot_data ────────────────────────────────────────────────────────
   if (msg.type === 'screenshot_data') {
     const { dataBase64, contentId, trigger } = msg.payload;
+
+    // Live-view frames are relayed directly to SSE listeners, never persisted
+    if (trigger === 'live') {
+      const viewers = liveViewers.get(deviceId);
+      if (viewers) {
+        console.info('[ws] relaying live frame', { deviceId, viewers: viewers.size, bytes: dataBase64.length });
+        for (const cb of viewers) cb(dataBase64);
+      }
+      return;
+    }
+
     const buf = Buffer.from(dataBase64, 'base64');
     const fileName = `${randomUUID()}.jpg`;
     const storageKey = `${deviceId}/${fileName}`;

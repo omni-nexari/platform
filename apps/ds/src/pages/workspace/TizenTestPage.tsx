@@ -1,19 +1,27 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
   Bug,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
   Command,
   Copy,
   Download,
+  Home,
   Monitor,
   RefreshCw,
   Send,
   TerminalSquare,
   Trash2,
+  Tv2,
+  X,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
+import { useAuthStore } from '../../lib/auth.js';
 import {
   ActionButton,
   Badge,
@@ -87,7 +95,7 @@ type DeviceLogEntry = {
 type DeviceDetailResponse = {
   device: DeviceDetail;
   latestHeartbeat: DeviceHeartbeat | null;
-  screenshots: Array<{ id: string }>;
+  screenshots: Array<{ id: string; takenAt: string; trigger: string | null }>;
 };
 
 type DeviceLogsResponse = {
@@ -117,6 +125,9 @@ const QUICK_COMMANDS = [
   { key: 'screenshot', label: 'Screenshot' },
   { key: 'clear_cache', label: 'Clear Cache' },
   { key: 'reboot', label: 'Reboot' },
+  { key: 'relaunch_app', label: 'Relaunch App' },
+  { key: 'power_on', label: 'Power On' },
+  { key: 'power_off', label: 'Power Off' },
 ] as const;
 
 function formatTimestamp(value: string | null | undefined) {
@@ -156,6 +167,7 @@ function preferObservedValue(deviceValue: string | null | undefined, observedVal
 }
 
 export default function TizenTestPage() {
+  const { user, bootstrapped } = useAuthStore();
   const queryClient = useQueryClient();
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
@@ -167,27 +179,32 @@ export default function TizenTestPage() {
   const { data: workspaces = [] } = useQuery<Workspace[]>({
     queryKey: ['workspaces'],
     queryFn: () => api.get('/workspaces'),
+    enabled: bootstrapped && !!user,
+    retry: false,
   });
 
   const { data: devices = [] } = useQuery<DeviceSummary[]>({
     queryKey: ['tizen-test-devices', selectedWorkspaceId],
     queryFn: () => api.get(`/devices?workspaceId=${selectedWorkspaceId}`),
-    enabled: !!selectedWorkspaceId,
-    refetchInterval: 15_000,
+    enabled: bootstrapped && !!user && !!selectedWorkspaceId,
+    refetchInterval: (query) => (query.state.status === 'error' ? false : 15_000),
+    retry: false,
   });
 
   const { data: detail } = useQuery<DeviceDetailResponse>({
     queryKey: ['tizen-test-detail', selectedDeviceId],
     queryFn: () => api.get(`/devices/${selectedDeviceId}`),
-    enabled: !!selectedDeviceId,
-    refetchInterval: 5_000,
+    enabled: bootstrapped && !!user && !!selectedDeviceId,
+    refetchInterval: (query) => (query.state.status === 'error' ? false : 5_000),
+    retry: false,
   });
 
   const { data: logData } = useQuery<DeviceLogsResponse>({
     queryKey: ['tizen-test-logs', selectedDeviceId],
     queryFn: () => api.get(`/devices/${selectedDeviceId}/logs?limit=1000`),
-    enabled: !!selectedDeviceId,
-    refetchInterval: 2_000,
+    enabled: bootstrapped && !!user && !!selectedDeviceId,
+    refetchInterval: (query) => (query.state.status === 'error' ? false : 2_000),
+    retry: false,
   });
 
   const sendCommand = useMutation({
@@ -208,6 +225,16 @@ export default function TizenTestPage() {
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to clear logs'),
   });
+
+  const deleteScreenshot = useMutation({
+    mutationFn: (screenshotId: string) => api.delete(`/devices/${selectedDeviceId}/screenshots/${screenshotId}`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['tizen-test-detail', selectedDeviceId] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to delete screenshot'),
+  });
+
+  const [liveViewOpen, setLiveViewOpen] = useState(false);
 
   const device = detail?.device ?? null;
   const latestHeartbeat = detail?.latestHeartbeat ?? null;
@@ -425,7 +452,7 @@ export default function TizenTestPage() {
                   {QUICK_COMMANDS.map((command) => (
                     <ActionButton
                       key={command.key}
-                      tone={command.key === 'dump_logs' ? 'warning' : 'default'}
+                      tone={command.key === 'dump_logs' ? 'warning' : command.key === 'power_off' ? 'danger' : command.key === 'power_on' ? 'success' : 'default'}
                       disabled={!isOnline || sendCommand.isPending}
                       onClick={() => sendCommand.mutate({ command: command.key })}
                     >
@@ -470,6 +497,58 @@ export default function TizenTestPage() {
               </SectionCardBody>
             </SectionCard>
           </div>
+
+          <SectionCard>
+            <SectionCardHeader>
+              <div>
+                <h2 className="text-lg font-semibold text-[var(--text)]">Screenshots</h2>
+                <p className="text-sm text-[var(--text-muted)]">Captured screenshots from the device. Use the Screenshot button above to capture.</p>
+              </div>
+              <div className="flex gap-2">
+                <ActionButton tone="primary" disabled={!isOnline} onClick={() => setLiveViewOpen(true)}>
+                  <Tv2 className="w-4 h-4" /> Live View
+                </ActionButton>
+              </div>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              {detail?.screenshots && detail.screenshots.length > 0 ? (
+                <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+                  {detail.screenshots.map((shot) => (
+                    <div key={shot.id} className="group relative rounded-xl border border-[var(--border)] overflow-hidden bg-[var(--surface)]">
+                      <a href={`/api/devices/${selectedDeviceId}/screenshots/${shot.id}`} target="_blank" rel="noreferrer">
+                        <img
+                          src={`/api/devices/${selectedDeviceId}/screenshots/${shot.id}`}
+                          alt={`Screenshot ${shot.takenAt}`}
+                          className="w-full object-cover aspect-video bg-black"
+                        />
+                      </a>
+                      <button
+                        onClick={() => deleteScreenshot.mutate(shot.id)}
+                        className="absolute top-2 right-2 rounded-lg bg-black/60 p-1.5 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
+                        title="Delete screenshot"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                      <div className="px-3 py-2 text-xs text-[var(--text-muted)]">
+                        <span>{formatTimestamp(shot.takenAt)}</span>
+                        {shot.trigger ? <span className="ml-2 opacity-60">{shot.trigger}</span> : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-[var(--text-muted)]">No screenshots yet. Send the Screenshot command to capture one.</p>
+              )}
+            </SectionCardBody>
+          </SectionCard>
+
+          {liveViewOpen ? (
+            <LiveViewOverlay
+              deviceId={selectedDeviceId}
+              isOnline={isOnline}
+              onClose={() => setLiveViewOpen(false)}
+            />
+          ) : null}
 
           <SectionCard>
             <SectionCardHeader>
@@ -519,6 +598,332 @@ function InfoItem({ label, value, mono = false }: { label: string; value: string
     <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
       <div className="text-[11px] uppercase tracking-[0.12em] text-[var(--text-muted)]">{label}</div>
       <div className={`mt-2 text-sm text-[var(--text)] ${mono ? 'font-mono break-all' : ''}`}>{value ?? '—'}</div>
+    </div>
+  );
+}
+
+function LiveViewOverlay({
+  deviceId,
+  isOnline,
+  onClose,
+}: {
+  deviceId: string;
+  isOnline: boolean;
+  onClose: () => void;
+}) {
+  type LiveStatus = 'idle' | 'buffering' | 'playing';
+
+  const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [status, setStatus] = useState<LiveStatus>('idle');
+  const [sseError, setSseError] = useState<string | null>(null);
+  const [intervalMs, setIntervalMs] = useState(1000);
+  const [waitingElapsed, setWaitingElapsed] = useState(0);
+  const [isStale, setIsStale] = useState(false);
+  const [measuredCadenceMs, setMeasuredCadenceMs] = useState(0);
+  const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
+
+  const esRef = useRef<EventSource | null>(null);
+  const statusRef = useRef<LiveStatus>('idle');
+  const staleFrameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hardTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastFrameAtRef = useRef<number>(0);
+  const measuredCadenceRef = useRef<number>(0);
+  const remoteStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => { onCloseRef.current = onClose; });
+
+  function doCleanup() {
+    esRef.current?.close();
+    esRef.current = null;
+    if (staleFrameTimerRef.current) { clearTimeout(staleFrameTimerRef.current); staleFrameTimerRef.current = null; }
+    if (hardTimeoutRef.current) { clearTimeout(hardTimeoutRef.current); hardTimeoutRef.current = null; }
+    if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null; }
+    lastFrameAtRef.current = 0;
+    measuredCadenceRef.current = 0;
+    setWaitingElapsed(0);
+    setIsStale(false);
+    setMeasuredCadenceMs(0);
+    statusRef.current = 'idle';
+    setStatus('idle');
+  }
+
+  function armStaleFrameTimer() {
+    if (staleFrameTimerRef.current) clearTimeout(staleFrameTimerRef.current);
+    // Grace period: 2.5× measured cadence + 3s, minimum 15s. Never nag between normal frames.
+    const gracePeriod = measuredCadenceRef.current > 0
+      ? Math.max(measuredCadenceRef.current * 2.5 + 3000, 15000)
+      : 20000;
+    staleFrameTimerRef.current = setTimeout(() => {
+      if (statusRef.current === 'playing') setIsStale(true);
+    }, gracePeriod);
+  }
+
+  function handleStart() {
+    if (!isOnline) return;
+    doCleanup();
+    setImgSrc(null);
+    setSseError(null);
+    statusRef.current = 'buffering';
+    setStatus('buffering');
+
+    setWaitingElapsed(0);
+    elapsedTimerRef.current = setInterval(() => setWaitingElapsed(s => s + 1), 1000);
+
+    const es = new EventSource(`/api/devices/${deviceId}/screenshot/stream?intervalMs=${intervalMs}`);
+    esRef.current = es;
+
+    es.onmessage = (e) => {
+      if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null; }
+      if (hardTimeoutRef.current) { clearTimeout(hardTimeoutRef.current); hardTimeoutRef.current = null; }
+      // Measure actual frame cadence via exponential moving average
+      const now = Date.now();
+      if (lastFrameAtRef.current > 0) {
+        const delta = now - lastFrameAtRef.current;
+        measuredCadenceRef.current = measuredCadenceRef.current > 0
+          ? Math.round(measuredCadenceRef.current * 0.7 + delta * 0.3)
+          : delta;
+        setMeasuredCadenceMs(measuredCadenceRef.current);
+      }
+      lastFrameAtRef.current = now;
+      setIsStale(false);
+      setImgSrc(`data:image/jpeg;base64,${e.data}`);
+      if (statusRef.current !== 'playing') {
+        statusRef.current = 'playing';
+        setStatus('playing');
+      }
+      armStaleFrameTimer();
+    };
+    es.onerror = () => {
+      setSseError('Stream connection failed. Is the device online?');
+      doCleanup();
+    };
+
+    // Hard timeout: if no first frame after 30s, give up
+    hardTimeoutRef.current = setTimeout(() => {
+      if (statusRef.current === 'buffering') {
+        setSseError('No frames received after 30s. The device may be unresponsive.');
+        doCleanup();
+      }
+    }, 30000);
+  }
+
+  useEffect(() => () => {
+    esRef.current?.close();
+    if (staleFrameTimerRef.current) clearTimeout(staleFrameTimerRef.current);
+    if (hardTimeoutRef.current) clearTimeout(hardTimeoutRef.current);
+    if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
+    if (remoteStatusTimerRef.current) clearTimeout(remoteStatusTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  const isLive = status !== 'idle';
+  const cadenceLabel = measuredCadenceMs > 0
+    ? `~${(measuredCadenceMs / 1000).toFixed(1)}s`
+    : `~${Math.ceil(intervalMs / 1000)}s`;
+
+  async function sendRemoteKey(key: string) {
+    if (remoteStatusTimerRef.current) clearTimeout(remoteStatusTimerRef.current);
+    try {
+      await api.post(`/devices/${deviceId}/remote-key`, { key });
+      setRemoteStatus(`✓ ${key.replace('_', ' ').toLowerCase()}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      let label = msg;
+      try { label = (JSON.parse(msg) as { error?: string }).error ?? msg; } catch { /* raw text */ }
+      setRemoteStatus(`✗ ${label}`);
+    }
+    remoteStatusTimerRef.current = setTimeout(() => setRemoteStatus(null), 2500);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-black/95" onClick={(e) => { if (e.target === e.currentTarget) onCloseRef.current(); }}>
+      {/* Toolbar */}
+      <div className="flex items-center gap-3 px-4 py-3 bg-black/80 border-b border-white/10">
+        <Tv2 className="w-5 h-5 text-white/70" />
+        <span className="text-white font-semibold text-sm">Live View</span>
+
+        {status === 'buffering' && (
+          <span className="flex items-center gap-1.5 text-xs text-yellow-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-yellow-300 animate-pulse" />
+            Waiting for first frame…
+          </span>
+        )}
+        {status === 'playing' && (
+          <span className="flex items-center gap-1.5 rounded-full bg-red-600 px-2.5 py-0.5 text-[11px] font-bold text-white uppercase tracking-widest"
+            style={isStale ? { backgroundColor: 'rgb(161,98,7)' } : undefined}>
+            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            LIVE
+          </span>
+        )}
+        {isLive ? <span className="text-[11px] text-white/30">{cadenceLabel} cadence</span> : null}
+
+        <div className="ml-auto flex items-center gap-3">
+          <label className="flex items-center gap-2 text-xs text-white/60">
+            Interval
+            <select
+              value={intervalMs}
+              onChange={(e) => setIntervalMs(Number(e.target.value))}
+              disabled={isLive}
+              className="rounded bg-white/10 px-2 py-1 text-white text-xs border border-white/20 disabled:opacity-40"
+            >
+              <option value={1000}>1s</option>
+              <option value={2000}>2s</option>
+              <option value={3000}>3s</option>
+            </select>
+          </label>
+          {!isLive ? (
+            <button
+              onClick={handleStart}
+              disabled={!isOnline}
+              className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white disabled:opacity-40 transition-colors"
+            >
+              Start Live
+            </button>
+          ) : (
+            <button
+              onClick={doCleanup}
+              className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white transition-colors"
+            >
+              Stop
+            </button>
+          )}
+          <button onClick={() => onCloseRef.current()} className="rounded-lg p-1.5 text-white/60 hover:text-white hover:bg-white/10 transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Main content: image + remote panel */}
+      <div className="flex-1 flex overflow-hidden">
+
+        {/* Image / status area */}
+        <div className="flex-1 flex items-center justify-center p-4 overflow-hidden relative">
+        {status === 'buffering' && (
+          <div className="flex flex-col items-center gap-4">
+            <div className="relative w-16 h-16">
+              <svg className="absolute inset-0 -rotate-90 w-full h-full" viewBox="0 0 64 64">
+                <circle cx="32" cy="32" r="28" fill="none" stroke="rgba(253,224,71,0.15)" strokeWidth="3" />
+                <circle cx="32" cy="32" r="28" fill="none" stroke="rgb(253,224,71)" strokeWidth="3"
+                  strokeDasharray="175.9"
+                  strokeDashoffset={175.9 - (175.9 * Math.min(waitingElapsed / 30, 1))}
+                  style={{ transition: 'stroke-dashoffset 0.9s linear' }}
+                />
+              </svg>
+              <span className="absolute inset-0 flex items-center justify-center text-yellow-300 text-sm font-mono">
+                {waitingElapsed}s
+              </span>
+            </div>
+            <p className="text-white/70 text-sm">
+              {waitingElapsed >= 10 ? 'Still waiting — device is warming up…' : 'Waiting for first frame…'}
+            </p>
+            <p className="text-white/30 text-xs">{cadenceLabel} capture cycle · 30s timeout</p>
+          </div>
+        )}
+
+        {status === 'playing' && imgSrc && (
+          <img
+            src={imgSrc}
+            alt="Live view"
+            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+          />
+        )}
+
+        {sseError && (
+          <div className="flex flex-col items-center gap-3 text-center max-w-sm">
+            <p className="text-red-400 text-sm">{sseError}</p>
+            <button
+              onClick={() => { setSseError(null); handleStart(); }}
+              disabled={!isOnline}
+              className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-white/10 hover:bg-white/20 text-white disabled:opacity-40 transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+        {status === 'idle' && !sseError && imgSrc && (
+          <>
+            <img src={imgSrc} alt="Last frame" className="max-w-full max-h-full object-contain rounded-lg shadow-2xl opacity-30" />
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <span className="bg-black/70 text-white/50 text-xs font-medium px-3 py-1.5 rounded-full">Stream stopped · last frame</span>
+            </div>
+          </>
+        )}
+        {status === 'idle' && !sseError && !imgSrc && (
+          <div className="text-white/40 text-sm">
+            {isOnline ? 'Press Start Live to begin streaming' : 'Device is offline'}
+          </div>
+        )}
+        </div>
+
+        {/* Remote control panel */}
+        <div className="w-48 flex-shrink-0 border-l border-white/10 flex flex-col items-center justify-center gap-5 p-4 bg-black/40">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-white/30">Remote</p>
+
+          {/* D-pad */}
+          <div className="grid grid-cols-3 gap-1.5">
+            <div />
+            <button onClick={() => sendRemoteKey('ARROW_UP')} title="Up"
+              className="flex items-center justify-center w-10 h-10 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white transition-colors">
+              <ChevronUp className="w-5 h-5" />
+            </button>
+            <div />
+            <button onClick={() => sendRemoteKey('ARROW_LEFT')} title="Left"
+              className="flex items-center justify-center w-10 h-10 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white transition-colors">
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <button onClick={() => sendRemoteKey('ENTER')} title="Enter / OK"
+              className="flex items-center justify-center w-10 h-10 rounded-full bg-white/20 hover:bg-white/30 active:bg-white/40 text-white text-xs font-bold transition-colors">
+              OK
+            </button>
+            <button onClick={() => sendRemoteKey('ARROW_RIGHT')} title="Right"
+              className="flex items-center justify-center w-10 h-10 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white transition-colors">
+              <ChevronRight className="w-5 h-5" />
+            </button>
+            <div />
+            <button onClick={() => sendRemoteKey('ARROW_DOWN')} title="Down"
+              className="flex items-center justify-center w-10 h-10 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white transition-colors">
+              <ChevronDown className="w-5 h-5" />
+            </button>
+            <div />
+          </div>
+
+          {/* Function buttons */}
+          <div className="flex gap-2">
+            <button onClick={() => sendRemoteKey('MENU')} title="Menu"
+              className="flex-1 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white text-xs font-medium transition-colors">
+              Menu
+            </button>
+            <button onClick={() => sendRemoteKey('RETURN')} title="Back / Return"
+              className="flex-1 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white text-xs font-medium transition-colors">
+              Back
+            </button>
+          </div>
+          <button onClick={() => sendRemoteKey('HOME')} title="Home"
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white text-xs font-medium transition-colors w-full justify-center">
+            <Home className="w-3.5 h-3.5" />
+            Home
+          </button>
+
+          {/* Status feedback */}
+          {remoteStatus && (
+            <span className={`text-[11px] text-center leading-tight ${
+              remoteStatus.startsWith('✓') ? 'text-green-400' : 'text-red-400'
+            }`}>{remoteStatus}</span>
+          )}
+
+          {!isOnline && (
+            <p className="text-[10px] text-white/20 text-center">Device offline — MDC may still work over LAN</p>
+          )}
+        </div>
+
+      </div>
     </div>
   );
 }

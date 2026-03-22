@@ -145,7 +145,7 @@ function ApprovalBadge({ state }: { state: string }) {
 
 // ── INFO tab ──────────────────────────────────────────────────────────────────
 function InfoTab({ item, onAddTag }: { item: ContentDetail; onAddTag: () => void }) {
-  const meta = TYPE_META[item.type];
+  const meta = TYPE_META[item.type] ?? { label: item.type, color: 'bg-slate-500/80', icon: null };
   const isExpired = item.validUntil ? new Date(item.validUntil).getTime() < Date.now() : false;
   const isExpiringSoon = item.validUntil && !isExpired
     ? new Date(item.validUntil).getTime() - Date.now() < 7 * 24 * 60 * 60 * 1000

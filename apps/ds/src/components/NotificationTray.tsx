@@ -70,7 +70,7 @@ export default function NotificationTray() {
     queryKey: ['notifications-tray'],
     queryFn: () => api.get('/notifications?page=1&limit=10'),
     enabled: bootstrapped && !!user,
-    refetchInterval: open ? 15_000 : 30_000,
+    refetchInterval: (query) => (query.state.status === 'error' ? false : open ? 15_000 : 30_000),
     retry: false,
   });
 

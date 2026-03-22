@@ -16,6 +16,7 @@
     <tizen:privilege name="http://tizen.org/privilege/filesystem.write"/>
     <tizen:privilege name="http://tizen.org/privilege/download"/>
     <tizen:privilege name="http://tizen.org/privilege/application.launch"/>
+    <tizen:privilege name="http://tizen.org/privilege/alarm"/>
     <tizen:privilege name="http://tizen.org/privilege/tv.display"/>
     <tizen:privilege name="http://tizen.org/privilege/volume.set"/>
     <tizen:privilege name="http://tizen.org/privilege/power"/>

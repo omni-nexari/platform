@@ -53,7 +53,7 @@ interface EmergencyOverride {
 }
 
 export default function AppLayout() {
-  const { user, clearAuth } = useAuthStore();
+  const { user, bootstrapped, clearAuth } = useAuthStore();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const queryClient = useQueryClient();
@@ -88,7 +88,7 @@ export default function AppLayout() {
   }, [pathname]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!bootstrapped || !user) return;
 
     const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     let cancelled = false;
@@ -101,11 +101,13 @@ export default function AppLayout() {
       socket = new WebSocket(buildWebSocketUrl('/notifications/ws'));
 
       socket.onopen = () => {
-        if (!cancelled) return;
-        socket?.close();
+        if (cancelled) {
+          socket?.close();
+        }
       };
 
       socket.onmessage = (event) => {
+        if (!useAuthStore.getState().user) return;
         try {
           const payload = JSON.parse(event.data) as { type?: string };
           if (payload.type === 'notifications.invalidate') {
@@ -118,7 +120,7 @@ export default function AppLayout() {
       };
 
       socket.onclose = () => {
-        if (cancelled) return;
+        if (cancelled || !useAuthStore.getState().user) return;
         reconnectTimer = setTimeout(connect, 3000);
       };
 
@@ -139,23 +141,28 @@ export default function AppLayout() {
         socket.close();
       }
     };
-  }, [user, queryClient]);
+  }, [bootstrapped, user, queryClient]);
 
   const { data: workspaces = [] } = useQuery<Workspace[]>({
     queryKey: ['workspaces'],
     queryFn: () => api.get('/workspaces'),
+    enabled: bootstrapped && !!user,
+    retry: false,
   });
 
   const { data: activeOverrides = [] } = useQuery<EmergencyOverride[]>({
     queryKey: ['emergency'],
     queryFn: () => api.get('/emergency'),
-    refetchInterval: 30_000,
+    enabled: bootstrapped && !!user,
+    refetchInterval: (query) => (query.state.status === 'error' ? false : 30_000),
+    retry: false,
   });
 
   const { data: currentWs } = useQuery<Workspace>({
     queryKey: ['workspace', currentWsId],
     queryFn: () => api.get(`/workspaces/${currentWsId}`),
-    enabled: !!currentWsId,
+    enabled: bootstrapped && !!user && !!currentWsId,
+    retry: false,
   });
 
   const activateEmergency = useMutation({

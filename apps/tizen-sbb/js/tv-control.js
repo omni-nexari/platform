@@ -2,8 +2,11 @@
 
 window.TVControl = {
   apis: {
+    power: null,
     remotePower: null,
     hospitality: null,
+    b2bControl: null,
+    tvDisplayControl: null,
     audio: null,
     tvWindow: null,
     tvChannel: null,
@@ -12,20 +15,26 @@ window.TVControl = {
     systemControl: null,
   },
   capabilities: {
+    screenPower: false,
     remotePower: false,
     audio: false,
     tvWindow: false,
     channel: false,
     videoSourceList: false,
     hospitalityPower: false,
+    b2bPanelPower: false,
+    tvDisplayPower: false,
     virtualStandby: false,
     tvInputPower: false,
     systemControlPower: false,
   },
 
   init() {
+    this.apis.power = typeof tizen !== 'undefined' && tizen.power ? tizen.power : null;
     this.apis.remotePower = typeof webapis !== 'undefined' ? webapis.remotepower || null : null;
     this.apis.hospitality = typeof webapis !== 'undefined' && webapis.tv ? webapis.tv.hospitality || null : null;
+    this.apis.b2bControl = typeof b2bapis !== 'undefined' ? b2bapis.b2bcontrol || null : null;
+    this.apis.tvDisplayControl = typeof webapis !== 'undefined' ? webapis.tvdisplaycontrol || null : null;
     this.apis.tvInputDevice = typeof webapis !== 'undefined' ? (webapis.tvinputdevice || webapis.tvinputdevice2 || null) : (typeof b2bapis !== 'undefined' ? b2bapis.tvinputdevice || null : null);
     this.apis.systemControl = typeof webapis !== 'undefined' && webapis.systemcontrol ? webapis.systemcontrol : null;
     this.apis.audio = typeof tizen !== 'undefined' && tizen.tvaudiocontrol ? tizen.tvaudiocontrol : (typeof webapis !== 'undefined' ? webapis.audiocontrol || null : null);
@@ -33,6 +42,10 @@ window.TVControl = {
     this.apis.tvChannel = typeof tizen !== 'undefined' ? tizen.tvchannel || null : null;
     this.apis.systemInfo = typeof tizen !== 'undefined' ? tizen.systeminfo || null : null;
 
+    this.capabilities.screenPower = !!(this.apis.power && (
+      typeof this.apis.power.setScreenState === 'function' ||
+      typeof this.apis.power.request === 'function'
+    ));
     this.capabilities.remotePower = !!(this.apis.remotePower && typeof this.apis.remotePower.powerOff === 'function');
     this.capabilities.virtualStandby = !!(this.apis.remotePower && (
       typeof this.apis.remotePower.getVirtualStandbyMode === 'function' ||
@@ -46,12 +59,54 @@ window.TVControl = {
       typeof this.apis.hospitality.controlPower === 'function' ||
       typeof this.apis.hospitality.setPowerOn === 'function'
     ));
+    this.capabilities.b2bPanelPower = !!(this.apis.b2bControl);
+    this.capabilities.tvDisplayPower = !!(this.apis.tvDisplayControl && (
+      typeof this.apis.tvDisplayControl.setPower === 'function' ||
+      typeof this.apis.tvDisplayControl.setPowerState === 'function'
+    ));
     this.capabilities.audio = !!(this.apis.audio && (typeof this.apis.audio.setVolume === 'function' || typeof this.apis.audio.setVolumeLevel === 'function'));
     this.capabilities.tvWindow = !!(this.apis.tvWindow && typeof this.apis.tvWindow.getSource === 'function');
     this.capabilities.channel = !!(this.apis.tvChannel && (typeof this.apis.tvChannel.tune === 'function' || typeof this.apis.tvChannel.tuneUp === 'function'));
     this.capabilities.videoSourceList = !!(this.apis.systemInfo && typeof this.apis.systemInfo.getPropertyValue === 'function');
 
     logger.info('[TVControl] Initialized capabilities:', JSON.stringify(this.capabilities));
+    logger.info('[TVControl] Power API probe:', JSON.stringify(this.describePowerApis()));
+  },
+
+  describePowerApis() {
+    const pickMethods = (api, names) => {
+      if (!api) return [];
+      return names.filter((name) => typeof api[name] === 'function');
+    };
+
+    return {
+      namespaces: {
+        tizenPower: !!this.apis.power,
+        tvDisplayControl: !!this.apis.tvDisplayControl,
+        b2bControl: !!this.apis.b2bControl,
+        hospitality: !!this.apis.hospitality,
+        remotePower: !!this.apis.remotePower,
+        tvInputDevice: !!this.apis.tvInputDevice,
+        systemControl: !!this.apis.systemControl,
+      },
+      methods: {
+        tizenPower: pickMethods(this.apis.power, ['setScreenState', 'getScreenState', 'request', 'release']),
+        tvDisplayControl: pickMethods(this.apis.tvDisplayControl, ['setPower', 'getPower', 'setPowerState', 'getPowerState']),
+        b2bControl: (() => {
+        if (!this.apis.b2bControl) return [];
+        const obj = this.apis.b2bControl;
+        const known = ['setPowerOff', 'setPanelMute', 'getPanelMuteStatus', 'setPanelMuteStatus', 'setStandby', 'getStandby', 'panelOff', 'panelOn', 'setPower', 'getPower', 'reboot', 'rebootDevice', 'setSystemReboot', 'shutdown', 'setPowerState', 'getPowerState', 'setDisplayOnOff', 'setDisplayBrightness'];
+        const found = new Set(known.filter((n) => typeof obj[n] === 'function'));
+        try { Object.getOwnPropertyNames(obj).forEach((n) => { if (typeof obj[n] === 'function') found.add(n); }); } catch (_) {}
+        try { const p = Object.getPrototypeOf(obj); if (p && p !== Object.prototype) Object.getOwnPropertyNames(p).forEach((n) => { if (typeof obj[n] === 'function') found.add(n); }); } catch (_) {}
+        return [...found];
+      })(),
+        hospitality: pickMethods(this.apis.hospitality, ['powerOff', 'powerOn', 'controlPower', 'setPowerOn', 'getPowerState']),
+        remotePower: pickMethods(this.apis.remotePower, ['powerOff', 'powerOn', 'reboot', 'getPowerState', 'setPowerOnWithKey']),
+        tvInputDevice: pickMethods(this.apis.tvInputDevice, ['setPowerOn', 'setPowerState']),
+        systemControl: pickMethods(this.apis.systemControl, ['setPowerOn', 'setPowerOnWithKey', 'rebootDevice']),
+      },
+    };
   },
 
   isAvailable(feature) {
@@ -59,15 +114,93 @@ window.TVControl = {
   },
 
   powerOff(options = {}) {
+    const power = this.apis.power;
+    const b2b = this.apis.b2bControl;
+    const display = this.apis.tvDisplayControl;
     const hosp = this.apis.hospitality;
     const remote = this.apis.remotePower;
 
-    if (!this.capabilities.hospitalityPower && !this.isAvailable('remotePower')) {
-      logger.warn('[TVControl] Hospitality/remote power API unavailable');
+    if (!this.capabilities.screenPower && !this.capabilities.tvDisplayPower && !this.capabilities.b2bPanelPower && !this.capabilities.hospitalityPower && !this.isAvailable('remotePower')) {
+      logger.warn('[TVControl] Tizen power/TVDisplay/LFD panel/hospitality/remote power API unavailable:', JSON.stringify(this.describePowerApis()));
       return false;
     }
 
     try {
+      if (this.capabilities.screenPower && power) {
+        if (typeof power.setScreenState === 'function') {
+          const attempts = ['SCREEN_OFF', 'SCREEN_DIM'];
+          for (let i = 0; i < attempts.length; i += 1) {
+            try {
+              power.setScreenState(attempts[i]);
+              logger.info('[TVControl] Screen off requested via tizen.power.setScreenState', attempts[i]);
+              return true;
+            } catch (error) {
+              logger.warn('[TVControl] tizen.power.setScreenState power-off attempt failed:', attempts[i], (error && error.message) || error);
+            }
+          }
+        }
+        if (typeof power.request === 'function') {
+          try {
+            power.request('SCREEN', 'SCREEN_DIM');
+            logger.info('[TVControl] Screen dim requested via tizen.power.request("SCREEN", "SCREEN_DIM")');
+            return true;
+          } catch (error) {
+            logger.warn('[TVControl] tizen.power.request SCREEN_DIM failed:', (error && error.message) || error);
+          }
+        }
+      }
+
+      if (this.capabilities.tvDisplayPower && display && typeof display.setPower === 'function') {
+        const attempts = [false, 'OFF', 0];
+        for (let i = 0; i < attempts.length; i += 1) {
+          try {
+            display.setPower(attempts[i]);
+            logger.info('[TVControl] Power off requested via tvdisplaycontrol.setPower', attempts[i]);
+            return true;
+          } catch (error) {
+            logger.warn('[TVControl] tvdisplaycontrol.setPower power-off attempt failed:', attempts[i], (error && error.message) || error);
+          }
+        }
+      }
+      if (this.capabilities.tvDisplayPower && display && typeof display.setPowerState === 'function') {
+        const attempts = ['SCREEN_OFF', 'OFF', false, 0];
+        for (let i = 0; i < attempts.length; i += 1) {
+          try {
+            display.setPowerState(attempts[i]);
+            logger.info('[TVControl] Power off requested via tvdisplaycontrol.setPowerState', attempts[i]);
+            return true;
+          } catch (error) {
+            logger.warn('[TVControl] tvdisplaycontrol.setPowerState power-off attempt failed:', attempts[i], (error && error.message) || error);
+          }
+        }
+      }
+
+      if (this.capabilities.b2bPanelPower && b2b) {
+        const b2bOff = [
+          ['setPowerOff', []],
+          ['panelOff', []],
+          ['setDisplayOnOff', [false]],
+          ['setPower', [false]],
+          ['setPowerState', ['OFF']],
+          ['shutdown', []],
+        ];
+        for (let i = 0; i < b2bOff.length; i += 1) {
+          const [method, args] = b2bOff[i];
+          if (typeof b2b[method] === 'function') {
+            try {
+              b2b[method](...args,
+                () => logger.info('[TVControl] b2b panel off via', method),
+                (e) => logger.warn('[TVControl] b2b panel off cb error', method, (e && e.message) || e),
+              );
+              logger.info('[TVControl] Power off requested via b2bcontrol.' + method);
+              return true;
+            } catch (e) {
+              logger.warn('[TVControl] b2b.' + method + ' power-off failed:', (e && e.message) || e);
+            }
+          }
+        }
+        logger.warn('[TVControl] b2bControl present but no power-off method matched. Available methods:', JSON.stringify(this.describePowerApis().methods.b2bControl));
+      }
       if (options.virtualStandby && remote && typeof remote.setVirtualStandbyMode === 'function') {
         this.setVirtualStandbyMode(true);
       }
@@ -91,17 +224,95 @@ window.TVControl = {
   },
 
   powerOn() {
+    const power = this.apis.power;
+    const b2b = this.apis.b2bControl;
+    const display = this.apis.tvDisplayControl;
     const hosp = this.apis.hospitality;
     const remote = this.apis.remotePower;
     const tvInput = this.apis.tvInputDevice;
     const sys = this.apis.systemControl;
 
-    if (!this.capabilities.hospitalityPower && !this.isAvailable('remotePower') && !this.capabilities.tvInputPower && !this.capabilities.systemControlPower) {
-      logger.warn('[TVControl] Hospitality/remote/tvInput/systemcontrol power API unavailable');
+    if (!this.capabilities.screenPower && !this.capabilities.tvDisplayPower && !this.capabilities.b2bPanelPower && !this.capabilities.hospitalityPower && !this.isAvailable('remotePower') && !this.capabilities.tvInputPower && !this.capabilities.systemControlPower) {
+      logger.warn('[TVControl] Tizen power/TVDisplay/LFD panel/hospitality/remote/tvInput/systemcontrol power API unavailable:', JSON.stringify(this.describePowerApis()));
       return false;
     }
 
     try {
+      if (this.capabilities.screenPower && power) {
+        if (typeof power.setScreenState === 'function') {
+          try {
+            power.setScreenState('SCREEN_ON');
+            logger.info('[TVControl] Screen on requested via tizen.power.setScreenState("SCREEN_ON")');
+            return true;
+          } catch (error) {
+            logger.warn('[TVControl] tizen.power.setScreenState("SCREEN_ON") failed:', (error && error.message) || error);
+          }
+        }
+        if (typeof power.request === 'function') {
+          const attempts = ['SCREEN_NORMAL', 'SCREEN_BRIGHT'];
+          for (let i = 0; i < attempts.length; i += 1) {
+            try {
+              power.request('SCREEN', attempts[i]);
+              logger.info('[TVControl] Screen on requested via tizen.power.request("SCREEN", state)', attempts[i]);
+              return true;
+            } catch (error) {
+              logger.warn('[TVControl] tizen.power.request screen-on attempt failed:', attempts[i], (error && error.message) || error);
+            }
+          }
+        }
+      }
+
+      if (this.capabilities.tvDisplayPower && display && typeof display.setPower === 'function') {
+        const attempts = [true, 'ON', 1];
+        for (let i = 0; i < attempts.length; i += 1) {
+          try {
+            display.setPower(attempts[i]);
+            logger.info('[TVControl] Power on requested via tvdisplaycontrol.setPower', attempts[i]);
+            return true;
+          } catch (error) {
+            logger.warn('[TVControl] tvdisplaycontrol.setPower power-on attempt failed:', attempts[i], (error && error.message) || error);
+          }
+        }
+      }
+      if (this.capabilities.tvDisplayPower && display && typeof display.setPowerState === 'function') {
+        const attempts = ['SCREEN_ON', 'ON', true, 1];
+        for (let i = 0; i < attempts.length; i += 1) {
+          try {
+            display.setPowerState(attempts[i]);
+            logger.info('[TVControl] Power on requested via tvdisplaycontrol.setPowerState', attempts[i]);
+            return true;
+          } catch (error) {
+            logger.warn('[TVControl] tvdisplaycontrol.setPowerState power-on attempt failed:', attempts[i], (error && error.message) || error);
+          }
+        }
+      }
+
+      if (this.capabilities.b2bPanelPower && b2b) {
+        const b2bOn = [
+          ['setPanelMuteStatus', [false]],
+          ['panelOn', []],
+          ['setDisplayOnOff', [true]],
+          ['setPower', [true]],
+          ['setPowerState', ['ON']],
+        ];
+        for (let i = 0; i < b2bOn.length; i += 1) {
+          const [method, args] = b2bOn[i];
+          if (typeof b2b[method] === 'function') {
+            try {
+              b2b[method](...args,
+                () => logger.info('[TVControl] b2b panel on via', method),
+                (e) => logger.warn('[TVControl] b2b panel on cb error', method, (e && e.message) || e),
+              );
+              logger.info('[TVControl] Power on requested via b2bcontrol.' + method);
+              return true;
+            } catch (e) {
+              logger.warn('[TVControl] b2b.' + method + ' power-on failed:', (e && e.message) || e);
+            }
+          }
+        }
+        logger.warn('[TVControl] b2bControl present but no power-on method matched. Available methods:', JSON.stringify(this.describePowerApis().methods.b2bControl));
+      }
+
       if (hosp) {
         if (typeof hosp.controlPower === 'function') {
           hosp.controlPower('POWER_ON');
@@ -205,6 +416,12 @@ window.TVControl = {
 
   getPowerState() {
     try {
+      if (this.apis.power && typeof this.apis.power.getScreenState === 'function') {
+        return this.apis.power.getScreenState();
+      }
+      if (this.apis.tvDisplayControl && typeof this.apis.tvDisplayControl.getPower === 'function') {
+        return this.apis.tvDisplayControl.getPower();
+      }
       if (this.apis.remotePower && typeof this.apis.remotePower.getPowerState === 'function') {
         return this.apis.remotePower.getPowerState();
       }

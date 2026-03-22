@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
+import { useAuthStore } from '../../lib/auth.js';
 import { UpdateDeviceSchema } from '@signage/shared';
 import type { UpdateDeviceInput, DeviceCommandInput } from '@signage/shared';
 import {
@@ -241,6 +242,7 @@ export default function DeviceDetailPage() {
   const { wsId, deviceId } = useParams<{ wsId: string; deviceId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user, bootstrapped } = useAuthStore();
 
   // Timer slots
   const [onTimers,  setOnTimers]  = useState<Record<number, string>>({});
@@ -262,14 +264,17 @@ export default function DeviceDetailPage() {
   }>({
     queryKey: ['device', deviceId],
     queryFn: () => api.get(`/devices/${deviceId}`),
-    refetchInterval: 15_000,
+    enabled: bootstrapped && !!user && !!deviceId,
+    refetchInterval: (query) => (query.state.status === 'error' ? false : 15_000),
+    retry: false,
   });
 
   const { data: logData } = useQuery<DeviceLogsResponse>({
     queryKey: ['device-logs', deviceId],
     queryFn: () => api.get(`/devices/${deviceId}/logs?limit=300`),
-    enabled: !!deviceId,
-    refetchInterval: 5_000,
+    enabled: bootstrapped && !!user && !!deviceId,
+    refetchInterval: (query) => (query.state.status === 'error' ? false : 5_000),
+    retry: false,
   });
 
   const observedSystemInfo = useMemo(() => parseObservedSystemInfo(logData?.logs ?? []), [logData?.logs]);

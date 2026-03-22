@@ -216,7 +216,7 @@ async function request<T>(
     const retry = await fetch(buildApiUrl(path), { ...options, headers, credentials: 'include' });
     if (!retry.ok) {
       const retryText = await retry.text();
-      if (path === '/auth/me' && retry.status === 404 && isAuthMeNotFound(retryText)) {
+      if (retry.status === 401 || (path === '/auth/me' && retry.status === 404 && isAuthMeNotFound(retryText))) {
         clearInvalidSession();
       }
       throw new Error(retryText);
