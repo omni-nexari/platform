@@ -53,12 +53,20 @@ window.RemoteControl = {
 
   registerTizenKeys() {
     try {
-      if (typeof tizen !== 'undefined' && tizen.tvinputdevice) {
+      // On SSSP (older platform) tvinputdevice lives under b2bapis; on newer Tizen it's tizen.tvinputdevice
+      const inputDevice =
+        (typeof tizen !== 'undefined' && tizen.tvinputdevice)
+          ? tizen.tvinputdevice
+          : (typeof b2bapis !== 'undefined' && b2bapis.tvinputdevice)
+            ? b2bapis.tvinputdevice
+            : null;
+
+      if (inputDevice) {
         // Navigation keys (arrows, enter, return) work by default without registration
         // Only try to register special keys that require explicit permission
         
         // Get list of supported keys
-        const supportedKeys = tizen.tvinputdevice.getSupportedKeys();
+        const supportedKeys = inputDevice.getSupportedKeys();
         logger.debug(`Supported input keys: ${supportedKeys.length} keys available`);
         
         // Try to register Info/Tools key for debug display
@@ -72,7 +80,7 @@ window.RemoteControl = {
 
         keysToRegister.forEach(key => {
           try {
-            tizen.tvinputdevice.registerKey(key);
+            inputDevice.registerKey(key);
             logger.debug(`Registered key: ${key}`);
           } catch (e) {
             logger.debug(`Could not register key ${key}:`, e.message);
@@ -177,9 +185,9 @@ window.RemoteControl = {
 
   handleGlobalShortcut(keyCode, activeScreen, event) {
     switch (keyCode) {
-      case this.KEYS.NUM_1:
+      case this.KEYS.NUM_4:
         event.preventDefault();
-        logger.info('Navigating to test-tizen.html');
+        logger.info('Navigating to test-tizen.html via NUM_4');
         window.location.href = 'test-tizen.html';
         return true;
 

@@ -130,9 +130,9 @@ window.RemoteControl = {
 
   handleGlobalShortcut(keyCode, activeScreen, event) {
     switch (keyCode) {
-      case this.KEYS.NUM_1:
+      case this.KEYS.NUM_4:
         event.preventDefault();
-        logger.info('Navigating to test-tizen.html');
+        logger.info('Navigating to test-tizen.html via NUM_4');
         window.location.href = 'test-tizen.html';
         return true;
 

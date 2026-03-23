@@ -801,14 +801,16 @@ const Player = {
         if (typeof DataSyncRenderer !== 'undefined') {
             DataSyncRenderer.disconnect();
         }
+        this.closeDocumentViewer();
         // Clear existing content
         container.innerHTML = '';
         if (!content || !content.type) {
             this.showIdleScreen();
             return;
         }
-        logger.info('Rendering content:', content.type);
-        switch (content.type) {
+        const contentType = String(content.type || '').toUpperCase();
+        logger.info('Rendering content:', contentType);
+        switch (contentType) {
             case 'IMAGE':
                 this.renderImage(container, content);
                 break;
@@ -827,8 +829,9 @@ const Player = {
                 this.renderVideo(container, content);
                 break;
             case 'PRESENTATION':
-                // Video presentations - use AVPlay
-                this.renderVideo(container, content);
+            case 'DOCUMENT':
+            case 'PDF':
+                this.renderDocument(container, content);
                 break;
             case 'HTML':
                 this.renderHTML(container, content);
@@ -843,7 +846,7 @@ const Player = {
                 this.renderPlaylist(container, content);
                 break;
             default:
-                logger.warn('Unknown content type:', content.type);
+                logger.warn('Unknown content type:', content.type, 'normalized to', contentType);
                 this.showIdleScreen();
         }
     },
@@ -962,6 +965,89 @@ const Player = {
       </div>
     `;
     },
+    renderDocument(container, content) {
+        const b2bdoc = typeof b2bapis !== 'undefined' && b2bapis.b2bdoc ? b2bapis.b2bdoc : null;
+        const name = (content && content.name) || 'document';
+        const url = (content && (content.url || content.localUrl)) || '';
+        if (!b2bdoc) {
+            logger.warn('[B2BDoc] b2bapis.b2bdoc not available');
+            container.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#111;flex-direction:column;">
+        <div style="font-size:22px;">Document API unavailable</div>
+        <div style="font-size:14px;margin-top:8px;opacity:0.7;">${name}</div>
+      </div>
+    `;
+            return;
+        }
+        if (!url) {
+            logger.warn('[B2BDoc] Missing document URL for', name);
+            container.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#111;flex-direction:column;">
+        <div style="font-size:22px;">Document URL missing</div>
+        <div style="font-size:14px;margin-top:8px;opacity:0.7;">${name}</div>
+      </div>
+    `;
+            return;
+        }
+        container.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#111;flex-direction:column;">
+        <div style="font-size:22px;">Opening document...</div>
+        <div style="font-size:14px;margin-top:8px;opacity:0.7;">${name}</div>
+      </div>
+    `;
+        logger.info('[B2BDoc] Opening document:', { name, url });
+        const onSuccess = () => {
+            logger.info('[B2BDoc] Document opened:', name);
+        };
+        const onError = (error) => {
+            logger.warn('[B2BDoc] Failed to open document:', name, (error && error.message) || error);
+            container.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#111;flex-direction:column;">
+          <div style="font-size:22px;">Document open failed</div>
+          <div style="font-size:14px;margin-top:8px;opacity:0.7;">${name}</div>
+        </div>
+      `;
+        };
+        try {
+            if (typeof b2bdoc.open === 'function') {
+                b2bdoc.open(url, onSuccess, onError);
+                return;
+            }
+            if (typeof b2bdoc.openDocument === 'function') {
+                b2bdoc.openDocument(url, onSuccess, onError);
+                return;
+            }
+            if (typeof b2bdoc.playDocument === 'function') {
+                b2bdoc.playDocument(url, onSuccess, onError);
+                return;
+            }
+        }
+        catch (error) {
+            onError(error);
+            return;
+        }
+        logger.warn('[B2BDoc] No supported open method found');
+        onError(new Error('No supported b2bdoc open method found'));
+    },
+    closeDocumentViewer() {
+        const b2bdoc = typeof b2bapis !== 'undefined' && b2bapis.b2bdoc ? b2bapis.b2bdoc : null;
+        if (!b2bdoc) {
+            return;
+        }
+        const methods = ['close', 'closeDocument', 'stop'];
+        for (let i = 0; i < methods.length; i += 1) {
+            const method = methods[i];
+            if (typeof b2bdoc[method] === 'function') {
+                try {
+                    b2bdoc[method]();
+                    return;
+                }
+                catch (_) {
+                    // Ignore best-effort document close failures.
+                }
+            }
+        }
+    },
     // Infer MIME type for locally cached files (helps the browser decode blob URLs)
     getMimeType(fileName, fallback) {
         if (fallback) {
@@ -983,6 +1069,20 @@ const Player = {
                 return 'image/bmp';
             case 'webp':
                 return 'image/webp';
+            case 'pdf':
+                return 'application/pdf';
+            case 'ppt':
+                return 'application/vnd.ms-powerpoint';
+            case 'pptx':
+                return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+            case 'doc':
+                return 'application/msword';
+            case 'docx':
+                return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+            case 'xls':
+                return 'application/vnd.ms-excel';
+            case 'xlsx':
+                return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
             default:
                 return null;
         }
@@ -2136,7 +2236,7 @@ const Player = {
         const container = document.getElementById('content-container');
         // Check if this is an all-video(-like) playlist for seamless playback
         // (Some CMS flows may label video assets as PRESENTATION/OVERLAY but still render via AVPlay.)
-        const videoLikeTypes = new Set(['VIDEO', 'PRESENTATION', 'OVERLAY']);
+        const videoLikeTypes = new Set(['VIDEO', 'OVERLAY']);
         const allVideos = playableItems.every(item => videoLikeTypes.has(item.content.type));
         const hasMultipleVideos = allVideos && playableItems.length > 1;
         // Try to use seamless AVPlay for all-video playlists
@@ -2512,7 +2612,8 @@ const Player = {
                 container.innerHTML = '';
             }
             // Render based on content type
-            switch (content.type) {
+            const contentType = String(content.type || '').toUpperCase();
+            switch (contentType) {
                 case 'IMAGE':
                     if (!canReuseImage) {
                         this.renderImage(container, content);
@@ -2711,6 +2812,12 @@ const Player = {
                         }, 100);
                     }
                     break;
+                case 'PRESENTATION':
+                case 'DOCUMENT':
+                case 'PDF':
+                    this.renderDocument(container, content);
+                    scheduleNext(duration * 1000);
+                    break;
                 case 'HTML':
                 case 'WEBPAGE':
                     this.renderHTML(container, content);
@@ -2726,7 +2833,7 @@ const Player = {
                     scheduleNext(duration * 1000);
                     break;
                 default:
-                    logger.warn('Unknown content type:', content.type);
+                    logger.warn('Unknown content type:', content.type, 'normalized to', contentType);
                     // Skip to next item
                     scheduleNext(1000);
             }
@@ -3198,11 +3305,47 @@ const Player = {
             localStorage.setItem('PLAYER_NTP_SERVER', server);
             localStorage.setItem('PLAYER_NTP_TIMEZONE', timezone);
             logger.info('Stored requested NTP settings', { server, timezone });
+            // Apply hardware NTP via b2bapis.b2bcontrol (SSSP older platform)
+            this._applyHardwareNtp(server, timezone);
             this.syncTimeWithServer();
         }
         catch (error) {
             logger.warn('Failed to store NTP settings:', error);
         }
+    },
+    _applyHardwareNtp(server, timezone) {
+        const b2b = (typeof b2bapis !== 'undefined') ? b2bapis.b2bcontrol : null;
+        if (!b2b) {
+            logger.debug('[NTP] b2bapis.b2bcontrol not available; hardware NTP skipped');
+            return;
+        }
+        const onOk  = (method) => () => logger.info('[NTP] hardware NTP set via', method);
+        const onErr = (method) => (e) => logger.warn('[NTP] hardware NTP error via', method, (e && e.message) || e);
+        // Try combined call first (sets both server and timezone in one step)
+        if (typeof b2b.setNTPSync === 'function') {
+            try { b2b.setNTPSync(server, timezone, onOk('setNTPSync'), onErr('setNTPSync')); return; }
+            catch (e) { logger.warn('[NTP] setNTPSync threw:', (e && e.message) || e); }
+        }
+        if (typeof b2b.setClockSync === 'function') {
+            try { b2b.setClockSync(true, server, timezone, onOk('setClockSync'), onErr('setClockSync')); return; }
+            catch (e) { logger.warn('[NTP] setClockSync threw:', (e && e.message) || e); }
+        }
+        // Try individual server + timezone calls
+        if (typeof b2b.setNTPServer === 'function') {
+            try { b2b.setNTPServer(server, onOk('setNTPServer'), onErr('setNTPServer')); }
+            catch (e) { logger.warn('[NTP] setNTPServer threw:', (e && e.message) || e); }
+        } else if (typeof b2b.enableNTPSync === 'function') {
+            try { b2b.enableNTPSync(server, onOk('enableNTPSync'), onErr('enableNTPSync')); }
+            catch (e) { logger.warn('[NTP] enableNTPSync threw:', (e && e.message) || e); }
+        }
+        if (typeof b2b.setTimeZone === 'function') {
+            try { b2b.setTimeZone(timezone, onOk('setTimeZone'), onErr('setTimeZone')); }
+            catch (e) { logger.warn('[NTP] setTimeZone threw:', (e && e.message) || e); }
+        } else if (typeof b2b.setTimezone === 'function') {
+            try { b2b.setTimezone(timezone, onOk('setTimezone'), onErr('setTimezone')); }
+            catch (e) { logger.warn('[NTP] setTimezone threw:', (e && e.message) || e); }
+        }
+        logger.info('[NTP] hardware NTP call attempted', { server, timezone });
     },
     applyLockSetting(kind, enabled) {
         const value = !!enabled;
@@ -3213,6 +3356,37 @@ const Player = {
             logger.debug('Failed to persist lock state:', error);
         }
         logger.info(kind + ' updated', { enabled: value });
+        const b2b = typeof b2bapis !== 'undefined' ? b2bapis.b2bcontrol || null : null;
+        if (b2b) {
+            const methodGroups = kind === 'irLock'
+                ? [
+                    ['setIRReceiverStatus', [!value]],
+                    ['setIRReceiver', [!value]],
+                    ['setIRLock', [value]],
+                    ['setRemoteControlLock', [value]],
+                ]
+                : [
+                    ['setLocalButtonStatus', [!value]],
+                    ['setPanelKey', [!value]],
+                    ['setButtonLock', [value]],
+                    ['setLocalKeyLock', [value]],
+                ];
+            for (let i = 0; i < methodGroups.length; i += 1) {
+                const [method, args] = methodGroups[i];
+                if (typeof b2b[method] === 'function') {
+                    try {
+                        b2b[method](...args,
+                            () => logger.info('[Lock] Applied via ' + method, { kind, value }),
+                            (e) => logger.warn('[Lock] ' + method + ' callback error:', (e && e.message) || e),
+                        );
+                        break;
+                    }
+                    catch (e) {
+                        logger.warn('[Lock] ' + method + ' failed:', (e && e.message) || e);
+                    }
+                }
+            }
+        }
         if (this.wsConnection && this.wsConnection.readyState === this.wsConnection.OPEN) {
             this.wsConnection.send(JSON.stringify({
                 type: 'system_state',
@@ -3232,6 +3406,41 @@ const Player = {
         catch (error) {
             logger.debug('Failed to persist timer payload:', error);
         }
+        // Apply hardware timer via b2bapis.b2bcontrol (SSSP older platform)
+        const slot = Number((payload && payload.slot) || 1);
+        const timeStr = (payload && payload.time) || '';
+        const parts = timeStr.split(':');
+        const hour   = parseInt(parts[0], 10);
+        const minute = parseInt(parts[1], 10);
+        if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+            logger.warn('[Timer] Invalid time format, expected HH:MM:', timeStr);
+            return;
+        }
+        const b2b = (typeof b2bapis !== 'undefined') ? b2bapis.b2bcontrol : null;
+        if (!b2b) {
+            logger.debug('[Timer] b2bapis.b2bcontrol not available; hardware timer skipped');
+            return;
+        }
+        const onOk  = (m) => () => logger.info('[Timer] ' + kind + ' timer set via', m, { slot, hour, minute });
+        const onErr = (m) => (e) => logger.warn('[Timer] ' + kind + ' timer error via', m, (e && e.message) || e);
+        if (kind === 'on') {
+            const methods = ['setOnTimer', 'setPowerOnTimer', 'addOnTimer'];
+            for (let i = 0; i < methods.length; i++) {
+                if (typeof b2b[methods[i]] === 'function') {
+                    try { b2b[methods[i]](slot, hour, minute, onOk(methods[i]), onErr(methods[i])); return; }
+                    catch (e) { logger.warn('[Timer] ' + methods[i] + ' threw:', (e && e.message) || e); }
+                }
+            }
+        } else {
+            const methods = ['setOffTimer', 'setPowerOffTimer', 'addOffTimer'];
+            for (let i = 0; i < methods.length; i++) {
+                if (typeof b2b[methods[i]] === 'function') {
+                    try { b2b[methods[i]](slot, hour, minute, onOk(methods[i]), onErr(methods[i])); return; }
+                    catch (e) { logger.warn('[Timer] ' + methods[i] + ' threw:', (e && e.message) || e); }
+                }
+            }
+        }
+        logger.warn('[Timer] No matching b2bcontrol method found for', kind, 'timer');
     },
     clearTimerCommand(kind, payload) {
         logger.info('Timer clear command received', { kind, payload });
@@ -3241,6 +3450,33 @@ const Player = {
         catch (error) {
             logger.debug('Failed to clear timer payload:', error);
         }
+        // Clear hardware timer via b2bapis.b2bcontrol (SSSP older platform)
+        const slot = Number((payload && payload.slot) || 1);
+        const b2b = (typeof b2bapis !== 'undefined') ? b2bapis.b2bcontrol : null;
+        if (!b2b) {
+            logger.debug('[Timer] b2bapis.b2bcontrol not available; hardware timer clear skipped');
+            return;
+        }
+        const onOk  = (m) => () => logger.info('[Timer] ' + kind + ' timer cleared via', m, { slot });
+        const onErr = (m) => (e) => logger.warn('[Timer] ' + kind + ' timer clear error via', m, (e && e.message) || e);
+        if (kind === 'on') {
+            const methods = ['deleteOnTimer', 'clearOnTimer', 'removePowerOnTimer'];
+            for (let i = 0; i < methods.length; i++) {
+                if (typeof b2b[methods[i]] === 'function') {
+                    try { b2b[methods[i]](slot, onOk(methods[i]), onErr(methods[i])); return; }
+                    catch (e) { logger.warn('[Timer] ' + methods[i] + ' threw:', (e && e.message) || e); }
+                }
+            }
+        } else {
+            const methods = ['deleteOffTimer', 'clearOffTimer', 'removePowerOffTimer'];
+            for (let i = 0; i < methods.length; i++) {
+                if (typeof b2b[methods[i]] === 'function') {
+                    try { b2b[methods[i]](slot, onOk(methods[i]), onErr(methods[i])); return; }
+                    catch (e) { logger.warn('[Timer] ' + methods[i] + ' threw:', (e && e.message) || e); }
+                }
+            }
+        }
+        logger.warn('[Timer] No matching b2bcontrol delete method found for', kind, 'timer');
     },
     applyScreenshotInterval(payload) {
         var minutes = Number((payload && payload.minutes) || 0);

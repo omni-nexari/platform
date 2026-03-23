@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="connect-src http://localhost:3000 http://127.0.0.1:3000 http://192.168.1.110:3000;">
   <title>Tizen B2B API Test</title>
+  <script type="text/javascript" src="$B2BAPIS/b2bapis/b2bapis.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -150,12 +152,45 @@
       margin-left: 8px;
       vertical-align: middle;
     }
+
+    .status-card {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: #070910;
+      font-family: 'Lucida Console', 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #b0c0d8;
+    }
+
+    .status-card .row {
+      margin-bottom: 4px;
+      word-break: break-all;
+    }
+
+    .status-card .label {
+      color: #7a8299;
+    }
+
+    .url-input {
+      width: 100%;
+      margin-top: 8px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: #1a1f2e;
+      color: #e8eaf0;
+      font-size: 12px;
+      font-family: 'Lucida Console', 'Courier New', monospace;
+    }
   </style>
 </head>
 <body>
 
   <h1>Tizen B2B API Test <span class="badge">b2bcontrol</span></h1>
-  <p class="subtitle">Press <strong style="color:#4ff2d1">1</strong> on the remote while on the player screen · RETURN/BACK to go back</p>
+  <p class="subtitle">Press <strong style="color:#4ff2d1">4</strong> on the remote while on the player screen · RETURN/BACK to go back</p>
 
   <div class="grid">
 
@@ -184,6 +219,33 @@
       <div class="btn-row">
         <button onclick="testGetPinStatus()">getPinStatus()</button>
         <button onclick="testGetSssp()">detectB2BControl()</button>
+      </div>
+    </div>
+
+    <!-- Test-only Node.js smoke server -->
+    <div class="section">
+      <h2>Node.js Smoke Test</h2>
+      <div class="btn-row">
+        <button class="primary" onclick="testNodeStart()">Start Node.js</button>
+        <button onclick="testNodeHealth()">GET /health</button>
+        <button onclick="testNodePingDev()">Ping Dev Server</button>
+        <button class="danger" onclick="testNodeStop()">Stop Node.js</button>
+      </div>
+      <p class="hint">
+        Samsung SSSP: Node.js <strong>4.4.3</strong> · only <strong>http</strong> module guaranteed.<br>
+        Entry-point: <strong>server65.js.signed</strong> (signed) → requires <strong>lib/logic.js</strong> (unsigned).<br>
+        Node server binds <code>0.0.0.0:3000</code> — reachable from <em>any device on same network</em>.<br>
+        <strong>Laptop test:</strong> open <code>http://&lt;TV-IP&gt;:3000/health</code> in your browser to confirm Node runs.
+      </p>
+      <input id="node-server-path" class="url-input" type="text" value="server65.js.signed" spellcheck="false" placeholder="server path e.g. server65.js.signed" />
+      <input id="node-tv-ip" class="url-input" type="text" value="" spellcheck="false" placeholder="TV LAN IP (optional) e.g. 192.168.1.50" />
+      <input id="node-dev-url" class="url-input" type="url" value="http://192.168.1.110:3000/api/v1/devices/time" spellcheck="false" />
+      <div id="node-status-card" class="status-card">
+        <div class="row"><span class="label">Status:</span> <span id="node-status-text">idle</span></div>
+        <div class="row"><span class="label">Server:</span> <span id="node-server-path-view">server65.js.signed</span></div>
+        <div class="row"><span class="label">From TV:</span> http://127.0.0.1:3000/health · http://localhost:3000/health</div>
+        <div class="row"><span class="label">From Laptop:</span> <span id="node-laptop-url">enter TV IP above</span></div>
+        <div class="row"><span class="label">Last Result:</span> <span id="node-last-result">—</span></div>
       </div>
     </div>
 
@@ -384,6 +446,157 @@
     }
     return true;
   }
+
+  function setNodeStatus(status, result) {
+    document.getElementById('node-status-text').textContent = status;
+    if (typeof result === 'string') {
+      document.getElementById('node-last-result').textContent = result;
+    }
+  }
+
+  window.testNodeStart = function() {
+    var serverPath = document.getElementById('node-server-path').value.trim() || 'server65.js.signed';
+    document.getElementById('node-server-path-view').textContent = serverPath;
+    log('Starting ' + serverPath + ' via b2bcontrol.startNodeServer()...', 'log-info');
+    if (!checkB2B()) return;
+    setNodeStatus('starting', 'Launching ' + serverPath + ' ...');
+    try {
+      if (typeof b2bapis.b2bcontrol.startNodeServer !== 'function') {
+        setNodeStatus('error', 'startNodeServer() not available');
+        log('startNodeServer() not available on this firmware', 'log-error');
+        return;
+      }
+      b2bapis.b2bcontrol.startNodeServer(
+        serverPath,
+        'node-smoke-test',
+        function() {
+          setNodeStatus('running', 'Node server start callback succeeded');
+          log('startNodeServer SUCCESS for ' + serverPath, 'log-ok');
+        },
+        function(error) {
+          var msg = (error && (error.message || error.name || error.code)) || JSON.stringify(error);
+          setNodeStatus('error', msg);
+          log('startNodeServer ERROR: ' + msg, 'log-error');
+        }
+      );
+    } catch (e) {
+      setNodeStatus('exception', e.message);
+      log('startNodeServer EXCEPTION: ' + e.message, 'log-error');
+    }
+  };
+
+  function wait(ms) {
+    return new Promise(function(resolve) { setTimeout(resolve, ms); });
+  }
+
+  async function probeNodeUrl(url, attempts) {
+    var lastError = null;
+    for (var i = 0; i < attempts; i++) {
+      try {
+        var res = await fetch(url, { cache: 'no-store' });
+        var text = await res.text();
+        if (!res.ok) {
+          lastError = 'HTTP ' + res.status + ' → ' + text;
+        } else {
+          return { ok: true, url: url, text: text };
+        }
+      } catch (error) {
+        lastError = error && error.message ? error.message : String(error);
+      }
+      if (i < attempts - 1) await wait(500);
+    }
+    return { ok: false, url: url, error: lastError || 'Unknown error' };
+  }
+
+  // Update the laptop URL display whenever the TV IP changes
+  document.getElementById('node-tv-ip').addEventListener('input', function() {
+    var ip = this.value.trim();
+    document.getElementById('node-laptop-url').textContent = ip
+      ? 'http://' + ip + ':3000/health'
+      : 'enter TV IP above';
+  });
+
+  window.testNodeHealth = function() {
+    var tvIp = document.getElementById('node-tv-ip').value.trim();
+    var urls = [
+      'http://127.0.0.1:3000/health',
+      'http://localhost:3000/health'
+    ];
+    if (tvIp) {
+      urls.push('http://' + tvIp + ':3000/health');
+    }
+    log('Probing Node.js health: ' + urls.join(', '), 'log-info');
+    setNodeStatus('checking', 'Probing ' + urls.length + ' URL(s)...');
+
+    (async function() {
+      for (var i = 0; i < urls.length; i++) {
+        var result = await probeNodeUrl(urls[i], 3);
+        if (result.ok) {
+          setNodeStatus('ok', result.url + ' → ' + result.text);
+          log('/health SUCCESS via ' + result.url + ' → ' + result.text, 'log-ok');
+          return;
+        }
+        log('/health failed via ' + result.url + ' → ' + result.error, 'log-warn');
+      }
+
+      setNodeStatus('failed', 'All health probes failed. Check API logs for beacon.');
+      log('/health FAILED on all URLs. If "source=tizen-node-server-up" appears in API logs, Node is running but browser-to-localhost is blocked.', 'log-error');
+    })();
+  };
+
+  window.testNodeStop = function() {
+    log('Stopping Node.js server via b2bcontrol.stopNodeServer()...', 'log-warn');
+    if (!checkB2B()) return;
+    try {
+      if (typeof b2bapis.b2bcontrol.stopNodeServer !== 'function') {
+        setNodeStatus('error', 'stopNodeServer() not available');
+        log('stopNodeServer() not available on this firmware', 'log-error');
+        return;
+      }
+      b2bapis.b2bcontrol.stopNodeServer(
+        function() {
+          setNodeStatus('stopped', 'stopNodeServer callback succeeded');
+          log('stopNodeServer SUCCESS', 'log-ok');
+        },
+        function(error) {
+          var msg = (error && (error.message || error.name || error.code)) || JSON.stringify(error);
+          setNodeStatus('error', msg);
+          log('stopNodeServer ERROR: ' + msg, 'log-error');
+        }
+      );
+    } catch (e) {
+      setNodeStatus('exception', e.message);
+      log('stopNodeServer EXCEPTION: ' + e.message, 'log-error');
+    }
+  };
+
+  window.testNodePingDev = function() {
+    var targetUrl = document.getElementById('node-dev-url').value.trim();
+    log('Requesting Node.js outbound ping to ' + targetUrl + ' ...', 'log-info');
+    setNodeStatus('pinging-dev', targetUrl);
+
+    fetch('http://127.0.0.1:3000/ping-dev', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: targetUrl })
+    })
+      .then(function(res) {
+        return res.text().then(function(text) {
+          if (!res.ok) {
+            setNodeStatus('ping-failed', text || ('HTTP ' + res.status));
+            log('Ping Dev Server FAILED → ' + text, 'log-error');
+            return;
+          }
+          setNodeStatus('ping-ok', text);
+          log('Ping Dev Server SUCCESS → ' + text, 'log-ok');
+        });
+      })
+      .catch(function(error) {
+        var msg = error && error.message ? error.message : String(error);
+        setNodeStatus('ping-fetch-error', msg);
+        log('Ping Dev Server FETCH ERROR: ' + msg, 'log-error');
+      });
+  };
 
   // ── Screen Capture ───────────────────────────────────────────────────────────
 
@@ -659,6 +872,8 @@
   window.addEventListener('load', function() {
     log('test-tizen.html loaded — b2bcontrol privilege: http://developer.samsung.com/privilege/b2bcontrol', 'log-info');
     log('Click "detectB2BControl()" to discover available APIs', 'log-info');
+    log('Node smoke test uses server65.js.signed + lib/logic.js on port 3000', 'log-info');
+    log('If start succeeds but no beacon appears, try server path ../test-node-server.js.signed', 'log-info');
     applyFocus(0);
   });
 

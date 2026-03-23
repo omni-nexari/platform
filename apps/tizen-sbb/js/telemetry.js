@@ -140,7 +140,17 @@ window.Telemetry = {
         logger.debug('tvinfo.getVersion not available');
       }
 
-      // Try systemcontrol if exposed (B2B)
+      // Prefer SSSP b2bcontrol on older SBB firmware
+      try {
+        if (!serialNumber && typeof b2bapis !== 'undefined' && b2bapis.b2bcontrol && typeof b2bapis.b2bcontrol.getSerialNumber === 'function') {
+          serialNumber = b2bapis.b2bcontrol.getSerialNumber();
+          serialAttempts.push('b2bapis.b2bcontrol.getSerialNumber');
+        }
+      } catch (e) {
+        logger.debug('b2bapis.b2bcontrol.getSerialNumber not available');
+      }
+
+      // Try systemcontrol if exposed as a secondary fallback
       try {
         if (!serialNumber && typeof webapis !== 'undefined' && webapis.systemcontrol && typeof webapis.systemcontrol.getSerialNumber === 'function') {
           serialNumber = webapis.systemcontrol.getSerialNumber();
@@ -148,16 +158,6 @@ window.Telemetry = {
         }
       } catch (e) {
         logger.debug('systemcontrol.getSerialNumber not available');
-      }
-
-      // Try b2bcontrol.getSerialNumber as another fallback
-      try {
-        if (!serialNumber && typeof webapis !== 'undefined' && webapis.b2bcontrol && typeof webapis.b2bcontrol.getSerialNumber === 'function') {
-          serialNumber = webapis.b2bcontrol.getSerialNumber();
-          serialAttempts.push('b2bcontrol.getSerialNumber');
-        }
-      } catch (e) {
-        logger.debug('b2bcontrol.getSerialNumber not available');
       }
       
       // Fallback to BUILD info
@@ -350,7 +350,9 @@ window.Telemetry = {
       // Get power state
       let powerState = 'ON';
       try {
-        if (typeof webapis !== 'undefined' && webapis.remotepower && typeof webapis.remotepower.getPowerState === 'function') {
+        if (typeof b2bapis !== 'undefined' && b2bapis.b2bcontrol && typeof b2bapis.b2bcontrol.getPowerState === 'function') {
+          powerState = b2bapis.b2bcontrol.getPowerState() || 'ON';
+        } else if (typeof webapis !== 'undefined' && webapis.remotepower && typeof webapis.remotepower.getPowerState === 'function') {
           powerState = webapis.remotepower.getPowerState() || 'ON';
         }
       } catch (e) {
