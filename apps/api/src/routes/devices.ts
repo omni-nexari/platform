@@ -1274,7 +1274,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     ]);
 
     const legacyPublishedSchedule = buildLegacyPublishedSchedule({
-      content: publishedContent,
+      content: publishedContent ?? null,
       playlist: publishedPlaylist,
       schedule: publishedSchedule,
     });

@@ -344,7 +344,13 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     if (pending) {
       clearTimeout(pending.timer);
       pendingMdcStatus.delete(pendingKey);
-      pending.resolve(msg.payload);
+      pending.resolve({
+        requestId: msg.payload.requestId,
+        ok: msg.payload.ok,
+        ...(msg.payload.rawHex !== undefined ? { rawHex: msg.payload.rawHex } : {}),
+        ...(msg.payload.error !== undefined ? { error: msg.payload.error } : {}),
+        ...(msg.payload.status !== undefined ? { status: msg.payload.status } : {}),
+      });
     }
     return;
   }
