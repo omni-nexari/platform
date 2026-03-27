@@ -114,7 +114,8 @@ On Pi:
 
 ```bash
 systemctl status signage-api --no-pager
-curl -sS http://127.0.0.1:3000/health
+curl -sS http://127.0.0.1:3000/api/v1/health
+curl -sS http://127.0.0.1/api/health
 sudo nginx -t
 ```
 

@@ -122,4 +122,4 @@ sudo systemctl reload nginx
 sudo certbot --nginx -d ds.chiho.app
 
 echo "Deploy complete."
-echo "API health: curl http://127.0.0.1:3000/health"
+echo "API health: curl http://127.0.0.1:3000/api/v1/health"

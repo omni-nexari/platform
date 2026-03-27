@@ -31,7 +31,7 @@ sudo systemctl restart signage-api
 sudo systemctl reload nginx
 
 echo "Done"
-echo "Verify API health: curl http://127.0.0.1:3000/health"
+echo "Verify API health: curl http://127.0.0.1:3000/api/v1/health"
 echo "Verify service: sudo systemctl status signage-api --no-pager"
 
 if [[ -n "${STASH_NAME}" ]]; then
@@ -40,5 +40,5 @@ if [[ -n "${STASH_NAME}" ]]; then
 	echo "Reapply with: git stash pop"
 fi
 
-curl http://127.0.0.1:3000/health
+curl http://127.0.0.1:3000/api/v1/health
 sudo systemctl status signage-api --no-pager
