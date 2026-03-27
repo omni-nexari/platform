@@ -344,12 +344,28 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     if (pending) {
       clearTimeout(pending.timer);
       pendingMdcStatus.delete(pendingKey);
+
+      const normalizedStatus = msg.payload.status
+        ? {
+          displayId: msg.payload.status.displayId,
+          ack: msg.payload.status.ack,
+          rCmd: msg.payload.status.rCmd,
+          ...(msg.payload.status.power !== undefined ? { power: msg.payload.status.power } : {}),
+          ...(msg.payload.status.volume !== undefined ? { volume: msg.payload.status.volume } : {}),
+          ...(msg.payload.status.mute !== undefined ? { mute: msg.payload.status.mute } : {}),
+          ...(msg.payload.status.input !== undefined ? { input: msg.payload.status.input } : {}),
+          ...(msg.payload.status.aspect !== undefined ? { aspect: msg.payload.status.aspect } : {}),
+          ...(msg.payload.status.nTime !== undefined ? { nTime: msg.payload.status.nTime } : {}),
+          ...(msg.payload.status.fTime !== undefined ? { fTime: msg.payload.status.fTime } : {}),
+        }
+        : undefined;
+
       pending.resolve({
         requestId: msg.payload.requestId,
         ok: msg.payload.ok,
         ...(msg.payload.rawHex !== undefined ? { rawHex: msg.payload.rawHex } : {}),
         ...(msg.payload.error !== undefined ? { error: msg.payload.error } : {}),
-        ...(msg.payload.status !== undefined ? { status: msg.payload.status } : {}),
+        ...(normalizedStatus !== undefined ? { status: normalizedStatus } : {}),
       });
     }
     return;
