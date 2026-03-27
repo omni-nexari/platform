@@ -6,12 +6,36 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-APP_USER="${APP_USER:-signage}"
+APP_USER="${APP_USER:-chiho}"
 APP_DIR="${APP_DIR:-/opt/signage}"
 UPLOAD_DIR="${UPLOAD_DIR:-/var/signage/uploads}"
 ENV_DIR="${ENV_DIR:-/etc/signage}"
 
 export DEBIAN_FRONTEND=noninteractive
+
+ensure_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if command -v corepack >/dev/null 2>&1; then
+    corepack enable
+    corepack prepare pnpm@9 --activate
+    if command -v pnpm >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  if command -v npm >/dev/null 2>&1; then
+    npm install -g pnpm@9
+    if command -v pnpm >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  echo "Failed to provision pnpm. Install Node.js 22+ with corepack or install pnpm manually."
+  exit 1
+}
 
 LIBREOFFICE_PACKAGES=()
 if apt-cache show libreoffice-headless >/dev/null 2>&1; then
@@ -47,11 +71,24 @@ ln -sf /snap/bin/certbot /usr/bin/certbot || true
 
 if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | cut -d. -f1 | tr -d 'v')" -lt 22 ]]; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-  apt-get install -y nodejs
+  apt-get install -y --allow-change-held-packages nodejs
 fi
 
-corepack enable
-corepack prepare pnpm@9 --activate
+if ! command -v npm >/dev/null 2>&1; then
+  apt-get install -y --allow-change-held-packages npm || true
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "Node.js installation failed. 'node' is still not available on PATH."
+  exit 1
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "npm installation failed. 'npm' is still not available on PATH."
+  exit 1
+fi
+
+ensure_pnpm
 
 if ! id -u "${APP_USER}" >/dev/null 2>&1; then
   useradd --system --create-home --shell /bin/bash "${APP_USER}"

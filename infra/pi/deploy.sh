@@ -9,6 +9,30 @@ DS_HOSTNAME="${DS_HOSTNAME:-ds.chiho.app}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"    # required for certbot; set in env or export before running
 CERTBOT_STAGING="${CERTBOT_STAGING:-0}"
 
+ensure_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if command -v corepack >/dev/null 2>&1; then
+    sudo env "PATH=$PATH" corepack enable
+    sudo env "PATH=$PATH" corepack prepare pnpm@9 --activate
+    if command -v pnpm >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  if command -v npm >/dev/null 2>&1; then
+    sudo npm install -g pnpm@9
+    if command -v pnpm >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  echo "Failed to provision pnpm. Install Node.js 22+ with corepack or install pnpm manually."
+  exit 1
+}
+
 upsert_env_var() {
   local key="$1"
   local value="$2"
@@ -66,11 +90,7 @@ upsert_env_var "GHOSTSCRIPT_PATH" "${GHOSTSCRIPT_PATH_VALUE}"
 
 cd "${APP_DIR}"
 
-# corepack needs sudo when node is installed system-wide
-sudo corepack enable
-sudo corepack prepare pnpm@9 --activate
-export PNPM_HOME="/usr/local/share/pnpm"
-export PATH="$PNPM_HOME:$PATH"
+ensure_pnpm
 pnpm install --frozen-lockfile
 pnpm -r build
 
