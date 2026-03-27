@@ -91,7 +91,7 @@ upsert_env_var "GHOSTSCRIPT_PATH" "${GHOSTSCRIPT_PATH_VALUE}"
 cd "${APP_DIR}"
 
 ensure_pnpm
-pnpm install --frozen-lockfile
+pnpm install --no-frozen-lockfile
 pnpm -r build
 
 set -a
@@ -114,20 +114,7 @@ fi
 sudo nginx -t
 sudo systemctl reload nginx
 
-CERT_PATH="/etc/letsencrypt/live/${DS_HOSTNAME}/fullchain.pem"
-if [[ -f "${CERT_PATH}" ]]; then
-  echo "TLS certificate already present at ${CERT_PATH}; skipping certbot issuance."
-else
-  if command -v certbot >/dev/null 2>&1 && [[ -n "${CERTBOT_EMAIL}" ]]; then
-    echo "Requesting TLS certificate for ${DS_HOSTNAME} with certbot"
-    STAGING_FLAG=""
-    if [[ "${CERTBOT_STAGING}" != "0" ]]; then STAGING_FLAG="--staging"; fi
-    sudo certbot --nginx -d "${DS_HOSTNAME}" --non-interactive --agree-tos --email "${CERTBOT_EMAIL}" ${STAGING_FLAG} || true
-  else
-    echo "Certbot not available or CERTBOT_EMAIL not set; skipping cert issuance."
-    echo "To obtain a certificate later run: sudo certbot --nginx -d ${DS_HOSTNAME} --email you@example.com"
-  fi
-fi
+sudo certbot --nginx -d ds.chiho.app
 
 echo "Deploy complete."
 echo "API health: curl http://127.0.0.1:3000/health"
