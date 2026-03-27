@@ -23,8 +23,10 @@ tmp/
 
 Docs/sample/
 
-apps/test-nodejs-mdc-sbb
+#Tizen apps
 apps/tizen
 apps/tizen-sbb
+apps/test-nodejs-mdc-sbb
+
 
 
