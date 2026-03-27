@@ -24,4 +24,7 @@ tmp/
 Docs/sample/
 
 apps/test-nodejs-mdc-sbb
+apps/tizen
+apps/tizen-sbb
+
 
