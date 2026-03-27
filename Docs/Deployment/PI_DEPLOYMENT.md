@@ -115,7 +115,7 @@ On Pi:
 ```bash
 systemctl status signage-api --no-pager
 curl -sS http://127.0.0.1:3000/api/v1/health
-curl -sS http://127.0.0.1/api/health
+curl -sS -H "Host: ds.chiho.app" http://127.0.0.1/api/health
 sudo nginx -t
 ```
 
@@ -125,8 +125,92 @@ From browser:
 - Verify dashboard loads
 - Verify API calls resolve under /api
 
-## 6. Notes
+## 6. Redis password setup
+
+Redis must be configured with a password to match the `REDIS_URL` in `/etc/signage/api.env`.
+
+### 6.1 Set requirepass in redis.conf
+
+```bash
+sudo nano /etc/redis/redis.conf
+```
+
+Find and set these two lines (use Ctrl+W to search):
+
+```
+requirepass RedisSignage@2026!
+bind 127.0.0.1 -::1
+```
+
+Save with Ctrl+X → Y → Enter.
+
+### 6.2 Restart and verify
+
+```bash
+sudo systemctl restart redis-server
+
+# Should be refused without password:
+redis-cli ping
+
+# Should return PONG with password:
+redis-cli -a 'RedisSignage@2026!' ping
+```
+
+### 6.3 Confirm api.env has matching REDIS_URL
+
+```bash
+grep REDIS_URL /etc/signage/api.env
+```
+
+Expected:
+
+```
+REDIS_URL=redis://:RedisSignage@2026!@localhost:6379
+```
+
+If missing or wrong:
+
+```bash
+sudo nano /etc/signage/api.env
+```
+
+### 6.4 Restart API after any redis.conf or api.env change
+
+```bash
+sudo systemctl restart signage-api
+curl -sS http://127.0.0.1:3000/api/v1/health
+```
+
+Expected: `{"status":"ok","db":"ok",...}`
+
+## 7. LAN access (192.168.1.17)
+
+The nginx config includes a second server block for `192.168.1.17` so the dashboard is reachable over LAN without needing the public domain.
+
+After deploying the nginx config, these URLs work from any device on the same network:
+
+- `http://192.168.1.17/login`
+- `http://192.168.1.17/superadmin`
+- `http://192.168.1.17/management`
+
+To apply the nginx config on Pi:
+
+```bash
+cd /opt/signage
+sudo cp infra/nginx/signage.conf /etc/nginx/sites-available/signage.conf
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Verify LAN access:
+
+```bash
+curl -sS http://192.168.1.17/api/v1/health
+```
+
+## 8. Notes
 
 - nginx routes /api/* to Fastify and strips the /api prefix before reaching the API app.
 - WebSocket endpoint is proxied via /ws/* and forwarded to Fastify at port 3000.
 - Uploaded files are served from /var/signage/uploads via /uploads/*.
+- The `requirepass` approach in redis.conf matches the `redis://:PASSWORD@host:port` URL format used by this app. Do not use ACL users unless you also update the REDIS_URL format to include a username.
