@@ -92,7 +92,7 @@ else
 fi
 
 apt-get update
-apt-get install -y \
+apt-get install -y --allow-change-held-packages \
   ca-certificates \
   curl \
   git \

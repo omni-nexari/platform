@@ -92,7 +92,12 @@ cd "${APP_DIR}"
 
 ensure_pnpm
 pnpm install --no-frozen-lockfile
-pnpm -r build
+
+echo "Building production workspace packages"
+pnpm --filter @signage/db build
+pnpm --filter @signage/shared build
+pnpm --filter @signage/api build
+pnpm --filter @signage/ds build
 
 set -a
 source "${API_ENV_FILE}"
