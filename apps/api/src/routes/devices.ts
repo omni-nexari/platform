@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { createReadStream, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
-import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, schedules, scheduleSlots, playlists, playlistItems, contentItems } from '@signage/db';
+import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups } from '@signage/db';
 import { eq, and, isNull, desc, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -38,7 +38,7 @@ type AuthUser = { sub: string; orgId: string; role: string };
 
 type PublishedTargetSummary = {
   id: string;
-  type: 'content' | 'playlist' | 'schedule';
+  type: 'content' | 'playlist' | 'schedule' | 'sync-group';
   name: string;
 };
 
@@ -61,7 +61,7 @@ function resolveReportedDeviceStatus(device: { id: string; status: string | null
 const PublishToDevicesSchema = z.object({
   workspaceId: z.string().uuid(),
   deviceIds: z.array(z.string().uuid()).min(1),
-  resourceType: z.enum(['content', 'playlist', 'schedule']),
+  resourceType: z.enum(['content', 'playlist', 'schedule', 'sync-group']),
   resourceId: z.string().uuid(),
 });
 
@@ -75,12 +75,14 @@ async function resolvePublishedTargetMap(deviceRows: Array<{
   publishedContentId: string | null;
   publishedPlaylistId: string | null;
   publishedScheduleId: string | null;
+  publishedSyncGroupId?: string | null;
 }>) {
   const contentIds = [...new Set(deviceRows.map((device) => device.publishedContentId).filter((value): value is string => !!value))];
   const playlistIds = [...new Set(deviceRows.map((device) => device.publishedPlaylistId).filter((value): value is string => !!value))];
   const scheduleIds = [...new Set(deviceRows.map((device) => device.publishedScheduleId).filter((value): value is string => !!value))];
+  const syncGroupIds = [...new Set(deviceRows.map((device) => device.publishedSyncGroupId).filter((value): value is string => !!value))];
 
-  const [contentRows, playlistRows, scheduleRows] = await Promise.all([
+  const [contentRows, playlistRows, scheduleRows, syncGroupRows] = await Promise.all([
     contentIds.length > 0
       ? db.query.contentItems.findMany({
           where: and(inArray(contentItems.id, contentIds), isNull(contentItems.deletedAt)),
@@ -99,20 +101,29 @@ async function resolvePublishedTargetMap(deviceRows: Array<{
           columns: { id: true, name: true },
         })
       : Promise.resolve([]),
+    syncGroupIds.length > 0
+      ? db.query.syncGroups.findMany({
+          where: and(inArray(syncGroups.id, syncGroupIds), isNull(syncGroups.deletedAt)),
+          columns: { id: true, name: true },
+        })
+      : Promise.resolve([]),
   ]);
 
   const contentMap = Object.fromEntries(contentRows.map((item) => [item.id, item.name]));
   const playlistMap = Object.fromEntries(playlistRows.map((item) => [item.id, item.name]));
   const scheduleMap = Object.fromEntries(scheduleRows.map((item) => [item.id, item.name]));
+  const syncGroupMap = Object.fromEntries(syncGroupRows.map((item) => [item.id, item.name]));
 
   return Object.fromEntries(deviceRows.map((device) => {
     let target: PublishedTargetSummary | null = null;
     if (device.publishedContentId && contentMap[device.publishedContentId]) {
-      target = { id: device.publishedContentId, type: 'content', name: contentMap[device.publishedContentId] };
+      target = { id: device.publishedContentId, type: 'content', name: contentMap[device.publishedContentId]! };
     } else if (device.publishedPlaylistId && playlistMap[device.publishedPlaylistId]) {
-      target = { id: device.publishedPlaylistId, type: 'playlist', name: playlistMap[device.publishedPlaylistId] };
+      target = { id: device.publishedPlaylistId, type: 'playlist', name: playlistMap[device.publishedPlaylistId]! };
     } else if (device.publishedScheduleId && scheduleMap[device.publishedScheduleId]) {
-      target = { id: device.publishedScheduleId, type: 'schedule', name: scheduleMap[device.publishedScheduleId] };
+      target = { id: device.publishedScheduleId, type: 'schedule', name: scheduleMap[device.publishedScheduleId]! };
+    } else if (device.publishedSyncGroupId && syncGroupMap[device.publishedSyncGroupId]) {
+      target = { id: device.publishedSyncGroupId, type: 'sync-group', name: syncGroupMap[device.publishedSyncGroupId]! };
     }
     return [device.id, target];
   })) as Record<string, PublishedTargetSummary | null>;
@@ -816,10 +827,22 @@ export async function deviceRoutes(app: FastifyInstance) {
       if (!schedule) return reply.status(404).send({ error: 'Schedule not found' });
     }
 
+    if (body.data.resourceType === 'sync-group') {
+      const syncGroup = await db.query.syncGroups.findFirst({
+        where: and(
+          eq(syncGroups.id, body.data.resourceId),
+          eq(syncGroups.workspaceId, body.data.workspaceId),
+          isNull(syncGroups.deletedAt),
+        ),
+      });
+      if (!syncGroup) return reply.status(404).send({ error: 'Sync group not found' });
+    }
+
     const publishPatch = {
       publishedContentId: body.data.resourceType === 'content' ? body.data.resourceId : null,
       publishedPlaylistId: body.data.resourceType === 'playlist' ? body.data.resourceId : null,
       publishedScheduleId: body.data.resourceType === 'schedule' ? body.data.resourceId : null,
+      publishedSyncGroupId: body.data.resourceType === 'sync-group' ? body.data.resourceId : null,
       updatedAt: new Date(),
     };
 
@@ -892,6 +915,7 @@ export async function deviceRoutes(app: FastifyInstance) {
         publishedContentId: null,
         publishedPlaylistId: null,
         publishedScheduleId: null,
+        publishedSyncGroupId: null,
         updatedAt: new Date(),
       })
       .where(and(

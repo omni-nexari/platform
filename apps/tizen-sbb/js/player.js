@@ -966,6 +966,12 @@ const Player = {
     `;
     },
     renderDocument(container, content) {
+        // If PDF.js is already rendering in this container (player loop re-entry), do nothing.
+        // _pdfjsDoc is set after getDocument() resolves and cleared by closeDocumentViewer().
+        if (container._pdfjsDoc) {
+            logger.info('[B2BDoc] PDF.js already running, skipping re-init');
+            return;
+        }
         const b2bdoc = typeof b2bapis !== 'undefined' && b2bapis.b2bdoc ? b2bapis.b2bdoc : null;
         const name = (content && content.name) || 'document';
         const url = (content && (content.url || content.localUrl)) || '';
@@ -999,26 +1005,254 @@ const Player = {
         const onSuccess = () => {
             logger.info('[B2BDoc] Document opened:', name);
         };
+        // Native b2bdoc viewer failed (CouldNotLaunchDOCViewer — viewer not installed on this SBB
+        // firmware). Tizen 4 webview is Chromium-based but has no built-in PDF plugin, so a plain
+        // iframe also shows white. Use PDF.js canvas rendering instead:
+        //   1. XHR reads the local file:// PDF as an ArrayBuffer (same file:// origin — allowed).
+        //   2. PDF.js is loaded from CDN (device has internet; no worker needed — run inline).
+        //   3. Pages are rendered onto a <canvas> and auto-cycled for signage.
         const onError = (error) => {
-            logger.warn('[B2BDoc] Failed to open document:', name, (error && error.message) || error);
+            const errMsg = (error && (error.message || error.code)) || String(error);
+            logger.warn('[B2BDoc] Failed to open document:', name, errMsg);
+            if (!url) {
+                container.innerHTML = `
+          <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#111;flex-direction:column;">
+            <div style="font-size:22px;">Document URL missing</div>
+            <div style="font-size:14px;margin-top:8px;opacity:0.7;">${name}</div>
+          </div>`;
+                return;
+            }
+            logger.info('[B2BDoc] Falling back to PDF.js canvas renderer for:', name);
             container.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#111;flex-direction:column;">
-          <div style="font-size:22px;">Document open failed</div>
-          <div style="font-size:14px;margin-top:8px;opacity:0.7;">${name}</div>
-        </div>
-      `;
+        <div id="pdfjs-viewport" style="width:100%;height:100%;overflow:hidden;background:#222;display:flex;align-items:center;justify-content:center;position:relative;">
+          <canvas id="pdfjs-canvas" style="max-width:100%;max-height:100%;display:block;"></canvas>
+          <div id="pdfjs-status" style="position:absolute;color:#333;font-size:22px;background:rgba(255,255,255,0.9);padding:16px 32px;border-radius:8px;">Loading PDF\u2026</div>
+          <div id="pdfjs-page" style="position:absolute;bottom:12px;right:16px;color:rgba(255,255,255,0.8);font-size:16px;background:rgba(0,0,0,0.45);padding:4px 10px;border-radius:4px;display:none;"></div>
+        </div>`;
+            // Render PDF using PDF.js 1.10.100 — ES5 only, compatible with Tizen 4.0 (Chromium 56).
+            // PDF.js 2.x uses ES6 class syntax which causes a SyntaxError on this device.
+            const renderPdf = function(pdfData) {
+                // Load PDF.js 1.x from CDN if not yet present.
+                const loadPdfJs = function(cb) {
+                    if (window.PDFJS) { cb(); return; }
+                    const scr = document.createElement('script');
+                    // 1.10.100 — last pure-ES5 release, works on Chromium 56.
+                    scr.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/1.10.100/pdf.min.js';
+                    scr.onload = cb;
+                    scr.onerror = function() {
+                        const s = document.getElementById('pdfjs-status');
+                        if (s) s.textContent = 'Failed to load PDF renderer (no internet?)';
+                        logger.warn('[B2BDoc] PDF.js CDN load failed');
+                    };
+                    document.head.appendChild(scr);
+                };
+                loadPdfJs(function() {
+                    // PDF.js 1.x API: global is PDFJS, not pdfjsLib.
+                    // Disable the web worker entirely — no file:// worker fetch issues.
+                    window.PDFJS.disableWorker = true;
+                    window.PDFJS.getDocument(pdfData).then(function(pdf) {
+                        logger.info('[B2BDoc] PDF.js loaded PDF, pages:', pdf.numPages);
+                        container._pdfjsDoc = pdf;
+                        const status = document.getElementById('pdfjs-status');
+                        if (status) status.style.display = 'none';
+                        const pageIndicator = document.getElementById('pdfjs-page');
+                        if (pageIndicator) pageIndicator.style.display = 'block';
+                        let currentPage = 1;
+                        const totalPages = pdf.numPages;
+                        container._pdfjsPageTimer = null;
+                        container._pdfjsRenderTask = null;
+                        const renderPage = function(pageNum) {
+                            currentPage = pageNum;
+                            // Cancel any in-progress render before starting a new one.
+                            if (container._pdfjsRenderTask) {
+                                try { container._pdfjsRenderTask.cancel(); } catch (e) {}
+                                container._pdfjsRenderTask = null;
+                            }
+                            pdf.getPage(pageNum).then(function(page) {
+                                const canvasEl = document.getElementById('pdfjs-canvas');
+                                if (!canvasEl) return; // container was replaced
+                                const viewportWrap = document.getElementById('pdfjs-viewport');
+                                const containerW = viewportWrap ? viewportWrap.clientWidth : window.innerWidth;
+                                const containerH = viewportWrap ? viewportWrap.clientHeight : window.innerHeight;
+                                // PDF.js 1.x: getViewport takes a plain number, not an object.
+                                const baseViewport = page.getViewport(1);
+                                const scale = Math.min(containerW / baseViewport.width, containerH / baseViewport.height);
+                                const scaledViewport = page.getViewport(scale);
+                                canvasEl.width = scaledViewport.width;
+                                canvasEl.height = scaledViewport.height;
+                                const ctx = canvasEl.getContext('2d');
+                                var task = page.render({ canvasContext: ctx, viewport: scaledViewport });
+                                container._pdfjsRenderTask = task;
+                                task.then(function() {
+                                    container._pdfjsRenderTask = null;
+                                    if (pageIndicator) pageIndicator.textContent = pageNum + ' / ' + totalPages;
+                                    // Auto-advance every 10 s; loop back after last page.
+                                    container._pdfjsPageTimer = setTimeout(function() {
+                                        renderPage(currentPage < totalPages ? currentPage + 1 : 1);
+                                    }, 10000);
+                                }).catch(function(err) {
+                                    // RenderingCancelledException is expected when navigation cancels a render.
+                                    if (err && err.name === 'RenderingCancelledException') return;
+                                    logger.warn('[B2BDoc] PDF.js render error:', err.message || err);
+                                });
+                            }).catch(function(err) {
+                                logger.warn('[B2BDoc] PDF.js renderPage error:', err.message || err);
+                            });
+                        };
+                        // Remote key navigation: LEFT arrow (37) = prev page, RIGHT arrow (39) = next.
+                        container._pdfjsKeyHandler = function(e) {
+                            if (e.keyCode === 37 || e.keyCode === 39) {
+                                if (container._pdfjsPageTimer) {
+                                    clearTimeout(container._pdfjsPageTimer);
+                                    container._pdfjsPageTimer = null;
+                                }
+                                var nextPage;
+                                if (e.keyCode === 37) {
+                                    nextPage = currentPage > 1 ? currentPage - 1 : totalPages;
+                                } else {
+                                    nextPage = currentPage < totalPages ? currentPage + 1 : 1;
+                                }
+                                renderPage(nextPage);
+                            }
+                        };
+                        document.addEventListener('keydown', container._pdfjsKeyHandler);
+                        renderPage(1);
+                    }).catch(function(err) {
+                        logger.warn('[B2BDoc] PDF.js getDocument error:', err.message || err);
+                        const s = document.getElementById('pdfjs-status');
+                        if (s) s.textContent = 'PDF render failed: ' + (err.message || err);
+                    });
+                });
+            };
+            // Step 1: read the local file as ArrayBuffer.
+            // Try XHR (file:// → file:// same-origin); fall back to fetch().
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', url, true);
+            xhr.responseType = 'arraybuffer';
+            xhr.onload = function() {
+                if (xhr.status === 200 || xhr.status === 0) {
+                    renderPdf(xhr.response);
+                } else {
+                    logger.warn('[B2BDoc] XHR file read status:', xhr.status);
+                    const s = document.getElementById('pdfjs-status');
+                    if (s) s.textContent = 'PDF read error: HTTP ' + xhr.status;
+                }
+            };
+            xhr.onerror = function() {
+                logger.warn('[B2BDoc] XHR file read failed, trying fetch()');
+                // fetch() as fallback
+                if (window.fetch) {
+                    window.fetch(url).then(function(r) { return r.arrayBuffer(); }).then(renderPdf).catch(function(fe) {
+                        const s = document.getElementById('pdfjs-status');
+                        if (s) s.textContent = 'Failed to read PDF: ' + (fe.message || fe);
+                        logger.warn('[B2BDoc] fetch() file read also failed:', fe.message || fe);
+                    });
+                } else {
+                    const s = document.getElementById('pdfjs-status');
+                    if (s) s.textContent = 'Failed to read PDF file';
+                }
+            };
+            xhr.send();
         };
+        // Log all available methods on b2bdoc for diagnostics (SSSP version can differ)
         try {
+            const b2bdocMethods = Object.getOwnPropertyNames(b2bdoc)
+                .concat(Object.getOwnPropertyNames(Object.getPrototypeOf(b2bdoc) || {}))
+                .filter((k) => typeof b2bdoc[k] === 'function');
+            logger.info('[B2BDoc] Available methods:', b2bdocMethods.join(', ') || '(none found)');
+        }
+        catch (_) { /* ignore */ }
+
+        // SSSP 4.0 b2bdoc.openDoc requires a raw filesystem path, not a file:// URI.
+        // Passing file:// causes an internal callback-type validation error.
+        const rawPath = url.startsWith('file://') ? url.replace(/^file:\/\//, '') : url;
+        logger.info('[B2BDoc] rawPath for openDoc:', rawPath);
+
+        // Helper: try calling openDoc with different argument patterns.
+        // SSSP 4.0 rejects arrow-function callbacks passed as 'onsuccess' with the
+        // 'Invalid showCreateAccountView SuccessCallback' error when the path is wrong
+        // or when it doesn't support callbacks at all on this firmware revision.
+        const tryOpenDoc = (path) => {
+            // Pattern 1: raw path + callbacks (standard)
+            try {
+                if (typeof b2bdoc.openDoc === 'function') {
+                    b2bdoc.openDoc(path, onSuccess, onError);
+                    return true;
+                }
+            } catch (_) { /* fall through */ }
+            return false;
+        };
+
+        const tryOpenDocNoCallbacks = (path) => {
+            // Pattern 2: raw path only — no callbacks (some SSSP 4.0 revisions)
+            try {
+                if (typeof b2bdoc.openDoc === 'function') {
+                    b2bdoc.openDoc(path);
+                    onSuccess();
+                    return true;
+                }
+            } catch (_) { /* fall through */ }
+            return false;
+        };
+
+        const tryOpenDocNullCallbacks = (path) => {
+            // Pattern 3: null callbacks
+            try {
+                if (typeof b2bdoc.openDoc === 'function') {
+                    b2bdoc.openDoc(path, null, null);
+                    onSuccess();
+                    return true;
+                }
+            } catch (_) { /* fall through */ }
+            return false;
+        };
+
+        try {
+            // Prefer openDoc (confirmed present on SSSP 4.0) with raw path.
+            // Try with callbacks first; if that throws the SuccessCallback type error,
+            // fall back to no-callback and null-callback patterns.
+            if (typeof b2bdoc.openDoc === 'function') {
+                try {
+                    b2bdoc.openDoc(rawPath, onSuccess, onError);
+                    return;
+                }
+                catch (cbErr) {
+                    logger.warn('[B2BDoc] openDoc(path, cb, cb) threw, trying no-callback variant:', cbErr.message || cbErr);
+                }
+                // Try without callbacks
+                try {
+                    b2bdoc.openDoc(rawPath);
+                    onSuccess();
+                    return;
+                }
+                catch (noErr) {
+                    logger.warn('[B2BDoc] openDoc(path) threw:', noErr.message || noErr);
+                }
+                // Try with null callbacks
+                try {
+                    b2bdoc.openDoc(rawPath, null, null);
+                    onSuccess();
+                    return;
+                }
+                catch (nullErr) {
+                    logger.warn('[B2BDoc] openDoc(path, null, null) threw:', nullErr.message || nullErr);
+                }
+            }
+            // SSSP 5+ method names
             if (typeof b2bdoc.open === 'function') {
-                b2bdoc.open(url, onSuccess, onError);
+                b2bdoc.open(rawPath, onSuccess, onError);
                 return;
             }
             if (typeof b2bdoc.openDocument === 'function') {
-                b2bdoc.openDocument(url, onSuccess, onError);
+                b2bdoc.openDocument(rawPath, onSuccess, onError);
                 return;
             }
             if (typeof b2bdoc.playDocument === 'function') {
-                b2bdoc.playDocument(url, onSuccess, onError);
+                b2bdoc.playDocument(rawPath, onSuccess, onError);
+                return;
+            }
+            if (typeof b2bdoc.playDoc === 'function') {
+                b2bdoc.playDoc(rawPath, onSuccess, onError);
                 return;
             }
         }
@@ -1030,11 +1264,29 @@ const Player = {
         onError(new Error('No supported b2bdoc open method found'));
     },
     closeDocumentViewer() {
+        // Clean up all PDF.js canvas renderer state.
+        const viewport = document.getElementById('pdfjs-viewport');
+        const pdfContainer = viewport ? viewport.parentElement : null;
+        if (pdfContainer) {
+            if (pdfContainer._pdfjsPageTimer) {
+                clearTimeout(pdfContainer._pdfjsPageTimer);
+                pdfContainer._pdfjsPageTimer = null;
+            }
+            if (pdfContainer._pdfjsRenderTask) {
+                try { pdfContainer._pdfjsRenderTask.cancel(); } catch (e) {}
+                pdfContainer._pdfjsRenderTask = null;
+            }
+            if (pdfContainer._pdfjsKeyHandler) {
+                document.removeEventListener('keydown', pdfContainer._pdfjsKeyHandler);
+                pdfContainer._pdfjsKeyHandler = null;
+            }
+            pdfContainer._pdfjsDoc = null;
+        }
         const b2bdoc = typeof b2bapis !== 'undefined' && b2bapis.b2bdoc ? b2bapis.b2bdoc : null;
         if (!b2bdoc) {
             return;
         }
-        const methods = ['close', 'closeDocument', 'stop'];
+        const methods = ['closeDoc', 'close', 'closeDocument', 'stop'];
         for (let i = 0; i < methods.length; i += 1) {
             const method = methods[i];
             if (typeof b2bdoc[method] === 'function') {
@@ -2608,7 +2860,11 @@ const Player = {
             const canReuseImage = content.type === 'IMAGE' &&
                 this.lastRenderedItemKey === itemKey &&
                 container.children.length > 0;
-            if (!canReuseImage) {
+            // Reuse a live PDF canvas: don't wipe the container or re-init PDF.js.
+            const canReuseDocument = (contentType === 'PDF' || contentType === 'DOCUMENT' || contentType === 'PRESENTATION') &&
+                this.lastRenderedItemKey === itemKey &&
+                !!container._pdfjsDoc;
+            if (!canReuseImage && !canReuseDocument) {
                 container.innerHTML = '';
             }
             // Render based on content type
@@ -2815,7 +3071,12 @@ const Player = {
                 case 'PRESENTATION':
                 case 'DOCUMENT':
                 case 'PDF':
-                    this.renderDocument(container, content);
+                    if (!canReuseDocument) {
+                        this.renderDocument(container, content);
+                        this.lastRenderedItemKey = itemKey;
+                    } else {
+                        logger.debug('Skipping PDF re-render, same document still active');
+                    }
                     scheduleNext(duration * 1000);
                     break;
                 case 'HTML':

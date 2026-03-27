@@ -37,6 +37,8 @@ import {
   Menu,
   BarChart2,
   Bug,
+  Layers2,
+  Tv2,
 } from 'lucide-react';
 
 interface Workspace {
@@ -341,6 +343,32 @@ export default function AppLayout() {
               >
                 <BarChart2 className="w-4 h-4" />
                 Analytics
+              </NavLink>
+              <NavLink
+                to={`/workspaces/${currentWsId}/sync-playlists`}
+                className={({ isActive }) =>
+                  `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                    isActive
+                      ? 'bg-[var(--blue)] text-white'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                  }`
+                }
+              >
+                <Layers2 className="w-4 h-4" />
+                Sync Playlists
+              </NavLink>
+              <NavLink
+                to={`/workspaces/${currentWsId}/sync-groups`}
+                className={({ isActive }) =>
+                  `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                    isActive
+                      ? 'bg-[var(--blue)] text-white'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                  }`
+                }
+              >
+                <Tv2 className="w-4 h-4" />
+                Sync Groups
               </NavLink>
             </>
           )}

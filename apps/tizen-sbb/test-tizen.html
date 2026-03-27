@@ -233,17 +233,17 @@
       </div>
       <p class="hint">
         Samsung SSSP: Node.js <strong>4.4.3</strong> · only <strong>http</strong> module guaranteed.<br>
-        Entry-point: <strong>server65.js.signed</strong> (signed) → requires <strong>lib/logic.js</strong> (unsigned).<br>
-        Node server binds <code>0.0.0.0:3000</code> — reachable from <em>any device on same network</em>.<br>
-        <strong>Laptop test:</strong> open <code>http://&lt;TV-IP&gt;:3000/health</code> in your browser to confirm Node runs.
+        <code>b2bapis.b2bcontrol.startNodeServer(serverPath, serverName, onSuccess, onError)</code> starts the script file.<br>
+        Entry-point: <strong>test-node-server.js</strong> · current script binds <code>0.0.0.0:8080</code>.<br>
+        <strong>Laptop test:</strong> open <code>http://&lt;TV-IP&gt;:8080/health</code> in your browser to confirm Node runs.
       </p>
-      <input id="node-server-path" class="url-input" type="text" value="server65.js.signed" spellcheck="false" placeholder="server path e.g. server65.js.signed" />
+      <input id="node-server-path" class="url-input" type="text" value="test-node-server.js" spellcheck="false" placeholder="server path e.g. test-node-server.js" />
       <input id="node-tv-ip" class="url-input" type="text" value="" spellcheck="false" placeholder="TV LAN IP (optional) e.g. 192.168.1.50" />
       <input id="node-dev-url" class="url-input" type="url" value="http://192.168.1.110:3000/api/v1/devices/time" spellcheck="false" />
       <div id="node-status-card" class="status-card">
         <div class="row"><span class="label">Status:</span> <span id="node-status-text">idle</span></div>
-        <div class="row"><span class="label">Server:</span> <span id="node-server-path-view">server65.js.signed</span></div>
-        <div class="row"><span class="label">From TV:</span> http://127.0.0.1:3000/health · http://localhost:3000/health</div>
+        <div class="row"><span class="label">Server:</span> <span id="node-server-path-view">test-node-server.js</span></div>
+        <div class="row"><span class="label">From TV:</span> http://127.0.0.1:8080/health · http://localhost:8080/health</div>
         <div class="row"><span class="label">From Laptop:</span> <span id="node-laptop-url">enter TV IP above</span></div>
         <div class="row"><span class="label">Last Result:</span> <span id="node-last-result">—</span></div>
       </div>
@@ -455,11 +455,12 @@
   }
 
   window.testNodeStart = function() {
-    var serverPath = document.getElementById('node-server-path').value.trim() || 'server65.js.signed';
+    var serverPath = document.getElementById('node-server-path').value.trim() || 'test-node-server.js';
+    var serverName = 'node-smoke-test';
     document.getElementById('node-server-path-view').textContent = serverPath;
-    log('Starting ' + serverPath + ' via b2bcontrol.startNodeServer()...', 'log-info');
+    log('Starting ' + serverPath + ' via b2bcontrol.startNodeServer(serverPath, serverName, onSuccess, onError)...', 'log-info');
     if (!checkB2B()) return;
-    setNodeStatus('starting', 'Launching ' + serverPath + ' ...');
+    setNodeStatus('starting', 'Launching ' + serverPath + ' as ' + serverName + ' ...');
     try {
       if (typeof b2bapis.b2bcontrol.startNodeServer !== 'function') {
         setNodeStatus('error', 'startNodeServer() not available');
@@ -468,10 +469,10 @@
       }
       b2bapis.b2bcontrol.startNodeServer(
         serverPath,
-        'node-smoke-test',
+        serverName,
         function() {
           setNodeStatus('running', 'Node server start callback succeeded');
-          log('startNodeServer SUCCESS for ' + serverPath, 'log-ok');
+          log('startNodeServer SUCCESS for ' + serverPath + ' (' + serverName + ')', 'log-ok');
         },
         function(error) {
           var msg = (error && (error.message || error.name || error.code)) || JSON.stringify(error);
@@ -512,18 +513,18 @@
   document.getElementById('node-tv-ip').addEventListener('input', function() {
     var ip = this.value.trim();
     document.getElementById('node-laptop-url').textContent = ip
-      ? 'http://' + ip + ':3000/health'
+      ? 'http://' + ip + ':8080/health'
       : 'enter TV IP above';
   });
 
   window.testNodeHealth = function() {
     var tvIp = document.getElementById('node-tv-ip').value.trim();
     var urls = [
-      'http://127.0.0.1:3000/health',
-      'http://localhost:3000/health'
+      'http://127.0.0.1:8080/health',
+      'http://localhost:8080/health'
     ];
     if (tvIp) {
-      urls.push('http://' + tvIp + ':3000/health');
+      urls.push('http://' + tvIp + ':8080/health');
     }
     log('Probing Node.js health: ' + urls.join(', '), 'log-info');
     setNodeStatus('checking', 'Probing ' + urls.length + ' URL(s)...');
@@ -575,7 +576,7 @@
     log('Requesting Node.js outbound ping to ' + targetUrl + ' ...', 'log-info');
     setNodeStatus('pinging-dev', targetUrl);
 
-    fetch('http://127.0.0.1:3000/ping-dev', {
+    fetch('http://127.0.0.1:8080/ping-dev', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: targetUrl })
@@ -872,8 +873,8 @@
   window.addEventListener('load', function() {
     log('test-tizen.html loaded — b2bcontrol privilege: http://developer.samsung.com/privilege/b2bcontrol', 'log-info');
     log('Click "detectB2BControl()" to discover available APIs', 'log-info');
-    log('Node smoke test uses server65.js.signed + lib/logic.js on port 3000', 'log-info');
-    log('If start succeeds but no beacon appears, try server path ../test-node-server.js.signed', 'log-info');
+    log('Node smoke test uses startNodeServer(serverPath, serverName, onSuccess, onError)', 'log-info');
+    log('Current smoke script is test-node-server.js and it listens on port 8080', 'log-info');
     applyFocus(0);
   });
 

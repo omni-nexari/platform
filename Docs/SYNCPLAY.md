@@ -6,8 +6,8 @@ Two distinct sync modes are defined. They are implemented separately and never m
 
 | Mode | Scope | Status |
 |---|---|---|
-| **Mode 1 — Native Samsung SyncPlay** | Samsung B2B LFD, Tizen 6.5+ only, same LAN | Deferred — implement later |
-| **Mode 2 — Custom Mixed-Platform Sync** | All platforms: Tizen 4, webOS, Android, Windows | Active design target |
+| **Mode 1 — Native Samsung SyncPlay** | All Samsung B2B (Tizen 4 SSSP + Tizen 6.5+), same LAN | Active design target |
+| **Mode 2 — Custom Mixed-Platform Sync** | Mixed groups: any non-Samsung device present | Active design target |
 
 This document covers:
 1. Samsung's native SyncPlay API — capabilities, hard constraints, and how it is already partially implemented
@@ -174,14 +174,15 @@ All of the same hard constraints apply:
 
 ### Scope
 
-Covers all platforms that cannot use Samsung native SyncPlay:
-- Tizen 4 (SBB) — AVPlay
-- Tizen 6.5+ (when group contains mixed platforms) — AVPlay only, not native SyncPlay
+Covers all groups that contain at least one non-Samsung device:
 - webOS (LG) — HTML5 `<video>`
 - Android — WebView HTML5 or ExoPlayer
 - Windows — Electron / Chromium HTML5
+- Any mixed group where Samsung and non-Samsung devices are combined
 
-**Rule:** If any device in a group is not Samsung B2B Tizen 6.5+, the entire group uses Mode 2. Native Samsung SyncPlay cannot be mixed with app-layer timing in the same group.
+**Rule:** If any device in a group is not Samsung B2B (either SSSP Tizen 4 or Tizen 6.5+), the entire group uses Mode 2. Native Samsung firmware sync cannot be mixed with app-layer timing in the same group.
+
+Note: All-Samsung groups (Tizen 4 SSSP and/or Tizen 6.5+) use Mode 1, not Mode 2. See Section 5.
 
 ---
 
@@ -268,20 +269,41 @@ SyncPlaylistItem {
 #### SyncGroup
 A named user-created group of screens assigned to play a SyncPlaylist together.
 
+> **Existing DB schema** (`packages/db/src/schema/telemetry.ts`) already defines `sync_groups` and `sync_group_members` tables, explicitly tagged "Phase 3 — Samsung SyncPlay API". The shape below reconciles the existing columns with what the new feature needs.
+
 ```typescript
+// DB table: sync_groups  (already exists)
 {
-  id: string
+  id: string              // uuid, PK
+  orgId: string           // FK → organisations
+  workspaceId: string     // FK → workspaces
   name: string
-  workspaceId: string
-  syncPlaylistId: string
-  mode: 'native-samsung' | 'custom-mixed'   // auto-determined from device platforms
-  leaderPriority: string[]   // ordered device IDs — server assigns on group creation
-  coordinatorAddress: string // LAN address of Node.js coordinator
-  startPolicy: 'all-ready' | 'quorum-80'
+  groupId: number         // smallint (0–65535) — the firmware groupID for Mode 1
+                          // Derived via CRC-16 from this record's id at creation time
+  layout: object | null   // jsonb — video wall tile grid config (rows, cols, screen dimensions)
+                          // Used by Mode 1 to position each screen within a multi-panel wall
   createdAt: string
   updatedAt: string
+
+  // --- Columns to ADD via migration ---
+  syncPlaylistId: string  // FK → sync_playlists (new table)
+  mode: 'native-samsung' | 'custom-mixed'  // auto-set from assigned device platforms
+}
+
+// DB table: sync_group_members  (already exists)
+{
+  syncGroupId: string     // FK → sync_groups (cascade delete)
+  deviceId: string        // FK → devices (cascade delete)
+  tileCol: number         // smallint — x position in video wall grid (0-based)
+  tileRow: number         // smallint — y position in video wall grid (0-based)
+  // PK: (syncGroupId, deviceId)
+
+  // --- Column to ADD ---
+  leaderPriority: number  // int, order for leader election (0 = primary candidate)
 }
 ```
+
+**Tile layout note:** The `tileCol`/`tileRow` fields exist for Mode 1 video wall use: each Samsung screen in the group renders a different tile/viewport of the video content rather than the same full-frame content. The `layout` jsonb on the group stores the grid dimensions. This is a future Mode 1 feature — for initial SyncPlay implementation every screen renders the full image (tileCol = 0, tileRow = 0).
 
 #### SyncSession
 The live runtime state for an active playback session.
@@ -306,7 +328,7 @@ type SyncSessionState =
   | 'STARTING'         // startAt sent, waiting for play
   | 'PLAYING'
   | 'RESYNCING'        // recovering from drift or leader change
-  | 'DEGRADED'         // quorum lost, some devices missing
+  | 'DEGRADED'         // one or more screens disconnected during playback
   | 'STOPPED'
 ```
 
@@ -345,9 +367,8 @@ type SyncSessionState =
 
 #### Session start (coordinator-driven)
 
-9. Coordinator evaluates start barrier:
-   - `all-ready`: waits for all assigned devices to report `READY`
-   - `quorum-80`: starts when ≥80% of assigned devices are ready (admin-configurable)
+9. Coordinator evaluates start barrier: waits until all assigned online screens report `READY`.
+   Screens that were offline when the group was provisioned are excluded from the barrier.
 10. Coordinator sends `START_AT` to all group members with:
     - `targetStartAt` = current coordinator time + `bufferMs` (default 5000ms, increase for Tizen 4 which needs long prepareAsync)
     - `currentItemIndex = 0`
@@ -412,7 +433,7 @@ Device → Coordinator
   PLAYHEAD_REPORT    { deviceId, positionMs, itemIndex }
 
 Coordinator → Device
-  SESSION_CONFIG     { sessionId, generation, groupId, playlistId, leaderId, leaderPriority, startPolicy }
+  SESSION_CONFIG     { sessionId, generation, groupId, playlistId, leaderId, leaderPriority }
   START_AT           { sessionId, generation, targetStartAt, itemIndex, coordinatorSentAt }
   PLAYHEAD_REF       { sessionId, generation, leaderId, positionMs, itemIndex, sentAt }
   LEADER_CHANGED     { sessionId, generation, newLeaderId }
@@ -481,33 +502,77 @@ Deterministic local path: `sync-{contentId}.{ext}` (already implemented in tizen
 
 ### 3.9 What Needs to Be Built
 
+Legend: ✅ already exists in codebase · ⚠️ partially exists, needs extension · ❌ not yet built
+
+#### Database migrations
+- ✅ `sync_groups` table (`packages/db/src/schema/telemetry.ts`)
+- ✅ `sync_group_members` table with `tileCol`/`tileRow` (same file)
+- ❌ `sync_playlists` table (new — separate from regular `playlists`)
+- ❌ `sync_playlist_items` table
+- ⚠️ `sync_groups`: add `syncPlaylistId`, `mode` columns
+- ⚠️ `sync_group_members`: add `leaderPriority` column
+- ⚠️ `devices`: add `publishedSyncGroupId` FK column (alongside existing `publishedContentId`, `publishedPlaylistId`, `publishedScheduleId`)
+- ⚠️ `schedule_slots`: add `syncGroupId` FK + `syncPlaylistId` FK columns for sync scheduling
+
 #### Cloud API / backend
-- [ ] `SyncPlaylist` CRUD (separate from regular playlists)
-- [ ] `SyncGroup` CRUD with screen assignment
-- [ ] Auto-assign `leaderPriority` on group creation
-- [ ] Push `SESSION_CONFIG` to devices on group assignment
-- [ ] Track per-device readiness state from reports
-- [ ] `startPolicy` configuration per group
+- ❌ `SyncPlaylist` CRUD routes (`GET/POST/PATCH/DELETE /sync-playlists`)
+- ⚠️ `SyncGroup` CRUD routes — DB table exists, but no routes exist yet (`GET/POST/PATCH/DELETE /sync-groups`)
+- ❌ `POST /sync-groups/:id/members` — add device to group
+- ❌ `DELETE /sync-groups/:id/members/:deviceId` — remove device from group
+- ⚠️ `POST /devices/publish` — exists but `resourceType` only supports `'content' | 'playlist' | 'schedule'`; add `'sync-group'`
+- ❌ Auto-detect group `mode` (`native-samsung` vs `custom-mixed`) from assigned device platforms on create/member change
 
-#### Node.js local coordinator service
-- [ ] WebSocket server
-- [ ] Group session state machine
-- [ ] Start barrier logic (`all-ready` or `quorum`)
-- [ ] Leader heartbeat monitoring and failover
-- [ ] `PLAYHEAD_REF` fan-out from leader reports
-- [ ] LAN-only mode (no cloud dependency at runtime)
-- [ ] Coordinator discovery (static config pushed from backend; optionally mDNS)
+#### WebSocket handlers (apps/api/src/services/ws.ts)
+- ⚠️ `SYNC_PLAY` message type exists but all actions are stubs/no-ops
+- ❌ Handle incoming `READINESS_UPDATE` from devices
+- ❌ Handle incoming `LEADER_HEARTBEAT` from devices
+- ❌ Handle incoming `PLAYHEAD_REPORT` from devices
+- ❌ Send `SESSION_CONFIG` on group assignment
+- ❌ Send `START_AT` once readiness barrier is met
+- ❌ Fan out `PLAYHEAD_REF` every 2s from leader reports
+- ❌ Send `LEADER_CHANGED` / `LEADER_TAKEOVER` on failover
+- ❌ Send `SESSION_STOP`
 
-#### Tizen 4 (SBB) player
-- [ ] Handle `SESSION_CONFIG` → begin prebuffer
-- [ ] Report `READINESS_UPDATE` with per-gate status
-- [ ] Handle `START_AT` → `waitForPreciseSyncedTime` → `play()`
-- [ ] Handle `PLAYHEAD_REF` → seek correction when drift >250ms
-- [ ] `LEADER_HEARTBEAT` emit if elected leader
+#### Node.js local coordinator service (Mode 2 only — new service)
+- ❌ WebSocket server
+- ❌ Group session state machine
+- ❌ Start barrier logic (wait for all online screens)
+- ❌ Leader heartbeat monitoring and failover
+- ❌ `PLAYHEAD_REF` fan-out from leader reports
+- ❌ LAN-only mode (no cloud dependency at runtime)
+- ❌ Coordinator discovery (static config pushed from backend; optionally mDNS)
 
-#### Non-Samsung clients (webOS / Android / Windows)
-- [ ] Sync agent: WebSocket client + HTML5 video control + clock sync
-- [ ] Same protocol as above, with `video.playbackRate` for fine drift correction
+#### Tizen 4 (SBB) player (apps/tizen-sbb/js/player.js)
+- ⚠️ `handleSyncPlayCommand()` exists but logs "legacy orchestration disabled" — all cases are no-ops
+- ❌ Fix `isSyncplayAvailable()` — add `b2bapis.b2bsyncplay` check (bug: always returns false on Tizen 4)
+- ❌ Mode 1: detect `b2bapis.b2bsyncplay`, call `makeSyncPlayList` / `startSyncPlay` with positional args
+- ❌ Mode 2: handle `SESSION_CONFIG` → begin prebuffer
+- ❌ Mode 2: report `READINESS_UPDATE` with per-gate status
+- ❌ Mode 2: handle `START_AT` → `waitForPreciseSyncedTime` → `play()`
+- ❌ Mode 2: handle `PLAYHEAD_REF` → seek correction when drift >250ms
+- ❌ Mode 2: `LEADER_HEARTBEAT` emit if elected leader
+
+#### Non-Samsung clients — Mode 2 only (webOS / Android / Windows)
+- ❌ Sync agent: WebSocket client + HTML5 video control + clock sync
+- ❌ Same protocol as above, with `video.playbackRate` for fine drift correction
+
+#### Portal / frontend (apps/ds/src)
+- ✅ `DevicePickerModal` — already supports multi-select, reuse as-is for adding screens to groups
+- ✅ `ContentPickerModal` — already supports playlist-only filter, reuse for Sync Playlist picker
+- ✅ Publish pattern (`POST /devices/publish` from PlaylistPage) — extend for sync groups
+- ✅ Device detail already shows `publishedTarget` badge — extend to show `sync-group` type
+- ❌ Sidebar: add collapsible Sync section (Sync Playlists + Sync Groups)
+- ❌ Route + page: `/workspaces/:wsId/sync-playlists` — Sync Playlists list
+- ❌ Route + page: `/workspaces/:wsId/sync-playlists/:id` — Sync Playlist editor with per-item cache badge
+- ❌ Route + page: `/workspaces/:wsId/sync-groups` — Sync Groups list with status pills
+- ❌ Route + page: `/workspaces/:wsId/sync-groups/:id` — Sync Group detail with screens list + live status panel
+- ❌ Devices page: mixed render — Sync Group card for grouped devices, normal card for ungrouped
+- ❌ Device detail: read-only Sync section (group name, status, content ready)
+- ❌ Publish flow: screen picker that resolves to a Sync Group (create inline if none exists)
+- ❌ Publish flow on Devices page: SyncPlay option that surfaces available groups
+- ❌ Schedule page: allow Sync Group as schedule target; show Sync Playlist picker for that target
+- ❌ Image-in-Samsung-group warning in Sync Playlist editor
+- ❌ Empty and error/degraded states for all new Sync pages (see Section 6)
 
 ---
 
@@ -602,6 +667,16 @@ else                                  → fall back to Mode 2 app-layer sync
 
 **This is transparent to the user.** They never choose a mode — the system determines it from the assigned screens' platform metadata.
 
+#### `groupID` derivation for Mode 1
+
+The Samsung firmware sync API requires a 16-bit integer `groupID` (0–65535) that must be identical on all devices in the group at runtime. For the new named `SyncGroup` entity, the server derives this deterministically:
+
+```
+groupID = crc16(syncGroup.id) % 65536
+```
+
+This is pushed to devices as part of `SESSION_CONFIG`. Collision probability within a workspace is low but should be checked on group creation — if a collision is detected, increment by 1 and retry. The existing tizen player already uses a similar approach from `folderId`.
+
 ---
 
 ## 6. Portal UI/UX Design
@@ -653,23 +728,15 @@ Same card-grid layout as the existing Playlists page. Familiar, no new patterns 
 - `Publish` button on the card, matching the current playlist/content/schedule publish action style
 - `⋮` context menu: Edit, Duplicate, Delete
 
-#### Publish behavior must match the current portal flow
+#### How publishing works from a Sync Playlist
 
-SyncPlay should follow the same publish convention the portal already uses today:
-- Publish is initiated from the resource card or detail page
-- The primary action label is `Publish`
-- After clicking `Publish`, the user gets a picker modal to choose the publish target
-- The system then applies the assignment in one step
-
-For Sync Playlists specifically:
-- `Publish` opens the existing picker flow used by the portal today
-- The user first selects target screens using the existing device picker pattern
-- Sync playback is never published as a plain standalone device override
-- After device selection, the flow resolves to a Sync Group target:
-  - if exactly one matching Sync Group already exists for the selected screens, use that group
-  - if multiple matching Sync Groups exist, let the user choose one
-  - if no matching Sync Group exists, offer `Create Sync Group` inline with this playlist preselected
-- Final result: the playlist is assigned to a Sync Group, not directly to ad hoc standalone screens
+- Click `Publish` on any Sync Playlist card or in the editor
+- A screen picker opens — the same one used everywhere else in the portal
+- Select the screens you want to sync together
+- If those screens already belong to a Sync Group, the system will show it as the target
+- If more than one matching group exists, pick the one you want
+- If no group exists yet, you'll be offered a quick `Create Sync Group` step right there — no need to leave the publish flow
+- After confirming, you land on the Sync Group page and the screens start downloading content automatically
 
 #### Sync Playlist Editor  `/workspaces/:wsId/sync-playlists/:id`
 
@@ -683,13 +750,11 @@ No other new fields. Nothing technical exposed.
 
 #### Scheduling a Sync Playlist
 
-Sync Playlists must also be available from the existing Schedules flow when the user is scheduling for a Sync Group.
+Sync Playlists can also be assigned from the existing Schedules page so you can set them to run at specific times.
 
-Rules:
-- If the user is creating a normal schedule for standalone devices, the existing content / playlist / schedule behavior stays unchanged
-- If the user is scheduling for a Sync Group, the picker must allow selecting a Sync Playlist
-- A Sync Playlist scheduled through Schedules still resolves to a Sync Group target, never to independent device overrides
-- The scheduling UX should reuse the current picker pattern and only expose Sync Playlists when the target context is a Sync Group
+- For normal standalone device schedules, nothing changes — existing behavior is untouched
+- When scheduling for a Sync Group, the picker shows Sync Playlists as available options
+- A scheduled Sync Playlist always targets a Sync Group — it never pins playback on individual screens independently
 
 ---
 
@@ -714,11 +779,7 @@ Card layout.
 - `Publish` button on the card, using the same placement and visual treatment as current resource cards
 - `⋮` context menu: Edit, Delete
 
-For Sync Groups:
-- `Publish` means "publish this synchronised experience"
-- Clicking `Publish` should open a target picker consistent with the current portal publish flow
-- Device selection is only used to identify or create the target Sync Group
-- Publish never bypasses the Sync Group and pins a Sync Playlist directly to a device outside group context
+Clicking `Publish` on a Sync Group opens the sync playlist picker — same visual pattern as the rest of the portal. Select the playlist you want the group to play and confirm. Screens start preparing immediately.
 
 ---
 
@@ -802,6 +863,18 @@ Sync
 
 No action needed from here — just visibility.
 
+#### Stop Sync vs Remove from Group
+
+These are two different actions and must be clearly separated in the UI:
+
+| Action | What it does |
+|---|---|
+| **Stop Sync** | Ends the current playback session. The group, its screens, and its playlist assignment all remain. Screens resume normal scheduled content. The group can be started again. |
+| **Remove from Group** | Removes a screen from the Sync Group entirely. The screen is no longer a member. Cached sync content on that device can optionally be cleared. |
+| **Delete Group** | Removes the Sync Group. All screen assignments are removed. Cached content is not automatically cleared from devices. |
+
+There is no "Unpublish" for a Sync Group the way there is for a normal content/playlist override. Sync Groups are persistent assignments, not device overrides. To stop a sync group from running, use Stop Sync. To disassociate a screen, use Remove.
+
 ### 6.5A Devices page — group presentation
 
 On the main Devices page, Sync Groups should also be visible directly in the card grid so grouped playback is understandable without opening each device one by one.
@@ -846,112 +919,139 @@ Summary of the Devices page behavior:
 
 ---
 
+### 6.5B Empty states
+
+**Sync Playlists page — empty:**
+```
+  No Sync Playlists yet
+  Create a sync playlist to get started.
+  [+ New Sync Playlist]
+```
+
+**Sync Groups page — empty:**
+```
+  No Sync Groups yet
+  A Sync Group lets multiple screens play content in perfect sync.
+  [+ New Sync Group]
+```
+
+**Sync Group Detail — no playlist assigned:**
+```
+  No playlist assigned
+  Pick a Sync Playlist to start synced playback on this group.
+  [Assign Playlist]
+```
+
+**Sync Group Detail — no screens:**
+```
+  No screens in this group
+  Add screens so they can play together in sync.
+  [+ Add Screens]
+```
+
+---
+
+### 6.5C Error and degraded states
+
+**Download failed on a screen:**
+- Show the screen row in amber with label `Download failed`
+- Group stays in `Preparing` and retries automatically
+- If a screen cannot download after retry, the portal shows a `⚠ 1 screen failed to download` banner on the group detail page
+- System waits for that screen before starting
+
+**Screen goes offline during Preparing:**
+- Row shows `○ Offline — waiting`
+- Group waits until the screen comes back online or is removed from the group
+
+**Screen drops out during Playing:**
+- Group card status changes from `Playing` to `Degraded`
+- The screen row inside the group card shows `○ Offline`
+- Remaining screens continue playing in sync
+- When the screen comes back online, it rejoins automatically and catches up
+
+**All screens offline:**
+- Group status → `Idle`
+- A `⚠ All screens offline` banner is shown on the group detail page
+
+**Image items on an all-Samsung group:**
+- Show an inline warning in the Sync Playlist editor:
+  > ⚠ This playlist contains images. Samsung screens only support video in sync mode — images will be skipped during sync playback.
+
+---
+
 ### 6.6 User workflow (four entry paths, all simple)
 
-**Path A — Playlist first**
+**Path A — Start from a Sync Playlist ("I know what I want to play")**
 ```
 1. Sync Playlists → + New → add content → Save
-2. From the playlist page or playlist editor, click `Publish`
-3. Show the existing device picker modal pattern so the user selects screens the same way they already do elsewhere in the portal
-4. Resolve the selected screens to a Sync Group
-5. If a matching group exists, show it as the publish target
-6. If no group exists yet, offer `Create Sync Group` inline with this playlist preselected
-7. Prompt only for group name if needed, then save
-  → New or existing group is now assigned this playlist
-  → User lands on the group detail page
-  → System starts preparing automatically
+2. Click Publish on the playlist card or in the editor
+3. Pick the screens to include — same screen picker used elsewhere in the portal
+4. If those screens are already in a Sync Group, choose that group
+5. If not, create a new Sync Group right there (just give it a name)
+   → You land on the Sync Group page
+   → Screens start downloading content automatically
 ```
 
-**Path B — Group first**
+**Path B — Start from Sync Groups ("I want to set up a group")**
 ```
-1. Sync Groups → + New → name it → add screens → choose sync playlist → Save
-2. User lands on the group detail page
-  → Preparation begins immediately
-```
-
-**Path C — Device first**
-```
-1. Devices → select one or more devices, or open a device detail page
-2. Click `Publish`
-3. Show the existing resource picker pattern already used in the portal
-4. If the user chooses SyncPlay, resolve or create the Sync Group for those devices
-5. Show the available Sync Playlists for that group using the existing picker pattern
-6. If no Sync Group exists yet, offer `Create Sync Group` with those devices preselected
-7. User confirms group name if needed, picks the sync playlist, and saves
-  → User lands on the group detail page
-  → Group assignment is created and preparation starts
+1. Sync Groups → + New
+2. Give the group a name
+3. Add screens
+4. Pick a Sync Playlist
+5. Save
+   → You land on the group page
+   → Screens start downloading content automatically
 ```
 
-**Path D — Existing Sync Group**
+**Path C — Start from Devices ("I know which screens I want")**
 ```
-1. Sync Groups → open an existing group
-2. Click `Publish`
-3. Show the sync playlist picker using the current picker pattern
-4. Select the sync playlist and confirm
-  → Playlist is assigned to that group
-  → Preparation or playback update begins immediately
-```
-
-**Path E — Schedule first**
-```
-1. Schedules → + New or edit existing schedule
-2. Choose publish target
-3. If the target is standalone devices, keep the current scheduling flow unchanged
-4. If the target is a Sync Group, show Sync Playlists in the picker
-5. Select the Sync Playlist and save the schedule
-  → The schedule is attached to the Sync Group
-  → At runtime, the group prepares and starts in sync when the schedule triggers
+1. Devices → select one or more devices
+2. Click Publish
+3. Choose SyncPlay from the resource type picker
+4. If those devices are already in a Sync Group, choose it
+5. If not, create a new group (just give it a name)
+6. Pick a Sync Playlist from the same picker used elsewhere in the portal
+7. Save
+   → You land on the Sync Group page
+   → Screens start downloading content automatically
 ```
 
-Rules for these entry points:
-- Playlist-first must feel like "I already know the content, now choose the screens"
-- Device-first must feel like "I already know the screens, now choose the content"
-- Schedule-first must feel like "I already know when this group should run, now choose the synced content"
-- Both flows must reuse the current picker UX instead of introducing a new Sync-only picker pattern
-- SyncPlay should reuse the current `Publish` wording, button placement, and picker-first interaction model
-- Sync playback always resolves to a Sync Group before assignment is saved
-- A Sync Playlist is never published directly to a device outside Sync Group context
-- When a device selection belongs to a Sync Group, publish should surface the available SyncPlay targets for that group rather than making the user navigate elsewhere
-- User still only decides: name, playlist, screens
+**Path D — Update what an existing group is playing**
+```
+1. Sync Groups → open the group
+2. Click Publish
+3. Pick a different Sync Playlist
+4. Confirm
+   → Screens switch over to the new playlist
+```
 
-In all cases: **no mode selection, no leader config, no start policy, no coordinator URL** — the system handles all of that behind the scenes.
+**Path E — Schedule a Sync Group to run at a specific time**
+```
+1. Schedules → + New or edit an existing schedule
+2. Set your time / recurrence as normal
+3. For the target, pick a Sync Group instead of individual devices
+4. The playlist picker will show available Sync Playlists for that group
+5. Select and save
+   → At the scheduled time, all screens in the group prepare and play together automatically
+```
 
-#### Practical publish rule
+Design rules for all paths:
+- All paths reuse the same screen picker and playlist picker already in the portal
+- The `Publish` button, placement, and interaction style are the same as everywhere else in the portal
+- The user only ever decides three things: group name, playlist, and which screens
+- The system handles everything else automatically — no technical choices required
 
-To stay consistent with the current product:
-- Standard resources (content, playlist, schedule) publish to devices
-- Sync resources publish through the same `Publish` action, but the resolved target is always a Sync Group
-- If the destination is a Sync Group, the publish UI should show available Sync Playlists for that group
-- If the destination is not in a Sync Group yet, the UI should offer group creation inline instead of forcing the user to leave the publish flow
-- If the user is in Schedules and the selected target is a Sync Group, the picker should include Sync Playlists as valid scheduled resources
+#### When to use normal Publish vs Sync Publish
 
-#### Strict separation between normal publish and Sync publish
+| | Normal Publish | Sync Publish |
+|---|---|---|
+| **What you're publishing** | Content, Playlist, or Schedule | Sync Playlist |
+| **Target** | Individual devices | A Sync Group |
+| **Screens play** | Independently — each on its own | Together — all timed to match |
+| **Requires a group?** | No | Yes (created inline if needed) |
 
-- Normal publish:
-  - Content / Playlist / Schedule
-  - Target = device override
-  - Works without any Sync Group
-
-- Normal schedule:
-  - Content / Playlist assigned on a schedule
-  - Target = device override or existing non-sync scheduling target
-  - No Sync Group required
-
-- Sync publish:
-  - Sync Playlist
-  - Target = Sync Group
-  - Requires a Sync Group, either existing or created inline during publish
-  - Never creates a plain standalone device override
-
-- Sync schedule:
-  - Sync Playlist assigned on a schedule
-  - Target = Sync Group
-  - Requires a Sync Group
-  - Never schedules independent per-device overrides for a synced experience
-
-This keeps the product model unambiguous:
-- If the user wants independent playback on screens, use normal publish
-- If the user wants synchronised playback across screens, use Sync Group + Sync Playlist
+If you want screens to play independently → use normal Publish.
+If you want screens to play in perfect sync → use Sync Publish through a Sync Group.
 
 ---
 
@@ -959,36 +1059,16 @@ This keeps the product model unambiguous:
 
 | Decision | Auto logic |
 |---|---|
-| Sync mode | All Samsung B2B → native firmware sync; any non-Samsung → app-layer sync |
+| Sync mode | All Samsung B2B → firmware sync (Mode 1); any non-Samsung present → app-layer sync (Mode 2) |
 | API backend | Tizen 6.5+ → `webapis.syncplay`; Tizen 4 SSSP → `b2bapis.b2bsyncplay` |
-| Leader | Server picks first online high-uptime device; rest are auto backup candidates |
-| Start barrier | All assigned online screens must be ready (screens offline at provision time are excluded) |
-| `targetStartAt` | Coordinator adds buffer based on slowest device type in group (7s for Tizen 4, 5s otherwise) |
-| Drift correction | Samsung native → firmware handles; app-layer → seek or rate nudge per platform |
-| Coordinator | Mode 2 only: cloud server by default; local Node.js coordinator if configured in workspace settings |
+| `groupID` | Derived from `SyncGroup.id` via CRC-16 — same value pushed to all devices |
+| Leader | Server picks first online high-uptime device; rest are automatic backup candidates |
+| Who can start | All assigned online screens must be ready; screens offline at provision time are excluded |
+| Start timing buffer | 7 seconds if any Tizen 4 device is in the group; 5 seconds otherwise |
+| Drift correction | Samsung firmware handles it internally; other screens use seek or playback rate nudge |
+| Coordinator | Non-Samsung groups only: always uses cloud — no manual configuration needed |
 
 ---
-
-### 6.8 Advanced / workspace settings (Mode 2 only, optional, hidden by default)
-
-Advanced settings exist only for **Mode 2 custom sync**. They do not apply to Samsung native firmware SyncPlay.
-
-For teams that need them, accessible under Workspace Settings → Sync:
-
-```
-Workspace Settings → Sync (advanced)
-  Local Coordinator    [ws://192.168.1.10:9876]  (blank = use cloud)
-  Start policy         ● All screens ready  ○ 80% quorum
-  Auto-start           ● On (start as soon as ready)  ○ Manual
-```
-
-These are workspace-level defaults for app-layer sync groups only. Not shown on the Sync Group Detail page itself — keeps the everyday view clean.
-
-For Samsung native groups:
-- No coordinator setting
-- No start policy override
-- No advanced user-facing controls
-- The firmware API handles synchronisation directly once the group is provisioned
 
 ---
 

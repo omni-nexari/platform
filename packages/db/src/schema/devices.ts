@@ -72,8 +72,9 @@ export const devices = pgTable('devices', {
   // ── Direct per-device publish target override ─────────────────────────────
   publishedContentId: uuid('published_content_id').references(() => contentItems.id, { onDelete: 'set null' }),
   publishedPlaylistId: uuid('published_playlist_id').references(() => playlists.id, { onDelete: 'set null' }),
-  publishedScheduleId: uuid('published_schedule_id').references(() => schedules.id, { onDelete: 'set null' }),
-
+  publishedScheduleId: uuid('published_schedule_id').references(() => schedules.id, { onDelete: 'set null' }),  // Note: no .references() here — sync.ts imports devices.ts so adding a back-reference would be circular.
+  // The FK constraint is enforced by the DB (see migration 0020_syncplay.sql).
+  publishedSyncGroupId: uuid('published_sync_group_id'),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

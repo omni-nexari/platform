@@ -2,15 +2,19 @@
  * Test-only Node.js smoke server for Samsung B2B Tizen devices.
  *
  * This file is NOT used by the main player.
- * It is intended to be signed as `test-node-server.js.signed` and started
- * manually from `test-tizen.html` via b2bapis.b2bcontrol.startNodeServer().
+ * It is intended to be started directly from `test-tizen.html` via
+ * b2bapis.b2bcontrol.startNodeServer(serverPath, serverName, onSuccess, onError).
+ *
+ * startNodeServer() only launches this script. The HTTP port is defined here by
+ * server.listen(PORT, ...), and other devices on the same LAN must connect to
+ * http://<tv-ip>:PORT.
  */
 
 var http = require('http');
-var https = require('https');
-var url = require('url');
 
-var PORT = 80;
+// Samsung SSSP Node.js runs as an unprivileged process — ports < 1024 are blocked.
+// Port 8080 matches Samsung's own documentation example.
+var PORT = 8080;
 var STARTUP_BEACON_URL = 'http://192.168.1.110:3000/api/v1/devices/time?source=tizen-node-startup';
 
 function respondJson(res, statusCode, payload) {
@@ -31,13 +35,28 @@ function collectRequestBody(req, cb) {
 
 function outboundPing(targetUrl, cb) {
   try {
-    var parsed = url.parse(targetUrl);
-    var transport = parsed.protocol === 'https:' ? https : http;
+    if (typeof targetUrl !== 'string' || targetUrl.indexOf('http://') !== 0) {
+      cb(new Error('Only http:// URLs are supported by this smoke test server'));
+      return;
+    }
+
+    var withoutProtocol = targetUrl.substring('http://'.length);
+    var slashIndex = withoutProtocol.indexOf('/');
+    var hostPort = slashIndex >= 0 ? withoutProtocol.substring(0, slashIndex) : withoutProtocol;
+    var requestPath = slashIndex >= 0 ? withoutProtocol.substring(slashIndex) : '/';
+    var colonIndex = hostPort.indexOf(':');
+    var hostname = colonIndex >= 0 ? hostPort.substring(0, colonIndex) : hostPort;
+    var port = colonIndex >= 0 ? parseInt(hostPort.substring(colonIndex + 1), 10) : 80;
+
+    if (!hostname) {
+      cb(new Error('Invalid URL hostname'));
+      return;
+    }
+
     var options = {
-      protocol: parsed.protocol,
-      hostname: parsed.hostname,
-      port: parsed.port,
-      path: parsed.path,
+      hostname: hostname,
+      port: isNaN(port) ? 80 : port,
+      path: requestPath,
       method: 'GET',
       timeout: 5000,
       headers: {
@@ -46,7 +65,7 @@ function outboundPing(targetUrl, cb) {
       }
     };
 
-    var request = transport.request(options, function(response) {
+    var request = http.request(options, function(response) {
       var text = '';
       response.on('data', function(chunk) { text += chunk.toString(); });
       response.on('end', function() {

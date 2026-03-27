@@ -61,7 +61,9 @@ export type WsCommand =
   | { type: 'stop_live_capture' }
   | { type: 'set_zones'; payload: { zones: Array<{ id: string; rect: { x: number; y: number; width: number; height: number }; playlistId?: string }> } }
   | { type: 'remote_key'; payload: { key: string } }
-  | { type: 'remote_status'; payload: { requestId: string } };
+  | { type: 'remote_status'; payload: { requestId: string } }
+  | { type: 'SESSION_CONFIG'; groupId: number; mode: string; syncPlaylistId: string | null }
+  | { type: 'SYNC_PLAY'; action: 'STOP' | 'CANCEL' | 'START_SYNCPLAY' };
 
 const connections = new Map<string, Conn>();
 const deviceLogs = new Map<string, DeviceConsoleLogEntry[]>();

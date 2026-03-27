@@ -153,10 +153,10 @@ Platform
 - **Multi-zone layout**: A device can be configured with 2–4 named screen zones, each assigned its own playlist and a display rect (`x, y, w, h`). Each zone runs an independent `ZoneRunner` (playlist + scheduler). All content renderers accept a display rect so AVPlay and Document API layers render into the correct screen region.
 - **Device replacement**: When a physical display is swapped, a "Replace device" action copies all settings, tags, and active schedule assignments from the old device record to a newly paired device. The old record is soft-deleted.
 - **Groups**: Devices can be tagged and bulk-managed.
-- **Video walls (future)**: Devices can be assigned to a Sync Group where all members play the same pre-downloaded content in hardware-synchronized lockstep via `webapis.syncplay`.
+- **SyncPlay groups**: Devices can be assigned to a Sync Group where all members play the same pre-downloaded content in hardware-synchronized lockstep via Samsung native SyncPlay. The current native path supports both `webapis.syncplay` (newer SSSP firmware) and `b2bapis.b2bsyncplay` (older SSSP4 / Tizen 4 firmware). Mixed-device software sync and tile-cropped videowalls remain future work.
 - **Idle / fallback content**: When no schedule slot is active the player walks a fallback chain before showing the built-in idle screen: device default playlist → workspace default playlist → built-in idle screen. Both defaults are configurable from the dashboard. The built-in idle screen is bundled inside the `.wgt` and requires no network or storage.
 - **Signed Proof-of-Play export**: The `play_events` table can be exported as a date-range CSV or PDF, signed with an org-scoped RSA private key stored in the server's secrets vault. Recipients can verify authenticity independently — essential for advertising clients.
-- **Platform**: Samsung LFD commercial displays running **Tizen 6.5+** with the Tizen web player app (see §10).
+- **Platform**: Samsung commercial displays using the Tizen web player stack; the current native SyncPlay path supports newer SSSP firmware via `webapis.syncplay` and older SSSP4 / Tizen 4 signage firmware via `b2bapis.b2bsyncplay` (see §10).
 
 ### 3.2 Content Management
 
@@ -571,7 +571,7 @@ Optional, toggled per workspace in workspace settings.
 | Concern | Choice |
 |---|---|
 | Platform | **Tizen Web App** (HTML5 + JavaScript) |
-| Target OS | **Tizen 6.5+** (Samsung LFD / Smart Signage Platform, 2022+ models) |
+| Target OS | **Samsung commercial Tizen signage firmware** — primary app path targets modern Tizen / SSSP releases, while native SyncPlay compatibility also covers older SSSP4 / Tizen 4 in the SBB player path |
 | Dev tooling | **Tizen Studio 6+** + **Tizen CLI** + VS Code extension |
 | Web engine | **Chromium-based** (Blink renderer + V8 JS engine) — ES2022+, WebAssembly |
 | Video renderer | **`webapis.avplaystore`** (hardware decoder, double-buffer, seamless via `setVideoStillMode`) — NOT `<video>` |
@@ -930,7 +930,7 @@ sync_groups (
   org_id       UUID FK organizations,
   workspace_id UUID FK workspaces,
   name         TEXT NOT NULL,
-  group_id     SMALLINT NOT NULL,        -- 16-bit int passed to webapis.syncplay.start()
+  group_id     INTEGER NOT NULL,         -- unsigned CRC-16 value (0..65535) passed to Samsung SyncPlay
   layout       JSONB DEFAULT '{}',       -- {cols: 2, rows: 2}
   deleted_at   TIMESTAMPTZ
 )
@@ -2205,24 +2205,29 @@ Device timer state is reported back to the server in the `system_state` WebSocke
 - WS reconnect exponential backoff: 1 s → 2 s → 4 s → 8 s → 30 s → 60 s max.
 - On reconnect: re-authenticate, send heartbeat, refresh schedule, poll `/device/emergency`.
 
-### VideoWall / SyncPlay (Future — Phase 3+)
+### VideoWall / SyncPlay
 
-All devices in a Sync Group download their assigned content to local cache, then play in hardware-synchronized lockstep via `webapis.syncplay` (Partner privilege).
+SyncPlay is now split into two tracks:
 
-**Two modes:**
-- **Mode A — Full video sync**: All devices download the same file and play it in sync. Used for arrays of identical displays.
-- **Mode B — Pre-cropped tile content**: Server generates per-tile cropped variants via FFmpeg (`-vf "crop=W:H:X:Y"`). Each device downloads only its tile. Combined screens form one large image/video.
+- **Mode 1 — Native Samsung SyncPlay (implemented)**: Devices in a Sync Group use Samsung native SyncPlay to play the same pre-downloaded local media in hardware-synchronized lockstep. Dashboard support exists for Sync Playlists and Sync Groups, the API persists sync assignments and member lists, and the Samsung SBB player can prepare/start/stop native sessions.
+- **Mode 2 — Software / mixed-device sync (future)**: Non-Samsung or mixed fleets will use a WebSocket-coordinated runtime with ready-state orchestration and local-clock offset handling.
+- **Tile-cropped videowalls (future)**: Server-generated per-tile variants via FFmpeg remain future work.
 
-**Sequence:**
+**Current native flow:**
 ```
-1. Server: send WS message 'prefetch_sync_content' { contentId per device }
-2. Devices: download tile content → send 'sync_ready' WS message
-3. Server: when ALL members send 'sync_ready' → send 'start_sync_play' { groupId, playlist }
-4. Devices: createPlaylist([local file]) → syncplay.start({ groupID, rectX:0, rectY:0, rectW:1920, rectH:1080 })
-   All members share same groupID → hardware clock synchronised
+1. Dashboard: user creates a Sync Playlist and assigns it to a Sync Group.
+2. API: sync group CRUD persists a stable numeric `group_id` derived from CRC-16 and stores group membership.
+3. API: when membership or playlist assignment changes, online members receive `SESSION_CONFIG` over WebSocket.
+4. Device: player downloads required media to deterministic local paths shared across the group.
+5. Device: native Samsung SyncPlay playlist is prepared locally.
+6. Device: `SYNC_PLAY` command starts/stops the native session using the shared `group_id`.
 ```
 
-No UDP multicast; all content is pre-downloaded MP4 played from local storage.
+**Samsung firmware compatibility:**
+- Newer SSSP firmware: `webapis.syncplay`
+- Older SSSP4 / Tizen 4 firmware: `b2bapis.b2bsyncplay`
+
+No UDP multicast is required; all content is pre-downloaded and played from local storage.
 
 ### Multi-Zone Layout
 
@@ -2875,21 +2880,24 @@ The Pi 5 is a single host. A backup strategy is essential before going to produc
 - [ ] Email/notification alert action type
 - [ ] End-to-end test: ESP32 → MQTT → rule fires → device switches playlist
 
-### Phase 9 — VideoWall & SyncPlay (Future)
+### Phase 9 — VideoWall & SyncPlay
 
-- [ ] DB: `sync_groups` + `sync_group_members` tables
-- [ ] API: Sync group CRUD (`/workspaces/:wsId/sync-groups`)
-- [ ] API: Device sync group assignment endpoint
+- [x] DB: `sync_playlists` + `sync_playlist_items` tables
+- [x] DB: extend `sync_groups` + `sync_group_members` for playlist assignment and member priority/layout metadata
+- [x] API: Sync playlist CRUD + atomic item replacement (`/sync-playlists`)
+- [x] API: Sync group CRUD + member management (`/sync-groups`)
+- [x] API: device publish target support for sync groups
+- [x] API: WebSocket command types for `SESSION_CONFIG` and `SYNC_PLAY`
+- [x] Tizen SBB: native SyncPlay prepare/start/stop support
+- [x] Tizen SBB: compatibility path for both `webapis.syncplay` and `b2bapis.b2bsyncplay`
+- [x] Dashboard: Sync Playlist list/editor flow
+- [x] Dashboard: Sync Group management page (`/:wsId/sync-groups`)
 - [ ] Server: Tile crop job — FFmpeg `-vf "crop=W:H:X:Y"` per tile variant; store as child `content_items`
-- [ ] API: WS broadcast `prefetch_sync_content` to all group members
-- [ ] API: Track `sync_ready` messages; trigger `start_sync_play` when all members confirm
-- [ ] Tizen: `syncplay` module — `createPlaylist`, `start`, `stop`, `removePlaylist`
-- [ ] Tizen: `prefetch_sync_content` WS handler — download tile content, send `sync_ready`
-- [ ] Tizen: `start_sync_play` WS handler — `createPlaylist` + `syncplay.start({groupID, rect})`
-- [ ] Dashboard: Sync Group management page (`/:wsId/sync-groups`)
-- [ ] Dashboard: Device detail page — sync group assignment + tile position picker
-- [ ] Dashboard: Content upload — optional "Create videowall variants" toggle, tile count/layout picker
+- [ ] API: ready-state orchestration for mixed-device / software sync runtime
+- [ ] Tizen / mixed clients: software sync runtime for non-Samsung devices
+- [ ] Dashboard: device-level tile position picker for videowall layouts
+- [ ] Dashboard: content upload — optional "Create videowall variants" toggle, tile count/layout picker
 
 ---
 
-*Last updated: March 19, 2026*
+*Last updated: March 23, 2026*

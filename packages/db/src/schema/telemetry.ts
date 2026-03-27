@@ -5,20 +5,16 @@ import {
   timestamp,
   boolean,
   integer,
-  smallint,
   real,
   bigint,
-  jsonb,
   primaryKey,
   index,
 } from 'drizzle-orm/pg-core';
 import { desc } from 'drizzle-orm';
-import { organisations } from './auth.js';
 import { devices } from './devices.js';
 import { contentItems } from './content.js';
 import { playlists } from './playlists.js';
 import { schedules } from './schedules.js';
-import { workspaces } from './workspaces.js';
 
 /**
  * One row per device heartbeat (every 30 s).
@@ -69,25 +65,4 @@ export const playEvents = pgTable('play_events', {
   startedIdx: index('idx_play_events_started').on(desc(t.startedAt)),
 }));
 
-/**
- * VideoWall sync groups (Phase 3 — Samsung SyncPlay API).
- */
-export const syncGroups = pgTable('sync_groups', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
-  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
-  name: text('name').notNull(),
-  groupId: smallint('group_id').notNull(),
-  layout: jsonb('layout'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
-
-export const syncGroupMembers = pgTable('sync_group_members', {
-  syncGroupId: uuid('sync_group_id').notNull().references(() => syncGroups.id, { onDelete: 'cascade' }),
-  deviceId: uuid('device_id').notNull().references(() => devices.id, { onDelete: 'cascade' }),
-  tileCol: smallint('tile_col').notNull().default(0),
-  tileRow: smallint('tile_row').notNull().default(0),
-}, (t) => ({
-  pk: primaryKey({ columns: [t.syncGroupId, t.deviceId] }),
-}));
+// syncGroups and syncGroupMembers have moved to schema/sync.ts

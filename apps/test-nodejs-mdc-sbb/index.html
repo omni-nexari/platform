@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Node Test</title>
+  <script src="$B2BAPIS/b2bapis/b2bapis.js"></script>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Node Test</h1>
+    <div class="sub">Minimal Samsung SBB node launcher</div>
+
+    <div class="panel">
+      <div class="status">
+        <div id="dot" class="dot idle"></div>
+        <div id="statusText">idle</div>
+      </div>
+      <div class="label">Node script</div>
+      <input value="lib/server.js" disabled />
+    </div>
+
+    <div class="panel">
+      <div class="controls">
+        <button id="btnStart" class="primary" onclick="startNode()">Start Node</button>
+        <button id="btnStop" class="danger" onclick="stopNode()">Stop Node</button>
+        <button id="btnClear" onclick="clearLog()">Clear Log</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="label">Log</div>
+      <div id="log"></div>
+    </div>
+  </div>
+  <script src="js/main.js"></script>
+</body>
+</html>

@@ -122,7 +122,7 @@
   if (typeof b2bapis !== 'undefined' && b2bapis.b2bcontrol &&
       typeof b2bapis.b2bcontrol.startNodeServer === 'function') {
     b2bapis.b2bcontrol.startNodeServer(
-      'server.js.signed',
+      'server.js',
       'mdc-bridge',
       function() { logger.info('[mdc-bridge] Node server started on :9615'); },
       function(e) { logger.warn('[mdc-bridge] Failed to start Node server:', e && e.message); }

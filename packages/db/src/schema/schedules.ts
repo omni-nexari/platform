@@ -25,6 +25,10 @@ export const scheduleSlots = pgTable('schedule_slots', {
   /** At most one of these is set */
   playlistId: uuid('playlist_id').references(() => playlists.id, { onDelete: 'set null' }),
   contentId: uuid('content_id').references(() => contentItems.id, { onDelete: 'set null' }),
+  // Note: no .references() on these — sync.ts imports devices.ts which imports schedules.ts (circular).
+  // FK constraints are enforced by the DB (see migration 0020_syncplay.sql).
+  syncGroupId: uuid('sync_group_id'),
+  syncPlaylistId: uuid('sync_playlist_id'),
   /** Time of day as HH:MM */
   startTime: text('start_time').notNull(),
   endTime: text('end_time').notNull(),

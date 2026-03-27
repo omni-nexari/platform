@@ -14,4 +14,5 @@ export * from './tags.js';
 export * from './smart-views.js';
 export * from './portal-analytics.js';
 export * from './telemetry.js';
+export * from './sync.js';
 export * from './canvas.js';

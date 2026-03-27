@@ -2,7 +2,7 @@
  * MDC Bridge — local Node.js HTTP server running ON the Samsung display.
  *
  * Started by app.js via:
- *   b2bapis.b2bcontrol.startNodeServer('server.js.signed', 'mdc-bridge', ...)
+ *   b2bapis.b2bcontrol.startNodeServer('server.js', 'mdc-bridge', ...)
  *
  * The browser-side player calls:
  *   POST http://127.0.0.1:9615/remote-key   { key: 'ARROW_UP' }
@@ -12,9 +12,8 @@
  * Because both this server and the firmware are on the same device, 127.0.0.1
  * always works regardless of the display's external IP or network topology.
  *
- * NOTE: This file must be signed with Samsung's Node signing tool before
- * deployment. The signed output (server.js.signed) is what gets bundled in
- * the .wgt package. Only Node built-in modules may be used — no node_modules.
+ * This file is launched directly by b2bcontrol.startNodeServer().
+ * Keep it limited to Node built-in modules only — no node_modules.
  */
 
 var http = require('http');

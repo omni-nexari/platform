@@ -1,0 +1,28 @@
+{
+  "esversion": 8,
+  "browser": true,
+  "devel": true,
+  "globals": {
+    "webapis": true,
+    "tizen": true,
+    "b2bapis": true,
+    "AVPlay": true,
+    "AVPlayManager": true,
+    "SyncPlay": true
+  },
+  "undef": false,
+  "unused": false,
+  "eqeqeq": false,
+  "strict": false,
+  "asi": true,
+  "laxbreak": true,
+  "laxcomma": true,
+  "boss": true,
+  "expr": true,
+  "loopfunc": true,
+  "funcscope": true,
+  "shadow": true,
+  "evil": true,
+  "esnext": true,
+  "sub": true
+}

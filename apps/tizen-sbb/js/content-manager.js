@@ -651,11 +651,45 @@ window.ContentManager = {
       logger.warn('Content has no URL:', content);
       return null;
     }
-    
-    // Use content ID and extract extension from URL
+
     const contentId = content.id;
-    const urlParts = content.url.split('.');
-    const extension = urlParts[urlParts.length - 1].split('?')[0]; // Remove query params
+
+    // Known content-type → canonical extension mapping.
+    // Use this as the primary source so that even when the download URL has no
+    // extension (or has a signed-URL hash as the path suffix) the cached file
+    // always has a proper extension that Samsung's b2bdoc / AVPlay APIs need.
+    const TYPE_EXT = {
+      PDF: 'pdf',
+      DOCUMENT: 'pdf',
+      PRESENTATION: 'pptx',
+      VIDEO: null,   // must be derived from URL (mp4/webm/etc differ)
+      IMAGE: null,   // must be derived from URL (jpg/png/etc differ)
+    };
+    if (content.type && TYPE_EXT[content.type] !== undefined && TYPE_EXT[content.type] !== null) {
+      return `${contentId}.${TYPE_EXT[content.type]}`;
+    }
+
+    // For types not in the map, derive extension from the URL path.
+    // Strip query string and fragment FIRST so dots in signed-URL tokens
+    // are not mistaken for the file extension.
+    let pathOnly = content.url;
+    const qIdx = pathOnly.indexOf('?');
+    if (qIdx !== -1) pathOnly = pathOnly.substring(0, qIdx);
+    const hIdx = pathOnly.indexOf('#');
+    if (hIdx !== -1) pathOnly = pathOnly.substring(0, hIdx);
+
+    const lastSlash = pathOnly.lastIndexOf('/');
+    const baseName = lastSlash !== -1 ? pathOnly.substring(lastSlash + 1) : pathOnly;
+    const dotIdx = baseName.lastIndexOf('.');
+    const extension = dotIdx !== -1 ? baseName.substring(dotIdx + 1).toLowerCase() : null;
+
+    // Sanity-check: a real file extension is short and alphanumeric.
+    // If it looks like a hash/token, ignore it and store without extension.
+    if (!extension || extension.length > 8 || !/^[a-zA-Z0-9]+$/.test(extension)) {
+      logger.warn('Could not extract valid file extension from URL, storing without extension:', content.url);
+      return `${contentId}`;
+    }
+
     return `${contentId}.${extension}`;
   },
 

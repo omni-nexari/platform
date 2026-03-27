@@ -39,6 +39,9 @@ import ScheduleEditorPage from './pages/workspace/ScheduleEditorPage.js';
 import TagsPage from './pages/workspace/TagsPage.js';
 import CanvasEditorPage from './pages/workspace/CanvasEditorPage.js';
 import AnalyticsPage from './pages/workspace/AnalyticsPage.js';
+import SyncPlaylistsPage from './pages/workspace/SyncPlaylistsPage.js';
+import SyncPlaylistEditorPage from './pages/workspace/SyncPlaylistEditorPage.js';
+import SyncGroupsPage from './pages/workspace/SyncGroupsPage.js';
 import { buildApiUrl } from './lib/api.js';
 
 function sleep(ms: number) {
@@ -274,6 +277,9 @@ export default function App() {
         <Route path="/workspaces/:wsId/tags" element={<TagsPage />} />
         <Route path="/workspaces/:wsId/canvas/:id" element={<CanvasEditorPage />} />
         <Route path="/workspaces/:wsId/analytics" element={<AnalyticsPage />} />
+        <Route path="/workspaces/:wsId/sync-playlists" element={<SyncPlaylistsPage />} />
+        <Route path="/workspaces/:wsId/sync-playlists/:id" element={<SyncPlaylistEditorPage />} />
+        <Route path="/workspaces/:wsId/sync-groups" element={<SyncGroupsPage />} />
       </Route>
 
       {/* Root redirect */}

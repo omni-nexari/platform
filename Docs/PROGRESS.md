@@ -1,7 +1,7 @@
 # OmniHub Signage — Build Progress Tracker
 
-> Last updated: March 20, 2026 (portal mobile polish + docs status refresh)  
-> Codebase: `apps/ds` (React frontend) + `apps/api` (Fastify backend) + `apps/tizen` (Samsung LFD player)
+> Last updated: March 23, 2026 (SyncPlay phases 1-4 shipped + docs refresh)  
+> Codebase: `apps/ds` (React frontend) + `apps/api` (Fastify backend) + `apps/tizen` / `apps/tizen-sbb` (Samsung player apps)
 
 ---
 
@@ -20,6 +20,7 @@
 
 | Date | Milestone | Status | Notes |
 |---|---|---|---|
+| March 23, 2026 | SyncPlay phases 1-4 shipped | ✅ | Added Sync Playlist + Sync Group DB schema and migrations, backend CRUD/routes, dashboard pages/editor flows, sync-group publish target support, and native Samsung SyncPlay runtime support in the SBB player with `webapis.syncplay` and `b2bapis.b2bsyncplay` compatibility |
 | March 20, 2026 | Reseller onboarding provisions client dashboard owner | ✅ | First-time reseller portal setup can now optionally create an active client-facing dashboard org/workspace owned by the same invited reseller email/password, so resellers can operate their own dashboard immediately and invite clients later |
 | March 20, 2026 | Portal mobile UX polish + guarded reseller deletion | ✅ | Platform Owner, reseller, and client shells now use foldable mobile drawers; portal analytics tables/cards were tightened for small screens; and resellers can be soft-deleted only when no active client organizations remain |
 | March 20, 2026 | Portal analytics persistence + notification routing | ✅ | Platform Owner and reseller analytics now persist alert thresholds and routing preferences, sync threshold-based analytics alerts into a platform-admin notification inbox, and support saved workspace drilldown presets for repeat operational views |
@@ -183,6 +184,22 @@
 
 ---
 
+## Workspace — Sync Play
+
+| Feature | Status | Notes |
+|---|---|---|
+| Sync playlist list page | ✅ | `/workspaces/:wsId/sync-playlists` with create, delete, publish, and card navigation |
+| Sync playlist editor | ✅ | Add/remove/reorder content items, per-item duration override, inline rename, save via `PUT /sync-playlists/:id/items` |
+| Sync group management page | ✅ | `/workspaces/:wsId/sync-groups` with create/delete, member management, and playlist assignment |
+| Backend sync playlist API | ✅ | `GET/POST/PATCH/DELETE /sync-playlists` + atomic item replace route |
+| Backend sync group API | ✅ | `GET/POST/PATCH/DELETE /sync-groups` + member add/remove + CRC-16 group ID allocation |
+| Device publish target: sync group | ✅ | Devices can now publish/unpublish a sync group target alongside content, playlist, and schedule |
+| Samsung native SyncPlay runtime | ✅ | Tizen SBB player prepares and starts native SyncPlay sessions; supports both `webapis.syncplay` (newer SSSP) and `b2bapis.b2bsyncplay` (older SSSP4/Tizen 4) |
+| Mixed-device software sync (Phase 5) | ❌ | Future coordinator/runtime for non-Samsung or mixed fleets |
+| Tile-crop videowall variants | ❌ | Future FFmpeg-generated per-tile content workflow |
+
+---
+
 ## Samsung Tizen LFD Player (`apps/tizen`)
 
 | Area | Status | Notes |
@@ -208,6 +225,7 @@
 | Auto-screenshot on content change | ✅ | ~2 s delay, 1/10 s rate limit; interval fallback |
 | Renderers (image, iframe, avplayer, document, transition) | ✅ | Double-buffer; seamless AVPlay ping-pong; Document API for PDF/PPT |
 | OTA firmware + player update handlers | ✅ | `systemcontrol.updateFirmware()` + `tizen.application.install()` |
+| Native SyncPlay session control (`apps/tizen-sbb`) | ✅ | Sync playlist preparation/start/stop wired for Samsung native SyncPlay; backend auto-detects `webapis.syncplay` vs `b2bapis.b2bsyncplay` |
 | Backend: Migration 0008 (18 device cols + heartbeat + play_events) | ✅ | Applied |
 | Backend: `GET /device/schedule`, `/device/content/:id/file`, `/device/emergency` | ✅ | All device-JWT authenticated |
 | Backend: All WS message types + command types | ✅ | Full bi-directional protocol |
@@ -309,6 +327,7 @@
 
 | Date | Status | Notes |
 |---|---|---|
+| March 23, 2026 | ✅ | SyncPlay phases 1-4 shipped; local DB migration updated through `0021_syncplay_groupid_int.sql`; fresh `@signage/db` and `@signage/ds` TypeScript checks clean; API retains only unrelated pre-existing diagnostics |
 | March 20, 2026 | ✅ | Notification event triggers + browser WS push + analytics expansion shipped; `@signage/db` and `@signage/shared` rebuilt; fresh `@signage/api`, `@signage/ds`, and Tizen TS checks clean |
 | March 20, 2026 | ✅ | Smart Views migration applied in target DB via `pnpm db:migrate`; fresh `@signage/ds`, `@signage/db`, and `@signage/api` TypeScript checks all clean after repairing `TagsPage.tsx` and `ZoneLayoutEditor.tsx` |
 | March 20, 2026 | ✅ | Notification Center + Analytics shipped; Management Company layer; API + DS TypeScript 0 errors |
@@ -327,5 +346,5 @@
 | # | Area | Task |
 |---|---|---|
 | 1 | Billing | Organization billing / plan management UI and ownership workflows |
-| 2 | VideoWall / SyncPlay | Multi-device sync groups; FFmpeg tile crop; `syncplay` module |
+| 2 | VideoWall / SyncPlay | Phase 5 mixed-device software sync, ready-state orchestration, and FFmpeg tile-crop videowall variants |
 | 3 | Sensors | Frontend UI for sensor sources and trigger rules |
