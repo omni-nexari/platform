@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router';
 import { useForm } from 'react-hook-form';
@@ -33,6 +33,7 @@ import {
   AlertTriangle,
   Settings2,
   Timer,
+  Trash2,
 } from 'lucide-react';
 import { formatDistanceToNow } from '../utils/time.js';
 import WorkspaceTagPicker from '../../components/WorkspaceTagPicker.js';
@@ -155,6 +156,100 @@ interface ObservedSystemInfo {
   tvName?: string | null;
 }
 
+interface TzEntry { tz: string; offsetMin: number; label: string; }
+
+const ALL_TIMEZONE_ENTRIES: TzEntry[] = (() => {
+  const now = Date.now();
+  const fmt = (tz: string) => {
+    try {
+      // Get the UTC offset by formatting a date in the tz and comparing
+      const parts = new Intl.DateTimeFormat('en', {
+        timeZone: tz, timeZoneName: 'shortOffset', hour: 'numeric',
+      }).formatToParts(now);
+      const offsetStr = parts.find((p) => p.type === 'timeZoneName')?.value ?? 'UTC';
+      // offsetStr is like "GMT+9", "GMT-5:30", "GMT"
+      const match = offsetStr.match(/GMT([+-])(\d+)(?::(\d+))?/);
+      let offsetMin = 0;
+      if (match) {
+        const sign = match[1] === '+' ? 1 : -1;
+        offsetMin = sign * (parseInt(match[2], 10) * 60 + parseInt(match[3] ?? '0', 10));
+      }
+      const hh = String(Math.floor(Math.abs(offsetMin) / 60)).padStart(2, '0');
+      const mm = String(Math.abs(offsetMin) % 60).padStart(2, '0');
+      const sign = offsetMin >= 0 ? '+' : '-';
+      return { tz, offsetMin, label: `(UTC${sign}${hh}:${mm}) ${tz}` };
+    } catch {
+      return { tz, offsetMin: 0, label: `(UTC+00:00) ${tz}` };
+    }
+  };
+  return Intl.supportedValuesOf('timeZone').map(fmt).sort((a, b) => a.offsetMin - b.offsetMin || a.tz.localeCompare(b.tz));
+})();
+
+function TimezoneCombobox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const currentEntry = ALL_TIMEZONE_ENTRIES.find((e) => e.tz === value);
+  const displayValue = currentEntry?.label ?? value;
+
+  const [query, setQuery] = useState(displayValue);
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { setQuery(currentEntry?.label ?? value); }, [value, currentEntry?.label]);
+
+  const filtered = useMemo(() => {
+    const q = query.toLowerCase();
+    // If query matches the current label exactly, show all (user hasn't started typing)
+    if (!q || q === displayValue.toLowerCase()) return ALL_TIMEZONE_ENTRIES.slice(0, 80);
+    return ALL_TIMEZONE_ENTRIES.filter(
+      (e) => e.tz.toLowerCase().includes(q) || e.label.toLowerCase().includes(q)
+    ).slice(0, 80);
+  }, [query, displayValue]);
+
+  useEffect(() => {
+    function onMouseDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery(currentEntry?.label ?? value);
+      }
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [value, currentEntry?.label]);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={(e) => { e.target.select(); setOpen(true); }}
+        placeholder="(UTC+00:00) UTC"
+        className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]"
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-xl">
+          {filtered.map((entry) => (
+            <li
+              key={entry.tz}
+              onMouseDown={(e) => { e.preventDefault(); onChange(entry.tz); setQuery(entry.label); setOpen(false); }}
+              className={`px-3 py-1.5 text-xs font-mono cursor-pointer hover:bg-[var(--surface-raised)] ${
+                entry.tz === value ? 'text-[var(--blue)] font-semibold' : 'text-[var(--text)]'
+              }`}
+            >
+              <span className="text-[var(--text-muted)]">{entry.label.split(')')[0]})</span>
+              {' '}{entry.tz}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function buildLogText(logs: DeviceLogEntry[]) {
+  return logs
+    .map((entry) => `[${new Date(entry.createdAt).toLocaleTimeString()}] [${entry.level.toUpperCase()}] ${entry.line}`)
+    .join('\n');
+}
+
 function parseObservedSystemInfo(logs: DeviceLogEntry[]): ObservedSystemInfo | null {
   for (let index = logs.length - 1; index >= 0; index -= 1) {
     const line = logs[index]?.line;
@@ -249,11 +344,7 @@ export default function DeviceDetailPage() {
   const [offTimers, setOffTimers] = useState<Record<number, string>>({});
   // NTP form
   const [ntpServer,      setNtpServer]      = useState('');
-  const [ntpTimezone,    setNtpTimezone]    = useState('');
   const [ntpInitialised, setNtpInitialised] = useState(false);
-  // Firmware update form
-  const [playerVersion, setPlayerVersion] = useState('');
-  const [playerUrl,     setPlayerUrl]     = useState('');
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [replaceCode, setReplaceCode] = useState('');
 
@@ -269,15 +360,72 @@ export default function DeviceDetailPage() {
     retry: false,
   });
 
+  type PlayerRelease = { id: string; version: string; downloadUrl: string; releaseNotes: string | null; isLatest: boolean; publishedAt: string };
+  const { data: latestRelease } = useQuery<PlayerRelease | null>({
+    queryKey: ['player-releases-latest'],
+    queryFn: () => api.get('/player-releases/latest'),
+    enabled: bootstrapped && !!user,
+    staleTime: 60_000,
+    retry: false,
+  });
+
   const { data: logData } = useQuery<DeviceLogsResponse>({
     queryKey: ['device-logs', deviceId],
-    queryFn: () => api.get(`/devices/${deviceId}/logs?limit=300`),
+    queryFn: () => api.get(`/devices/${deviceId}/logs?limit=1000`),
     enabled: bootstrapped && !!user && !!deviceId,
-    refetchInterval: (query) => (query.state.status === 'error' ? false : 5_000),
+    refetchInterval: (query) => (query.state.status === 'error' ? false : 2_000),
     retry: false,
   });
 
   const observedSystemInfo = useMemo(() => parseObservedSystemInfo(logData?.logs ?? []), [logData?.logs]);
+
+  type LogLevel = 'all' | 'debug' | 'info' | 'warn' | 'error';
+  const [logFilter, setLogFilter] = useState<LogLevel>('all');
+  const [autoScroll, setAutoScroll] = useState(true);
+  const logAreaRef = useRef<HTMLTextAreaElement>(null);
+
+  const logs = logData?.logs ?? [];
+  const filteredLogs = useMemo(
+    () => (logFilter === 'all' ? logs : logs.filter((l) => l.level === logFilter)),
+    [logs, logFilter],
+  );
+  const logText = useMemo(() => buildLogText(filteredLogs), [filteredLogs]);
+
+  useEffect(() => {
+    if (autoScroll && logAreaRef.current) {
+      logAreaRef.current.scrollTop = logAreaRef.current.scrollHeight;
+    }
+  }, [logText, autoScroll]);
+
+  const handleLogScroll = useCallback(() => {
+    const el = logAreaRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    setAutoScroll(atBottom);
+  }, []);
+
+  const clearLogs = useMutation({
+    mutationFn: () => api.delete(`/devices/${deviceId}/logs`),
+    onSuccess: () => {
+      toast.success('Logs cleared');
+      void queryClient.invalidateQueries({ queryKey: ['device-logs', deviceId] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to clear logs'),
+  });
+
+  function downloadLogs() {
+    if (!logText) {
+      toast.error('No logs to download');
+      return;
+    }
+    const blob = new Blob([logText], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `device-logs-${deviceId}.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
 
   const resolvedTimezone = useMemo(
     () => preferObservedValue(data?.device.timezone, observedSystemInfo?.timezone),
@@ -319,13 +467,14 @@ export default function DeviceDetailPage() {
   useEffect(() => {
     if (!data?.device || ntpInitialised) return;
     setNtpServer(data.device.ntpServer ?? 'pool.ntp.org');
-    setNtpTimezone(preferObservedValue(data.device.timezone, observedSystemInfo?.timezone) ?? data.device.ntpTimezone ?? 'UTC');
     setNtpInitialised(true);
   }, [data?.device, ntpInitialised, observedSystemInfo?.timezone]);
 
   const {
     register,
     handleSubmit,
+    watch,
+    setValue,
     formState: { isDirty, isSubmitting },
   } = useForm<UpdateDeviceInput>({
     resolver: zodResolver(UpdateDeviceSchema),
@@ -385,7 +534,6 @@ export default function DeviceDetailPage() {
         power_off:          'Power-off sent',
         clear_cache:        'Cache clear sent',
         dump_logs:          'Log dump requested — check device OSD',
-        update_tv_firmware: 'TV firmware update started',
         update_player:      'Player update sent',
         set_ntp:            'NTP settings applied',
         set_ir_lock:        'IR lock updated',
@@ -769,6 +917,15 @@ export default function DeviceDetailPage() {
               />
             </div>
           </div>
+
+          <div className="flex flex-wrap gap-3 pt-2">
+            <ActionButton disabled={cmdDisabled} onClick={() => sendCmd({ command: 'clear_cache' })}>
+              <HardDrive className="w-4 h-4" /> Clear Cache
+            </ActionButton>
+            <ActionButton tone="danger" disabled={cmdDisabled} onClick={() => sendCmd({ command: 'reboot' })}>
+              <Power className="w-4 h-4" /> Reboot Device
+            </ActionButton>
+          </div>
         </SectionCardBody>
       </SectionCard>
 
@@ -824,104 +981,55 @@ export default function DeviceDetailPage() {
         </SectionCardBody>
       </SectionCard>
 
-      {/* ── #19 NTP ──────────────────────────────────────────────────────── */}
-      <SectionCard>
-        <SectionCardHeader>
-          <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
-            <Clock className="w-3.5 h-3.5" />NTP Configuration
-          </h2>
-          <div className="flex items-center gap-2">
-            <Badge tone={device.ntpEnabled ? 'success' : 'neutral'}>
-              {device.ntpEnabled ? 'Enabled' : 'Disabled'}
-            </Badge>
-            {device.clockDriftMs != null && (
-              <span className="text-xs text-[var(--text-muted)]">Drift: {device.clockDriftMs} ms</span>
-            )}
-          </div>
-        </SectionCardHeader>
-        <SectionCardBody>
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-1">
-              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">NTP Server</label>
-              <input value={ntpServer} onChange={(e) => setNtpServer(e.target.value)}
-                placeholder="pool.ntp.org"
-                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]" />
-            </div>
-            <div className="flex-1">
-              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">Timezone</label>
-              <input value={ntpTimezone} onChange={(e) => setNtpTimezone(e.target.value)}
-                placeholder="Asia/Seoul"
-                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]" />
-            </div>
-            <div className="flex items-end">
-              <ActionButton
-                onClick={() => sendCmd({ command: 'set_ntp', payload: { server: ntpServer, timezone: ntpTimezone } })}
-                disabled={cmdDisabled || !ntpServer || !ntpTimezone}
-                tone="primary" className="px-4 py-2 text-sm"
-              >Apply NTP</ActionButton>
-            </div>
-          </div>
-          <p className="mt-3 text-xs text-[var(--text-muted)]">
-            Detected device timezone: <span className="font-mono text-[var(--text)]">{resolvedTimezone ?? '—'}</span>
-          </p>
-        </SectionCardBody>
-      </SectionCard>
-
-      {/* ── #20 Firmware ─────────────────────────────────────────────────── */}
-      <SectionCard>
-        <SectionCardHeader>
-          <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
-            <Download className="w-3.5 h-3.5" />Firmware &amp; Updates
-          </h2>
-        </SectionCardHeader>
-        <SectionCardBody className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-[var(--text)]">TV Firmware</p>
-              <p className="text-xs text-[var(--text-muted)]">Current: {device.firmwareVersion ?? 'Unknown'}</p>
-            </div>
-            <ActionButton onClick={() => sendCmd({ command: 'update_tv_firmware' })}
-              disabled={cmdDisabled} tone="warning" className="px-4 py-2 text-sm">
-              <Download className="w-4 h-4" />Update TV Firmware
-            </ActionButton>
-          </div>
-          <div className="h-px bg-[var(--border)]" />
-          <div className="space-y-3">
-            <p className="text-sm font-medium text-[var(--text)]">Player App Update</p>
-            <div className="flex flex-col sm:flex-row gap-3">
-              <input value={playerVersion} onChange={(e) => setPlayerVersion(e.target.value)}
-                placeholder="Version (e.g. 1.2.3)"
-                className="flex-1 px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]" />
-              <input value={playerUrl} onChange={(e) => setPlayerUrl(e.target.value)}
-                placeholder="Download URL"
-                className="flex-[2] px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]" />
-              <ActionButton
-                onClick={() => sendCmd({ command: 'update_player', payload: { version: playerVersion, downloadUrl: playerUrl } })}
-                disabled={cmdDisabled || !playerVersion || !playerUrl}
-                tone="primary" className="px-4 py-2 text-sm shrink-0"
-              >Push Update</ActionButton>
-            </div>
-          </div>
-        </SectionCardBody>
-      </SectionCard>
-
       {/* ── Settings (#25 screenshot interval + #26 location) ───────────── */}
       <SectionCard>
         <SectionCardHeader>
           <h2 className="text-sm font-semibold text-[var(--text)]">Settings</h2>
         </SectionCardHeader>
         <SectionCardBody>
-          <form onSubmit={handleSubmit((d) => updateDevice.mutate(d))}
+          <form onSubmit={handleSubmit((d) => {
+            updateDevice.mutate(d);
+            if (isOnline && ntpServer) {
+              sendCmd({ command: 'set_ntp', payload: { server: ntpServer, timezone: d.timezone ?? 'UTC' } });
+            }
+          })}
             className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
+            <div className="sm:col-span-2">
               <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Display Name</label>
               <input {...register('name')}
                 className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]" />
             </div>
             <div>
-              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Timezone</label>
-              <input {...register('timezone')} placeholder="UTC"
+              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5 flex items-center gap-1">
+                <Clock className="w-3 h-3" />NTP Server
+              </label>
+              <input value={ntpServer} onChange={(e) => setNtpServer(e.target.value)}
+                placeholder="pool.ntp.org"
                 className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]" />
+              {device.ntpEnabled != null && (
+                <p className="mt-1.5 text-xs text-[var(--text-muted)]">
+                  NTP{' '}<span className={device.ntpEnabled ? 'text-emerald-400' : 'text-[var(--text-muted)]'}>{device.ntpEnabled ? 'enabled' : 'disabled'}</span>
+                  {device.clockDriftMs != null && <span> &middot; Drift: {device.clockDriftMs} ms</span>}
+                </p>
+              )}
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Timezone</label>
+              <TimezoneCombobox
+                value={watch('timezone') ?? ''}
+                onChange={(v) => setValue('timezone', v, { shouldDirty: true })}
+              />
+              {resolvedTimezone && (
+                <p className="mt-1.5 text-xs text-[var(--text-muted)]">
+                  Detected on device: <span className="font-mono text-[var(--text)]">{resolvedTimezone}</span>
+                  {resolvedTimezone !== watch('timezone') && (
+                    <button type="button" onClick={() => setValue('timezone', resolvedTimezone, { shouldDirty: true })}
+                      className="ml-2 text-blue-400 underline hover:text-blue-300">
+                      Use this
+                    </button>
+                  )}
+                </p>
+              )}
             </div>
             {/* Default playlist fallback */}
             <div className="sm:col-span-2">
@@ -982,6 +1090,35 @@ export default function DeviceDetailPage() {
                 Save Changes
               </ActionButton>
             </div>
+
+            {/* Player App */}
+            <div className="sm:col-span-2 h-px bg-[var(--border)]" />
+            <div className="sm:col-span-2">
+              <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                <Download className="w-3 h-3" />Player App
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-xs text-[var(--text-muted)]">Installed:</span>
+                <span className="font-mono text-xs text-[var(--text)]">{device.playerVersion ? `v${device.playerVersion}` : '—'}</span>
+                {latestRelease && device.playerVersion && latestRelease.version !== device.playerVersion && (
+                  <>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                      Update available: v{latestRelease.version}
+                    </span>
+                    <ActionButton
+                      onClick={() => sendCmd({ command: 'update_player', payload: { version: latestRelease.version, downloadUrl: latestRelease.downloadUrl } })}
+                      disabled={cmdDisabled}
+                      tone="primary" className="px-3 py-1 text-xs shrink-0"
+                    >Apply Update</ActionButton>
+                  </>
+                )}
+                {latestRelease && device.playerVersion === latestRelease.version && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/15 text-green-400 border border-green-500/30">
+                    Up to date
+                  </span>
+                )}
+              </div>
+            </div>
           </form>
         </SectionCardBody>
       </SectionCard>
@@ -1013,61 +1150,74 @@ export default function DeviceDetailPage() {
         </SectionCardBody>
       </SectionCard>
 
-      {/* ── Remote Commands ──────────────────────────────────────────────── */}
-      <SectionCard>
-        <SectionCardHeader>
-          <h2 className="text-sm font-semibold text-[var(--text)]">Remote Commands</h2>
-        </SectionCardHeader>
-        <SectionCardBody>
-          {!isOnline && (
-            <p className="text-xs text-[var(--text-muted)] mb-3 p-2 rounded-lg bg-[var(--surface)]">
-              Device must be online to send commands.
-            </p>
-          )}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {(
-              [
-                { cmd: { command: 'screenshot' }         as DeviceCommandInput, label: 'Take Screenshot',    icon: Camera,    hint: 'Capture current display',      danger: false },
-                { cmd: { command: 'refresh_schedule' }   as DeviceCommandInput, label: 'Refresh Schedule',   icon: RefreshCw, hint: 'Force pull latest schedule',   danger: false },
-                { cmd: { command: 'clear_cache' }        as DeviceCommandInput, label: 'Clear Cache',        icon: HardDrive, hint: 'Delete all local media cache', danger: false },
-                { cmd: { command: 'dump_logs' }          as DeviceCommandInput, label: 'Dump Logs',          icon: FileText,  hint: 'Output log to OSD overlay',    danger: false },
-                { cmd: { command: 'reboot' }             as DeviceCommandInput, label: 'Reboot Device',      icon: Power,     hint: 'Restart the player app',       danger: true  },
-                { cmd: { command: 'update_tv_firmware' } as DeviceCommandInput, label: 'Update TV Firmware', icon: Download,  hint: 'Trigger Samsung OTA update',   danger: false },
-              ] as Array<{ cmd: DeviceCommandInput; label: string; icon: React.ElementType; hint: string; danger: boolean }>
-            ).map(({ cmd, label, icon: Icon, hint, danger }) => (
-              <ActionButton key={cmd.command} disabled={cmdDisabled} onClick={() => sendCmd(cmd)}
-                tone={danger ? 'danger' : 'default'}
-                className="justify-start px-4 py-3 text-sm disabled:cursor-not-allowed">
-                <Icon className="w-4 h-4 shrink-0" />
-                <div className="text-left">
-                  <p className="font-medium">{label}</p>
-                  <p className="text-xs text-[var(--text-muted)]">{hint}</p>
-                </div>
-              </ActionButton>
-            ))}
-          </div>
-        </SectionCardBody>
-      </SectionCard>
-
       {/* ── #24 Device Logs ──────────────────────────────────────────────── */}
       <SectionCard>
         <SectionCardHeader>
-          <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
-            <FileText className="w-3.5 h-3.5" />Device Logs
-          </h2>
-        </SectionCardHeader>
-        <SectionCardBody className="space-y-3">
-          <div className="flex items-start gap-3 p-3 rounded-lg bg-[var(--surface)] text-xs text-[var(--text-muted)]">
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
-            <p>
-              Use <strong className="text-[var(--text)]">Dump Logs</strong> to push the on-device log
-              buffer to the player&rsquo;s OSD overlay. Logs are not persisted server-side in this release.
-            </p>
+          <div>
+            <h2 className="text-lg font-semibold text-[var(--text)]">Remote Console Logs</h2>
+            <p className="text-sm text-[var(--text-muted)]">Recent Tizen console output received from the device WebSocket</p>
           </div>
-          <ActionButton disabled={cmdDisabled} onClick={() => sendCmd({ command: 'dump_logs' })}
-            tone="default" className="px-4 py-2 text-sm">
-            <FileText className="w-4 h-4" />Request Log Dump
-          </ActionButton>
+        </SectionCardHeader>
+        <SectionCardBody className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <Badge tone={logData?.online ? 'success' : 'neutral'}>{logData?.online ? 'LIVE WS' : 'DEVICE OFFLINE'}</Badge>
+            <Badge tone="accent">{filteredLogs.length}{logFilter !== 'all' ? ` / ${logs.length}` : ''} lines</Badge>
+            <span className="text-sm text-[var(--text-muted)]">Use Dump Logs to ask the device to flush the recent local ring buffer.</span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Level filter */}
+            {(['all', 'debug', 'info', 'warn', 'error'] as const).map((level) => (
+              <button
+                key={level}
+                onClick={() => setLogFilter(level)}
+                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  logFilter === level
+                    ? level === 'error'  ? 'bg-red-500/20 border-red-500 text-red-400'
+                    : level === 'warn'   ? 'bg-amber-500/20 border-amber-500 text-amber-400'
+                    : level === 'info'   ? 'bg-blue-500/20 border-blue-500 text-blue-400'
+                    : level === 'debug'  ? 'bg-purple-500/20 border-purple-500 text-purple-400'
+                    : 'bg-[var(--surface-raised)] border-[var(--border-strong)] text-[var(--text)]'
+                    : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]'
+                }`}
+              >
+                {level.toUpperCase()}
+              </button>
+            ))}
+
+            {/* Auto-scroll toggle */}
+            <button
+              onClick={() => setAutoScroll((v) => !v)}
+              className={`ml-auto px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                autoScroll
+                  ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
+                  : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]'
+              }`}
+            >
+              Auto-scroll {autoScroll ? 'ON' : 'OFF'}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <ActionButton onClick={downloadLogs} disabled={!filteredLogs.length}>
+              <Download className="w-4 h-4" /> Download
+            </ActionButton>
+            <ActionButton disabled={cmdDisabled} onClick={() => sendCmd({ command: 'dump_logs' })}>
+              <FileText className="w-4 h-4" /> Request Log Dump
+            </ActionButton>
+            <ActionButton tone="danger" onClick={() => clearLogs.mutate()} disabled={!logs.length || clearLogs.isPending}>
+              <Trash2 className="w-4 h-4" /> Clear
+            </ActionButton>
+          </div>
+
+          <textarea
+            ref={logAreaRef}
+            value={logText}
+            readOnly
+            onScroll={handleLogScroll}
+            className="min-h-[420px] w-full rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 font-mono text-xs leading-6 text-[var(--text)]"
+            placeholder="No remote logs received yet. If the device is online, send Dump Logs first."
+          />
         </SectionCardBody>
       </SectionCard>
 

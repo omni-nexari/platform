@@ -22,6 +22,8 @@ export interface DeviceConsoleLogEntry {
 export interface MdcStatusResponse {
   requestId: string;
   ok: boolean;
+  nodeRunning?: boolean;
+  serial?: string;
   rawHex?: string;
   error?: string;
   status?: {
@@ -363,6 +365,8 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
       pending.resolve({
         requestId: msg.payload.requestId,
         ok: msg.payload.ok,
+        ...(msg.payload.nodeRunning !== undefined ? { nodeRunning: msg.payload.nodeRunning } : {}),
+        ...(msg.payload.serial !== undefined ? { serial: msg.payload.serial } : {}),
         ...(msg.payload.rawHex !== undefined ? { rawHex: msg.payload.rawHex } : {}),
         ...(msg.payload.error !== undefined ? { error: msg.payload.error } : {}),
         ...(normalizedStatus !== undefined ? { status: normalizedStatus } : {}),

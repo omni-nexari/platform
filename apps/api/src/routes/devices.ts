@@ -1430,7 +1430,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     }
 
     try {
-      const status = await requestRemoteStatus(device.id, 5000);
+      const status = await requestRemoteStatus(device.id, 10_000);
       return reply.send(status);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

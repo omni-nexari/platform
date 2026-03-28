@@ -19,6 +19,7 @@ import { smartViewsRoutes } from './smart-views.js';
 import { analyticsRoutes } from './analytics.js';
 import { syncPlaylistRoutes } from './sync-playlists.js';
 import { syncGroupRoutes } from './sync-groups.js';
+import { playerReleasesRoutes } from './player-releases.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoute);
@@ -41,5 +42,6 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(analyticsRoutes, { prefix: '/analytics' });
   await app.register(syncPlaylistRoutes, { prefix: '/sync-playlists' });
   await app.register(syncGroupRoutes, { prefix: '/sync-groups' });
+  await app.register(playerReleasesRoutes, { prefix: '/player-releases' });
 }
 

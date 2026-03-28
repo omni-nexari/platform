@@ -15,6 +15,8 @@ import {
   Monitor,
   Power,
   PowerOff,
+  Maximize2,
+  Minimize2,
   RefreshCw,
   Send,
   TerminalSquare,
@@ -625,6 +627,8 @@ function LiveViewOverlay({
   const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
   const [mdcStatusResponse, setMdcStatusResponse] = useState<{
     ok: boolean;
+    nodeRunning?: boolean;
+    serial?: string;
     rawHex?: string;
     error?: string;
     status?: {
@@ -651,6 +655,34 @@ function LiveViewOverlay({
   const remoteStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onCloseRef = useRef(onClose);
 
+  // Draggable window state
+  const [pos, setPos] = useState(() => ({
+    x: Math.max(0, Math.round((window.innerWidth  - 1280) / 2)),
+    y: Math.max(0, Math.round((window.innerHeight -  760) / 2)),
+  }));
+  const [fullscreen, setFullscreen] = useState(false);
+  const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
+
+  function onDragStart(e: React.MouseEvent<HTMLDivElement>) {
+    // Only drag on the toolbar itself, not its buttons
+    if ((e.target as HTMLElement).closest('button,select,a')) return;
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, originX: pos.x, originY: pos.y };
+    function onMove(ev: MouseEvent) {
+      if (!dragRef.current) return;
+      const x = Math.max(0, Math.min(window.innerWidth  - 200, dragRef.current.originX + ev.clientX - dragRef.current.startX));
+      const y = Math.max(0, Math.min(window.innerHeight - 48,  dragRef.current.originY + ev.clientY - dragRef.current.startY));
+      setPos({ x, y });
+    }
+    function onUp() {
+      dragRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
   useEffect(() => { onCloseRef.current = onClose; });
 
   function doCleanup() {
@@ -668,6 +700,12 @@ function LiveViewOverlay({
     setStatus('idle');
   }
 
+  // Auto-fetch MDC status when the overlay opens
+  useEffect(() => {
+    void fetchRemoteStatus();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function armStaleFrameTimer() {
     if (staleFrameTimerRef.current) clearTimeout(staleFrameTimerRef.current);
     // Grace period: 2.5× measured cadence + 3s, minimum 15s. Never nag between normal frames.
@@ -679,8 +717,9 @@ function LiveViewOverlay({
     }, gracePeriod);
   }
 
-  function handleStart() {
+  function handleStart(ms?: number) {
     if (!isOnline) return;
+    const interval = ms ?? intervalMs;
     doCleanup();
     setImgSrc(null);
     setSseError(null);
@@ -690,7 +729,7 @@ function LiveViewOverlay({
     setWaitingElapsed(0);
     elapsedTimerRef.current = setInterval(() => setWaitingElapsed(s => s + 1), 1000);
 
-    const es = new EventSource(`/api/devices/${deviceId}/screenshot/stream?intervalMs=${intervalMs}`);
+    const es = new EventSource(`/api/devices/${deviceId}/screenshot/stream?intervalMs=${interval}`);
     esRef.current = es;
 
     es.onmessage = (e) => {
@@ -742,6 +781,12 @@ function LiveViewOverlay({
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
+  // Auto-fetch MDC status when overlay opens
+  useEffect(() => {
+    void fetchRemoteStatus();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const isLive = status !== 'idle';
   const cadenceLabel = measuredCadenceMs > 0
     ? `~${(measuredCadenceMs / 1000).toFixed(1)}s`
@@ -766,6 +811,8 @@ function LiveViewOverlay({
     try {
       const result = await api.get(`/devices/${deviceId}/remote-status`) as {
         ok: boolean;
+        nodeRunning?: boolean;
+        serial?: string;
         rawHex?: string;
         error?: string;
         status?: {
@@ -794,9 +841,18 @@ function LiveViewOverlay({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/95" onClick={(e) => { if (e.target === e.currentTarget) onCloseRef.current(); }}>
-      {/* Toolbar */}
-      <div className="flex items-center gap-3 px-4 py-3 bg-black/80 border-b border-white/10">
+    <div className="fixed inset-0 z-50" style={{ pointerEvents: 'none' }}>
+      <div
+        className="absolute flex flex-col bg-[#0d0d0d] border border-white/10 rounded-xl shadow-2xl overflow-hidden"
+        style={fullscreen
+          ? { left: 0, top: 0, width: '100vw', height: '100vh', borderRadius: 0, pointerEvents: 'all' }
+          : { left: pos.x, top: pos.y, width: 1280, height: 760, pointerEvents: 'all' }}
+      >
+      {/* Toolbar — drag handle */}
+      <div
+        className="flex items-center gap-3 px-4 py-3 bg-black/80 border-b border-white/10 cursor-grab active:cursor-grabbing select-none"
+        onMouseDown={onDragStart}
+      >
         <Tv2 className="w-5 h-5 text-white/70" />
         <span className="text-white font-semibold text-sm">Live View</span>
 
@@ -820,9 +876,12 @@ function LiveViewOverlay({
             Interval
             <select
               value={intervalMs}
-              onChange={(e) => setIntervalMs(Number(e.target.value))}
-              disabled={isLive}
-              className="rounded bg-white/10 px-2 py-1 text-white text-xs border border-white/20 disabled:opacity-40"
+              onChange={(e) => {
+                const ms = Number(e.target.value);
+                setIntervalMs(ms);
+                if (isLive) handleStart(ms);
+              }}
+              className="rounded bg-white/10 px-2 py-1 text-white text-xs border border-white/20"
             >
               <option value={1000}>1s</option>
               <option value={2000}>2s</option>
@@ -845,6 +904,15 @@ function LiveViewOverlay({
               Stop
             </button>
           )}
+          <button
+            onClick={() => { setFullscreen(f => !f); }}
+            title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            className="rounded-lg p-1.5 text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+          >
+            {fullscreen
+              ? <Minimize2 className="w-4 h-4" />
+              : <Maximize2 className="w-4 h-4" />}
+          </button>
           <button onClick={() => onCloseRef.current()} className="rounded-lg p-1.5 text-white/60 hover:text-white hover:bg-white/10 transition-colors">
             <X className="w-5 h-5" />
           </button>
@@ -855,7 +923,9 @@ function LiveViewOverlay({
       <div className="flex-1 flex overflow-hidden">
 
         {/* Image / status area */}
-        <div className="flex-1 flex items-center justify-center p-4 overflow-hidden relative">
+        <div className="flex-1 flex items-center justify-center p-4 overflow-hidden relative"
+          style={{ background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.01) 50%, transparent 100%), linear-gradient(135deg, rgba(255,255,255,0.03) 0%, transparent 60%)' }}
+        >
         {status === 'buffering' && (
           <div className="flex flex-col items-center gap-4">
             <div className="relative w-16 h-16">
@@ -984,29 +1054,45 @@ function LiveViewOverlay({
             Home
           </button>
 
-          {/* Status feedback */}
+          {/* Node + MDC status — shown below Home, auto-populated on open */}
+          <div className="w-full rounded-lg border border-white/10 bg-black/30 p-2 text-[10px] leading-5">
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-semibold uppercase tracking-widest text-white/30 text-[9px]">Device Status</span>
+              <button onClick={() => void fetchRemoteStatus()} title="Refresh status"
+                className="text-white/30 hover:text-sky-300 transition-colors">
+                <RefreshCw className="w-2.5 h-2.5" />
+              </button>
+            </div>
+            {mdcStatusResponse === null ? (
+              <span className="text-white/20">fetching…</span>
+            ) : (
+              <>
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${mdcStatusResponse.nodeRunning ? 'bg-green-400' : 'bg-red-400'}`} />
+                  <span className={mdcStatusResponse.nodeRunning ? 'text-green-400' : 'text-red-400'}>
+                    Node {mdcStatusResponse.nodeRunning ? 'running' : 'offline'}
+                  </span>
+                </div>
+                {mdcStatusResponse.serial ? (
+                  <div className="font-mono text-white mt-0.5">S/N: {mdcStatusResponse.serial}</div>
+                ) : null}
+                {mdcStatusResponse.status ? (
+                  <div className="text-white/60 mt-0.5 space-y-0.5">
+                    <div>Power: <span className={mdcStatusResponse.status.power === 1 ? 'text-green-400' : 'text-white/40'}>{mdcStatusResponse.status.power === 1 ? 'ON' : mdcStatusResponse.status.power === 0 ? 'OFF' : '—'}</span></div>
+                    <div>Vol: {mdcStatusResponse.status.volume ?? '—'}{'  '}Mute: {mdcStatusResponse.status.mute === 1 ? 'ON' : 'off'}</div>
+                    <div>Input: {mdcStatusResponse.status.input != null ? `0x${mdcStatusResponse.status.input.toString(16).toUpperCase()}` : '—'}</div>
+                  </div>
+                ) : null}
+                {mdcStatusResponse.error ? <div className="text-red-300 mt-0.5">{mdcStatusResponse.error}</div> : null}
+              </>
+            )}
+          </div>
+
+          {/* Command feedback */}
           {remoteStatus && (
             <span className={`text-[11px] text-center leading-tight ${
               remoteStatus.startsWith('✓') ? 'text-green-400' : 'text-red-400'
             }`}>{remoteStatus}</span>
-          )}
-
-          {mdcStatusResponse && (
-            <div className="w-full rounded-lg border border-white/10 bg-black/30 p-2 text-[10px] leading-4 text-white/70">
-              <div className="font-semibold uppercase tracking-widest text-white/30 mb-1">MDC Status</div>
-              <div>Ack: {mdcStatusResponse.status?.ack ?? (mdcStatusResponse.ok ? 'A' : 'N/A')}</div>
-              <div>ID: {mdcStatusResponse.status?.displayId ?? 1}</div>
-              <div>R-CMD: {mdcStatusResponse.status?.rCmd ?? 0}</div>
-              <div>Power: {mdcStatusResponse.status?.power ?? '—'}</div>
-              <div>Volume: {mdcStatusResponse.status?.volume ?? '—'}</div>
-              <div>Mute: {mdcStatusResponse.status?.mute ?? '—'}</div>
-              <div>Input: {mdcStatusResponse.status?.input ?? '—'}</div>
-              <div>Aspect: {mdcStatusResponse.status?.aspect ?? '—'}</div>
-              <div>N Time NF: {mdcStatusResponse.status?.nTime ?? '—'}</div>
-              <div>F Time NF: {mdcStatusResponse.status?.fTime ?? '—'}</div>
-              {mdcStatusResponse.rawHex ? <div className="mt-1 break-all text-white/40">{mdcStatusResponse.rawHex}</div> : null}
-              {mdcStatusResponse.error ? <div className="mt-1 text-red-300">{mdcStatusResponse.error}</div> : null}
-            </div>
           )}
 
           {!isOnline && (
@@ -1014,6 +1100,7 @@ function LiveViewOverlay({
           )}
         </div>
 
+      </div>
       </div>
     </div>
   );

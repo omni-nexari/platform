@@ -234,6 +234,8 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
     payload: z.object({
       requestId: z.string().uuid(),
       ok: z.boolean(),
+      nodeRunning: z.boolean().optional(),
+      serial: z.string().optional(),
       rawHex: z.string().optional(),
       error: z.string().optional(),
       status: z.object({
