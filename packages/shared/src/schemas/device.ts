@@ -123,11 +123,15 @@ export const DeviceCommandSchema = z.discriminatedUnion('command', [
   z.object({
     command: z.literal('mdc_control'),
     payload: z.object({
-      action: z.enum(['set_volume', 'set_mute', 'set_source', 'set_device_name']),
+      action: z.enum([
+        'set_volume', 'set_mute', 'set_source', 'set_device_name',
+        'standby_set', 'network_standby_set', 'remote_control_set', 'safety_lock_set',
+      ]),
       level: z.number().int().min(0).max(100).optional(),
       mute: z.boolean().optional(),
       source: z.string().optional(),
       name: z.string().max(15).optional(),
+      value: z.number().int().min(0).max(255).optional(),
     }),
   }),
 ]);

@@ -277,7 +277,7 @@ export default function WorkspaceDashboardPage() {
                     <span className="text-white/40 text-[11px]">No content assigned</span>
                   </div>
                 )}
-                {device.status !== 'online' && !device.latestScreenshotKey && (
+                {device.status !== 'online' && !device.latestScreenshotId && (
                   <div className="absolute inset-0 flex items-center justify-center z-10">
                     <div className="w-16 h-16 rounded-2xl bg-white/8 border border-white/10 flex items-center justify-center backdrop-blur-sm">
                       <WifiOff className="w-8 h-8 text-[var(--text-muted)]" />

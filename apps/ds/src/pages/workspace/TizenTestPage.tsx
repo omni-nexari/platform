@@ -89,6 +89,19 @@ const ASPECT_LABELS: Record<number, string> = {
   0x20: 'Smart View 1',
   0x21: 'Smart View 2',
 };
+const STANDBY_LABELS: Record<number, string> = {
+  0: 'Off',
+  1: 'On',
+  2: 'Auto',
+};
+const OSD_TYPE_LABELS: Record<number, string> = {
+  0: 'Source OSD',
+  1: 'Not Optimum Mode OSD',
+  2: 'No Signal OSD',
+  3: 'MDC OSD',
+  4: 'Schedule Channel Info',
+};
+const OSD_STATUS_BITS = ['Source', 'Not Optimum Mode', 'No Signal', 'MDC', 'Schedule Channel Info'];
 const NETWORK_STANDBY_LABELS: Record<number, string> = {
   0: 'Off',
   1: 'On',
@@ -181,6 +194,48 @@ function decodeMdcResult(action: string, result: MdcResult, payload: Record<stri
         nTimeText: nTime === 0 ? '0 (unused on newer timer models)' : `${nTime}`,
         fTimeText: fTime === 0 ? '0 (unused on newer timer models)' : `${fTime}`,
         meaning: `Power ${POWER_STATE_LABELS[power] ?? byteHex(power)}, volume ${volume}%, ${MUTE_LABELS[mute]?.toLowerCase() ?? 'unknown mute state'}, input ${INPUT_LABELS[input] ?? byteHex(input)}.`,
+      };
+    }
+    case 'standby_set': {
+      const value = Number(payload.value ?? -1);
+      return {
+        ...resultWithId,
+        requestedValue: value,
+        requestedValueHex: value >= 0 ? `0x${value.toString(16).toUpperCase().padStart(2, '0')}` : 'Unknown',
+        meaning: STANDBY_LABELS[value] ? `Set standby to ${STANDBY_LABELS[value]}.` : 'Standby updated.',
+      };
+    }
+    case 'standby_get': {
+      if (data.length === 0) return resultWithId;
+      const value = data[0] ?? -1;
+      return {
+        ...resultWithId,
+        value,
+        valueHex: `0x${value.toString(16).toUpperCase().padStart(2, '0')}`,
+        label: 'Standby',
+        meaning: STANDBY_LABELS[value] ?? 'Unknown standby value.',
+      };
+    }
+    case 'osd_display_set': {
+      const osdType  = Number(payload.osdType ?? -1);
+      const osdOnOff = Number(payload.osdOnOff ?? -1);
+      return {
+        ...resultWithId,
+        osdType: OSD_TYPE_LABELS[osdType] ?? `0x${osdType.toString(16).toUpperCase().padStart(2, '0')}`,
+        osdOnOff: osdOnOff === 1 ? 'On' : osdOnOff === 0 ? 'Off' : 'Unknown',
+        meaning: `Set ${OSD_TYPE_LABELS[osdType] ?? 'OSD type'} to ${osdOnOff === 1 ? 'On' : 'Off'}.`,
+      };
+    }
+    case 'osd_display_get': {
+      if (data.length === 0) return resultWithId;
+      const bitmask = data[0] ?? 0;
+      const active = OSD_STATUS_BITS.filter((_, i) => (bitmask >> i) & 1);
+      return {
+        ...resultWithId,
+        value: bitmask,
+        valueHex: `0x${bitmask.toString(16).toUpperCase().padStart(2, '0')}`,
+        activeOSDs: active.length > 0 ? active.join(', ') : 'None',
+        meaning: active.length > 0 ? `Currently showing: ${active.join(', ')}.` : 'All OSD types are off.',
       };
     }
     case 'network_standby_set': {
@@ -373,6 +428,9 @@ export default function TizenTestPage() {
   const [results, setResults] = useState<Record<string, MdcResult | null>>({});
 
   // Per-section set values
+  const [standbyValue, setStandbyValue] = useState(0);   // standby: 0=off 1=on 2=auto
+  const [osdType, setOsdType] = useState(0);              // OSD type: 0=Source 1=Not Optimum 2=No Signal 3=MDC 4=Schedule
+  const [osdOnOff, setOsdOnOff] = useState(0);            // OSD on/off: 0=off 1=on
   const [nsValue, setNsValue] = useState(0);             // network standby: 0=off 1=on
   const [menuOrientValue, setMenuOrientValue] = useState(0);
   const [srcOrientValue, setSrcOrientValue] = useState(0);
@@ -639,6 +697,68 @@ export default function TizenTestPage() {
             </SectionCardBody>
           </SectionCard>
 
+          {/* ── Standby Control ───────────────────────────────────────────── */}
+          <SectionCard>
+            <SectionCardHeader>
+              <div>
+                <h2 className="text-base font-semibold text-[var(--text)]">Standby Control</h2>
+                <p className="text-sm text-[var(--text-muted)]">MDC 0x4A — DPMS sleep mode (Off / On / Auto). Note: works only under external input source.</p>
+              </div>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <div className="flex flex-wrap gap-3 items-center">
+                <ActionButton onClick={() => runMdc('standby', 'standby_get')} disabled={busy('standby')}>
+                  GET
+                </ActionButton>
+                <div className="flex items-center gap-2">
+                  <select value={standbyValue} onChange={(e) => setStandbyValue(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
+                    <option value={0}>Off (0x00)</option>
+                    <option value={1}>On (0x01)</option>
+                    <option value={2}>Auto (0x02)</option>
+                  </select>
+                  <ActionButton tone="primary" onClick={() => runMdc('standby', 'standby_set', { value: standbyValue })} disabled={busy('standby')}>
+                    SET
+                  </ActionButton>
+                </div>
+              </div>
+              {results['standby'] ? <ResultPanel result={results['standby'] as MdcResult} /> : null}
+            </SectionCardBody>
+          </SectionCard>
+
+          {/* ── OSD Display Type On/Off ───────────────────────────────────── */}
+          <SectionCard>
+            <SectionCardHeader>
+              <div>
+                <h2 className="text-base font-semibold text-[var(--text)]">OSD Display Type On/Off</h2>
+                <p className="text-sm text-[var(--text-muted)]">MDC 0xA3 — enable/disable individual OSD overlays (Source, No Signal, MDC, etc.).</p>
+              </div>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <div className="flex flex-wrap gap-3 items-center">
+                <ActionButton onClick={() => runMdc('osd', 'osd_display_get')} disabled={busy('osd')}>
+                  GET
+                </ActionButton>
+                <div className="flex items-center gap-2">
+                  <select value={osdType} onChange={(e) => setOsdType(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
+                    <option value={0}>Source OSD (0x00)</option>
+                    <option value={1}>Not Optimum Mode (0x01)</option>
+                    <option value={2}>No Signal OSD (0x02)</option>
+                    <option value={3}>MDC OSD (0x03)</option>
+                    <option value={4}>Schedule Channel Info (0x04)</option>
+                  </select>
+                  <select value={osdOnOff} onChange={(e) => setOsdOnOff(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
+                    <option value={0}>Off (0x00)</option>
+                    <option value={1}>On (0x01)</option>
+                  </select>
+                  <ActionButton tone="primary" onClick={() => runMdc('osd', 'osd_display_set', { osdType, osdOnOff })} disabled={busy('osd')}>
+                    SET
+                  </ActionButton>
+                </div>
+              </div>
+              {results['osd'] ? <ResultPanel result={results['osd'] as MdcResult} /> : null}
+            </SectionCardBody>
+          </SectionCard>
+
           {/* ── Network Standby ────────────────────────────────────────────── */}
           <SectionCard>
             <SectionCardHeader>
@@ -841,6 +961,99 @@ export default function TizenTestPage() {
             </SectionCardBody>
           </SectionCard>
 
+          {/* ── Auto ID ───────────────────────────────────────────────────── */}
+          <SectionCard>
+            <SectionCardHeader>
+              <div>
+                <h2 className="text-base font-semibold text-[var(--text)]">Auto ID (MDC 0xB8)</h2>
+                <p className="text-sm text-[var(--text-muted)]">
+                  Assigns sequential MDC IDs starting at 1. A single device on the chain will receive ID=1.
+                  Click <strong>START</strong>, wait a moment, then click <strong>STOP</strong>.
+                  STOP will automatically scan to confirm the assigned ID.
+                </p>
+              </div>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <div className="flex flex-wrap gap-3 items-center">
+                <ActionButton
+                  tone="primary"
+                  onClick={() => runMdc('autoIdStart', 'auto_id_start')}
+                  disabled={busy('autoIdStart') || busy('autoIdStop')}
+                >
+                  START Auto ID
+                </ActionButton>
+                <ActionButton
+                  onClick={() => runMdc('autoIdStop', 'auto_id_stop')}
+                  disabled={busy('autoIdStop') || busy('autoIdStart')}
+                >
+                  STOP Auto ID + Scan
+                </ActionButton>
+              </div>
+
+              {/* START result */}
+              {results['autoIdStart'] ? (
+                <div className="space-y-1">
+                  <ResultPanel result={results['autoIdStart'] as MdcResult} />
+                  {results['autoIdStart']?.ok ? (
+                    <p className="text-sm text-green-500 font-semibold">
+                      ✓ Auto ID START sent — now click STOP Auto ID + Scan
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* STOP + scan result */}
+              {results['autoIdStop'] ? (
+                <div className="space-y-1">
+                  <ResultPanel result={results['autoIdStop'] as MdcResult} />
+                  {results['autoIdStop']?.ok ? (
+                    <p className="text-sm text-[var(--text-muted)]">
+                      Device MDC ID after Auto ID:{' '}
+                      <span className={`font-semibold ${results['autoIdStop']['idOk'] ? 'text-green-500' : 'text-yellow-500'}`}>
+                        {String(results['autoIdStop']['displayId'])}
+                        {results['autoIdStop']['idOk']
+                          ? ' ✓ — ID is now 1, all MDC commands will work'
+                          : ' ✗ — Auto ID did not assign ID=1 (unexpected)'}
+                      </span>
+                    </p>
+                  ) : (
+                    <p className="text-sm text-yellow-500 font-semibold">
+                      {String(results['autoIdStop']['error'] ?? 'Auto ID STOP sent but no device responded to scan')}
+                    </p>
+                  )}
+                </div>
+              ) : null}
+            </SectionCardBody>
+          </SectionCard>
+
+          {/* ── B2B PC Connection ──────────────────────────────────────────── */}
+          <SectionCard>
+            <SectionCardHeader>
+              <div>
+                <h2 className="text-base font-semibold text-[var(--text)]">B2B PC Connection</h2>
+                <p className="text-sm text-[var(--text-muted)]">
+                  b2bapis.b2bcontrol.getPCConnection() — returns the MDC connection type and device ID
+                  as seen by the Tizen firmware (not via MDC). Useful for diagnosing why MDC commands may not work.
+                </p>
+              </div>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <div className="flex flex-wrap gap-3 items-center">
+                <ActionButton onClick={() => runMdc('b2bPcConn', 'b2b_pc_connection_get')} disabled={busy('b2bPcConn')}>
+                  GET PC Connection
+                </ActionButton>
+              </div>
+              {results['b2bPcConn'] ? (
+                <ResultPanel result={results['b2bPcConn'] as MdcResult} />
+              ) : null}
+              {results['b2bPcConn']?.ok ? (
+                <pre className="rounded-lg bg-[var(--surface-raised)] p-3 text-xs font-mono text-[var(--text)] overflow-x-auto whitespace-pre-wrap">
+                  {JSON.stringify(results['b2bPcConn']['value'] ?? results['b2bPcConn']['raw'], null, 2)}
+                </pre>
+              ) : null}
+            </SectionCardBody>
+          </SectionCard>
+
           {/* ── MDC Connection Type ────────────────────────────────────────── */}
           <SectionCard>
             <SectionCardHeader>
@@ -874,6 +1087,115 @@ export default function TizenTestPage() {
                     <span>· Panel ID <span className="font-semibold text-[var(--text)]">{String(results['mdcConn']['displayId'])}</span></span>
                   ) : null}
                 </p>
+              ) : null}
+            </SectionCardBody>
+          </SectionCard>
+
+          {/* ── MDC Fix: Apply Required Settings ──────────────────────────── */}
+          <SectionCard>
+            <SectionCardHeader>
+              <div>
+                <h2 className="text-base font-semibold text-[var(--text)]">MDC Fix — Apply Required Settings</h2>
+                <p className="text-sm text-[var(--text-muted)]">
+                  MDC commands require: connection type = RJ45 <em>and</em> device MDC ID = 1.
+                  There is no MDC command to change the device ID — it must be changed via the display OSD.
+                  Use <strong>Scan MDC ID</strong> to find the current ID. Once found, click{' '}
+                  <strong>Save as Active MDC ID</strong> so all future commands use the correct ID automatically.
+                </p>
+              </div>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <div className="flex flex-wrap gap-3 items-center">
+                <ActionButton
+                  onClick={() => runMdc('mdcIdScan', 'mdc_id_scan')}
+                  disabled={busy('mdcIdScan') || busy('mdcFix')}
+                >
+                  Scan MDC ID (1–9)
+                </ActionButton>
+                <ActionButton
+                  tone="danger"
+                  onClick={() => runMdc('mdcFix', 'mdc_conn_type_fix')}
+                  disabled={busy('mdcFix') || busy('mdcIdScan')}
+                >
+                  Fix: Force RJ45 + Scan ID
+                </ActionButton>
+              </div>
+
+              {/* Scan-only result */}
+              {results['mdcIdScan'] ? (
+                <div className="space-y-2">
+                  <ResultPanel result={results['mdcIdScan'] as MdcResult} />
+                  {results['mdcIdScan']?.ok ? (
+                    <>
+                      <p className="text-sm text-[var(--text-muted)]">
+                        Device MDC ID:{' '}
+                        <span className={`font-semibold ${results['mdcIdScan']['idOk'] ? 'text-green-500' : 'text-yellow-500'}`}>
+                          {String(results['mdcIdScan']['displayId'])}
+                          {results['mdcIdScan']['idOk']
+                            ? ' ✓ — MDC ID is correct'
+                            : ' ✗ — change via display OSD: Menu → System → MDC → Network ID → 1, then re-scan'}
+                        </span>
+                      </p>
+                      <ActionButton
+                        tone="primary"
+                        onClick={() => runMdc('saveMdcId', 'save_mdc_id', { id: results['mdcIdScan']!['displayId'] as number })}
+                        disabled={busy('saveMdcId')}
+                      >
+                        Save ID {String(results['mdcIdScan']['displayId'])} as Active MDC ID
+                      </ActionButton>
+                    </>
+                  ) : (
+                    <p className="text-sm text-yellow-500 font-semibold">
+                      No device responded to IDs 1–9. Check MDC TCP connection.
+                    </p>
+                  )}
+                </div>
+              ) : null}
+
+              {/* Save result */}
+              {results['saveMdcId'] ? (
+                <p className="text-sm">
+                  {results['saveMdcId']?.ok
+                    ? <span className="text-green-500 font-semibold">✓ MDC ID {String(results['saveMdcId']['mdcId'])} saved — all MDC commands will now use this ID.</span>
+                    : <span className="text-red-500 font-semibold">✗ Save failed: {String(results['saveMdcId']['error'] ?? 'unknown error')}</span>
+                  }
+                </p>
+              ) : null}
+
+              {/* Fix result */}
+              {results['mdcFix'] ? (
+                <div className="space-y-2">
+                  <ResultPanel result={results['mdcFix'] as MdcResult} />
+                  <p className="text-sm text-[var(--text-muted)]">
+                    RJ45 broadcast SET:{' '}
+                    <span className="font-semibold text-green-500">✓ Sent</span>
+                    <span className="text-[var(--text-muted)]"> (0xFE broadcast — no ACK expected)</span>
+                  </p>
+                  {results['mdcFix']?.ok ? (
+                    <>
+                      <p className="text-sm text-[var(--text-muted)]">
+                        Device MDC ID:{' '}
+                        <span className={`font-semibold ${results['mdcFix']['idOk'] ? 'text-green-500' : 'text-yellow-500'}`}>
+                          {String(results['mdcFix']['displayId'])}
+                          {results['mdcFix']['idOk']
+                            ? ' ✓ — all MDC commands will work'
+                            : ' ✗ — RJ45 was set but ID must be changed to 1 via display OSD: Menu → System → MDC → Network ID → 1'}
+                        </span>
+                      </p>
+                      <ActionButton
+                        tone="primary"
+                        onClick={() => runMdc('saveMdcId', 'save_mdc_id', { id: results['mdcFix']!['displayId'] as number })}
+                        disabled={busy('saveMdcId')}
+                      >
+                        Save ID {String(results['mdcFix']['displayId'])} as Active MDC ID
+                      </ActionButton>
+                    </>
+                  ) : (
+                    <p className="text-sm text-yellow-500 font-semibold">
+                      RJ45 SET sent but no device responded to IDs 1–9.
+                    </p>
+                  )}
+                </div>
               ) : null}
             </SectionCardBody>
           </SectionCard>

@@ -377,6 +377,59 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     return;
   }
 
+  // ── mdc_heartbeat: 30s MDC status_get result → update powerState column ───
+  if (msg.type === 'mdc_heartbeat') {
+    const mh = msg.payload as { power?: number; volume?: number; mute?: number; input?: number };
+    if (mh.power != null) {
+      await db
+        .update(devices)
+        .set({ powerState: mh.power === 1 ? 'on' : 'off', updatedAt: new Date() })
+        .where(eq(devices.id, deviceId));
+    }
+    return;
+  }
+
+  // ── mdc_poll: 5min full MDC GET results → merge into devices.settings JSON ─
+  if (msg.type === 'mdc_poll') {
+    const mp = msg.payload as Record<string, unknown>;
+    const [row] = await db.select({ settings: devices.settings }).from(devices).where(eq(devices.id, deviceId));
+    let existing: Record<string, unknown> = {};
+    try { existing = JSON.parse(row?.settings ?? '{}'); } catch { /**/ }
+    const updated = {
+      ...existing,
+      ...(mp.standby        != null ? { standby:        mp.standby        } : {}),
+      ...(mp.osdStatus      != null ? { osdStatus:      mp.osdStatus      } : {}),
+      ...(mp.networkStandby != null ? { networkStandby: mp.networkStandby } : {}),
+      ...(mp.menuOrientation != null ? { menuOrientation: mp.menuOrientation } : {}),
+      srcOrientation: mp.srcOrientation ?? null, // always write (null = NAK/unsupported)
+      ...(mp.remoteControl  != null ? { remoteControl:  mp.remoteControl  } : {}),
+      ...(mp.safetyLock     != null ? { safetyLock:     mp.safetyLock     } : {}),
+      ...(mp.softwareVersion != null ? { softwareVersion: mp.softwareVersion } : {}),
+      ...(mp.temperatureC   != null ? { temperatureC:   mp.temperatureC   } : {}),
+      mdcLastPoll: new Date().toISOString(),
+    };
+    await db
+      .update(devices)
+      .set({ settings: JSON.stringify(updated), updatedAt: new Date() })
+      .where(eq(devices.id, deviceId));
+    return;
+  }
+
+  // ── mdc_id_persist: save scanned MDC ID into devices.settings.mdcId ────────
+  if (msg.type === 'mdc_id_persist') {
+    const { mdcId } = msg.payload as { mdcId: number };
+    if (typeof mdcId === 'number' && mdcId >= 1 && mdcId <= 254) {
+      const [row] = await db.select({ settings: devices.settings }).from(devices).where(eq(devices.id, deviceId));
+      let existing: Record<string, unknown> = {};
+      try { existing = JSON.parse(row?.settings ?? '{}'); } catch { /**/ }
+      await db
+        .update(devices)
+        .set({ settings: JSON.stringify({ ...existing, mdcId }), updatedAt: new Date() })
+        .where(eq(devices.id, deviceId));
+    }
+    return;
+  }
+
   // ── screenshot_data ────────────────────────────────────────────────────────
   if (msg.type === 'screenshot_data') {
     const { dataBase64, contentId, trigger } = msg.payload;

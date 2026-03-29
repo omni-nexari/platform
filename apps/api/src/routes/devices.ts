@@ -1467,9 +1467,39 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
     if (!device) return reply.status(404).send({ error: 'Not found' });
 
+    // ── save_mdc_id: persist to DB then prime server.js in-memory ID ─────────
+    if (action === 'save_mdc_id') {
+      const rawId = body.id;
+      const mdcId = typeof rawId === 'number' ? rawId : parseInt(String(rawId ?? ''), 10);
+      if (!mdcId || mdcId < 1 || mdcId > 254) return reply.status(400).send({ error: 'Invalid MDC ID (1–254)' });
+
+      let existingSettings: Record<string, unknown> = {};
+      try { existingSettings = JSON.parse(device.settings ?? '{}') as Record<string, unknown>; } catch {}
+      await db.update(devices).set({
+        settings: JSON.stringify({ ...existingSettings, mdcId }),
+        updatedAt: new Date(),
+      }).where(eq(devices.id, id));
+
+      // Prime the in-memory ID on the device (best-effort)
+      try { await requestMdcControl(device.id, 'set_mdc_id', { id: mdcId }, 5_000); } catch {}
+      return reply.send({ ok: true, mdcId });
+    }
+
+    // ── For all other actions: read stored mdcId and inject as displayId ─────
+    let storedMdcId: number | undefined;
+    try {
+      const s = JSON.parse(device.settings ?? '{}') as Record<string, unknown>;
+      storedMdcId = typeof s.mdcId === 'number' ? s.mdcId : undefined;
+    } catch {}
+
     try {
       const { action: _a, ...rest } = body;
-      const result = await requestMdcControl(device.id, action, rest, 10_000);
+      // Inject stored MDC ID as displayId if caller didn't supply one
+      const payload = {
+        ...rest,
+        ...(storedMdcId != null && rest.displayId == null ? { displayId: storedMdcId } : {}),
+      };
+      const result = await requestMdcControl(device.id, action, payload, 10_000);
       return reply.send(result);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

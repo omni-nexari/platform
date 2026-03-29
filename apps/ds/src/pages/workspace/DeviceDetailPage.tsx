@@ -93,6 +93,24 @@ interface DeviceHeartbeat {
   nextContentName: string | null;
 }
 
+interface MdcSettings {
+  mdcId?: number;
+  standby?: number;           // 0=off 1=on 2=auto
+  networkStandby?: number;    // 0=off 1=on
+  menuOrientation?: number;
+  srcOrientation?: number | null; // null = NAK/unsupported
+  remoteControl?: number;     // 0=disable 1=enable
+  safetyLock?: number;        // 0=off 1=on
+  softwareVersion?: string | null;
+  osdStatus?: number;         // bitmask: bit0=Source bit1=NotOptimum bit2=NoSignal bit3=MDC bit4=Schedule
+  temperatureC?: number;
+  mdcLastPoll?: string;
+}
+const MDC_ORIENTATION_LABELS: Record<number, string> = {
+  0: 'Landscape (0°)', 1: 'Portrait (90°)', 2: 'Landscape (180°)', 3: 'Portrait (270°)',
+};
+const OSD_BIT_LABELS = ['Source', 'Not Optimum', 'No Signal', 'MDC', 'Schedule'] as const;
+
 interface Device {
   id: string;
   name: string;
@@ -644,6 +662,10 @@ export default function DeviceDetailPage() {
   const [volumeInput, setVolumeInput] = useState(50);
   const [selectedSource, setSelectedSource] = useState('HDMI1');
   const [optimisticMute, setOptimisticMute] = useState<boolean | null>(null);
+  const [optimisticStandby, setOptimisticStandby] = useState<number | null>(null);
+  const [optimisticNetStandby, setOptimisticNetStandby] = useState<boolean | null>(null);
+  const [optimisticRemoteCtrl, setOptimisticRemoteCtrl] = useState<boolean | null>(null);
+  const [optimisticSafetyLock, setOptimisticSafetyLock] = useState<boolean | null>(null);
   const [liveViewOpen, setLiveViewOpen] = useState(false);
   // NTP form
   const [ntpServer,      setNtpServer]      = useState('');
@@ -688,9 +710,18 @@ export default function DeviceDetailPage() {
     retry: false,
   });
 
+  // Fresh MDC poll data overrides optimistic state
   useEffect(() => {
-    if (mdcStatus?.status?.volume != null) setVolumeInput(mdcStatus.status.volume);
-    if (mdcStatus?.status?.input != null) {
+    setOptimisticStandby(null);
+    setOptimisticNetStandby(null);
+    setOptimisticRemoteCtrl(null);
+    setOptimisticSafetyLock(null);
+  }, [data?.device?.settings]);
+
+  useEffect(() => {
+    if (!mdcStatus?.status) return;
+    setVolumeInput(mdcStatus.status.volume ?? 0);
+    if (mdcStatus.status.input != null) {
       const src = MDC_SOURCE_BY_BYTE[mdcStatus.status.input];
       if (src) setSelectedSource(src);
     }
@@ -931,6 +962,9 @@ export default function DeviceDetailPage() {
   }
 
   const { device, screenshots, latestHeartbeat: hb } = data;
+  const mdcSettings = useMemo((): MdcSettings => {
+    try { return JSON.parse(data.device.settings ?? '{}') as MdcSettings; } catch { return {}; }
+  }, [data.device.settings]);
   const isOnline    = device.status === 'online';
   const cmdDisabled = !isOnline || cmdMutation.isPending;
   const fallbackNowPlaying = device.publishedTarget?.name ?? null;
@@ -1050,6 +1084,7 @@ export default function DeviceDetailPage() {
             <InfoRow icon={Settings2}   label="Serial Number"  value={device.serialNumber} />
             <InfoRow icon={Cpu}         label="Firmware"       value={device.firmwareVersion ?? observedSystemInfo?.firmwareVersion} />
             <InfoRow icon={Cpu}         label="Player version" value={device.playerVersion ? `v${device.playerVersion}` : null} />
+            <InfoRow icon={Settings2}   label="Software Ver"   value={mdcSettings.softwareVersion ?? null} />
             <InfoRow icon={Monitor}     label="Resolution"     value={resolvedResolution} />
             <InfoRow icon={Globe}       label="Timezone"       value={resolvedTimezone} />
           </SectionCardBody>
@@ -1108,13 +1143,13 @@ export default function DeviceDetailPage() {
           <SectionCardBody className="space-y-4">
             {hb ? (
               <>
-                {hb.temperatureC != null && (
+                {(mdcSettings.temperatureC != null || hb.temperatureC != null) && (
                   <div className="flex items-center justify-between text-sm">
                     <span className="flex items-center gap-2 text-[var(--text-muted)]">
                       <Thermometer className="w-3.5 h-3.5" />Temperature
                     </span>
-                    <Badge tone={hb.temperatureC > 70 ? 'danger' : hb.temperatureC > 55 ? 'warning' : 'neutral'}>
-                      {hb.temperatureC.toFixed(1)} °C
+                    <Badge tone={(mdcSettings.temperatureC ?? hb.temperatureC ?? 0) > 70 ? 'danger' : (mdcSettings.temperatureC ?? hb.temperatureC ?? 0) > 55 ? 'warning' : 'neutral'}>
+                      {(mdcSettings.temperatureC ?? hb.temperatureC)!.toFixed(1)} °C
                     </Badge>
                   </div>
                 )}
@@ -1387,6 +1422,121 @@ export default function DeviceDetailPage() {
             </div>
 
           </div>
+        </SectionCardBody>
+      </SectionCard>
+
+      {/* ── MDC Display Settings ─────────────────────────────────────────── */}
+      <SectionCard>
+        <SectionCardHeader>
+          <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
+            <Settings2 className="w-3.5 h-3.5" />Display Settings
+          </h2>
+          {mdcSettings.mdcLastPoll && (
+            <span className="text-xs text-[var(--text-muted)]">polled {formatDistanceToNow(mdcSettings.mdcLastPoll)}</span>
+          )}
+        </SectionCardHeader>
+        <SectionCardBody className="space-y-4">
+          {/* Standby Control */}
+          <div className="flex items-center justify-between text-sm">
+            <span className="flex items-center gap-2 text-[var(--text-muted)]"><Power className="w-3.5 h-3.5" />Standby (DPMS)</span>
+            <div className="flex items-center gap-2">
+              {mdcSettings.standby != null && (
+                <span className="text-xs text-[var(--text-muted)]">current: {['Off','On','Auto'][mdcSettings.standby] ?? '—'}</span>
+              )}
+              <select
+                value={optimisticStandby ?? mdcSettings.standby ?? 0}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setOptimisticStandby(v);
+                  sendCmd({ command: 'mdc_control', payload: { action: 'standby_set', value: v } });
+                }}
+                disabled={cmdDisabled}
+                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--text)] disabled:opacity-40"
+              >
+                <option value={0}>Off</option>
+                <option value={1}>On</option>
+                <option value={2}>Auto</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Network Standby */}
+          <div className="flex items-center justify-between text-sm">
+            <span className="flex items-center gap-2 text-[var(--text-muted)]"><Wifi className="w-3.5 h-3.5" />Network Standby</span>
+            <ToggleSwitch
+              label={(optimisticNetStandby !== null ? optimisticNetStandby : mdcSettings.networkStandby === 1) ? 'On' : 'Off'}
+              checked={optimisticNetStandby !== null ? optimisticNetStandby : mdcSettings.networkStandby === 1}
+              onChange={() => {
+                const next = !(optimisticNetStandby !== null ? optimisticNetStandby : mdcSettings.networkStandby === 1);
+                setOptimisticNetStandby(next);
+                sendCmd({ command: 'mdc_control', payload: { action: 'network_standby_set', value: next ? 1 : 0 } });
+              }}
+              labelClassName="text-xs"
+            />
+          </div>
+
+          {/* Remote Control */}
+          <div className="flex items-center justify-between text-sm">
+            <span className="flex items-center gap-2 text-[var(--text-muted)]"><Radio className="w-3.5 h-3.5" />Remote Control</span>
+            <ToggleSwitch
+              label={(optimisticRemoteCtrl !== null ? optimisticRemoteCtrl : mdcSettings.remoteControl === 1) ? 'Enabled' : 'Disabled'}
+              checked={optimisticRemoteCtrl !== null ? optimisticRemoteCtrl : mdcSettings.remoteControl === 1}
+              onChange={() => {
+                const next = !(optimisticRemoteCtrl !== null ? optimisticRemoteCtrl : mdcSettings.remoteControl === 1);
+                setOptimisticRemoteCtrl(next);
+                sendCmd({ command: 'mdc_control', payload: { action: 'remote_control_set', value: next ? 1 : 0 } });
+              }}
+              labelClassName="text-xs"
+            />
+          </div>
+
+          {/* Safety Lock */}
+          <div className="flex items-center justify-between text-sm">
+            <span className="flex items-center gap-2 text-[var(--text-muted)]"><Lock className="w-3.5 h-3.5" />Safety Lock</span>
+            <ToggleSwitch
+              label={(optimisticSafetyLock !== null ? optimisticSafetyLock : mdcSettings.safetyLock === 1) ? 'On' : 'Off'}
+              checked={optimisticSafetyLock !== null ? optimisticSafetyLock : mdcSettings.safetyLock === 1}
+              onChange={() => {
+                const next = !(optimisticSafetyLock !== null ? optimisticSafetyLock : mdcSettings.safetyLock === 1);
+                setOptimisticSafetyLock(next);
+                sendCmd({ command: 'mdc_control', payload: { action: 'safety_lock_set', value: next ? 1 : 0 } });
+              }}
+              labelClassName="text-xs"
+            />
+          </div>
+
+          {/* OSD Status */}
+          {mdcSettings.osdStatus != null && (
+            <div className="flex items-start justify-between text-sm gap-4">
+              <span className="flex items-center gap-2 text-[var(--text-muted)] shrink-0"><Monitor className="w-3.5 h-3.5" />Active OSD</span>
+              <div className="flex flex-wrap gap-1 justify-end">
+                {OSD_BIT_LABELS.map((label, i) => (
+                  (mdcSettings.osdStatus! >> i) & 1 ? <Badge key={label} tone="warning">{label}</Badge> : null
+                ))}
+                {(mdcSettings.osdStatus & 0x1F) === 0 && <Badge tone="neutral">All off</Badge>}
+              </div>
+            </div>
+          )}
+
+          {/* Menu / Source Orientation */}
+          {mdcSettings.menuOrientation != null && (
+            <InfoRow icon={Monitor} label="Menu Orientation"
+              value={MDC_ORIENTATION_LABELS[mdcSettings.menuOrientation] ?? `0x${mdcSettings.menuOrientation.toString(16).toUpperCase()}`} />
+          )}
+          <div className="flex items-center justify-between text-sm">
+            <span className="flex items-center gap-2 text-[var(--text-muted)]"><Monitor className="w-3.5 h-3.5" />Source Orientation</span>
+            <span className="text-xs font-mono text-[var(--text)]">
+              {mdcSettings.srcOrientation != null
+                ? (MDC_ORIENTATION_LABELS[mdcSettings.srcOrientation] ?? `0x${mdcSettings.srcOrientation.toString(16).toUpperCase()}`)
+                : '—'}
+            </span>
+          </div>
+
+          {(!isOnline || mdcSettings.mdcLastPoll == null) && (
+            <p className="text-xs text-[var(--text-muted)]">
+              {isOnline ? 'Waiting for first MDC poll (runs every 5 min after player telemetry).' : 'Device offline — showing last known values.'}
+            </p>
+          )}
         </SectionCardBody>
       </SectionCard>
 
