@@ -39,6 +39,8 @@ interface WsSummary {
   deviceOnline: number;
   deviceOffline: number;
   deviceError: number;
+  devicePowerOn: number;
+  devicePowerOff: number;
   contentStats: ContentTypeStat[];
   playlistTotal: number;
   playlistActive: number;
@@ -62,9 +64,10 @@ function timeGreeting(name: string) {
 // ── Device Card ────────────────────────────────────────────────────────────────
 
 function DeviceCard({
-  total, online, offline, error, onClick, onAdd,
+  total, online, offline, error, powerOn, powerOff, onClick, onAdd,
 }: {
   total: number; online: number; offline: number; error: number;
+  powerOn: number; powerOff: number;
   onClick?: () => void; onAdd?: () => void;
 }) {
   const pct = (n: number) => (total > 0 ? (n / total) * 100 : 0);
@@ -121,11 +124,11 @@ function DeviceCard({
             {total === 0  && <div className="w-full" style={{ background: 'rgba(255,255,255,0.07)' }} />}
           </div>
           <div className="grid grid-cols-3 gap-1">
-            {([
+            {[
               { label: 'Online',  count: online,  color: '#34d399' },
               { label: 'Error',   count: error,   color: '#fbbf24' },
               { label: 'Offline', count: offline, color: '#475569' },
-            ] as const).map(({ label, count, color }) => (
+            ].map(({ label, count, color }) => (
               <div key={label}>
                 <div className="flex items-center gap-1.5 mb-0.5">
                   <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
@@ -135,6 +138,24 @@ function DeviceCard({
               </div>
             ))}
           </div>
+          {total > 0 && (
+            <div className="mt-3 pt-3 border-t flex gap-4" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+              <div>
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: '#34d399' }} />
+                  <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Power on</span>
+                </div>
+                <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>{powerOn}</span>
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: '#475569' }} />
+                  <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Power off</span>
+                </div>
+                <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>{powerOff}</span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -591,6 +612,8 @@ export default function OrgDashboardPage() {
               online={summary?.deviceOnline ?? 0}
               offline={summary?.deviceOffline ?? 0}
               error={summary?.deviceError ?? 0}
+              powerOn={summary?.devicePowerOn ?? 0}
+              powerOff={summary?.devicePowerOff ?? 0}
               onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}`)}
               onAdd={() => selectedWsId && navigate(`/workspaces/${selectedWsId}`)}
             />

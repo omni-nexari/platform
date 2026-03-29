@@ -32,7 +32,7 @@ export const DeviceSchema = z.object({
 
   // Display state
   screenOrientation: z.enum(['landscape', 'portrait']).nullable(),
-  powerState: z.enum(['on', 'off', 'standby']),
+  powerState: z.enum(['on', 'off', 'standby']).nullable(),
   irLock: z.boolean(),
   buttonLock: z.boolean(),
   autoPowerOn: z.boolean(),
@@ -120,6 +120,16 @@ export const DeviceCommandSchema = z.discriminatedUnion('command', [
   z.object({ command: z.literal('dump_logs') }),
   z.object({ command: z.literal('set_screenshot_interval'), payload: z.object({ minutes: z.number().int().min(1) }) }),
   z.object({ command: z.literal('set_zones'), payload: z.object({ zones: z.array(ZoneConfigSchema) }) }),
+  z.object({
+    command: z.literal('mdc_control'),
+    payload: z.object({
+      action: z.enum(['set_volume', 'set_mute', 'set_source', 'set_device_name']),
+      level: z.number().int().min(0).max(100).optional(),
+      mute: z.boolean().optional(),
+      source: z.string().optional(),
+      name: z.string().max(15).optional(),
+    }),
+  }),
 ]);
 export type DeviceCommandInput = z.infer<typeof DeviceCommandSchema>;
 
@@ -140,6 +150,7 @@ export const HeartbeatSchema = z.object({
   currentContentId: z.string().uuid().nullable().optional(),
   nextContentId: z.string().uuid().nullable().optional(),
   nextStartsAt: z.string().datetime().nullable().optional(),
+  tvName: z.string().optional(),
 });
 export type HeartbeatPayload = z.infer<typeof HeartbeatSchema>;
 
@@ -236,6 +247,8 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
       ok: z.boolean(),
       nodeRunning: z.boolean().optional(),
       serial: z.string().optional(),
+      tvName: z.string().optional(),
+      deviceTime: z.string().optional(),
       rawHex: z.string().optional(),
       error: z.string().optional(),
       status: z.object({
@@ -250,6 +263,16 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
         nTime: z.number().int().optional(),
         fTime: z.number().int().optional(),
       }).optional(),
+    }),
+  }),
+  z.object({
+    type: z.literal('mdc_control_response'),
+    payload: z.object({
+      requestId: z.string(),
+      ok: z.boolean(),
+      rawHex: z.string().optional(),
+      data: z.array(z.number().int()).optional(),
+      error: z.string().optional(),
     }),
   }),
 ]);

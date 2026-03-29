@@ -24,6 +24,9 @@ export interface MdcStatusResponse {
   ok: boolean;
   nodeRunning?: boolean;
   serial?: string;
+  deviceName?: string;
+  tvName?: string;
+  deviceTime?: string;
   rawHex?: string;
   error?: string;
   status?: {
@@ -64,6 +67,7 @@ export type WsCommand =
   | { type: 'set_zones'; payload: { zones: Array<{ id: string; rect: { x: number; y: number; width: number; height: number }; playlistId?: string }> } }
   | { type: 'remote_key'; payload: { key: string } }
   | { type: 'remote_status'; payload: { requestId: string } }
+  | { type: 'mdc_control'; payload: { action: string; requestId?: string; level?: number; mute?: boolean; source?: string; [key: string]: unknown } }
   | { type: 'SESSION_CONFIG'; groupId: number; mode: string; syncPlaylistId: string | null }
   | { type: 'SYNC_PLAY'; action: 'STOP' | 'CANCEL' | 'START_SYNCPLAY' };
 
@@ -72,6 +76,20 @@ const deviceLogs = new Map<string, DeviceConsoleLogEntry[]>();
 const MAX_DEVICE_LOGS = 2000;
 const pendingMdcStatus = new Map<string, {
   resolve: (value: MdcStatusResponse) => void;
+  reject: (reason: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+
+export type MdcControlResponse = {
+  requestId: string;
+  ok: boolean;
+  rawHex?: string;
+  data?: number[];
+  error?: string;
+};
+
+const pendingMdcControl = new Map<string, {
+  resolve: (value: MdcControlResponse) => void;
   reject: (reason: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }>();
@@ -177,6 +195,35 @@ export function requestRemoteStatus(deviceId: string, timeoutMs = 5000): Promise
   });
 }
 
+export function requestMdcControl(
+  deviceId: string,
+  action: string,
+  payload: Record<string, unknown>,
+  timeoutMs = 10_000,
+): Promise<MdcControlResponse> {
+  const requestId = randomUUID();
+  const pendingKey = `${deviceId}:${requestId}`;
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingMdcControl.delete(pendingKey);
+      reject(new Error('Timed out waiting for MDC control response from device'));
+    }, timeoutMs);
+
+    pendingMdcControl.set(pendingKey, { resolve, reject, timer });
+
+    const delivered = sendCommand(deviceId, {
+      type: 'mdc_control',
+      payload: { action, requestId, ...payload },
+    });
+    if (!delivered) {
+      clearTimeout(timer);
+      pendingMdcControl.delete(pendingKey);
+      reject(new Error('Device is offline or not connected via WebSocket'));
+    }
+  });
+}
+
 // ── Storage root for screenshots ──────────────────────────────────────────────
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? join(process.cwd(), 'signage_uploads');
 
@@ -185,6 +232,48 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
   try {
     raw = JSON.parse(data);
   } catch {
+    return;
+  }
+
+  // Handle MDC control responses before schema parsing so API relay remains
+  // robust even if the shared package watcher has not reloaded yet.
+  if (
+    typeof raw === 'object' &&
+    raw !== null &&
+    'type' in raw &&
+    (raw as { type?: unknown }).type === 'mdc_control_response'
+  ) {
+    const payload = (raw as {
+      payload?: {
+        requestId?: unknown;
+        ok?: unknown;
+        rawHex?: unknown;
+        data?: unknown;
+        error?: unknown;
+      };
+    }).payload;
+
+    if (typeof payload?.requestId === 'string' && typeof payload?.ok === 'boolean') {
+      const pendingKey = `${deviceId}:${payload.requestId}`;
+      const pending = pendingMdcControl.get(pendingKey);
+      if (pending) {
+        clearTimeout(pending.timer);
+        pendingMdcControl.delete(pendingKey);
+        console.info('[ws] raw mdc_control_response resolved', { deviceId, requestId: payload.requestId, ok: payload.ok });
+        pending.resolve({
+          requestId: payload.requestId,
+          ok: payload.ok,
+          ...(typeof payload.rawHex === 'string' ? { rawHex: payload.rawHex } : {}),
+          ...(Array.isArray(payload.data) ? { data: payload.data.filter((item): item is number => typeof item === 'number') } : {}),
+          ...(typeof payload.error === 'string' ? { error: payload.error } : {}),
+        });
+      } else {
+        console.warn('[ws] raw mdc_control_response had no pending waiter', { deviceId, requestId: payload.requestId });
+      }
+      return;
+    }
+
+    console.warn('[ws] raw mdc_control_response missing required fields', { deviceId, raw });
     return;
   }
 
@@ -197,6 +286,14 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
       (raw as { type?: unknown }).type === 'screenshot_data'
     ) {
       console.warn('[ws] screenshot_data parse failed', parsed.error.issues);
+    }
+    if (
+      typeof raw === 'object' &&
+      raw !== null &&
+      'type' in raw &&
+      (raw as { type?: unknown }).type === 'mdc_control_response'
+    ) {
+      console.warn('[ws] mdc_control_response parse failed', parsed.error.issues, raw);
     }
     return;
   }
@@ -225,6 +322,7 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
         ...(hb.clockDriftMs != null ? { clockDriftMs: hb.clockDriftMs } : {}),
         ...(hb.irLock != null ? { irLock: hb.irLock } : {}),
         ...(hb.buttonLock != null ? { buttonLock: hb.buttonLock } : {}),
+        ...('tvName' in hb && hb.tvName ? { name: hb.tvName } : {}),
         updatedAt: new Date(),
       })
       .where(eq(devices.id, deviceId));
@@ -362,15 +460,44 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
         }
         : undefined;
 
+      // Persist MDC power to devices table so it is the source of truth
+      if (normalizedStatus?.power !== undefined) {
+        const mdcPowerState = normalizedStatus.power === 1 ? 'on' : 'off';
+        await db.update(devices).set({ powerState: mdcPowerState, updatedAt: new Date() }).where(eq(devices.id, deviceId));
+      }
+
       pending.resolve({
         requestId: msg.payload.requestId,
         ok: msg.payload.ok,
         ...(msg.payload.nodeRunning !== undefined ? { nodeRunning: msg.payload.nodeRunning } : {}),
         ...(msg.payload.serial !== undefined ? { serial: msg.payload.serial } : {}),
+        ...(msg.payload.tvName !== undefined ? { tvName: msg.payload.tvName } : {}),
+        ...(msg.payload.deviceTime !== undefined ? { deviceTime: msg.payload.deviceTime } : {}),
         ...(msg.payload.rawHex !== undefined ? { rawHex: msg.payload.rawHex } : {}),
         ...(msg.payload.error !== undefined ? { error: msg.payload.error } : {}),
         ...(normalizedStatus !== undefined ? { status: normalizedStatus } : {}),
       });
+    }
+    return;
+  }
+
+  // ── mdc_control_response ────────────────────────────────────────────────
+  if (msg.type === 'mdc_control_response') {
+    const pendingKey = `${deviceId}:${msg.payload.requestId}`;
+    const pending = pendingMdcControl.get(pendingKey);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pendingMdcControl.delete(pendingKey);
+      console.info('[ws] mdc_control_response resolved', { deviceId, requestId: msg.payload.requestId, ok: msg.payload.ok });
+      pending.resolve({
+        requestId: msg.payload.requestId,
+        ok: msg.payload.ok,
+        ...(msg.payload.rawHex !== undefined ? { rawHex: msg.payload.rawHex } : {}),
+        ...(msg.payload.data !== undefined ? { data: msg.payload.data } : {}),
+        ...(msg.payload.error !== undefined ? { error: msg.payload.error } : {}),
+      });
+    } else {
+      console.warn('[ws] mdc_control_response had no pending waiter', { deviceId, requestId: msg.payload.requestId });
     }
     return;
   }

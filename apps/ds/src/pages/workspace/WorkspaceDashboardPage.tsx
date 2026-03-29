@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
 import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
-import { Monitor, Plus, Wifi, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw } from 'lucide-react';
+import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw } from 'lucide-react';
 import { formatDistanceToNow } from '../utils/time.js';
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import BulkTagModal from '../../components/BulkTagModal.js';
@@ -30,12 +30,16 @@ interface Device {
   id: string;
   name: string;
   status: 'unclaimed' | 'online' | 'offline' | 'error';
+  powerState: 'on' | 'off' | 'standby' | null;
   assignedTags?: AssignedTag[];
   lastSeen: string | null;
   playerVersion: string | null;
   resolution: string | null;
   ipAddress: string | null;
+  macAddress: string | null;
+  serialNumber: string | null;
   timezone: string;
+  latestScreenshotId: string | null;
   publishedTarget: {
     id: string;
     type: 'content' | 'playlist' | 'schedule';
@@ -244,25 +248,47 @@ export default function WorkspaceDashboardPage() {
                 >
                   {selectedItems.has(device.id) && <Check className="w-3 h-3 text-white" />}
                 </div>
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(58,123,255,0.24),_transparent_58%),linear-gradient(180deg,rgba(20,24,33,0.45),rgba(10,12,18,0.92))]" />
-                <span className="ui-media-badge ui-media-badge-accent absolute top-9 left-2 z-20">Device</span>
+                {/* Thumbnail */}
+                {device.latestScreenshotId ? (
+                  <img
+                    src={`/api/devices/${device.id}/screenshots/${device.latestScreenshotId}`}
+                    alt="Last screenshot"
+                    className="absolute inset-0 w-full h-full object-cover"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                  />
+                ) : (
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(58,123,255,0.24),_transparent_58%),linear-gradient(180deg,rgba(20,24,33,0.45),rgba(10,12,18,0.92))]"
+                  />
+                )}
+                {/* Scrim over thumbnail */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-black/30" />
                 <span className={`ui-media-badge absolute top-2 right-2 z-20 ${currentStatusMeta.mediaTone}`}>
                   {currentStatusMeta.label}
                 </span>
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-16 h-16 rounded-2xl bg-white/8 border border-white/10 flex items-center justify-center backdrop-blur-sm">
-                    {device.status === 'online' ? (
-                      <Wifi className="w-8 h-8 text-emerald-400" />
-                    ) : (
-                      <WifiOff className="w-8 h-8 text-[var(--text-muted)]" />
-                    )}
+                {/* Content/playlist badge + name over thumbnail */}
+                {device.publishedTarget && (
+                  <div className="absolute bottom-8 left-2 right-2 z-20 flex items-center gap-1.5 min-w-0">
+                    <span className="ui-media-badge ui-media-badge-accent shrink-0">{device.publishedTarget.type}</span>
+                    <span className="text-white text-[11px] font-medium truncate drop-shadow">{device.publishedTarget.name}</span>
                   </div>
-                </div>
+                )}
+                {!device.publishedTarget && (
+                  <div className="absolute bottom-8 left-2 z-20">
+                    <span className="text-white/40 text-[11px]">No content assigned</span>
+                  </div>
+                )}
+                {device.status !== 'online' && !device.latestScreenshotKey && (
+                  <div className="absolute inset-0 flex items-center justify-center z-10">
+                    <div className="w-16 h-16 rounded-2xl bg-white/8 border border-white/10 flex items-center justify-center backdrop-blur-sm">
+                      <WifiOff className="w-8 h-8 text-[var(--text-muted)]" />
+                    </div>
+                  </div>
+                )}
                 <div className="ui-media-badge absolute bottom-2 right-2 z-20">
                   <Clock size={9} />
                   {device.lastSeen ? formatDistanceToNow(device.lastSeen) : 'Never connected'}
                 </div>
-                <div className="ui-media-icon-btn absolute top-11 right-2 z-20">
+                <div className="ui-media-icon-btn absolute top-2 left-10 z-20">
                   <ChevronRight className="w-4 h-4" />
                 </div>
                     </>
@@ -272,35 +298,41 @@ export default function WorkspaceDashboardPage() {
 
               <div className="ui-entity-card-body">
                 <h3 className="ui-entity-card-title truncate mb-1">{device.name}</h3>
-                <StatusBadge status={device.status} />
+                <div className="flex items-center gap-2 flex-wrap">
+                  <StatusBadge status={device.status} />
+                  {device.powerState != null && (
+                    <Badge tone={device.powerState === 'on' ? 'success' : device.powerState === 'standby' ? 'warning' : 'neutral'}>
+                      Power {device.powerState}
+                    </Badge>
+                  )}
+                </div>
 
-                <div className="ui-entity-card-meta mt-3">
-                  {device.playerVersion ? (
+                <div className="ui-entity-card-meta mt-3 flex-wrap gap-y-1">
+                  {device.playerVersion && (
                     <span className="flex items-center gap-1">
                       <Cpu className="w-3 h-3" />
                       v{device.playerVersion}
                     </span>
-                  ) : (
-                    <span className="flex items-center gap-1">
+                  )}
+                  {device.ipAddress && (
+                    <span className="flex items-center gap-1 font-mono">
                       <Monitor className="w-3 h-3" />
-                      Display ready
+                      {device.ipAddress}
+                    </span>
+                  )}
+                  {device.macAddress && (
+                    <span className="flex items-center gap-1 font-mono">
+                      {device.macAddress}
+                    </span>
+                  )}
+                  {device.serialNumber && (
+                    <span className="flex items-center gap-1 font-mono">
+                      S/N: {device.serialNumber}
                     </span>
                   )}
                 </div>
                 <div className="mt-2">
                   <AssignedTagPills tags={device.assignedTags} />
-                </div>
-                <div className="mt-2 min-h-[1.25rem]">
-                  {device.publishedTarget ? (
-                    <div className="flex items-center gap-2 text-xs min-w-0">
-                      <Badge tone="accent">{device.publishedTarget.type}</Badge>
-                      <span className="text-[var(--text)] truncate" title={device.publishedTarget.name}>
-                        {device.publishedTarget.name}
-                      </span>
-                    </div>
-                  ) : (
-                    <span className="text-xs text-[var(--text-muted)]">Following workspace scheduling</span>
-                  )}
                 </div>
               </div>
             </button>

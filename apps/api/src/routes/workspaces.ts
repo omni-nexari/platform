@@ -3,6 +3,16 @@ import { db, workspaces, workspaceMembers, users, devices, contentItems, playlis
 import { eq, and, isNull, count, sql } from 'drizzle-orm';
 import { CreateWorkspaceSchema, AddWorkspaceMemberSchema } from '@signage/shared';
 import { writeAuditLog } from '../services/audit.js';
+import { isDeviceOnline } from '../services/ws.js';
+
+const DEVICE_RECENT_MS = 90_000;
+function liveStatus(row: { id: string; status: string | null; lastSeen: Date | null }): string {
+  const recentActivity = row.lastSeen
+    ? Date.now() - new Date(row.lastSeen).getTime() <= DEVICE_RECENT_MS
+    : false;
+  if (isDeviceOnline(row.id) || recentActivity) return 'online';
+  return row.status === 'online' ? 'offline' : (row.status ?? 'offline');
+}
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -266,8 +276,8 @@ export async function workspaceRoutes(app: FastifyInstance) {
     });
     if (!ws) return reply.status(404).send({ error: 'Not found' });
 
-    const rows = await db
-      .select({ status: devices.status, cnt: count() })
+    const deviceRows = await db
+      .select({ id: devices.id, status: devices.status, lastSeen: devices.lastSeen })
       .from(devices)
       .where(
         and(
@@ -276,15 +286,14 @@ export async function workspaceRoutes(app: FastifyInstance) {
           isNull(devices.deletedAt),
           sql`${devices.status} != 'unclaimed'`,
         ),
-      )
-      .groupBy(devices.status);
+      );
 
     let online = 0, offline = 0, error = 0;
-    for (const r of rows) {
-      const n = Number(r.cnt);
-      if (r.status === 'online') online = n;
-      else if (r.status === 'offline') offline = n;
-      else if (r.status === 'error') error = n;
+    for (const r of deviceRows) {
+      const s = liveStatus(r);
+      if (s === 'online') online++;
+      else if (s === 'error') error++;
+      else offline++;
     }
 
     const contentRows = await db
@@ -319,11 +328,32 @@ export async function workspaceRoutes(app: FastifyInstance) {
     const scheduleTotal = Number(scheduleRows[0]?.total ?? 0);
     const scheduleActive = Number(scheduleRows[0]?.active ?? 0);
 
+    const powerRows = await db
+      .select({ id: devices.id, status: devices.status, lastSeen: devices.lastSeen, powerState: devices.powerState })
+      .from(devices)
+      .where(
+        and(
+          eq(devices.workspaceId, id),
+          eq(devices.orgId, user.orgId),
+          isNull(devices.deletedAt),
+          sql`${devices.status} != 'unclaimed'`,
+        ),
+      );
+
+    let devicePowerOn = 0, devicePowerOff = 0;
+    for (const r of powerRows) {
+      const n = r.powerState === 'on' ? 1 : (r.powerState === 'off' || r.powerState === 'standby' ? -1 : 0);
+      if (n === 1) devicePowerOn++;
+      else if (n === -1) devicePowerOff++;
+    }
+
     return reply.send({
       deviceTotal: online + offline + error,
       deviceOnline: online,
       deviceOffline: offline,
       deviceError: error,
+      devicePowerOn,
+      devicePowerOff,
       contentStats: contentRows.map(r => ({ type: r.type, total: Number(r.total), published: Number(r.active) })),
       playlistTotal,
       playlistActive,

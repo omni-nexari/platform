@@ -46,7 +46,7 @@ export const devices = pgTable('devices', {
 
   // ── Display state ──────────────────────────────────────────────────────────
   screenOrientation: text('screen_orientation'), // landscape | portrait
-  powerState: text('power_state').notNull().default('on'), // on | off | standby
+  powerState: text('power_state'), // on | off | standby — null until MDC reports
   irLock: boolean('ir_lock').notNull().default(false),
   buttonLock: boolean('button_lock').notNull().default(false),
   autoPowerOn: boolean('auto_power_on').notNull().default(false),

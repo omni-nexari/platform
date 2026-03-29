@@ -14,6 +14,7 @@ import { MDC_ALL_COMMAND_NAMES } from '../services/mdc.js';
 import {
   sendCommand,
   requestRemoteStatus,
+  requestMdcControl,
   isDeviceOnline,
   registerDevice,
   unregisterDevice,
@@ -566,12 +567,27 @@ export async function deviceRoutes(app: FastifyInstance) {
       : {};
     const publishedTargetMap = await resolvePublishedTargetMap(list);
 
+    // Latest screenshot per device
+    const deviceIds = list.map((d) => d.id);
+    const screenshotRows = deviceIds.length > 0
+      ? await db
+          .select({ deviceId: deviceScreenshots.deviceId, id: deviceScreenshots.id })
+          .from(deviceScreenshots)
+          .where(inArray(deviceScreenshots.deviceId, deviceIds))
+          .orderBy(desc(deviceScreenshots.takenAt))
+      : [];
+    const latestScreenshotMap: Record<string, string> = {};
+    for (const row of screenshotRows) {
+      if (!latestScreenshotMap[row.deviceId]) latestScreenshotMap[row.deviceId] = row.id;
+    }
+
     // Overlay live WS status
     const enriched = list.map((d) => ({
       ...d,
       assignedTags: assignedTagMap[d.id] ?? [],
       publishedTarget: publishedTargetMap[d.id] ?? null,
       status: resolveReportedDeviceStatus(d),
+      latestScreenshotId: latestScreenshotMap[d.id] ?? null,
     }));
 
     return reply.send(enriched);
@@ -1432,6 +1448,29 @@ export async function deviceRoutes(app: FastifyInstance) {
     try {
       const status = await requestRemoteStatus(device.id, 10_000);
       return reply.send(status);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.status(504).send({ error: msg });
+    }
+  });
+
+  // ── POST /devices/:id/mdc-control ─ raw MDC command via WS relay ──────────
+  app.post('/:id/mdc-control', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { action?: string; [key: string]: unknown };
+    const action = body.action ?? '';
+    if (!action) return reply.status(400).send({ error: 'action is required' });
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    try {
+      const { action: _a, ...rest } = body;
+      const result = await requestMdcControl(device.id, action, rest, 10_000);
+      return reply.send(result);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       return reply.status(504).send({ error: msg });

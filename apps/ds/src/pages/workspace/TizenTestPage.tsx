@@ -1,35 +1,15 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  AlertTriangle,
   Bug,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ChevronUp,
-  Command,
-  Copy,
-  Download,
-  Home,
   Monitor,
-  Power,
-  PowerOff,
-  Maximize2,
-  Minimize2,
-  RefreshCw,
-  Send,
   TerminalSquare,
-  Trash2,
-  Tv2,
-  X,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useAuthStore } from '../../lib/auth.js';
 import {
   ActionButton,
-  Badge,
-  Callout,
   EmptyState,
   PageHeader,
   SectionCard,
@@ -37,148 +17,316 @@ import {
   SectionCardHeader,
 } from '../../components/UiPrimitives.js';
 
-type Workspace = {
-  id: string;
-  name: string;
-  slug: string;
+type Workspace = { id: string; name: string };
+type DeviceSummary = { id: string; name: string; status: string; modelName: string | null };
+type MdcResult = { ok: boolean; rawHex?: string; data?: number[]; error?: string } & Record<string, unknown>;
+
+const RESULT_LABELS: Record<string, string> = {
+  displayId: 'Display ID',
+  label: 'Label',
+  meaning: 'Meaning',
+  value: 'Value',
+  valueHex: 'Value (Hex)',
+  requestedValue: 'Requested Value',
+  requestedValueHex: 'Requested Value (Hex)',
+  subCommand: 'Sub-command',
+  powerState: 'Power',
+  volumePercent: 'Volume',
+  muteState: 'Mute',
+  inputSource: 'Input Source',
+  aspectMode: 'Aspect',
+  nTimeText: 'N Time',
+  fTimeText: 'F Time',
+  lampStatus: 'Lamp Status',
+  temperatureStatus: 'Temperature Status',
+  brightnessSensorStatus: 'Brightness Sensor',
+  syncStatus: 'Sync Status',
+  currentTemperatureC: 'Current Temperature',
+  fanStatus: 'Fan Status',
+  version: 'Software Version',
+};
+const ORIENTATION_LABELS: Record<number, string> = {
+  0: 'Landscape (0°)', 1: 'Portrait (270°)', 2: 'Portrait (180°)', 3: 'Portrait (90°)',
+};
+const POWER_STATE_LABELS: Record<number, string> = {
+  0: 'Off',
+  1: 'On',
+};
+const MUTE_LABELS: Record<number, string> = {
+  0: 'Unmuted',
+  1: 'Muted',
+  255: 'Not supported on this model',
+};
+const INPUT_LABELS: Record<number, string> = {
+  0x08: 'AV',
+  0x0C: 'Component',
+  0x14: 'PC',
+  0x18: 'DVI',
+  0x21: 'HDMI1',
+  0x23: 'HDMI2',
+  0x25: 'DisplayPort',
+  0x31: 'HDMI3',
+  0x33: 'HDMI4',
+};
+const ASPECT_LABELS: Record<number, string> = {
+  0x00: 'PC 16:9',
+  0x01: 'PC 4:3',
+  0x0B: 'Video 16:9',
+  0x0C: 'Video Zoom',
+  0x0D: 'Video Wide Zoom',
+  0x0E: 'Video 4:3',
+  0x1F: 'Screen Fit',
+  0x20: 'Smart View 1',
+  0x21: 'Smart View 2',
+};
+const NETWORK_STANDBY_LABELS: Record<number, string> = {
+  0: 'Off',
+  1: 'On',
+};
+const POWER_BUTTON_LABELS: Record<number, string> = {
+  0: 'Power-On Only',
+  1: 'Power-On/Off Toggle',
+};
+const MDC_CONNECTION_LABELS: Record<number, string> = {
+  0: 'RS232C',
+  1: 'RJ45',
+};
+const SOURCE_BYTE_TO_LABEL: Record<number, string> = {
+  0x08: 'AV',
+  0x0C: 'Component',
+  0x14: 'PC',
+  0x18: 'DVI',
+  0x21: 'HDMI1',
+  0x23: 'HDMI2',
+  0x25: 'DisplayPort',
+  0x31: 'HDMI3',
+  0x33: 'HDMI4',
+  0x62: 'Internal/USB',
+};
+const REPEAT_LABELS: Record<number, string> = {
+  0: 'Once', 1: 'Every Day', 2: 'Mon–Fri', 3: 'Mon–Sat', 4: 'Sat–Sun', 5: 'Manual Weekday',
 };
 
-type DeviceSummary = {
-  id: string;
-  name: string;
-  status: 'unclaimed' | 'online' | 'offline' | 'error';
-  workspaceId: string | null;
-  modelName: string | null;
-  ipAddress: string | null;
-  updatedAt: string;
-};
-
-type DeviceHeartbeat = {
-  playerVersion: string | null;
-  firmwareVersion: string | null;
-  cpuLoad: number | null;
-  storageFreeBytes: number | null;
-  createdAt: string;
-  currentContentName: string | null;
-  nextContentName: string | null;
-};
-
-type DeviceDetail = {
-  id: string;
-  name: string;
-  status: 'unclaimed' | 'online' | 'offline' | 'error';
-  lastSeen: string | null;
-  playerVersion: string | null;
-  firmwareVersion: string | null;
-  resolution: string | null;
-  ipAddress: string | null;
-  timezone: string;
-  duid: string | null;
-  modelName: string | null;
-  modelCode: string | null;
-  serialNumber: string | null;
-  macAddress: string | null;
-  connectionType: 'wifi' | 'ethernet' | null;
-  wifiSsid: string | null;
-  wifiStrength: number | null;
-  powerState: 'on' | 'off' | 'standby';
-  irLock: boolean;
-  buttonLock: boolean;
-  screenshotIntervalMin: number | null;
-  ntpServer: string | null;
-  ntpTimezone: string | null;
-};
-
-type DeviceLogEntry = {
-  id: string;
-  level: 'debug' | 'info' | 'warn' | 'error';
-  line: string;
-  createdAt: string;
-};
-
-type DeviceDetailResponse = {
-  device: DeviceDetail;
-  latestHeartbeat: DeviceHeartbeat | null;
-  screenshots: Array<{ id: string; takenAt: string; trigger: string | null }>;
-};
-
-type DeviceLogsResponse = {
-  deviceId: string;
-  online: boolean;
-  logs: DeviceLogEntry[];
-};
-
-type ObservedSystemInfo = {
-  duid?: string | null;
-  macAddress?: string | null;
-  resolution?: string | null;
-  ipAddress?: string | null;
-  networkType?: string | null;
-  wifiSsid?: string | null;
-  gateway?: string | null;
-  timezone?: string | null;
-  firmwareVersion?: string | null;
-  realModel?: string | null;
-  panelType?: string | null;
-  tvName?: string | null;
-};
-
-const QUICK_COMMANDS = [
-  { key: 'refresh_schedule', label: 'Refresh Schedule' },
-  { key: 'dump_logs', label: 'Dump Logs' },
-  { key: 'screenshot', label: 'Screenshot' },
-  { key: 'clear_cache', label: 'Clear Cache' },
-  { key: 'reboot', label: 'Reboot' },
-  { key: 'relaunch_app', label: 'Relaunch App' },
-  { key: 'power_on', label: 'Power On' },
-  { key: 'power_off', label: 'Power Off' },
-] as const;
-
-function formatTimestamp(value: string | null | undefined) {
-  if (!value) return '—';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+function decodeAscii(data: number[]) {
+  return data
+    .filter((value) => value >= 0x20 && value <= 0x7e)
+    .map((value) => String.fromCharCode(value))
+    .join('')
+    .trim();
 }
 
-function buildLogText(logs: DeviceLogEntry[]) {
-  return logs
-    .map((entry) => `[${new Date(entry.createdAt).toLocaleTimeString()}] [${entry.level.toUpperCase()}] ${entry.line}`)
-    .join('\n');
+function statusFlagLabel(value: number | undefined, okText = 'Normal', badText = 'Error') {
+  if (value == null) return 'Unknown';
+  return value === 0 ? okText : badText;
 }
 
-function parseObservedSystemInfo(logs: DeviceLogEntry[]): ObservedSystemInfo | null {
-  for (let index = logs.length - 1; index >= 0; index -= 1) {
-    const line = logs[index]?.line;
-    if (!line || !line.includes('System info collected:')) continue;
+function byteHex(value: number | undefined) {
+  if (value == null || Number.isNaN(value)) return 'Unknown';
+  return `0x${value.toString(16).toUpperCase().padStart(2, '0')}`;
+}
 
-    const jsonStart = line.indexOf('{');
-    if (jsonStart < 0) continue;
+function extractDisplayId(result: MdcResult) {
+  if (typeof result.displayId === 'number') return result.displayId;
+  const rawHex = typeof result.rawHex === 'string' ? result.rawHex : '';
+  const parts = rawHex.split(/\s+/).filter(Boolean);
+  if (parts.length < 3) return undefined;
+  const value = Number.parseInt(parts[2] ?? '', 16);
+  return Number.isNaN(value) ? undefined : value;
+}
 
-    try {
-      return JSON.parse(line.slice(jsonStart)) as ObservedSystemInfo;
-    } catch {
-      continue;
+function withDisplayId(result: MdcResult) {
+  const displayId = extractDisplayId(result);
+  if (displayId == null) return result;
+  return {
+    ...result,
+    displayId: `${displayId} (${byteHex(displayId)})`,
+  };
+}
+
+function decodeMdcResult(action: string, result: MdcResult, payload: Record<string, unknown> = {}): MdcResult {
+  const data = Array.isArray(result.data) ? result.data : [];
+  const resultWithId = withDisplayId(result);
+  if (!result.ok) return resultWithId;
+
+  switch (action) {
+    case 'status_get': {
+      if (data.length < 7) return resultWithId;
+      const power = data[0] ?? -1;
+      const volume = data[1] ?? -1;
+      const mute = data[2] ?? -1;
+      const input = data[3] ?? -1;
+      const aspect = data[4] ?? -1;
+      const nTime = data[5] ?? -1;
+      const fTime = data[6] ?? -1;
+      return {
+        ...resultWithId,
+        label: 'Status Control',
+        powerState: POWER_STATE_LABELS[power] ?? `Unknown (${byteHex(power)})`,
+        volumePercent: volume >= 0 ? `${volume}%` : 'Unknown',
+        muteState: MUTE_LABELS[mute] ?? `Unknown (${byteHex(mute)})`,
+        inputSource: INPUT_LABELS[input] ?? `Unknown (${byteHex(input)})`,
+        aspectMode: ASPECT_LABELS[aspect] ?? `Unknown (${byteHex(aspect)})`,
+        nTimeText: nTime === 0 ? '0 (unused on newer timer models)' : `${nTime}`,
+        fTimeText: fTime === 0 ? '0 (unused on newer timer models)' : `${fTime}`,
+        meaning: `Power ${POWER_STATE_LABELS[power] ?? byteHex(power)}, volume ${volume}%, ${MUTE_LABELS[mute]?.toLowerCase() ?? 'unknown mute state'}, input ${INPUT_LABELS[input] ?? byteHex(input)}.`,
+      };
     }
+    case 'network_standby_set': {
+      const value = Number(payload.value ?? -1);
+      return {
+        ...resultWithId,
+        requestedValue: value,
+        requestedValueHex: value >= 0 ? `0x${value.toString(16).toUpperCase().padStart(2, '0')}` : 'Unknown',
+        meaning: NETWORK_STANDBY_LABELS[value] ? `Set network standby to ${NETWORK_STANDBY_LABELS[value]}.` : 'Network standby updated.',
+      };
+    }
+    case 'network_standby_get': {
+      if (data.length === 0) return resultWithId;
+      const value = data[0] ?? -1;
+      return {
+        ...resultWithId,
+        value,
+        valueHex: `0x${value.toString(16).toUpperCase().padStart(2, '0')}`,
+        label: 'Network Standby',
+        meaning: value === 1
+          ? 'On - network standby is enabled.'
+          : value === 0
+            ? 'Off - network standby is disabled.'
+            : 'Unknown network standby value.',
+      };
+    }
+    case 'menu_orientation_set':
+    case 'src_orientation_set': {
+      const value = Number(payload.value ?? -1);
+      return {
+        ...resultWithId,
+        requestedValue: value,
+        requestedValueHex: value >= 0 ? `0x${value.toString(16).toUpperCase().padStart(2, '0')}` : 'Unknown',
+        meaning: `Set ${action === 'menu_orientation_set' ? 'menu' : 'source content'} orientation to ${ORIENTATION_LABELS[value] ?? 'Unknown'}.`,
+      };
+    }
+    case 'menu_orientation_get':
+    case 'src_orientation_get': {
+      if (data.length < 2) return resultWithId;
+      const value = data[1] ?? -1;
+      return {
+        ...resultWithId,
+        subCommand: data[0] != null ? `0x${data[0].toString(16).toUpperCase().padStart(2, '0')}` : undefined,
+        value,
+        valueHex: `0x${value.toString(16).toUpperCase().padStart(2, '0')}`,
+        label: action === 'menu_orientation_get' ? 'Menu Orientation' : 'Source Content Orientation',
+        meaning: ORIENTATION_LABELS[value] ?? 'Unknown orientation',
+      };
+    }
+    case 'power_button_set': {
+      const value = Number(payload.value ?? -1);
+      return {
+        ...resultWithId,
+        requestedValue: value,
+        requestedValueHex: value >= 0 ? `0x${value.toString(16).toUpperCase().padStart(2, '0')}` : 'Unknown',
+        meaning: `Set power button mode to ${POWER_BUTTON_LABELS[value] ?? 'Unknown'}.`,
+      };
+    }
+    case 'power_button_get': {
+      if (data.length < 2) return resultWithId;
+      const value = data[1] ?? -1;
+      return {
+        ...resultWithId,
+        subCommand: data[0] != null ? `0x${data[0].toString(16).toUpperCase().padStart(2, '0')}` : undefined,
+        value,
+        valueHex: `0x${value.toString(16).toUpperCase().padStart(2, '0')}`,
+        label: 'Power Button Mode',
+        meaning: POWER_BUTTON_LABELS[value] ?? 'Unknown power button mode',
+      };
+    }
+    case 'display_status_get': {
+      if (data.length < 6) return resultWithId;
+      return {
+        ...resultWithId,
+        lampStatus: statusFlagLabel(data[0]),
+        temperatureStatus: statusFlagLabel(data[1]),
+        brightnessSensorStatus: statusFlagLabel(data[2]),
+        syncStatus: statusFlagLabel(data[3]),
+        currentTemperatureC: data[4],
+        fanStatus: statusFlagLabel(data[5]),
+        meaning: data.slice(0, 4).every((value) => value === 0) && data[5] === 0
+          ? `Display status normal. Current temperature is ${data[4]}°C.`
+          : 'One or more display status flags report an error.',
+      };
+    }
+    case 'mdc_conn_type_get': {
+      if (data.length === 0) return resultWithId;
+      const value = data[0] ?? -1;
+      return {
+        ...resultWithId,
+        value,
+        valueHex: `0x${value.toString(16).toUpperCase().padStart(2, '0')}`,
+        label: 'MDC Connection Type',
+        meaning: MDC_CONNECTION_LABELS[value] ?? 'Unknown connection type',
+      };
+    }
+    case 'mdc_conn_type_set': {
+      const value = Number(payload.value ?? -1);
+      return {
+        ...resultWithId,
+        requestedValue: value,
+        requestedValueHex: value >= 0 ? `0x${value.toString(16).toUpperCase().padStart(2, '0')}` : 'Unknown',
+        meaning: `Set MDC connection type to ${MDC_CONNECTION_LABELS[value] ?? 'Unknown'}.`,
+      };
+    }
+    case 'sw_version_get':
+      return {
+        ...resultWithId,
+        version: decodeAscii(data),
+        meaning: decodeAscii(data) ? `Software version is ${decodeAscii(data)}.` : 'Software version returned non-ASCII bytes only.',
+      };
+    default:
+      return resultWithId;
   }
-
-  return null;
 }
 
-function preferObservedValue(deviceValue: string | null | undefined, observedValue: string | null | undefined) {
-  if (deviceValue && deviceValue !== 'UTC') return deviceValue;
-  if (observedValue) return observedValue;
-  return deviceValue ?? null;
+function ResultPanel({ result }: { result: MdcResult | null | undefined }) {
+  if (!result) return null;
+  const skip = new Set(['ok', 'rawHex', 'data', 'error']);
+  const parsed = Object.entries(result).filter(([k]) => !skip.has(k));
+  return (
+    <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-xs space-y-1.5">
+      <div className={`font-semibold ${result.ok ? 'text-green-500' : 'text-red-400'}`}>
+        {result.ok ? '✓ OK' : '✗ Error'}
+      </div>
+      {result.error ? <div className="text-red-400">{String(result.error)}</div> : null}
+      {parsed.length > 0 ? (
+        <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-0.5">
+          {parsed.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="text-[var(--text-muted)]">{RESULT_LABELS[k] ?? k}</dt>
+              <dd className="font-mono text-[var(--text)]">{String(v)}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {result.rawHex ? (
+        <div className="font-mono text-[10px] text-[var(--text-muted)] break-all pt-1 border-t border-[var(--border)]">
+          Raw ACK: {String(result.rawHex)}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export default function TizenTestPage() {
   const { user, bootstrapped } = useAuthStore();
-  const queryClient = useQueryClient();
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
-  const [ntpServer, setNtpServer] = useState('pool.ntp.org');
-  const [ntpTimezone, setNtpTimezone] = useState('UTC');
-  const [screenshotInterval, setScreenshotInterval] = useState('5');
-  const [formSeedDeviceId, setFormSeedDeviceId] = useState('');
+  const [pending, setPending] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, MdcResult | null>>({});
+
+  // Per-section set values
+  const [nsValue, setNsValue] = useState(0);             // network standby: 0=off 1=on
+  const [menuOrientValue, setMenuOrientValue] = useState(0);
+  const [srcOrientValue, setSrcOrientValue] = useState(0);
+  const [pwrBtnValue, setPwrBtnValue] = useState(0);     // 0=power-on-only 1=toggle
+  const [mdcConnValue, setMdcConnValue] = useState(1);   // 0=RS232C 1=RJ45
 
   const { data: workspaces = [] } = useQuery<Workspace[]>({
     queryKey: ['workspaces'],
@@ -188,183 +336,56 @@ export default function TizenTestPage() {
   });
 
   const { data: devices = [] } = useQuery<DeviceSummary[]>({
-    queryKey: ['tizen-test-devices', selectedWorkspaceId],
+    queryKey: ['mdc-test-devices', selectedWorkspaceId],
     queryFn: () => api.get(`/devices?workspaceId=${selectedWorkspaceId}`),
     enabled: bootstrapped && !!user && !!selectedWorkspaceId,
-    refetchInterval: (query) => (query.state.status === 'error' ? false : 15_000),
     retry: false,
   });
 
-  const { data: detail } = useQuery<DeviceDetailResponse>({
-    queryKey: ['tizen-test-detail', selectedDeviceId],
-    queryFn: () => api.get(`/devices/${selectedDeviceId}`),
-    enabled: bootstrapped && !!user && !!selectedDeviceId,
-    refetchInterval: (query) => (query.state.status === 'error' ? false : 5_000),
-    retry: false,
-  });
+  const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId) ?? null;
 
-  const { data: logData } = useQuery<DeviceLogsResponse>({
-    queryKey: ['tizen-test-logs', selectedDeviceId],
-    queryFn: () => api.get(`/devices/${selectedDeviceId}/logs?limit=1000`),
-    enabled: bootstrapped && !!user && !!selectedDeviceId,
-    refetchInterval: (query) => (query.state.status === 'error' ? false : 2_000),
-    retry: false,
-  });
-
-  const sendCommand = useMutation({
-    mutationFn: (body: unknown) => api.post(`/devices/${selectedDeviceId}/command`, body),
-    onSuccess: () => {
-      toast.success('Command sent');
-      void queryClient.invalidateQueries({ queryKey: ['tizen-test-detail', selectedDeviceId] });
-      void queryClient.invalidateQueries({ queryKey: ['tizen-test-logs', selectedDeviceId] });
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : 'Command failed'),
-  });
-
-  const clearLogs = useMutation({
-    mutationFn: () => api.delete(`/devices/${selectedDeviceId}/logs`),
-    onSuccess: () => {
-      toast.success('Logs cleared');
-      void queryClient.invalidateQueries({ queryKey: ['tizen-test-logs', selectedDeviceId] });
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to clear logs'),
-  });
-
-  const deleteScreenshot = useMutation({
-    mutationFn: (screenshotId: string) => api.delete(`/devices/${selectedDeviceId}/screenshots/${screenshotId}`),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['tizen-test-detail', selectedDeviceId] });
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to delete screenshot'),
-  });
-
-  const [liveViewOpen, setLiveViewOpen] = useState(false);
-
-  const device = detail?.device ?? null;
-  const latestHeartbeat = detail?.latestHeartbeat ?? null;
-  const logs = logData?.logs ?? [];
-  const logText = useMemo(() => buildLogText(logs), [logs]);
-  const observedSystemInfo = useMemo(() => parseObservedSystemInfo(logs), [logs]);
-  const isOnline = device?.status === 'online';
-
-  const resolvedTimezone = useMemo(
-    () => preferObservedValue(device?.timezone, observedSystemInfo?.timezone),
-    [device?.timezone, observedSystemInfo?.timezone],
-  );
-  const resolvedResolution = useMemo(
-    () => device?.resolution || observedSystemInfo?.resolution || null,
-    [device?.resolution, observedSystemInfo?.resolution],
-  );
-  const resolvedWifiSsid = useMemo(
-    () => device?.wifiSsid || observedSystemInfo?.wifiSsid || null,
-    [device?.wifiSsid, observedSystemInfo?.wifiSsid],
-  );
-  const resolvedIpAddress = useMemo(
-    () => device?.ipAddress || observedSystemInfo?.ipAddress || null,
-    [device?.ipAddress, observedSystemInfo?.ipAddress],
-  );
-  const resolvedMacAddress = useMemo(
-    () => device?.macAddress || observedSystemInfo?.macAddress || null,
-    [device?.macAddress, observedSystemInfo?.macAddress],
-  );
-
-  const observedOnlyFields = useMemo(() => {
-    if (!device || !observedSystemInfo) return [] as string[];
-
-    const items: string[] = [];
-    if ((!device.timezone || device.timezone === 'UTC') && observedSystemInfo.timezone) items.push(`timezone=${observedSystemInfo.timezone}`);
-    if (!device.resolution && observedSystemInfo.resolution) items.push(`resolution=${observedSystemInfo.resolution}`);
-    if (!device.wifiSsid && observedSystemInfo.wifiSsid) items.push(`ssid=${observedSystemInfo.wifiSsid}`);
-    if (!device.ipAddress && observedSystemInfo.ipAddress) items.push(`ip=${observedSystemInfo.ipAddress}`);
-    if (!device.macAddress && observedSystemInfo.macAddress) items.push(`mac=${observedSystemInfo.macAddress}`);
-    return items;
-  }, [device, observedSystemInfo]);
-
-  useEffect(() => {
-    if (!device?.id) return;
-    if (formSeedDeviceId === device.id) return;
-
-    setNtpServer(device.ntpServer ?? 'pool.ntp.org');
-    setNtpTimezone(preferObservedValue(device.timezone, observedSystemInfo?.timezone) ?? device.ntpTimezone ?? 'UTC');
-    setScreenshotInterval(String(device.screenshotIntervalMin ?? 5));
-    setFormSeedDeviceId(device.id);
-  }, [device?.id, device?.ntpServer, device?.ntpTimezone, device?.timezone, device?.screenshotIntervalMin, observedSystemInfo?.timezone, formSeedDeviceId]);
-
-  const missingFields = useMemo(() => {
-    if (!device) return [] as string[];
-    const items: string[] = [];
-    if (!resolvedTimezone) items.push('timezone');
-    if (!resolvedResolution) items.push('resolution');
-    if (!resolvedWifiSsid && device.connectionType === 'wifi') items.push('wifi ssid');
-    if (!resolvedMacAddress) items.push('mac address');
-    if (!resolvedIpAddress) items.push('ip address');
-    return items;
-  }, [device, resolvedTimezone, resolvedResolution, resolvedWifiSsid, resolvedMacAddress, resolvedIpAddress]);
-
-  const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null;
-
-  function handleWorkspaceChange(value: string) {
-    setSelectedWorkspaceId(value);
-    setSelectedDeviceId('');
+  async function runMdc(key: string, action: string, payload: Record<string, unknown> = {}) {
+    if (!selectedDeviceId) return;
+    setPending(key);
+    try {
+      const result = await api.post(`/devices/${selectedDeviceId}/mdc-control`, { action, ...payload }) as MdcResult;
+      setResults((prev) => ({ ...prev, [key]: decodeMdcResult(action, result, payload) }));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setResults((prev) => ({ ...prev, [key]: { ok: false, error: msg } }));
+      toast.error(msg);
+    } finally {
+      setPending(null);
+    }
   }
 
-  async function copyLogs() {
-    if (!logText) {
-      toast.error('No logs to copy');
-      return;
-    }
-
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(logText);
-      toast.success('Logs copied');
-      return;
-    }
-
-    toast.error('Clipboard API not available in this browser');
-  }
-
-  function downloadLogs() {
-    if (!logText) {
-      toast.error('No logs to download');
-      return;
-    }
-
-    const blob = new Blob([logText], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${device?.name ?? 'tizen-device'}-logs.txt`;
-    link.click();
-    URL.revokeObjectURL(url);
-  }
+  const busy = (key: string) => pending === key;
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-6">
+    <div className="p-8 max-w-5xl mx-auto space-y-6">
       <PageHeader
         icon={<Bug className="w-6 h-6" />}
-        title="Tizen Test"
-        subtitle="Remote bug-fixing workspace for a paired Tizen player. Inspect device fields, send commands, and capture console logs without using the TV UI."
+        title="MDC Test"
+        subtitle="Send MDC commands to paired Samsung displays for testing and verification."
         trailing={
           <div className="flex flex-wrap gap-3">
             <select
               value={selectedWorkspaceId}
-              onChange={(event) => handleWorkspaceChange(event.target.value)}
-              className="rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--text)] min-w-56"
+              onChange={(e) => { setSelectedWorkspaceId(e.target.value); setSelectedDeviceId(''); }}
+              className="rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--text)] min-w-48"
             >
               <option value="">Select workspace</option>
-              {workspaces.map((workspace) => (
-                <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
-              ))}
+              {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
             <select
               value={selectedDeviceId}
-              onChange={(event) => setSelectedDeviceId(event.target.value)}
+              onChange={(e) => setSelectedDeviceId(e.target.value)}
               disabled={!selectedWorkspaceId}
-              className="rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--text)] min-w-72"
+              className="rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--text)] min-w-64"
             >
               <option value="">Select device</option>
-              {devices.map((item) => (
-                <option key={item.id} value={item.id}>{item.name}{item.modelName ? ` · ${item.modelName}` : ''}</option>
+              {devices.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}{d.modelName ? ` · ${d.modelName}` : ''}</option>
               ))}
             </select>
           </div>
@@ -372,736 +393,296 @@ export default function TizenTestPage() {
       />
 
       {!selectedWorkspaceId ? (
-        <EmptyState
-          icon={<Monitor className="w-6 h-6" />}
-          title="Select a workspace"
-          description="Choose the workspace that contains the Samsung player you want to debug."
-        />
-      ) : null}
-
-      {selectedWorkspaceId && !selectedDeviceId ? (
+        <EmptyState icon={<Monitor className="w-6 h-6" />} title="Select a workspace" description="Choose the workspace containing the Samsung display you want to test." />
+      ) : !selectedDeviceId ? (
         <EmptyState
           icon={<TerminalSquare className="w-6 h-6" />}
           title={devices.length ? 'Select a device' : 'No devices found'}
-          description={devices.length ? `Workspace ${selectedWorkspace?.name ?? ''} has ${devices.length} device${devices.length === 1 ? '' : 's'}.` : 'This workspace does not have a paired device yet.'}
+          description={devices.length
+            ? `Workspace "${selectedWorkspace?.name ?? ''}" has ${devices.length} device${devices.length === 1 ? '' : 's'}.`
+            : 'This workspace has no paired devices yet.'}
         />
-      ) : null}
-
-      {device ? (
+      ) : (
         <>
-          {missingFields.length > 0 ? (
-            <Callout tone="warning" icon={<AlertTriangle className="w-4 h-4" />}>
-              Missing device fields detected: {missingFields.join(', ')}. Use Dump Logs and Refresh Schedule below to verify whether telemetry is reaching the backend.
-            </Callout>
-          ) : null}
+          <SectionCard>
+            <SectionCardHeader>
+              <div>
+                <h2 className="text-base font-semibold text-[var(--text)]">Status Control</h2>
+                <p className="text-sm text-[var(--text-muted)]">MDC 0x00 — power, volume, mute, input source, aspect, and legacy timer bytes from the panel.</p>
+              </div>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <ActionButton onClick={() => runMdc('status', 'status_get')} disabled={busy('status')}>
+                GET
+              </ActionButton>
+              {results['status'] ? (
+                <>
+                  <ResultPanel result={results['status'] as MdcResult} />
+                  {results['status'].ok ? (
+                    <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                      {(
+                        [
+                          ['Power', String(results['status']['powerState'] ?? '-')],
+                          ['Volume', String(results['status']['volumePercent'] ?? '-')],
+                          ['Mute', String(results['status']['muteState'] ?? '-')],
+                          ['Input', String(results['status']['inputSource'] ?? '-')],
+                          ['Aspect', String(results['status']['aspectMode'] ?? '-')],
+                          ['Display ID', String(results['status']['displayId'] ?? '-')],
+                        ] as [string, string][]
+                      ).map(([label, val]) => (
+                        <div key={label} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+                          <div className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">{label}</div>
+                          <div className="mt-1 font-semibold text-[var(--text)]">{val}</div>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : null}
+                </>
+              ) : null}
+            </SectionCardBody>
+          </SectionCard>
 
-          {observedOnlyFields.length > 0 ? (
-            <Callout tone="accent" icon={<Bug className="w-4 h-4" />}>
-              Device logs already contain values not fully reflected in persisted device state: {observedOnlyFields.join(', ')}.
-            </Callout>
-          ) : null}
-
-          <div className="grid gap-6 xl:grid-cols-[1.25fr,0.9fr]">
-            <SectionCard>
-              <SectionCardHeader>
-                <div>
-                  <h2 className="text-lg font-semibold text-[var(--text)]">Device State</h2>
-                  <p className="text-sm text-[var(--text-muted)]">Latest device columns and most recent heartbeat</p>
-                </div>
-              </SectionCardHeader>
-              <SectionCardBody className="space-y-5">
-                <div className="flex flex-wrap items-center gap-3">
-                  <Badge tone={isOnline ? 'success' : 'neutral'}>{device.status.toUpperCase()}</Badge>
-                  <Badge tone="accent">{device.connectionType ? device.connectionType.toUpperCase() : 'NO LINK TYPE'}</Badge>
-                  <span className="text-sm text-[var(--text-muted)]">Last seen {formatTimestamp(device.lastSeen)}</span>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 text-sm">
-                  <InfoItem label="Device Name" value={device.name} />
-                  <InfoItem label="Model" value={device.modelName ?? device.modelCode ?? observedSystemInfo?.realModel} />
-                  <InfoItem label="DUID" value={device.duid} mono />
-                  <InfoItem label="IP Address" value={resolvedIpAddress} mono />
-                  <InfoItem label="MAC Address" value={resolvedMacAddress} mono />
-                  <InfoItem label="SSID" value={resolvedWifiSsid} mono />
-                  <InfoItem label="Timezone" value={resolvedTimezone} mono />
-                  <InfoItem label="Resolution" value={resolvedResolution} mono />
-                  <InfoItem label="Player Version" value={device.playerVersion ?? latestHeartbeat?.playerVersion} mono />
-                  <InfoItem label="Firmware" value={device.firmwareVersion ?? latestHeartbeat?.firmwareVersion ?? observedSystemInfo?.firmwareVersion} mono />
-                  <InfoItem label="Heartbeat CPU" value={latestHeartbeat?.cpuLoad != null ? `${latestHeartbeat.cpuLoad.toFixed(1)}%` : '—'} />
-                  <InfoItem label="Heartbeat Storage Free" value={latestHeartbeat?.storageFreeBytes != null ? `${Math.round(latestHeartbeat.storageFreeBytes / 1048576)} MB` : '—'} />
-                </div>
-
-                {observedSystemInfo ? (
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 text-sm border-t border-[var(--border)] pt-5">
-                    <InfoItem label="Observed TV Name" value={observedSystemInfo.tvName} />
-                    <InfoItem label="Observed Panel Type" value={observedSystemInfo.panelType} />
-                    <InfoItem label="Observed Network" value={observedSystemInfo.networkType} />
-                    <InfoItem label="Observed Gateway" value={observedSystemInfo.gateway} mono />
-                    <InfoItem label="Observed Real Model" value={observedSystemInfo.realModel} mono />
-                    <InfoItem label="Observed From Logs" value={logs.length ? formatTimestamp(logs[logs.length - 1]?.createdAt) : '—'} />
-                  </div>
-                ) : null}
-              </SectionCardBody>
-            </SectionCard>
-
-            <SectionCard>
-              <SectionCardHeader>
-                <div>
-                  <h2 className="text-lg font-semibold text-[var(--text)]">Command Test</h2>
-                  <p className="text-sm text-[var(--text-muted)]">Send commands directly to the player</p>
-                </div>
-              </SectionCardHeader>
-              <SectionCardBody className="space-y-5">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {QUICK_COMMANDS.map((command) => (
-                    <ActionButton
-                      key={command.key}
-                      tone={command.key === 'dump_logs' ? 'warning' : command.key === 'power_off' ? 'danger' : command.key === 'power_on' ? 'success' : 'default'}
-                      disabled={!isOnline || sendCommand.isPending}
-                      onClick={() => sendCommand.mutate({ command: command.key })}
-                    >
-                      <Send className="w-4 h-4" /> {command.label}
-                    </ActionButton>
-                  ))}
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-muted)]">NTP Server</span>
-                    <input value={ntpServer} onChange={(event) => setNtpServer(event.target.value)} className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]" />
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-muted)]">Timezone</span>
-                    <input value={ntpTimezone} onChange={(event) => setNtpTimezone(event.target.value)} className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]" />
-                  </label>
-                </div>
-                <div className="text-xs text-[var(--text-muted)]">
-                  Detected device timezone: <span className="font-mono text-[var(--text)]">{resolvedTimezone ?? '—'}</span>
-                </div>
-                <ActionButton
-                  tone="primary"
-                  disabled={!isOnline || sendCommand.isPending || !ntpServer || !ntpTimezone}
-                  onClick={() => sendCommand.mutate({ command: 'set_ntp', payload: { server: ntpServer, timezone: ntpTimezone } })}
-                >
-                  <Command className="w-4 h-4" /> Send NTP Settings
+          {/* ── Network Standby ────────────────────────────────────────────── */}
+          <SectionCard>
+            <SectionCardHeader>
+              <div>
+                <h2 className="text-base font-semibold text-[var(--text)]">Network Standby</h2>
+                <p className="text-sm text-[var(--text-muted)]">MDC 0xB5 — control standby over network (on = display keeps LAN alive in standby)</p>
+              </div>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <div className="flex flex-wrap gap-3 items-center">
+                <ActionButton onClick={() => runMdc('ns', 'network_standby_get')} disabled={busy('ns')}>
+                  GET
                 </ActionButton>
-
-                <div className="grid gap-3 md:grid-cols-[1fr,auto] md:items-end">
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-muted)]">Screenshot Interval Minutes</span>
-                    <input value={screenshotInterval} onChange={(event) => setScreenshotInterval(event.target.value)} className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]" />
-                  </label>
-                  <ActionButton
-                    disabled={!isOnline || sendCommand.isPending || !Number.isFinite(Number(screenshotInterval)) || Number(screenshotInterval) < 1}
-                    onClick={() => sendCommand.mutate({ command: 'set_screenshot_interval', payload: { minutes: Number(screenshotInterval) } })}
-                  >
-                    <Command className="w-4 h-4" /> Set Interval
+                <div className="flex items-center gap-2">
+                  <select value={nsValue} onChange={(e) => setNsValue(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
+                    <option value={0}>Off (0x00)</option>
+                    <option value={1}>On (0x01)</option>
+                  </select>
+                  <ActionButton tone="primary" onClick={() => runMdc('ns', 'network_standby_set', { value: nsValue })} disabled={busy('ns')}>
+                    SET
                   </ActionButton>
                 </div>
-              </SectionCardBody>
-            </SectionCard>
-          </div>
+              </div>
+              {results['ns'] ? (
+                <ResultPanel result={results['ns'] as MdcResult & { value?: number }} />
+              ) : null}
+              {results['ns']?.ok && typeof results['ns']?.['value'] === 'number' ? (
+                <p className="text-sm text-[var(--text-muted)]">
+                  Current: <span className="font-semibold text-[var(--text)]">{results['ns']['value'] === 1 ? 'On' : 'Off'}</span>
+                </p>
+              ) : null}
+            </SectionCardBody>
+          </SectionCard>
 
+          {/* ── Menu Orientation ───────────────────────────────────────────── */}
           <SectionCard>
             <SectionCardHeader>
               <div>
-                <h2 className="text-lg font-semibold text-[var(--text)]">Screenshots</h2>
-                <p className="text-sm text-[var(--text-muted)]">Captured screenshots from the device. Use the Screenshot button above to capture.</p>
-              </div>
-              <div className="flex gap-2">
-                <ActionButton tone="primary" disabled={!isOnline} onClick={() => setLiveViewOpen(true)}>
-                  <Tv2 className="w-4 h-4" /> Live View
-                </ActionButton>
+                <h2 className="text-base font-semibold text-[var(--text)]">Menu Orientation</h2>
+                <p className="text-sm text-[var(--text-muted)]">MDC 0xC8 sub 0x81 — OSD/menu rotation angle</p>
               </div>
             </SectionCardHeader>
             <SectionCardBody className="space-y-4">
-              {detail?.screenshots && detail.screenshots.length > 0 ? (
-                <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-                  {detail.screenshots.map((shot) => (
-                    <div key={shot.id} className="group relative rounded-xl border border-[var(--border)] overflow-hidden bg-[var(--surface)]">
-                      <a href={`/api/devices/${selectedDeviceId}/screenshots/${shot.id}`} target="_blank" rel="noreferrer">
-                        <img
-                          src={`/api/devices/${selectedDeviceId}/screenshots/${shot.id}`}
-                          alt={`Screenshot ${shot.takenAt}`}
-                          className="w-full object-cover aspect-video bg-black"
-                        />
-                      </a>
-                      <button
-                        onClick={() => deleteScreenshot.mutate(shot.id)}
-                        className="absolute top-2 right-2 rounded-lg bg-black/60 p-1.5 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
-                        title="Delete screenshot"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                      <div className="px-3 py-2 text-xs text-[var(--text-muted)]">
-                        <span>{formatTimestamp(shot.takenAt)}</span>
-                        {shot.trigger ? <span className="ml-2 opacity-60">{shot.trigger}</span> : null}
-                      </div>
-                    </div>
-                  ))}
+              <div className="flex flex-wrap gap-3 items-center">
+                <ActionButton onClick={() => runMdc('menuOrient', 'menu_orientation_get')} disabled={busy('menuOrient')}>
+                  GET
+                </ActionButton>
+                <div className="flex items-center gap-2">
+                  <select value={menuOrientValue} onChange={(e) => setMenuOrientValue(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
+                    {Object.entries(ORIENTATION_LABELS).map(([v, label]) => (
+                      <option key={v} value={v}>{label} (0x0{v})</option>
+                    ))}
+                  </select>
+                  <ActionButton tone="primary" onClick={() => runMdc('menuOrient', 'menu_orientation_set', { value: menuOrientValue })} disabled={busy('menuOrient')}>
+                    SET
+                  </ActionButton>
                 </div>
-              ) : (
-                <p className="text-sm text-[var(--text-muted)]">No screenshots yet. Send the Screenshot command to capture one.</p>
-              )}
+              </div>
+              {results['menuOrient'] ? (
+                <ResultPanel result={results['menuOrient'] as MdcResult} />
+              ) : null}
+              {results['menuOrient']?.ok && typeof results['menuOrient']?.['value'] === 'number' ? (
+                <p className="text-sm text-[var(--text-muted)]">
+                  Current: <span className="font-semibold text-[var(--text)]">{ORIENTATION_LABELS[results['menuOrient']['value'] as number] ?? `0x${(results['menuOrient']['value'] as number).toString(16)}`}</span>
+                </p>
+              ) : null}
             </SectionCardBody>
           </SectionCard>
 
-          {liveViewOpen ? (
-            <LiveViewOverlay
-              deviceId={selectedDeviceId}
-              isOnline={isOnline}
-              onClose={() => setLiveViewOpen(false)}
-            />
-          ) : null}
-
+          {/* ── Source Content Orientation ──────────────────────────────────── */}
           <SectionCard>
             <SectionCardHeader>
               <div>
-                <h2 className="text-lg font-semibold text-[var(--text)]">Remote Console Logs</h2>
-                <p className="text-sm text-[var(--text-muted)]">Recent Tizen console output received from the device WebSocket</p>
+                <h2 className="text-base font-semibold text-[var(--text)]">Source Content Orientation</h2>
+                <p className="text-sm text-[var(--text-muted)]">MDC 0xC8 sub 0x82 — display content rotation angle</p>
               </div>
             </SectionCardHeader>
             <SectionCardBody className="space-y-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <Badge tone={logData?.online ? 'success' : 'neutral'}>{logData?.online ? 'LIVE WS' : 'DEVICE OFFLINE'}</Badge>
-                <Badge tone="accent">{logs.length} lines</Badge>
-                <span className="text-sm text-[var(--text-muted)]">Use Dump Logs to ask the device to flush the recent local ring buffer.</span>
+              <div className="flex flex-wrap gap-3 items-center">
+                <ActionButton onClick={() => runMdc('srcOrient', 'src_orientation_get')} disabled={busy('srcOrient')}>
+                  GET
+                </ActionButton>
+                <div className="flex items-center gap-2">
+                  <select value={srcOrientValue} onChange={(e) => setSrcOrientValue(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
+                    {Object.entries(ORIENTATION_LABELS).map(([v, label]) => (
+                      <option key={v} value={v}>{label} (0x0{v})</option>
+                    ))}
+                  </select>
+                  <ActionButton tone="primary" onClick={() => runMdc('srcOrient', 'src_orientation_set', { value: srcOrientValue })} disabled={busy('srcOrient')}>
+                    SET
+                  </ActionButton>
+                </div>
               </div>
-
-              <div className="flex flex-wrap gap-3">
-                <ActionButton onClick={() => void queryClient.invalidateQueries({ queryKey: ['tizen-test-logs', selectedDeviceId] })}>
-                  <RefreshCw className="w-4 h-4" /> Refresh
-                </ActionButton>
-                <ActionButton onClick={() => void copyLogs()} disabled={!logs.length}>
-                  <Copy className="w-4 h-4" /> Copy
-                </ActionButton>
-                <ActionButton onClick={downloadLogs} disabled={!logs.length}>
-                  <Download className="w-4 h-4" /> Download
-                </ActionButton>
-                <ActionButton tone="danger" onClick={() => clearLogs.mutate()} disabled={!logs.length || clearLogs.isPending}>
-                  <Trash2 className="w-4 h-4" /> Clear
-                </ActionButton>
-              </div>
-
-              <textarea
-                value={logText}
-                readOnly
-                className="min-h-[420px] w-full rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 font-mono text-xs leading-6 text-[var(--text)]"
-                placeholder="No remote logs received yet. If the device is online, send Dump Logs first."
-              />
+              {results['srcOrient'] ? (
+                <ResultPanel result={results['srcOrient'] as MdcResult} />
+              ) : null}
+              {results['srcOrient']?.ok && typeof results['srcOrient']?.['value'] === 'number' ? (
+                <p className="text-sm text-[var(--text-muted)]">
+                  Current: <span className="font-semibold text-[var(--text)]">{ORIENTATION_LABELS[results['srcOrient']['value'] as number] ?? `0x${(results['srcOrient']['value'] as number).toString(16)}`}</span>
+                </p>
+              ) : null}
             </SectionCardBody>
           </SectionCard>
+
+          {/* ── Power Button ───────────────────────────────────────────────── */}
+          <SectionCard>
+            <SectionCardHeader>
+              <div>
+                <h2 className="text-base font-semibold text-[var(--text)]">Power Button Mode</h2>
+                <p className="text-sm text-[var(--text-muted)]">MDC 0xCA sub 0x91 — 0x00 = power-on only; 0x01 = power-on/off toggle</p>
+              </div>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <div className="flex flex-wrap gap-3 items-center">
+                <ActionButton onClick={() => runMdc('pwrBtn', 'power_button_get')} disabled={busy('pwrBtn')}>
+                  GET
+                </ActionButton>
+                <div className="flex items-center gap-2">
+                  <select value={pwrBtnValue} onChange={(e) => setPwrBtnValue(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
+                    <option value={0}>Power-On Only (0x00)</option>
+                    <option value={1}>Power-On/Off Toggle (0x01)</option>
+                  </select>
+                  <ActionButton tone="primary" onClick={() => runMdc('pwrBtn', 'power_button_set', { value: pwrBtnValue })} disabled={busy('pwrBtn')}>
+                    SET
+                  </ActionButton>
+                </div>
+              </div>
+              {results['pwrBtn'] ? (
+                <ResultPanel result={results['pwrBtn'] as MdcResult} />
+              ) : null}
+              {results['pwrBtn']?.ok && typeof results['pwrBtn']?.['value'] === 'number' ? (
+                <p className="text-sm text-[var(--text-muted)]">
+                  Current: <span className="font-semibold text-[var(--text)]">{results['pwrBtn']['value'] === 1 ? 'Power-On/Off Toggle' : 'Power-On Only'}</span>
+                </p>
+              ) : null}
+            </SectionCardBody>
+          </SectionCard>
+
+          {/* ── Display Status ─────────────────────────────────────────────── */}
+          <SectionCard>
+            <SectionCardHeader>
+              <div>
+                <h2 className="text-base font-semibold text-[var(--text)]">Display Status</h2>
+                <p className="text-sm text-[var(--text-muted)]">MDC 0x0D — lamp error, temp error, brightness sensor, sync error, current temp (°C), fan error</p>
+              </div>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <ActionButton onClick={() => runMdc('dispStatus', 'display_status_get')} disabled={busy('dispStatus')}>
+                GET
+              </ActionButton>
+              {results['dispStatus'] ? (
+                <>
+                  <ResultPanel result={results['dispStatus'] as MdcResult} />
+                  {results['dispStatus'].ok && Array.isArray(results['dispStatus'].data) && results['dispStatus'].data.length >= 6 ? (
+                    <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                      {(
+                        [
+                          ['Lamp', String(results['dispStatus']['lampStatus'] ?? '-')],
+                          ['Temperature', String(results['dispStatus']['temperatureStatus'] ?? '-')],
+                          ['Brightness Sensor', String(results['dispStatus']['brightnessSensorStatus'] ?? '-')],
+                          ['Sync', String(results['dispStatus']['syncStatus'] ?? '-')],
+                          ['Current Temp', `${String(results['dispStatus']['currentTemperatureC'] ?? '-')}°C`],
+                          ['Fan', String(results['dispStatus']['fanStatus'] ?? '-')],
+                        ] as [string, string][]
+                      ).map(([label, val]) => (
+                        <div key={label} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+                          <div className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">{label}</div>
+                          <div className={`mt-1 font-semibold ${val === 'Error' ? 'text-red-400' : 'text-[var(--text)]'}`}>{val}</div>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : null}
+                </>
+              ) : null}
+            </SectionCardBody>
+          </SectionCard>
+
+          {/* ── SW Version ─────────────────────────────────────────────────── */}
+          <SectionCard>
+            <SectionCardHeader>
+              <div>
+                <h2 className="text-base font-semibold text-[var(--text)]">Software Version</h2>
+                <p className="text-sm text-[var(--text-muted)]">MDC 0x0E — read firmware/software version string from display</p>
+              </div>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <ActionButton onClick={() => runMdc('swVersion', 'sw_version_get')} disabled={busy('swVersion')}>
+                GET
+              </ActionButton>
+              {results['swVersion'] ? (
+                <>
+                  <ResultPanel result={results['swVersion'] as MdcResult} />
+                  {results['swVersion'].ok && results['swVersion']['version'] ? (
+                    <p className="text-sm text-[var(--text-muted)]">
+                      Version: <span className="font-mono font-semibold text-[var(--text)]">{String(results['swVersion']['version'])}</span>
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
+            </SectionCardBody>
+          </SectionCard>
+
+          {/* ── MDC Connection Type ────────────────────────────────────────── */}
+          <SectionCard>
+            <SectionCardHeader>
+              <div>
+                <h2 className="text-base font-semibold text-[var(--text)]">MDC Connection Type</h2>
+                <p className="text-sm text-[var(--text-muted)]">MDC 0x1D — 0x00 = RS232C serial; 0x01 = RJ45 Ethernet</p>
+              </div>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <div className="flex flex-wrap gap-3 items-center">
+                <ActionButton onClick={() => runMdc('mdcConn', 'mdc_conn_type_get')} disabled={busy('mdcConn')}>
+                  GET
+                </ActionButton>
+                <div className="flex items-center gap-2">
+                  <select value={mdcConnValue} onChange={(e) => setMdcConnValue(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
+                    <option value={0}>RS232C (0x00)</option>
+                    <option value={1}>RJ45 (0x01)</option>
+                  </select>
+                  <ActionButton tone="primary" onClick={() => runMdc('mdcConn', 'mdc_conn_type_set', { value: mdcConnValue })} disabled={busy('mdcConn')}>
+                    SET
+                  </ActionButton>
+                </div>
+              </div>
+              {results['mdcConn'] ? (
+                <ResultPanel result={results['mdcConn'] as MdcResult} />
+              ) : null}
+              {results['mdcConn']?.ok ? (
+                <p className="text-sm text-[var(--text-muted)]">
+                  Current: <span className="font-semibold text-[var(--text)]">{results['mdcConn']['value'] === 1 ? 'RJ45' : 'RS232C'}</span>{' '}
+                  {results['mdcConn']['displayId'] ? (
+                    <span>· Panel ID <span className="font-semibold text-[var(--text)]">{String(results['mdcConn']['displayId'])}</span></span>
+                  ) : null}
+                </p>
+              ) : null}
+            </SectionCardBody>
+          </SectionCard>
+
         </>
-      ) : null}
-    </div>
-  );
-}
-
-function InfoItem({ label, value, mono = false }: { label: string; value: string | number | null | undefined; mono?: boolean }) {
-  return (
-    <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
-      <div className="text-[11px] uppercase tracking-[0.12em] text-[var(--text-muted)]">{label}</div>
-      <div className={`mt-2 text-sm text-[var(--text)] ${mono ? 'font-mono break-all' : ''}`}>{value ?? '—'}</div>
-    </div>
-  );
-}
-
-function LiveViewOverlay({
-  deviceId,
-  isOnline,
-  onClose,
-}: {
-  deviceId: string;
-  isOnline: boolean;
-  onClose: () => void;
-}) {
-  type LiveStatus = 'idle' | 'buffering' | 'playing';
-
-  const [imgSrc, setImgSrc] = useState<string | null>(null);
-  const [status, setStatus] = useState<LiveStatus>('idle');
-  const [sseError, setSseError] = useState<string | null>(null);
-  const [intervalMs, setIntervalMs] = useState(1000);
-  const [waitingElapsed, setWaitingElapsed] = useState(0);
-  const [isStale, setIsStale] = useState(false);
-  const [measuredCadenceMs, setMeasuredCadenceMs] = useState(0);
-  const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
-  const [mdcStatusResponse, setMdcStatusResponse] = useState<{
-    ok: boolean;
-    nodeRunning?: boolean;
-    serial?: string;
-    rawHex?: string;
-    error?: string;
-    status?: {
-      displayId: number;
-      ack: 'A' | 'N';
-      rCmd: number;
-      power?: number;
-      volume?: number;
-      mute?: number;
-      input?: number;
-      aspect?: number;
-      nTime?: number;
-      fTime?: number;
-    };
-  } | null>(null);
-
-  const esRef = useRef<EventSource | null>(null);
-  const statusRef = useRef<LiveStatus>('idle');
-  const staleFrameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hardTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastFrameAtRef = useRef<number>(0);
-  const measuredCadenceRef = useRef<number>(0);
-  const remoteStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const onCloseRef = useRef(onClose);
-
-  // Draggable window state
-  const [pos, setPos] = useState(() => ({
-    x: Math.max(0, Math.round((window.innerWidth  - 1280) / 2)),
-    y: Math.max(0, Math.round((window.innerHeight -  760) / 2)),
-  }));
-  const [fullscreen, setFullscreen] = useState(false);
-  const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
-
-  function onDragStart(e: React.MouseEvent<HTMLDivElement>) {
-    // Only drag on the toolbar itself, not its buttons
-    if ((e.target as HTMLElement).closest('button,select,a')) return;
-    e.preventDefault();
-    dragRef.current = { startX: e.clientX, startY: e.clientY, originX: pos.x, originY: pos.y };
-    function onMove(ev: MouseEvent) {
-      if (!dragRef.current) return;
-      const x = Math.max(0, Math.min(window.innerWidth  - 200, dragRef.current.originX + ev.clientX - dragRef.current.startX));
-      const y = Math.max(0, Math.min(window.innerHeight - 48,  dragRef.current.originY + ev.clientY - dragRef.current.startY));
-      setPos({ x, y });
-    }
-    function onUp() {
-      dragRef.current = null;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    }
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  }
-
-  useEffect(() => { onCloseRef.current = onClose; });
-
-  function doCleanup() {
-    esRef.current?.close();
-    esRef.current = null;
-    if (staleFrameTimerRef.current) { clearTimeout(staleFrameTimerRef.current); staleFrameTimerRef.current = null; }
-    if (hardTimeoutRef.current) { clearTimeout(hardTimeoutRef.current); hardTimeoutRef.current = null; }
-    if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null; }
-    lastFrameAtRef.current = 0;
-    measuredCadenceRef.current = 0;
-    setWaitingElapsed(0);
-    setIsStale(false);
-    setMeasuredCadenceMs(0);
-    statusRef.current = 'idle';
-    setStatus('idle');
-  }
-
-  // Auto-fetch MDC status when the overlay opens
-  useEffect(() => {
-    void fetchRemoteStatus();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function armStaleFrameTimer() {
-    if (staleFrameTimerRef.current) clearTimeout(staleFrameTimerRef.current);
-    // Grace period: 2.5× measured cadence + 3s, minimum 15s. Never nag between normal frames.
-    const gracePeriod = measuredCadenceRef.current > 0
-      ? Math.max(measuredCadenceRef.current * 2.5 + 3000, 15000)
-      : 20000;
-    staleFrameTimerRef.current = setTimeout(() => {
-      if (statusRef.current === 'playing') setIsStale(true);
-    }, gracePeriod);
-  }
-
-  function handleStart(ms?: number) {
-    if (!isOnline) return;
-    const interval = ms ?? intervalMs;
-    doCleanup();
-    setImgSrc(null);
-    setSseError(null);
-    statusRef.current = 'buffering';
-    setStatus('buffering');
-
-    setWaitingElapsed(0);
-    elapsedTimerRef.current = setInterval(() => setWaitingElapsed(s => s + 1), 1000);
-
-    const es = new EventSource(`/api/devices/${deviceId}/screenshot/stream?intervalMs=${interval}`);
-    esRef.current = es;
-
-    es.onmessage = (e) => {
-      if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null; }
-      if (hardTimeoutRef.current) { clearTimeout(hardTimeoutRef.current); hardTimeoutRef.current = null; }
-      // Measure actual frame cadence via exponential moving average
-      const now = Date.now();
-      if (lastFrameAtRef.current > 0) {
-        const delta = now - lastFrameAtRef.current;
-        measuredCadenceRef.current = measuredCadenceRef.current > 0
-          ? Math.round(measuredCadenceRef.current * 0.7 + delta * 0.3)
-          : delta;
-        setMeasuredCadenceMs(measuredCadenceRef.current);
-      }
-      lastFrameAtRef.current = now;
-      setIsStale(false);
-      setImgSrc(`data:image/jpeg;base64,${e.data}`);
-      if (statusRef.current !== 'playing') {
-        statusRef.current = 'playing';
-        setStatus('playing');
-      }
-      armStaleFrameTimer();
-    };
-    es.onerror = () => {
-      setSseError('Stream connection failed. Is the device online?');
-      doCleanup();
-    };
-
-    // Hard timeout: if no first frame after 30s, give up
-    hardTimeoutRef.current = setTimeout(() => {
-      if (statusRef.current === 'buffering') {
-        setSseError('No frames received after 30s. The device may be unresponsive.');
-        doCleanup();
-      }
-    }, 30000);
-  }
-
-  useEffect(() => () => {
-    esRef.current?.close();
-    if (staleFrameTimerRef.current) clearTimeout(staleFrameTimerRef.current);
-    if (hardTimeoutRef.current) clearTimeout(hardTimeoutRef.current);
-    if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
-    if (remoteStatusTimerRef.current) clearTimeout(remoteStatusTimerRef.current);
-  }, []);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current(); };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
-
-  // Auto-fetch MDC status when overlay opens
-  useEffect(() => {
-    void fetchRemoteStatus();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const isLive = status !== 'idle';
-  const cadenceLabel = measuredCadenceMs > 0
-    ? `~${(measuredCadenceMs / 1000).toFixed(1)}s`
-    : `~${Math.ceil(intervalMs / 1000)}s`;
-
-  async function sendRemoteKey(key: string) {
-    if (remoteStatusTimerRef.current) clearTimeout(remoteStatusTimerRef.current);
-    try {
-      await api.post(`/devices/${deviceId}/remote-key`, { key });
-      setRemoteStatus(`✓ ${key.replace('_', ' ').toLowerCase()}`);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      let label = msg;
-      try { label = (JSON.parse(msg) as { error?: string }).error ?? msg; } catch { /* raw text */ }
-      setRemoteStatus(`✗ ${label}`);
-    }
-    remoteStatusTimerRef.current = setTimeout(() => setRemoteStatus(null), 2500);
-  }
-
-  async function fetchRemoteStatus() {
-    if (remoteStatusTimerRef.current) clearTimeout(remoteStatusTimerRef.current);
-    try {
-      const result = await api.get(`/devices/${deviceId}/remote-status`) as {
-        ok: boolean;
-        nodeRunning?: boolean;
-        serial?: string;
-        rawHex?: string;
-        error?: string;
-        status?: {
-          displayId: number;
-          ack: 'A' | 'N';
-          rCmd: number;
-          power?: number;
-          volume?: number;
-          mute?: number;
-          input?: number;
-          aspect?: number;
-          nTime?: number;
-          fTime?: number;
-        };
-      };
-      setMdcStatusResponse(result);
-      setRemoteStatus(result.ok ? '✓ status read' : `✗ ${result.error ?? 'status failed'}`);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      let label = msg;
-      try { label = (JSON.parse(msg) as { error?: string }).error ?? msg; } catch { /* raw text */ }
-      setMdcStatusResponse({ ok: false, error: label });
-      setRemoteStatus(`✗ ${label}`);
-    }
-    remoteStatusTimerRef.current = setTimeout(() => setRemoteStatus(null), 3000);
-  }
-
-  return (
-    <div className="fixed inset-0 z-50" style={{ pointerEvents: 'none' }}>
-      <div
-        className="absolute flex flex-col bg-[#0d0d0d] border border-white/10 rounded-xl shadow-2xl overflow-hidden"
-        style={fullscreen
-          ? { left: 0, top: 0, width: '100vw', height: '100vh', borderRadius: 0, pointerEvents: 'all' }
-          : { left: pos.x, top: pos.y, width: 1280, height: 760, pointerEvents: 'all' }}
-      >
-      {/* Toolbar — drag handle */}
-      <div
-        className="flex items-center gap-3 px-4 py-3 bg-black/80 border-b border-white/10 cursor-grab active:cursor-grabbing select-none"
-        onMouseDown={onDragStart}
-      >
-        <Tv2 className="w-5 h-5 text-white/70" />
-        <span className="text-white font-semibold text-sm">Live View</span>
-
-        {status === 'buffering' && (
-          <span className="flex items-center gap-1.5 text-xs text-yellow-300">
-            <span className="w-1.5 h-1.5 rounded-full bg-yellow-300 animate-pulse" />
-            Waiting for first frame…
-          </span>
-        )}
-        {status === 'playing' && (
-          <span className="flex items-center gap-1.5 rounded-full bg-red-600 px-2.5 py-0.5 text-[11px] font-bold text-white uppercase tracking-widest"
-            style={isStale ? { backgroundColor: 'rgb(161,98,7)' } : undefined}>
-            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-            LIVE
-          </span>
-        )}
-        {isLive ? <span className="text-[11px] text-white/30">{cadenceLabel} cadence</span> : null}
-
-        <div className="ml-auto flex items-center gap-3">
-          <label className="flex items-center gap-2 text-xs text-white/60">
-            Interval
-            <select
-              value={intervalMs}
-              onChange={(e) => {
-                const ms = Number(e.target.value);
-                setIntervalMs(ms);
-                if (isLive) handleStart(ms);
-              }}
-              className="rounded bg-white/10 px-2 py-1 text-white text-xs border border-white/20"
-            >
-              <option value={1000}>1s</option>
-              <option value={2000}>2s</option>
-              <option value={3000}>3s</option>
-            </select>
-          </label>
-          {!isLive ? (
-            <button
-              onClick={handleStart}
-              disabled={!isOnline}
-              className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white disabled:opacity-40 transition-colors"
-            >
-              Start Live
-            </button>
-          ) : (
-            <button
-              onClick={doCleanup}
-              className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white transition-colors"
-            >
-              Stop
-            </button>
-          )}
-          <button
-            onClick={() => { setFullscreen(f => !f); }}
-            title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-            className="rounded-lg p-1.5 text-white/60 hover:text-white hover:bg-white/10 transition-colors"
-          >
-            {fullscreen
-              ? <Minimize2 className="w-4 h-4" />
-              : <Maximize2 className="w-4 h-4" />}
-          </button>
-          <button onClick={() => onCloseRef.current()} className="rounded-lg p-1.5 text-white/60 hover:text-white hover:bg-white/10 transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-      </div>
-
-      {/* Main content: image + remote panel */}
-      <div className="flex-1 flex overflow-hidden">
-
-        {/* Image / status area */}
-        <div className="flex-1 flex items-center justify-center p-4 overflow-hidden relative"
-          style={{ background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.01) 50%, transparent 100%), linear-gradient(135deg, rgba(255,255,255,0.03) 0%, transparent 60%)' }}
-        >
-        {status === 'buffering' && (
-          <div className="flex flex-col items-center gap-4">
-            <div className="relative w-16 h-16">
-              <svg className="absolute inset-0 -rotate-90 w-full h-full" viewBox="0 0 64 64">
-                <circle cx="32" cy="32" r="28" fill="none" stroke="rgba(253,224,71,0.15)" strokeWidth="3" />
-                <circle cx="32" cy="32" r="28" fill="none" stroke="rgb(253,224,71)" strokeWidth="3"
-                  strokeDasharray="175.9"
-                  strokeDashoffset={175.9 - (175.9 * Math.min(waitingElapsed / 30, 1))}
-                  style={{ transition: 'stroke-dashoffset 0.9s linear' }}
-                />
-              </svg>
-              <span className="absolute inset-0 flex items-center justify-center text-yellow-300 text-sm font-mono">
-                {waitingElapsed}s
-              </span>
-            </div>
-            <p className="text-white/70 text-sm">
-              {waitingElapsed >= 10 ? 'Still waiting — device is warming up…' : 'Waiting for first frame…'}
-            </p>
-            <p className="text-white/30 text-xs">{cadenceLabel} capture cycle · 30s timeout</p>
-          </div>
-        )}
-
-        {status === 'playing' && imgSrc && (
-          <img
-            src={imgSrc}
-            alt="Live view"
-            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-          />
-        )}
-
-        {sseError && (
-          <div className="flex flex-col items-center gap-3 text-center max-w-sm">
-            <p className="text-red-400 text-sm">{sseError}</p>
-            <button
-              onClick={() => { setSseError(null); handleStart(); }}
-              disabled={!isOnline}
-              className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-white/10 hover:bg-white/20 text-white disabled:opacity-40 transition-colors"
-            >
-              Retry
-            </button>
-          </div>
-        )}
-        {status === 'idle' && !sseError && imgSrc && (
-          <>
-            <img src={imgSrc} alt="Last frame" className="max-w-full max-h-full object-contain rounded-lg shadow-2xl opacity-30" />
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <span className="bg-black/70 text-white/50 text-xs font-medium px-3 py-1.5 rounded-full">Stream stopped · last frame</span>
-            </div>
-          </>
-        )}
-        {status === 'idle' && !sseError && !imgSrc && (
-          <div className="text-white/40 text-sm">
-            {isOnline ? 'Press Start Live to begin streaming' : 'Device is offline'}
-          </div>
-        )}
-        </div>
-
-        {/* Remote control panel */}
-        <div className="w-56 flex-shrink-0 border-l border-white/10 flex flex-col items-center gap-4 p-4 bg-black/40 overflow-y-auto">
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-white/30">Remote</p>
-
-          {/* Power */}
-          <div className="flex gap-1.5 w-full">
-            <button onClick={() => sendRemoteKey('POWER_ON')} title="Power On"
-              className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-green-600/20 hover:bg-green-600/40 active:bg-green-600/60 text-green-400 text-xs font-medium transition-colors">
-              <Power className="w-3 h-3" /> On
-            </button>
-            <button onClick={() => sendRemoteKey('POWER_OFF')} title="Power Off"
-              className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/40 active:bg-red-600/60 text-red-400 text-xs font-medium transition-colors">
-              <PowerOff className="w-3 h-3" /> Off
-            </button>
-          </div>
-          <button onClick={() => sendRemoteKey('REBOOT')} title="Reboot display"
-            className="flex items-center justify-center gap-1 w-full py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/40 active:bg-amber-600/60 text-amber-400 text-xs font-medium transition-colors">
-            <RefreshCw className="w-3 h-3" /> Reboot
-          </button>
-          <button onClick={fetchRemoteStatus} title="Read MDC status"
-            className="flex items-center justify-center gap-1 w-full py-1.5 rounded-lg bg-sky-600/20 hover:bg-sky-600/40 active:bg-sky-600/60 text-sky-300 text-xs font-medium transition-colors">
-            <Monitor className="w-3 h-3" /> Status
-          </button>
-
-          <div className="w-full border-t border-white/10" />
-
-          {/* D-pad */}
-          <div className="grid grid-cols-3 gap-1.5">
-            <div />
-            <button onClick={() => sendRemoteKey('ARROW_UP')} title="Up"
-              className="flex items-center justify-center w-10 h-10 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white transition-colors">
-              <ChevronUp className="w-5 h-5" />
-            </button>
-            <div />
-            <button onClick={() => sendRemoteKey('ARROW_LEFT')} title="Left"
-              className="flex items-center justify-center w-10 h-10 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white transition-colors">
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-            <button onClick={() => sendRemoteKey('ENTER')} title="Enter / OK"
-              className="flex items-center justify-center w-10 h-10 rounded-full bg-white/20 hover:bg-white/30 active:bg-white/40 text-white text-xs font-bold transition-colors">
-              OK
-            </button>
-            <button onClick={() => sendRemoteKey('ARROW_RIGHT')} title="Right"
-              className="flex items-center justify-center w-10 h-10 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white transition-colors">
-              <ChevronRight className="w-5 h-5" />
-            </button>
-            <div />
-            <button onClick={() => sendRemoteKey('ARROW_DOWN')} title="Down"
-              className="flex items-center justify-center w-10 h-10 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white transition-colors">
-              <ChevronDown className="w-5 h-5" />
-            </button>
-            <div />
-          </div>
-
-          {/* Function buttons */}
-          <div className="flex gap-2">
-            <button onClick={() => sendRemoteKey('MENU')} title="Menu"
-              className="flex-1 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white text-xs font-medium transition-colors">
-              Menu
-            </button>
-            <button onClick={() => sendRemoteKey('RETURN')} title="Back / Return"
-              className="flex-1 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white text-xs font-medium transition-colors">
-              Back
-            </button>
-          </div>
-          <button onClick={() => sendRemoteKey('HOME')} title="Home"
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 active:bg-white/30 text-white text-xs font-medium transition-colors w-full justify-center">
-            <Home className="w-3.5 h-3.5" />
-            Home
-          </button>
-
-          {/* Node + MDC status — shown below Home, auto-populated on open */}
-          <div className="w-full rounded-lg border border-white/10 bg-black/30 p-2 text-[10px] leading-5">
-            <div className="flex items-center justify-between mb-1">
-              <span className="font-semibold uppercase tracking-widest text-white/30 text-[9px]">Device Status</span>
-              <button onClick={() => void fetchRemoteStatus()} title="Refresh status"
-                className="text-white/30 hover:text-sky-300 transition-colors">
-                <RefreshCw className="w-2.5 h-2.5" />
-              </button>
-            </div>
-            {mdcStatusResponse === null ? (
-              <span className="text-white/20">fetching…</span>
-            ) : (
-              <>
-                <div className="flex items-center gap-1.5">
-                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${mdcStatusResponse.nodeRunning ? 'bg-green-400' : 'bg-red-400'}`} />
-                  <span className={mdcStatusResponse.nodeRunning ? 'text-green-400' : 'text-red-400'}>
-                    Node {mdcStatusResponse.nodeRunning ? 'running' : 'offline'}
-                  </span>
-                </div>
-                {mdcStatusResponse.serial ? (
-                  <div className="font-mono text-white mt-0.5">S/N: {mdcStatusResponse.serial}</div>
-                ) : null}
-                {mdcStatusResponse.status ? (
-                  <div className="text-white/60 mt-0.5 space-y-0.5">
-                    <div>Power: <span className={mdcStatusResponse.status.power === 1 ? 'text-green-400' : 'text-white/40'}>{mdcStatusResponse.status.power === 1 ? 'ON' : mdcStatusResponse.status.power === 0 ? 'OFF' : '—'}</span></div>
-                    <div>Vol: {mdcStatusResponse.status.volume ?? '—'}{'  '}Mute: {mdcStatusResponse.status.mute === 1 ? 'ON' : 'off'}</div>
-                    <div>Input: {mdcStatusResponse.status.input != null ? `0x${mdcStatusResponse.status.input.toString(16).toUpperCase()}` : '—'}</div>
-                  </div>
-                ) : null}
-                {mdcStatusResponse.error ? <div className="text-red-300 mt-0.5">{mdcStatusResponse.error}</div> : null}
-              </>
-            )}
-          </div>
-
-          {/* Command feedback */}
-          {remoteStatus && (
-            <span className={`text-[11px] text-center leading-tight ${
-              remoteStatus.startsWith('✓') ? 'text-green-400' : 'text-red-400'
-            }`}>{remoteStatus}</span>
-          )}
-
-          {!isOnline && (
-            <p className="text-[10px] text-white/20 text-center">Device offline — MDC may still work over LAN</p>
-          )}
-        </div>
-
-      </div>
-      </div>
+      )}
     </div>
   );
 }
