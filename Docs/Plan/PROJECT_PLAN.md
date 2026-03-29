@@ -142,12 +142,12 @@ Platform
 - **Register**: Device reads its hardware DUID from the Samsung ProductInfo API and sends it with `modelName`, `modelCode` during pairing. Server issues a long-lived device JWT stored securely in the WidgetData encrypted store on the device. Dashboard user claims the device via a 6-character one-time code displayed on screen.
 - **DUID-based identity**: `webapis.productinfo.getDuid()` is the canonical hardware identity. Re-pairing the same physical device reuses the existing device record (DUID dedupe on the server).
 - **Status Monitoring**: Online/offline, last seen, firmware/player version, serial number, screen resolution, screen orientation, uptime, IP address, MAC address, Wi-Fi SSID & signal strength, NTP config, power state, CPU load, storage free, temperature.
-- **Remote Commands**: Reboot, clear cache, force-refresh schedule, screenshot, power off/on, set NTP server, set IR lock, set button lock, set on/off timers (Tizen Timer API), firmware OTA update, dump remote logs.
+- **Remote Commands**: Reboot, clear cache, force-refresh schedule, screenshot, power off/on, set NTP server, set IR lock, set button lock, set on/off timers (SSSP `b2bapis.b2bcontrol` on older signage devices; `webapis.timer` on newer Tizen 6.5+ devices), firmware OTA update, dump remote logs.
 - **Screenshot**: Device captures via `webapis.systemcontrol.captureScreen()`, reads the resulting JPEG from the filesystem, and streams it base64-encoded over the WebSocket. Server stores to `device_screenshots` table.
 - **Screenshot history**: Stored and viewable in a chronological gallery on the device detail page.
 - **Auto-screenshot on content change**: The Tizen player automatically captures a screenshot every time the active content item transitions (new item starts rendering). The capture fires ~2 s after transition to ensure the frame is fully rendered. This gives a passive visual proof-of-display record for every content play without any server intervention. Additionally, a `screenshotIntervalMin` setting (0 = disabled) provides a time-based fallback cap — e.g. set to 60 to guarantee at minimum one screenshot per hour even during long-running content. Screenshots are rate-limited to at most 1 per 10 s to prevent bursts during rapid playlist cycling.
 - **Boot auto-config**: On first boot after pairing, the Tizen player automatically applies the recommended LFD settings via Partner-privilege Samsung APIs: `setAutoPowerOn('ON')`, `setMessageDisplay('OFF')`, `setIRLock('ON')`, `setButtonLock('ON')`, `setNTP(...)`, `setSafetyLock('OFF')`.
-- **Power schedule**: On/off timers enforced locally using the Samsung Timer API (`webapis.timer.setOnTimer` / `setOffTimer`). Up to 7 on-timers and 7 off-timers, configurable from the dashboard.
+- **Power schedule**: On/off timers are enforced locally through Samsung device APIs. Older SSSP signage uses `b2bapis.b2bcontrol.setontimer` / `setofftimer` (or `setontimerrepeat` / `setofftimerrepeat`), while newer Tizen 6.5+ signage uses `webapis.timer`.
 - **Remote log streaming**: A `dump_logs` WS command triggers the device to flush its last 500 console log entries as a `device_log` WS message. Invaluable for diagnosing field issues without physical access. Logs are also auto-flushed on WS reconnect if the error buffer is non-empty.
 - **Device map view**: Devices store optional `latitude` + `longitude` set during pairing (browser geolocation) or manually on the detail page. Dashboard shows all devices on an interactive map — useful for multi-site clients with 50+ displays.
 - **Multi-zone layout**: A device can be configured with 2–4 named screen zones, each assigned its own playlist and a display rect (`x, y, w, h`). Each zone runs an independent `ZoneRunner` (playlist + scheduler). All content renderers accept a display rect so AVPlay and Document API layers render into the correct screen region.
@@ -1921,7 +1921,7 @@ GET    /workspaces/:wsId/sensors/live          latest reading for every active s
 | `webapis.avplay` / `avplaystore` | Standard web platform | Public | Video hardware decode |
 | `webapis.document` | `http://developer.samsung.com/privilege/documentplay` | **Partner** | PDF/PPTX native rendering |
 | `webapis.systemcontrol` | `http://developer.samsung.com/privilege/systemcontrol` | **Partner** | Reboot, serial, IR/button lock, orientation, firmware OTA, screenshot |
-| `webapis.timer` | `http://developer.samsung.com/privilege/devicetimer` | **Partner** | NTP set/get, on/off timers |
+| `b2bapis.b2bcontrol` time APIs on older SSSP, `webapis.timer` on Tizen 6.5+ | `http://developer.samsung.com/privilege/devicetimer` | **Partner** | NTP set/get, on/off timers |
 | `webapis.syncplay` | `http://developer.samsung.com/privilege/syncplay` | **Partner** | Multi-device sync/videowall |
 | `tizen.tvinputdevice` | `http://tizen.org/privilege/tv.inputdevice` | Public | Remote control key registration |
 | `tizen.download` | `http://tizen.org/privilege/download` | Public | File download to filesystem |
@@ -2161,18 +2161,26 @@ player_releases (
 
 ### Device Power & Timer Schedule
 
-On/off schedule is managed by the Samsung **Timer API** (`webapis.timer`, Partner privilege `devicetimer`). Up to 7 independent on-timers and 7 off-timers can be set per device. The dashboard sends `set_on_timer` / `set_off_timer` WS commands which the device applies via:
+On/off schedule is managed by Samsung device timer APIs under the same Partner `devicetimer` privilege. On older SSSP signage players, the device applies the dashboard commands through `b2bapis.b2bcontrol`; on newer Tizen 6.5+ signage, the equivalent API is `webapis.timer`. Up to 7 independent on-timers and 7 off-timers can be set per device. The dashboard sends `set_on_timer` / `set_off_timer` WS commands which the device applies via:
 
 ```js
-// Timer IDs: "TIMER1" through "TIMER7"
-// setup: "TIMER_OFF" | "TIMER_ONCE" | "TIMER_EVERYDAY" | "TIMER_MON_FRI" | "TIMER_SAT_SUN" | "TIMER_MANUAL"
+// Older SSSP signage path
+b2bapis.b2bcontrol.setontimerrepeat("timer1", "08 00", "timer_mon_fri", onSuccess, onError);
+b2bapis.b2bcontrol.setofftimerrepeat("timer1", "22 00", "timer_mon_fri", onSuccess, onError);
+// For specific days: b2bapis.b2bcontrol.setontimerrepeat("timer2", "09 00", "timer_manual", "mon wed fri", onSuccess, onError)
+
+// Newer Tizen 6.5+ signage path
 webapis.timer.setOnTimer({ timerID: "TIMER1", time: "08:00", setup: "TIMER_MON_FRI", volume: 10 });
 webapis.timer.setOffTimer({ timerID: "TIMER1", time: "22:00", setup: "TIMER_MON_FRI" });
-// For specific days: setup: "TIMER_MANUAL", manual: ["MON", "WED", "FRI"]
 ```
 
-NTP sync is also set to the device via the Timer API:
+NTP sync is also set to the device through the matching Samsung device API:
 ```js
+b2bapis.b2bcontrol.setntpuse("use", onSuccess, onError);
+b2bapis.b2bcontrol.setntpserveraddress("pool.ntp.org", onSuccess, onError);
+b2bapis.b2bcontrol.setcurrenttimezone("Asia/Dubai", onSuccess, onError);
+
+// Newer Tizen 6.5+ signage path
 webapis.timer.setNTP({ use: "ON", address: "pool.ntp.org", timeZone: "Asia/Dubai" });
 ```
 

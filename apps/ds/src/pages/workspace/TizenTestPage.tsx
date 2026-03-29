@@ -44,6 +44,15 @@ const RESULT_LABELS: Record<string, string> = {
   currentTemperatureC: 'Current Temperature',
   fanStatus: 'Fan Status',
   version: 'Software Version',
+  timerKind: 'Timer Kind',
+  timerId: 'Timer Slot',
+  timerMethod: 'Timer Method',
+  setup: 'Schedule',
+  manualDays: 'Manual Days',
+  time: 'Time',
+  volume: 'Volume',
+  volumeMethod: 'Volume Method',
+  volumeError: 'Volume Error',
 };
 const ORIENTATION_LABELS: Record<number, string> = {
   0: 'Landscape (0°)', 1: 'Portrait (270°)', 2: 'Portrait (180°)', 3: 'Portrait (90°)',
@@ -106,6 +115,14 @@ const SOURCE_BYTE_TO_LABEL: Record<number, string> = {
 const REPEAT_LABELS: Record<number, string> = {
   0: 'Once', 1: 'Every Day', 2: 'Mon–Fri', 3: 'Mon–Sat', 4: 'Sat–Sun', 5: 'Manual Weekday',
 };
+const TIMER_SETUP_LABELS: Record<string, string> = {
+  TIMER_OFF: 'Off',
+  TIMER_ONCE: 'Once',
+  TIMER_EVERYDAY: 'Every Day',
+  TIMER_MON_FRI: 'Mon-Fri',
+  TIMER_SAT_SUN: 'Sat-Sun',
+  TIMER_MANUAL: 'Manual',
+};
 
 function decodeAscii(data: number[]) {
   return data
@@ -149,6 +166,41 @@ function decodeMdcResult(action: string, result: MdcResult, payload: Record<stri
   if (!result.ok) return resultWithId;
 
   switch (action) {
+    case 'b2b_timer_get':
+    case 'b2b_timer_set':
+    case 'b2b_timer_clear': {
+      const timerKind = String(result.timerKind ?? payload.kind ?? 'on');
+      const setup = typeof result.setup === 'string' ? result.setup : typeof payload.setup === 'string' ? payload.setup : undefined;
+      const rawValue = result.value;
+      const formattedValue = typeof rawValue === 'string'
+        ? rawValue
+        : rawValue == null
+          ? undefined
+          : JSON.stringify(rawValue);
+      const manualDays = Array.isArray(payload.manual)
+        ? payload.manual.join(' ')
+        : typeof result.manualDays === 'string'
+          ? result.manualDays
+          : undefined;
+      const meaning = action === 'b2b_timer_get'
+        ? `Read ${timerKind === 'off' ? 'off' : 'on'} timer ${String(result.timerId ?? `TIMER${payload.slot ?? 1}`)} via ${String(result.timerMethod ?? 'SSSP B2B API')}.`
+        : action === 'b2b_timer_clear'
+          ? `Cleared ${timerKind === 'off' ? 'off' : 'on'} timer ${String(result.timerId ?? `TIMER${payload.slot ?? 1}`)} using ${String(result.timerMethod ?? 'SSSP B2B API')}.`
+          : `Updated ${timerKind === 'off' ? 'off' : 'on'} timer ${String(result.timerId ?? `TIMER${payload.slot ?? 1}`)} using ${String(result.timerMethod ?? 'SSSP B2B API')}.`;
+      return {
+        ...resultWithId,
+        label: timerKind === 'off' ? 'SSSP Off Timer' : 'SSSP On Timer',
+        timerKind: timerKind === 'off' ? 'Off' : 'On',
+        timerId: String(result.timerId ?? `TIMER${payload.slot ?? 1}`),
+        timerMethod: String(result.timerMethod ?? 'Unknown'),
+        ...(setup ? { setup: TIMER_SETUP_LABELS[setup] ?? setup } : {}),
+        ...(manualDays ? { manualDays } : {}),
+        ...(typeof result.time === 'string' ? { time: result.time } : typeof payload.time === 'string' ? { time: payload.time } : {}),
+        ...(formattedValue ? { value: formattedValue } : {}),
+        ...(typeof result.volume === 'number' ? { volume: `${result.volume}%` } : typeof payload.volume === 'number' ? { volume: `${payload.volume}%` } : {}),
+        meaning,
+      };
+    }
     case 'status_get': {
       if (data.length < 7) return resultWithId;
       const power = data[0] ?? -1;
@@ -300,7 +352,7 @@ function ResultPanel({ result }: { result: MdcResult | null | undefined }) {
           {parsed.map(([k, v]) => (
             <div key={k} className="contents">
               <dt className="text-[var(--text-muted)]">{RESULT_LABELS[k] ?? k}</dt>
-              <dd className="font-mono text-[var(--text)]">{String(v)}</dd>
+              <dd className="font-mono text-[var(--text)]">{typeof v === 'string' ? v : JSON.stringify(v)}</dd>
             </div>
           ))}
         </dl>
@@ -327,6 +379,12 @@ export default function TizenTestPage() {
   const [srcOrientValue, setSrcOrientValue] = useState(0);
   const [pwrBtnValue, setPwrBtnValue] = useState(0);     // 0=power-on-only 1=toggle
   const [mdcConnValue, setMdcConnValue] = useState(1);   // 0=RS232C 1=RJ45
+  const [timerKind, setTimerKind] = useState<'on' | 'off'>('on');
+  const [timerSlot, setTimerSlot] = useState(1);
+  const [timerTime, setTimerTime] = useState('08:30');
+  const [timerSetup, setTimerSetup] = useState('TIMER_ONCE');
+  const [timerManualDays, setTimerManualDays] = useState('MON WED FRI');
+  const [timerVolume, setTimerVolume] = useState(10);
 
   const { data: workspaces = [] } = useQuery<Workspace[]>({
     queryKey: ['workspaces'],
@@ -357,6 +415,19 @@ export default function TizenTestPage() {
     } finally {
       setPending(null);
     }
+  }
+
+  function buildTimerPayload(includeSchedule = true) {
+    return {
+      kind: timerKind,
+      slot: timerSlot,
+      ...(includeSchedule ? { time: timerTime } : {}),
+      ...(includeSchedule ? { setup: timerSetup } : {}),
+      ...(includeSchedule && timerSetup === 'TIMER_MANUAL'
+        ? { manual: timerManualDays.split(/[\s,]+/).map((value) => value.trim()).filter(Boolean) }
+        : {}),
+      ...(includeSchedule && timerKind === 'on' ? { volume: timerVolume } : {}),
+    };
   }
 
   const busy = (key: string) => pending === key;
@@ -439,6 +510,73 @@ export default function TizenTestPage() {
                   ) : null}
                 </>
               ) : null}
+            </SectionCardBody>
+          </SectionCard>
+
+          <SectionCard>
+            <SectionCardHeader>
+              <div>
+                <h2 className="text-base font-semibold text-[var(--text)]">SSSP Timer (B2B API)</h2>
+                <p className="text-sm text-[var(--text-muted)]">Runs timer tests inside the player with Samsung&apos;s SSSP B2B API, using calls like setOnTimer(&quot;TIMER1&quot;, &quot;08:30&quot;, ...).</p>
+              </div>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <label className="space-y-1 text-sm text-[var(--text-muted)]">
+                  <span>Timer kind</span>
+                  <select value={timerKind} onChange={(e) => setTimerKind(e.target.value as 'on' | 'off')} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]">
+                    <option value="on">On timer</option>
+                    <option value="off">Off timer</option>
+                  </select>
+                </label>
+                <label className="space-y-1 text-sm text-[var(--text-muted)]">
+                  <span>Slot</span>
+                  <select value={timerSlot} onChange={(e) => setTimerSlot(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]">
+                    {Array.from({ length: 7 }, (_, index) => index + 1).map((slot) => (
+                      <option key={slot} value={slot}>{`TIMER${slot}`}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1 text-sm text-[var(--text-muted)]">
+                  <span>Time</span>
+                  <input value={timerTime} onChange={(e) => setTimerTime(e.target.value)} placeholder="08:30" className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]" />
+                </label>
+                <label className="space-y-1 text-sm text-[var(--text-muted)]">
+                  <span>Schedule</span>
+                  <select value={timerSetup} onChange={(e) => setTimerSetup(e.target.value)} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]">
+                    {Object.entries(TIMER_SETUP_LABELS).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </label>
+                {timerSetup === 'TIMER_MANUAL' ? (
+                  <label className="space-y-1 text-sm text-[var(--text-muted)] sm:col-span-2 lg:col-span-1">
+                    <span>Manual days</span>
+                    <input value={timerManualDays} onChange={(e) => setTimerManualDays(e.target.value)} placeholder="MON WED FRI" className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]" />
+                  </label>
+                ) : null}
+                {timerKind === 'on' ? (
+                  <label className="space-y-1 text-sm text-[var(--text-muted)]">
+                    <span>Volume</span>
+                    <input type="number" min={0} max={100} value={timerVolume} onChange={(e) => setTimerVolume(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]" />
+                  </label>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <ActionButton onClick={() => runMdc('ssspTimer', 'b2b_timer_get', buildTimerPayload(false))} disabled={busy('ssspTimer')}>
+                  GET
+                </ActionButton>
+                <ActionButton tone="primary" onClick={() => runMdc('ssspTimer', 'b2b_timer_set', buildTimerPayload(true))} disabled={busy('ssspTimer')}>
+                  SET
+                </ActionButton>
+                <ActionButton onClick={() => runMdc('ssspTimer', 'b2b_timer_clear', { kind: timerKind, slot: timerSlot })} disabled={busy('ssspTimer')}>
+                  CLEAR
+                </ActionButton>
+              </div>
+              {timerSetup === 'TIMER_MANUAL' ? (
+                <p className="text-sm text-[var(--text-muted)]">Manual days are passed straight to the player as uppercase day tokens such as MON WED FRI.</p>
+              ) : null}
+              {results['ssspTimer'] ? <ResultPanel result={results['ssspTimer'] as MdcResult} /> : null}
             </SectionCardBody>
           </SectionCard>
 
