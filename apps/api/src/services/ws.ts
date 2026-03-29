@@ -86,6 +86,7 @@ export type MdcControlResponse = {
   rawHex?: string;
   data?: number[];
   error?: string;
+  [key: string]: unknown;
 };
 
 const pendingMdcControl = new Map<string, {
@@ -261,12 +262,11 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
         pendingMdcControl.delete(pendingKey);
         console.info('[ws] raw mdc_control_response resolved', { deviceId, requestId: payload.requestId, ok: payload.ok });
         pending.resolve({
-          requestId: payload.requestId,
-          ok: payload.ok,
-          ...(typeof payload.rawHex === 'string' ? { rawHex: payload.rawHex } : {}),
-          ...(Array.isArray(payload.data) ? { data: payload.data.filter((item): item is number => typeof item === 'number') } : {}),
-          ...(typeof payload.error === 'string' ? { error: payload.error } : {}),
-        });
+          ...(payload as Record<string, unknown>),
+          requestId: String(payload.requestId),
+          ok: !!payload.ok,
+          ...(Array.isArray(payload.data) ? { data: (payload.data as unknown[]).filter((item): item is number => typeof item === 'number') } : {}),
+        } as MdcControlResponse);
       } else {
         console.warn('[ws] raw mdc_control_response had no pending waiter', { deviceId, requestId: payload.requestId });
       }

@@ -44,15 +44,16 @@ const RESULT_LABELS: Record<string, string> = {
   currentTemperatureC: 'Current Temperature',
   fanStatus: 'Fan Status',
   version: 'Software Version',
-  timerKind: 'Timer Kind',
-  timerId: 'Timer Slot',
-  timerMethod: 'Timer Method',
-  setup: 'Schedule',
+  slot: 'Slot',
+  timerCmd: 'MDC Command',
+  onTime: 'On Time',
+  offTime: 'Off Time',
+  onEnabled: 'On Timer',
+  offEnabled: 'Off Timer',
+  timerVolume: 'Volume',
+  source: 'Source',
+  repeat: 'Repeat',
   manualDays: 'Manual Days',
-  time: 'Time',
-  volume: 'Volume',
-  volumeMethod: 'Volume Method',
-  volumeError: 'Volume Error',
 };
 const ORIENTATION_LABELS: Record<number, string> = {
   0: 'Landscape (0°)', 1: 'Portrait (270°)', 2: 'Portrait (180°)', 3: 'Portrait (90°)',
@@ -101,6 +102,7 @@ const MDC_CONNECTION_LABELS: Record<number, string> = {
   1: 'RJ45',
 };
 const SOURCE_BYTE_TO_LABEL: Record<number, string> = {
+  0x01: 'URL Launcher',
   0x08: 'AV',
   0x0C: 'Component',
   0x14: 'PC',
@@ -115,15 +117,6 @@ const SOURCE_BYTE_TO_LABEL: Record<number, string> = {
 const REPEAT_LABELS: Record<number, string> = {
   0: 'Once', 1: 'Every Day', 2: 'Mon–Fri', 3: 'Mon–Sat', 4: 'Sat–Sun', 5: 'Manual Weekday',
 };
-const TIMER_SETUP_LABELS: Record<string, string> = {
-  TIMER_OFF: 'Off',
-  TIMER_ONCE: 'Once',
-  TIMER_EVERYDAY: 'Every Day',
-  TIMER_MON_FRI: 'Mon-Fri',
-  TIMER_SAT_SUN: 'Sat-Sun',
-  TIMER_MANUAL: 'Manual',
-};
-
 function decodeAscii(data: number[]) {
   return data
     .filter((value) => value >= 0x20 && value <= 0x7e)
@@ -163,44 +156,11 @@ function withDisplayId(result: MdcResult) {
 function decodeMdcResult(action: string, result: MdcResult, payload: Record<string, unknown> = {}): MdcResult {
   const data = Array.isArray(result.data) ? result.data : [];
   const resultWithId = withDisplayId(result);
-  if (!result.ok) return resultWithId;
+  if (!result.ok) {
+    return resultWithId;
+  }
 
   switch (action) {
-    case 'b2b_timer_get':
-    case 'b2b_timer_set':
-    case 'b2b_timer_clear': {
-      const timerKind = String(result.timerKind ?? payload.kind ?? 'on');
-      const setup = typeof result.setup === 'string' ? result.setup : typeof payload.setup === 'string' ? payload.setup : undefined;
-      const rawValue = result.value;
-      const formattedValue = typeof rawValue === 'string'
-        ? rawValue
-        : rawValue == null
-          ? undefined
-          : JSON.stringify(rawValue);
-      const manualDays = Array.isArray(payload.manual)
-        ? payload.manual.join(' ')
-        : typeof result.manualDays === 'string'
-          ? result.manualDays
-          : undefined;
-      const meaning = action === 'b2b_timer_get'
-        ? `Read ${timerKind === 'off' ? 'off' : 'on'} timer ${String(result.timerId ?? `TIMER${payload.slot ?? 1}`)} via ${String(result.timerMethod ?? 'SSSP B2B API')}.`
-        : action === 'b2b_timer_clear'
-          ? `Cleared ${timerKind === 'off' ? 'off' : 'on'} timer ${String(result.timerId ?? `TIMER${payload.slot ?? 1}`)} using ${String(result.timerMethod ?? 'SSSP B2B API')}.`
-          : `Updated ${timerKind === 'off' ? 'off' : 'on'} timer ${String(result.timerId ?? `TIMER${payload.slot ?? 1}`)} using ${String(result.timerMethod ?? 'SSSP B2B API')}.`;
-      return {
-        ...resultWithId,
-        label: timerKind === 'off' ? 'SSSP Off Timer' : 'SSSP On Timer',
-        timerKind: timerKind === 'off' ? 'Off' : 'On',
-        timerId: String(result.timerId ?? `TIMER${payload.slot ?? 1}`),
-        timerMethod: String(result.timerMethod ?? 'Unknown'),
-        ...(setup ? { setup: TIMER_SETUP_LABELS[setup] ?? setup } : {}),
-        ...(manualDays ? { manualDays } : {}),
-        ...(typeof result.time === 'string' ? { time: result.time } : typeof payload.time === 'string' ? { time: payload.time } : {}),
-        ...(formattedValue ? { value: formattedValue } : {}),
-        ...(typeof result.volume === 'number' ? { volume: `${result.volume}%` } : typeof payload.volume === 'number' ? { volume: `${payload.volume}%` } : {}),
-        meaning,
-      };
-    }
     case 'status_get': {
       if (data.length < 7) return resultWithId;
       const power = data[0] ?? -1;
@@ -332,6 +292,45 @@ function decodeMdcResult(action: string, result: MdcResult, payload: Record<stri
         version: decodeAscii(data),
         meaning: decodeAscii(data) ? `Software version is ${decodeAscii(data)}.` : 'Software version returned non-ASCII bytes only.',
       };
+    case 'on_timer_get':
+    case 'on_timer_set': {
+      // 15-byte payload layout (confirmed from MDC packet capture):
+      // [0]=onHour, [1]=onMin, [2]=source, [3]=onEnable,
+      // [4]=offHour, [5]=offMin, [6]=repeat, [7]=offEnable,
+      // [8-11]=manualDayBits, [12]=volume, [13-14]=model constants
+      if (data.length < 13) return { ...resultWithId, meaning: `Only ${data.length} bytes returned — expected 15.` };
+      const onHour   = data[0] ?? 0;
+      const onMin    = data[1] ?? 0;
+      const src      = data[2] ?? 0;
+      const onEnable = data[3] ?? 0;
+      const offHour  = data[4] ?? 0;
+      const offMin   = data[5] ?? 0;
+      const repeat   = data[6] ?? 0;
+      const offEnable = data[7] ?? 0;
+      const vol      = data[12] ?? 0;
+      const REPEAT_DECODE: Record<number, string> = {
+        0: 'Once', 1: 'Every Day', 2: 'Mon–Fri', 3: 'Mon–Sat', 4: 'Sat–Sun', 5: 'Manual',
+      };
+      const DAY_FLAGS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+      const manualDayBits = (data[8] ?? 0) | ((data[9] ?? 0) << 8) | ((data[10] ?? 0) << 16) | ((data[11] ?? 0) << 24);
+      const manualDays = DAY_FLAGS.filter((_, i) => (manualDayBits >> i) & 1).join(' ') || '—';
+      const pad2 = (n: number) => String(n).padStart(2, '0');
+      const slotLabel = result.slot ?? payload.slot ?? '?';
+      return {
+        ...resultWithId,
+        slot: String(slotLabel),
+        timerCmd: result.cmd != null ? `0x${Number(result.cmd).toString(16).toUpperCase().padStart(2, '0')}` : '?',
+        onTime:  `${pad2(onHour)}:${pad2(onMin)}`,
+        offTime: `${pad2(offHour)}:${pad2(offMin)}`,
+        timerVolume: `${vol}%`,
+        source: SOURCE_BYTE_TO_LABEL[src] ?? `0x${src.toString(16).toUpperCase().padStart(2, '0')}`,
+        repeat: REPEAT_DECODE[repeat] ?? `0x${repeat.toString(16).toUpperCase().padStart(2, '0')}`,
+        onEnabled:  onEnable  === 0x01 ? 'Enabled' : 'Disabled',
+        offEnabled: offEnable === 0x01 ? 'Enabled' : 'Disabled',
+        ...(repeat === 5 ? { manualDays } : {}),
+        meaning: `Slot ${slotLabel}: On ${onEnable ? 'ENABLED' : 'disabled'} at ${pad2(onHour)}:${pad2(onMin)}, Off ${offEnable ? 'ENABLED' : 'disabled'} at ${pad2(offHour)}:${pad2(offMin)}, repeat: ${REPEAT_DECODE[repeat] ?? repeat}, vol: ${vol}%.`,
+      };
+    }
     default:
       return resultWithId;
   }
@@ -379,13 +378,16 @@ export default function TizenTestPage() {
   const [srcOrientValue, setSrcOrientValue] = useState(0);
   const [pwrBtnValue, setPwrBtnValue] = useState(0);     // 0=power-on-only 1=toggle
   const [mdcConnValue, setMdcConnValue] = useState(1);   // 0=RS232C 1=RJ45
-  const [timerKind, setTimerKind] = useState<'on' | 'off'>('on');
   const [timerSlot, setTimerSlot] = useState(1);
-  const [timerTime, setTimerTime] = useState('08:30');
-  const [timerSetup, setTimerSetup] = useState('TIMER_ONCE');
-  const [timerManualDays, setTimerManualDays] = useState('MON WED FRI');
-  const [timerVolume, setTimerVolume] = useState(10);
-
+  const [timerOnHour, setTimerOnHour] = useState(7);
+  const [timerOnMin, setTimerOnMin] = useState(0);
+  const [timerOnEnable, setTimerOnEnable] = useState(true);
+  const [timerOffHour, setTimerOffHour] = useState(10);
+  const [timerOffMin, setTimerOffMin] = useState(0);
+  const [timerOffEnable, setTimerOffEnable] = useState(true);
+  const [timerRepeat, setTimerRepeat] = useState(1);
+  const [timerVolume, setTimerVolume] = useState(20);
+  const [timerSource, setTimerSource] = useState(0x01);
   const { data: workspaces = [] } = useQuery<Workspace[]>({
     queryKey: ['workspaces'],
     queryFn: () => api.get('/workspaces'),
@@ -415,19 +417,6 @@ export default function TizenTestPage() {
     } finally {
       setPending(null);
     }
-  }
-
-  function buildTimerPayload(includeSchedule = true) {
-    return {
-      kind: timerKind,
-      slot: timerSlot,
-      ...(includeSchedule ? { time: timerTime } : {}),
-      ...(includeSchedule ? { setup: timerSetup } : {}),
-      ...(includeSchedule && timerSetup === 'TIMER_MANUAL'
-        ? { manual: timerManualDays.split(/[\s,]+/).map((value) => value.trim()).filter(Boolean) }
-        : {}),
-      ...(includeSchedule && timerKind === 'on' ? { volume: timerVolume } : {}),
-    };
   }
 
   const busy = (key: string) => pending === key;
@@ -513,70 +502,140 @@ export default function TizenTestPage() {
             </SectionCardBody>
           </SectionCard>
 
+          {/* ── On Timer GET ───────────────────────────────────────────────── */}
           <SectionCard>
             <SectionCardHeader>
               <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">SSSP Timer (B2B API)</h2>
-                <p className="text-sm text-[var(--text-muted)]">Runs timer tests inside the player with Samsung&apos;s SSSP B2B API, using calls like setOnTimer(&quot;TIMER1&quot;, &quot;08:30&quot;, ...).</p>
+                <h2 className="text-base font-semibold text-[var(--text)]">On/Off Timer (MDC)</h2>
+                <p className="text-sm text-[var(--text-muted)]">MDC 0xA4–0xAE — read and write on/off timer slots 1–7. Each slot stores both an on-time and off-time with a shared repeat schedule. Hours use <strong>12-hour format (0–12)</strong>; PM support is TBD.</p>
               </div>
             </SectionCardHeader>
             <SectionCardBody className="space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <label className="space-y-1 text-sm text-[var(--text-muted)]">
-                  <span>Timer kind</span>
-                  <select value={timerKind} onChange={(e) => setTimerKind(e.target.value as 'on' | 'off')} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]">
-                    <option value="on">On timer</option>
-                    <option value="off">Off timer</option>
-                  </select>
-                </label>
-                <label className="space-y-1 text-sm text-[var(--text-muted)]">
-                  <span>Slot</span>
-                  <select value={timerSlot} onChange={(e) => setTimerSlot(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]">
-                    {Array.from({ length: 7 }, (_, index) => index + 1).map((slot) => (
-                      <option key={slot} value={slot}>{`TIMER${slot}`}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="space-y-1 text-sm text-[var(--text-muted)]">
-                  <span>Time</span>
-                  <input value={timerTime} onChange={(e) => setTimerTime(e.target.value)} placeholder="08:30" className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]" />
-                </label>
-                <label className="space-y-1 text-sm text-[var(--text-muted)]">
-                  <span>Schedule</span>
-                  <select value={timerSetup} onChange={(e) => setTimerSetup(e.target.value)} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]">
-                    {Object.entries(TIMER_SETUP_LABELS).map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
-                  </select>
-                </label>
-                {timerSetup === 'TIMER_MANUAL' ? (
-                  <label className="space-y-1 text-sm text-[var(--text-muted)] sm:col-span-2 lg:col-span-1">
-                    <span>Manual days</span>
-                    <input value={timerManualDays} onChange={(e) => setTimerManualDays(e.target.value)} placeholder="MON WED FRI" className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]" />
-                  </label>
-                ) : null}
-                {timerKind === 'on' ? (
-                  <label className="space-y-1 text-sm text-[var(--text-muted)]">
-                    <span>Volume</span>
-                    <input type="number" min={0} max={100} value={timerVolume} onChange={(e) => setTimerVolume(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]" />
-                  </label>
-                ) : null}
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <ActionButton onClick={() => runMdc('ssspTimer', 'b2b_timer_get', buildTimerPayload(false))} disabled={busy('ssspTimer')}>
+              {/* Slot + GET controls */}
+              <div className="flex flex-wrap gap-3 items-center">
+                <select value={timerSlot} onChange={(e) => setTimerSlot(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
+                  {[1,2,3,4,5,6,7].map((s) => (
+                    <option key={s} value={s}>Slot {s}</option>
+                  ))}
+                </select>
+                <ActionButton onClick={() => runMdc('onTimer', 'on_timer_get', { slot: timerSlot })} disabled={busy('onTimer') || busy('onTimerSet')}>
                   GET
                 </ActionButton>
-                <ActionButton tone="primary" onClick={() => runMdc('ssspTimer', 'b2b_timer_set', buildTimerPayload(true))} disabled={busy('ssspTimer')}>
-                  SET
-                </ActionButton>
-                <ActionButton onClick={() => runMdc('ssspTimer', 'b2b_timer_clear', { kind: timerKind, slot: timerSlot })} disabled={busy('ssspTimer')}>
-                  CLEAR
+                <ActionButton onClick={() => { for (let s = 1; s <= 7; s++) runMdc(`onTimer${s}`, 'on_timer_get', { slot: s }); }} disabled={!!(pending)}>
+                  GET ALL (1–7)
                 </ActionButton>
               </div>
-              {timerSetup === 'TIMER_MANUAL' ? (
-                <p className="text-sm text-[var(--text-muted)]">Manual days are passed straight to the player as uppercase day tokens such as MON WED FRI.</p>
+              {results['onTimer'] ? <ResultPanel result={results['onTimer'] as MdcResult} /> : null}
+              {[1,2,3,4,5,6,7].some((s) => results[`onTimer${s}`]) ? (
+                <div className="space-y-2">
+                  {[1,2,3,4,5,6,7].map((s) => results[`onTimer${s}`] ? (
+                    <div key={s}>
+                      <div className="text-xs font-semibold text-[var(--text-muted)] mb-1">Slot {s}</div>
+                      <ResultPanel result={results[`onTimer${s}`] as MdcResult} />
+                    </div>
+                  ) : null)}
+                </div>
               ) : null}
-              {results['ssspTimer'] ? <ResultPanel result={results['ssspTimer'] as MdcResult} /> : null}
+
+              {/* SET controls */}
+              <div className="border-t border-[var(--border)] pt-4 space-y-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Set Timer</div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <label className="space-y-1 text-sm text-[var(--text-muted)]">
+                    <span>Repeat</span>
+                    <select value={timerRepeat} onChange={(e) => setTimerRepeat(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
+                      <option value={0}>Once</option>
+                      <option value={1}>Every Day</option>
+                      <option value={2}>Mon–Fri</option>
+                      <option value={3}>Mon–Sat</option>
+                      <option value={4}>Sat–Sun</option>
+                      <option value={5}>Manual</option>
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-sm text-[var(--text-muted)]">
+                    <span>Source</span>
+                    <select value={timerSource} onChange={(e) => setTimerSource(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
+                      <option value={0x01}>URL Launcher (0x01)</option>
+                      <option value={0x21}>HDMI1 (0x21)</option>
+                      <option value={0x23}>HDMI2 (0x23)</option>
+                      <option value={0x62}>Internal/USB (0x62)</option>
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-sm text-[var(--text-muted)]">
+                    <span>Volume</span>
+                    <input type="number" min={0} max={100} value={timerVolume} onChange={(e) => setTimerVolume(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]" />
+                  </label>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {/* On Timer */}
+                  <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-[var(--text)]">On Timer</span>
+                      <label className="flex items-center gap-2 text-sm text-[var(--text-muted)] cursor-pointer">
+                        <input type="checkbox" checked={timerOnEnable} onChange={(e) => setTimerOnEnable(e.target.checked)} />
+                        Enable
+                      </label>
+                    </div>
+                    <div className="flex gap-2">
+                      <label className="flex-1 space-y-1 text-xs text-[var(--text-muted)]">
+                        <span>Hour (0–12)</span>
+                        <input type="number" min={0} max={12} value={timerOnHour} onChange={(e) => setTimerOnHour(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-sm text-[var(--text)]" />
+                      </label>
+                      <label className="flex-1 space-y-1 text-xs text-[var(--text-muted)]">
+                        <span>Minute</span>
+                        <input type="number" min={0} max={59} step={5} value={timerOnMin} onChange={(e) => setTimerOnMin(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-sm text-[var(--text)]" />
+                      </label>
+                    </div>
+                  </div>
+                  {/* Off Timer */}
+                  <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-[var(--text)]">Off Timer</span>
+                      <label className="flex items-center gap-2 text-sm text-[var(--text-muted)] cursor-pointer">
+                        <input type="checkbox" checked={timerOffEnable} onChange={(e) => setTimerOffEnable(e.target.checked)} />
+                        Enable
+                      </label>
+                    </div>
+                    <div className="flex gap-2">
+                      <label className="flex-1 space-y-1 text-xs text-[var(--text-muted)]">
+                        <span>Hour (0–12)</span>
+                        <input type="number" min={0} max={12} value={timerOffHour} onChange={(e) => setTimerOffHour(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-sm text-[var(--text)]" />
+                      </label>
+                      <label className="flex-1 space-y-1 text-xs text-[var(--text-muted)]">
+                        <span>Minute</span>
+                        <input type="number" min={0} max={59} step={5} value={timerOffMin} onChange={(e) => setTimerOffMin(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-sm text-[var(--text)]" />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <ActionButton
+                    tone="primary"
+                    onClick={() => runMdc('onTimerSet', 'on_timer_set', {
+                      slot: timerSlot,
+                      onHour: timerOnHour, onMin: timerOnMin, onEnable: timerOnEnable,
+                      offHour: timerOffHour, offMin: timerOffMin, offEnable: timerOffEnable,
+                      repeat: timerRepeat, volume: timerVolume, source: timerSource,
+                    })}
+                    disabled={busy('onTimerSet') || busy('onTimer')}
+                  >
+                    SET Slot {timerSlot}
+                  </ActionButton>
+                  <ActionButton
+                    tone="danger"
+                    onClick={() => runMdc('onTimerSet', 'on_timer_set', {
+                      slot: timerSlot,
+                      onHour: timerOnHour, onMin: timerOnMin, onEnable: false,
+                      offHour: timerOffHour, offMin: timerOffMin, offEnable: false,
+                      repeat: timerRepeat, volume: timerVolume, source: timerSource,
+                    })}
+                    disabled={busy('onTimerSet') || busy('onTimer')}
+                  >
+                    DISABLE Slot {timerSlot}
+                  </ActionButton>
+                </div>
+                {results['onTimerSet'] ? <ResultPanel result={results['onTimerSet'] as MdcResult} /> : null}
+              </div>
             </SectionCardBody>
           </SectionCard>
 
