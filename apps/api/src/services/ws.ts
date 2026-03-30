@@ -377,55 +377,41 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     return;
   }
 
-  // ── mdc_heartbeat: 30s MDC status_get result → update powerState column ───
+  // ── mdc_heartbeat: 30s MDC status_get result → update powerState + live MDC state ─
   if (msg.type === 'mdc_heartbeat') {
     const mh = msg.payload as { power?: number; volume?: number; mute?: number; input?: number };
-    if (mh.power != null) {
-      await db
-        .update(devices)
-        .set({ powerState: mh.power === 1 ? 'on' : 'off', updatedAt: new Date() })
-        .where(eq(devices.id, deviceId));
-    }
+    const set: Partial<typeof devices.$inferInsert> = { updatedAt: new Date() };
+    if (mh.power  != null) set.powerState = mh.power === 1 ? 'on' : 'off';
+    if (mh.volume != null) set.mdcVolume  = mh.volume;
+    if (mh.mute   != null) set.mdcMute    = mh.mute === 1;
+    if (mh.input  != null) set.mdcInput   = mh.input;
+    await db.update(devices).set(set).where(eq(devices.id, deviceId));
     return;
   }
 
-  // ── mdc_poll: 5min full MDC GET results → merge into devices.settings JSON ─
+  // ── mdc_poll: 5min full MDC GET results → write to dedicated DB columns ───
   if (msg.type === 'mdc_poll') {
     const mp = msg.payload as Record<string, unknown>;
-    const [row] = await db.select({ settings: devices.settings }).from(devices).where(eq(devices.id, deviceId));
-    let existing: Record<string, unknown> = {};
-    try { existing = JSON.parse(row?.settings ?? '{}'); } catch { /**/ }
-    const updated = {
-      ...existing,
-      ...(mp.standby        != null ? { standby:        mp.standby        } : {}),
-      ...(mp.osdStatus      != null ? { osdStatus:      mp.osdStatus      } : {}),
-      ...(mp.networkStandby != null ? { networkStandby: mp.networkStandby } : {}),
-      ...(mp.menuOrientation != null ? { menuOrientation: mp.menuOrientation } : {}),
-      srcOrientation: mp.srcOrientation ?? null, // always write (null = NAK/unsupported)
-      ...(mp.remoteControl  != null ? { remoteControl:  mp.remoteControl  } : {}),
-      ...(mp.safetyLock     != null ? { safetyLock:     mp.safetyLock     } : {}),
-      ...(mp.softwareVersion != null ? { softwareVersion: mp.softwareVersion } : {}),
-      ...(mp.temperatureC   != null ? { temperatureC:   mp.temperatureC   } : {}),
-      mdcLastPoll: new Date().toISOString(),
-    };
-    await db
-      .update(devices)
-      .set({ settings: JSON.stringify(updated), updatedAt: new Date() })
-      .where(eq(devices.id, deviceId));
+    const set: Partial<typeof devices.$inferInsert> = { updatedAt: new Date(), mdcLastPoll: new Date() };
+    if (mp.standby         != null) set.mdcStandby        = mp.standby         as number;
+    if (mp.osdStatus       != null) set.mdcOsdStatus      = mp.osdStatus       as number;
+    if (mp.networkStandby  != null) set.mdcNetworkStandby = mp.networkStandby  as number;
+    if (mp.menuOrientation != null) set.mdcMenuOrientation = mp.menuOrientation as number;
+    // srcOrientation can be null (NAK = unsupported) — always write
+    set.mdcSrcOrientation = mp.srcOrientation != null ? mp.srcOrientation as number : null;
+    if (mp.remoteControl   != null) set.mdcRemoteControl  = mp.remoteControl   as number;
+    if (mp.safetyLock      != null) set.mdcSafetyLock     = mp.safetyLock      as number;
+    if (mp.softwareVersion != null) set.mdcSoftwareVersion = mp.softwareVersion as string;
+    if (mp.temperatureC    != null) set.mdcTemperatureC   = mp.temperatureC    as number;
+    await db.update(devices).set(set).where(eq(devices.id, deviceId));
     return;
   }
 
-  // ── mdc_id_persist: save scanned MDC ID into devices.settings.mdcId ────────
+  // ── mdc_id_persist: save scanned MDC ID into dedicated DB column ──────────
   if (msg.type === 'mdc_id_persist') {
     const { mdcId } = msg.payload as { mdcId: number };
     if (typeof mdcId === 'number' && mdcId >= 1 && mdcId <= 254) {
-      const [row] = await db.select({ settings: devices.settings }).from(devices).where(eq(devices.id, deviceId));
-      let existing: Record<string, unknown> = {};
-      try { existing = JSON.parse(row?.settings ?? '{}'); } catch { /**/ }
-      await db
-        .update(devices)
-        .set({ settings: JSON.stringify({ ...existing, mdcId }), updatedAt: new Date() })
-        .where(eq(devices.id, deviceId));
+      await db.update(devices).set({ mdcId, updatedAt: new Date() }).where(eq(devices.id, deviceId));
     }
     return;
   }

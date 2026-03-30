@@ -126,12 +126,15 @@ export const DeviceCommandSchema = z.discriminatedUnion('command', [
       action: z.enum([
         'set_volume', 'set_mute', 'set_source', 'set_device_name',
         'standby_set', 'network_standby_set', 'remote_control_set', 'safety_lock_set',
+        'osd_display_set', 'menu_orientation_set', 'src_orientation_set',
       ]),
       level: z.number().int().min(0).max(100).optional(),
       mute: z.boolean().optional(),
       source: z.string().optional(),
       name: z.string().max(15).optional(),
       value: z.number().int().min(0).max(255).optional(),
+      osdType: z.number().int().min(0).max(4).optional(),
+      osdOnOff: z.number().int().min(0).max(1).optional(),
     }),
   }),
 ]);
@@ -268,6 +271,23 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
         fTime: z.number().int().optional(),
       }).optional(),
     }),
+  }),
+  z.object({
+    type: z.literal('mdc_heartbeat'),
+    payload: z.object({
+      power:  z.number().int().optional(),
+      volume: z.number().int().optional(),
+      mute:   z.number().int().optional(),
+      input:  z.number().int().optional(),
+    }),
+  }),
+  z.object({
+    type: z.literal('mdc_poll'),
+    payload: z.record(z.unknown()),
+  }),
+  z.object({
+    type: z.literal('mdc_id_persist'),
+    payload: z.object({ mdcId: z.number().int().min(1).max(254) }),
   }),
   z.object({
     type: z.literal('mdc_control_response'),

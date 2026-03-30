@@ -388,6 +388,7 @@ export async function deviceRoutes(app: FastifyInstance) {
       : null;
 
     if (existing?.orgId && existing.deviceToken && !existing.deletedAt) {
+      // Device reinstalled — reset mdcNetworkStandby so auto-enable fires on next WS connect
       await db
         .update(devices)
         .set({
@@ -399,6 +400,7 @@ export async function deviceRoutes(app: FastifyInstance) {
           ipAddress: req.ip ?? null,
           lastSeen: new Date(),
           updatedAt: new Date(),
+          mdcNetworkStandby: null,
         })
         .where(eq(devices.id, existing.id));
 
@@ -1183,6 +1185,13 @@ export async function deviceRoutes(app: FastifyInstance) {
         deviceName: device.name,
         status: 'online',
       });
+    }
+
+    // Auto-enable network standby on first pairing (mdcNetworkStandby null = never polled)
+    if (device.orgId && device.mdcNetworkStandby === null) {
+      setTimeout(() => {
+        sendCommand(deviceId, { type: 'mdc_control', payload: { action: 'network_standby_set', value: 1 } });
+      }, 3000);
     }
 
     app.log.info({ deviceId }, 'Device connected via WS');

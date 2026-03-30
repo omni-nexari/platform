@@ -51,6 +51,22 @@ export const devices = pgTable('devices', {
   buttonLock: boolean('button_lock').notNull().default(false),
   autoPowerOn: boolean('auto_power_on').notNull().default(false),
 
+  // ── MDC state (auto-updated every 30s / 5min by player) ───────────────────
+  mdcId: integer('mdc_id'),
+  mdcVolume: integer('mdc_volume'),                     // 0-100
+  mdcMute: boolean('mdc_mute'),                         // true=muted
+  mdcInput: integer('mdc_input'),                       // source byte
+  mdcStandby: integer('mdc_standby'),                   // 0=off 1=on 2=auto
+  mdcNetworkStandby: integer('mdc_network_standby'),    // 0=off 1=on
+  mdcRemoteControl: integer('mdc_remote_control'),      // 0=disable 1=enable
+  mdcSafetyLock: integer('mdc_safety_lock'),            // 0=off 1=on
+  mdcSoftwareVersion: text('mdc_software_version'),
+  mdcOsdStatus: integer('mdc_osd_status'),              // bitmask
+  mdcMenuOrientation: integer('mdc_menu_orientation'),  // 0-3
+  mdcSrcOrientation: integer('mdc_src_orientation'),    // 0-3 or null=unsupported
+  mdcTemperatureC: doublePrecision('mdc_temperature_c'),
+  mdcLastPoll: timestamp('mdc_last_poll', { withTimezone: true }),
+
   // ── NTP / clock ────────────────────────────────────────────────────────────
   ntpEnabled: boolean('ntp_enabled').notNull().default(false),
   ntpServer: text('ntp_server'),
