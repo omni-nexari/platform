@@ -50,6 +50,7 @@ export type WsCommand =
   | { type: 'emergency_start'; payload: { text?: string; contentItemId?: string } }
   | { type: 'emergency_clear' }
   | { type: 'power_off' }
+  | { type: 'power_on' }
   | { type: 'set_ntp'; payload: { server: string; timezone: string } }
   | { type: 'set_ir_lock'; payload: { lock: boolean } }
   | { type: 'set_button_lock'; payload: { lock: boolean } }

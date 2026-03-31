@@ -1,11 +1,7 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import {
-  Bug,
-  Monitor,
-  TerminalSquare,
-} from 'lucide-react';
+import { Bug, Monitor, TerminalSquare } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useAuthStore } from '../../lib/auth.js';
 import {
@@ -28,120 +24,61 @@ const RESULT_LABELS: Record<string, string> = {
   value: 'Value',
   valueHex: 'Value (Hex)',
   requestedValue: 'Requested Value',
-  requestedValueHex: 'Requested Value (Hex)',
-  subCommand: 'Sub-command',
-  powerState: 'Power',
-  volumePercent: 'Volume',
-  muteState: 'Mute',
-  inputSource: 'Input Source',
-  aspectMode: 'Aspect',
-  nTimeText: 'N Time',
-  fTimeText: 'F Time',
-  lampStatus: 'Lamp Status',
-  temperatureStatus: 'Temperature Status',
-  brightnessSensorStatus: 'Brightness Sensor',
-  syncStatus: 'Sync Status',
-  currentTemperatureC: 'Current Temperature',
-  fanStatus: 'Fan Status',
-  version: 'Software Version',
-  slot: 'Slot',
-  timerCmd: 'MDC Command',
-  onTime: 'On Time',
-  offTime: 'Off Time',
-  onEnabled: 'On Timer',
-  offEnabled: 'Off Timer',
-  timerVolume: 'Volume',
+  contrast: 'Contrast',
+  brightness: 'Brightness',
+  sharpness: 'Sharpness',
+  color: 'Color',
+  tint: 'Tint',
+  colorTone: 'Color Tone',
+  colorTemp: 'Color Temp',
+  redGain: 'Red Gain',
+  greenGain: 'Green Gain',
+  blueGain: 'Blue Gain',
+  modelName: 'Model Name',
+  brightnessSensor: 'Brightness Sensor',
+  mdcIdDisplay: 'MDC ID Display',
+  urlAddress: 'URL Address',
+  ssid: 'SSID',
+  macAddress: 'MAC Address',
+  pin: 'PIN',
+  panelOnOff: 'Panel On/Off',
   source: 'Source',
-  repeat: 'Repeat',
-  manualDays: 'Manual Days',
+  videoWallOnOff: 'Video Wall On/Off',
+  videoWallPosition: 'Video Wall Position',
+  videoWallDivision: 'Video Wall Division',
+  videoWallMode: 'Video Wall Mode',
+  rotation: 'Rotation',
+  swVersion: 'SW Version',
+  modelCode: 'Model Code',
+  serialNumber: 'Serial Number',
+  screenSize: 'Screen Size (inch)',
+  ipAddress: 'IP Address',
+  subnetMask: 'Subnet Mask',
+  gateway: 'Gateway',
+  dns: 'DNS',
+  weekDay: 'Weekday Bitmask',
+  weekDayText: 'Weekday',
+  timeHour: 'Hour',
+  timeMinute: 'Minute',
+  safetyScreenType: 'Safety Screen Type',
+  tickerOnOff: 'Ticker On/Off',
+  tickerMessage: 'Ticker Message',
+  tickerStart: 'Ticker Start',
+  tickerEnd: 'Ticker End',
+  dataLength: 'Data Length',
 };
-const ORIENTATION_LABELS: Record<number, string> = {
-  0: 'Landscape (0°)', 1: 'Portrait (270°)', 2: 'Portrait (180°)', 3: 'Portrait (90°)',
-};
-const POWER_STATE_LABELS: Record<number, string> = {
-  0: 'Off',
-  1: 'On',
-};
-const MUTE_LABELS: Record<number, string> = {
-  0: 'Unmuted',
-  1: 'Muted',
-  255: 'Not supported on this model',
-};
-const INPUT_LABELS: Record<number, string> = {
-  0x08: 'AV',
-  0x0C: 'Component',
-  0x14: 'PC',
-  0x18: 'DVI',
-  0x21: 'HDMI1',
-  0x23: 'HDMI2',
-  0x25: 'DisplayPort',
-  0x31: 'HDMI3',
-  0x33: 'HDMI4',
-};
-const ASPECT_LABELS: Record<number, string> = {
-  0x00: 'PC 16:9',
-  0x01: 'PC 4:3',
-  0x0B: 'Video 16:9',
-  0x0C: 'Video Zoom',
-  0x0D: 'Video Wide Zoom',
-  0x0E: 'Video 4:3',
-  0x1F: 'Screen Fit',
-  0x20: 'Smart View 1',
-  0x21: 'Smart View 2',
-};
-const STANDBY_LABELS: Record<number, string> = {
-  0: 'Off',
-  1: 'On',
-  2: 'Auto',
-};
-const OSD_TYPE_LABELS: Record<number, string> = {
-  0: 'Source OSD',
-  1: 'Not Optimum Mode OSD',
-  2: 'No Signal OSD',
-  3: 'MDC OSD',
-  4: 'Schedule Channel Info',
-};
-const OSD_STATUS_BITS = ['Source', 'Not Optimum Mode', 'No Signal', 'MDC', 'Schedule Channel Info'];
-const NETWORK_STANDBY_LABELS: Record<number, string> = {
-  0: 'Off',
-  1: 'On',
-};
-const POWER_BUTTON_LABELS: Record<number, string> = {
-  0: 'Power-On Only',
-  1: 'Power-On/Off Toggle',
-};
-const MDC_CONNECTION_LABELS: Record<number, string> = {
-  0: 'RS232C',
-  1: 'RJ45',
-};
-const SOURCE_BYTE_TO_LABEL: Record<number, string> = {
-  0x01: 'URL Launcher',
-  0x08: 'AV',
-  0x0C: 'Component',
-  0x14: 'PC',
-  0x18: 'DVI',
-  0x21: 'HDMI1',
-  0x23: 'HDMI2',
-  0x25: 'DisplayPort',
-  0x31: 'HDMI3',
-  0x33: 'HDMI4',
-  0x62: 'Internal/USB',
-};
-const REPEAT_LABELS: Record<number, string> = {
-  0: 'Once', 1: 'Every Day', 2: 'Mon–Fri', 3: 'Mon–Sat', 4: 'Sat–Sun', 5: 'Manual Weekday',
-};
-function decodeAscii(data: number[]) {
-  return data
-    .filter((value) => value >= 0x20 && value <= 0x7e)
-    .map((value) => String.fromCharCode(value))
-    .join('')
-    .trim();
-}
 
-function statusFlagLabel(value: number | undefined, okText = 'Normal', badText = 'Error') {
-  if (value == null) return 'Unknown';
-  return value === 0 ? okText : badText;
-}
+const SAFETY_SCREEN_TYPES: Array<{ value: number; label: string }> = [
+  { value: 0x00, label: 'Off (0x00)' },
+  { value: 0x01, label: 'Signal Pattern (0x01)' },
+  { value: 0x02, label: 'All White (0x02)' },
+  { value: 0x03, label: 'Scroll (0x03)' },
+  { value: 0x04, label: 'Bar (0x04)' },
+  { value: 0x06, label: 'Eraser (0x06)' },
+  { value: 0x07, label: 'Pixel (0x07)' },
+  { value: 0x10, label: 'Rolling Bar (0x10)' },
+  { value: 0x11, label: 'Fading Screen (0x11)' },
+];
 
 function byteHex(value: number | undefined) {
   if (value == null || Number.isNaN(value)) return 'Unknown';
@@ -166,226 +103,254 @@ function withDisplayId(result: MdcResult) {
   };
 }
 
+function decodeAscii(data: number[]) {
+  return data
+    .filter((value) => value >= 0x20 && value <= 0x7e)
+    .map((value) => String.fromCharCode(value))
+    .join('')
+    .trim();
+}
+
+function decodeWeekdayMask(mask: number | undefined) {
+  if (mask == null) return 'Unknown';
+  const names = ['Sunday', 'Saturday', 'Friday', 'Thursday', 'Wednesday', 'Tuesday', 'Monday'];
+  const active = names.filter((_, i) => ((mask >> i) & 1) === 1);
+  return active.length ? active.join(', ') : 'No restart day selected';
+}
+
+function ipFromBytes(data: number[], start: number) {
+  if (data.length < start + 4) return 'Unknown';
+  return `${data[start]}.${data[start + 1]}.${data[start + 2]}.${data[start + 3]}`;
+}
+
 function decodeMdcResult(action: string, result: MdcResult, payload: Record<string, unknown> = {}): MdcResult {
   const data = Array.isArray(result.data) ? result.data : [];
   const resultWithId = withDisplayId(result);
-  if (!result.ok) {
-    return resultWithId;
-  }
+  if (!result.ok) return resultWithId;
 
   switch (action) {
-    case 'status_get': {
-      if (data.length < 7) return resultWithId;
-      const power = data[0] ?? -1;
-      const volume = data[1] ?? -1;
-      const mute = data[2] ?? -1;
-      const input = data[3] ?? -1;
-      const aspect = data[4] ?? -1;
-      const nTime = data[5] ?? -1;
-      const fTime = data[6] ?? -1;
+    case 'video_control_get':
       return {
         ...resultWithId,
-        label: 'Status Control',
-        powerState: POWER_STATE_LABELS[power] ?? `Unknown (${byteHex(power)})`,
-        volumePercent: volume >= 0 ? `${volume}%` : 'Unknown',
-        muteState: MUTE_LABELS[mute] ?? `Unknown (${byteHex(mute)})`,
-        inputSource: INPUT_LABELS[input] ?? `Unknown (${byteHex(input)})`,
-        aspectMode: ASPECT_LABELS[aspect] ?? `Unknown (${byteHex(aspect)})`,
-        nTimeText: nTime === 0 ? '0 (unused on newer timer models)' : `${nTime}`,
-        fTimeText: fTime === 0 ? '0 (unused on newer timer models)' : `${fTime}`,
-        meaning: `Power ${POWER_STATE_LABELS[power] ?? byteHex(power)}, volume ${volume}%, ${MUTE_LABELS[mute]?.toLowerCase() ?? 'unknown mute state'}, input ${INPUT_LABELS[input] ?? byteHex(input)}.`,
+        label: 'Video Control (0x04)',
+        contrast: data[0],
+        brightness: data[1],
+        sharpness: data[2],
+        color: data[3],
+        tint: data[4],
+        colorTone: data[5],
+        colorTemp: data[6],
       };
-    }
-    case 'standby_set': {
-      const value = Number(payload.value ?? -1);
+    case 'rgb_control_get':
       return {
         ...resultWithId,
-        requestedValue: value,
-        requestedValueHex: value >= 0 ? `0x${value.toString(16).toUpperCase().padStart(2, '0')}` : 'Unknown',
-        meaning: STANDBY_LABELS[value] ? `Set standby to ${STANDBY_LABELS[value]}.` : 'Standby updated.',
+        label: 'RGB Control (0x06)',
+        contrast: data[0],
+        brightness: data[1],
+        colorTone: data[2],
+        colorTemp: data[3],
+        redGain: data[4],
+        greenGain: data[5],
+        blueGain: data[6],
+      };
+    case 'maintenance_get':
+      return {
+        ...resultWithId,
+        label: 'Maintenance Control (0x08)',
+        dataLength: data.length,
+      };
+    case 'serial_number_get':
+      return {
+        ...resultWithId,
+        label: 'Serial Number (0x0B)',
+        serialNumber: decodeAscii(data),
+      };
+    case 'model_name_get':
+      return {
+        ...resultWithId,
+        label: 'Model Name (0x8A)',
+        modelName: decodeAscii(data),
+      };
+    case 'screen_size_get':
+      return {
+        ...resultWithId,
+        label: 'Screen Size (0x19)',
+        screenSize: data[0],
+      };
+    case 'network_config_get': {
+      const offset = data[0] === 0x82 ? 1 : 0;
+      return {
+        ...resultWithId,
+        label: 'Network Config (0x1B, sub 0x82)',
+        ipAddress: ipFromBytes(data, offset),
+        subnetMask: ipFromBytes(data, offset + 4),
+        gateway: ipFromBytes(data, offset + 8),
+        dns: ipFromBytes(data, offset + 12),
       };
     }
-    case 'standby_get': {
-      if (data.length === 0) return resultWithId;
-      const value = data[0] ?? -1;
+    case 'network_config_set':
+      return {
+        ...resultWithId,
+        label: 'Network Config Set',
+        ipAddress: String(payload.ipAddress ?? ''),
+        subnetMask: String(payload.subnetMask ?? ''),
+        gateway: String(payload.gateway ?? ''),
+        dns: String(payload.dns ?? ''),
+      };
+    case 'weekly_restart_get': {
+      const offset = data[0] === 0xa2 ? 1 : 0;
+      const weekDay = data[offset];
+      const hour = data[offset + 1];
+      const minute = data[offset + 2];
+      return {
+        ...resultWithId,
+        label: 'Weekly Restart (0x1B, sub 0xA2)',
+        weekDay,
+        weekDayText: decodeWeekdayMask(weekDay),
+        timeHour: hour,
+        timeMinute: minute,
+      };
+    }
+    case 'weekly_restart_set': {
+      const weekDay = Number(payload.weekDay ?? 0);
+      const hour = Number(payload.timeHour ?? 0);
+      const minute = Number(payload.timeMinute ?? 0);
+      return {
+        ...resultWithId,
+        label: 'Weekly Restart Set',
+        weekDay,
+        weekDayText: decodeWeekdayMask(weekDay),
+        timeHour: hour,
+        timeMinute: minute,
+      };
+    }
+    case 'brightness_get':
+    case 'sharpness_get':
+    case 'color_get':
+      return {
+        ...resultWithId,
+        value: data[0],
+        valueHex: byteHex(data[0]),
+      };
+    case 'brightness_set':
+    case 'sharpness_set':
+    case 'color_set':
+      return {
+        ...resultWithId,
+        requestedValue: Number(payload.value ?? 0),
+      };
+    case 'brightness_sensor_get':
+      return {
+        ...resultWithId,
+        label: 'Brightness Sensor (0x86)',
+        value: data[0],
+        brightnessSensor: data[0] === 1 ? 'On' : 'Off',
+      };
+    case 'brightness_sensor_set':
+      return {
+        ...resultWithId,
+        label: 'Brightness Sensor Set',
+        requestedValue: Number(payload.value ?? 0),
+        brightnessSensor: Number(payload.value ?? 0) === 1 ? 'On' : 'Off',
+      };
+    case 'mdc_id_display_set':
+      return {
+        ...resultWithId,
+        label: 'MDC ID Display (0xB9)',
+        requestedValue: Number(payload.value ?? 0),
+        mdcIdDisplay: Number(payload.value ?? 0) === 1 ? 'Show' : 'Hide',
+      };
+    case 'url_launcher_address_get': {
+      const offset = data[0] === 0x82 ? 1 : 0;
+      return {
+        ...resultWithId,
+        label: 'URL Launcher Address (0xC7, sub 0x82)',
+        urlAddress: decodeAscii(data.slice(offset)),
+      };
+    }
+    case 'url_launcher_address_set':
+      return {
+        ...resultWithId,
+        label: 'URL Launcher Address Set',
+        urlAddress: String(payload.urlAddress ?? ''),
+      };
+    case 'safety_screen_run_get': {
+      const value = data[0];
+      const label = SAFETY_SCREEN_TYPES.find((item) => item.value === value)?.label ?? `Unknown (${byteHex(value)})`;
       return {
         ...resultWithId,
         value,
-        valueHex: `0x${value.toString(16).toUpperCase().padStart(2, '0')}`,
-        label: 'Standby',
-        meaning: STANDBY_LABELS[value] ?? 'Unknown standby value.',
+        safetyScreenType: label,
       };
     }
-    case 'osd_display_set': {
-      const osdType  = Number(payload.osdType ?? -1);
-      const osdOnOff = Number(payload.osdOnOff ?? -1);
-      return {
-        ...resultWithId,
-        osdType: OSD_TYPE_LABELS[osdType] ?? `0x${osdType.toString(16).toUpperCase().padStart(2, '0')}`,
-        osdOnOff: osdOnOff === 1 ? 'On' : osdOnOff === 0 ? 'Off' : 'Unknown',
-        meaning: `Set ${OSD_TYPE_LABELS[osdType] ?? 'OSD type'} to ${osdOnOff === 1 ? 'On' : 'Off'}.`,
-      };
-    }
-    case 'osd_display_get': {
-      if (data.length === 0) return resultWithId;
-      const bitmask = data[0] ?? 0;
-      const active = OSD_STATUS_BITS.filter((_, i) => (bitmask >> i) & 1);
-      return {
-        ...resultWithId,
-        value: bitmask,
-        valueHex: `0x${bitmask.toString(16).toUpperCase().padStart(2, '0')}`,
-        activeOSDs: active.length > 0 ? active.join(', ') : 'None',
-        meaning: active.length > 0 ? `Currently showing: ${active.join(', ')}.` : 'All OSD types are off.',
-      };
-    }
-    case 'network_standby_set': {
-      const value = Number(payload.value ?? -1);
+    case 'safety_screen_run_set': {
+      const value = Number(payload.value ?? 0);
+      const label = SAFETY_SCREEN_TYPES.find((item) => item.value === value)?.label ?? `Unknown (${byteHex(value)})`;
       return {
         ...resultWithId,
         requestedValue: value,
-        requestedValueHex: value >= 0 ? `0x${value.toString(16).toUpperCase().padStart(2, '0')}` : 'Unknown',
-        meaning: NETWORK_STANDBY_LABELS[value] ? `Set network standby to ${NETWORK_STANDBY_LABELS[value]}.` : 'Network standby updated.',
+        safetyScreenType: label,
       };
     }
-    case 'network_standby_get': {
-      if (data.length === 0) return resultWithId;
-      const value = data[0] ?? -1;
+    case 'ticker_get': {
+      // 15-byte header: [onOff, startH, startM, endH, endM, posH, posV, motionOO, motionDir, motionSpeed, fontSize, fgCol, bgCol, fgOp, bgOp], then message
+      const text = decodeAscii(data.slice(15));
       return {
         ...resultWithId,
-        value,
-        valueHex: `0x${value.toString(16).toUpperCase().padStart(2, '0')}`,
-        label: 'Network Standby',
-        meaning: value === 1
-          ? 'On - network standby is enabled.'
-          : value === 0
-            ? 'Off - network standby is disabled.'
-            : 'Unknown network standby value.',
+        label: 'Ticker (0x63)',
+        tickerOnOff: data[0] === 1 ? 'On' : 'Off',
+        tickerStart: `${String(data[1] ?? 0).padStart(2, '0')}:${String(data[2] ?? 0).padStart(2, '0')}`,
+        tickerEnd: `${String(data[3] ?? 0).padStart(2, '0')}:${String(data[4] ?? 0).padStart(2, '0')}`,
+        tickerMessage: text || '(empty)',
       };
     }
-    case 'menu_orientation_set':
-    case 'src_orientation_set': {
-      const value = Number(payload.value ?? -1);
+    case 'ticker_set':
       return {
         ...resultWithId,
-        requestedValue: value,
-        requestedValueHex: value >= 0 ? `0x${value.toString(16).toUpperCase().padStart(2, '0')}` : 'Unknown',
-        meaning: `Set ${action === 'menu_orientation_set' ? 'menu' : 'source content'} orientation to ${ORIENTATION_LABELS[value] ?? 'Unknown'}.`,
+        label: 'Ticker Set',
+        tickerOnOff: Number(payload.onOff ?? 0) === 1 ? 'On' : 'Off',
+        tickerMessage: String(payload.message ?? ''),
       };
-    }
-    case 'menu_orientation_get':
-    case 'src_orientation_get': {
-      if (data.length < 2) return resultWithId;
-      const value = data[1] ?? -1;
+    case 'network_wifi_set':
       return {
         ...resultWithId,
-        subCommand: data[0] != null ? `0x${data[0].toString(16).toUpperCase().padStart(2, '0')}` : undefined,
-        value,
-        valueHex: `0x${value.toString(16).toUpperCase().padStart(2, '0')}`,
-        label: action === 'menu_orientation_get' ? 'Menu Orientation' : 'Source Content Orientation',
-        meaning: ORIENTATION_LABELS[value] ?? 'Unknown orientation',
+        label: 'WiFi AP Config Set (0x1B.0x8A)',
+        ssid: String(payload.ssid ?? ''),
       };
-    }
-    case 'power_button_set': {
-      const value = Number(payload.value ?? -1);
+    case 'child_device_get':
       return {
         ...resultWithId,
-        requestedValue: value,
-        requestedValueHex: value >= 0 ? `0x${value.toString(16).toUpperCase().padStart(2, '0')}` : 'Unknown',
-        meaning: `Set power button mode to ${POWER_BUTTON_LABELS[value] ?? 'Unknown'}.`,
+        label: 'Child Device Info (0x0A.0x81)',
+        panelOnOff: data[1] === 0 ? 'On' : 'Off',
+        source: byteHex(data[2]),
+        videoWallOnOff: data[3] === 0 ? 'Off' : 'On',
+        videoWallPosition: data[4],
+        videoWallDivision: data[5],
+        videoWallMode: data[6] === 0 ? 'Natural' : 'Full',
+        rotation: byteHex(data[7]),
+        screenSize: data[8],
+        modelCode: byteHex(data[9]),
+        swVersion: String(result.swVersion ?? ''),
+        modelName: String(result.modelName ?? ''),
       };
-    }
-    case 'power_button_get': {
-      if (data.length < 2) return resultWithId;
-      const value = data[1] ?? -1;
+    case 'mac_address_get':
       return {
         ...resultWithId,
-        subCommand: data[0] != null ? `0x${data[0].toString(16).toUpperCase().padStart(2, '0')}` : undefined,
-        value,
-        valueHex: `0x${value.toString(16).toUpperCase().padStart(2, '0')}`,
-        label: 'Power Button Mode',
-        meaning: POWER_BUTTON_LABELS[value] ?? 'Unknown power button mode',
+        label: 'MAC Address (0x1B.0x81)',
+        macAddress: String(result.macAddress ?? ''),
       };
-    }
-    case 'display_status_get': {
-      if (data.length < 6) return resultWithId;
+    case 'device_pin_get':
       return {
         ...resultWithId,
-        lampStatus: statusFlagLabel(data[0]),
-        temperatureStatus: statusFlagLabel(data[1]),
-        brightnessSensorStatus: statusFlagLabel(data[2]),
-        syncStatus: statusFlagLabel(data[3]),
-        currentTemperatureC: data[4],
-        fanStatus: statusFlagLabel(data[5]),
-        meaning: data.slice(0, 4).every((value) => value === 0) && data[5] === 0
-          ? `Display status normal. Current temperature is ${data[4]}°C.`
-          : 'One or more display status flags report an error.',
+        label: 'Device PIN (0x1B.0x87)',
+        pin: String(result.pin ?? ''),
       };
-    }
-    case 'mdc_conn_type_get': {
-      if (data.length === 0) return resultWithId;
-      const value = data[0] ?? -1;
+    case 'device_pin_set':
       return {
         ...resultWithId,
-        value,
-        valueHex: `0x${value.toString(16).toUpperCase().padStart(2, '0')}`,
-        label: 'MDC Connection Type',
-        meaning: MDC_CONNECTION_LABELS[value] ?? 'Unknown connection type',
+        label: 'Device PIN Set',
+        pin: String(payload.pin ?? ''),
       };
-    }
-    case 'mdc_conn_type_set': {
-      const value = Number(payload.value ?? -1);
-      return {
-        ...resultWithId,
-        requestedValue: value,
-        requestedValueHex: value >= 0 ? `0x${value.toString(16).toUpperCase().padStart(2, '0')}` : 'Unknown',
-        meaning: `Set MDC connection type to ${MDC_CONNECTION_LABELS[value] ?? 'Unknown'}.`,
-      };
-    }
-    case 'sw_version_get':
-      return {
-        ...resultWithId,
-        version: decodeAscii(data),
-        meaning: decodeAscii(data) ? `Software version is ${decodeAscii(data)}.` : 'Software version returned non-ASCII bytes only.',
-      };
-    case 'on_timer_get':
-    case 'on_timer_set': {
-      // 15-byte payload layout (confirmed from MDC packet capture):
-      // [0]=onHour, [1]=onMin, [2]=source, [3]=onEnable,
-      // [4]=offHour, [5]=offMin, [6]=repeat, [7]=offEnable,
-      // [8-11]=manualDayBits, [12]=volume, [13-14]=model constants
-      if (data.length < 13) return { ...resultWithId, meaning: `Only ${data.length} bytes returned — expected 15.` };
-      const onHour   = data[0] ?? 0;
-      const onMin    = data[1] ?? 0;
-      const src      = data[2] ?? 0;
-      const onEnable = data[3] ?? 0;
-      const offHour  = data[4] ?? 0;
-      const offMin   = data[5] ?? 0;
-      const repeat   = data[6] ?? 0;
-      const offEnable = data[7] ?? 0;
-      const vol      = data[12] ?? 0;
-      const REPEAT_DECODE: Record<number, string> = {
-        0: 'Once', 1: 'Every Day', 2: 'Mon–Fri', 3: 'Mon–Sat', 4: 'Sat–Sun', 5: 'Manual',
-      };
-      const DAY_FLAGS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-      const manualDayBits = (data[8] ?? 0) | ((data[9] ?? 0) << 8) | ((data[10] ?? 0) << 16) | ((data[11] ?? 0) << 24);
-      const manualDays = DAY_FLAGS.filter((_, i) => (manualDayBits >> i) & 1).join(' ') || '—';
-      const pad2 = (n: number) => String(n).padStart(2, '0');
-      const slotLabel = result.slot ?? payload.slot ?? '?';
-      return {
-        ...resultWithId,
-        slot: String(slotLabel),
-        timerCmd: result.cmd != null ? `0x${Number(result.cmd).toString(16).toUpperCase().padStart(2, '0')}` : '?',
-        onTime:  `${pad2(onHour)}:${pad2(onMin)}`,
-        offTime: `${pad2(offHour)}:${pad2(offMin)}`,
-        timerVolume: `${vol}%`,
-        source: SOURCE_BYTE_TO_LABEL[src] ?? `0x${src.toString(16).toUpperCase().padStart(2, '0')}`,
-        repeat: REPEAT_DECODE[repeat] ?? `0x${repeat.toString(16).toUpperCase().padStart(2, '0')}`,
-        onEnabled:  onEnable  === 0x01 ? 'Enabled' : 'Disabled',
-        offEnabled: offEnable === 0x01 ? 'Enabled' : 'Disabled',
-        ...(repeat === 5 ? { manualDays } : {}),
-        meaning: `Slot ${slotLabel}: On ${onEnable ? 'ENABLED' : 'disabled'} at ${pad2(onHour)}:${pad2(onMin)}, Off ${offEnable ? 'ENABLED' : 'disabled'} at ${pad2(offHour)}:${pad2(offMin)}, repeat: ${REPEAT_DECODE[repeat] ?? repeat}, vol: ${vol}%.`,
-      };
-    }
     default:
       return resultWithId;
   }
@@ -398,7 +363,7 @@ function ResultPanel({ result }: { result: MdcResult | null | undefined }) {
   return (
     <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-xs space-y-1.5">
       <div className={`font-semibold ${result.ok ? 'text-green-500' : 'text-red-400'}`}>
-        {result.ok ? '✓ OK' : '✗ Error'}
+        {result.ok ? 'OK' : 'Error'}
       </div>
       {result.error ? <div className="text-red-400">{String(result.error)}</div> : null}
       {parsed.length > 0 ? (
@@ -427,25 +392,33 @@ export default function TizenTestPage() {
   const [pending, setPending] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, MdcResult | null>>({});
 
-  // Per-section set values
-  const [standbyValue, setStandbyValue] = useState(0);   // standby: 0=off 1=on 2=auto
-  const [osdType, setOsdType] = useState(0);              // OSD type: 0=Source 1=Not Optimum 2=No Signal 3=MDC 4=Schedule
-  const [osdOnOff, setOsdOnOff] = useState(0);            // OSD on/off: 0=off 1=on
-  const [nsValue, setNsValue] = useState(0);             // network standby: 0=off 1=on
-  const [menuOrientValue, setMenuOrientValue] = useState(0);
-  const [srcOrientValue, setSrcOrientValue] = useState(0);
-  const [pwrBtnValue, setPwrBtnValue] = useState(0);     // 0=power-on-only 1=toggle
-  const [mdcConnValue, setMdcConnValue] = useState(1);   // 0=RS232C 1=RJ45
-  const [timerSlot, setTimerSlot] = useState(1);
-  const [timerOnHour, setTimerOnHour] = useState(7);
-  const [timerOnMin, setTimerOnMin] = useState(0);
-  const [timerOnEnable, setTimerOnEnable] = useState(true);
-  const [timerOffHour, setTimerOffHour] = useState(10);
-  const [timerOffMin, setTimerOffMin] = useState(0);
-  const [timerOffEnable, setTimerOffEnable] = useState(true);
-  const [timerRepeat, setTimerRepeat] = useState(1);
-  const [timerVolume, setTimerVolume] = useState(20);
-  const [timerSource, setTimerSource] = useState(0x01);
+  const [ipAddress, setIpAddress] = useState('192.168.0.100');
+  const [subnetMask, setSubnetMask] = useState('255.255.255.0');
+  const [gateway, setGateway] = useState('192.168.0.1');
+  const [dns, setDns] = useState('8.8.8.8');
+
+  const [weekDay, setWeekDay] = useState(0);
+  const [timeHour, setTimeHour] = useState(3);
+  const [timeMinute, setTimeMinute] = useState(0);
+
+  const [brightness, setBrightness] = useState(50);
+  const [sharpness, setSharpness] = useState(50);
+  const [color, setColor] = useState(50);
+  const [brightnessSensor, setBrightnessSensor] = useState(0);
+  const [mdcIdDisplay, setMdcIdDisplay] = useState(0);
+  const [urlLauncherAddress, setUrlLauncherAddress] = useState('https://example.com');
+  const [safetyScreenType, setSafetyScreenType] = useState(0x00);
+
+  const [tickerOnOff, setTickerOnOff] = useState(1);
+  const [tickerMessage, setTickerMessage] = useState('PLATFORM TEST TICKER');
+  const [tickerStartHour, setTickerStartHour] = useState(9);
+  const [tickerStartMinute, setTickerStartMinute] = useState(0);
+  const [tickerEndHour, setTickerEndHour] = useState(6);
+  const [tickerEndMinute, setTickerEndMinute] = useState(0);
+  const [wifiSsid, setWifiSsid] = useState('');
+  const [wifiPassword, setWifiPassword] = useState('');
+  const [devicePin, setDevicePin] = useState('');
+
   const { data: workspaces = [] } = useQuery<Workspace[]>({
     queryKey: ['workspaces'],
     queryFn: () => api.get('/workspaces'),
@@ -483,8 +456,8 @@ export default function TizenTestPage() {
     <div className="p-8 max-w-5xl mx-auto space-y-6">
       <PageHeader
         icon={<Bug className="w-6 h-6" />}
-        title="MDC Test"
-        subtitle="Send MDC commands to paired Samsung displays for testing and verification."
+        title="Tizen MDC Test"
+        subtitle="Testing page for extended MDC command coverage."
         trailing={
           <div className="flex flex-wrap gap-3">
             <select
@@ -503,7 +476,7 @@ export default function TizenTestPage() {
             >
               <option value="">Select device</option>
               {devices.map((d) => (
-                <option key={d.id} value={d.id}>{d.name}{d.modelName ? ` · ${d.modelName}` : ''}</option>
+                <option key={d.id} value={d.id}>{d.name}{d.modelName ? ` - ${d.modelName}` : ''}</option>
               ))}
             </select>
           </div>
@@ -523,683 +496,288 @@ export default function TizenTestPage() {
       ) : (
         <>
           <SectionCard>
-            <SectionCardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">Status Control</h2>
-                <p className="text-sm text-[var(--text-muted)]">MDC 0x00 — power, volume, mute, input source, aspect, and legacy timer bytes from the panel.</p>
-              </div>
-            </SectionCardHeader>
-            <SectionCardBody className="space-y-4">
-              <ActionButton onClick={() => runMdc('status', 'status_get')} disabled={busy('status')}>
-                GET
-              </ActionButton>
-              {results['status'] ? (
-                <>
-                  <ResultPanel result={results['status'] as MdcResult} />
-                  {results['status'].ok ? (
-                    <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-                      {(
-                        [
-                          ['Power', String(results['status']['powerState'] ?? '-')],
-                          ['Volume', String(results['status']['volumePercent'] ?? '-')],
-                          ['Mute', String(results['status']['muteState'] ?? '-')],
-                          ['Input', String(results['status']['inputSource'] ?? '-')],
-                          ['Aspect', String(results['status']['aspectMode'] ?? '-')],
-                          ['Display ID', String(results['status']['displayId'] ?? '-')],
-                        ] as [string, string][]
-                      ).map(([label, val]) => (
-                        <div key={label} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
-                          <div className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">{label}</div>
-                          <div className="mt-1 font-semibold text-[var(--text)]">{val}</div>
-                        </div>
-                      ))}
-                    </dl>
-                  ) : null}
-                </>
-              ) : null}
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Video Control (0x04)</h2></SectionCardHeader>
+            <SectionCardBody>
+              <ActionButton onClick={() => runMdc('video', 'video_control_get')} disabled={busy('video')}>GET</ActionButton>
+              <ResultPanel result={results['video'] as MdcResult} />
             </SectionCardBody>
           </SectionCard>
 
-          {/* ── On Timer GET ───────────────────────────────────────────────── */}
           <SectionCard>
-            <SectionCardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">On/Off Timer (MDC)</h2>
-                <p className="text-sm text-[var(--text-muted)]">MDC 0xA4–0xAE — read and write on/off timer slots 1–7. Each slot stores both an on-time and off-time with a shared repeat schedule. Hours use <strong>12-hour format (0–12)</strong>; PM support is TBD.</p>
-              </div>
-            </SectionCardHeader>
-            <SectionCardBody className="space-y-4">
-              {/* Slot + GET controls */}
-              <div className="flex flex-wrap gap-3 items-center">
-                <select value={timerSlot} onChange={(e) => setTimerSlot(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
-                  {[1,2,3,4,5,6,7].map((s) => (
-                    <option key={s} value={s}>Slot {s}</option>
-                  ))}
-                </select>
-                <ActionButton onClick={() => runMdc('onTimer', 'on_timer_get', { slot: timerSlot })} disabled={busy('onTimer') || busy('onTimerSet')}>
-                  GET
-                </ActionButton>
-                <ActionButton onClick={() => { for (let s = 1; s <= 7; s++) runMdc(`onTimer${s}`, 'on_timer_get', { slot: s }); }} disabled={!!(pending)}>
-                  GET ALL (1–7)
-                </ActionButton>
-              </div>
-              {results['onTimer'] ? <ResultPanel result={results['onTimer'] as MdcResult} /> : null}
-              {[1,2,3,4,5,6,7].some((s) => results[`onTimer${s}`]) ? (
-                <div className="space-y-2">
-                  {[1,2,3,4,5,6,7].map((s) => results[`onTimer${s}`] ? (
-                    <div key={s}>
-                      <div className="text-xs font-semibold text-[var(--text-muted)] mb-1">Slot {s}</div>
-                      <ResultPanel result={results[`onTimer${s}`] as MdcResult} />
-                    </div>
-                  ) : null)}
-                </div>
-              ) : null}
-
-              {/* SET controls */}
-              <div className="border-t border-[var(--border)] pt-4 space-y-3">
-                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Set Timer</div>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  <label className="space-y-1 text-sm text-[var(--text-muted)]">
-                    <span>Repeat</span>
-                    <select value={timerRepeat} onChange={(e) => setTimerRepeat(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
-                      <option value={0}>Once</option>
-                      <option value={1}>Every Day</option>
-                      <option value={2}>Mon–Fri</option>
-                      <option value={3}>Mon–Sat</option>
-                      <option value={4}>Sat–Sun</option>
-                      <option value={5}>Manual</option>
-                    </select>
-                  </label>
-                  <label className="space-y-1 text-sm text-[var(--text-muted)]">
-                    <span>Source</span>
-                    <select value={timerSource} onChange={(e) => setTimerSource(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
-                      <option value={0x01}>URL Launcher (0x01)</option>
-                      <option value={0x21}>HDMI1 (0x21)</option>
-                      <option value={0x23}>HDMI2 (0x23)</option>
-                      <option value={0x62}>Internal/USB (0x62)</option>
-                    </select>
-                  </label>
-                  <label className="space-y-1 text-sm text-[var(--text-muted)]">
-                    <span>Volume</span>
-                    <input type="number" min={0} max={100} value={timerVolume} onChange={(e) => setTimerVolume(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]" />
-                  </label>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {/* On Timer */}
-                  <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-[var(--text)]">On Timer</span>
-                      <label className="flex items-center gap-2 text-sm text-[var(--text-muted)] cursor-pointer">
-                        <input type="checkbox" checked={timerOnEnable} onChange={(e) => setTimerOnEnable(e.target.checked)} />
-                        Enable
-                      </label>
-                    </div>
-                    <div className="flex gap-2">
-                      <label className="flex-1 space-y-1 text-xs text-[var(--text-muted)]">
-                        <span>Hour (0–12)</span>
-                        <input type="number" min={0} max={12} value={timerOnHour} onChange={(e) => setTimerOnHour(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-sm text-[var(--text)]" />
-                      </label>
-                      <label className="flex-1 space-y-1 text-xs text-[var(--text-muted)]">
-                        <span>Minute</span>
-                        <input type="number" min={0} max={59} step={5} value={timerOnMin} onChange={(e) => setTimerOnMin(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-sm text-[var(--text)]" />
-                      </label>
-                    </div>
-                  </div>
-                  {/* Off Timer */}
-                  <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-[var(--text)]">Off Timer</span>
-                      <label className="flex items-center gap-2 text-sm text-[var(--text-muted)] cursor-pointer">
-                        <input type="checkbox" checked={timerOffEnable} onChange={(e) => setTimerOffEnable(e.target.checked)} />
-                        Enable
-                      </label>
-                    </div>
-                    <div className="flex gap-2">
-                      <label className="flex-1 space-y-1 text-xs text-[var(--text-muted)]">
-                        <span>Hour (0–12)</span>
-                        <input type="number" min={0} max={12} value={timerOffHour} onChange={(e) => setTimerOffHour(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-sm text-[var(--text)]" />
-                      </label>
-                      <label className="flex-1 space-y-1 text-xs text-[var(--text-muted)]">
-                        <span>Minute</span>
-                        <input type="number" min={0} max={59} step={5} value={timerOffMin} onChange={(e) => setTimerOffMin(Number(e.target.value))} className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-sm text-[var(--text)]" />
-                      </label>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <ActionButton
-                    tone="primary"
-                    onClick={() => runMdc('onTimerSet', 'on_timer_set', {
-                      slot: timerSlot,
-                      onHour: timerOnHour, onMin: timerOnMin, onEnable: timerOnEnable,
-                      offHour: timerOffHour, offMin: timerOffMin, offEnable: timerOffEnable,
-                      repeat: timerRepeat, volume: timerVolume, source: timerSource,
-                    })}
-                    disabled={busy('onTimerSet') || busy('onTimer')}
-                  >
-                    SET Slot {timerSlot}
-                  </ActionButton>
-                  <ActionButton
-                    tone="danger"
-                    onClick={() => runMdc('onTimerSet', 'on_timer_set', {
-                      slot: timerSlot,
-                      onHour: timerOnHour, onMin: timerOnMin, onEnable: false,
-                      offHour: timerOffHour, offMin: timerOffMin, offEnable: false,
-                      repeat: timerRepeat, volume: timerVolume, source: timerSource,
-                    })}
-                    disabled={busy('onTimerSet') || busy('onTimer')}
-                  >
-                    DISABLE Slot {timerSlot}
-                  </ActionButton>
-                </div>
-                {results['onTimerSet'] ? <ResultPanel result={results['onTimerSet'] as MdcResult} /> : null}
-              </div>
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">RGB Control (0x06)</h2></SectionCardHeader>
+            <SectionCardBody>
+              <ActionButton onClick={() => runMdc('rgb', 'rgb_control_get')} disabled={busy('rgb')}>GET</ActionButton>
+              <ResultPanel result={results['rgb'] as MdcResult} />
             </SectionCardBody>
           </SectionCard>
 
-          {/* ── Standby Control ───────────────────────────────────────────── */}
           <SectionCard>
-            <SectionCardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">Standby Control</h2>
-                <p className="text-sm text-[var(--text-muted)]">MDC 0x4A — DPMS sleep mode (Off / On / Auto). Note: works only under external input source.</p>
-              </div>
-            </SectionCardHeader>
-            <SectionCardBody className="space-y-4">
-              <div className="flex flex-wrap gap-3 items-center">
-                <ActionButton onClick={() => runMdc('standby', 'standby_get')} disabled={busy('standby')}>
-                  GET
-                </ActionButton>
-                <div className="flex items-center gap-2">
-                  <select value={standbyValue} onChange={(e) => setStandbyValue(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
-                    <option value={0}>Off (0x00)</option>
-                    <option value={1}>On (0x01)</option>
-                    <option value={2}>Auto (0x02)</option>
-                  </select>
-                  <ActionButton tone="primary" onClick={() => runMdc('standby', 'standby_set', { value: standbyValue })} disabled={busy('standby')}>
-                    SET
-                  </ActionButton>
-                </div>
-              </div>
-              {results['standby'] ? <ResultPanel result={results['standby'] as MdcResult} /> : null}
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Maintenance Control (0x08)</h2></SectionCardHeader>
+            <SectionCardBody>
+              <ActionButton onClick={() => runMdc('maintenance', 'maintenance_get')} disabled={busy('maintenance')}>GET</ActionButton>
+              <ResultPanel result={results['maintenance'] as MdcResult} />
             </SectionCardBody>
           </SectionCard>
 
-          {/* ── OSD Display Type On/Off ───────────────────────────────────── */}
           <SectionCard>
-            <SectionCardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">OSD Display Type On/Off</h2>
-                <p className="text-sm text-[var(--text-muted)]">MDC 0xA3 — enable/disable individual OSD overlays (Source, No Signal, MDC, etc.).</p>
-              </div>
-            </SectionCardHeader>
-            <SectionCardBody className="space-y-4">
-              <div className="flex flex-wrap gap-3 items-center">
-                <ActionButton onClick={() => runMdc('osd', 'osd_display_get')} disabled={busy('osd')}>
-                  GET
-                </ActionButton>
-                <div className="flex items-center gap-2">
-                  <select value={osdType} onChange={(e) => setOsdType(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
-                    <option value={0}>Source OSD (0x00)</option>
-                    <option value={1}>Not Optimum Mode (0x01)</option>
-                    <option value={2}>No Signal OSD (0x02)</option>
-                    <option value={3}>MDC OSD (0x03)</option>
-                    <option value={4}>Schedule Channel Info (0x04)</option>
-                  </select>
-                  <select value={osdOnOff} onChange={(e) => setOsdOnOff(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
-                    <option value={0}>Off (0x00)</option>
-                    <option value={1}>On (0x01)</option>
-                  </select>
-                  <ActionButton tone="primary" onClick={() => runMdc('osd', 'osd_display_set', { osdType, osdOnOff })} disabled={busy('osd')}>
-                    SET
-                  </ActionButton>
-                </div>
-              </div>
-              {results['osd'] ? <ResultPanel result={results['osd'] as MdcResult} /> : null}
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Serial Number (0x0B)</h2></SectionCardHeader>
+            <SectionCardBody>
+              <ActionButton onClick={() => runMdc('serial', 'serial_number_get')} disabled={busy('serial')}>GET</ActionButton>
+              <ResultPanel result={results['serial'] as MdcResult} />
             </SectionCardBody>
           </SectionCard>
 
-          {/* ── Network Standby ────────────────────────────────────────────── */}
           <SectionCard>
-            <SectionCardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">Network Standby</h2>
-                <p className="text-sm text-[var(--text-muted)]">MDC 0xB5 — control standby over network (on = display keeps LAN alive in standby)</p>
-              </div>
-            </SectionCardHeader>
-            <SectionCardBody className="space-y-4">
-              <div className="flex flex-wrap gap-3 items-center">
-                <ActionButton onClick={() => runMdc('ns', 'network_standby_get')} disabled={busy('ns')}>
-                  GET
-                </ActionButton>
-                <div className="flex items-center gap-2">
-                  <select value={nsValue} onChange={(e) => setNsValue(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
-                    <option value={0}>Off (0x00)</option>
-                    <option value={1}>On (0x01)</option>
-                  </select>
-                  <ActionButton tone="primary" onClick={() => runMdc('ns', 'network_standby_set', { value: nsValue })} disabled={busy('ns')}>
-                    SET
-                  </ActionButton>
-                </div>
-              </div>
-              {results['ns'] ? (
-                <ResultPanel result={results['ns'] as MdcResult & { value?: number }} />
-              ) : null}
-              {results['ns']?.ok && typeof results['ns']?.['value'] === 'number' ? (
-                <p className="text-sm text-[var(--text-muted)]">
-                  Current: <span className="font-semibold text-[var(--text)]">{results['ns']['value'] === 1 ? 'On' : 'Off'}</span>
-                </p>
-              ) : null}
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Model Name (0x8A)</h2></SectionCardHeader>
+            <SectionCardBody>
+              <ActionButton onClick={() => runMdc('modelName', 'model_name_get')} disabled={busy('modelName')}>GET</ActionButton>
+              <ResultPanel result={results['modelName'] as MdcResult} />
             </SectionCardBody>
           </SectionCard>
 
-          {/* ── Menu Orientation ───────────────────────────────────────────── */}
           <SectionCard>
-            <SectionCardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">Menu Orientation</h2>
-                <p className="text-sm text-[var(--text-muted)]">MDC 0xC8 sub 0x81 — OSD/menu rotation angle</p>
-              </div>
-            </SectionCardHeader>
-            <SectionCardBody className="space-y-4">
-              <div className="flex flex-wrap gap-3 items-center">
-                <ActionButton onClick={() => runMdc('menuOrient', 'menu_orientation_get')} disabled={busy('menuOrient')}>
-                  GET
-                </ActionButton>
-                <div className="flex items-center gap-2">
-                  <select value={menuOrientValue} onChange={(e) => setMenuOrientValue(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
-                    {Object.entries(ORIENTATION_LABELS).map(([v, label]) => (
-                      <option key={v} value={v}>{label} (0x0{v})</option>
-                    ))}
-                  </select>
-                  <ActionButton tone="primary" onClick={() => runMdc('menuOrient', 'menu_orientation_set', { value: menuOrientValue })} disabled={busy('menuOrient')}>
-                    SET
-                  </ActionButton>
-                </div>
-              </div>
-              {results['menuOrient'] ? (
-                <ResultPanel result={results['menuOrient'] as MdcResult} />
-              ) : null}
-              {results['menuOrient']?.ok && typeof results['menuOrient']?.['value'] === 'number' ? (
-                <p className="text-sm text-[var(--text-muted)]">
-                  Current: <span className="font-semibold text-[var(--text)]">{ORIENTATION_LABELS[results['menuOrient']['value'] as number] ?? `0x${(results['menuOrient']['value'] as number).toString(16)}`}</span>
-                </p>
-              ) : null}
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Screen Size (0x19)</h2></SectionCardHeader>
+            <SectionCardBody>
+              <ActionButton onClick={() => runMdc('screenSize', 'screen_size_get')} disabled={busy('screenSize')}>GET</ActionButton>
+              <ResultPanel result={results['screenSize'] as MdcResult} />
             </SectionCardBody>
           </SectionCard>
 
-          {/* ── Source Content Orientation ──────────────────────────────────── */}
           <SectionCard>
-            <SectionCardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">Source Content Orientation</h2>
-                <p className="text-sm text-[var(--text-muted)]">MDC 0xC8 sub 0x82 — display content rotation angle</p>
-              </div>
-            </SectionCardHeader>
-            <SectionCardBody className="space-y-4">
-              <div className="flex flex-wrap gap-3 items-center">
-                <ActionButton onClick={() => runMdc('srcOrient', 'src_orientation_get')} disabled={busy('srcOrient')}>
-                  GET
-                </ActionButton>
-                <div className="flex items-center gap-2">
-                  <select value={srcOrientValue} onChange={(e) => setSrcOrientValue(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
-                    {Object.entries(ORIENTATION_LABELS).map(([v, label]) => (
-                      <option key={v} value={v}>{label} (0x0{v})</option>
-                    ))}
-                  </select>
-                  <ActionButton tone="primary" onClick={() => runMdc('srcOrient', 'src_orientation_set', { value: srcOrientValue })} disabled={busy('srcOrient')}>
-                    SET
-                  </ActionButton>
-                </div>
-              </div>
-              {results['srcOrient'] ? (
-                <ResultPanel result={results['srcOrient'] as MdcResult} />
-              ) : null}
-              {results['srcOrient']?.ok && typeof results['srcOrient']?.['value'] === 'number' ? (
-                <p className="text-sm text-[var(--text-muted)]">
-                  Current: <span className="font-semibold text-[var(--text)]">{ORIENTATION_LABELS[results['srcOrient']['value'] as number] ?? `0x${(results['srcOrient']['value'] as number).toString(16)}`}</span>
-                </p>
-              ) : null}
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Child Device Info (0x0A.0x81)</h2></SectionCardHeader>
+            <SectionCardBody>
+              <ActionButton onClick={() => runMdc('childDevice', 'child_device_get')} disabled={busy('childDevice')}>GET</ActionButton>
+              <ResultPanel result={results['childDevice'] as MdcResult} />
             </SectionCardBody>
           </SectionCard>
 
-          {/* ── Power Button ───────────────────────────────────────────────── */}
           <SectionCard>
-            <SectionCardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">Power Button Mode</h2>
-                <p className="text-sm text-[var(--text-muted)]">MDC 0xCA sub 0x91 — 0x00 = power-on only; 0x01 = power-on/off toggle</p>
-              </div>
-            </SectionCardHeader>
-            <SectionCardBody className="space-y-4">
-              <div className="flex flex-wrap gap-3 items-center">
-                <ActionButton onClick={() => runMdc('pwrBtn', 'power_button_get')} disabled={busy('pwrBtn')}>
-                  GET
-                </ActionButton>
-                <div className="flex items-center gap-2">
-                  <select value={pwrBtnValue} onChange={(e) => setPwrBtnValue(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
-                    <option value={0}>Power-On Only (0x00)</option>
-                    <option value={1}>Power-On/Off Toggle (0x01)</option>
-                  </select>
-                  <ActionButton tone="primary" onClick={() => runMdc('pwrBtn', 'power_button_set', { value: pwrBtnValue })} disabled={busy('pwrBtn')}>
-                    SET
-                  </ActionButton>
-                </div>
-              </div>
-              {results['pwrBtn'] ? (
-                <ResultPanel result={results['pwrBtn'] as MdcResult} />
-              ) : null}
-              {results['pwrBtn']?.ok && typeof results['pwrBtn']?.['value'] === 'number' ? (
-                <p className="text-sm text-[var(--text-muted)]">
-                  Current: <span className="font-semibold text-[var(--text)]">{results['pwrBtn']['value'] === 1 ? 'Power-On/Off Toggle' : 'Power-On Only'}</span>
-                </p>
-              ) : null}
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">MAC Address (0x1B.0x81)</h2></SectionCardHeader>
+            <SectionCardBody>
+              <ActionButton onClick={() => runMdc('macAddress', 'mac_address_get')} disabled={busy('macAddress')}>GET</ActionButton>
+              <ResultPanel result={results['macAddress'] as MdcResult} />
             </SectionCardBody>
           </SectionCard>
 
-          {/* ── Display Status ─────────────────────────────────────────────── */}
           <SectionCard>
-            <SectionCardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">Display Status</h2>
-                <p className="text-sm text-[var(--text-muted)]">MDC 0x0D — lamp error, temp error, brightness sensor, sync error, current temp (°C), fan error</p>
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Device PIN (0x1B.0x87)</h2></SectionCardHeader>
+            <SectionCardBody className="space-y-3">
+              <p className="text-xs text-[var(--text-muted)]">Note: spec states this will not work via Ethernet — RS232C only.</p>
+              <input
+                value={devicePin}
+                onChange={(e) => setDevicePin(e.target.value)}
+                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full sm:w-56"
+                placeholder="PIN"
+              />
+              <div className="flex gap-3 flex-wrap">
+                <ActionButton onClick={() => runMdc('devicePin', 'device_pin_get')} disabled={busy('devicePin')}>GET</ActionButton>
+                <ActionButton tone="primary" onClick={() => runMdc('devicePin', 'device_pin_set', { pin: devicePin })} disabled={busy('devicePin') || !devicePin}>SET</ActionButton>
               </div>
-            </SectionCardHeader>
-            <SectionCardBody className="space-y-4">
-              <ActionButton onClick={() => runMdc('dispStatus', 'display_status_get')} disabled={busy('dispStatus')}>
-                GET
-              </ActionButton>
-              {results['dispStatus'] ? (
-                <>
-                  <ResultPanel result={results['dispStatus'] as MdcResult} />
-                  {results['dispStatus'].ok && Array.isArray(results['dispStatus'].data) && results['dispStatus'].data.length >= 6 ? (
-                    <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-                      {(
-                        [
-                          ['Lamp', String(results['dispStatus']['lampStatus'] ?? '-')],
-                          ['Temperature', String(results['dispStatus']['temperatureStatus'] ?? '-')],
-                          ['Brightness Sensor', String(results['dispStatus']['brightnessSensorStatus'] ?? '-')],
-                          ['Sync', String(results['dispStatus']['syncStatus'] ?? '-')],
-                          ['Current Temp', `${String(results['dispStatus']['currentTemperatureC'] ?? '-')}°C`],
-                          ['Fan', String(results['dispStatus']['fanStatus'] ?? '-')],
-                        ] as [string, string][]
-                      ).map(([label, val]) => (
-                        <div key={label} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
-                          <div className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">{label}</div>
-                          <div className={`mt-1 font-semibold ${val === 'Error' ? 'text-red-400' : 'text-[var(--text)]'}`}>{val}</div>
-                        </div>
-                      ))}
-                    </dl>
-                  ) : null}
-                </>
-              ) : null}
+              <ResultPanel result={results['devicePin'] as MdcResult} />
             </SectionCardBody>
           </SectionCard>
 
-          {/* ── SW Version ─────────────────────────────────────────────────── */}
           <SectionCard>
-            <SectionCardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">Software Version</h2>
-                <p className="text-sm text-[var(--text-muted)]">MDC 0x0E — read firmware/software version string from display</p>
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Network Config (0x1B.0x82)</h2></SectionCardHeader>
+            <SectionCardBody className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <input value={ipAddress} onChange={(e) => setIpAddress(e.target.value)} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="IP Address" />
+                <input value={subnetMask} onChange={(e) => setSubnetMask(e.target.value)} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="Subnet Mask" />
+                <input value={gateway} onChange={(e) => setGateway(e.target.value)} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="Gateway" />
+                <input value={dns} onChange={(e) => setDns(e.target.value)} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="DNS" />
               </div>
-            </SectionCardHeader>
-            <SectionCardBody className="space-y-4">
-              <ActionButton onClick={() => runMdc('swVersion', 'sw_version_get')} disabled={busy('swVersion')}>
-                GET
-              </ActionButton>
-              {results['swVersion'] ? (
-                <>
-                  <ResultPanel result={results['swVersion'] as MdcResult} />
-                  {results['swVersion'].ok && results['swVersion']['version'] ? (
-                    <p className="text-sm text-[var(--text-muted)]">
-                      Version: <span className="font-mono font-semibold text-[var(--text)]">{String(results['swVersion']['version'])}</span>
-                    </p>
-                  ) : null}
-                </>
-              ) : null}
+              <div className="flex gap-3 flex-wrap">
+                <ActionButton onClick={() => runMdc('network', 'network_config_get')} disabled={busy('network')}>GET</ActionButton>
+                <ActionButton tone="primary" onClick={() => runMdc('network', 'network_config_set', { ipAddress, subnetMask, gateway, dns })} disabled={busy('network')}>SET</ActionButton>
+              </div>
+              <ResultPanel result={results['network'] as MdcResult} />
             </SectionCardBody>
           </SectionCard>
 
-          {/* ── Auto ID ───────────────────────────────────────────────────── */}
           <SectionCard>
-            <SectionCardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">Auto ID (MDC 0xB8)</h2>
-                <p className="text-sm text-[var(--text-muted)]">
-                  Assigns sequential MDC IDs starting at 1. A single device on the chain will receive ID=1.
-                  Click <strong>START</strong>, wait a moment, then click <strong>STOP</strong>.
-                  STOP will automatically scan to confirm the assigned ID.
-                </p>
-              </div>
-            </SectionCardHeader>
-            <SectionCardBody className="space-y-4">
-              <div className="flex flex-wrap gap-3 items-center">
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">URL Launcher Address (0xC7.0x82)</h2></SectionCardHeader>
+            <SectionCardBody className="space-y-3">
+              <input
+                value={urlLauncherAddress}
+                onChange={(e) => setUrlLauncherAddress(e.target.value)}
+                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full"
+                placeholder="https://example.com"
+              />
+              <div className="flex gap-3 flex-wrap">
+                <ActionButton onClick={() => runMdc('urlLauncher', 'url_launcher_address_get')} disabled={busy('urlLauncher')}>GET</ActionButton>
                 <ActionButton
                   tone="primary"
-                  onClick={() => runMdc('autoIdStart', 'auto_id_start')}
-                  disabled={busy('autoIdStart') || busy('autoIdStop')}
+                  onClick={() => runMdc('urlLauncher', 'url_launcher_address_set', { urlAddress: urlLauncherAddress })}
+                  disabled={busy('urlLauncher')}
                 >
-                  START Auto ID
-                </ActionButton>
-                <ActionButton
-                  onClick={() => runMdc('autoIdStop', 'auto_id_stop')}
-                  disabled={busy('autoIdStop') || busy('autoIdStart')}
-                >
-                  STOP Auto ID + Scan
+                  SET
                 </ActionButton>
               </div>
-
-              {/* START result */}
-              {results['autoIdStart'] ? (
-                <div className="space-y-1">
-                  <ResultPanel result={results['autoIdStart'] as MdcResult} />
-                  {results['autoIdStart']?.ok ? (
-                    <p className="text-sm text-green-500 font-semibold">
-                      ✓ Auto ID START sent — now click STOP Auto ID + Scan
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {/* STOP + scan result */}
-              {results['autoIdStop'] ? (
-                <div className="space-y-1">
-                  <ResultPanel result={results['autoIdStop'] as MdcResult} />
-                  {results['autoIdStop']?.ok ? (
-                    <p className="text-sm text-[var(--text-muted)]">
-                      Device MDC ID after Auto ID:{' '}
-                      <span className={`font-semibold ${results['autoIdStop']['idOk'] ? 'text-green-500' : 'text-yellow-500'}`}>
-                        {String(results['autoIdStop']['displayId'])}
-                        {results['autoIdStop']['idOk']
-                          ? ' ✓ — ID is now 1, all MDC commands will work'
-                          : ' ✗ — Auto ID did not assign ID=1 (unexpected)'}
-                      </span>
-                    </p>
-                  ) : (
-                    <p className="text-sm text-yellow-500 font-semibold">
-                      {String(results['autoIdStop']['error'] ?? 'Auto ID STOP sent but no device responded to scan')}
-                    </p>
-                  )}
-                </div>
-              ) : null}
+              <ResultPanel result={results['urlLauncher'] as MdcResult} />
             </SectionCardBody>
           </SectionCard>
 
-          {/* ── B2B PC Connection ──────────────────────────────────────────── */}
           <SectionCard>
-            <SectionCardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">B2B PC Connection</h2>
-                <p className="text-sm text-[var(--text-muted)]">
-                  b2bapis.b2bcontrol.getPCConnection() — returns the MDC connection type and device ID
-                  as seen by the Tizen firmware (not via MDC). Useful for diagnosing why MDC commands may not work.
-                </p>
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Weekly Reboot (0x1B.0xA2)</h2></SectionCardHeader>
+            <SectionCardBody className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <input type="number" min={0} max={127} value={weekDay} onChange={(e) => setWeekDay(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="Weekday bitmask" />
+                <input type="number" min={0} max={23} value={timeHour} onChange={(e) => setTimeHour(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="Hour" />
+                <input type="number" min={0} max={59} value={timeMinute} onChange={(e) => setTimeMinute(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="Minute" />
               </div>
-            </SectionCardHeader>
-            <SectionCardBody className="space-y-4">
-              <div className="flex flex-wrap gap-3 items-center">
-                <ActionButton onClick={() => runMdc('b2bPcConn', 'b2b_pc_connection_get')} disabled={busy('b2bPcConn')}>
-                  GET PC Connection
-                </ActionButton>
+              <div className="flex gap-3 flex-wrap">
+                <ActionButton onClick={() => runMdc('weekly', 'weekly_restart_get')} disabled={busy('weekly')}>GET</ActionButton>
+                <ActionButton tone="primary" onClick={() => runMdc('weekly', 'weekly_restart_set', { weekDay, timeHour, timeMinute })} disabled={busy('weekly')}>SET</ActionButton>
               </div>
-              {results['b2bPcConn'] ? (
-                <ResultPanel result={results['b2bPcConn'] as MdcResult} />
-              ) : null}
-              {results['b2bPcConn']?.ok ? (
-                <pre className="rounded-lg bg-[var(--surface-raised)] p-3 text-xs font-mono text-[var(--text)] overflow-x-auto whitespace-pre-wrap">
-                  {JSON.stringify(results['b2bPcConn']['value'] ?? results['b2bPcConn']['raw'], null, 2)}
-                </pre>
-              ) : null}
+              <ResultPanel result={results['weekly'] as MdcResult} />
             </SectionCardBody>
           </SectionCard>
 
-          {/* ── MDC Connection Type ────────────────────────────────────────── */}
           <SectionCard>
-            <SectionCardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">MDC Connection Type</h2>
-                <p className="text-sm text-[var(--text-muted)]">MDC 0x1D — 0x00 = RS232C serial; 0x01 = RJ45 Ethernet</p>
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Brightness (0x25)</h2></SectionCardHeader>
+            <SectionCardBody className="space-y-3">
+              <input type="number" min={0} max={100} value={brightness} onChange={(e) => setBrightness(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-40" />
+              <div className="flex gap-3 flex-wrap">
+                <ActionButton onClick={() => runMdc('brightness', 'brightness_get')} disabled={busy('brightness')}>GET</ActionButton>
+                <ActionButton tone="primary" onClick={() => runMdc('brightness', 'brightness_set', { value: brightness })} disabled={busy('brightness')}>SET</ActionButton>
               </div>
-            </SectionCardHeader>
-            <SectionCardBody className="space-y-4">
-              <div className="flex flex-wrap gap-3 items-center">
-                <ActionButton onClick={() => runMdc('mdcConn', 'mdc_conn_type_get')} disabled={busy('mdcConn')}>
-                  GET
-                </ActionButton>
-                <div className="flex items-center gap-2">
-                  <select value={mdcConnValue} onChange={(e) => setMdcConnValue(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)]">
-                    <option value={0}>RS232C (0x00)</option>
-                    <option value={1}>RJ45 (0x01)</option>
-                  </select>
-                  <ActionButton tone="primary" onClick={() => runMdc('mdcConn', 'mdc_conn_type_set', { value: mdcConnValue })} disabled={busy('mdcConn')}>
-                    SET
-                  </ActionButton>
-                </div>
-              </div>
-              {results['mdcConn'] ? (
-                <ResultPanel result={results['mdcConn'] as MdcResult} />
-              ) : null}
-              {results['mdcConn']?.ok ? (
-                <p className="text-sm text-[var(--text-muted)]">
-                  Current: <span className="font-semibold text-[var(--text)]">{results['mdcConn']['value'] === 1 ? 'RJ45' : 'RS232C'}</span>{' '}
-                  {results['mdcConn']['displayId'] ? (
-                    <span>· Panel ID <span className="font-semibold text-[var(--text)]">{String(results['mdcConn']['displayId'])}</span></span>
-                  ) : null}
-                </p>
-              ) : null}
+              <ResultPanel result={results['brightness'] as MdcResult} />
             </SectionCardBody>
           </SectionCard>
 
-          {/* ── MDC Fix: Apply Required Settings ──────────────────────────── */}
           <SectionCard>
-            <SectionCardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--text)]">MDC Fix — Apply Required Settings</h2>
-                <p className="text-sm text-[var(--text-muted)]">
-                  MDC commands require: connection type = RJ45 <em>and</em> device MDC ID = 1.
-                  There is no MDC command to change the device ID — it must be changed via the display OSD.
-                  Use <strong>Scan MDC ID</strong> to find the current ID. Once found, click{' '}
-                  <strong>Save as Active MDC ID</strong> so all future commands use the correct ID automatically.
-                </p>
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Sharpness (0x26)</h2></SectionCardHeader>
+            <SectionCardBody className="space-y-3">
+              <input type="number" min={0} max={100} value={sharpness} onChange={(e) => setSharpness(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-40" />
+              <div className="flex gap-3 flex-wrap">
+                <ActionButton onClick={() => runMdc('sharpness', 'sharpness_get')} disabled={busy('sharpness')}>GET</ActionButton>
+                <ActionButton tone="primary" onClick={() => runMdc('sharpness', 'sharpness_set', { value: sharpness })} disabled={busy('sharpness')}>SET</ActionButton>
               </div>
-            </SectionCardHeader>
-            <SectionCardBody className="space-y-4">
-              <div className="flex flex-wrap gap-3 items-center">
-                <ActionButton
-                  onClick={() => runMdc('mdcIdScan', 'mdc_id_scan')}
-                  disabled={busy('mdcIdScan') || busy('mdcFix')}
-                >
-                  Scan MDC ID (1–9)
-                </ActionButton>
-                <ActionButton
-                  tone="danger"
-                  onClick={() => runMdc('mdcFix', 'mdc_conn_type_fix')}
-                  disabled={busy('mdcFix') || busy('mdcIdScan')}
-                >
-                  Fix: Force RJ45 + Scan ID
-                </ActionButton>
-              </div>
-
-              {/* Scan-only result */}
-              {results['mdcIdScan'] ? (
-                <div className="space-y-2">
-                  <ResultPanel result={results['mdcIdScan'] as MdcResult} />
-                  {results['mdcIdScan']?.ok ? (
-                    <>
-                      <p className="text-sm text-[var(--text-muted)]">
-                        Device MDC ID:{' '}
-                        <span className={`font-semibold ${results['mdcIdScan']['idOk'] ? 'text-green-500' : 'text-yellow-500'}`}>
-                          {String(results['mdcIdScan']['displayId'])}
-                          {results['mdcIdScan']['idOk']
-                            ? ' ✓ — MDC ID is correct'
-                            : ' ✗ — change via display OSD: Menu → System → MDC → Network ID → 1, then re-scan'}
-                        </span>
-                      </p>
-                      <ActionButton
-                        tone="primary"
-                        onClick={() => runMdc('saveMdcId', 'save_mdc_id', { id: results['mdcIdScan']!['displayId'] as number })}
-                        disabled={busy('saveMdcId')}
-                      >
-                        Save ID {String(results['mdcIdScan']['displayId'])} as Active MDC ID
-                      </ActionButton>
-                    </>
-                  ) : (
-                    <p className="text-sm text-yellow-500 font-semibold">
-                      No device responded to IDs 1–9. Check MDC TCP connection.
-                    </p>
-                  )}
-                </div>
-              ) : null}
-
-              {/* Save result */}
-              {results['saveMdcId'] ? (
-                <p className="text-sm">
-                  {results['saveMdcId']?.ok
-                    ? <span className="text-green-500 font-semibold">✓ MDC ID {String(results['saveMdcId']['mdcId'])} saved — all MDC commands will now use this ID.</span>
-                    : <span className="text-red-500 font-semibold">✗ Save failed: {String(results['saveMdcId']['error'] ?? 'unknown error')}</span>
-                  }
-                </p>
-              ) : null}
-
-              {/* Fix result */}
-              {results['mdcFix'] ? (
-                <div className="space-y-2">
-                  <ResultPanel result={results['mdcFix'] as MdcResult} />
-                  <p className="text-sm text-[var(--text-muted)]">
-                    RJ45 broadcast SET:{' '}
-                    <span className="font-semibold text-green-500">✓ Sent</span>
-                    <span className="text-[var(--text-muted)]"> (0xFE broadcast — no ACK expected)</span>
-                  </p>
-                  {results['mdcFix']?.ok ? (
-                    <>
-                      <p className="text-sm text-[var(--text-muted)]">
-                        Device MDC ID:{' '}
-                        <span className={`font-semibold ${results['mdcFix']['idOk'] ? 'text-green-500' : 'text-yellow-500'}`}>
-                          {String(results['mdcFix']['displayId'])}
-                          {results['mdcFix']['idOk']
-                            ? ' ✓ — all MDC commands will work'
-                            : ' ✗ — RJ45 was set but ID must be changed to 1 via display OSD: Menu → System → MDC → Network ID → 1'}
-                        </span>
-                      </p>
-                      <ActionButton
-                        tone="primary"
-                        onClick={() => runMdc('saveMdcId', 'save_mdc_id', { id: results['mdcFix']!['displayId'] as number })}
-                        disabled={busy('saveMdcId')}
-                      >
-                        Save ID {String(results['mdcFix']['displayId'])} as Active MDC ID
-                      </ActionButton>
-                    </>
-                  ) : (
-                    <p className="text-sm text-yellow-500 font-semibold">
-                      RJ45 SET sent but no device responded to IDs 1–9.
-                    </p>
-                  )}
-                </div>
-              ) : null}
+              <ResultPanel result={results['sharpness'] as MdcResult} />
             </SectionCardBody>
           </SectionCard>
 
+          <SectionCard>
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Color (0x27)</h2></SectionCardHeader>
+            <SectionCardBody className="space-y-3">
+              <input type="number" min={0} max={100} value={color} onChange={(e) => setColor(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-40" />
+              <div className="flex gap-3 flex-wrap">
+                <ActionButton onClick={() => runMdc('color', 'color_get')} disabled={busy('color')}>GET</ActionButton>
+                <ActionButton tone="primary" onClick={() => runMdc('color', 'color_set', { value: color })} disabled={busy('color')}>SET</ActionButton>
+              </div>
+              <ResultPanel result={results['color'] as MdcResult} />
+            </SectionCardBody>
+          </SectionCard>
+
+          <SectionCard>
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Brightness Sensor (0x86)</h2></SectionCardHeader>
+            <SectionCardBody className="space-y-3">
+              <select
+                value={brightnessSensor}
+                onChange={(e) => setBrightnessSensor(Number(e.target.value))}
+                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full sm:w-80"
+              >
+                <option value={0}>Off (0x00)</option>
+                <option value={1}>On (0x01)</option>
+              </select>
+              <div className="flex gap-3 flex-wrap">
+                <ActionButton onClick={() => runMdc('brightnessSensor', 'brightness_sensor_get')} disabled={busy('brightnessSensor')}>GET</ActionButton>
+                <ActionButton tone="primary" onClick={() => runMdc('brightnessSensor', 'brightness_sensor_set', { value: brightnessSensor })} disabled={busy('brightnessSensor')}>SET</ActionButton>
+              </div>
+              <ResultPanel result={results['brightnessSensor'] as MdcResult} />
+            </SectionCardBody>
+          </SectionCard>
+
+          <SectionCard>
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">MDC ID Hide/Show (0xB9)</h2></SectionCardHeader>
+            <SectionCardBody className="space-y-3">
+              <select
+                value={mdcIdDisplay}
+                onChange={(e) => setMdcIdDisplay(Number(e.target.value))}
+                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full sm:w-80"
+              >
+                <option value={0}>Hide ID Display (0x00)</option>
+                <option value={1}>Show ID Display (0x01)</option>
+              </select>
+              <div className="flex gap-3 flex-wrap">
+                <ActionButton tone="primary" onClick={() => runMdc('mdcIdDisplay', 'mdc_id_display_set', { value: mdcIdDisplay })} disabled={busy('mdcIdDisplay')}>SET</ActionButton>
+              </div>
+              <ResultPanel result={results['mdcIdDisplay'] as MdcResult} />
+            </SectionCardBody>
+          </SectionCard>
+
+          <SectionCard>
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Safety Screen Run (0x59)</h2></SectionCardHeader>
+            <SectionCardBody className="space-y-3">
+              <select value={safetyScreenType} onChange={(e) => setSafetyScreenType(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full sm:w-80">
+                {SAFETY_SCREEN_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </select>
+              <div className="flex gap-3 flex-wrap">
+                <ActionButton onClick={() => runMdc('safetyRun', 'safety_screen_run_get')} disabled={busy('safetyRun')}>GET</ActionButton>
+                <ActionButton tone="primary" onClick={() => runMdc('safetyRun', 'safety_screen_run_set', { value: safetyScreenType })} disabled={busy('safetyRun')}>SET</ActionButton>
+              </div>
+              <ResultPanel result={results['safetyRun'] as MdcResult} />
+            </SectionCardBody>
+          </SectionCard>
+
+          <SectionCard>
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Ticker (0x63)</h2></SectionCardHeader>
+            <SectionCardBody className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <select value={tickerOnOff} onChange={(e) => setTickerOnOff(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm">
+                  <option value={0}>Off (0x00)</option>
+                  <option value={1}>On (0x01)</option>
+                </select>
+                <input type="number" min={1} max={12} value={tickerStartHour} onChange={(e) => setTickerStartHour(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="Start Hour (1-12)" />
+                <input type="number" min={0} max={59} value={tickerStartMinute} onChange={(e) => setTickerStartMinute(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="Start Minute" />
+                <input type="number" min={1} max={12} value={tickerEndHour} onChange={(e) => setTickerEndHour(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="End Hour (1-12)" />
+                <input type="number" min={0} max={59} value={tickerEndMinute} onChange={(e) => setTickerEndMinute(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="End Minute" />
+              </div>
+              <input value={tickerMessage} onChange={(e) => setTickerMessage(e.target.value)} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full" placeholder="Ticker message (max 240 chars)" />
+              <div className="flex gap-3 flex-wrap">
+                <ActionButton onClick={() => runMdc('ticker', 'ticker_get')} disabled={busy('ticker')}>GET</ActionButton>
+                <ActionButton tone="primary" onClick={() => runMdc('ticker', 'ticker_set', {
+                  onOff: tickerOnOff,
+                  message: tickerMessage,
+                  startHour: tickerStartHour,
+                  startMinute: tickerStartMinute,
+                  endHour: tickerEndHour,
+                  endMinute: tickerEndMinute,
+                })} disabled={busy('ticker')}>SET</ActionButton>
+              </div>
+              <ResultPanel result={results['ticker'] as MdcResult} />
+            </SectionCardBody>
+          </SectionCard>
+
+          <SectionCard>
+            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">WiFi AP Config (0x1B.0x8A)</h2></SectionCardHeader>
+            <SectionCardBody className="space-y-3">
+              <p className="text-xs text-[var(--text-muted)]">SET only — adds SSID to device connection history. Device may change network; response may not return.</p>
+              <input
+                value={wifiSsid}
+                onChange={(e) => setWifiSsid(e.target.value)}
+                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full"
+                placeholder="SSID"
+              />
+              <input
+                type="password"
+                value={wifiPassword}
+                onChange={(e) => setWifiPassword(e.target.value)}
+                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full"
+                placeholder="Password"
+              />
+              <div className="flex gap-3 flex-wrap">
+                <ActionButton
+                  tone="primary"
+                  onClick={() => runMdc('wifiAp', 'network_wifi_set', { ssid: wifiSsid, password: wifiPassword })}
+                  disabled={busy('wifiAp') || !wifiSsid}
+                >
+                  SET
+                </ActionButton>
+              </div>
+              <ResultPanel result={results['wifiAp'] as MdcResult} />
+            </SectionCardBody>
+          </SectionCard>
         </>
       )}
     </div>

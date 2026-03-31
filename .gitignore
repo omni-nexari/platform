@@ -26,7 +26,7 @@ Docs/sample/
 #Tizen apps
 apps/tizen
 apps/tizen-sbb
-apps/test-nodejs-mdc-sbb
+apps/tizen-rateboard
 
 
 

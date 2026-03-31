@@ -38,6 +38,8 @@ import {
   RotateCcw,
   Tv2,
   Maximize2,
+  ScanLine,
+  Save,
   Minimize2,
   PowerOff,
   Home,
@@ -46,6 +48,9 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
+  AlarmClock,
+  ArrowDown,
+  ArrowUp,
 } from 'lucide-react';
 import { formatDistanceToNow } from '../utils/time.js';
 import WorkspaceTagPicker from '../../components/WorkspaceTagPicker.js';
@@ -202,6 +207,38 @@ const MDC_SOURCES = [
   { key: 'COMPONENT', label: 'Component',     byte: 0x0C },
 ] as const;
 const MDC_SOURCE_BY_BYTE: Record<number, string> = Object.fromEntries(MDC_SOURCES.map((s) => [s.byte, s.key]));
+
+const TIMER_SOURCES = [
+  { label: 'URL Launcher', byte: 0x01 },
+  { label: 'HDMI 1',       byte: 0x21 },
+  { label: 'HDMI 2',       byte: 0x23 },
+  { label: 'HDMI 3',       byte: 0x31 },
+  { label: 'HDMI 4',       byte: 0x33 },
+  { label: 'DisplayPort',  byte: 0x25 },
+  { label: 'Internal/USB', byte: 0x62 },
+] as const;
+
+const TIMER_REPEAT_OPTIONS = [
+  { value: 0, label: 'Once' },
+  { value: 1, label: 'Every day' },
+  { value: 2, label: 'Mon – Fri' },
+  { value: 3, label: 'Mon – Sat' },
+  { value: 4, label: 'Sat – Sun' },
+  { value: 5, label: 'Custom days' },
+] as const;
+
+const WEEK_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+type TimerSlotState = {
+  onHour: number; onMin: number; onEnable: boolean;
+  offHour: number; offMin: number; offEnable: boolean;
+  repeat: number; manualDays: number; volume: number; source: number; busy: boolean;
+};
+const DEFAULT_TIMER_SLOT: TimerSlotState = {
+  onHour: 8, onMin: 0, onEnable: true,
+  offHour: 22, offMin: 0, offEnable: true,
+  repeat: 1, manualDays: 0, volume: 20, source: 0x01, busy: false,
+};
 
 const ALL_TIMEZONE_ENTRIES: TzEntry[] = (() => {
   const now = Date.now();
@@ -377,7 +414,7 @@ function MiniBar({ value, max = 100, tone = 'default' }: {
 }
 
 // ── LiveViewOverlay ───────────────────────────────────────────────────────────
-function LiveViewOverlay({ deviceId, isOnline, onClose }: { deviceId: string; isOnline: boolean; onClose: () => void }) {
+function LiveViewOverlay({ deviceId, isOnline, onClose, onPowerChange }: { deviceId: string; isOnline: boolean; onClose: () => void; onPowerChange?: (state: 'on' | 'off') => void }) {
   type LiveStatus = 'idle' | 'buffering' | 'playing';
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [status, setStatus] = useState<LiveStatus>('idle');
@@ -597,8 +634,8 @@ function LiveViewOverlay({ deviceId, isOnline, onClose }: { deviceId: string; is
           <div className="w-56 flex-shrink-0 border-l border-white/10 flex flex-col items-center gap-4 p-4 bg-black/40 overflow-y-auto">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-white/30">Remote</p>
             <div className="flex gap-1.5 w-full">
-              <button onClick={() => sendRemoteKey('POWER_ON')} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-green-600/20 hover:bg-green-600/40 text-green-400 text-xs font-medium transition-colors"><Power className="w-3 h-3" /> On</button>
-              <button onClick={() => sendRemoteKey('POWER_OFF')} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400 text-xs font-medium transition-colors"><PowerOff className="w-3 h-3" /> Off</button>
+              <button onClick={() => { onPowerChange?.('on'); void sendRemoteKey('POWER_ON'); }} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-green-600/20 hover:bg-green-600/40 text-green-400 text-xs font-medium transition-colors"><Power className="w-3 h-3" /> On</button>
+              <button onClick={() => { onPowerChange?.('off'); void sendRemoteKey('POWER_OFF'); }} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400 text-xs font-medium transition-colors"><PowerOff className="w-3 h-3" /> Off</button>
             </div>
             <button onClick={() => sendRemoteKey('REBOOT')} className="flex items-center justify-center gap-1 w-full py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 text-xs font-medium transition-colors"><RefreshCw className="w-3 h-3" /> Reboot</button>
             <button onClick={fetchRemoteStatus} className="flex items-center justify-center gap-1 w-full py-1.5 rounded-lg bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 text-xs font-medium transition-colors"><Monitor className="w-3 h-3" /> Status</button>
@@ -671,12 +708,18 @@ export default function DeviceDetailPage() {
   const [optimisticOsdBits, setOptimisticOsdBits] = useState<number | null>(null);
   const [optimisticMenuOrientation, setOptimisticMenuOrientation] = useState<number | null>(null);
   const [optimisticSrcOrientation, setOptimisticSrcOrientation] = useState<number | null>(null);
+  const [optimisticPowerState, setOptimisticPowerState] = useState<'on' | 'off' | null>(null);
   const [liveViewOpen, setLiveViewOpen] = useState(false);
   // NTP form
   const [ntpServer,      setNtpServer]      = useState('');
   const [ntpInitialised, setNtpInitialised] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [replaceCode, setReplaceCode] = useState('');
+  const [mdcScanBusy, setMdcScanBusy] = useState(false);
+  const [mdcScanResult, setMdcScanResult] = useState<{ found: true; displayId: number } | { found: false } | null>(null);
+  const [mdcSaveBusy, setMdcSaveBusy] = useState(false);
+  const [selectedTimerSlot, setSelectedTimerSlot] = useState(1);
+  const [timerSlots, setTimerSlots] = useState<Record<number, TimerSlotState>>({});
 
   const { data, isLoading } = useQuery<{
     device: Device;
@@ -713,7 +756,15 @@ export default function DeviceDetailPage() {
     setOptimisticNetStandby(null);
     setOptimisticRemoteCtrl(null);
     setOptimisticSafetyLock(null);
+    setOptimisticOsdBits(null);
+    setOptimisticMenuOrientation(null);
+    setOptimisticSrcOrientation(null);
   }, [data?.device?.mdcLastPoll]);
+
+  // Reset optimistic power state when the DB value is confirmed
+  useEffect(() => {
+    setOptimisticPowerState(null);
+  }, [data?.device?.powerState]);
 
   // Sync volume/source/mute inputs from latest DB heartbeat values
   useEffect(() => {
@@ -890,6 +941,7 @@ export default function DeviceDetailPage() {
         screenshot:         'Screenshot requested',
         refresh_schedule:   'Schedule refresh sent',
         power_off:          'Power-off sent',
+        power_on:           'Power-on sent',
         clear_cache:        'Cache clear sent',
         dump_logs:          'Log dump requested — check device OSD',
         mdc_control:        'MDC command sent',
@@ -904,7 +956,15 @@ export default function DeviceDetailPage() {
         set_screenshot_interval: 'Screenshot interval updated',
       };
       toast.success(labels[cmd.command] ?? `Command sent: ${cmd.command}`);
-      if (cmd.command === 'screenshot') {
+      if (cmd.command === 'power_off') {
+        setOptimisticPowerState('off');
+        void queryClient.invalidateQueries({ queryKey: ['device', deviceId] });
+        void queryClient.invalidateQueries({ queryKey: ['devices', wsId] });
+      } else if (cmd.command === 'power_on') {
+        setOptimisticPowerState('on');
+        void queryClient.invalidateQueries({ queryKey: ['device', deviceId] });
+        void queryClient.invalidateQueries({ queryKey: ['devices', wsId] });
+      } else if (cmd.command === 'screenshot') {
         setTimeout(() => void queryClient.invalidateQueries({ queryKey: ['device', deviceId] }), 5000);
       }
     },
@@ -1001,9 +1061,9 @@ export default function DeviceDetailPage() {
           trailing={
             <div className="flex items-center gap-2">
               <StatusBadge status={device.status} />
-              {device.powerState != null && (
-                <Badge tone={device.powerState === 'on' ? 'success' : device.powerState === 'standby' ? 'warning' : 'neutral'}>
-                  Power {device.powerState}
+              {(optimisticPowerState ?? device.powerState) != null && (
+                <Badge tone={(optimisticPowerState ?? device.powerState) === 'on' ? 'success' : (optimisticPowerState ?? device.powerState) === 'standby' ? 'warning' : 'neutral'}>
+                  Power {optimisticPowerState ?? device.powerState}
                 </Badge>
               )}
             </div>
@@ -1173,13 +1233,13 @@ export default function DeviceDetailPage() {
                     value={`${hb.clockDriftMs > 0 ? '+' : ''}${hb.clockDriftMs} ms`} />
                 )}
                 {/* Power state from MDC heartbeat (DB column) */}
-                {device.powerState != null && (
+                {(optimisticPowerState ?? device.powerState) != null && (
                   <div className="flex items-center justify-between text-sm">
                     <span className="flex items-center gap-2 text-[var(--text-muted)]">
                       <Power className="w-3.5 h-3.5" />Power state
                     </span>
-                    <Badge tone={device.powerState === 'on' ? 'success' : device.powerState === 'standby' ? 'warning' : 'neutral'}>
-                      {device.powerState}
+                    <Badge tone={(optimisticPowerState ?? device.powerState) === 'on' ? 'success' : (optimisticPowerState ?? device.powerState) === 'standby' ? 'warning' : 'neutral'}>
+                      {optimisticPowerState ?? device.powerState}
                     </Badge>
                   </div>
                 )}
@@ -1271,303 +1331,186 @@ export default function DeviceDetailPage() {
           <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
             <Power className="w-3.5 h-3.5" />Power &amp; Controls
           </h2>
-          {device.powerState != null && (
-            <Badge tone={device.powerState === 'on' ? 'success' : device.powerState === 'standby' ? 'warning' : 'neutral'}>
-              {device.powerState}
+          {(optimisticPowerState ?? device.powerState) != null && (
+            <Badge tone={(optimisticPowerState ?? device.powerState) === 'on' ? 'success' : (optimisticPowerState ?? device.powerState) === 'standby' ? 'warning' : 'neutral'}>
+              {optimisticPowerState ?? device.powerState}
             </Badge>
           )}
         </SectionCardHeader>
-        <SectionCardBody className="space-y-5">
-          {/* Power buttons */}
+        <SectionCardBody className="space-y-4">
+
+          {/* ── Power ───────────────────────────────────────────────────── */}
           <div className="flex items-center gap-2 flex-wrap">
-              <button
-                type="button"
-                onClick={() => sendCmd({ command: 'power_on' })}
-                disabled={cmdDisabled}
-                title="Power On"
-                className="flex flex-col items-center gap-1 px-3 py-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-40 transition-colors"
-              >
-                <Power className="w-4 h-4 text-emerald-400" />
-                <span className="text-xs text-emerald-400">On</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => sendCmd({ command: 'power_off' })}
-                disabled={cmdDisabled}
-                title="Power Off"
-                className="flex flex-col items-center gap-1 px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 disabled:opacity-40 transition-colors"
-              >
-                <Power className="w-4 h-4 text-red-400" />
-                <span className="text-xs text-red-400">Off</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => sendCmd({ command: 'reboot' })}
-                disabled={cmdDisabled}
-                title="Reboot"
-                className="flex flex-col items-center gap-1 px-3 py-2 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-40 transition-colors"
-              >
-                <RotateCcw className="w-4 h-4 text-amber-400" />
-                <span className="text-xs text-amber-400">Reboot</span>
-              </button>
+            <span className="text-xs text-[var(--text-muted)] w-16 shrink-0">Power</span>
+            <button
+              type="button"
+              onClick={() => sendCmd({ command: 'power_on' })}
+              disabled={cmdDisabled}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-40 transition-colors text-xs font-medium text-emerald-400"
+            >
+              <Power className="w-3 h-3" />On
+            </button>
+            <button
+              type="button"
+              onClick={() => sendCmd({ command: 'power_off' })}
+              disabled={cmdDisabled}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 disabled:opacity-40 transition-colors text-xs font-medium text-red-400"
+            >
+              <Power className="w-3 h-3" />Off
+            </button>
+            <button
+              type="button"
+              onClick={() => sendCmd({ command: 'reboot' })}
+              disabled={cmdDisabled}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-40 transition-colors text-xs font-medium text-amber-400"
+            >
+              <RotateCcw className="w-3 h-3" />Reboot
+            </button>
           </div>
 
-          {/* Two-column row: action buttons (left) | vol/mute/source (right) */}
-          <div className="flex items-start gap-6 flex-wrap">
+          <div className="h-px bg-[var(--border)]" />
 
-            {/* Left: action buttons */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <ActionButton type="button" disabled={cmdDisabled} onClick={() => sendCmd({ command: 'clear_cache' })}>
-                <HardDrive className="w-3.5 h-3.5" /> Clear Cache
-              </ActionButton>
-              <ActionButton type="button" disabled={cmdDisabled} onClick={() => sendCmd({ command: 'relaunch_app' })}>
-                <RefreshCw className="w-3.5 h-3.5" /> Relaunch App
-              </ActionButton>
-              <ActionButton type="button" disabled={!isOnline} onClick={() => setLiveViewOpen(true)} tone="primary">
-                <Tv2 className="w-3.5 h-3.5" /> Live View
-              </ActionButton>
+          {/* ── Display controls (expandable: add brightness/contrast rows here) */}
+          <div className="space-y-3">
+
+            {/* Volume + Mute */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <Volume2 className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+              <span className="text-xs text-[var(--text-muted)] w-12 shrink-0">Volume</span>
+              <input
+                type="number" min={0} max={100} value={volumeInput}
+                onChange={(e) => setVolumeInput(Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)))}
+                className="w-16 px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]"
+              />
+              <ActionButton
+                type="button"
+                disabled={cmdDisabled}
+                onClick={() => sendCmd({ command: 'mdc_control', payload: { action: 'set_volume', level: volumeInput } })}
+                tone="primary" className="px-3 py-1.5 text-xs"
+              >Set</ActionButton>
+              {device.mdcVolume != null && (
+                <span className="text-xs text-[var(--text-muted)]">current: {device.mdcVolume}</span>
+              )}
+              <span className="w-px h-4 bg-[var(--border)] mx-1 shrink-0" />
+              {(optimisticMute !== null ? optimisticMute : !!(device.mdcMute))
+                ? <VolumeX className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                : <Volume2 className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+              }
+              <span className="text-xs text-[var(--text-muted)]">Mute</span>
+              <ToggleSwitch
+                label={(optimisticMute !== null ? optimisticMute : !!(device.mdcMute)) ? 'Muted' : 'Unmuted'}
+                checked={optimisticMute !== null ? optimisticMute : !!(device.mdcMute)}
+                onChange={() => {
+                  const next = !(optimisticMute !== null ? optimisticMute : !!(device.mdcMute));
+                  setOptimisticMute(next);
+                  sendCmd({ command: 'mdc_control', payload: { action: 'set_mute', mute: next } });
+                }}
+                labelClassName="text-xs"
+              />
             </div>
 
-            {/* Right: volume + mute + source */}
-            <div className="flex flex-col gap-2 ml-auto">
-              {/* Volume + Mute */}
-              <div className="flex items-center gap-4 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <Volume2 className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                  <span className="text-xs text-[var(--text-muted)] w-14 shrink-0">Volume</span>
-                  <input
-                    type="number" min={0} max={100} value={volumeInput}
-                    onChange={(e) => setVolumeInput(Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)))}
-                    className="w-20 px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]"
-                  />
-                  <ActionButton
-                    type="button"
-                    disabled={cmdDisabled}
-                    onClick={() => sendCmd({ command: 'mdc_control', payload: { action: 'set_volume', level: volumeInput } })}
-                    tone="primary" className="px-3 py-1.5 text-xs"
-                  >Set</ActionButton>
-                  {device.mdcVolume != null && (
-                    <span className="text-xs text-[var(--text-muted)]">current: {device.mdcVolume}</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {(optimisticMute !== null ? optimisticMute : !!(device.mdcMute))
-                    ? <VolumeX className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                    : <Volume2 className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                  }
-                  <span className="text-xs text-[var(--text-muted)]">Mute</span>
-                  <ToggleSwitch
-                    label={(optimisticMute !== null ? optimisticMute : !!(device.mdcMute)) ? 'Muted' : 'Unmuted'}
-                    checked={optimisticMute !== null ? optimisticMute : !!(device.mdcMute)}
-                    onChange={() => {
-                      const next = !(optimisticMute !== null ? optimisticMute : !!(device.mdcMute));
-                      setOptimisticMute(next);
-                      sendCmd({ command: 'mdc_control', payload: { action: 'set_mute', mute: next } });
-                    }}
-                    labelClassName="text-xs"
-                  />
-                </div>
-              </div>
+            {/* Source */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <Monitor className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+              <span className="text-xs text-[var(--text-muted)] w-12 shrink-0">Source</span>
+              <select
+                value={selectedSource}
+                onChange={(e) => setSelectedSource(e.target.value)}
+                className="w-36 px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]"
+              >
+                {MDC_SOURCES.map((s) => (
+                  <option key={s.key} value={s.key}>{s.label}</option>
+                ))}
+              </select>
+              <ActionButton
+                type="button"
+                disabled={cmdDisabled}
+                onClick={() => sendCmd({ command: 'mdc_control', payload: { action: 'set_source', source: selectedSource } })}
+                tone="primary" className="px-3 py-1.5 text-xs shrink-0"
+              >Set</ActionButton>
+              {device.mdcInput != null && MDC_SOURCE_BY_BYTE[device.mdcInput] && (
+                <span className="text-xs text-[var(--text-muted)]">
+                  current: {MDC_SOURCES.find((s) => s.key === MDC_SOURCE_BY_BYTE[device.mdcInput!])?.label
+                    ?? `0x${device.mdcInput.toString(16).toUpperCase()}`}
+                </span>
+              )}
+            </div>
 
-              {/* Source */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <Monitor className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                <span className="text-xs text-[var(--text-muted)] w-14 shrink-0">Source</span>
-                <select
-                  value={selectedSource}
-                  onChange={(e) => setSelectedSource(e.target.value)}
-                  className="w-36 px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]"
-                >
-                  {MDC_SOURCES.map((s) => (
-                    <option key={s.key} value={s.key}>{s.label}</option>
-                  ))}
-                </select>
+          </div>
+
+          <div className="h-px bg-[var(--border)]" />
+
+          {/* ── App actions + MDC ID ─────────────────────────────────────── */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <ActionButton type="button" disabled={cmdDisabled} onClick={() => sendCmd({ command: 'clear_cache' })}>
+              <HardDrive className="w-3.5 h-3.5" /> Clear Cache
+            </ActionButton>
+            <ActionButton type="button" disabled={cmdDisabled} onClick={() => sendCmd({ command: 'relaunch_app' })}>
+              <RefreshCw className="w-3.5 h-3.5" /> Relaunch App
+            </ActionButton>
+            <ActionButton type="button" disabled={!isOnline} onClick={() => setLiveViewOpen(true)} tone="primary">
+              <Tv2 className="w-3.5 h-3.5" /> Live View
+            </ActionButton>
+            <span className="w-px h-4 bg-[var(--border)] mx-1 shrink-0" />
+            <span className="text-xs text-[var(--text-muted)]">MDC ID:</span>
+            <span className="text-xs font-mono font-semibold text-[var(--text)]">{device.mdcId ?? '—'}</span>
+            <ActionButton
+              type="button"
+              disabled={!isOnline || mdcScanBusy}
+              onClick={async () => {
+                setMdcScanBusy(true);
+                setMdcScanResult(null);
+                try {
+                  const r = await api.post(`/devices/${deviceId}/mdc-control`, { action: 'mdc_id_scan' }) as { ok: boolean; displayId?: number };
+                  const found = r.ok && r.displayId != null;
+                  setMdcScanResult(found && r.displayId != null ? { found: true, displayId: r.displayId } : { found: false });
+                  if (!found) toast.error('No MDC device responded (IDs 1–9)');
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : 'Scan failed');
+                } finally {
+                  setMdcScanBusy(false);
+                }
+              }}
+            >
+              <ScanLine className="w-3.5 h-3.5" />{mdcScanBusy ? 'Scanning…' : 'Scan'}
+            </ActionButton>
+            {mdcScanResult?.found && mdcScanResult.displayId != null && (
+              <>
+                <span className="text-xs text-[var(--text-muted)]">Found: <span className="font-mono font-semibold text-[var(--text)]">{mdcScanResult.displayId}</span></span>
                 <ActionButton
                   type="button"
-                  disabled={cmdDisabled}
-                  onClick={() => sendCmd({ command: 'mdc_control', payload: { action: 'set_source', source: selectedSource } })}
-                  tone="primary" className="px-3 py-1.5 text-xs shrink-0"
-                >Set</ActionButton>
-                {device.mdcInput != null && MDC_SOURCE_BY_BYTE[device.mdcInput] && (
-                  <span className="text-xs text-[var(--text-muted)]">
-                    current: {MDC_SOURCES.find((s) => s.key === MDC_SOURCE_BY_BYTE[device.mdcInput!])?.label
-                      ?? `0x${device.mdcInput.toString(16).toUpperCase()}`}
-                  </span>
-                )}
-              </div>
-            </div>
-
-          </div>
-        </SectionCardBody>
-      </SectionCard>
-
-      {/* ── MDC Display Settings ─────────────────────────────────────────── */}
-      <SectionCard>
-        <SectionCardHeader>
-          <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
-            <Settings2 className="w-3.5 h-3.5" />Display Settings
-          </h2>
-          {device.mdcLastPoll && (
-            <span className="text-xs text-[var(--text-muted)]">MDC polled {formatDistanceToNow(device.mdcLastPoll)}</span>
-          )}
-        </SectionCardHeader>
-        <SectionCardBody className="space-y-5">
-
-          {/* 2×2 toggle grid */}
-          <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-
-            {/* Standby (DPMS) */}
-            <div className="flex items-center justify-between gap-2 text-sm">
-              <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] shrink-0">
-                <Power className="w-3 h-3" />Standby
-              </span>
-              <select
-                value={optimisticStandby ?? device.mdcStandby ?? 0}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setOptimisticStandby(v);
-                  sendCmd({ command: 'mdc_control', payload: { action: 'standby_set', value: v } });
-                }}
-                disabled={cmdDisabled}
-                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--text)] disabled:opacity-40"
-              >
-                <option value={0}>Off</option>
-                <option value={1}>On</option>
-                <option value={2}>Auto</option>
-              </select>
-            </div>
-
-            {/* Network Standby */}
-            <div className="flex items-center justify-between gap-2 text-sm">
-              <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] shrink-0">
-                <Wifi className="w-3 h-3" />Net Standby
-              </span>
-              <ToggleSwitch
-                label={(optimisticNetStandby !== null ? optimisticNetStandby : device.mdcNetworkStandby === 1) ? 'On' : 'Off'}
-                checked={optimisticNetStandby !== null ? optimisticNetStandby : device.mdcNetworkStandby === 1}
-                onChange={() => {
-                  const next = !(optimisticNetStandby !== null ? optimisticNetStandby : device.mdcNetworkStandby === 1);
-                  setOptimisticNetStandby(next);
-                  sendCmd({ command: 'mdc_control', payload: { action: 'network_standby_set', value: next ? 1 : 0 } });
-                }}
-                labelClassName="text-xs"
-              />
-            </div>
-
-            {/* Remote Control */}
-            <div className="flex items-center justify-between gap-2 text-sm">
-              <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] shrink-0">
-                <Radio className="w-3 h-3" />Remote Ctrl
-              </span>
-              <ToggleSwitch
-                label={(optimisticRemoteCtrl !== null ? optimisticRemoteCtrl : device.mdcRemoteControl === 1) ? 'On' : 'Off'}
-                checked={optimisticRemoteCtrl !== null ? optimisticRemoteCtrl : device.mdcRemoteControl === 1}
-                onChange={() => {
-                  const next = !(optimisticRemoteCtrl !== null ? optimisticRemoteCtrl : device.mdcRemoteControl === 1);
-                  setOptimisticRemoteCtrl(next);
-                  sendCmd({ command: 'mdc_control', payload: { action: 'remote_control_set', value: next ? 1 : 0 } });
-                }}
-                labelClassName="text-xs"
-              />
-            </div>
-
-            {/* Safety Lock */}
-            <div className="flex items-center justify-between gap-2 text-sm">
-              <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] shrink-0">
-                <Lock className="w-3 h-3" />Safety Lock
-              </span>
-              <ToggleSwitch
-                label={(optimisticSafetyLock !== null ? optimisticSafetyLock : device.mdcSafetyLock === 1) ? 'On' : 'Off'}
-                checked={optimisticSafetyLock !== null ? optimisticSafetyLock : device.mdcSafetyLock === 1}
-                onChange={() => {
-                  const next = !(optimisticSafetyLock !== null ? optimisticSafetyLock : device.mdcSafetyLock === 1);
-                  setOptimisticSafetyLock(next);
-                  sendCmd({ command: 'mdc_control', payload: { action: 'safety_lock_set', value: next ? 1 : 0 } });
-                }}
-                labelClassName="text-xs"
-              />
-            </div>
-
-          </div>
-
-          {/* OSD + Orientation controls */}
-          <div className="space-y-4 pt-3 border-t border-[var(--border)]">
-
-            {/* OSD toggles — one per OSD type (bits 0–4) */}
-            <div>
-              <span className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-muted)] mb-2">
-                <Monitor className="w-3 h-3" />OSD Notifications
-              </span>
-              <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-                {OSD_BIT_LABELS.map((label, i) => {
-                  const bits = optimisticOsdBits !== null ? optimisticOsdBits : (device.mdcOsdStatus ?? 0);
-                  const isOn = !!((bits >> i) & 1);
-                  return (
-                    <div key={label} className="flex items-center justify-between gap-2 text-sm">
-                      <span className="text-xs text-[var(--text-muted)] shrink-0">{label}</span>
-                      <ToggleSwitch
-                        label={isOn ? 'On' : 'Off'}
-                        checked={isOn}
-                        onChange={() => {
-                          const newBits = bits ^ (1 << i);
-                          setOptimisticOsdBits(newBits);
-                          sendCmd({ command: 'mdc_control', payload: { action: 'osd_display_set', osdType: i, osdOnOff: (newBits >> i) & 1 } });
-                        }}
-                        labelClassName="text-xs"
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Orientation toggle — Landscape (0) ↔ Portrait 270° (3) */}
-            <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-              <div className="flex items-center justify-between gap-2 text-sm">
-                <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] shrink-0">
-                  <RotateCcw className="w-3 h-3" />Menu Orient.
-                </span>
-                <ToggleSwitch
-                  label={(optimisticMenuOrientation !== null ? optimisticMenuOrientation : (device.mdcMenuOrientation ?? 0)) === 3 ? 'Portrait' : 'Landscape'}
-                  checked={(optimisticMenuOrientation !== null ? optimisticMenuOrientation : (device.mdcMenuOrientation ?? 0)) === 3}
-                  onChange={() => {
-                    const next = (optimisticMenuOrientation !== null ? optimisticMenuOrientation : (device.mdcMenuOrientation ?? 0)) === 3 ? 0 : 3;
-                    setOptimisticMenuOrientation(next);
-                    sendCmd({ command: 'mdc_control', payload: { action: 'menu_orientation_set', value: next } });
+                  tone="primary"
+                  disabled={mdcSaveBusy}
+                  onClick={async () => {
+                    setMdcSaveBusy(true);
+                    try {
+                      await api.post(`/devices/${deviceId}/mdc-control`, { action: 'save_mdc_id', id: mdcScanResult.displayId });
+                      toast.success(`MDC ID ${mdcScanResult.displayId} saved`);
+                      setMdcScanResult(null);
+                      void queryClient.invalidateQueries({ queryKey: ['device', deviceId] });
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : 'Save failed');
+                    } finally {
+                      setMdcSaveBusy(false);
+                    }
                   }}
-                  labelClassName="text-xs"
-                />
-              </div>
-              <div className="flex items-center justify-between gap-2 text-sm">
-                <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] shrink-0">
-                  <RotateCcw className="w-3 h-3" />Src Orient.
-                </span>
-                <ToggleSwitch
-                  label={(optimisticSrcOrientation !== null ? optimisticSrcOrientation : (device.mdcSrcOrientation ?? 0)) === 3 ? 'Portrait' : 'Landscape'}
-                  checked={(optimisticSrcOrientation !== null ? optimisticSrcOrientation : (device.mdcSrcOrientation ?? 0)) === 3}
-                  onChange={() => {
-                    const next = (optimisticSrcOrientation !== null ? optimisticSrcOrientation : (device.mdcSrcOrientation ?? 0)) === 3 ? 0 : 3;
-                    setOptimisticSrcOrientation(next);
-                    sendCmd({ command: 'mdc_control', payload: { action: 'src_orientation_set', value: next } });
-                  }}
-                  labelClassName="text-xs"
-                />
-              </div>
-            </div>
-
+                >
+                  <Save className="w-3.5 h-3.5" /> Save
+                </ActionButton>
+              </>
+            )}
           </div>
-
-          {device.mdcLastPoll == null && isOnline && (
-            <p className="text-xs text-[var(--text-muted)]">Waiting for first MDC poll (runs every 5 min while device is online).</p>
-          )}
 
         </SectionCardBody>
       </SectionCard>
 
-      {/* ── Settings (#25 screenshot interval + #26 location) ───────────── */}
+      {/* ── Settings ─────────────────────────────────────────────────────── */}
       <SectionCard>
         <SectionCardHeader>
           <h2 className="text-sm font-semibold text-[var(--text)]">Settings</h2>
+          {device.mdcLastPoll && (
+            <span className="text-xs text-[var(--text-muted)]">MDC polled {formatDistanceToNow(device.mdcLastPoll)}</span>
+          )}
         </SectionCardHeader>
         <SectionCardBody>
           <form onSubmit={handleSubmit((d) => {
@@ -1585,6 +1528,160 @@ export default function DeviceDetailPage() {
               <input {...register('name')}
                 className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]" />
             </div>
+
+            {/* ── Display Settings (MDC) ───────────────────────────────── */}
+            <div className="sm:col-span-2 space-y-5">
+
+              {/* 2×2 toggle grid */}
+              <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+
+                {/* Standby (DPMS) */}
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] shrink-0">
+                    <Power className="w-3 h-3" />Standby
+                  </span>
+                  <select
+                    value={optimisticStandby ?? device.mdcStandby ?? 0}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setOptimisticStandby(v);
+                      sendCmd({ command: 'mdc_control', payload: { action: 'standby_set', value: v } });
+                    }}
+                    disabled={cmdDisabled}
+                    className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--text)] disabled:opacity-40"
+                  >
+                    <option value={0}>Off</option>
+                    <option value={1}>On</option>
+                    <option value={2}>Auto</option>
+                  </select>
+                </div>
+
+                {/* Network Standby */}
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] shrink-0">
+                    <Wifi className="w-3 h-3" />Net Standby
+                  </span>
+                  <ToggleSwitch
+                    label={(optimisticNetStandby !== null ? optimisticNetStandby : device.mdcNetworkStandby === 1) ? 'On' : 'Off'}
+                    checked={optimisticNetStandby !== null ? optimisticNetStandby : device.mdcNetworkStandby === 1}
+                    onChange={() => {
+                      const next = !(optimisticNetStandby !== null ? optimisticNetStandby : device.mdcNetworkStandby === 1);
+                      setOptimisticNetStandby(next);
+                      sendCmd({ command: 'mdc_control', payload: { action: 'network_standby_set', value: next ? 1 : 0 } });
+                    }}
+                    labelClassName="text-xs"
+                  />
+                </div>
+
+                {/* Remote Control */}
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] shrink-0">
+                    <Radio className="w-3 h-3" />Remote Ctrl
+                  </span>
+                  <ToggleSwitch
+                    label={(optimisticRemoteCtrl !== null ? optimisticRemoteCtrl : device.mdcRemoteControl === 1) ? 'On' : 'Off'}
+                    checked={optimisticRemoteCtrl !== null ? optimisticRemoteCtrl : device.mdcRemoteControl === 1}
+                    onChange={() => {
+                      const next = !(optimisticRemoteCtrl !== null ? optimisticRemoteCtrl : device.mdcRemoteControl === 1);
+                      setOptimisticRemoteCtrl(next);
+                      sendCmd({ command: 'mdc_control', payload: { action: 'remote_control_set', value: next ? 1 : 0 } });
+                    }}
+                    labelClassName="text-xs"
+                  />
+                </div>
+
+                {/* Safety Lock */}
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] shrink-0">
+                    <Lock className="w-3 h-3" />Safety Lock
+                  </span>
+                  <ToggleSwitch
+                    label={(optimisticSafetyLock !== null ? optimisticSafetyLock : device.mdcSafetyLock === 1) ? 'On' : 'Off'}
+                    checked={optimisticSafetyLock !== null ? optimisticSafetyLock : device.mdcSafetyLock === 1}
+                    onChange={() => {
+                      const next = !(optimisticSafetyLock !== null ? optimisticSafetyLock : device.mdcSafetyLock === 1);
+                      setOptimisticSafetyLock(next);
+                      sendCmd({ command: 'mdc_control', payload: { action: 'safety_lock_set', value: next ? 1 : 0 } });
+                    }}
+                    labelClassName="text-xs"
+                  />
+                </div>
+
+              </div>
+
+              {/* OSD + Orientation controls */}
+              <div className="space-y-4 pt-3 border-t border-[var(--border)]">
+
+                {/* OSD toggles — one per OSD type (bits 0–4) */}
+                <div>
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-muted)] mb-2">
+                    <Monitor className="w-3 h-3" />OSD Notifications
+                  </span>
+                  <div className="grid grid-cols-2 gap-x-8 gap-y-3">
+                    {OSD_BIT_LABELS.map((label, i) => {
+                      const bits = optimisticOsdBits !== null ? optimisticOsdBits : (device.mdcOsdStatus ?? 0);
+                      const isOn = !!((bits >> i) & 1);
+                      return (
+                        <div key={label} className="flex items-center justify-between gap-2 text-sm">
+                          <span className="text-xs text-[var(--text-muted)] shrink-0">{label}</span>
+                          <ToggleSwitch
+                            label={isOn ? 'On' : 'Off'}
+                            checked={isOn}
+                            onChange={() => {
+                              const newBits = bits ^ (1 << i);
+                              setOptimisticOsdBits(newBits);
+                              sendCmd({ command: 'mdc_control', payload: { action: 'osd_display_set', osdType: i, osdOnOff: (newBits >> i) & 1 } });
+                            }}
+                            labelClassName="text-xs"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Orientation toggle — Landscape (0) ↔ Portrait 270° (3) */}
+                <div className="grid grid-cols-2 gap-x-8 gap-y-3">
+                  <div className="flex items-center justify-between gap-2 text-sm">
+                    <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] shrink-0">
+                      <RotateCcw className="w-3 h-3" />Menu Orient.
+                    </span>
+                    <ToggleSwitch
+                      label={(optimisticMenuOrientation !== null ? optimisticMenuOrientation : (device.mdcMenuOrientation ?? 0)) === 3 ? 'Portrait' : 'Landscape'}
+                      checked={(optimisticMenuOrientation !== null ? optimisticMenuOrientation : (device.mdcMenuOrientation ?? 0)) === 3}
+                      onChange={() => {
+                        const next = (optimisticMenuOrientation !== null ? optimisticMenuOrientation : (device.mdcMenuOrientation ?? 0)) === 3 ? 0 : 3;
+                        setOptimisticMenuOrientation(next);
+                        sendCmd({ command: 'mdc_control', payload: { action: 'menu_orientation_set', value: next } });
+                      }}
+                      labelClassName="text-xs"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-sm">
+                    <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] shrink-0">
+                      <RotateCcw className="w-3 h-3" />Src Orient.
+                    </span>
+                    <ToggleSwitch
+                      label={(optimisticSrcOrientation !== null ? optimisticSrcOrientation : (device.mdcSrcOrientation ?? 0)) === 3 ? 'Portrait' : 'Landscape'}
+                      checked={(optimisticSrcOrientation !== null ? optimisticSrcOrientation : (device.mdcSrcOrientation ?? 0)) === 3}
+                      onChange={() => {
+                        const next = (optimisticSrcOrientation !== null ? optimisticSrcOrientation : (device.mdcSrcOrientation ?? 0)) === 3 ? 0 : 3;
+                        setOptimisticSrcOrientation(next);
+                        sendCmd({ command: 'mdc_control', payload: { action: 'src_orientation_set', value: next } });
+                      }}
+                      labelClassName="text-xs"
+                    />
+                  </div>
+                </div>
+
+              </div>
+
+              {device.mdcLastPoll == null && isOnline && (
+                <p className="text-xs text-[var(--text-muted)]">Waiting for first MDC poll (runs every 5 min while device is online).</p>
+              )}
+
+            </div>
+
             <div>
               <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5 flex items-center gap-1">
                 <Clock className="w-3 h-3" />NTP Server
@@ -1617,6 +1714,267 @@ export default function DeviceDetailPage() {
                 </p>
               )}
             </div>
+
+            {/* ── On/Off Timers ────────────────────────────────────────── */}
+            <div className="sm:col-span-2 space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wide flex items-center gap-1.5">
+                  <AlarmClock className="w-3 h-3" />On/Off Timers
+                </p>
+                <span className="text-xs text-[var(--text-muted)]">Controls when the display wakes and sleeps &middot; 12-hr format</span>
+              </div>
+
+              {/* Timer selector pills */}
+              <div className="flex gap-1.5 flex-wrap">
+                {([1,2,3,4,5,6,7] as const).map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setSelectedTimerSlot(n)}
+                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                      selectedTimerSlot === n
+                        ? 'bg-[var(--blue)] text-white'
+                        : 'bg-[var(--surface)] border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)]'
+                    }`}
+                  >
+                    Timer {n}
+                  </button>
+                ))}
+              </div>
+
+              {/* Active timer panel */}
+              {((): React.ReactNode => {
+                const slot = timerSlots[selectedTimerSlot] ?? DEFAULT_TIMER_SLOT;
+                const update = (patch: Partial<TimerSlotState>) =>
+                  setTimerSlots(prev => ({ ...prev, [selectedTimerSlot]: { ...(prev[selectedTimerSlot] ?? DEFAULT_TIMER_SLOT), ...patch } }));
+                return (
+                  <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-4">
+
+                    {/* Repeat / Source / Volume */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-medium text-[var(--text-muted)]">Repeat</label>
+                        <select
+                          value={slot.repeat}
+                          onChange={(e) => update({ repeat: Number(e.target.value), manualDays: 0 })}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]"
+                        >
+                          {TIMER_REPEAT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-medium text-[var(--text-muted)]">Source</label>
+                        <select
+                          value={slot.source}
+                          onChange={(e) => update({ source: Number(e.target.value) })}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]"
+                        >
+                          {TIMER_SOURCES.map(s => <option key={s.byte} value={s.byte}>{s.label}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-medium text-[var(--text-muted)]">Volume</label>
+                        <input
+                          type="number" min={0} max={100}
+                          value={slot.volume}
+                          onChange={(e) => update({ volume: Math.max(0, Math.min(100, Number(e.target.value))) })}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Custom day checkboxes */}
+                    {slot.repeat === 5 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {WEEK_DAYS.map((day, i) => {
+                          const active = !!((slot.manualDays >> i) & 1);
+                          return (
+                            <button
+                              key={day}
+                              type="button"
+                              onClick={() => update({ manualDays: slot.manualDays ^ (1 << i) })}
+                              className={`w-11 h-8 rounded-md text-xs font-medium border transition-colors ${
+                                active
+                                  ? 'bg-[var(--blue)] border-[var(--blue)] text-white'
+                                  : 'bg-[var(--card)] border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)]'
+                              }`}
+                            >
+                              {day}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Wake / Sleep time cards */}
+                    <div className="grid grid-cols-2 gap-3">
+                      {/* Wake On */}
+                      <div className="rounded-lg bg-[var(--card)] border border-[var(--border)] p-3 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold text-[var(--text)] flex items-center gap-1.5">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />Wake
+                          </span>
+                          <ToggleSwitch
+                            label={slot.onEnable ? 'On' : 'Off'}
+                            checked={slot.onEnable}
+                            onChange={() => update({ onEnable: !slot.onEnable })}
+                            labelClassName="text-xs"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <div className="flex-1 space-y-1">
+                            <label className="block text-[11px] text-[var(--text-muted)]">Hour</label>
+                            <select
+                              value={slot.onHour}
+                              onChange={(e) => update({ onHour: Number(e.target.value) })}
+                              className="w-full px-2 py-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]"
+                            >
+                              {Array.from({length: 13}, (_, h) => <option key={h} value={h}>{h}</option>)}
+                            </select>
+                          </div>
+                          <div className="flex-1 space-y-1">
+                            <label className="block text-[11px] text-[var(--text-muted)]">Minute</label>
+                            <select
+                              value={slot.onMin}
+                              onChange={(e) => update({ onMin: Number(e.target.value) })}
+                              className="w-full px-2 py-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]"
+                            >
+                              {Array.from({length: 12}, (_, i) => i * 5).map(m => <option key={m} value={m}>{String(m).padStart(2,'0')}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Sleep Off */}
+                      <div className="rounded-lg bg-[var(--card)] border border-[var(--border)] p-3 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold text-[var(--text)] flex items-center gap-1.5">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400" />Sleep
+                          </span>
+                          <ToggleSwitch
+                            label={slot.offEnable ? 'On' : 'Off'}
+                            checked={slot.offEnable}
+                            onChange={() => update({ offEnable: !slot.offEnable })}
+                            labelClassName="text-xs"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <div className="flex-1 space-y-1">
+                            <label className="block text-[11px] text-[var(--text-muted)]">Hour</label>
+                            <select
+                              value={slot.offHour}
+                              onChange={(e) => update({ offHour: Number(e.target.value) })}
+                              className="w-full px-2 py-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]"
+                            >
+                              {Array.from({length: 13}, (_, h) => <option key={h} value={h}>{h}</option>)}
+                            </select>
+                          </div>
+                          <div className="flex-1 space-y-1">
+                            <label className="block text-[11px] text-[var(--text-muted)]">Minute</label>
+                            <select
+                              value={slot.offMin}
+                              onChange={(e) => update({ offMin: Number(e.target.value) })}
+                              className="w-full px-2 py-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]"
+                            >
+                              {Array.from({length: 12}, (_, i) => i * 5).map(m => <option key={m} value={m}>{String(m).padStart(2,'0')}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-[var(--border)]">
+                      <ActionButton
+                        type="button"
+                        disabled={!isOnline || slot.busy}
+                        onClick={async () => {
+                          update({ busy: true });
+                          try {
+                            const r = await api.post(`/devices/${deviceId}/mdc-control`, { action: 'on_timer_get', slot: selectedTimerSlot }) as Record<string,unknown>;
+                            if (r['ok']) {
+                              update({
+                                onHour: Number(r['onHour'] ?? 0), onMin: Number(r['onMin'] ?? 0), onEnable: !!r['onEnable'],
+                                offHour: Number(r['offHour'] ?? 0), offMin: Number(r['offMin'] ?? 0), offEnable: !!r['offEnable'],
+                                repeat: Number(r['repeat'] ?? 1), volume: Number(r['volume'] ?? 20), source: Number(r['source'] ?? 0x01),
+                                manualDays: Number(r['manualDays'] ?? 0),
+                              });
+                              toast.success(`Timer ${selectedTimerSlot} loaded from display`);
+                            } else {
+                              toast.error(String(r['error'] ?? `Timer ${selectedTimerSlot} read failed`));
+                            }
+                          } catch (e) {
+                            toast.error(e instanceof Error ? e.message : 'Read failed');
+                          } finally {
+                            update({ busy: false });
+                          }
+                        }}
+                      >
+                        <ArrowDown className="w-3 h-3" />Read from display
+                      </ActionButton>
+                      <ActionButton
+                        type="button"
+                        tone="primary"
+                        disabled={!isOnline || slot.busy}
+                        onClick={async () => {
+                          update({ busy: true });
+                          try {
+                            const r = await api.post(`/devices/${deviceId}/mdc-control`, {
+                              action: 'on_timer_set', slot: selectedTimerSlot,
+                              onHour: slot.onHour, onMin: slot.onMin, onEnable: slot.onEnable,
+                              offHour: slot.offHour, offMin: slot.offMin, offEnable: slot.offEnable,
+                              repeat: slot.repeat, volume: slot.volume, source: slot.source,
+                              ...(slot.repeat === 5 ? { manualDays: slot.manualDays } : {}),
+                            }) as Record<string,unknown>;
+                            if (r['ok']) {
+                              toast.success(`Timer ${selectedTimerSlot} saved to display`);
+                            } else {
+                              toast.error(String(r['error'] ?? 'Save failed'));
+                            }
+                          } catch (e) {
+                            toast.error(e instanceof Error ? e.message : 'Save failed');
+                          } finally {
+                            update({ busy: false });
+                          }
+                        }}
+                      >
+                        <ArrowUp className="w-3 h-3" />Save to display
+                      </ActionButton>
+                      <ActionButton
+                        type="button"
+                        tone="danger"
+                        disabled={!isOnline || slot.busy}
+                        onClick={async () => {
+                          update({ busy: true });
+                          try {
+                            const r = await api.post(`/devices/${deviceId}/mdc-control`, {
+                              action: 'on_timer_set', slot: selectedTimerSlot,
+                              onHour: slot.onHour, onMin: slot.onMin, onEnable: false,
+                              offHour: slot.offHour, offMin: slot.offMin, offEnable: false,
+                              repeat: slot.repeat, volume: slot.volume, source: slot.source,
+                            }) as Record<string,unknown>;
+                            if (r['ok']) {
+                              update({ onEnable: false, offEnable: false });
+                              toast.success(`Timer ${selectedTimerSlot} disabled`);
+                            } else {
+                              toast.error(String(r['error'] ?? 'Disable failed'));
+                            }
+                          } catch (e) {
+                            toast.error(e instanceof Error ? e.message : 'Disable failed');
+                          } finally {
+                            update({ busy: false });
+                          }
+                        }}
+                      >
+                        Disable Timer {selectedTimerSlot}
+                      </ActionButton>
+                    </div>
+
+                  </div>
+                );
+              })()}
+            </div>
+
             {/* Default playlist fallback */}
             <div className="sm:col-span-2">
               <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">
@@ -1878,6 +2236,7 @@ export default function DeviceDetailPage() {
           deviceId={deviceId}
           isOnline={isOnline}
           onClose={() => setLiveViewOpen(false)}
+          onPowerChange={setOptimisticPowerState}
         />
       )}
     </div>

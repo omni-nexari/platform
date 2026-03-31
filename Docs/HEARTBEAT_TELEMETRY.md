@@ -11,7 +11,7 @@ Documents what data is collected and sent at each lifecycle stage for Tizen SBB 
 | `HEARTBEAT_INTERVAL` | 30 000 ms (30s) |
 | `TELEMETRY_INTERVAL` | 5 × 60 × 1000 ms (5min) |
 | `PAIRING_CHECK_INTERVAL` | 5 000 ms (5s) |
-| `COMMAND_POLL_INTERVAL` | 10 000 ms (10s) |
+| `COMMAND_POLL_INTERVAL` | 10 000 ms (10s) — unused (commands arrive via WS) |
 | `CONTENT_REFRESH_INTERVAL` | 60 000 ms (1min) |
 
 ---
@@ -42,6 +42,8 @@ Device gathers hardware info locally (displayed on screen) then registers with:
 - `ipAddress` (from `req.ip`)
 - `pairingCode`, `pairingExpiresAt` (10-min expiry)
 
+**On reinstall** (device already exists in DB): `mdcNetworkStandby` is reset to `null` so the auto-enable fires again on the next WS connect.
+
 **No WebSocket open at this stage. No heartbeat. No telemetry.**  
 Device polls `GET /pair/status?code=XXXXX` every 5s until an admin claims it.
 
@@ -49,10 +51,27 @@ Device polls `GET /pair/status?code=XXXXX` every 5s until an admin claims it.
 
 ## Phase 2 — Just After Pairing (admin claims device)
 
-`Pairing.onPaired()` is called → saves `deviceId`, `deviceToken`, `deviceName`, `workspaceId` to `localStorage` → attempts `Telemetry.send(deviceId)`.
+`Pairing.onPaired()` → saves `deviceId`, `deviceToken`, `deviceName`, `workspaceId` to `localStorage` → attempts `Telemetry.send(deviceId)`.
 
-> ⚠️ **Known issue**: This initial telemetry call **always fails silently** because `Player.wsConnection` doesn't exist yet (`Player.init()` hasn't been called). `API.sendTelemetry()` requires an open WebSocket and returns `{ ok: false, reason: 'ws_unavailable' }`. The `.catch()` block starts the player anyway.  
+> ⚠️ **Known issue**: This initial telemetry call **always fails silently** because `Player.wsConnection` doesn't exist yet. `API.sendTelemetry()` returns `{ ok: false, reason: 'ws_unavailable' }`. The app starts the player anyway.
 > **Result**: First real system telemetry is T+5min after player start.
+
+`Player.init()` then runs, which:
+1. Opens the WebSocket
+2. Starts heartbeat (30s) and telemetry (5min) intervals
+3. After 5s: calls `runPostPairingMdcSetup()`
+
+### Post-Pairing MDC Setup (`runPostPairingMdcSetup`)
+
+Fires 5s after `Player.init()`. If WS is not open yet, retries every 3s.
+
+Actions (all via XHR to `localhost:9615`, non-blocking):
+- Sends `mdc_id_persist` WS message to persist the scanned MDC ID to DB
+- `standby_set { value: 0 }` — sets Standby Control to **Off**
+- `osd_display_set { osdType: 0, osdOnOff: 0 }` — Source OSD off
+- `osd_display_set { osdType: 2, osdOnOff: 0 }` — No Signal OSD off
+- `osd_display_set { osdType: 3, osdOnOff: 0 }` — MDC OSD off
+- `osd_display_set { osdType: 4, osdOnOff: 0 }` — Schedule OSD off
 
 ---
 
@@ -89,23 +108,49 @@ Device polls `GET /pair/status?code=XXXXX` every 5s until an admin claims it.
 | `currentContentId` | ⚠️ always null |
 | `nextContentId` | ⚠️ always null |
 | `nextStartsAt` | ⚠️ always null |
-| `playerVersion` | null |
-| `firmwareVersion` | null |
-| `powerState` | null |
-| `cpuLoad` | null |
-| `storageFreeBytes` | null |
-| `temperatureC` | null |
-| `irLock` / `buttonLock` | null |
+| `playerVersion` | null (30s only; populated at 5min) |
+| `firmwareVersion` | null (30s only; populated at 5min) |
+| `powerState` | null (populated via `mdc_heartbeat`, not this message) |
+| `cpuLoad` | null (30s only; populated at 5min) |
+| `storageFreeBytes` | null (30s only; populated at 5min) |
+| `temperatureC` | null (see `mdcTemperatureC` on `devices`) |
+| `irLock` / `buttonLock` | null (`system_state` msg — not sent by tizen-sbb) |
+
+### Phase 3b — MDC Heartbeat (every 30s, piggybacked on heartbeat)
+
+`sendWebSocketHeartbeat()` also calls `sendMdcHeartbeat()` after sending the heartbeat payload.
+
+`sendMdcHeartbeat()` sends `status_get` via XHR to `localhost:9615/mdc-control` (5s timeout), then — if the MDC response is OK — sends:
+
+```json
+{
+  "type": "mdc_heartbeat",
+  "payload": { "power": 1, "volume": 50, "mute": 0, "input": 33 }
+}
+```
+
+**Server side** (`ws.ts`) on receipt — updates `devices` only (no heartbeat row):
+
+| Field | Value |
+|---|---|
+| `powerState` | ✅ `power === 1 → 'on'`, else `'off'` |
+| `mdcVolume` | ✅ integer |
+| `mdcMute` | ✅ boolean |
+| `mdcInput` | ✅ integer (Samsung input source code) |
 
 ---
 
-## Phase 4 — Every 5 Minutes (full telemetry)
+## Phase 4 — Every 5 Minutes (full telemetry + MDC poll)
 
-**Source**: `player.ts` → `Telemetry.send(deviceId)` → `API.sendTelemetry()`
+**Source**: `player.ts` → `startTelemetry()` setInterval
 
-`Telemetry.send()` collects full system info from Tizen APIs (30s cache TTL), then `API.sendTelemetry()` sends **two WS messages**:
+Two operations run back-to-back on each tick:
 
-### Message A — `network_info`
+### 4a — System Telemetry
+
+`Telemetry.send(deviceId)` collects full system info (30s cache TTL), then `API.sendTelemetry()` sends **two WS messages**:
+
+**Message A — `network_info`**
 ```json
 {
   "type": "network_info",
@@ -120,9 +165,9 @@ Device polls `GET /pair/status?code=XXXXX` every 5s until an admin claims it.
 }
 ```
 → Updates `devices`: `ipAddress`, `macAddress`, `connectionType`, `wifiSsid`, `wifiStrength`  
-→ **No `deviceHeartbeats` row inserted**
+→ **No `deviceHeartbeats` row**
 
-### Message B — `heartbeat` extras
+**Message B — `heartbeat` extras**
 ```json
 {
   "type": "heartbeat",
@@ -138,7 +183,7 @@ Device polls `GET /pair/status?code=XXXXX` every 5s until an admin claims it.
 }
 ```
 → Updates `devices`: all above fields + `lastSeen`, `status = 'online'`  
-→ Inserts `deviceHeartbeats` row:
+→ Inserts `deviceHeartbeats` row with full fields
 
 | Column | Value |
 |---|---|
@@ -149,35 +194,99 @@ Device polls `GET /pair/status?code=XXXXX` every 5s until an admin claims it.
 | `cpuLoad` | ✅ |
 | `storageFreeBytes` | ✅ |
 | `tvName` → `name` (devices only) | ✅ |
-| `powerState` | ⚠️ never sent |
-| `temperatureC` | ⚠️ not collected |
-| `irLock` / `buttonLock` | ✗ (system_state msg only) |
+| `powerState` | ⚠️ not in this payload (see `mdc_heartbeat`) |
+| `temperatureC` | ⚠️ not in this payload (see `mdcTemperatureC`) |
+
+### 4b — MDC Poll (`runMdcPoll`)
+
+Runs immediately after telemetry on every 5min tick, and also **5 seconds after every WS connect/reconnect**.
+
+Sends 9 MDC GET commands in parallel via XHR to `localhost:9615/mdc-control` (5s timeout each). When all responses arrive, bundles results into one WS message:
+
+```json
+{
+  "type": "mdc_poll",
+  "payload": {
+    "standby": 0,
+    "osdStatus": 0,
+    "networkStandby": 1,
+    "menuOrientation": 0,
+    "srcOrientation": null,
+    "remoteControl": 1,
+    "safetyLock": 0,
+    "softwareVersion": "T-HKMFDEUC-1351.3",
+    "temperatureC": 38
+  }
+}
+```
+
+**Server side** (`ws.ts`) on receipt — updates `devices` only:
+
+| MDC GET command | Payload field | DB column |
+|---|---|---|
+| `standby_get` | `standby` | `mdcStandby` |
+| `osd_display_get` | `osdStatus` | `mdcOsdStatus` |
+| `network_standby_get` | `networkStandby` | `mdcNetworkStandby` |
+| `menu_orientation_get` | `menuOrientation` | `mdcMenuOrientation` |
+| `src_orientation_get` | `srcOrientation` | `mdcSrcOrientation` (nullable — NAK means unsupported) |
+| `remote_control_get` | `remoteControl` | `mdcRemoteControl` |
+| `safety_lock_get` | `safetyLock` | `mdcSafetyLock` |
+| `sw_version_get` | `softwareVersion` | `mdcSoftwareVersion` |
+| `display_status_get` | `temperatureC` (byte 4) | `mdcTemperatureC` |
+| (always) | — | `mdcLastPoll` (timestamp) |
+
+---
+
+## Network Standby Auto-Enable
+
+On every WS device connect, the API checks `devices.mdcNetworkStandby`. If it is `null` (device has never been polled, or was just reinstalled), it fires after 3s:
+
+```
+requestMdcControl(deviceId, 'network_standby_set', { value: 1 })
+  → on success: writes mdcNetworkStandby = 1 to DB
+```
+
+This ensures network standby is always enabled on first connect without any user action.
 
 ---
 
 ## Full Data Map
 
-| Field | pair/request | 30s heartbeat | 5min telemetry |
-|---|:---:|:---:|:---:|
-| `duid` / `serialNumber` | ✅ | — | — |
-| `ipAddress` | ✅ req.ip | — | ✅ network_info |
-| `macAddress` | — | — | ✅ network_info |
-| `connectionType` | — | — | ✅ network_info |
-| `wifiSsid` | — | — | ✅ network_info |
-| `clockDriftMs` | — | ✅ | — |
-| `currentContentId` | — | ⚠️ always null | — |
-| `playerVersion` | — | — | ✅ |
-| `firmwareVersion` | ✅ | — | ✅ |
-| `cpuLoad` | — | — | ✅ |
-| `storageFreeBytes` | — | — | ✅ |
-| `resolution` | — | — | ✅ |
-| `timezone` | — | — | ✅ |
-| `tvName` / `name` | ✅ | — | ✅ |
-| `powerState` | — | — | ⚠️ never sent |
-| `temperatureC` | — | — | ⚠️ not collected |
-| `irLock` / `buttonLock` | — | — | ✗ (system_state) |
-| `status → 'online'` | — | ✅ | ✅ |
-| `lastSeen` | — | ✅ | ✅ |
+| Field | pair/request | 30s heartbeat | 30s mdc_heartbeat | 5min telemetry | 5min mdc_poll |
+|---|:---:|:---:|:---:|:---:|:---:|
+| `duid` / `serialNumber` | ✅ | — | — | — | — |
+| `ipAddress` | ✅ req.ip | — | — | ✅ network_info | — |
+| `macAddress` | — | — | — | ✅ network_info | — |
+| `connectionType` | — | — | — | ✅ network_info | — |
+| `wifiSsid` | — | — | — | ✅ network_info | — |
+| `clockDriftMs` | — | ✅ | — | — | — |
+| `currentContentId` | — | ⚠️ null | — | — | — |
+| `playerVersion` | — | — | — | ✅ | — |
+| `firmwareVersion` | ✅ | — | — | ✅ | — |
+| `cpuLoad` | — | — | — | ✅ | — |
+| `storageFreeBytes` | — | — | — | ✅ | — |
+| `resolution` | — | — | — | ✅ | — |
+| `timezone` | — | — | — | ✅ | — |
+| `tvName` / `name` | ✅ | — | — | ✅ | — |
+| `powerState` | — | — | ✅ via MDC | — | — |
+| `mdcVolume` | — | — | ✅ | — | — |
+| `mdcMute` | — | — | ✅ | — | — |
+| `mdcInput` | — | — | ✅ | — | — |
+| `mdcStandby` | — | — | — | — | ✅ |
+| `mdcNetworkStandby` | — | — | — | — | ✅ |
+| `mdcRemoteControl` | — | — | — | — | ✅ |
+| `mdcSafetyLock` | — | — | — | — | ✅ |
+| `mdcOsdStatus` | — | — | — | — | ✅ |
+| `mdcMenuOrientation` | — | — | — | — | ✅ |
+| `mdcSrcOrientation` | — | — | — | — | ✅ |
+| `mdcSoftwareVersion` | — | — | — | — | ✅ |
+| `mdcTemperatureC` | — | — | — | — | ✅ |
+| `mdcLastPoll` | — | — | — | — | ✅ timestamp |
+| `irLock` / `buttonLock` | — | — | — | — | — |
+| `status → 'online'` | — | ✅ | — | ✅ | — |
+| `lastSeen` | — | ✅ | — | ✅ | — |
+
+> `irLock`/`buttonLock` are handled by a `system_state` WS message type defined in the schema, but tizen-sbb does not currently send it.
 
 ---
 
@@ -185,10 +294,11 @@ Device polls `GET /pair/status?code=XXXXX` every 5s until an admin claims it.
 
 | # | Issue | Location | Impact |
 |---|---|---|---|
-| 1 | **Initial telemetry always fails** — WS not open when `onPaired()` fires | `pairing.js:260`, `api.js:55` | First system telemetry delayed to T+5min |
-| 2 | **`currentContentId`/`nextContentId`/`nextStartsAt` always null** — `buildReadinessPayload()` doesn't return those keys | `player.ts` `sendWebSocketHeartbeat()` | Playing-state never tracked in heartbeat rows |
-| 3 | **`powerState` never populated** in `deviceHeartbeats` | `telemetry.js` `send()` | Power state history missing |
-| 4 | **`temperatureC` never populated** | No Tizen API call in pipeline | Thermal monitoring not available |
+| 1 | **Initial telemetry always fails** — WS not open when `onPaired()` fires | `pairing.js`, `api.js:sendTelemetry` | First system telemetry delayed to T+5min after player start |
+| 2 | **`currentContentId`/`nextContentId`/`nextStartsAt` always null** — `buildReadinessPayload()` doesn't return those keys | `player.ts:sendWebSocketHeartbeat` | Playing-state never tracked in `deviceHeartbeats` rows |
+| 3 | **`powerState` not in `deviceHeartbeats`** — `mdc_heartbeat` updates `devices.powerState` but doesn't insert a heartbeat row | `ws.ts:mdc_heartbeat` handler | Power state history missing from heartbeat timeseries |
+| 4 | **`temperatureC` in `deviceHeartbeats` never populated** — temperature comes from `mdc_poll` → `devices.mdcTemperatureC`, not into heartbeat rows | `ws.ts:mdc_poll` handler | Thermal history missing from heartbeat timeseries |
+| 5 | **`system_state` message not sent** — `irLock`/`buttonLock`/`autoPowerOn` schema exists but tizen-sbb never sends this message | `apps/tizen-sbb` player | IR lock and button lock states never populated |
 
 ---
 
@@ -200,9 +310,9 @@ Device polls `GET /pair/status?code=XXXXX` every 5s until an admin claims it.
 | `apps/tizen-sbb/js/pairing.js` | Pairing flow, `onPaired()`, initial telemetry attempt |
 | `apps/tizen-sbb/js/telemetry.js` | `Telemetry.getSystemInfo()`, `Telemetry.send()` |
 | `apps/tizen-sbb/js/api.js` | `API.sendTelemetry()` — splits into `network_info` + `heartbeat` WS msgs |
-| `apps/tizen-sbb/src/player.ts` | `sendWebSocketHeartbeat()`, `startHeartbeat()`, `startTelemetry()` |
-| `apps/api/src/services/ws.ts` | Server-side WS handler — persists heartbeat/network_info/system_state |
-| `apps/api/src/routes/devices.ts` | `POST /pair/request`, `GET /pair/status`, `POST /mdc-control` |
+| `apps/tizen-sbb/src/player.ts` | `sendWebSocketHeartbeat()`, `sendMdcHeartbeat()`, `runMdcPoll()`, `runPostPairingMdcSetup()` |
+| `apps/api/src/services/ws.ts` | Server-side WS handler — all device→API message types |
+| `apps/api/src/routes/devices.ts` | `POST /pair/request`, `GET /pair/status`, `POST /mdc-control`, WS device endpoint |
 | `packages/db/src/` | `devices` + `deviceHeartbeats` schema |
 
 ---
@@ -222,14 +332,11 @@ Device polls `GET /pair/status?code=XXXXX` every 5s until an admin claims it.
 | **NTP** | `ntpEnabled`, `ntpServer`, `ntpTimezone`, `clockDriftMs` |
 | **Location** | `latitude`, `longitude`, `locationLabel` |
 | **Content assignment** | `publishedContentId`, `publishedPlaylistId`, `publishedScheduleId`, `publishedSyncGroupId`, `defaultPlaylistId` |
-| **Config** | `zones` (jsonb), `screenshotIntervalMin`, `settings` (jsonb text) |
+| **Config** | `zones` (jsonb), `screenshotIntervalMin`, `settings` (jsonb — legacy, unused) |
+| **MDC live state** | `mdcVolume`, `mdcMute`, `mdcInput` — updated every 30s via `mdc_heartbeat` |
+| **MDC settings** | `mdcStandby`, `mdcNetworkStandby`, `mdcRemoteControl`, `mdcSafetyLock`, `mdcOsdStatus`, `mdcMenuOrientation`, `mdcSrcOrientation` — updated every 5min via `mdc_poll` or immediately on toggle |
+| **MDC info** | `mdcSoftwareVersion`, `mdcTemperatureC`, `mdcLastPoll`, `mdcId` |
 | **Audit** | `createdAt`, `updatedAt`, `deletedAt` |
-
-**`settings` jsonb** is the free-form config bag. Currently used to store:
-
-| Key | Type | Set by |
-|---|---|---|
-| `mdcId` | `number` | `POST /mdc-control { action: save_mdc_id }` via MDC Fix test page |
 
 ### `deviceHeartbeats` table (one row every 30s, ~48h retention)
 
@@ -245,6 +352,22 @@ One row per screenshot: `deviceId`, `contentId`, `trigger`, `storageKey`, `taken
 
 ---
 
+## WS Message Types — Device → API
+
+| Message type | Trigger | DB writes |
+|---|---|---|
+| `heartbeat` | Every 30s + every 5min (extended payload) | `devices` (status/lastSeen/clockDriftMs/versions), `deviceHeartbeats` INSERT |
+| `mdc_heartbeat` | Every 30s (piggybacked on heartbeat) | `devices`: `powerState`, `mdcVolume`, `mdcMute`, `mdcInput` |
+| `network_info` | Every 5min | `devices`: `ipAddress`, `macAddress`, `connectionType`, `wifiSsid`, `wifiStrength` |
+| `mdc_poll` | Every 5min + on WS connect (+5s) | `devices`: all 9 MDC columns + `mdcLastPoll` |
+| `mdc_id_persist` | On post-pairing MDC setup | `devices`: `mdcId` |
+| `system_state` | Not sent by tizen-sbb | `devices`: `irLock`, `buttonLock`, `autoPowerOn` |
+| `screenshot_data` | On screenshot request or live-view | `deviceScreenshots` INSERT (persisted) or SSE relay (live) |
+| `mdc_control_response` | ACK for mdc-control commands | None (relayed to waiting HTTP request) |
+| `ack` | ACK for device commands | None (relayed to waiting HTTP request) |
+
+---
+
 ## MDC Device ID — How It Works
 
 Samsung MDC requires every packet to include the display's **MDC Device ID** (byte 3 of every frame). Default is `0x01` but devices may be configured otherwise.
@@ -252,7 +375,7 @@ Samsung MDC requires every packet to include the display's **MDC Device ID** (by
 ### Storage & propagation
 
 ```
-DB (devices.settings.mdcId)
+DB (devices.mdcId)
   ↓ read on every mdc-control request
 API (routes/devices.ts) injects displayId into WS payload
   ↓ WS mdc_control msg
@@ -266,9 +389,9 @@ MDC TCP packet
 ### Setting the ID (test page workflow)
 
 1. **Scan** — `mdc_id_scan` sends `CMD_STATUS GET` to IDs 1–9 sequentially (800ms each), returns first responder. Auto-sets `DEVICE_MDC_ID` in server.js memory for the current session.
-2. **Save** — `save_mdc_id` persists `{ mdcId: N }` to `devices.settings` in DB, then sends `set_mdc_id` to update server.js memory. All subsequent commands use the saved ID automatically — survives API restarts and server.js restarts.
+2. **Save** — `save_mdc_id` persists `mdcId` to `devices.mdcId` in DB, then sends `set_mdc_id` to update server.js memory. All subsequent commands use the saved ID — survives API and server.js restarts.
 
 ### On server.js restart
 
-`DEVICE_MDC_ID` resets to `0x01` in memory. However the API always reads `devices.settings.mdcId` from DB and injects `displayId` into every relayed payload, so the correct ID is always used regardless.
+`DEVICE_MDC_ID` resets to `0x01` in memory. The API always reads `devices.mdcId` from DB and injects `displayId` into every relayed payload, so the correct ID is used regardless.
 

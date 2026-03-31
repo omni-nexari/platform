@@ -1120,12 +1120,33 @@ export async function deviceRoutes(app: FastifyInstance) {
     }
 
     const cmd = body.data;
+
+    // Before powering off, ensure network standby is enabled so the device
+    // can be woken up again. Without it, power_on via network will not work.
+    if (cmd.command === 'power_off' && device.mdcNetworkStandby !== 1) {
+      try {
+        const nsResult = await requestMdcControl(id, 'network_standby_set', { value: 1 }, 10_000);
+        if (nsResult.ok) {
+          await db.update(devices).set({ mdcNetworkStandby: 1, updatedAt: new Date() }).where(eq(devices.id, id));
+        }
+      } catch {
+        // Non-blocking — proceed with power_off even if this fails
+      }
+    }
+
     // Map discriminated-union command to WsCommand (payload varies by type)
     const wsCmd = 'payload' in cmd
       ? { type: cmd.command, payload: (cmd as { command: string; payload: unknown }).payload }
       : { type: cmd.command };
 
     sendCommand(id, wsCmd as Parameters<typeof sendCommand>[1]);
+
+    // Immediately write powerState to DB so the 15s UI poll reflects the change
+    if (cmd.command === 'power_off') {
+      await db.update(devices).set({ powerState: 'off', updatedAt: new Date() }).where(eq(devices.id, id));
+    } else if (cmd.command === 'power_on') {
+      await db.update(devices).set({ powerState: 'on', updatedAt: new Date() }).where(eq(devices.id, id));
+    }
 
     await writeAuditLog({
       orgId: user.orgId,
@@ -1187,10 +1208,17 @@ export async function deviceRoutes(app: FastifyInstance) {
       });
     }
 
-    // Auto-enable network standby on first pairing (mdcNetworkStandby null = never polled)
-    if (device.orgId && device.mdcNetworkStandby === null) {
+    // Auto-enable network standby whenever it is not confirmed ON.
+    // Fires on first pairing (null), after reinstall (null), or if mdc_poll found it off (0).
+    if (device.orgId && device.mdcNetworkStandby !== 1) {
       setTimeout(() => {
-        sendCommand(deviceId, { type: 'mdc_control', payload: { action: 'network_standby_set', value: 1 } });
+        requestMdcControl(deviceId, 'network_standby_set', { value: 1 }, 10_000)
+          .then(async (result) => {
+            if (result.ok) {
+              await db.update(devices).set({ mdcNetworkStandby: 1, updatedAt: new Date() }).where(eq(devices.id, deviceId));
+            }
+          })
+          .catch(() => { /* best-effort */ });
       }, 3000);
     }
 
@@ -1482,12 +1510,7 @@ export async function deviceRoutes(app: FastifyInstance) {
       const mdcId = typeof rawId === 'number' ? rawId : parseInt(String(rawId ?? ''), 10);
       if (!mdcId || mdcId < 1 || mdcId > 254) return reply.status(400).send({ error: 'Invalid MDC ID (1–254)' });
 
-      let existingSettings: Record<string, unknown> = {};
-      try { existingSettings = JSON.parse(device.settings ?? '{}') as Record<string, unknown>; } catch {}
-      await db.update(devices).set({
-        settings: JSON.stringify({ ...existingSettings, mdcId }),
-        updatedAt: new Date(),
-      }).where(eq(devices.id, id));
+      await db.update(devices).set({ mdcId, updatedAt: new Date() }).where(eq(devices.id, id));
 
       // Prime the in-memory ID on the device (best-effort)
       try { await requestMdcControl(device.id, 'set_mdc_id', { id: mdcId }, 5_000); } catch {}
@@ -1495,11 +1518,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     }
 
     // ── For all other actions: read stored mdcId and inject as displayId ─────
-    let storedMdcId: number | undefined;
-    try {
-      const s = JSON.parse(device.settings ?? '{}') as Record<string, unknown>;
-      storedMdcId = typeof s.mdcId === 'number' ? s.mdcId : undefined;
-    } catch {}
+    const storedMdcId: number | undefined = typeof device.mdcId === 'number' ? device.mdcId : undefined;
 
     try {
       const { action: _a, ...rest } = body;
@@ -1509,6 +1528,31 @@ export async function deviceRoutes(app: FastifyInstance) {
         ...(storedMdcId != null && rest.displayId == null ? { displayId: storedMdcId } : {}),
       };
       const result = await requestMdcControl(device.id, action, payload, 10_000);
+
+      // Write-back: update DB immediately so the 15s UI poll reflects the new value
+      if (result.ok) {
+        const dbSet: Partial<typeof devices.$inferInsert> = { updatedAt: new Date() };
+        const v = typeof body.value === 'number' ? body.value : undefined;
+        if (action === 'network_standby_set'  && v != null) dbSet.mdcNetworkStandby  = v;
+        else if (action === 'standby_set'     && v != null) dbSet.mdcStandby         = v;
+        else if (action === 'remote_control_set' && v != null) dbSet.mdcRemoteControl = v;
+        else if (action === 'safety_lock_set' && v != null) dbSet.mdcSafetyLock      = v;
+        else if (action === 'menu_orientation_set' && v != null) dbSet.mdcMenuOrientation = v;
+        else if (action === 'src_orientation_set'  && v != null) dbSet.mdcSrcOrientation  = v;
+        else if (action === 'osd_display_set') {
+          // Flip the individual bit in the stored bitmask
+          const osdType  = typeof body.osdType  === 'number' ? body.osdType  : null;
+          const osdOnOff = typeof body.osdOnOff === 'number' ? body.osdOnOff : null;
+          if (osdType != null && osdOnOff != null) {
+            const current = (await db.query.devices.findFirst({ where: eq(devices.id, id) }))?.mdcOsdStatus ?? 0;
+            dbSet.mdcOsdStatus = osdOnOff ? (current | (1 << osdType)) : (current & ~(1 << osdType));
+          }
+        }
+        if (Object.keys(dbSet).length > 1) {
+          await db.update(devices).set(dbSet).where(eq(devices.id, id));
+        }
+      }
+
       return reply.send(result);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
