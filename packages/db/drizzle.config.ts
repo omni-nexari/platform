@@ -5,8 +5,8 @@ export default defineConfig({
   out: './migrations',
   dialect: 'postgresql',
   dbCredentials: {
-    url: process.env['DATABASE_URL'] ?? 'postgresql://ds:Samsung%402026!@192.168.1.17:5432/ds',
+    url: process.env['DATABASE_URL'] ?? 'postgresql://ds:Samsung%402026!@localhost:5432/ds',
   },
-  verbose: true,
+  verbose: false,
   strict: true,
 });

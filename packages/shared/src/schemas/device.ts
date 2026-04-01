@@ -55,6 +55,13 @@ export const DeviceSchema = z.object({
   publishedPlaylistId: z.string().uuid().nullable(),
   publishedScheduleId: z.string().uuid().nullable(),
 
+  // On/Off timer slots (populated by mdc_poll, keys are slot numbers 1-7)
+  timerSlots: z.record(z.string(), z.object({
+    onHour: z.number(), onMin: z.number(), onEnable: z.boolean(),
+    offHour: z.number(), offMin: z.number(), offEnable: z.boolean(),
+    repeat: z.number(), volume: z.number(), source: z.number(), manualDays: z.number(),
+  })).nullable().optional(),
+
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -62,11 +69,11 @@ export type Device = z.infer<typeof DeviceSchema>;
 
 /** Sent by Tizen device on first boot to request a pairing code. */
 export const PairRequestSchema = z.object({
-  duid: z.string().min(1),
-  modelName: z.string().optional(),
-  modelCode: z.string().optional(),
-  serialNumber: z.string().optional(),
-  firmwareVersion: z.string().optional(),
+  duid: z.string().min(1).nullish(),
+  modelName: z.string().nullish(),
+  modelCode: z.string().nullish(),
+  serialNumber: z.string().nullish(),
+  firmwareVersion: z.string().nullish(),
 });
 export type PairRequestInput = z.infer<typeof PairRequestSchema>;
 
@@ -127,6 +134,7 @@ export const DeviceCommandSchema = z.discriminatedUnion('command', [
         'set_volume', 'set_mute', 'set_source', 'set_device_name',
         'standby_set', 'network_standby_set', 'remote_control_set', 'safety_lock_set',
         'osd_display_set', 'menu_orientation_set', 'src_orientation_set',
+        'url_launcher_address_get', 'url_launcher_address_set',
       ]),
       level: z.number().int().min(0).max(100).optional(),
       mute: z.boolean().optional(),
@@ -135,6 +143,7 @@ export const DeviceCommandSchema = z.discriminatedUnion('command', [
       value: z.number().int().min(0).max(255).optional(),
       osdType: z.number().int().min(0).max(4).optional(),
       osdOnOff: z.number().int().min(0).max(1).optional(),
+      urlAddress: z.string().max(200).optional(),
     }),
   }),
 ]);

@@ -152,6 +152,12 @@ interface Device {
   ntpServer: string | null;
   ntpTimezone: string | null;
   clockDriftMs: number | null;
+  // On/Off timer slots (from mdc_poll, updated every 5min)
+  timerSlots: Record<string, {
+    onHour: number; onMin: number; onEnable: boolean;
+    offHour: number; offMin: number; offEnable: boolean;
+    repeat: number; volume: number; source: number; manualDays: number;
+  }> | null;
   // Location
   latitude: number | null;
   longitude: number | null;
@@ -413,6 +419,20 @@ function MiniBar({ value, max = 100, tone = 'default' }: {
   );
 }
 
+// Input source byte → friendly name (Samsung MDC spec)
+const MDC_INPUT_SOURCE_NAMES: Record<number, string> = {
+  0x21: 'HDMI 1',
+  0x23: 'HDMI 2',
+  0x31: 'HDMI 3',
+  0x33: 'HDMI 4',
+  0x62: 'USB',
+  0x14: 'PC',
+  0x18: 'DVI',
+  0x25: 'DisplayPort',
+  0x08: 'AV',
+  0x0C: 'Component',
+};
+
 // ── LiveViewOverlay ───────────────────────────────────────────────────────────
 function LiveViewOverlay({ deviceId, isOnline, onClose, onPowerChange }: { deviceId: string; isOnline: boolean; onClose: () => void; onPowerChange?: (state: 'on' | 'off') => void }) {
   type LiveStatus = 'idle' | 'buffering' | 'playing';
@@ -425,9 +445,10 @@ function LiveViewOverlay({ deviceId, isOnline, onClose, onPowerChange }: { devic
   const [measuredCadenceMs, setMeasuredCadenceMs] = useState(0);
   const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
   const [mdcStatusResponse, setMdcStatusResponse] = useState<{
-    ok: boolean; nodeRunning?: boolean; serial?: string; rawHex?: string; error?: string;
+    ok: boolean; nodeRunning?: boolean; serial?: string; deviceName?: string; modelName?: string; ipAddress?: string; remoteControl?: number; rawHex?: string; error?: string;
     status?: { displayId: number; ack: 'A'|'N'; rCmd: number; power?: number; volume?: number; mute?: number; input?: number; aspect?: number; nTime?: number; fTime?: number };
   } | null>(null);
+  const [localRemoteCtrl, setLocalRemoteCtrl] = useState<number | null>(null); // optimistic toggle within Live View
   const esRef = useRef<EventSource | null>(null);
   const statusRef = useRef<LiveStatus>('idle');
   const staleFrameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -538,6 +559,7 @@ function LiveViewOverlay({ deviceId, isOnline, onClose, onPowerChange }: { devic
     try {
       const result = await api.get(`/devices/${deviceId}/remote-status`) as typeof mdcStatusResponse;
       setMdcStatusResponse(result);
+      setLocalRemoteCtrl(null); // reset optimistic — use real value
       setRemoteStatus(result?.ok ? '✓ status read' : `✗ ${result?.error ?? 'failed'}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -546,6 +568,13 @@ function LiveViewOverlay({ deviceId, isOnline, onClose, onPowerChange }: { devic
       setRemoteStatus(`✗ ${label}`);
     }
     remoteStatusTimerRef.current = setTimeout(() => setRemoteStatus(null), 3000);
+  }
+
+  async function toggleRemoteCtrl(enable: boolean) {
+    setLocalRemoteCtrl(enable ? 1 : 0);
+    try {
+      await api.post(`/devices/${deviceId}/mdc-control`, { action: 'remote_control_set', value: enable ? 1 : 0 });
+    } catch { /* ignore — optimistic already set */ }
   }
 
   const isLive = status !== 'idle';
@@ -665,16 +694,38 @@ function LiveViewOverlay({ deviceId, isOnline, onClose, onPowerChange }: { devic
                 <>
                   <div className="flex items-center gap-1.5">
                     <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${mdcStatusResponse.nodeRunning ? 'bg-green-400' : 'bg-red-400'}`} />
-                    <span className={mdcStatusResponse.nodeRunning ? 'text-green-400' : 'text-red-400'}>Node {mdcStatusResponse.nodeRunning ? 'running' : 'offline'}</span>
+                    <span className={mdcStatusResponse.nodeRunning ? 'text-green-400' : 'text-red-400'}>Node {mdcStatusResponse.nodeRunning ? 'online' : 'offline'}</span>
                   </div>
-                  {mdcStatusResponse.serial && <div className="font-mono text-white mt-0.5">S/N: {mdcStatusResponse.serial}</div>}
+                  {(mdcStatusResponse.deviceName || mdcStatusResponse.modelName) && (
+                    <div className="text-white/60 mt-0.5">
+                      {mdcStatusResponse.deviceName && <div className="truncate" title={mdcStatusResponse.deviceName}>Name: <span className="text-white/80">{mdcStatusResponse.deviceName}</span></div>}
+                      {mdcStatusResponse.modelName && <div className="truncate" title={mdcStatusResponse.modelName}>Model: <span className="text-white/80">{mdcStatusResponse.modelName}</span></div>}
+                    </div>
+                  )}
+                  {mdcStatusResponse.ipAddress && <div className="text-white/60">IP: <span className="font-mono text-white/80">{mdcStatusResponse.ipAddress}</span></div>}
+                  {mdcStatusResponse.serial && <div className="text-white/60">S/N: <span className="font-mono text-white/80">{mdcStatusResponse.serial}</span></div>}
                   {mdcStatusResponse.status && (
                     <div className="text-white/60 mt-0.5 space-y-0.5">
                       <div>Power: <span className={mdcStatusResponse.status.power === 1 ? 'text-green-400' : 'text-white/40'}>{mdcStatusResponse.status.power === 1 ? 'ON' : mdcStatusResponse.status.power === 0 ? 'OFF' : '—'}</span></div>
-                      <div>Vol: {mdcStatusResponse.status.volume ?? '—'}{'  '}Mute: {mdcStatusResponse.status.mute === 1 ? 'ON' : 'off'}</div>
-                      <div>Input: {mdcStatusResponse.status.input != null ? `0x${mdcStatusResponse.status.input.toString(16).toUpperCase()}` : '—'}</div>
+                      <div>Source: <span className="text-white/80">{mdcStatusResponse.status.input != null ? (MDC_INPUT_SOURCE_NAMES[mdcStatusResponse.status.input] ?? `0x${mdcStatusResponse.status.input.toString(16).toUpperCase()}`) : '—'}</span></div>
+                      <div>Vol: <span className="text-white/80">{mdcStatusResponse.status.volume ?? '—'}</span></div>
                     </div>
                   )}
+                  {mdcStatusResponse.remoteControl !== undefined || localRemoteCtrl !== null ? (
+                    <div className="flex items-center justify-between mt-1 pt-1 border-t border-white/10">
+                      <span className="text-white/50 flex items-center gap-1"><Radio className="w-2.5 h-2.5" />Remote Ctrl</span>
+                      <button
+                        onClick={() => toggleRemoteCtrl((localRemoteCtrl ?? mdcStatusResponse.remoteControl ?? 1) === 0)}
+                        className={`relative inline-flex h-4 w-7 flex-shrink-0 rounded-full transition-colors ${
+                          (localRemoteCtrl ?? mdcStatusResponse.remoteControl ?? 1) === 1 ? 'bg-sky-500' : 'bg-white/20'
+                        }`}
+                      >
+                        <span className={`mt-0.5 inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
+                          (localRemoteCtrl ?? mdcStatusResponse.remoteControl ?? 1) === 1 ? 'translate-x-3.5' : 'translate-x-0.5'
+                        }`} />
+                      </button>
+                    </div>
+                  ) : null}
                   {mdcStatusResponse.error && <div className="text-red-300 mt-0.5">{mdcStatusResponse.error}</div>}
                 </>
               )}
@@ -698,7 +749,7 @@ export default function DeviceDetailPage() {
   const queryClient = useQueryClient();
   const { user, bootstrapped } = useAuthStore();
 
-  const [volumeInput, setVolumeInput] = useState(50);
+  const [volumeInput, setVolumeInput] = useState<number | null>(null);
   const [selectedSource, setSelectedSource] = useState('HDMI1');
   const [optimisticMute, setOptimisticMute] = useState<boolean | null>(null);
   const [optimisticStandby, setOptimisticStandby] = useState<number | null>(null);
@@ -718,6 +769,8 @@ export default function DeviceDetailPage() {
   const [mdcScanBusy, setMdcScanBusy] = useState(false);
   const [mdcScanResult, setMdcScanResult] = useState<{ found: true; displayId: number } | { found: false } | null>(null);
   const [mdcSaveBusy, setMdcSaveBusy] = useState(false);
+  const [urlLauncherAddress, setUrlLauncherAddress] = useState('');
+  const [urlLauncherBusy, setUrlLauncherBusy] = useState(false);
   const [selectedTimerSlot, setSelectedTimerSlot] = useState(1);
   const [timerSlots, setTimerSlots] = useState<Record<number, TimerSlotState>>({});
 
@@ -770,7 +823,7 @@ export default function DeviceDetailPage() {
   useEffect(() => {
     if (data?.device == null) return;
     const d = data.device;
-    if (d.mdcVolume != null) setVolumeInput(d.mdcVolume);
+    // volumeInput intentionally not synced here — we read device.mdcVolume directly in the input
     if (d.mdcInput != null) {
       const src = MDC_SOURCE_BY_BYTE[d.mdcInput];
       if (src) setSelectedSource(src);
@@ -858,10 +911,11 @@ export default function DeviceDetailPage() {
   );
   const resolvedConnectionType = useMemo(() => {
     if (data?.device.connectionType) return data.device.connectionType;
+    if (data?.device.wifiSsid || observedSystemInfo?.wifiSsid) return 'wifi';
     if (observedSystemInfo?.networkType?.toUpperCase().includes('WIFI')) return 'wifi';
     if (observedSystemInfo?.networkType?.toUpperCase().includes('ETH')) return 'ethernet';
     return null;
-  }, [data?.device.connectionType, observedSystemInfo?.networkType]);
+  }, [data?.device.connectionType, data?.device.wifiSsid, observedSystemInfo?.wifiSsid, observedSystemInfo?.networkType]);
 
   const observedOnlyFields = useMemo(() => {
     if (!data?.device || !observedSystemInfo) return [] as string[];
@@ -878,6 +932,55 @@ export default function DeviceDetailPage() {
     setNtpServer(data.device.ntpServer ?? 'pool.ntp.org');
     setNtpInitialised(true);
   }, [data?.device, ntpInitialised, observedSystemInfo?.timezone]);
+
+  // Initialize timer slots from DB (populated by mdc_poll) then refresh from device when online
+  const timerFetchedRef = useRef(false);
+  useEffect(() => {
+    // Seed from last known DB state immediately
+    if (data?.device?.timerSlots) {
+      const stored = data.device.timerSlots;
+      const loaded: Record<number, TimerSlotState> = {};
+      for (const k of Object.keys(stored)) {
+        const s = stored[k];
+        if (!s) continue;
+        loaded[Number(k)] = {
+          onHour: s.onHour, onMin: s.onMin, onEnable: s.onEnable,
+          offHour: s.offHour, offMin: s.offMin, offEnable: s.offEnable,
+          repeat: s.repeat, volume: s.volume, source: s.source,
+          manualDays: s.manualDays, busy: false,
+        };
+      }
+      setTimerSlots(loaded);
+    }
+  }, [data?.device?.timerSlots]);
+
+  useEffect(() => {
+    // Fetch fresh timer data from device once per page load when online
+    if (timerFetchedRef.current || !deviceId) return;
+    if (!data?.device || data.device.status !== 'online') return;
+    timerFetchedRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      const updates: Record<number, TimerSlotState> = {};
+      await Promise.allSettled(
+        [1, 2, 3, 4, 5, 6, 7].map(async (slot) => {
+          try {
+            const r = await api.post(`/devices/${deviceId}/mdc-control`, { action: 'on_timer_get', slot }) as Record<string, unknown>;
+            if (r['ok'] && !cancelled) {
+              updates[slot] = {
+                onHour: Number(r['onHour'] ?? 0), onMin: Number(r['onMin'] ?? 0), onEnable: !!r['onEnable'],
+                offHour: Number(r['offHour'] ?? 0), offMin: Number(r['offMin'] ?? 0), offEnable: !!r['offEnable'],
+                repeat: Number(r['repeat'] ?? 1), volume: Number(r['volume'] ?? 20),
+                source: Number(r['source'] ?? 0x01), manualDays: Number(r['manualDays'] ?? 0), busy: false,
+              };
+            }
+          } catch { /* ignore per-slot failures */ }
+        })
+      );
+      if (!cancelled && Object.keys(updates).length > 0) setTimerSlots(updates);
+    })();
+    return () => { cancelled = true; };
+  }, [deviceId, data?.device?.status]);
 
   const {
     register,
@@ -1164,7 +1267,7 @@ export default function DeviceDetailPage() {
                   </Badge>
                 : <span className="text-[var(--text-muted)] text-xs">—</span>}
             </div>
-            {resolvedConnectionType === 'wifi' && (
+            {(resolvedConnectionType === 'wifi' || !!resolvedWifiSsid) && (
               <>
                 <InfoRow icon={Wifi} label="SSID" value={resolvedWifiSsid} />
                 {device.wifiStrength != null && (
@@ -1378,19 +1481,20 @@ export default function DeviceDetailPage() {
               <Volume2 className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
               <span className="text-xs text-[var(--text-muted)] w-12 shrink-0">Volume</span>
               <input
-                type="number" min={0} max={100} value={volumeInput}
+                type="number" min={0} max={100} value={volumeInput ?? device.mdcVolume ?? ''}
                 onChange={(e) => setVolumeInput(Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)))}
                 className="w-16 px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]"
               />
               <ActionButton
                 type="button"
                 disabled={cmdDisabled}
-                onClick={() => sendCmd({ command: 'mdc_control', payload: { action: 'set_volume', level: volumeInput } })}
+                onClick={() => {
+                  const level = volumeInput ?? device.mdcVolume ?? 0;
+                  setVolumeInput(level);
+                  sendCmd({ command: 'mdc_control', payload: { action: 'set_volume', level } });
+                }}
                 tone="primary" className="px-3 py-1.5 text-xs"
               >Set</ActionButton>
-              {device.mdcVolume != null && (
-                <span className="text-xs text-[var(--text-muted)]">current: {device.mdcVolume}</span>
-              )}
               <span className="w-px h-4 bg-[var(--border)] mx-1 shrink-0" />
               {(optimisticMute !== null ? optimisticMute : !!(device.mdcMute))
                 ? <VolumeX className="w-3.5 h-3.5 text-amber-400 shrink-0" />
@@ -1436,6 +1540,57 @@ export default function DeviceDetailPage() {
               )}
             </div>
 
+          </div>
+
+          <div className="h-px bg-[var(--border)]" />
+
+          {/* ── URL Launcher Address ─────────────────────────────────────── */}
+          <div className="space-y-2">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-muted)]">
+              <Globe className="w-3 h-3" />URL Launcher Address
+            </span>
+            <div className="flex gap-2">
+              <input
+                type="url"
+                value={urlLauncherAddress}
+                onChange={(e) => setUrlLauncherAddress(e.target.value)}
+                placeholder="http://..."
+                className="flex-1 px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-xs font-mono focus:outline-none focus:border-[var(--blue)] disabled:opacity-40"
+                disabled={cmdDisabled || urlLauncherBusy}
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={cmdDisabled || urlLauncherBusy}
+                onClick={async () => {
+                  setUrlLauncherBusy(true);
+                  try {
+                    const res = await api.post(`/devices/${deviceId}/command`, {
+                      command: 'mdc_control',
+                      payload: { action: 'url_launcher_address_get' },
+                    }) as { urlAddress?: string };
+                    if (res?.urlAddress != null) setUrlLauncherAddress(res.urlAddress);
+                    else toast.success('MDC command sent');
+                  } catch {
+                    toast.error('Failed to read URL from display');
+                  } finally {
+                    setUrlLauncherBusy(false);
+                  }
+                }}
+                className="px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs text-[var(--text)] hover:bg-[var(--card)] disabled:opacity-40 transition-colors"
+              >
+                {urlLauncherBusy ? 'Reading…' : 'Read from Display'}
+              </button>
+              <button
+                type="button"
+                disabled={cmdDisabled || urlLauncherBusy || !urlLauncherAddress.trim()}
+                onClick={() => sendCmd({ command: 'mdc_control', payload: { action: 'url_launcher_address_set', urlAddress: urlLauncherAddress.trim() } })}
+                className="px-3 py-1.5 rounded-lg border border-[var(--blue)] bg-[var(--blue)] text-xs text-white hover:opacity-90 disabled:opacity-40 transition-opacity"
+              >
+                Save to Display
+              </button>
+            </div>
           </div>
 
           <div className="h-px bg-[var(--border)]" />

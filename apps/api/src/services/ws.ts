@@ -25,6 +25,9 @@ export interface MdcStatusResponse {
   nodeRunning?: boolean;
   serial?: string;
   deviceName?: string;
+  modelName?: string;
+  ipAddress?: string;
+  remoteControl?: number;
   tvName?: string;
   deviceTime?: string;
   rawHex?: string;
@@ -404,6 +407,14 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     if (mp.safetyLock      != null) set.mdcSafetyLock     = mp.safetyLock      as number;
     if (mp.softwareVersion != null) set.mdcSoftwareVersion = mp.softwareVersion as string;
     if (mp.temperatureC    != null) set.mdcTemperatureC   = mp.temperatureC    as number;
+    // Timer slots (keys "1"-"7", each has the parsed on/off timer state)
+    if (Array.isArray(mp.timers)) {
+      const slots: Record<string, unknown> = {};
+      (mp.timers as (Record<string, unknown> | null)[]).forEach((t, i) => {
+        if (t != null) slots[String(i + 1)] = t;
+      });
+      if (Object.keys(slots).length > 0) set.timerSlots = slots;
+    }
     await db.update(devices).set(set).where(eq(devices.id, deviceId));
     return;
   }
@@ -511,6 +522,10 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
         ok: msg.payload.ok,
         ...(msg.payload.nodeRunning !== undefined ? { nodeRunning: msg.payload.nodeRunning } : {}),
         ...(msg.payload.serial !== undefined ? { serial: msg.payload.serial } : {}),
+        ...(msg.payload.deviceName !== undefined ? { deviceName: msg.payload.deviceName } : {}),
+        ...(msg.payload.modelName !== undefined ? { modelName: msg.payload.modelName } : {}),
+        ...(msg.payload.ipAddress !== undefined ? { ipAddress: msg.payload.ipAddress } : {}),
+        ...(msg.payload.remoteControl !== undefined ? { remoteControl: msg.payload.remoteControl } : {}),
         ...(msg.payload.tvName !== undefined ? { tvName: msg.payload.tvName } : {}),
         ...(msg.payload.deviceTime !== undefined ? { deviceTime: msg.payload.deviceTime } : {}),
         ...(msg.payload.rawHex !== undefined ? { rawHex: msg.payload.rawHex } : {}),

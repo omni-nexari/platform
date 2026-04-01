@@ -337,44 +337,7 @@ function buildLegacyPublishedSchedule(target: {
   return null;
 }
 
-async function ensureDevicePublishSchema(): Promise<void> {
-  await db.execute(sql.raw(`
-    ALTER TABLE devices
-    ADD COLUMN IF NOT EXISTS published_content_id uuid REFERENCES content_items(id) ON DELETE SET NULL
-  `));
-
-  await db.execute(sql.raw(`
-    ALTER TABLE devices
-    ADD COLUMN IF NOT EXISTS published_playlist_id uuid REFERENCES playlists(id) ON DELETE SET NULL
-  `));
-
-  await db.execute(sql.raw(`
-    ALTER TABLE devices
-    ADD COLUMN IF NOT EXISTS published_schedule_id uuid REFERENCES schedules(id) ON DELETE SET NULL
-  `));
-
-  await db.execute(sql.raw(`
-    DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'devices_single_publish_target_chk'
-      ) THEN
-        ALTER TABLE devices
-        ADD CONSTRAINT devices_single_publish_target_chk
-        CHECK (
-          (CASE WHEN published_content_id IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN published_playlist_id IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN published_schedule_id IS NOT NULL THEN 1 ELSE 0 END) <= 1
-        );
-      END IF;
-    END $$;
-  `));
-}
-
 export async function deviceRoutes(app: FastifyInstance) {
-  await ensureDevicePublishSchema();
 
   // ── POST /devices/pair/request ─ unauthenticated, called by the Tizen device ─
   app.post('/pair/request', async (req, reply) => {
@@ -1146,6 +1109,13 @@ export async function deviceRoutes(app: FastifyInstance) {
       await db.update(devices).set({ powerState: 'off', updatedAt: new Date() }).where(eq(devices.id, id));
     } else if (cmd.command === 'power_on') {
       await db.update(devices).set({ powerState: 'on', updatedAt: new Date() }).where(eq(devices.id, id));
+    } else if (cmd.command === 'set_ntp') {
+      await db.update(devices).set({
+        ntpEnabled: true,
+        ntpServer: cmd.payload.server || null,
+        ntpTimezone: cmd.payload.timezone || null,
+        updatedAt: new Date(),
+      }).where(eq(devices.id, id));
     }
 
     await writeAuditLog({

@@ -1,16 +1,34 @@
 import Fastify from 'fastify';
+import pino from 'pino';
 import { registerPlugins } from './plugins/index.js';
 import { registerRoutes } from './routes/index.js';
+import { startLogCleanup } from './services/log-cleanup.js';
+import { createPinoDbStream } from './services/pino-db-stream.js';
 
 const PORT = Number(process.env['API_PORT'] ?? 3000);
 
 async function start() {
   const isDev = process.env['NODE_ENV'] !== 'production';
-  const app = Fastify({
-    logger: isDev
-      ? { level: 'info', transport: { target: 'pino-pretty', options: { colorize: true } } }
-      : { level: 'info' },
-  });
+
+  // Build a multistream logger:
+  //   stream 1 → stdout (pretty in dev, JSON in prod)
+  //   stream 2 → DB insertion for warn/error only
+  const dbStream = createPinoDbStream();
+  const streams: pino.StreamEntry[] = isDev
+    ? [
+        { stream: pino.transport({ target: 'pino-pretty', options: { colorize: true } }) },
+        { level: 'warn', stream: dbStream },
+      ]
+    : [
+        { stream: process.stdout },
+        { level: 'warn', stream: dbStream },
+      ];
+
+  const logger = pino({ level: 'info' }, pino.multistream(streams));
+
+  const app = Fastify({ loggerInstance: logger });
+
+  startLogCleanup();
 
   await registerPlugins(app);
   await app.register(registerRoutes, { prefix: '/api/v1' });

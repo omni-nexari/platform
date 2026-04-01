@@ -67,6 +67,9 @@ export const devices = pgTable('devices', {
   mdcTemperatureC: doublePrecision('mdc_temperature_c'),
   mdcLastPoll: timestamp('mdc_last_poll', { withTimezone: true }),
 
+  // ── On/Off timer state (from MDC poll) ─────────────────────────────────────
+  timerSlots: jsonb('timer_slots'),
+
   // ── NTP / clock ────────────────────────────────────────────────────────────
   ntpEnabled: boolean('ntp_enabled').notNull().default(false),
   ntpServer: text('ntp_server'),

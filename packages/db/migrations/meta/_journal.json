@@ -134,6 +134,56 @@
       "when": 1774060200000,
       "tag": "0018_notification_prefs",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1774062000000,
+      "tag": "0019_device_publish_targets",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1774063800000,
+      "tag": "0020_syncplay",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1774065600000,
+      "tag": "0021_syncplay_groupid_int",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1774067400000,
+      "tag": "0022_power_state_nullable",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1774069200000,
+      "tag": "0023_mdc_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1774071000000,
+      "tag": "0024_device_timer_slots",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1774072800000,
+      "tag": "0025_log_entries",
+      "breakpoints": true
     }
   ]
 }
+

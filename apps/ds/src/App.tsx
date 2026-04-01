@@ -17,12 +17,14 @@ import ManagementCompanyDetailPage from './pages/superadmin/ManagementCompanyDet
 import PlatformOwnerDashboardPage from './pages/superadmin/PlatformOwnerDashboardPage.js';
 import PlatformAnalyticsPage from './pages/superadmin/PlatformAnalyticsPage.js';
 import PlatformNotificationsPage from './pages/superadmin/PlatformNotificationsPage.js';
+import PlatformLogsPage from './pages/superadmin/PlatformLogsPage.js';
 import ManagementLoginPage from './pages/management/ManagementLoginPage.js';
 import ManagementLayout from './pages/management/ManagementLayout.js';
 import ManagementDashboardPage from './pages/management/ManagementDashboardPage.js';
 import ManagementAnalyticsPage from './pages/management/ManagementAnalyticsPage.js';
 import ManagementNotificationsPage from './pages/management/ManagementNotificationsPage.js';
 import ManagementBrandingPage from './pages/management/ManagementBrandingPage.js';
+import ManagementLogsPage from './pages/management/ManagementLogsPage.js';
 import AcceptManagementCompanyInvitePage from './pages/auth/AcceptManagementCompanyInvitePage.js';
 import AcceptClientOrgInvitePage from './pages/auth/AcceptClientOrgInvitePage.js';
 import SettingsPage from './pages/account/SettingsPage.js';
@@ -228,6 +230,7 @@ export default function App() {
         <Route path="system" element={<SystemHealthPage />} />
         <Route path="analytics" element={<PlatformAnalyticsPage />} />
         <Route path="notifications" element={<PlatformNotificationsPage />} />
+        <Route path="logs" element={<PlatformLogsPage />} />
       </Route>
 
       {/* Management Company portal */}
@@ -248,6 +251,7 @@ export default function App() {
         <Route path="settings/branding" element={<ManagementBrandingPage />} />
         <Route path="analytics" element={<ManagementAnalyticsPage />} />
         <Route path="notifications" element={<ManagementNotificationsPage />} />
+        <Route path="logs" element={<ManagementLogsPage />} />
       </Route>
 
       {/* Authenticated user shell */}

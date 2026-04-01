@@ -333,12 +333,18 @@ function decodeMdcResult(action: string, result: MdcResult, payload: Record<stri
         swVersion: String(result.swVersion ?? ''),
         modelName: String(result.modelName ?? ''),
       };
-    case 'mac_address_get':
+    case 'mac_address_get': {
+      const offset = data[0] === 0x81 ? 1 : 0;
+      const macRaw = decodeAscii(data.slice(offset, offset + 12));
+      const macAddress = macRaw.length === 12
+        ? macRaw.replace(/(.{2})/g, '$1:').slice(0, 17)
+        : (macRaw || String(result.macAddress ?? ''));
       return {
         ...resultWithId,
         label: 'MAC Address (0x1B.0x81)',
-        macAddress: String(result.macAddress ?? ''),
+        macAddress,
       };
+    }
     case 'device_pin_get':
       return {
         ...resultWithId,

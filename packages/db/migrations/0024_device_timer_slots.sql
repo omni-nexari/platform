@@ -1,0 +1,1 @@
+ALTER TABLE "devices" ADD COLUMN IF NOT EXISTS "timer_slots" JSONB;
