@@ -89,6 +89,9 @@ interface DeviceHeartbeat {
   buttonLock: boolean | null;
   cpuLoad: number | null;
   storageFreeBytes: number | null;
+  memoryFreeBytes: number | null;
+  memoryTotalBytes: number | null;
+  deviceUptimeSec: number | null;
   temperatureC: number | null;
   currentContentId: string | null;
   nextContentId: string | null;
@@ -844,7 +847,22 @@ export default function DeviceDetailPage() {
   type LogLevel = 'all' | 'debug' | 'info' | 'warn' | 'error';
   const [logFilter, setLogFilter] = useState<LogLevel>('all');
   const [autoScroll, setAutoScroll] = useState(true);
+  const [liveLogs, setLiveLogs] = useState(false);
   const logAreaRef = useRef<HTMLTextAreaElement>(null);
+  const autoDumpRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Auto-dump: when liveLogs is on and device is online, fire dump_logs every 8 s
+  useEffect(() => {
+    if (autoDumpRef.current) { clearInterval(autoDumpRef.current); autoDumpRef.current = null; }
+    if (!liveLogs || !logData?.online) return;
+    // Fire immediately so there's no 8s wait after toggling on
+    cmdMutation.mutate({ command: 'dump_logs' });
+    autoDumpRef.current = setInterval(() => {
+      cmdMutation.mutate({ command: 'dump_logs' });
+    }, 8_000);
+    return () => { if (autoDumpRef.current) { clearInterval(autoDumpRef.current); autoDumpRef.current = null; } };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveLogs, logData?.online]);
 
   const logs = logData?.logs ?? [];
   const filteredLogs = useMemo(
@@ -893,6 +911,31 @@ export default function DeviceDetailPage() {
     () => preferObservedValue(data?.device.timezone, observedSystemInfo?.timezone),
     [data?.device.timezone, observedSystemInfo?.timezone],
   );
+
+  // These must live above early-return branches (Rules of Hooks)
+  const deviceUptimeLabel = useMemo(() => {
+    const uptimeSec = data?.latestHeartbeat?.deviceUptimeSec;
+    if (uptimeSec == null) return null;
+    const h = Math.floor(uptimeSec / 3600);
+    const m = Math.floor((uptimeSec % 3600) / 60);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }, [data?.latestHeartbeat?.deviceUptimeSec]);
+
+  const deviceTimeLabel = useMemo(() => {
+    const hbInner = data?.latestHeartbeat;
+    if (!hbInner?.createdAt) return null;
+    const deviceMs = new Date(hbInner.createdAt).getTime() + (hbInner.clockDriftMs ?? 0);
+    const tz = resolvedTimezone || 'UTC';
+    try {
+      return new Date(deviceMs).toLocaleString('en-CA', {
+        timeZone: tz, hour12: false,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      });
+    } catch {
+      return new Date(deviceMs).toISOString().replace('T', ' ').slice(0, 19);
+    }
+  }, [data?.latestHeartbeat?.createdAt, data?.latestHeartbeat?.clockDriftMs, resolvedTimezone]);
   const resolvedResolution = useMemo(
     () => data?.device.resolution || observedSystemInfo?.resolution || null,
     [data?.device.resolution, observedSystemInfo?.resolution],
@@ -1139,6 +1182,13 @@ export default function DeviceDetailPage() {
     ? Math.max(0, 100 - (storageFreeMb / storageTotalMb) * 100)
     : null;
 
+  // Memory
+  const memoryFreeMb  = hb?.memoryFreeBytes  != null ? hb.memoryFreeBytes  / 1_048_576 : null;
+  const memoryTotalMb = hb?.memoryTotalBytes != null ? hb.memoryTotalBytes / 1_048_576 : null;
+  const memoryUsedPct = memoryFreeMb != null && memoryTotalMb != null && memoryTotalMb > 0
+    ? Math.max(0, 100 - (memoryFreeMb / memoryTotalMb) * 100)
+    : null;
+
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-6">
 
@@ -1237,14 +1287,16 @@ export default function DeviceDetailPage() {
             </h2>
           </SectionCardHeader>
           <SectionCardBody className="space-y-3">
-            <InfoRow icon={Monitor}     label="Model"          value={[device.modelName, device.modelCode, observedSystemInfo?.realModel].filter(Boolean).join(' / ') || null} />
-            <InfoRow icon={Fingerprint} label="DUID"           value={device.duid} />
-            <InfoRow icon={Settings2}   label="Serial Number"  value={device.serialNumber} />
-            <InfoRow icon={Cpu}         label="Firmware"       value={device.firmwareVersion ?? observedSystemInfo?.firmwareVersion} />
-            <InfoRow icon={Cpu}         label="Player version" value={device.playerVersion ? `v${device.playerVersion}` : null} />
-            <InfoRow icon={Settings2}   label="Software Ver"   value={device.mdcSoftwareVersion ?? null} />
-            <InfoRow icon={Monitor}     label="Resolution"     value={resolvedResolution} />
-            <InfoRow icon={Globe}       label="Timezone"       value={resolvedTimezone} />
+            <InfoRow icon={Monitor}     label="Model"             value={[observedSystemInfo?.realModel || device.modelName, device.modelCode].filter(Boolean).join(' / ') || null} />
+            <InfoRow icon={Fingerprint} label="DUID"              value={device.duid} />
+            <InfoRow icon={Settings2}   label="Serial Number"     value={device.serialNumber} />
+            <InfoRow icon={Cpu}         label="Software version"  value={device.firmwareVersion ?? observedSystemInfo?.firmwareVersion} />
+            <InfoRow icon={Cpu}         label="Player version"    value={device.playerVersion ? `v${device.playerVersion}` : null} />
+            <InfoRow icon={Monitor}     label="Resolution"        value={resolvedResolution} />
+            {deviceTimeLabel && (
+              <InfoRow icon={Clock}     label="Device time"       value={deviceTimeLabel} />
+            )}
+            <InfoRow icon={Globe}       label="Timezone"          value={resolvedTimezone} />
           </SectionCardBody>
         </SectionCard>
 
@@ -1267,7 +1319,7 @@ export default function DeviceDetailPage() {
                   </Badge>
                 : <span className="text-[var(--text-muted)] text-xs">—</span>}
             </div>
-            {(resolvedConnectionType === 'wifi' || !!resolvedWifiSsid) && (
+            {resolvedConnectionType !== 'ethernet' && (resolvedConnectionType === 'wifi' || !!resolvedWifiSsid) && (
               <>
                 <InfoRow icon={Wifi} label="SSID" value={resolvedWifiSsid} />
                 {device.wifiStrength != null && (
@@ -1320,6 +1372,17 @@ export default function DeviceDetailPage() {
                     <MiniBar value={hb.cpuLoad} tone={hb.cpuLoad > 85 ? 'danger' : hb.cpuLoad > 65 ? 'warning' : 'default'} />
                   </div>
                 )}
+                {memoryUsedPct != null && memoryTotalMb != null && (
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs text-[var(--text-muted)]">
+                      <span className="flex items-center gap-1.5"><Cpu className="w-3 h-3" />Memory</span>
+                      <span className="font-mono">
+                        {memoryFreeMb != null ? `${memoryFreeMb.toFixed(0)} MB` : `${(100 - memoryUsedPct).toFixed(0)}%`} / {memoryTotalMb.toFixed(0)} MB
+                      </span>
+                    </div>
+                    <MiniBar value={memoryUsedPct} tone={memoryUsedPct > 85 ? 'danger' : memoryUsedPct > 70 ? 'warning' : 'default'} />
+                  </div>
+                )}
                 {storageUsedPct != null && (
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs text-[var(--text-muted)]">
@@ -1331,20 +1394,12 @@ export default function DeviceDetailPage() {
                     <MiniBar value={storageUsedPct} tone={storageUsedPct > 90 ? 'danger' : storageUsedPct > 75 ? 'warning' : 'default'} />
                   </div>
                 )}
+                {deviceUptimeLabel && (
+                  <InfoRow icon={Clock} label="Uptime" value={deviceUptimeLabel} />
+                )}
                 {hb.clockDriftMs != null && (
                   <InfoRow icon={Clock} label="Clock drift"
                     value={`${hb.clockDriftMs > 0 ? '+' : ''}${hb.clockDriftMs} ms`} />
-                )}
-                {/* Power state from MDC heartbeat (DB column) */}
-                {(optimisticPowerState ?? device.powerState) != null && (
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="flex items-center gap-2 text-[var(--text-muted)]">
-                      <Power className="w-3.5 h-3.5" />Power state
-                    </span>
-                    <Badge tone={(optimisticPowerState ?? device.powerState) === 'on' ? 'success' : (optimisticPowerState ?? device.powerState) === 'standby' ? 'warning' : 'neutral'}>
-                      {optimisticPowerState ?? device.powerState}
-                    </Badge>
-                  </div>
                 )}
               </>
             ) : (
@@ -2263,7 +2318,10 @@ export default function DeviceDetailPage() {
           <div className="flex flex-wrap items-center gap-3">
             <Badge tone={logData?.online ? 'success' : 'neutral'}>{logData?.online ? 'LIVE WS' : 'DEVICE OFFLINE'}</Badge>
             <Badge tone="accent">{filteredLogs.length}{logFilter !== 'all' ? ` / ${logs.length}` : ''} lines</Badge>
-            <span className="text-sm text-[var(--text-muted)]">Use Dump Logs to ask the device to flush the recent local ring buffer.</span>
+            {liveLogs && logData?.online && (
+              <Badge tone="success">AUTO-DUMP ON</Badge>
+            )}
+            <span className="text-sm text-[var(--text-muted)]">Use Dump Logs to flush the device's local ring buffer, or enable Live to auto-flush every 8 s.</span>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -2302,6 +2360,13 @@ export default function DeviceDetailPage() {
           <div className="flex flex-wrap gap-3">
             <ActionButton onClick={downloadLogs} disabled={!filteredLogs.length}>
               <Download className="w-4 h-4" /> Download
+            </ActionButton>
+            <ActionButton
+              disabled={cmdDisabled}
+              {...(liveLogs ? { tone: 'primary' as const } : {})}
+              onClick={() => setLiveLogs((v) => !v)}
+            >
+              {liveLogs ? '⏹ Stop Live' : '▶ Live'}
             </ActionButton>
             <ActionButton disabled={cmdDisabled} onClick={() => sendCmd({ command: 'dump_logs' })}>
               <FileText className="w-4 h-4" /> Request Log Dump

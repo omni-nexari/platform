@@ -1,791 +1,562 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
-import { Bug, Monitor, TerminalSquare } from 'lucide-react';
-import { api } from '../../lib/api.js';
-import { useAuthStore } from '../../lib/auth.js';
+import { Bug, FileText, Monitor, Radio, Shield, Terminal } from 'lucide-react';
 import {
   ActionButton,
-  EmptyState,
+  Badge,
+  Callout,
   PageHeader,
   SectionCard,
   SectionCardBody,
   SectionCardHeader,
 } from '../../components/UiPrimitives.js';
+import { api } from '../../lib/api.js';
 
 type Workspace = { id: string; name: string };
-type DeviceSummary = { id: string; name: string; status: string; modelName: string | null };
-type MdcResult = { ok: boolean; rawHex?: string; data?: number[]; error?: string } & Record<string, unknown>;
+type Device = { id: string; name: string; status?: string | null };
 
-const RESULT_LABELS: Record<string, string> = {
-  displayId: 'Display ID',
-  label: 'Label',
-  meaning: 'Meaning',
-  value: 'Value',
-  valueHex: 'Value (Hex)',
-  requestedValue: 'Requested Value',
-  contrast: 'Contrast',
-  brightness: 'Brightness',
-  sharpness: 'Sharpness',
-  color: 'Color',
-  tint: 'Tint',
-  colorTone: 'Color Tone',
-  colorTemp: 'Color Temp',
-  redGain: 'Red Gain',
-  greenGain: 'Green Gain',
-  blueGain: 'Blue Gain',
-  modelName: 'Model Name',
-  brightnessSensor: 'Brightness Sensor',
-  mdcIdDisplay: 'MDC ID Display',
-  urlAddress: 'URL Address',
-  ssid: 'SSID',
-  macAddress: 'MAC Address',
-  pin: 'PIN',
-  panelOnOff: 'Panel On/Off',
-  source: 'Source',
-  videoWallOnOff: 'Video Wall On/Off',
-  videoWallPosition: 'Video Wall Position',
-  videoWallDivision: 'Video Wall Division',
-  videoWallMode: 'Video Wall Mode',
-  rotation: 'Rotation',
-  swVersion: 'SW Version',
-  modelCode: 'Model Code',
-  serialNumber: 'Serial Number',
-  screenSize: 'Screen Size (inch)',
-  ipAddress: 'IP Address',
-  subnetMask: 'Subnet Mask',
-  gateway: 'Gateway',
-  dns: 'DNS',
-  weekDay: 'Weekday Bitmask',
-  weekDayText: 'Weekday',
-  timeHour: 'Hour',
-  timeMinute: 'Minute',
-  safetyScreenType: 'Safety Screen Type',
-  tickerOnOff: 'Ticker On/Off',
-  tickerMessage: 'Ticker Message',
-  tickerStart: 'Ticker Start',
-  tickerEnd: 'Ticker End',
-  dataLength: 'Data Length',
+type DeviceHeartbeat = {
+  id: string;
+  playerVersion: string | null;
+  firmwareVersion: string | null;
+  powerState: string | null;
+  clockDriftMs: number | null;
+  irLock: boolean | null;
+  buttonLock: boolean | null;
+  cpuLoad: number | null;
+  storageFreeBytes: number | null;
+  memoryFreeBytes: number | null;
+  memoryTotalBytes: number | null;
+  deviceUptimeSec: number | null;
+  temperatureC: number | null;
+  createdAt: string;
 };
 
-const SAFETY_SCREEN_TYPES: Array<{ value: number; label: string }> = [
-  { value: 0x00, label: 'Off (0x00)' },
-  { value: 0x01, label: 'Signal Pattern (0x01)' },
-  { value: 0x02, label: 'All White (0x02)' },
-  { value: 0x03, label: 'Scroll (0x03)' },
-  { value: 0x04, label: 'Bar (0x04)' },
-  { value: 0x06, label: 'Eraser (0x06)' },
-  { value: 0x07, label: 'Pixel (0x07)' },
-  { value: 0x10, label: 'Rolling Bar (0x10)' },
-  { value: 0x11, label: 'Fading Screen (0x11)' },
+type ProbeEntry = { label: string; value?: unknown; error?: string };
+type ProbeResult = {
+  requestId: string;
+  sections: {
+    productInfo?: ProbeEntry[];
+    samsungSystemInfo?: ProbeEntry[];
+    tizenSystemInfo?: ProbeEntry[];
+    systemControl?: ProbeEntry[];
+  };
+};
+
+type CommandResult = { ok: boolean; value?: unknown; error?: string } | null;
+
+const SECTION_META: Array<{ key: keyof ProbeResult['sections']; title: string; description: string }> = [
+  { key: 'productInfo',       title: 'ProductInfo',         description: 'Model, firmware, DUID, branding, and system config from webapis.productinfo.' },
+  { key: 'samsungSystemInfo', title: 'Samsung SystemInfo',  description: 'Codec support from webapis.systeminfo.' },
+  { key: 'tizenSystemInfo',   title: 'Tizen SystemInfo',    description: 'Memory, capabilities, and system properties from tizen.systeminfo.' },
+  { key: 'systemControl',     title: 'SystemControl',       description: 'B2B display state from webapis.systemcontrol (requires partner privilege).' },
 ];
 
-function byteHex(value: number | undefined) {
-  if (value == null || Number.isNaN(value)) return 'Unknown';
-  return `0x${value.toString(16).toUpperCase().padStart(2, '0')}`;
-}
-
-function extractDisplayId(result: MdcResult) {
-  if (typeof result.displayId === 'number') return result.displayId;
-  const rawHex = typeof result.rawHex === 'string' ? result.rawHex : '';
-  const parts = rawHex.split(/\s+/).filter(Boolean);
-  if (parts.length < 3) return undefined;
-  const value = Number.parseInt(parts[2] ?? '', 16);
-  return Number.isNaN(value) ? undefined : value;
-}
-
-function withDisplayId(result: MdcResult) {
-  const displayId = extractDisplayId(result);
-  if (displayId == null) return result;
-  return {
-    ...result,
-    displayId: `${displayId} (${byteHex(displayId)})`,
-  };
-}
-
-function decodeAscii(data: number[]) {
-  return data
-    .filter((value) => value >= 0x20 && value <= 0x7e)
-    .map((value) => String.fromCharCode(value))
-    .join('')
-    .trim();
-}
-
-function decodeWeekdayMask(mask: number | undefined) {
-  if (mask == null) return 'Unknown';
-  const names = ['Sunday', 'Saturday', 'Friday', 'Thursday', 'Wednesday', 'Tuesday', 'Monday'];
-  const active = names.filter((_, i) => ((mask >> i) & 1) === 1);
-  return active.length ? active.join(', ') : 'No restart day selected';
-}
-
-function ipFromBytes(data: number[], start: number) {
-  if (data.length < start + 4) return 'Unknown';
-  return `${data[start]}.${data[start + 1]}.${data[start + 2]}.${data[start + 3]}`;
-}
-
-function decodeMdcResult(action: string, result: MdcResult, payload: Record<string, unknown> = {}): MdcResult {
-  const data = Array.isArray(result.data) ? result.data : [];
-  const resultWithId = withDisplayId(result);
-  if (!result.ok) return resultWithId;
-
-  switch (action) {
-    case 'video_control_get':
-      return {
-        ...resultWithId,
-        label: 'Video Control (0x04)',
-        contrast: data[0],
-        brightness: data[1],
-        sharpness: data[2],
-        color: data[3],
-        tint: data[4],
-        colorTone: data[5],
-        colorTemp: data[6],
-      };
-    case 'rgb_control_get':
-      return {
-        ...resultWithId,
-        label: 'RGB Control (0x06)',
-        contrast: data[0],
-        brightness: data[1],
-        colorTone: data[2],
-        colorTemp: data[3],
-        redGain: data[4],
-        greenGain: data[5],
-        blueGain: data[6],
-      };
-    case 'maintenance_get':
-      return {
-        ...resultWithId,
-        label: 'Maintenance Control (0x08)',
-        dataLength: data.length,
-      };
-    case 'serial_number_get':
-      return {
-        ...resultWithId,
-        label: 'Serial Number (0x0B)',
-        serialNumber: decodeAscii(data),
-      };
-    case 'model_name_get':
-      return {
-        ...resultWithId,
-        label: 'Model Name (0x8A)',
-        modelName: decodeAscii(data),
-      };
-    case 'screen_size_get':
-      return {
-        ...resultWithId,
-        label: 'Screen Size (0x19)',
-        screenSize: data[0],
-      };
-    case 'network_config_get': {
-      const offset = data[0] === 0x82 ? 1 : 0;
-      return {
-        ...resultWithId,
-        label: 'Network Config (0x1B, sub 0x82)',
-        ipAddress: ipFromBytes(data, offset),
-        subnetMask: ipFromBytes(data, offset + 4),
-        gateway: ipFromBytes(data, offset + 8),
-        dns: ipFromBytes(data, offset + 12),
-      };
-    }
-    case 'network_config_set':
-      return {
-        ...resultWithId,
-        label: 'Network Config Set',
-        ipAddress: String(payload.ipAddress ?? ''),
-        subnetMask: String(payload.subnetMask ?? ''),
-        gateway: String(payload.gateway ?? ''),
-        dns: String(payload.dns ?? ''),
-      };
-    case 'weekly_restart_get': {
-      const offset = data[0] === 0xa2 ? 1 : 0;
-      const weekDay = data[offset];
-      const hour = data[offset + 1];
-      const minute = data[offset + 2];
-      return {
-        ...resultWithId,
-        label: 'Weekly Restart (0x1B, sub 0xA2)',
-        weekDay,
-        weekDayText: decodeWeekdayMask(weekDay),
-        timeHour: hour,
-        timeMinute: minute,
-      };
-    }
-    case 'weekly_restart_set': {
-      const weekDay = Number(payload.weekDay ?? 0);
-      const hour = Number(payload.timeHour ?? 0);
-      const minute = Number(payload.timeMinute ?? 0);
-      return {
-        ...resultWithId,
-        label: 'Weekly Restart Set',
-        weekDay,
-        weekDayText: decodeWeekdayMask(weekDay),
-        timeHour: hour,
-        timeMinute: minute,
-      };
-    }
-    case 'brightness_get':
-    case 'sharpness_get':
-    case 'color_get':
-      return {
-        ...resultWithId,
-        value: data[0],
-        valueHex: byteHex(data[0]),
-      };
-    case 'brightness_set':
-    case 'sharpness_set':
-    case 'color_set':
-      return {
-        ...resultWithId,
-        requestedValue: Number(payload.value ?? 0),
-      };
-    case 'brightness_sensor_get':
-      return {
-        ...resultWithId,
-        label: 'Brightness Sensor (0x86)',
-        value: data[0],
-        brightnessSensor: data[0] === 1 ? 'On' : 'Off',
-      };
-    case 'brightness_sensor_set':
-      return {
-        ...resultWithId,
-        label: 'Brightness Sensor Set',
-        requestedValue: Number(payload.value ?? 0),
-        brightnessSensor: Number(payload.value ?? 0) === 1 ? 'On' : 'Off',
-      };
-    case 'mdc_id_display_set':
-      return {
-        ...resultWithId,
-        label: 'MDC ID Display (0xB9)',
-        requestedValue: Number(payload.value ?? 0),
-        mdcIdDisplay: Number(payload.value ?? 0) === 1 ? 'Show' : 'Hide',
-      };
-    case 'url_launcher_address_get': {
-      const offset = data[0] === 0x82 ? 1 : 0;
-      return {
-        ...resultWithId,
-        label: 'URL Launcher Address (0xC7, sub 0x82)',
-        urlAddress: decodeAscii(data.slice(offset)),
-      };
-    }
-    case 'url_launcher_address_set':
-      return {
-        ...resultWithId,
-        label: 'URL Launcher Address Set',
-        urlAddress: String(payload.urlAddress ?? ''),
-      };
-    case 'safety_screen_run_get': {
-      const value = data[0];
-      const label = SAFETY_SCREEN_TYPES.find((item) => item.value === value)?.label ?? `Unknown (${byteHex(value)})`;
-      return {
-        ...resultWithId,
-        value,
-        safetyScreenType: label,
-      };
-    }
-    case 'safety_screen_run_set': {
-      const value = Number(payload.value ?? 0);
-      const label = SAFETY_SCREEN_TYPES.find((item) => item.value === value)?.label ?? `Unknown (${byteHex(value)})`;
-      return {
-        ...resultWithId,
-        requestedValue: value,
-        safetyScreenType: label,
-      };
-    }
-    case 'ticker_get': {
-      // 15-byte header: [onOff, startH, startM, endH, endM, posH, posV, motionOO, motionDir, motionSpeed, fontSize, fgCol, bgCol, fgOp, bgOp], then message
-      const text = decodeAscii(data.slice(15));
-      return {
-        ...resultWithId,
-        label: 'Ticker (0x63)',
-        tickerOnOff: data[0] === 1 ? 'On' : 'Off',
-        tickerStart: `${String(data[1] ?? 0).padStart(2, '0')}:${String(data[2] ?? 0).padStart(2, '0')}`,
-        tickerEnd: `${String(data[3] ?? 0).padStart(2, '0')}:${String(data[4] ?? 0).padStart(2, '0')}`,
-        tickerMessage: text || '(empty)',
-      };
-    }
-    case 'ticker_set':
-      return {
-        ...resultWithId,
-        label: 'Ticker Set',
-        tickerOnOff: Number(payload.onOff ?? 0) === 1 ? 'On' : 'Off',
-        tickerMessage: String(payload.message ?? ''),
-      };
-    case 'network_wifi_set':
-      return {
-        ...resultWithId,
-        label: 'WiFi AP Config Set (0x1B.0x8A)',
-        ssid: String(payload.ssid ?? ''),
-      };
-    case 'child_device_get':
-      return {
-        ...resultWithId,
-        label: 'Child Device Info (0x0A.0x81)',
-        panelOnOff: data[1] === 0 ? 'On' : 'Off',
-        source: byteHex(data[2]),
-        videoWallOnOff: data[3] === 0 ? 'Off' : 'On',
-        videoWallPosition: data[4],
-        videoWallDivision: data[5],
-        videoWallMode: data[6] === 0 ? 'Natural' : 'Full',
-        rotation: byteHex(data[7]),
-        screenSize: data[8],
-        modelCode: byteHex(data[9]),
-        swVersion: String(result.swVersion ?? ''),
-        modelName: String(result.modelName ?? ''),
-      };
-    case 'mac_address_get': {
-      const offset = data[0] === 0x81 ? 1 : 0;
-      const macRaw = decodeAscii(data.slice(offset, offset + 12));
-      const macAddress = macRaw.length === 12
-        ? macRaw.replace(/(.{2})/g, '$1:').slice(0, 17)
-        : (macRaw || String(result.macAddress ?? ''));
-      return {
-        ...resultWithId,
-        label: 'MAC Address (0x1B.0x81)',
-        macAddress,
-      };
-    }
-    case 'device_pin_get':
-      return {
-        ...resultWithId,
-        label: 'Device PIN (0x1B.0x87)',
-        pin: String(result.pin ?? ''),
-      };
-    case 'device_pin_set':
-      return {
-        ...resultWithId,
-        label: 'Device PIN Set',
-        pin: String(payload.pin ?? ''),
-      };
-    default:
-      return resultWithId;
+function ValueBlock({ value }: { value: unknown }) {
+  if (value == null) return <span className="font-mono text-sm text-[var(--text-muted)]">null</span>;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return <span className="font-mono text-sm text-[var(--text)]">{String(value)}</span>;
   }
+  return (
+    <pre className="overflow-x-auto rounded-lg bg-[var(--surface)] p-3 font-mono text-xs text-[var(--text)] whitespace-pre-wrap break-words">
+      {JSON.stringify(value, null, 2)}
+    </pre>
+  );
 }
 
-function ResultPanel({ result }: { result: MdcResult | null | undefined }) {
-  if (!result) return null;
-  const skip = new Set(['ok', 'rawHex', 'data', 'error']);
-  const parsed = Object.entries(result).filter(([k]) => !skip.has(k));
+function ProbeSection({ title, description, entries }: { title: string; description: string; entries: ProbeEntry[] }) {
+  const okCount = entries.filter((e) => !e.error).length;
+  const errCount = entries.filter((e) => !!e.error).length;
+  const badgeTone = errCount > 0 && okCount === 0 ? 'danger' : errCount > 0 ? 'warning' : 'success';
+  const badgeLabel = errCount > 0 && okCount === 0 ? 'All errors' : errCount > 0 ? 'Partial' : 'OK';
+
   return (
-    <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-xs space-y-1.5">
-      <div className={`font-semibold ${result.ok ? 'text-green-500' : 'text-red-400'}`}>
-        {result.ok ? 'OK' : 'Error'}
-      </div>
-      {result.error ? <div className="text-red-400">{String(result.error)}</div> : null}
-      {parsed.length > 0 ? (
-        <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-0.5">
-          {parsed.map(([k, v]) => (
-            <div key={k} className="contents">
-              <dt className="text-[var(--text-muted)]">{RESULT_LABELS[k] ?? k}</dt>
-              <dd className="font-mono text-[var(--text)]">{typeof v === 'string' ? v : JSON.stringify(v)}</dd>
+    <SectionCard>
+      <SectionCardHeader>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold text-[var(--text)]">{title}</h2>
+          <Badge tone={badgeTone}>{badgeLabel}</Badge>
+          <span className="text-xs text-[var(--text-muted)]">({okCount} ok, {errCount} errors)</span>
+        </div>
+        <p className="mt-1 text-sm text-[var(--text-muted)]">{description}</p>
+      </SectionCardHeader>
+      <SectionCardBody>
+        <div className="space-y-3">
+          {entries.map((entry) => (
+            <div key={entry.label} className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-sm font-semibold text-[var(--text)]">{entry.label}</span>
+                <Badge tone={entry.error ? 'danger' : 'success'}>{entry.error ? 'Error' : 'Value'}</Badge>
+              </div>
+              {entry.error
+                ? <div className="rounded-lg bg-[rgba(239,68,68,0.08)] px-3 py-2 text-sm text-red-400">{entry.error}</div>
+                : <ValueBlock value={entry.value} />}
             </div>
           ))}
-        </dl>
-      ) : null}
-      {result.rawHex ? (
-        <div className="font-mono text-[10px] text-[var(--text-muted)] break-all pt-1 border-t border-[var(--border)]">
-          Raw ACK: {String(result.rawHex)}
         </div>
-      ) : null}
-    </div>
+      </SectionCardBody>
+    </SectionCard>
   );
 }
 
 export default function TizenTestPage() {
-  const { user, bootstrapped } = useAuthStore();
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
-  const [selectedDeviceId, setSelectedDeviceId] = useState('');
-  const [pending, setPending] = useState<string | null>(null);
-  const [results, setResults] = useState<Record<string, MdcResult | null>>({});
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('');
+  const [selectedDeviceId, setSelectedDeviceId]       = useState<string>('');
+  const [busy, setBusy]         = useState(false);
+  const [result, setResult]     = useState<ProbeResult | null>(null);
+  const [probeError, setProbeError] = useState<string | null>(null);
 
-  const [ipAddress, setIpAddress] = useState('192.168.0.100');
-  const [subnetMask, setSubnetMask] = useState('255.255.255.0');
-  const [gateway, setGateway] = useState('192.168.0.1');
-  const [dns, setDns] = useState('8.8.8.8');
+  const [cmdBusy, setCmdBusy]     = useState<string | null>(null);
+  const [cmdResults, setCmdResults] = useState<Record<string, CommandResult>>({});
 
-  const [weekDay, setWeekDay] = useState(0);
-  const [timeHour, setTimeHour] = useState(3);
-  const [timeMinute, setTimeMinute] = useState(0);
-
-  const [brightness, setBrightness] = useState(50);
-  const [sharpness, setSharpness] = useState(50);
-  const [color, setColor] = useState(50);
-  const [brightnessSensor, setBrightnessSensor] = useState(0);
-  const [mdcIdDisplay, setMdcIdDisplay] = useState(0);
-  const [urlLauncherAddress, setUrlLauncherAddress] = useState('https://example.com');
-  const [safetyScreenType, setSafetyScreenType] = useState(0x00);
-
-  const [tickerOnOff, setTickerOnOff] = useState(1);
-  const [tickerMessage, setTickerMessage] = useState('PLATFORM TEST TICKER');
-  const [tickerStartHour, setTickerStartHour] = useState(9);
-  const [tickerStartMinute, setTickerStartMinute] = useState(0);
-  const [tickerEndHour, setTickerEndHour] = useState(6);
-  const [tickerEndMinute, setTickerEndMinute] = useState(0);
-  const [wifiSsid, setWifiSsid] = useState('');
-  const [wifiPassword, setWifiPassword] = useState('');
-  const [devicePin, setDevicePin] = useState('');
+  // Document API inputs
+  const [docPath, setDocPath]         = useState('file:///opt/usr/home/owner/apps_rw/EBDSignage/data/content/49f97527-f2fa-48b8-9bc8-6ea631236f46.pdf');
+  const [docRectX, setDocRectX]       = useState('0');
+  const [docRectY, setDocRectY]       = useState('0');
+  const [docRectW, setDocRectW]       = useState('1920');
+  const [docRectH, setDocRectH]       = useState('1080');
+  const [docSlideTime, setDocSlideTime] = useState('10');
+  const [docGotoPage, setDocGotoPage] = useState('1');
 
   const { data: workspaces = [] } = useQuery<Workspace[]>({
     queryKey: ['workspaces'],
     queryFn: () => api.get('/workspaces'),
-    enabled: bootstrapped && !!user,
-    retry: false,
   });
 
-  const { data: devices = [] } = useQuery<DeviceSummary[]>({
-    queryKey: ['mdc-test-devices', selectedWorkspaceId],
+  const { data: devices = [] } = useQuery<Device[]>({
+    queryKey: ['devices', selectedWorkspaceId],
     queryFn: () => api.get(`/devices?workspaceId=${selectedWorkspaceId}`),
-    enabled: bootstrapped && !!user && !!selectedWorkspaceId,
-    retry: false,
+    enabled: !!selectedWorkspaceId,
   });
 
-  const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId) ?? null;
+  const selectedDevice = devices.find((d) => d.id === selectedDeviceId);
 
-  async function runMdc(key: string, action: string, payload: Record<string, unknown> = {}) {
+  const { data: deviceDetail, refetch: refetchHeartbeat, isFetching: hbFetching } = useQuery<{ latestHeartbeat: DeviceHeartbeat | null }>(
+    {
+      queryKey: ['device-detail', selectedDeviceId],
+      queryFn: () => api.get(`/devices/${selectedDeviceId}`),
+      enabled: !!selectedDeviceId,
+      refetchInterval: 30_000,
+    },
+  );
+  const hb = deviceDetail?.latestHeartbeat ?? null;
+
+  async function runProbe() {
     if (!selectedDeviceId) return;
-    setPending(key);
+    setBusy(true);
+    setResult(null);
+    setProbeError(null);
     try {
-      const result = await api.post(`/devices/${selectedDeviceId}/mdc-control`, { action, ...payload }) as MdcResult;
-      setResults((prev) => ({ ...prev, [key]: decodeMdcResult(action, result, payload) }));
+      const res = await api.post<ProbeResult>(`/devices/${selectedDeviceId}/tizen-probe`);
+      setResult(res);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setResults((prev) => ({ ...prev, [key]: { ok: false, error: msg } }));
-      toast.error(msg);
+      setProbeError(err instanceof Error ? err.message : String(err));
     } finally {
-      setPending(null);
+      setBusy(false);
     }
   }
 
-  const busy = (key: string) => pending === key;
+  async function runCommand(action: string, params?: unknown) {
+    if (!selectedDeviceId) return;
+    setCmdBusy(action);
+    setCmdResults((prev) => ({ ...prev, [action]: null }));
+    try {
+      const res = await api.post<{ ok: boolean; value?: unknown; error?: string }>(
+        `/devices/${selectedDeviceId}/tizen-command`,
+        { action, ...(params !== undefined ? { params } : {}) },
+      );
+      setCmdResults((prev) => ({ ...prev, [action]: res }));
+    } catch (err: unknown) {
+      setCmdResults((prev) => ({ ...prev, [action]: { ok: false, error: err instanceof Error ? err.message : String(err) } }));
+    } finally {
+      setCmdBusy(null);
+    }
+  }
+
+  const deviceIsOnline = selectedDevice?.status === 'online';
+
+  function CmdResult({ action }: { action: string }) {
+    const r = cmdResults[action];
+    if (r === undefined) return null;
+    if (r === null) return <span className="text-xs text-[var(--text-muted)]">Running…</span>;
+    if (!r.ok) return <div className="rounded-lg bg-[rgba(239,68,68,0.08)] px-3 py-2 text-sm text-red-400">{r.error ?? 'Unknown error'}</div>;
+    return (
+      <div className="rounded-lg bg-[rgba(16,185,129,0.08)] px-3 py-2 text-sm text-green-400">
+        {r.value !== undefined ? <ValueBlock value={r.value} /> : 'OK'}
+      </div>
+    );
+  }
 
   return (
-    <div className="p-8 max-w-5xl mx-auto space-y-6">
+    <div className="p-8 max-w-6xl mx-auto space-y-6">
       <PageHeader
         icon={<Bug className="w-6 h-6" />}
-        title="Tizen MDC Test"
-        subtitle="Testing page for extended MDC command coverage."
-        trailing={
-          <div className="flex flex-wrap gap-3">
-            <select
-              value={selectedWorkspaceId}
-              onChange={(e) => { setSelectedWorkspaceId(e.target.value); setSelectedDeviceId(''); }}
-              className="rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--text)] min-w-48"
-            >
-              <option value="">Select workspace</option>
-              {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
-            <select
-              value={selectedDeviceId}
-              onChange={(e) => setSelectedDeviceId(e.target.value)}
-              disabled={!selectedWorkspaceId}
-              className="rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--text)] min-w-64"
-            >
-              <option value="">Select device</option>
-              {devices.map((d) => (
-                <option key={d.id} value={d.id}>{d.name}{d.modelName ? ` - ${d.modelName}` : ''}</option>
-              ))}
-            </select>
-          </div>
-        }
+        title="Tizen / Samsung API Test"
+        subtitle="Runs probes and commands on the paired Tizen device via WebSocket."
       />
 
-      {!selectedWorkspaceId ? (
-        <EmptyState icon={<Monitor className="w-6 h-6" />} title="Select a workspace" description="Choose the workspace containing the Samsung display you want to test." />
-      ) : !selectedDeviceId ? (
-        <EmptyState
-          icon={<TerminalSquare className="w-6 h-6" />}
-          title={devices.length ? 'Select a device' : 'No devices found'}
-          description={devices.length
-            ? `Workspace "${selectedWorkspace?.name ?? ''}" has ${devices.length} device${devices.length === 1 ? '' : 's'}.`
-            : 'This workspace has no paired devices yet.'}
-        />
-      ) : (
-        <>
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Video Control (0x04)</h2></SectionCardHeader>
-            <SectionCardBody>
-              <ActionButton onClick={() => runMdc('video', 'video_control_get')} disabled={busy('video')}>GET</ActionButton>
-              <ResultPanel result={results['video'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
+      <Callout tone="accent" icon={<Terminal className="w-4 h-4" />}>
+        <p className="text-sm text-[var(--text)] font-medium">How this works</p>
+        <p className="mt-1 text-sm text-[var(--text-muted)]">
+          The probe runs <strong>on the TV</strong> via the WebSocket connection. Action commands are sent separately
+          and may change device settings. Document API requires a Samsung partner certificate
+          (<code>samsung.com/privilege/documentplay</code>) — LFD only.
+        </p>
+      </Callout>
 
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">RGB Control (0x06)</h2></SectionCardHeader>
-            <SectionCardBody>
-              <ActionButton onClick={() => runMdc('rgb', 'rgb_control_get')} disabled={busy('rgb')}>GET</ActionButton>
-              <ResultPanel result={results['rgb'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
+      {/* ── Device Selection ───────────────────────────────────────────────── */}
+      <SectionCard>
+        <SectionCardHeader>
+          <h2 className="text-base font-semibold text-[var(--text)]">Device Selection</h2>
+          <p className="mt-1 text-sm text-[var(--text-muted)]">Pick a workspace and device, then run the probe.</p>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+            <div className="flex-1 space-y-1">
+              <label htmlFor="ws-select" className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wide">Workspace</label>
+              <select
+                id="ws-select"
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--blue)]"
+                value={selectedWorkspaceId}
+                onChange={(e) => { setSelectedWorkspaceId(e.target.value); setSelectedDeviceId(''); setResult(null); setProbeError(null); setCmdResults({}); }}
+              >
+                <option value="">Select workspace…</option>
+                {workspaces.map((ws) => <option key={ws.id} value={ws.id}>{ws.name}</option>)}
+              </select>
+            </div>
+            <div className="flex-1 space-y-1">
+              <label htmlFor="dev-select" className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wide">Device</label>
+              <select
+                id="dev-select"
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--blue)] disabled:opacity-50"
+                value={selectedDeviceId}
+                disabled={!selectedWorkspaceId}
+                onChange={(e) => { setSelectedDeviceId(e.target.value); setResult(null); setProbeError(null); setCmdResults({}); }}
+              >
+                <option value="">Select device…</option>
+                {devices.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}{d.status === 'online' ? ' ✓' : ' (offline)'}</option>
+                ))}
+              </select>
+            </div>
+            <ActionButton tone="primary" onClick={() => void runProbe()} disabled={!selectedDeviceId || busy}>
+              {busy ? 'Probing TV…' : 'Run Probe'}
+            </ActionButton>
+          </div>
 
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Maintenance Control (0x08)</h2></SectionCardHeader>
-            <SectionCardBody>
-              <ActionButton onClick={() => runMdc('maintenance', 'maintenance_get')} disabled={busy('maintenance')}>GET</ActionButton>
-              <ResultPanel result={results['maintenance'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
+          {selectedDevice && (
+            <div className="mt-4 flex items-center gap-2">
+              <Radio className="w-4 h-4 text-[var(--text-muted)]" />
+              <span className="text-sm text-[var(--text-muted)]">{selectedDevice.name}</span>
+              <Badge tone={deviceIsOnline ? 'success' : 'danger'}>{deviceIsOnline ? 'Online' : 'Offline'}</Badge>
+              {!deviceIsOnline && (
+                <span className="text-xs text-[var(--text-muted)]">Device must be online for commands to work.</span>
+              )}
+            </div>
+          )}
+        </SectionCardBody>
+      </SectionCard>
 
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Serial Number (0x0B)</h2></SectionCardHeader>
-            <SectionCardBody>
-              <ActionButton onClick={() => runMdc('serial', 'serial_number_get')} disabled={busy('serial')}>GET</ActionButton>
-              <ResultPanel result={results['serial'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
+      {probeError && (
+        <Callout tone="danger" icon={<Shield className="w-4 h-4" />}>
+          <p className="text-sm font-medium text-[var(--text)]">Probe failed</p>
+          <p className="mt-1 text-sm text-red-400">{probeError}</p>
+        </Callout>
+      )}
 
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Model Name (0x8A)</h2></SectionCardHeader>
-            <SectionCardBody>
-              <ActionButton onClick={() => runMdc('modelName', 'model_name_get')} disabled={busy('modelName')}>GET</ActionButton>
-              <ResultPanel result={results['modelName'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
+      {/* ── Probe results ──────────────────────────────────────────────────── */}
+      {result && SECTION_META.map(({ key, title, description }) => {
+        const entries = result.sections[key];
+        if (!entries?.length) return null;
+        return <ProbeSection key={key} title={title} description={description} entries={entries} />;
+      })}
 
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Screen Size (0x19)</h2></SectionCardHeader>
-            <SectionCardBody>
-              <ActionButton onClick={() => runMdc('screenSize', 'screen_size_get')} disabled={busy('screenSize')}>GET</ActionButton>
-              <ResultPanel result={results['screenSize'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
-
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Child Device Info (0x0A.0x81)</h2></SectionCardHeader>
-            <SectionCardBody>
-              <ActionButton onClick={() => runMdc('childDevice', 'child_device_get')} disabled={busy('childDevice')}>GET</ActionButton>
-              <ResultPanel result={results['childDevice'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
-
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">MAC Address (0x1B.0x81)</h2></SectionCardHeader>
-            <SectionCardBody>
-              <ActionButton onClick={() => runMdc('macAddress', 'mac_address_get')} disabled={busy('macAddress')}>GET</ActionButton>
-              <ResultPanel result={results['macAddress'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
-
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Device PIN (0x1B.0x87)</h2></SectionCardHeader>
-            <SectionCardBody className="space-y-3">
-              <p className="text-xs text-[var(--text-muted)]">Note: spec states this will not work via Ethernet — RS232C only.</p>
-              <input
-                value={devicePin}
-                onChange={(e) => setDevicePin(e.target.value)}
-                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full sm:w-56"
-                placeholder="PIN"
-              />
-              <div className="flex gap-3 flex-wrap">
-                <ActionButton onClick={() => runMdc('devicePin', 'device_pin_get')} disabled={busy('devicePin')}>GET</ActionButton>
-                <ActionButton tone="primary" onClick={() => runMdc('devicePin', 'device_pin_set', { pin: devicePin })} disabled={busy('devicePin') || !devicePin}>SET</ActionButton>
+      {/* ── Heartbeat Inspector ────────────────────────────────────────────── */}
+      {selectedDeviceId && (
+        <SectionCard>
+          <SectionCardHeader>
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-[var(--text)]">Latest Heartbeat (DB)</h2>
+              <ActionButton tone="default" onClick={() => void refetchHeartbeat()} disabled={hbFetching}>
+                {hbFetching ? 'Refreshing…' : 'Refresh'}
+              </ActionButton>
+            </div>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              Live view of what's actually stored in <code>device_heartbeats</code>. Memory/CPU only appear here if the TV is sending them.
+              {hb?.createdAt && <span className="ml-2 text-[var(--text-muted)]">Last: {new Date(hb.createdAt).toLocaleTimeString()}</span>}
+            </p>
+          </SectionCardHeader>
+          <SectionCardBody>
+            {hb ? (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {([
+                  ['CPU Load', hb.cpuLoad != null ? `${hb.cpuLoad.toFixed(1)}%` : null],
+                  ['Memory Free', hb.memoryFreeBytes != null ? `${(hb.memoryFreeBytes / 1_048_576).toFixed(0)} MB` : null],
+                  ['Memory Total', hb.memoryTotalBytes != null ? `${(hb.memoryTotalBytes / 1_048_576).toFixed(0)} MB` : null],
+                  ['Storage Free', hb.storageFreeBytes != null ? `${(hb.storageFreeBytes / 1_048_576).toFixed(0)} MB` : null],
+                  ['Uptime', hb.deviceUptimeSec != null ? `${Math.floor(hb.deviceUptimeSec / 3600)}h ${Math.floor((hb.deviceUptimeSec % 3600) / 60)}m` : null],
+                  ['Clock Drift', hb.clockDriftMs != null ? `${hb.clockDriftMs} ms` : null],
+                  ['Power State', hb.powerState],
+                  ['IR Lock', hb.irLock != null ? String(hb.irLock) : null],
+                  ['Button Lock', hb.buttonLock != null ? String(hb.buttonLock) : null],
+                  ['Temperature', hb.temperatureC != null ? `${hb.temperatureC.toFixed(1)} °C` : null],
+                  ['Player Ver', hb.playerVersion],
+                  ['Firmware', hb.firmwareVersion],
+                ] as [string, string | null][]).map(([label, val]) => (
+                  <div key={label} className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+                    <div className="text-xs text-[var(--text-muted)] mb-0.5">{label}</div>
+                    <div className={`text-sm font-mono font-medium ${val == null ? 'text-[var(--text-muted)]' : 'text-[var(--text)]'}`}>
+                      {val ?? 'null'}
+                    </div>
+                  </div>
+                ))}
               </div>
-              <ResultPanel result={results['devicePin'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
+            ) : (
+              <p className="text-sm text-[var(--text-muted)]">No heartbeat stored yet for this device.</p>
+            )}
+          </SectionCardBody>
+        </SectionCard>
+      )}
 
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Network Config (0x1B.0x82)</h2></SectionCardHeader>
-            <SectionCardBody className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <input value={ipAddress} onChange={(e) => setIpAddress(e.target.value)} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="IP Address" />
-                <input value={subnetMask} onChange={(e) => setSubnetMask(e.target.value)} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="Subnet Mask" />
-                <input value={gateway} onChange={(e) => setGateway(e.target.value)} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="Gateway" />
-                <input value={dns} onChange={(e) => setDns(e.target.value)} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="DNS" />
-              </div>
-              <div className="flex gap-3 flex-wrap">
-                <ActionButton onClick={() => runMdc('network', 'network_config_get')} disabled={busy('network')}>GET</ActionButton>
-                <ActionButton tone="primary" onClick={() => runMdc('network', 'network_config_set', { ipAddress, subnetMask, gateway, dns })} disabled={busy('network')}>SET</ActionButton>
-              </div>
-              <ResultPanel result={results['network'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
 
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">URL Launcher Address (0xC7.0x82)</h2></SectionCardHeader>
-            <SectionCardBody className="space-y-3">
-              <input
-                value={urlLauncherAddress}
-                onChange={(e) => setUrlLauncherAddress(e.target.value)}
-                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full"
-                placeholder="https://example.com"
-              />
-              <div className="flex gap-3 flex-wrap">
-                <ActionButton onClick={() => runMdc('urlLauncher', 'url_launcher_address_get')} disabled={busy('urlLauncher')}>GET</ActionButton>
+      {selectedDeviceId && (
+        <SectionCard>
+          <SectionCardHeader>
+            <div className="flex items-center gap-2">
+              <FileText className="w-4 h-4 text-[var(--text-muted)]" />
+              <h2 className="text-base font-semibold text-[var(--text)]">Document API</h2>
+            </div>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              <code>webapis.document</code> — LFD only, requires partner certificate
+              (<code>samsung.com/privilege/documentplay</code>, since Tizen 6.5).
+              The API renders PDF/Office files natively in its own overlay on the display.
+            </p>
+          </SectionCardHeader>
+          <SectionCardBody>
+            <div className="space-y-5">
+
+              {/* getVersion probe */}
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-2">
+                <span className="text-sm font-semibold text-[var(--text)]">getVersion</span>
+                <p className="text-xs text-[var(--text-muted)]">Check if Document API is available on this device.</p>
+                <ActionButton tone="default" onClick={() => void runCommand('document.getVersion')} disabled={!deviceIsOnline || cmdBusy === 'document.getVersion'}>
+                  {cmdBusy === 'document.getVersion' ? 'Sending…' : 'Get Version'}
+                </ActionButton>
+                <CmdResult action="document.getVersion" />
+              </div>
+
+              {/* open */}
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3">
+                <span className="text-sm font-semibold text-[var(--text)]">open</span>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Load a PDF or Office file. Use an HTTP URL or local Tizen path. Rect defaults to full screen (1920×1080).
+                </p>
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-mono text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--blue)]"
+                    placeholder="http://server/file.pdf  or  wgt-private/content/uuid.pdf"
+                    value={docPath}
+                    onChange={(e) => setDocPath(e.target.value)}
+                  />
+                  <div className="grid grid-cols-4 gap-2">
+                    {[
+                      { label: 'rectX', val: docRectX, set: setDocRectX },
+                      { label: 'rectY', val: docRectY, set: setDocRectY },
+                      { label: 'rectWidth', val: docRectW, set: setDocRectW },
+                      { label: 'rectHeight', val: docRectH, set: setDocRectH },
+                    ].map(({ label, val, set }) => (
+                      <div key={label} className="space-y-1">
+                        <label className="text-xs text-[var(--text-muted)]">{label}</label>
+                        <input
+                          type="number"
+                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm font-mono text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--blue)]"
+                          value={val}
+                          onChange={(e) => set(e.target.value)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
                 <ActionButton
                   tone="primary"
-                  onClick={() => runMdc('urlLauncher', 'url_launcher_address_set', { urlAddress: urlLauncherAddress })}
-                  disabled={busy('urlLauncher')}
+                  onClick={() => void runCommand('document.open', {
+                    docpath: docPath,
+                    rectX: Number(docRectX), rectY: Number(docRectY),
+                    rectWidth: Number(docRectW), rectHeight: Number(docRectH),
+                  })}
+                  disabled={!deviceIsOnline || !docPath.trim() || cmdBusy === 'document.open'}
                 >
-                  SET
+                  {cmdBusy === 'document.open' ? 'Opening…' : 'Open Document'}
                 </ActionButton>
+                <CmdResult action="document.open" />
               </div>
-              <ResultPanel result={results['urlLauncher'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
 
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Weekly Reboot (0x1B.0xA2)</h2></SectionCardHeader>
-            <SectionCardBody className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-3">
-                <input type="number" min={0} max={127} value={weekDay} onChange={(e) => setWeekDay(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="Weekday bitmask" />
-                <input type="number" min={0} max={23} value={timeHour} onChange={(e) => setTimeHour(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="Hour" />
-                <input type="number" min={0} max={59} value={timeMinute} onChange={(e) => setTimeMinute(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="Minute" />
+              {/* play / stop / pause / resume */}
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3">
+                <span className="text-sm font-semibold text-[var(--text)]">play / stop / pause / resume</span>
+                <p className="text-xs text-[var(--text-muted)]">
+                  <code>play(slideTime)</code> auto-advances pages every N seconds.
+                </p>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="space-y-1">
+                    <label className="text-xs text-[var(--text-muted)]">slideTime (s)</label>
+                    <input
+                      type="number"
+                      className="w-24 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm font-mono text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--blue)]"
+                      value={docSlideTime}
+                      min={1}
+                      onChange={(e) => setDocSlideTime(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex gap-2 flex-wrap pt-5">
+                    {(['play', 'stop', 'pause', 'resume'] as const).map((cmd) => (
+                      <div key={cmd} className="flex flex-col gap-1">
+                        <ActionButton
+                          tone={cmd === 'stop' ? 'danger' : 'default'}
+                          onClick={() => void runCommand(`document.${cmd}`, cmd === 'play' ? Number(docSlideTime) : undefined)}
+                          disabled={!deviceIsOnline || cmdBusy === `document.${cmd}`}
+                        >
+                          {cmdBusy === `document.${cmd}` ? '…' : cmd.charAt(0).toUpperCase() + cmd.slice(1)}
+                        </ActionButton>
+                        <CmdResult action={`document.${cmd}`} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
-              <div className="flex gap-3 flex-wrap">
-                <ActionButton onClick={() => runMdc('weekly', 'weekly_restart_get')} disabled={busy('weekly')}>GET</ActionButton>
-                <ActionButton tone="primary" onClick={() => runMdc('weekly', 'weekly_restart_set', { weekDay, timeHour, timeMinute })} disabled={busy('weekly')}>SET</ActionButton>
-              </div>
-              <ResultPanel result={results['weekly'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
 
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Brightness (0x25)</h2></SectionCardHeader>
-            <SectionCardBody className="space-y-3">
-              <input type="number" min={0} max={100} value={brightness} onChange={(e) => setBrightness(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-40" />
-              <div className="flex gap-3 flex-wrap">
-                <ActionButton onClick={() => runMdc('brightness', 'brightness_get')} disabled={busy('brightness')}>GET</ActionButton>
-                <ActionButton tone="primary" onClick={() => runMdc('brightness', 'brightness_set', { value: brightness })} disabled={busy('brightness')}>SET</ActionButton>
+              {/* page navigation */}
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3">
+                <span className="text-sm font-semibold text-[var(--text)]">Page Navigation</span>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Left/right remote key equivalents: <code>prevPage</code> / <code>nextPage</code>. Jump to any page with <code>gotoPage</code>.
+                </p>
+                <div className="flex items-end gap-3 flex-wrap">
+                  <div className="flex gap-2">
+                    {(['prevPage', 'nextPage'] as const).map((cmd) => (
+                      <div key={cmd} className="flex flex-col gap-1">
+                        <ActionButton
+                          tone="default"
+                          onClick={() => void runCommand(`document.${cmd}`)}
+                          disabled={!deviceIsOnline || cmdBusy === `document.${cmd}`}
+                        >
+                          {cmdBusy === `document.${cmd}` ? '…' : cmd === 'prevPage' ? '← Prev' : 'Next →'}
+                        </ActionButton>
+                        <CmdResult action={`document.${cmd}`} />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <div className="space-y-1">
+                      <label className="text-xs text-[var(--text-muted)]">Page number</label>
+                      <input
+                        type="number"
+                        className="w-20 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm font-mono text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--blue)]"
+                        value={docGotoPage}
+                        min={1}
+                        onChange={(e) => setDocGotoPage(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <ActionButton
+                        tone="default"
+                        onClick={() => void runCommand('document.gotoPage', Number(docGotoPage))}
+                        disabled={!deviceIsOnline || cmdBusy === 'document.gotoPage'}
+                      >
+                        {cmdBusy === 'document.gotoPage' ? '…' : 'Go to Page'}
+                      </ActionButton>
+                      <CmdResult action="document.gotoPage" />
+                    </div>
+                  </div>
+                </div>
               </div>
-              <ResultPanel result={results['brightness'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
 
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Sharpness (0x26)</h2></SectionCardHeader>
-            <SectionCardBody className="space-y-3">
-              <input type="number" min={0} max={100} value={sharpness} onChange={(e) => setSharpness(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-40" />
-              <div className="flex gap-3 flex-wrap">
-                <ActionButton onClick={() => runMdc('sharpness', 'sharpness_get')} disabled={busy('sharpness')}>GET</ActionButton>
-                <ActionButton tone="primary" onClick={() => runMdc('sharpness', 'sharpness_set', { value: sharpness })} disabled={busy('sharpness')}>SET</ActionButton>
+              {/* orientation + close */}
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-3">
+                <span className="text-sm font-semibold text-[var(--text)]">Orientation &amp; Close</span>
+                <p className="text-xs text-[var(--text-muted)]">
+                  <code>setDocumentOrientation</code> toggles vertical rendering. <code>close</code> stops and removes the document overlay.
+                </p>
+                <div className="flex gap-3 flex-wrap">
+                  <div className="flex flex-col gap-1">
+                    <ActionButton
+                      tone="default"
+                      onClick={() => void runCommand('document.setDocumentOrientation')}
+                      disabled={!deviceIsOnline || cmdBusy === 'document.setDocumentOrientation'}
+                    >
+                      {cmdBusy === 'document.setDocumentOrientation' ? '…' : 'Set Orientation (Vertical)'}
+                    </ActionButton>
+                    <CmdResult action="document.setDocumentOrientation" />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <ActionButton
+                      tone="danger"
+                      onClick={() => void runCommand('document.close')}
+                      disabled={!deviceIsOnline || cmdBusy === 'document.close'}
+                    >
+                      {cmdBusy === 'document.close' ? 'Closing…' : 'Close Document'}
+                    </ActionButton>
+                    <CmdResult action="document.close" />
+                  </div>
+                </div>
               </div>
-              <ResultPanel result={results['sharpness'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
+            </div>
+          </SectionCardBody>
+        </SectionCard>
+      )}
 
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Color (0x27)</h2></SectionCardHeader>
-            <SectionCardBody className="space-y-3">
-              <input type="number" min={0} max={100} value={color} onChange={(e) => setColor(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-40" />
-              <div className="flex gap-3 flex-wrap">
-                <ActionButton onClick={() => runMdc('color', 'color_get')} disabled={busy('color')}>GET</ActionButton>
-                <ActionButton tone="primary" onClick={() => runMdc('color', 'color_set', { value: color })} disabled={busy('color')}>SET</ActionButton>
-              </div>
-              <ResultPanel result={results['color'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
-
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Brightness Sensor (0x86)</h2></SectionCardHeader>
-            <SectionCardBody className="space-y-3">
-              <select
-                value={brightnessSensor}
-                onChange={(e) => setBrightnessSensor(Number(e.target.value))}
-                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full sm:w-80"
-              >
-                <option value={0}>Off (0x00)</option>
-                <option value={1}>On (0x01)</option>
-              </select>
-              <div className="flex gap-3 flex-wrap">
-                <ActionButton onClick={() => runMdc('brightnessSensor', 'brightness_sensor_get')} disabled={busy('brightnessSensor')}>GET</ActionButton>
-                <ActionButton tone="primary" onClick={() => runMdc('brightnessSensor', 'brightness_sensor_set', { value: brightnessSensor })} disabled={busy('brightnessSensor')}>SET</ActionButton>
-              </div>
-              <ResultPanel result={results['brightnessSensor'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
-
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">MDC ID Hide/Show (0xB9)</h2></SectionCardHeader>
-            <SectionCardBody className="space-y-3">
-              <select
-                value={mdcIdDisplay}
-                onChange={(e) => setMdcIdDisplay(Number(e.target.value))}
-                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full sm:w-80"
-              >
-                <option value={0}>Hide ID Display (0x00)</option>
-                <option value={1}>Show ID Display (0x01)</option>
-              </select>
-              <div className="flex gap-3 flex-wrap">
-                <ActionButton tone="primary" onClick={() => runMdc('mdcIdDisplay', 'mdc_id_display_set', { value: mdcIdDisplay })} disabled={busy('mdcIdDisplay')}>SET</ActionButton>
-              </div>
-              <ResultPanel result={results['mdcIdDisplay'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
-
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Safety Screen Run (0x59)</h2></SectionCardHeader>
-            <SectionCardBody className="space-y-3">
-              <select value={safetyScreenType} onChange={(e) => setSafetyScreenType(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full sm:w-80">
-                {SAFETY_SCREEN_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-              </select>
-              <div className="flex gap-3 flex-wrap">
-                <ActionButton onClick={() => runMdc('safetyRun', 'safety_screen_run_get')} disabled={busy('safetyRun')}>GET</ActionButton>
-                <ActionButton tone="primary" onClick={() => runMdc('safetyRun', 'safety_screen_run_set', { value: safetyScreenType })} disabled={busy('safetyRun')}>SET</ActionButton>
-              </div>
-              <ResultPanel result={results['safetyRun'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
-
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">Ticker (0x63)</h2></SectionCardHeader>
-            <SectionCardBody className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-3">
-                <select value={tickerOnOff} onChange={(e) => setTickerOnOff(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm">
-                  <option value={0}>Off (0x00)</option>
-                  <option value={1}>On (0x01)</option>
-                </select>
-                <input type="number" min={1} max={12} value={tickerStartHour} onChange={(e) => setTickerStartHour(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="Start Hour (1-12)" />
-                <input type="number" min={0} max={59} value={tickerStartMinute} onChange={(e) => setTickerStartMinute(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="Start Minute" />
-                <input type="number" min={1} max={12} value={tickerEndHour} onChange={(e) => setTickerEndHour(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="End Hour (1-12)" />
-                <input type="number" min={0} max={59} value={tickerEndMinute} onChange={(e) => setTickerEndMinute(Number(e.target.value))} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" placeholder="End Minute" />
-              </div>
-              <input value={tickerMessage} onChange={(e) => setTickerMessage(e.target.value)} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full" placeholder="Ticker message (max 240 chars)" />
-              <div className="flex gap-3 flex-wrap">
-                <ActionButton onClick={() => runMdc('ticker', 'ticker_get')} disabled={busy('ticker')}>GET</ActionButton>
-                <ActionButton tone="primary" onClick={() => runMdc('ticker', 'ticker_set', {
-                  onOff: tickerOnOff,
-                  message: tickerMessage,
-                  startHour: tickerStartHour,
-                  startMinute: tickerStartMinute,
-                  endHour: tickerEndHour,
-                  endMinute: tickerEndMinute,
-                })} disabled={busy('ticker')}>SET</ActionButton>
-              </div>
-              <ResultPanel result={results['ticker'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
-
-          <SectionCard>
-            <SectionCardHeader><h2 className="text-base font-semibold text-[var(--text)]">WiFi AP Config (0x1B.0x8A)</h2></SectionCardHeader>
-            <SectionCardBody className="space-y-3">
-              <p className="text-xs text-[var(--text-muted)]">SET only — adds SSID to device connection history. Device may change network; response may not return.</p>
-              <input
-                value={wifiSsid}
-                onChange={(e) => setWifiSsid(e.target.value)}
-                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full"
-                placeholder="SSID"
-              />
-              <input
-                type="password"
-                value={wifiPassword}
-                onChange={(e) => setWifiPassword(e.target.value)}
-                className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm w-full"
-                placeholder="Password"
-              />
-              <div className="flex gap-3 flex-wrap">
-                <ActionButton
-                  tone="primary"
-                  onClick={() => runMdc('wifiAp', 'network_wifi_set', { ssid: wifiSsid, password: wifiPassword })}
-                  disabled={busy('wifiAp') || !wifiSsid}
-                >
-                  SET
-                </ActionButton>
-              </div>
-              <ResultPanel result={results['wifiAp'] as MdcResult} />
-            </SectionCardBody>
-          </SectionCard>
-        </>
+      {/* ── Screen Orientation ─────────────────────────────────────────────── */}
+      {selectedDeviceId && (
+        <SectionCard>
+          <SectionCardHeader>
+            <div className="flex items-center gap-2">
+              <Monitor className="w-4 h-4 text-[var(--text-muted)]" />
+              <h2 className="text-base font-semibold text-[var(--text)]">Screen Orientation (MDC)</h2>
+            </div>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              Set display orientation via MDC <code>src_orientation_set</code> and <code>menu_orientation_set</code>.
+              These persist across reboots and are read back on the next MDC poll.
+            </p>
+          </SectionCardHeader>
+          <SectionCardBody>
+            <div className="space-y-4">
+              {[
+                { label: 'Source Orientation', action: 'src_orientation_set', note: 'Rotates the source/content display.' },
+                { label: 'Menu Orientation',   action: 'menu_orientation_set', note: 'Rotates the OSD menu.' },
+              ].map(({ label, action, note }) => (
+                <div key={action} className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-2">
+                  <span className="text-sm font-semibold text-[var(--text)]">{label}</span>
+                  <p className="text-xs text-[var(--text-muted)]">{note}</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {[
+                      { label: 'Portrait (0°)',    value: 0 },
+                      { label: 'Landscape (90°)',  value: 1 },
+                      { label: 'Portrait (180°)',  value: 2 },
+                      { label: 'Landscape (270°)', value: 3 },
+                    ].map(({ label: btnLabel, value }) => {
+                      const key = `${action}_${value}`;
+                      return (
+                        <div key={key} className="flex flex-col gap-1">
+                          <ActionButton
+                            tone="default"
+                            onClick={() => void runCommand('mdc', { command: action, params: { value } })}
+                            disabled={!deviceIsOnline || cmdBusy === key}
+                          >
+                            {cmdBusy === key ? '…' : btnLabel}
+                          </ActionButton>
+                          <CmdResult action={key} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </SectionCardBody>
+        </SectionCard>
       )}
     </div>
   );
 }
+

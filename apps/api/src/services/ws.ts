@@ -73,7 +73,9 @@ export type WsCommand =
   | { type: 'remote_status'; payload: { requestId: string } }
   | { type: 'mdc_control'; payload: { action: string; requestId?: string; level?: number; mute?: boolean; source?: string; [key: string]: unknown } }
   | { type: 'SESSION_CONFIG'; groupId: number; mode: string; syncPlaylistId: string | null }
-  | { type: 'SYNC_PLAY'; action: 'STOP' | 'CANCEL' | 'START_SYNCPLAY' };
+  | { type: 'SYNC_PLAY'; action: 'STOP' | 'CANCEL' | 'START_SYNCPLAY' }
+  | { type: 'tizen_probe'; payload: { requestId: string } }
+  | { type: 'tizen_command'; payload: { requestId: string; action: string; params?: unknown } };
 
 const connections = new Map<string, Conn>();
 const deviceLogs = new Map<string, DeviceConsoleLogEntry[]>();
@@ -95,6 +97,31 @@ export type MdcControlResponse = {
 
 const pendingMdcControl = new Map<string, {
   resolve: (value: MdcControlResponse) => void;
+  reject: (reason: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+
+export type TizenProbeEntry = { label: string; value?: unknown; error?: string };
+export type TizenProbeResult = {
+  requestId: string;
+  sections: Record<string, TizenProbeEntry[]>;
+};
+
+const pendingTizenProbe = new Map<string, {
+  resolve: (value: TizenProbeResult) => void;
+  reject: (reason: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+
+export type TizenCommandResult = {
+  requestId: string;
+  ok: boolean;
+  value?: unknown;
+  error?: string;
+};
+
+const pendingTizenCommand = new Map<string, {
+  resolve: (value: TizenCommandResult) => void;
   reject: (reason: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }>();
@@ -229,6 +256,50 @@ export function requestMdcControl(
   });
 }
 
+export function requestTizenCommand(deviceId: string, action: string, params?: unknown, timeoutMs = 30_000): Promise<TizenCommandResult> {
+  const requestId = randomUUID();
+  const pendingKey = `${deviceId}:${requestId}`;
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingTizenCommand.delete(pendingKey);
+      reject(new Error('Timed out waiting for Tizen command result from device'));
+    }, timeoutMs);
+
+    pendingTizenCommand.set(pendingKey, { resolve, reject, timer });
+
+    const delivered = sendCommand(deviceId, { type: 'tizen_command', payload: { requestId, action, ...(params !== undefined ? { params } : {}) } });
+    if (!delivered) {
+      clearTimeout(timer);
+      pendingTizenCommand.delete(pendingKey);
+      reject(new Error('Device is offline or not connected via WebSocket'));
+    } else {
+      console.info('[ws] tizen_command sent', { deviceId, action, requestId });
+    }
+  });
+}
+
+export function requestTizenProbe(deviceId: string, timeoutMs = 30_000): Promise<TizenProbeResult> {
+  const requestId = randomUUID();
+  const pendingKey = `${deviceId}:${requestId}`;
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingTizenProbe.delete(pendingKey);
+      reject(new Error('Timed out waiting for Tizen probe result from device'));
+    }, timeoutMs);
+
+    pendingTizenProbe.set(pendingKey, { resolve, reject, timer });
+
+    const delivered = sendCommand(deviceId, { type: 'tizen_probe', payload: { requestId } });
+    if (!delivered) {
+      clearTimeout(timer);
+      pendingTizenProbe.delete(pendingKey);
+      reject(new Error('Device is offline or not connected via WebSocket'));
+    }
+  });
+}
+
 // ── Storage root for screenshots ──────────────────────────────────────────────
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? join(process.cwd(), 'signage_uploads');
 
@@ -341,6 +412,9 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
       buttonLock: hb.buttonLock,
       cpuLoad: hb.cpuLoad,
       storageFreeBytes: hb.storageFreeBytes,
+      memoryFreeBytes: hb.memoryFreeBytes,
+      memoryTotalBytes: hb.memoryTotalBytes,
+      deviceUptimeSec: hb.deviceUptimeSec,
       temperatureC: hb.temperatureCelsius,
       currentContentId: hb.currentContentId ?? null,
       nextContentId: hb.nextContentId ?? null,
@@ -553,6 +627,37 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
       });
     } else {
       console.warn('[ws] mdc_control_response had no pending waiter', { deviceId, requestId: msg.payload.requestId });
+    }
+    return;
+  }
+
+  // ── tizen_probe_result ────────────────────────────────────────────────────
+  if (msg.type === 'tizen_probe_result') {
+    const pendingKey = `${deviceId}:${msg.payload.requestId}`;
+    const pending = pendingTizenProbe.get(pendingKey);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pendingTizenProbe.delete(pendingKey);
+      const data = msg.payload.data as Record<string, TizenProbeEntry[]>;
+      pending.resolve({ requestId: msg.payload.requestId, sections: data });
+    }
+    return;
+  }
+
+  // ── tizen_command_result ──────────────────────────────────────────────────
+  if (msg.type === 'tizen_command_result') {
+    console.info('[ws] tizen_command_result received', { deviceId, requestId: msg.payload.requestId, ok: msg.payload.ok, error: msg.payload.error });
+    const pendingKey = `${deviceId}:${msg.payload.requestId}`;
+    const pending = pendingTizenCommand.get(pendingKey);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pendingTizenCommand.delete(pendingKey);
+      pending.resolve({
+        requestId: msg.payload.requestId,
+        ok: msg.payload.ok,
+        ...(msg.payload.value !== undefined ? { value: msg.payload.value } : {}),
+        ...(msg.payload.error !== undefined ? { error: msg.payload.error } : {}),
+      });
     }
     return;
   }

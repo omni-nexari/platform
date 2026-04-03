@@ -15,6 +15,8 @@ import {
   sendCommand,
   requestRemoteStatus,
   requestMdcControl,
+  requestTizenProbe,
+  requestTizenCommand,
   isDeviceOnline,
   registerDevice,
   unregisterDevice,
@@ -1523,6 +1525,49 @@ export async function deviceRoutes(app: FastifyInstance) {
         }
       }
 
+      return reply.send(result);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.status(504).send({ error: msg });
+    }
+  });
+
+  // ── POST /devices/:id/tizen-probe ─ request on-device Samsung/Tizen API probe ──
+  app.post('/:id/tizen-probe', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    try {
+      const result = await requestTizenProbe(device.id, 30_000);
+      return reply.send(result);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.status(504).send({ error: msg });
+    }
+  });
+
+  // ── POST /devices/:id/tizen-command ─ run a write action on the TV via WebSocket ──
+  app.post('/:id/tizen-command', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const body = req.body as { action?: unknown; params?: unknown };
+
+    if (typeof body.action !== 'string' || !body.action) {
+      return reply.status(400).send({ error: 'action (string) is required' });
+    }
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    try {
+      const result = await requestTizenCommand(device.id, body.action, body.params, 8_000);
       return reply.send(result);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

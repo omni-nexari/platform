@@ -31,6 +31,9 @@ export const deviceHeartbeats = pgTable('device_heartbeats', {
   buttonLock: boolean('button_lock'),
   cpuLoad: real('cpu_load'),                                          // 0-100
   storageFreeBytes: bigint('storage_free_bytes', { mode: 'number' }),
+  memoryFreeBytes: bigint('memory_free_bytes', { mode: 'number' }),   // from tizen.systeminfo.getAvailableMemory()
+  memoryTotalBytes: bigint('memory_total_bytes', { mode: 'number' }), // from tizen.systeminfo.getTotalMemory()
+  deviceUptimeSec: integer('device_uptime_sec'),                       // from tizen.systeminfo.getDeviceUptime()
   temperatureC: real('temperature_c'),
   currentContentId: uuid('current_content_id').references(() => contentItems.id, { onDelete: 'set null' }),
   nextContentId: uuid('next_content_id').references(() => contentItems.id, { onDelete: 'set null' }),

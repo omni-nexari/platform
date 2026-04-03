@@ -183,6 +183,13 @@
       "when": 1774072800000,
       "tag": "0025_log_entries",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1743639600000,
+      "tag": "0026_heartbeat_memory_uptime",
+      "breakpoints": true
     }
   ]
 }

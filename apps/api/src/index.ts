@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyBaseLogger } from 'fastify';
 import pino from 'pino';
 import { registerPlugins } from './plugins/index.js';
 import { registerRoutes } from './routes/index.js';
@@ -24,7 +24,7 @@ async function start() {
         { level: 'warn', stream: dbStream },
       ];
 
-  const logger = pino({ level: 'info' }, pino.multistream(streams));
+  const logger: FastifyBaseLogger = pino({ level: 'info' }, pino.multistream(streams));
 
   const app = Fastify({ loggerInstance: logger });
 
