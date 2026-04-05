@@ -1,21 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { LayoutGrid, Plus, Trash2 } from 'lucide-react';
+import { LayoutGrid, Plus, Trash2, Film, Image, ListVideo, X } from 'lucide-react';
 import { ActionButton } from './UiPrimitives.js';
+import ContentPickerModal, { type PickedItem } from './ContentPickerModal.js';
+
+export type ZoneSource =
+  | { type: 'playlist'; playlistId: string; playlistName?: string }
+  | { type: 'content'; contentId: string; contentName?: string; contentType?: string }
+  | { type: 'empty' };
 
 export interface ZoneConfig {
   id: string;
   rect: { x: number; y: number; width: number; height: number };
-  playlistId?: string | null;
-}
-
-interface PlaylistBrief {
-  id: string;
-  name: string;
+  label?: string | null;
+  playlistId?: string | null; // backward compat
+  source?: ZoneSource | null;
 }
 
 interface Props {
   initialZones: ZoneConfig[];
-  playlists: PlaylistBrief[];
+  workspaceId: string;
   saving: boolean;
   onSave: (zones: ZoneConfig[]) => void;
 }
@@ -32,6 +35,7 @@ const CANVAS_W = 640;
 const CANVAS_H = 360;
 const DEVICE_W = 1920;
 const DEVICE_H = 1080;
+const MAX_ZONES = 8;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -51,12 +55,31 @@ function makeZone(index: number): ZoneConfig {
     id: crypto.randomUUID(),
     rect: { x: pos.x, y: pos.y, width, height },
     playlistId: null,
+    source: null,
   };
 }
 
-export default function ZoneLayoutEditor({ initialZones, playlists, saving, onSave }: Props) {
+function sourceLabel(zone: ZoneConfig): string {
+  if (zone.source?.type === 'playlist') return zone.source.playlistName ?? zone.source.playlistId;
+  if (zone.source?.type === 'content') return zone.source.contentName ?? zone.source.contentId;
+  if (zone.playlistId) return `Playlist (${zone.playlistId.slice(0, 8)}…)`;
+  return 'No source';
+}
+
+function SourceIcon({ source }: { source?: ZoneSource | null }) {
+  if (source?.type === 'playlist') return <ListVideo className="w-3.5 h-3.5 shrink-0" />;
+  if (source?.type === 'content') {
+    const t = source.contentType?.toUpperCase() ?? '';
+    if (t === 'VIDEO') return <Film className="w-3.5 h-3.5 shrink-0" />;
+    return <Image className="w-3.5 h-3.5 shrink-0" />;
+  }
+  return null;
+}
+
+export default function ZoneLayoutEditor({ initialZones, workspaceId, saving, onSave }: Props) {
   const [zones, setZones] = useState<ZoneConfig[]>(initialZones.length > 0 ? initialZones : [makeZone(0)]);
   const [drag, setDrag] = useState<DragState | null>(null);
+  const [pickerZoneId, setPickerZoneId] = useState<string | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -125,6 +148,36 @@ export default function ZoneLayoutEditor({ initialZones, playlists, saving, onSa
     [zones],
   );
 
+  function handlePickerSelect(pickedItems: PickedItem[]) {
+    const item = pickedItems[0];
+    if (!item || !pickerZoneId) return;
+    const source: ZoneSource =
+      item.type === 'playlist'
+        ? { type: 'playlist', playlistId: item.id, playlistName: item.name }
+        : { type: 'content', contentId: item.id, contentName: item.name };
+    setZones((prev) =>
+      prev.map((zone) =>
+        zone.id === pickerZoneId
+          ? {
+              ...zone,
+              source,
+              // keep backward-compat playlistId in sync
+              playlistId: source.type === 'playlist' ? source.playlistId : zone.playlistId,
+            }
+          : zone,
+      ),
+    );
+    setPickerZoneId(null);
+  }
+
+  function clearZoneSource(zoneId: string) {
+    setZones((prev) =>
+      prev.map((zone) =>
+        zone.id === zoneId ? { ...zone, source: null, playlistId: null } : zone,
+      ),
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3">
@@ -132,11 +185,16 @@ export default function ZoneLayoutEditor({ initialZones, playlists, saving, onSa
           <p className="text-sm font-medium text-[var(--text)] flex items-center gap-2">
             <LayoutGrid className="w-4 h-4" /> Multi-zone Layout
           </p>
-          <p className="text-xs text-[var(--text-muted)]">Drag zones to reposition them. Drag the lower-right corner to resize. Up to 4 zones.</p>
+          <p className="text-xs text-[var(--text-muted)]">
+            Drag zones to reposition. Drag corner to resize. Up to {MAX_ZONES} zones.
+            {normalizedZones.filter((z) => z.source?.type === 'content' || z.source?.type === 'playlist' || z.playlistId).length > 2 && (
+              <span className="ml-1 text-amber-400">More than 2 active zones may reduce video performance.</span>
+            )}
+          </p>
         </div>
         <ActionButton
-          onClick={() => setZones((prev) => (prev.length >= 4 ? prev : [...prev, makeZone(prev.length)]))}
-          disabled={zones.length >= 4}
+          onClick={() => setZones((prev) => (prev.length >= MAX_ZONES ? prev : [...prev, makeZone(prev.length)]))}
+          disabled={zones.length >= MAX_ZONES}
           tone="default"
           className="px-3 py-2 text-sm"
         >
@@ -210,17 +268,31 @@ export default function ZoneLayoutEditor({ initialZones, playlists, saving, onSa
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Playlist</label>
-                <select
-                  value={zone.playlistId ?? ''}
-                  onChange={(e) => setZones((prev) => prev.map((item) => item.id === zone.id ? { ...item, playlistId: e.target.value || null } : item))}
-                  className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]"
-                >
-                  <option value="">No playlist</option>
-                  {playlists.map((playlist) => (
-                    <option key={playlist.id} value={playlist.id}>{playlist.name}</option>
-                  ))}
-                </select>
+                <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Content Source</label>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] text-sm min-w-0">
+                    <SourceIcon source={zone.source} />
+                    <span className={`truncate ${zone.source && zone.source.type !== 'empty' ? 'text-[var(--text)]' : 'text-[var(--text-muted)]'}`}>
+                      {sourceLabel(zone)}
+                    </span>
+                  </div>
+                  <ActionButton
+                    onClick={() => setPickerZoneId(zone.id)}
+                    tone="default"
+                    className="px-3 py-2 text-xs shrink-0"
+                  >
+                    Pick
+                  </ActionButton>
+                  {(zone.source || zone.playlistId) && (
+                    <button
+                      onClick={() => clearZoneSource(zone.id)}
+                      className="p-2 rounded-lg text-[var(--text-muted)] hover:text-red-400 hover:bg-red-400/10"
+                      title="Clear source"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -254,6 +326,16 @@ export default function ZoneLayoutEditor({ initialZones, playlists, saving, onSa
           {saving ? 'Saving…' : 'Save Zones'}
         </ActionButton>
       </div>
+
+      <ContentPickerModal
+        open={pickerZoneId != null}
+        onClose={() => setPickerZoneId(null)}
+        onSelect={handlePickerSelect}
+        workspaceId={workspaceId}
+        multi={false}
+        allowedTypes={['content', 'playlist']}
+        title="Pick Zone Content"
+      />
     </div>
   );
 }

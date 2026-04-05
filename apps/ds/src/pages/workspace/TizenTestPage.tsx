@@ -1,4 +1,4 @@
-﻿import { useState } from 'react';
+﻿import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Bug, FileText, Monitor, Radio, Shield, Terminal } from 'lucide-react';
 import {
@@ -62,6 +62,17 @@ function ValueBlock({ value }: { value: unknown }) {
       {JSON.stringify(value, null, 2)}
     </pre>
   );
+}
+
+function LiveClock({ driftMs = 0 }: { driftMs?: number }) {
+  const [, setTick] = useState(0);
+  const driftRef = useRef(driftMs);
+  driftRef.current = driftMs;
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 1_000);
+    return () => clearInterval(id);
+  }, []);
+  return <span className="font-mono text-sm font-medium text-[var(--text)]">{new Date(Date.now() + driftRef.current).toLocaleString()}</span>;
 }
 
 function ProbeSection({ title, description, entries }: { title: string; description: string; entries: ProbeEntry[] }) {
@@ -289,6 +300,11 @@ export default function TizenTestPage() {
           <SectionCardBody>
             {hb ? (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {/* Device Time — isolated ticking component so it re-renders independently */}
+                <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+                  <div className="text-xs text-[var(--text-muted)] mb-0.5">Device Time</div>
+                  <LiveClock driftMs={hb.clockDriftMs ?? 0} />
+                </div>
                 {([
                   ['CPU Load', hb.cpuLoad != null ? `${hb.cpuLoad.toFixed(1)}%` : null],
                   ['Memory Free', hb.memoryFreeBytes != null ? `${(hb.memoryFreeBytes / 1_048_576).toFixed(0)} MB` : null],

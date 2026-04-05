@@ -190,6 +190,27 @@
       "when": 1743639600000,
       "tag": "0026_heartbeat_memory_uptime",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1743725280000,
+      "tag": "0027_mdc_url_launcher",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1743811200000,
+      "tag": "0028_mdc_lux",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1743897600000,
+      "tag": "0029_mdc_hw_clock",
+      "breakpoints": true
     }
   ]
 }

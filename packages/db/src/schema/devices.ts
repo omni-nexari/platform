@@ -65,7 +65,10 @@ export const devices = pgTable('devices', {
   mdcMenuOrientation: integer('mdc_menu_orientation'),  // 0-3
   mdcSrcOrientation: integer('mdc_src_orientation'),    // 0-3 or null=unsupported
   mdcTemperatureC: doublePrecision('mdc_temperature_c'),
+  mdcLuxValue: integer('mdc_lux_value'),                // light sensor lux (model-dependent)
+  mdcHwClock: text('mdc_hw_clock'),                     // device HW clock ISO string from MDC get_clock
   mdcLastPoll: timestamp('mdc_last_poll', { withTimezone: true }),
+  mdcUrlLauncherAddress: text('mdc_url_launcher_address'),
 
   // ── On/Off timer state (from MDC poll) ─────────────────────────────────────
   timerSlots: jsonb('timer_slots'),

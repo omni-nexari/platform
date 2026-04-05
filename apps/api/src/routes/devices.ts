@@ -1199,6 +1199,15 @@ export async function deviceRoutes(app: FastifyInstance) {
       socket.send(JSON.stringify({ type: 'server_ack', payload: { timestamp: new Date().toISOString(), reason: 'connected' } }));
     } catch {}
 
+    // Push current zone layout so the device always restores it on reconnect
+    const deviceZones = (device.zones ?? []) as unknown[];
+    if (deviceZones.length > 0) {
+      setTimeout(() => {
+        sendCommand(deviceId, { type: 'set_zones', payload: { zones: deviceZones as any } });
+        app.log.info({ deviceId, zoneCount: deviceZones.length }, 'Pushed zone layout on WS connect');
+      }, 1500);
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     socket.on('message', async (rawData: any) => {
       const rawText = rawData.toString() as string;
@@ -1357,7 +1366,36 @@ export async function deviceRoutes(app: FastifyInstance) {
       publishedContent,
       publishedPlaylist,
       publishedSchedule,
+      zones: device.zones ?? [],
     });
+  });
+
+  // ── GET /devices/device/playlist/:id ─ fetch playlist by ID (device-auth) ─
+  app.get('/device/playlist/:id', async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+    const { id } = req.params as { id: string };
+    const playlist = await loadPlaylistById(id);
+    if (!playlist || (playlist as any).workspaceId !== auth.workspaceId) {
+      return reply.status(404).send({ error: 'Not found' });
+    }
+    return reply.send(playlist);
+  });
+
+  // ── GET /devices/device/content/:id ─ fetch content metadata (device-auth) ─
+  app.get('/device/content/:id', async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+    const { id } = req.params as { id: string };
+    const item = await db.query.contentItems.findFirst({
+      where: and(
+        eq(contentItems.id, id),
+        eq(contentItems.workspaceId, auth.workspaceId),
+        isNull(contentItems.deletedAt),
+      ),
+    });
+    if (!item) return reply.status(404).send({ error: 'Not found' });
+    return reply.send(item);
   });
 
   // ── GET /devices/device/content/:id/file ─ stream content file to device ──
@@ -1383,10 +1421,35 @@ export async function deviceRoutes(app: FastifyInstance) {
     }
 
     const stat = await fsPromises.stat(absPath);
-    reply.header('Content-Type', item.mimeType ?? 'application/octet-stream');
-    reply.header('Content-Length', stat.size);
-    reply.header('Content-Disposition', `inline; filename="${item.originalName ?? id}"`);
+    const fileSize = stat.size;
+    const mimeType = item.mimeType ?? 'application/octet-stream';
+    const disposition = `inline; filename="${item.originalName ?? id}"`;
+
+    // Common headers always sent
+    reply.header('Content-Type', mimeType);
+    reply.header('Content-Disposition', disposition);
     reply.header('Cache-Control', 'private, max-age=86400');
+    reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
+    reply.header('Accept-Ranges', 'bytes');
+
+    const rangeHeader = (req.headers as Record<string, string | undefined>)['range'];
+    if (rangeHeader) {
+      // Parse "bytes=start-end"
+      const [startStr, endStr] = rangeHeader.replace(/^bytes=/, '').split('-');
+      const start = parseInt(startStr, 10) || 0;
+      const end = endStr ? Math.min(parseInt(endStr, 10), fileSize - 1) : fileSize - 1;
+      if (start > end || start >= fileSize) {
+        reply.header('Content-Range', `bytes */${fileSize}`);
+        return reply.status(416).send();
+      }
+      const chunkSize = end - start + 1;
+      reply.code(206);
+      reply.header('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+      reply.header('Content-Length', String(chunkSize));
+      return reply.send(createReadStream(absPath, { start, end }));
+    }
+
+    reply.header('Content-Length', String(fileSize));
     return reply.send(createReadStream(absPath));
   });
 
@@ -1480,7 +1543,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (action === 'save_mdc_id') {
       const rawId = body.id;
       const mdcId = typeof rawId === 'number' ? rawId : parseInt(String(rawId ?? ''), 10);
-      if (!mdcId || mdcId < 1 || mdcId > 254) return reply.status(400).send({ error: 'Invalid MDC ID (1–254)' });
+      if (isNaN(mdcId) || mdcId < 0 || mdcId > 254) return reply.status(400).send({ error: 'Invalid MDC ID (0–254)' });
 
       await db.update(devices).set({ mdcId, updatedAt: new Date() }).where(eq(devices.id, id));
 
@@ -1499,19 +1562,38 @@ export async function deviceRoutes(app: FastifyInstance) {
         ...rest,
         ...(storedMdcId != null && rest.displayId == null ? { displayId: storedMdcId } : {}),
       };
-      const result = await requestMdcControl(device.id, action, payload, 10_000);
+      // Scan actions probe up to 10 IDs sequentially — give them a longer budget.
+      const mdcTimeout = (action === 'mdc_id_scan' || action === 'mdc_conn_type_fix') ? 20_000 : 10_000;
+      const result = await requestMdcControl(device.id, action, payload, mdcTimeout);
 
       // Write-back: update DB immediately so the 15s UI poll reflects the new value
       if (result.ok) {
         const dbSet: Partial<typeof devices.$inferInsert> = { updatedAt: new Date() };
         const v = typeof body.value === 'number' ? body.value : undefined;
-        if (action === 'network_standby_set'  && v != null) dbSet.mdcNetworkStandby  = v;
+        if (action === 'set_volume') {
+          const level = typeof body.level === 'number' ? body.level : undefined;
+          if (level != null) dbSet.mdcVolume = Math.max(0, Math.min(100, level));
+        } else if (action === 'set_mute') {
+          if (typeof body.mute === 'boolean') dbSet.mdcMute = body.mute;
+        } else if (action === 'set_source') {
+          const SOURCE_BYTES: Record<string, number> = {
+            HDMI1: 0x21, HDMI2: 0x23, HDMI3: 0x31, HDMI4: 0x33,
+            PC: 0x14, DVI: 0x18, DP: 0x25, AV: 0x08, COMPONENT: 0x0C, INTERNAL_USB: 0x62,
+          };
+          const byte = typeof body.source === 'string' ? SOURCE_BYTES[body.source] : undefined;
+          if (byte != null) dbSet.mdcInput = byte;
+        } else if (action === 'network_standby_set'  && v != null) dbSet.mdcNetworkStandby  = v;
         else if (action === 'standby_set'     && v != null) dbSet.mdcStandby         = v;
         else if (action === 'remote_control_set' && v != null) dbSet.mdcRemoteControl = v;
         else if (action === 'safety_lock_set' && v != null) dbSet.mdcSafetyLock      = v;
         else if (action === 'menu_orientation_set' && v != null) dbSet.mdcMenuOrientation = v;
         else if (action === 'src_orientation_set'  && v != null) dbSet.mdcSrcOrientation  = v;
-        else if (action === 'osd_display_set') {
+        else if (action === 'url_launcher_address_set') {
+          const addr = typeof body.urlAddress === 'string' ? body.urlAddress.trim() : undefined;
+          if (addr != null) dbSet.mdcUrlLauncherAddress = addr;
+        } else if ((action === 'mdc_id_scan' || action === 'mdc_conn_type_fix') && typeof (result as Record<string, unknown>).displayId === 'number') {
+          dbSet.mdcId = (result as Record<string, unknown>).displayId as number;
+        } else if (action === 'osd_display_set') {
           // Flip the individual bit in the stored bitmask
           const osdType  = typeof body.osdType  === 'number' ? body.osdType  : null;
           const osdOnOff = typeof body.osdOnOff === 'number' ? body.osdOnOff : null;
@@ -1523,6 +1605,15 @@ export async function deviceRoutes(app: FastifyInstance) {
         if (Object.keys(dbSet).length > 1) {
           await db.update(devices).set(dbSet).where(eq(devices.id, id));
         }
+      }
+
+      // For GET actions that return data fields, decode them from the raw `data` bytes
+      // if the player hasn't forwarded them as named fields (older player versions).
+      const response = result as Record<string, unknown>;
+      if (action === 'url_launcher_address_get' && result.ok && response.urlAddress == null && Array.isArray(result.data)) {
+        const bytes = result.data as number[];
+        const offset = bytes.length > 0 && bytes[0] === 0x82 ? 1 : 0;
+        response.urlAddress = bytes.slice(offset).map((b) => String.fromCharCode(b)).join('');
       }
 
       return reply.send(result);

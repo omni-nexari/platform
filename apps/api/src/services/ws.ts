@@ -75,10 +75,12 @@ export type WsCommand =
   | { type: 'SESSION_CONFIG'; groupId: number; mode: string; syncPlaylistId: string | null }
   | { type: 'SYNC_PLAY'; action: 'STOP' | 'CANCEL' | 'START_SYNCPLAY' }
   | { type: 'tizen_probe'; payload: { requestId: string } }
-  | { type: 'tizen_command'; payload: { requestId: string; action: string; params?: unknown } };
+  | { type: 'tizen_command'; payload: { requestId: string; action: string; params?: unknown } }
+  | { type: 'ntp_resync' };
 
 const connections = new Map<string, Conn>();
 const deviceLogs = new Map<string, DeviceConsoleLogEntry[]>();
+const lastNtpResyncSentAt = new Map<string, number>(); // rate-limit ntp_resync per device
 const MAX_DEVICE_LOGS = 2000;
 const pendingMdcStatus = new Map<string, {
   resolve: (value: MdcStatusResponse) => void;
@@ -420,6 +422,22 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
       nextContentId: hb.nextContentId ?? null,
       nextStartsAt: hb.nextStartsAt ? new Date(hb.nextStartsAt) : null,
     });
+
+    // If drift exceeds ±200ms, nudge the TV to resync — but at most once per 60s per device
+    const NTP_RESYNC_THRESHOLD_MS = 200;
+    const NTP_RESYNC_COOLDOWN_MS = 60_000;
+    if (hb.clockDriftMs != null && Math.abs(hb.clockDriftMs) > NTP_RESYNC_THRESHOLD_MS) {
+      const lastSent = lastNtpResyncSentAt.get(deviceId) ?? 0;
+      if (Date.now() - lastSent > NTP_RESYNC_COOLDOWN_MS) {
+        const conn = connections.get(deviceId);
+        if (conn?.readyState === 1 /* OPEN */) {
+          conn.send(JSON.stringify({ type: 'ntp_resync' }));
+          lastNtpResyncSentAt.set(deviceId, Date.now());
+          console.info(`[ws] ntp_resync sent to ${deviceId} (drift=${hb.clockDriftMs}ms)`);
+        }
+      }
+    }
+
     return;
   }
 
@@ -481,6 +499,9 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     if (mp.safetyLock      != null) set.mdcSafetyLock     = mp.safetyLock      as number;
     if (mp.softwareVersion != null) set.mdcSoftwareVersion = mp.softwareVersion as string;
     if (mp.temperatureC    != null) set.mdcTemperatureC   = mp.temperatureC    as number;
+    if (mp.luxValue        != null) set.mdcLuxValue        = mp.luxValue        as number;
+    if (mp.hwClock         != null) set.mdcHwClock         = mp.hwClock         as string;
+    if (mp.urlLauncherAddress != null) set.mdcUrlLauncherAddress = mp.urlLauncherAddress as string;
     // Timer slots (keys "1"-"7", each has the parsed on/off timer state)
     if (Array.isArray(mp.timers)) {
       const slots: Record<string, unknown> = {};
@@ -618,11 +639,14 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
       clearTimeout(pending.timer);
       pendingMdcControl.delete(pendingKey);
       console.info('[ws] mdc_control_response resolved', { deviceId, requestId: msg.payload.requestId, ok: msg.payload.ok });
+      // Spread the full passthrough payload so extra fields (e.g. displayId, idOk) are preserved.
+      const { requestId: _rid, ok: _ok, data, ...extra } = msg.payload as Record<string, unknown> & { requestId: string; ok: boolean; data?: unknown };
       pending.resolve({
+        ...extra,
         requestId: msg.payload.requestId,
         ok: msg.payload.ok,
         ...(msg.payload.rawHex !== undefined ? { rawHex: msg.payload.rawHex } : {}),
-        ...(msg.payload.data !== undefined ? { data: msg.payload.data } : {}),
+        ...(Array.isArray(data) ? { data: (data as unknown[]).filter((x): x is number => typeof x === 'number') } : {}),
         ...(msg.payload.error !== undefined ? { error: msg.payload.error } : {}),
       });
     } else {

@@ -51,6 +51,9 @@ import {
   AlarmClock,
   ArrowDown,
   ArrowUp,
+  Activity,
+  Sun,
+  KeyRound,
 } from 'lucide-react';
 import { formatDistanceToNow } from '../utils/time.js';
 import WorkspaceTagPicker from '../../components/WorkspaceTagPicker.js';
@@ -149,7 +152,10 @@ interface Device {
   mdcMenuOrientation: number | null;
   mdcSrcOrientation: number | null;
   mdcTemperatureC: number | null;
+  mdcLuxValue: number | null;
+  mdcHwClock: string | null;
   mdcLastPoll: string | null;
+  mdcUrlLauncherAddress: string | null;
   // NTP
   ntpEnabled: boolean;
   ntpServer: string | null;
@@ -367,6 +373,41 @@ function preferObservedValue(deviceValue: string | null | undefined, observedVal
 
 // ── Small presentational helpers ─────────────────────────────────────────────
 
+function LiveDeviceClock({ driftMs = 0, timezone = 'UTC' }: { driftMs?: number; timezone?: string }) {
+  const [, setTick] = useState(0);
+  const driftRef = useRef(driftMs);
+  driftRef.current = driftMs;
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 1_000);
+    return () => clearInterval(id);
+  }, []);
+  const now = new Date(Date.now() + driftRef.current);
+  try {
+    return <>{now.toLocaleString('en-CA', {
+      timeZone: timezone, hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    })}</>;
+  } catch {
+    return <>{now.toISOString().replace('T', ' ').slice(0, 19)}</>;
+  }
+}
+
+function LiveUptime({ uptimeSec, syncedAt }: { uptimeSec: number; syncedAt: number }) {
+  const [, setTick] = useState(0);
+  const ref = useRef({ uptimeSec, syncedAt });
+  ref.current = { uptimeSec, syncedAt };
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 1_000);
+    return () => clearInterval(id);
+  }, []);
+  const live = ref.current.uptimeSec + Math.floor((Date.now() - ref.current.syncedAt) / 1_000);
+  const h = Math.floor(live / 3600);
+  const m = Math.floor((live % 3600) / 60);
+  const s = live % 60;
+  return <>{String(h).padStart(2, '0')}:{String(m).padStart(2, '0')}:{String(s).padStart(2, '0')}</>;
+}
+
 function StatusBadge({ status }: { status: Device['status'] }) {
   const map = {
     online:    { label: 'Online',    tone: 'success' },
@@ -437,7 +478,7 @@ const MDC_INPUT_SOURCE_NAMES: Record<number, string> = {
 };
 
 // ── LiveViewOverlay ───────────────────────────────────────────────────────────
-function LiveViewOverlay({ deviceId, isOnline, onClose, onPowerChange }: { deviceId: string; isOnline: boolean; onClose: () => void; onPowerChange?: (state: 'on' | 'off') => void }) {
+function LiveViewOverlay({ deviceId, isOnline, deviceInfo, onClose, onPowerChange }: { deviceId: string; isOnline: boolean; deviceInfo?: { name?: string | null; modelName?: string | null; ipAddress?: string | null; serialNumber?: string | null }; onClose: () => void; onPowerChange?: (state: 'on' | 'off') => void }) {
   type LiveStatus = 'idle' | 'buffering' | 'playing';
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [status, setStatus] = useState<LiveStatus>('idle');
@@ -450,7 +491,13 @@ function LiveViewOverlay({ deviceId, isOnline, onClose, onPowerChange }: { devic
   const [mdcStatusResponse, setMdcStatusResponse] = useState<{
     ok: boolean; nodeRunning?: boolean; serial?: string; deviceName?: string; modelName?: string; ipAddress?: string; remoteControl?: number; rawHex?: string; error?: string;
     status?: { displayId: number; ack: 'A'|'N'; rCmd: number; power?: number; volume?: number; mute?: number; input?: number; aspect?: number; nTime?: number; fTime?: number };
-  } | null>(null);
+  } | null>({
+    ok: false,
+    deviceName: deviceInfo?.name ?? undefined,
+    modelName: deviceInfo?.modelName ?? undefined,
+    ipAddress: deviceInfo?.ipAddress ?? undefined,
+    serial: deviceInfo?.serialNumber ?? undefined,
+  });
   const [localRemoteCtrl, setLocalRemoteCtrl] = useState<number | null>(null); // optimistic toggle within Live View
   const esRef = useRef<EventSource | null>(null);
   const statusRef = useRef<LiveStatus>('idle');
@@ -497,8 +544,6 @@ function LiveViewOverlay({ deviceId, isOnline, onClose, onPowerChange }: { devic
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, []);
-  useEffect(() => { void fetchRemoteStatus(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
-
   function doCleanup() {
     esRef.current?.close(); esRef.current = null;
     if (staleFrameTimerRef.current) { clearTimeout(staleFrameTimerRef.current); staleFrameTimerRef.current = null; }
@@ -670,7 +715,6 @@ function LiveViewOverlay({ deviceId, isOnline, onClose, onPowerChange }: { devic
               <button onClick={() => { onPowerChange?.('off'); void sendRemoteKey('POWER_OFF'); }} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400 text-xs font-medium transition-colors"><PowerOff className="w-3 h-3" /> Off</button>
             </div>
             <button onClick={() => sendRemoteKey('REBOOT')} className="flex items-center justify-center gap-1 w-full py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 text-xs font-medium transition-colors"><RefreshCw className="w-3 h-3" /> Reboot</button>
-            <button onClick={fetchRemoteStatus} className="flex items-center justify-center gap-1 w-full py-1.5 rounded-lg bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 text-xs font-medium transition-colors"><Monitor className="w-3 h-3" /> Status</button>
             <div className="w-full border-t border-white/10" />
             <div className="grid grid-cols-3 gap-1.5">
               <div />
@@ -695,10 +739,17 @@ function LiveViewOverlay({ deviceId, isOnline, onClose, onPowerChange }: { devic
               </div>
               {mdcStatusResponse === null ? <span className="text-white/20">fetching…</span> : (
                 <>
-                  <div className="flex items-center gap-1.5">
-                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${mdcStatusResponse.nodeRunning ? 'bg-green-400' : 'bg-red-400'}`} />
-                    <span className={mdcStatusResponse.nodeRunning ? 'text-green-400' : 'text-red-400'}>Node {mdcStatusResponse.nodeRunning ? 'online' : 'offline'}</span>
-                  </div>
+                  {mdcStatusResponse.nodeRunning !== undefined ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${mdcStatusResponse.nodeRunning ? 'bg-green-400' : 'bg-red-400'}`} />
+                      <span className={mdcStatusResponse.nodeRunning ? 'text-green-400' : 'text-red-400'}>Node {mdcStatusResponse.nodeRunning ? 'online' : 'offline'}</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isOnline ? 'bg-green-400' : 'bg-white/20'}`} />
+                      <span className={isOnline ? 'text-green-400' : 'text-white/30'}>{isOnline ? 'Connected' : 'Offline'}<span className="text-white/20 ml-1">— press ↻ for MDC</span></span>
+                    </div>
+                  )}
                   {(mdcStatusResponse.deviceName || mdcStatusResponse.modelName) && (
                     <div className="text-white/60 mt-0.5">
                       {mdcStatusResponse.deviceName && <div className="truncate" title={mdcStatusResponse.deviceName}>Name: <span className="text-white/80">{mdcStatusResponse.deviceName}</span></div>}
@@ -729,7 +780,12 @@ function LiveViewOverlay({ deviceId, isOnline, onClose, onPowerChange }: { devic
                       </button>
                     </div>
                   ) : null}
-                  {mdcStatusResponse.error && <div className="text-red-300 mt-0.5">{mdcStatusResponse.error}</div>}
+                  {mdcStatusResponse.error && mdcStatusResponse.nodeRunning === undefined && !mdcStatusResponse.deviceName && !mdcStatusResponse.modelName && !mdcStatusResponse.ipAddress && !mdcStatusResponse.serial && (
+                    <div className="text-white/30 mt-0.5">{mdcStatusResponse.error}</div>
+                  )}
+                  {mdcStatusResponse.error && mdcStatusResponse.nodeRunning !== undefined && (
+                    <div className="text-red-300 mt-0.5">{mdcStatusResponse.error}</div>
+                  )}
                 </>
               )}
             </div>
@@ -766,6 +822,7 @@ export default function DeviceDetailPage() {
   const [liveViewOpen, setLiveViewOpen] = useState(false);
   // NTP form
   const [ntpServer,      setNtpServer]      = useState('');
+  const [ntpTimezone,    setNtpTimezone]    = useState('');
   const [ntpInitialised, setNtpInitialised] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [replaceCode, setReplaceCode] = useState('');
@@ -776,6 +833,20 @@ export default function DeviceDetailPage() {
   const [urlLauncherBusy, setUrlLauncherBusy] = useState(false);
   const [selectedTimerSlot, setSelectedTimerSlot] = useState(1);
   const [timerSlots, setTimerSlots] = useState<Record<number, TimerSlotState>>({});
+  const [activeTab, setActiveTab] = useState<'info' | 'power' | 'network' | 'settings' | 'timers' | 'tags' | 'zones' | 'update' | 'logs'>('info');
+
+  // ── Network config state ────────────────────────────────────────────
+  type IpMode   = 'dhcp'     | 'static';
+  const [netIpMode,    setNetIpMode]    = useState<IpMode>('dhcp');
+  const [netIp,        setNetIp]        = useState('');
+  const [netSubnet,    setNetSubnet]    = useState('');
+  const [netGateway,   setNetGateway]   = useState('');
+  const [netDns,       setNetDns]       = useState('');
+  const [netSsid,      setNetSsid]      = useState('');
+  const [netPassword,  setNetPassword]  = useState('');
+  const [netBusy,      setNetBusy]      = useState(false);
+  const [netLoaded,    setNetLoaded]    = useState(false);
+  const [netShowPass,  setNetShowPass]  = useState(false);
 
   const { data, isLoading } = useQuery<{
     device: Device;
@@ -826,13 +897,14 @@ export default function DeviceDetailPage() {
   useEffect(() => {
     if (data?.device == null) return;
     const d = data.device;
-    // volumeInput intentionally not synced here — we read device.mdcVolume directly in the input
+    if (d.mdcVolume != null) setVolumeInput(d.mdcVolume);
     if (d.mdcInput != null) {
       const src = MDC_SOURCE_BY_BYTE[d.mdcInput];
       if (src) setSelectedSource(src);
     }
     if (d.mdcMute != null) setOptimisticMute(null);
-  }, [data?.device?.mdcVolume, data?.device?.mdcInput, data?.device?.mdcMute]);
+    if (d.mdcUrlLauncherAddress != null) setUrlLauncherAddress(d.mdcUrlLauncherAddress);
+  }, [data?.device?.mdcVolume, data?.device?.mdcInput, data?.device?.mdcMute, data?.device?.mdcUrlLauncherAddress]);
 
   const { data: logData } = useQuery<DeviceLogsResponse>({
     queryKey: ['device-logs', deviceId],
@@ -913,29 +985,16 @@ export default function DeviceDetailPage() {
   );
 
   // These must live above early-return branches (Rules of Hooks)
-  const deviceUptimeLabel = useMemo(() => {
-    const uptimeSec = data?.latestHeartbeat?.deviceUptimeSec;
-    if (uptimeSec == null) return null;
-    const h = Math.floor(uptimeSec / 3600);
-    const m = Math.floor((uptimeSec % 3600) / 60);
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  }, [data?.latestHeartbeat?.deviceUptimeSec]);
+  const deviceUptimeSec = data?.latestHeartbeat?.deviceUptimeSec ?? null;
+  const deviceUptimeSyncedAt = useMemo(
+    () => data?.latestHeartbeat?.createdAt ? new Date(data.latestHeartbeat.createdAt).getTime() : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data?.latestHeartbeat?.createdAt],
+  );
 
-  const deviceTimeLabel = useMemo(() => {
-    const hbInner = data?.latestHeartbeat;
-    if (!hbInner?.createdAt) return null;
-    const deviceMs = new Date(hbInner.createdAt).getTime() + (hbInner.clockDriftMs ?? 0);
-    const tz = resolvedTimezone || 'UTC';
-    try {
-      return new Date(deviceMs).toLocaleString('en-CA', {
-        timeZone: tz, hour12: false,
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-      });
-    } catch {
-      return new Date(deviceMs).toISOString().replace('T', ' ').slice(0, 19);
-    }
-  }, [data?.latestHeartbeat?.createdAt, data?.latestHeartbeat?.clockDriftMs, resolvedTimezone]);
+  const deviceTimeDriftMs = data?.latestHeartbeat?.clockDriftMs ?? null;
+  const deviceTimeZone   = resolvedTimezone || 'UTC';
+  const hasHeartbeat     = !!data?.latestHeartbeat?.createdAt;
   const resolvedResolution = useMemo(
     () => data?.device.resolution || observedSystemInfo?.resolution || null,
     [data?.device.resolution, observedSystemInfo?.resolution],
@@ -973,6 +1032,7 @@ export default function DeviceDetailPage() {
   useEffect(() => {
     if (!data?.device || ntpInitialised) return;
     setNtpServer(data.device.ntpServer ?? 'pool.ntp.org');
+    setNtpTimezone(data.device.timezone ?? 'UTC');
     setNtpInitialised(true);
   }, [data?.device, ntpInitialised, observedSystemInfo?.timezone]);
 
@@ -998,9 +1058,13 @@ export default function DeviceDetailPage() {
   }, [data?.device?.timerSlots]);
 
   useEffect(() => {
-    // Fetch fresh timer data from device once per page load when online
+    // Fetch fresh timer data from device only when the timers tab is opened and
+    // the device is online with a known MDC ID. Eagerly fetching on mount causes
+    // 7 × 10s MDC timeouts whenever Node.js bridge is offline on the Tizen app.
     if (timerFetchedRef.current || !deviceId) return;
+    if (activeTab !== 'timers') return;
     if (!data?.device || data.device.status !== 'online') return;
+    if (data.device.mdcId == null) return;
     timerFetchedRef.current = true;
     let cancelled = false;
     void (async () => {
@@ -1023,7 +1087,7 @@ export default function DeviceDetailPage() {
       if (!cancelled && Object.keys(updates).length > 0) setTimerSlots(updates);
     })();
     return () => { cancelled = true; };
-  }, [deviceId, data?.device?.status]);
+  }, [deviceId, activeTab, data?.device?.status]);
 
   const {
     register,
@@ -1031,25 +1095,41 @@ export default function DeviceDetailPage() {
     watch,
     setValue,
     formState: { isDirty, isSubmitting },
+    reset,
   } = useForm<UpdateDeviceInput>({
     resolver: zodResolver(UpdateDeviceSchema),
-    ...(data?.device && {
-      values: {
+    defaultValues: {
+      name: '',
+      screenshotIntervalMin: undefined,
+      locationLabel: null,
+      latitude: null,
+      longitude: null,
+      defaultPlaylistId: null,
+    },
+  });
+
+  // Populate form once when device data first loads — don't reset on background refetches
+  const formInitialisedRef = useRef(false);
+  useEffect(() => {
+    if (data?.device && !formInitialisedRef.current) {
+      formInitialisedRef.current = true;
+      reset({
         name: data.device.name,
-        timezone: data.device.timezone,
         screenshotIntervalMin: data.device.screenshotIntervalMin ?? undefined,
         locationLabel: data.device.locationLabel ?? null,
         latitude: data.device.latitude ?? null,
         longitude: data.device.longitude ?? null,
         defaultPlaylistId: data.device.defaultPlaylistId ?? null,
-      },
-    }),
-  });
+      });
+    }
+  }, [data?.device, reset]);
 
   const updateDevice = useMutation({
     mutationFn: (body: UpdateDeviceInput) => api.patch(`/devices/${deviceId}`, body),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       toast.success('Device updated');
+      // Reset form to the saved values so isDirty is false again
+      reset(variables);
       void queryClient.invalidateQueries({ queryKey: ['device', deviceId] });
       void queryClient.invalidateQueries({ queryKey: ['devices', wsId] });
     },
@@ -1090,7 +1170,7 @@ export default function DeviceDetailPage() {
         power_on:           'Power-on sent',
         clear_cache:        'Cache clear sent',
         dump_logs:          'Log dump requested — check device OSD',
-        mdc_control:        'MDC command sent',
+
         update_player:      'Player update sent',
         set_ntp:            'NTP settings applied',
         set_ir_lock:        'IR lock updated',
@@ -1141,6 +1221,19 @@ export default function DeviceDetailPage() {
   });
 
   const sendCmd = (cmd: DeviceCommandInput) => cmdMutation.mutate(cmd);
+
+  // All MDC commands go directly to /mdc-control (not via /command)
+  // so the Node bridge always receives the correct displayId.
+  const sendMdc = (payload: Record<string, unknown>) =>
+    api.post(`/devices/${deviceId}/mdc-control`, payload)
+      .then(() => toast.success('MDC command sent'))
+      .catch((err: unknown) => toast.error(err instanceof Error ? err.message : 'MDC command failed'));
+
+  // Remote-key helper at page scope (same endpoint as LiveView, no LiveView state deps)
+  const sendRemoteKey = (key: string) =>
+    api.post(`/devices/${deviceId}/remote-key`, { key })
+      .then(() => toast.success(`${key.replace(/_/g, ' ').toLowerCase()} sent`))
+      .catch((err: unknown) => toast.error(err instanceof Error ? err.message : `${key} failed`));
 
   if (isLoading) {
     return (
@@ -1278,6 +1371,43 @@ export default function DeviceDetailPage() {
         </SectionCardBody>
       </SectionCard>
 
+      {/* ── Tab bar ─────────────────────────────────────────────────────── */}
+      {(() => {
+        const TABS = [
+          { id: 'info',     label: 'Info' },
+          { id: 'power',    label: 'Power / Control' },
+          { id: 'network',  label: 'Network' },
+          { id: 'settings', label: 'Settings' },
+          { id: 'timers',   label: 'Timers' },
+          { id: 'tags',     label: 'Tags' },
+          { id: 'zones',    label: 'Zone Layout' },
+          { id: 'update',   label: 'Update' },
+          { id: 'logs',     label: 'Logs' },
+        ] as const;
+        return (
+          <div className="flex flex-wrap gap-1 border-b border-[var(--border)] pb-0">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors -mb-px border-b-2 ${
+                  activeTab === tab.id
+                    ? 'border-[var(--blue)] text-[var(--blue)] bg-[var(--surface-raised)]'
+                    : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        );
+      })()}
+
+      {/* ── Info tab ────────────────────────────────────────────────────── */}
+      {activeTab === 'info' && (
+        <div className="space-y-6">
+
       {/* ── #14 Hardware identity  +  #15 Network ────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <SectionCard>
@@ -1293,8 +1423,10 @@ export default function DeviceDetailPage() {
             <InfoRow icon={Cpu}         label="Software version"  value={device.firmwareVersion ?? observedSystemInfo?.firmwareVersion} />
             <InfoRow icon={Cpu}         label="Player version"    value={device.playerVersion ? `v${device.playerVersion}` : null} />
             <InfoRow icon={Monitor}     label="Resolution"        value={resolvedResolution} />
-            {deviceTimeLabel && (
-              <InfoRow icon={Clock}     label="Device time"       value={deviceTimeLabel} />
+            {hasHeartbeat && (
+              <InfoRow icon={Clock} label="Device time" value={
+                <LiveDeviceClock driftMs={deviceTimeDriftMs ?? 0} timezone={deviceTimeZone} />
+              } />
             )}
             <InfoRow icon={Globe}       label="Timezone"          value={resolvedTimezone} />
           </SectionCardBody>
@@ -1363,6 +1495,14 @@ export default function DeviceDetailPage() {
                     </Badge>
                   </div>
                 )}
+                {device.mdcLuxValue != null && (
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-2 text-[var(--text-muted)]">
+                      <Sun className="w-3.5 h-3.5" />Light Sensor
+                    </span>
+                    <Badge tone="neutral">{device.mdcLuxValue} lx</Badge>
+                  </div>
+                )}
                 {hb.cpuLoad != null && (
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs text-[var(--text-muted)]">
@@ -1394,13 +1534,25 @@ export default function DeviceDetailPage() {
                     <MiniBar value={storageUsedPct} tone={storageUsedPct > 90 ? 'danger' : storageUsedPct > 75 ? 'warning' : 'default'} />
                   </div>
                 )}
-                {deviceUptimeLabel && (
-                  <InfoRow icon={Clock} label="Uptime" value={deviceUptimeLabel} />
+                {deviceUptimeSec != null && deviceUptimeSyncedAt != null && (
+                  <InfoRow icon={Clock} label="Uptime" value={
+                    <LiveUptime uptimeSec={deviceUptimeSec} syncedAt={deviceUptimeSyncedAt} />
+                  } />
                 )}
-                {hb.clockDriftMs != null && (
-                  <InfoRow icon={Clock} label="Clock drift"
-                    value={`${hb.clockDriftMs > 0 ? '+' : ''}${hb.clockDriftMs} ms`} />
-                )}
+                {(() => {
+                  const drift = hb.clockDriftMs ?? device.clockDriftMs;
+                  if (drift == null) return null;
+                  const abs = Math.abs(drift);
+                  const color = abs > 200 ? 'text-red-400' : abs > 50 ? 'text-yellow-400' : 'text-emerald-400';
+                  return (
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="flex items-center gap-2 text-[var(--text-muted)]">
+                        <Activity className="w-3.5 h-3.5" />Clock drift
+                      </span>
+                      <span className={`font-mono text-xs ${color}`}>{drift > 0 ? '+' : ''}{drift} ms</span>
+                    </div>
+                  );
+                })()}
               </>
             ) : (
               <p className="text-xs text-[var(--text-muted)]">No heartbeat data yet.</p>
@@ -1483,6 +1635,13 @@ export default function DeviceDetailPage() {
         </SectionCard>
       </div>
 
+        </div>
+      )}
+
+      {/* ── Power / Control tab ─────────────────────────────────────────── */}
+      {activeTab === 'power' && (
+        <div className="space-y-6">
+
       {/* ── Power & Controls ─────────────────────────────────────────────── */}
       <SectionCard>
         <SectionCardHeader>
@@ -1502,7 +1661,11 @@ export default function DeviceDetailPage() {
             <span className="text-xs text-[var(--text-muted)] w-16 shrink-0">Power</span>
             <button
               type="button"
-              onClick={() => sendCmd({ command: 'power_on' })}
+              onClick={() => {
+                setOptimisticPowerState('on');
+                void sendRemoteKey('POWER_ON');
+                void queryClient.invalidateQueries({ queryKey: ['device', deviceId] });
+              }}
               disabled={cmdDisabled}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-40 transition-colors text-xs font-medium text-emerald-400"
             >
@@ -1510,7 +1673,11 @@ export default function DeviceDetailPage() {
             </button>
             <button
               type="button"
-              onClick={() => sendCmd({ command: 'power_off' })}
+              onClick={() => {
+                setOptimisticPowerState('off');
+                void sendRemoteKey('POWER_OFF');
+                void queryClient.invalidateQueries({ queryKey: ['device', deviceId] });
+              }}
               disabled={cmdDisabled}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 disabled:opacity-40 transition-colors text-xs font-medium text-red-400"
             >
@@ -1518,7 +1685,7 @@ export default function DeviceDetailPage() {
             </button>
             <button
               type="button"
-              onClick={() => sendCmd({ command: 'reboot' })}
+              onClick={() => void sendRemoteKey('REBOOT')}
               disabled={cmdDisabled}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-40 transition-colors text-xs font-medium text-amber-400"
             >
@@ -1546,7 +1713,9 @@ export default function DeviceDetailPage() {
                 onClick={() => {
                   const level = volumeInput ?? device.mdcVolume ?? 0;
                   setVolumeInput(level);
-                  sendCmd({ command: 'mdc_control', payload: { action: 'set_volume', level } });
+                  void sendMdc({ action: 'set_volume', level }).then(() =>
+                    void queryClient.invalidateQueries({ queryKey: ['device', deviceId] })
+                  );
                 }}
                 tone="primary" className="px-3 py-1.5 text-xs"
               >Set</ActionButton>
@@ -1562,7 +1731,7 @@ export default function DeviceDetailPage() {
                 onChange={() => {
                   const next = !(optimisticMute !== null ? optimisticMute : !!(device.mdcMute));
                   setOptimisticMute(next);
-                  sendCmd({ command: 'mdc_control', payload: { action: 'set_mute', mute: next } });
+                  void sendMdc({ action: 'set_mute', mute: next });
                 }}
                 labelClassName="text-xs"
               />
@@ -1584,7 +1753,7 @@ export default function DeviceDetailPage() {
               <ActionButton
                 type="button"
                 disabled={cmdDisabled}
-                onClick={() => sendCmd({ command: 'mdc_control', payload: { action: 'set_source', source: selectedSource } })}
+                onClick={() => void sendMdc({ action: 'set_source', source: selectedSource })}
                 tone="primary" className="px-3 py-1.5 text-xs shrink-0"
               >Set</ActionButton>
               {device.mdcInput != null && MDC_SOURCE_BY_BYTE[device.mdcInput] && (
@@ -1621,9 +1790,8 @@ export default function DeviceDetailPage() {
                 onClick={async () => {
                   setUrlLauncherBusy(true);
                   try {
-                    const res = await api.post(`/devices/${deviceId}/command`, {
-                      command: 'mdc_control',
-                      payload: { action: 'url_launcher_address_get' },
+                    const res = await api.post(`/devices/${deviceId}/mdc-control`, {
+                      action: 'url_launcher_address_get',
                     }) as { urlAddress?: string };
                     if (res?.urlAddress != null) setUrlLauncherAddress(res.urlAddress);
                     else toast.success('MDC command sent');
@@ -1640,7 +1808,7 @@ export default function DeviceDetailPage() {
               <button
                 type="button"
                 disabled={cmdDisabled || urlLauncherBusy || !urlLauncherAddress.trim()}
-                onClick={() => sendCmd({ command: 'mdc_control', payload: { action: 'url_launcher_address_set', urlAddress: urlLauncherAddress.trim() } })}
+                onClick={() => void sendMdc({ action: 'url_launcher_address_set', urlAddress: urlLauncherAddress.trim() })}
                 className="px-3 py-1.5 rounded-lg border border-[var(--blue)] bg-[var(--blue)] text-xs text-white hover:opacity-90 disabled:opacity-40 transition-opacity"
               >
                 Save to Display
@@ -1672,9 +1840,9 @@ export default function DeviceDetailPage() {
                 setMdcScanResult(null);
                 try {
                   const r = await api.post(`/devices/${deviceId}/mdc-control`, { action: 'mdc_id_scan' }) as { ok: boolean; displayId?: number };
-                  const found = r.ok && r.displayId != null;
-                  setMdcScanResult(found && r.displayId != null ? { found: true, displayId: r.displayId } : { found: false });
-                  if (!found) toast.error('No MDC device responded (IDs 1–9)');
+                  const found = r.ok && r.displayId !== undefined && r.displayId !== null;
+                  setMdcScanResult(found ? { found: true, displayId: r.displayId as number } : { found: false });
+                  if (!found) toast.error('No MDC device responded (IDs 0–9)');
                 } catch (e) {
                   toast.error(e instanceof Error ? e.message : 'Scan failed');
                 } finally {
@@ -1714,6 +1882,238 @@ export default function DeviceDetailPage() {
         </SectionCardBody>
       </SectionCard>
 
+        </div>
+      )}
+
+      {/* ── Network tab ─────────────────────────────────────────────────── */}
+      {activeTab === 'network' && (
+        <div className="space-y-6">
+
+          {/* ── Current status (read-only) ─────────────────────────────── */}
+          <SectionCard>
+            <SectionCardHeader>
+              <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
+                <Network className="w-3.5 h-3.5" />Network
+              </h2>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-3">
+              <InfoRow icon={Globe}   label="IP Address"  value={resolvedIpAddress} />
+              <InfoRow icon={Network} label="MAC Address" value={resolvedMacAddress} />
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2 text-[var(--text-muted)]">
+                  <Wifi className="w-3.5 h-3.5" />Connection
+                </span>
+                {resolvedConnectionType
+                  ? <Badge tone={resolvedConnectionType === 'wifi' ? 'accent' : 'neutral'}>
+                      {resolvedConnectionType.toUpperCase()}
+                    </Badge>
+                  : <span className="text-[var(--text-muted)] text-xs">—</span>}
+              </div>
+              {resolvedConnectionType !== 'ethernet' && (resolvedConnectionType === 'wifi' || !!resolvedWifiSsid) && (
+                <>
+                  <InfoRow icon={Wifi} label="SSID" value={resolvedWifiSsid} />
+                  {device.wifiStrength != null && (
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="flex items-center gap-2 text-[var(--text-muted)]">
+                        <Radio className="w-3.5 h-3.5" />Signal
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <SignalBars level={device.wifiStrength} />
+                        <span className="text-[var(--text)] font-mono text-xs">{device.wifiStrength}/5</span>
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
+            </SectionCardBody>
+          </SectionCard>
+
+          {/* ── Network Configuration ───────────────────────────────────── */}
+          {isOnline && (
+          <SectionCard>
+            <SectionCardHeader>
+              <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
+                <Settings2 className="w-3.5 h-3.5" />Network Configuration
+              </h2>
+              {!netLoaded && (
+                <button
+                  className="text-xs text-[var(--blue)] hover:underline"
+                  onClick={async () => {
+                    setNetBusy(true);
+                    try {
+                      const [cfgRes, modeRes] = await Promise.all([
+                        api.post(`/devices/${deviceId}/mdc-control`, { action: 'network_config_get' }),
+                        api.post(`/devices/${deviceId}/mdc-control`, { action: 'network_ip_mode_get' }),
+                      ]);
+                      const cfg  = cfgRes.data  as { ok: boolean; ipAddress?: string; subnetMask?: string; gateway?: string; dns?: string };
+                      const mode = modeRes.data as { ok: boolean; ipMode?: number };
+                      if (cfg.ok) {
+                        setNetIp(cfg.ipAddress ?? '');
+                        setNetSubnet(cfg.subnetMask ?? '');
+                        setNetGateway(cfg.gateway ?? '');
+                        setNetDns(cfg.dns ?? '');
+                      }
+                      if (mode.ok) setNetIpMode(mode.ipMode === 0x01 ? 'static' : 'dhcp');
+                      setNetLoaded(true);
+                    } catch { toast.error('Failed to read network config'); }
+                    finally { setNetBusy(false); }
+                  }}
+                >
+                  {netBusy ? 'Loading…' : 'Load current config'}
+                </button>
+              )}
+            </SectionCardHeader>
+            <SectionCardBody>
+              <div className="space-y-5">
+
+                {/* Connection type badge (read from device) */}
+                <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                  {resolvedConnectionType === 'wifi' ? <Wifi className="w-3.5 h-3.5" /> : <Network className="w-3.5 h-3.5" />}
+                  <span className="font-medium text-[var(--text)]">{resolvedConnectionType === 'wifi' ? 'Wi-Fi' : 'Ethernet'}</span>
+                  <span className="text-[var(--text-muted)]">— configuring {resolvedConnectionType === 'wifi' ? 'wireless' : 'wired'} connection</span>
+                </div>
+
+                {/* Wi-Fi credentials — only when connected via Wi-Fi */}
+                {resolvedConnectionType === 'wifi' && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs text-[var(--text-muted)] mb-1">SSID</label>
+                      <input
+                        value={netSsid} onChange={e => setNetSsid(e.target.value)}
+                        placeholder="Network name"
+                        className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-[var(--text-muted)] mb-1">Password</label>
+                      <div className="relative">
+                        <input
+                          type={netShowPass ? 'text' : 'password'}
+                          value={netPassword} onChange={e => setNetPassword(e.target.value)}
+                          placeholder="Wi-Fi password"
+                          className="w-full px-3 py-2 pr-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setNetShowPass(p => !p)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text)]"
+                        >
+                          <KeyRound className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* IP mode toggle */}
+                <div>
+                  <p className="text-xs text-[var(--text-muted)] mb-2">IP Configuration</p>
+                  <div className="flex gap-2">
+                    {(['dhcp', 'static'] as IpMode[]).map(m => (
+                      <button key={m}
+                        onClick={() => setNetIpMode(m)}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                          netIpMode === m
+                            ? 'bg-[var(--blue)] border-[var(--blue)] text-white'
+                            : 'border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)]'
+                        }`}
+                      >
+                        {m === 'dhcp' ? 'DHCP' : 'Static'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Static IP fields */}
+                {netIpMode === 'static' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {([
+                      { label: 'IP Address',  val: netIp,      set: setNetIp },
+                      { label: 'Subnet Mask', val: netSubnet,  set: setNetSubnet },
+                      { label: 'Gateway',     val: netGateway, set: setNetGateway },
+                      { label: 'DNS Server',  val: netDns,     set: setNetDns },
+                    ] as { label: string; val: string; set: (v: string) => void }[]).map(({ label, val, set }) => (
+                      <div key={label}>
+                        <label className="block text-xs text-[var(--text-muted)] mb-1">{label}</label>
+                        <input
+                          value={val} onChange={e => set(e.target.value)}
+                          placeholder="0.0.0.0"
+                          className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Apply button */}
+                <div className="flex justify-end pt-1">
+                  <button
+                    disabled={netBusy || cmdDisabled}
+                    onClick={async () => {
+                      setNetBusy(true);
+                      try {
+                        // 1. Set IP mode
+                        const modeRes = await api.post(`/devices/${deviceId}/mdc-control`, {
+                          action: 'network_ip_mode_set',
+                          dhcp: netIpMode === 'dhcp',
+                        });
+                        const modeData = modeRes.data as { ok: boolean; error?: string };
+                        if (!modeData.ok) toast.warning(`IP mode: ${modeData.error ?? 'NAK'}`);
+
+                        // 2. If static, push IP config
+                        if (netIpMode === 'static') {
+                          const cfgRes = await api.post(`/devices/${deviceId}/mdc-control`, {
+                            action: 'network_config_set',
+                            ipAddress: netIp,
+                            subnetMask: netSubnet,
+                            gateway: netGateway,
+                            dns: netDns,
+                          });
+                          const cfgData = cfgRes.data as { ok: boolean; error?: string };
+                          if (!cfgData.ok) toast.warning(`IP config: ${cfgData.error ?? 'NAK'}`);
+                        }
+
+                        // 3. If Wi-Fi, push SSID + password
+                        if (resolvedConnectionType === 'wifi' && netSsid) {
+                          const wifiRes = await api.post(`/devices/${deviceId}/mdc-control`, {
+                            action: 'network_wifi_set',
+                            ssid: netSsid,
+                            password: netPassword,
+                          });
+                          const wifiData = wifiRes.data as { ok: boolean; error?: string };
+                          if (!wifiData.ok) {
+                            toast.warning(`Wi-Fi: ${wifiData.error ?? 'NAK'} — ensure panel has Wi-Fi adapter and is connected`);
+                          } else {
+                            toast.success('Wi-Fi credentials sent — device will connect to network');
+                          }
+                        } else {
+                          toast.success('Network config applied');
+                        }
+                        setNetLoaded(false); // force reload on next expand
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : 'Network config failed');
+                      } finally {
+                        setNetBusy(false);
+                      }
+                    }}
+                    className="px-4 py-2 rounded-lg bg-[var(--blue)] text-white text-xs font-medium hover:opacity-90 disabled:opacity-40 transition-opacity"
+                  >
+                    {netBusy ? 'Applying…' : 'Apply'}
+                  </button>
+                </div>
+
+              </div>
+            </SectionCardBody>
+          </SectionCard>
+          )}
+
+        </div>
+      )}
+
+      {/* ── Settings tab ────────────────────────────────────────────────── */}
+      {activeTab === 'settings' && (
+        <div className="space-y-6">
+
       {/* ── Settings ─────────────────────────────────────────────────────── */}
       <SectionCard>
         <SectionCardHeader>
@@ -1725,11 +2125,8 @@ export default function DeviceDetailPage() {
         <SectionCardBody>
           <form onSubmit={handleSubmit((d) => {
             updateDevice.mutate(d);
-            if (isOnline && ntpServer) {
-              sendCmd({ command: 'set_ntp', payload: { server: ntpServer, timezone: d.timezone ?? 'UTC' } });
-            }
             if (isOnline && d.name) {
-              sendCmd({ command: 'mdc_control', payload: { action: 'set_device_name', name: d.name.slice(0, 15) } });
+              void sendMdc({ action: 'set_device_name', name: d.name.slice(0, 15) });
             }
           })}
             className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1755,7 +2152,7 @@ export default function DeviceDetailPage() {
                     onChange={(e) => {
                       const v = Number(e.target.value);
                       setOptimisticStandby(v);
-                      sendCmd({ command: 'mdc_control', payload: { action: 'standby_set', value: v } });
+                      void sendMdc({ action: 'standby_set', value: v });
                     }}
                     disabled={cmdDisabled}
                     className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--text)] disabled:opacity-40"
@@ -1777,7 +2174,7 @@ export default function DeviceDetailPage() {
                     onChange={() => {
                       const next = !(optimisticNetStandby !== null ? optimisticNetStandby : device.mdcNetworkStandby === 1);
                       setOptimisticNetStandby(next);
-                      sendCmd({ command: 'mdc_control', payload: { action: 'network_standby_set', value: next ? 1 : 0 } });
+                      void sendMdc({ action: 'network_standby_set', value: next ? 1 : 0 });
                     }}
                     labelClassName="text-xs"
                   />
@@ -1794,7 +2191,7 @@ export default function DeviceDetailPage() {
                     onChange={() => {
                       const next = !(optimisticRemoteCtrl !== null ? optimisticRemoteCtrl : device.mdcRemoteControl === 1);
                       setOptimisticRemoteCtrl(next);
-                      sendCmd({ command: 'mdc_control', payload: { action: 'remote_control_set', value: next ? 1 : 0 } });
+                      void sendMdc({ action: 'remote_control_set', value: next ? 1 : 0 });
                     }}
                     labelClassName="text-xs"
                   />
@@ -1811,7 +2208,7 @@ export default function DeviceDetailPage() {
                     onChange={() => {
                       const next = !(optimisticSafetyLock !== null ? optimisticSafetyLock : device.mdcSafetyLock === 1);
                       setOptimisticSafetyLock(next);
-                      sendCmd({ command: 'mdc_control', payload: { action: 'safety_lock_set', value: next ? 1 : 0 } });
+                      void sendMdc({ action: 'safety_lock_set', value: next ? 1 : 0 });
                     }}
                     labelClassName="text-xs"
                   />
@@ -1840,7 +2237,7 @@ export default function DeviceDetailPage() {
                             onChange={() => {
                               const newBits = bits ^ (1 << i);
                               setOptimisticOsdBits(newBits);
-                              sendCmd({ command: 'mdc_control', payload: { action: 'osd_display_set', osdType: i, osdOnOff: (newBits >> i) & 1 } });
+                              void sendMdc({ action: 'osd_display_set', osdType: i, osdOnOff: (newBits >> i) & 1 });
                             }}
                             labelClassName="text-xs"
                           />
@@ -1862,7 +2259,7 @@ export default function DeviceDetailPage() {
                       onChange={() => {
                         const next = (optimisticMenuOrientation !== null ? optimisticMenuOrientation : (device.mdcMenuOrientation ?? 0)) === 3 ? 0 : 3;
                         setOptimisticMenuOrientation(next);
-                        sendCmd({ command: 'mdc_control', payload: { action: 'menu_orientation_set', value: next } });
+                        void sendMdc({ action: 'menu_orientation_set', value: next });
                       }}
                       labelClassName="text-xs"
                     />
@@ -1877,7 +2274,7 @@ export default function DeviceDetailPage() {
                       onChange={() => {
                         const next = (optimisticSrcOrientation !== null ? optimisticSrcOrientation : (device.mdcSrcOrientation ?? 0)) === 3 ? 0 : 3;
                         setOptimisticSrcOrientation(next);
-                        sendCmd({ command: 'mdc_control', payload: { action: 'src_orientation_set', value: next } });
+                        void sendMdc({ action: 'src_orientation_set', value: next });
                       }}
                       labelClassName="text-xs"
                     />
@@ -1892,31 +2289,57 @@ export default function DeviceDetailPage() {
 
             </div>
 
+            <div className="sm:col-span-2 flex justify-end">
+              <ActionButton type="submit" disabled={!isDirty || isSubmitting || updateDevice.isPending}
+                tone="primary" className="px-4 py-2 text-sm">
+                Save Changes
+              </ActionButton>
+            </div>
+
+          </form>
+        </SectionCardBody>
+      </SectionCard>
+
+      {/* ── NTP & Timezone ───────────────────────────────────────────────── */}
+      <SectionCard>
+        <SectionCardHeader>
+          <h2 className="text-sm font-semibold flex items-center gap-1.5 text-[var(--text)]">
+            <Clock className="w-3.5 h-3.5" />NTP &amp; Timezone
+          </h2>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5 flex items-center gap-1">
-                <Clock className="w-3 h-3" />NTP Server
-              </label>
+              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">NTP Server</label>
               <input value={ntpServer} onChange={(e) => setNtpServer(e.target.value)}
                 placeholder="pool.ntp.org"
                 className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]" />
               {device.ntpEnabled != null && (
                 <p className="mt-1.5 text-xs text-[var(--text-muted)]">
                   NTP{' '}<span className={device.ntpEnabled ? 'text-emerald-400' : 'text-[var(--text-muted)]'}>{device.ntpEnabled ? 'enabled' : 'disabled'}</span>
-                  {device.clockDriftMs != null && <span> &middot; Drift: {device.clockDriftMs} ms</span>}
+                  {(() => {
+                    const drift = hb?.clockDriftMs ?? device.clockDriftMs;
+                    if (drift == null) return null;
+                    const abs = Math.abs(drift);
+                    const color = abs > 200 ? 'text-red-400' : abs > 50 ? 'text-yellow-400' : 'text-emerald-400';
+                    return (
+                      <span> &middot; Drift: <span className={`font-mono ${color}`}>{drift > 0 ? '+' : ''}{drift} ms</span></span>
+                    );
+                  })()}
                 </p>
               )}
             </div>
             <div>
               <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Timezone</label>
               <TimezoneCombobox
-                value={watch('timezone') ?? ''}
-                onChange={(v) => setValue('timezone', v, { shouldDirty: true })}
+                value={ntpTimezone}
+                onChange={(v) => setNtpTimezone(v)}
               />
               {resolvedTimezone && (
                 <p className="mt-1.5 text-xs text-[var(--text-muted)]">
                   Detected on device: <span className="font-mono text-[var(--text)]">{resolvedTimezone}</span>
-                  {resolvedTimezone !== watch('timezone') && (
-                    <button type="button" onClick={() => setValue('timezone', resolvedTimezone, { shouldDirty: true })}
+                  {resolvedTimezone !== ntpTimezone && (
+                    <button type="button" onClick={() => setNtpTimezone(resolvedTimezone)}
                       className="ml-2 text-blue-400 underline hover:text-blue-300">
                       Use this
                     </button>
@@ -1924,15 +2347,40 @@ export default function DeviceDetailPage() {
                 </p>
               )}
             </div>
+            <div className="sm:col-span-2 flex justify-end">
+              <ActionButton
+                type="button"
+                tone="primary"
+                className="px-4 py-2 text-sm"
+                disabled={updateDevice.isPending}
+                onClick={() => {
+                  updateDevice.mutate({ timezone: ntpTimezone });
+                  if (isOnline && ntpServer) {
+                    sendCmd({ command: 'set_ntp', payload: { server: ntpServer, timezone: ntpTimezone } });
+                  }
+                }}
+              >
+                Save Changes
+              </ActionButton>
+            </div>
+          </div>
+        </SectionCardBody>
+      </SectionCard>
 
-            {/* ── On/Off Timers ────────────────────────────────────────── */}
-            <div className="sm:col-span-2 space-y-3">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wide flex items-center gap-1.5">
-                  <AlarmClock className="w-3 h-3" />On/Off Timers
-                </p>
-                <span className="text-xs text-[var(--text-muted)]">Controls when the display wakes and sleeps &middot; 12-hr format</span>
-              </div>
+        </div>
+      )}
+
+      {/* ── Timers tab ──────────────────────────────────────────────────── */}
+      {activeTab === 'timers' && (
+        <div className="space-y-6">
+          <SectionCard>
+            <SectionCardHeader>
+              <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
+                <AlarmClock className="w-3.5 h-3.5" />On/Off Timers
+              </h2>
+              <span className="text-xs text-[var(--text-muted)]">Controls when the display wakes and sleeps &middot; 12-hr format</span>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
 
               {/* Timer selector pills */}
               <div className="flex gap-1.5 flex-wrap">
@@ -2183,74 +2631,82 @@ export default function DeviceDetailPage() {
                   </div>
                 );
               })()}
-            </div>
+            </SectionCardBody>
+          </SectionCard>
+        </div>
+      )}
 
-            {/* Default playlist fallback */}
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">
-                Default Playlist <span className="font-normal">(shown when no schedule slot is active)</span>
-              </label>
-              <select {...register('defaultPlaylistId')}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]">
-                <option value="">— Use workspace default —</option>
-                {playlists.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-            {/* #25 Screenshot interval */}
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5 flex items-center gap-1">
-                <Camera className="w-3 h-3" />Auto-screenshot interval (min)
-              </label>
-              <input type="number" min={1} {...register('screenshotIntervalMin', { valueAsNumber: true })}
-                placeholder="60"
-                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]" />
-            </div>
-            {/* #26 Location */}
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5 flex items-center gap-1">
-                <MapPin className="w-3 h-3" />Location Label
-              </label>
-              <input {...register('locationLabel')} placeholder="e.g. Lobby Level 3"
-                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Latitude</label>
-              <input type="number" step="any" {...register('latitude', { valueAsNumber: true })}
-                placeholder="37.5665"
-                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Longitude</label>
-              <input type="number" step="any" {...register('longitude', { valueAsNumber: true })}
-                placeholder="126.9780"
-                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]" />
-            </div>
-            {device.latitude != null && device.longitude != null && (
-              <div className="sm:col-span-2 flex items-center gap-2 text-xs text-[var(--text-muted)]">
-                <MapPin className="w-3.5 h-3.5 shrink-0" />
-                <span className="font-mono">{device.latitude.toFixed(6)}, {device.longitude.toFixed(6)}</span>
-                {device.locationLabel && <span className="text-[var(--text)]">— {device.locationLabel}</span>}
-                <a href={`https://maps.google.com/?q=${device.latitude},${device.longitude}`}
-                  target="_blank" rel="noopener noreferrer" className="text-blue-400 underline ml-1">
-                  View map
-                </a>
+      {/* ── Tags tab ────────────────────────────────────────────────────── */}
+      {activeTab === 'tags' && (
+        <div className="space-y-6">
+          <SectionCard>
+            <SectionCardHeader>
+              <h2 className="text-sm font-semibold text-[var(--text)]">Tags</h2>
+            </SectionCardHeader>
+            <SectionCardBody>
+              <div className="max-w-md space-y-3">
+                <WorkspaceTagPicker workspaceId={wsId!} entityId={deviceId ?? null} entityType="device" />
               </div>
-            )}
-            <div className="sm:col-span-2 flex justify-end">
-              <ActionButton type="submit" disabled={!isDirty || isSubmitting || updateDevice.isPending}
-                tone="primary" className="px-4 py-2 text-sm">
-                Save Changes
-              </ActionButton>
-            </div>
+            </SectionCardBody>
+          </SectionCard>
+        </div>
+      )}
 
-            {/* Player App */}
-            <div className="sm:col-span-2 h-px bg-[var(--border)]" />
-            <div className="sm:col-span-2">
-              <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wide mb-3 flex items-center gap-1.5">
-                <Download className="w-3 h-3" />Player App
-              </p>
+      {/* ── Zone Layout tab ─────────────────────────────────────────────── */}
+      {activeTab === 'zones' && (
+        <div className="space-y-6">
+          <SectionCard>
+            <SectionCardHeader>
+              <h2 className="text-sm font-semibold text-[var(--text)]">Default Playlist</h2>
+              <span className="text-xs text-[var(--text-muted)]">shown when no schedule slot is active</span>
+            </SectionCardHeader>
+            <SectionCardBody>
+              <form onSubmit={handleSubmit((d) => { updateDevice.mutate(d); })} className="flex flex-col gap-3 max-w-md">
+                <select {...register('defaultPlaylistId')}
+                  className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]">
+                  <option value="">— Use workspace default —</option>
+                  {playlists.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                <div className="flex justify-end">
+                  <ActionButton type="submit" disabled={!isDirty || isSubmitting || updateDevice.isPending}
+                    tone="primary" className="px-4 py-2 text-sm">
+                    Save
+                  </ActionButton>
+                </div>
+              </form>
+            </SectionCardBody>
+          </SectionCard>
+
+          <SectionCard>
+            <SectionCardHeader>
+              <h2 className="text-sm font-semibold text-[var(--text)]">Zone Layout</h2>
+              <span className="text-xs text-[var(--text-muted)]">1920 × 1080 coordinate space</span>
+            </SectionCardHeader>
+            <SectionCardBody>
+              <ZoneLayoutEditor
+                initialZones={device.zones ?? []}
+                workspaceId={wsId ?? ''}
+                saving={saveZones.isPending}
+                onSave={(zones) => saveZones.mutate(zones)}
+              />
+            </SectionCardBody>
+          </SectionCard>
+        </div>
+      )}
+
+      {/* ── Update tab ──────────────────────────────────────────────────── */}
+      {activeTab === 'update' && (
+        <div className="space-y-6">
+
+          <SectionCard>
+            <SectionCardHeader>
+              <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
+                <Download className="w-3.5 h-3.5" />Player App
+              </h2>
+            </SectionCardHeader>
+            <SectionCardBody>
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-xs text-[var(--text-muted)]">Installed:</span>
                 <span className="font-mono text-xs text-[var(--text)]">{device.playerVersion ? `v${device.playerVersion}` : '—'}</span>
@@ -2273,143 +2729,118 @@ export default function DeviceDetailPage() {
                   </span>
                 )}
               </div>
-            </div>
+            </SectionCardBody>
+          </SectionCard>
 
-          </form>
-        </SectionCardBody>
-      </SectionCard>
+        </div>
+      )}
 
-      {/* ── Tags ─────────────────────────────────────────────────────────── */}
-      <SectionCard>
-        <SectionCardHeader>
-          <h2 className="text-sm font-semibold text-[var(--text)]">Tags</h2>
-        </SectionCardHeader>
-        <SectionCardBody>
-          <div className="max-w-md space-y-3">
-            <WorkspaceTagPicker workspaceId={wsId!} entityId={deviceId ?? null} entityType="device" />
-          </div>
-        </SectionCardBody>
-      </SectionCard>
+      {/* ── Logs tab ────────────────────────────────────────────────────── */}
+      {activeTab === 'logs' && (
+        <div className="space-y-6">
 
-      <SectionCard>
-        <SectionCardHeader>
-          <h2 className="text-sm font-semibold text-[var(--text)]">Zone Layout</h2>
-          <span className="text-xs text-[var(--text-muted)]">1920 × 1080 coordinate space</span>
-        </SectionCardHeader>
-        <SectionCardBody>
-          <ZoneLayoutEditor
-            initialZones={device.zones ?? []}
-            playlists={playlists}
-            saving={saveZones.isPending}
-            onSave={(zones) => saveZones.mutate(zones)}
-          />
-        </SectionCardBody>
-      </SectionCard>
+          <SectionCard>
+            <SectionCardHeader>
+              <div>
+                <h2 className="text-lg font-semibold text-[var(--text)]">Remote Console Logs</h2>
+                <p className="text-sm text-[var(--text-muted)]">Recent Tizen console output received from the device WebSocket</p>
+              </div>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <Badge tone={logData?.online ? 'success' : 'neutral'}>{logData?.online ? 'LIVE WS' : 'DEVICE OFFLINE'}</Badge>
+                <Badge tone="accent">{filteredLogs.length}{logFilter !== 'all' ? ` / ${logs.length}` : ''} lines</Badge>
+                {liveLogs && logData?.online && (
+                  <Badge tone="success">AUTO-DUMP ON</Badge>
+                )}
+                <span className="text-sm text-[var(--text-muted)]">Use Dump Logs to flush the device's local ring buffer, or enable Live to auto-flush every 8 s.</span>
+              </div>
 
-      {/* ── #24 Device Logs ──────────────────────────────────────────────── */}
-      <SectionCard>
-        <SectionCardHeader>
-          <div>
-            <h2 className="text-lg font-semibold text-[var(--text)]">Remote Console Logs</h2>
-            <p className="text-sm text-[var(--text-muted)]">Recent Tizen console output received from the device WebSocket</p>
-          </div>
-        </SectionCardHeader>
-        <SectionCardBody className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <Badge tone={logData?.online ? 'success' : 'neutral'}>{logData?.online ? 'LIVE WS' : 'DEVICE OFFLINE'}</Badge>
-            <Badge tone="accent">{filteredLogs.length}{logFilter !== 'all' ? ` / ${logs.length}` : ''} lines</Badge>
-            {liveLogs && logData?.online && (
-              <Badge tone="success">AUTO-DUMP ON</Badge>
-            )}
-            <span className="text-sm text-[var(--text-muted)]">Use Dump Logs to flush the device's local ring buffer, or enable Live to auto-flush every 8 s.</span>
-          </div>
+              <div className="flex flex-wrap items-center gap-3">
+                {(['all', 'debug', 'info', 'warn', 'error'] as const).map((level) => (
+                  <button
+                    key={level}
+                    onClick={() => setLogFilter(level)}
+                    className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                      logFilter === level
+                        ? level === 'error'  ? 'bg-red-500/20 border-red-500 text-red-400'
+                        : level === 'warn'   ? 'bg-amber-500/20 border-amber-500 text-amber-400'
+                        : level === 'info'   ? 'bg-blue-500/20 border-blue-500 text-blue-400'
+                        : level === 'debug'  ? 'bg-purple-500/20 border-purple-500 text-purple-400'
+                        : 'bg-[var(--surface-raised)] border-[var(--border-strong)] text-[var(--text)]'
+                        : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]'
+                    }`}
+                  >
+                    {level.toUpperCase()}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setAutoScroll((v) => !v)}
+                  className={`ml-auto px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                    autoScroll
+                      ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
+                      : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]'
+                  }`}
+                >
+                  Auto-scroll {autoScroll ? 'ON' : 'OFF'}
+                </button>
+              </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Level filter */}
-            {(['all', 'debug', 'info', 'warn', 'error'] as const).map((level) => (
-              <button
-                key={level}
-                onClick={() => setLogFilter(level)}
-                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                  logFilter === level
-                    ? level === 'error'  ? 'bg-red-500/20 border-red-500 text-red-400'
-                    : level === 'warn'   ? 'bg-amber-500/20 border-amber-500 text-amber-400'
-                    : level === 'info'   ? 'bg-blue-500/20 border-blue-500 text-blue-400'
-                    : level === 'debug'  ? 'bg-purple-500/20 border-purple-500 text-purple-400'
-                    : 'bg-[var(--surface-raised)] border-[var(--border-strong)] text-[var(--text)]'
-                    : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]'
-                }`}
-              >
-                {level.toUpperCase()}
-              </button>
-            ))}
+              <div className="flex flex-wrap gap-3">
+                <ActionButton onClick={downloadLogs} disabled={!filteredLogs.length}>
+                  <Download className="w-4 h-4" /> Download
+                </ActionButton>
+                <ActionButton
+                  disabled={cmdDisabled}
+                  {...(liveLogs ? { tone: 'primary' as const } : {})}
+                  onClick={() => setLiveLogs((v) => !v)}
+                >
+                  {liveLogs ? '⏹ Stop Live' : '▶ Live'}
+                </ActionButton>
+                <ActionButton disabled={cmdDisabled} onClick={() => sendCmd({ command: 'dump_logs' })}>
+                  <FileText className="w-4 h-4" /> Request Log Dump
+                </ActionButton>
+                <ActionButton tone="danger" onClick={() => clearLogs.mutate()} disabled={!logs.length || clearLogs.isPending}>
+                  <Trash2 className="w-4 h-4" /> Clear
+                </ActionButton>
+              </div>
 
-            {/* Auto-scroll toggle */}
-            <button
-              onClick={() => setAutoScroll((v) => !v)}
-              className={`ml-auto px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                autoScroll
-                  ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
-                  : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]'
-              }`}
-            >
-              Auto-scroll {autoScroll ? 'ON' : 'OFF'}
-            </button>
-          </div>
+              <textarea
+                ref={logAreaRef}
+                value={logText}
+                readOnly
+                onScroll={handleLogScroll}
+                className="min-h-[420px] w-full rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 font-mono text-xs leading-6 text-[var(--text)]"
+                placeholder="No remote logs received yet. If the device is online, send Dump Logs first."
+              />
+            </SectionCardBody>
+          </SectionCard>
 
-          <div className="flex flex-wrap gap-3">
-            <ActionButton onClick={downloadLogs} disabled={!filteredLogs.length}>
-              <Download className="w-4 h-4" /> Download
-            </ActionButton>
-            <ActionButton
-              disabled={cmdDisabled}
-              {...(liveLogs ? { tone: 'primary' as const } : {})}
-              onClick={() => setLiveLogs((v) => !v)}
-            >
-              {liveLogs ? '⏹ Stop Live' : '▶ Live'}
-            </ActionButton>
-            <ActionButton disabled={cmdDisabled} onClick={() => sendCmd({ command: 'dump_logs' })}>
-              <FileText className="w-4 h-4" /> Request Log Dump
-            </ActionButton>
-            <ActionButton tone="danger" onClick={() => clearLogs.mutate()} disabled={!logs.length || clearLogs.isPending}>
-              <Trash2 className="w-4 h-4" /> Clear
-            </ActionButton>
-          </div>
-
-          <textarea
-            ref={logAreaRef}
-            value={logText}
-            readOnly
-            onScroll={handleLogScroll}
-            className="min-h-[420px] w-full rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 font-mono text-xs leading-6 text-[var(--text)]"
-            placeholder="No remote logs received yet. If the device is online, send Dump Logs first."
-          />
-        </SectionCardBody>
-      </SectionCard>
-
-      {/* ── Screenshot gallery ───────────────────────────────────────────── */}
-      {screenshots.length > 0 && (
-        <SectionCard>
-          <SectionCardHeader>
-            <h2 className="text-sm font-semibold text-[var(--text)]">
-              Screenshots <span className="text-[var(--text-muted)] font-normal">({screenshots.length})</span>
-            </h2>
-          </SectionCardHeader>
-          <SectionCardBody>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {screenshots.map((s) => (
-                <div key={s.id} className="aspect-video rounded-lg bg-[var(--surface)] border border-[var(--border)] overflow-hidden relative group">
-                  <img src={`/api/devices/${device.id}/screenshots/${s.id}`} alt={`Screenshot ${s.takenAt}`}
-                    className="w-full h-full object-cover" loading="lazy"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                  <div className="absolute inset-0 flex items-end justify-start p-1.5 bg-gradient-to-t from-black/60 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <span className="text-white text-[10px]">{new Date(s.takenAt).toLocaleString()}</span>
-                  </div>
+          {screenshots.length > 0 && (
+            <SectionCard>
+              <SectionCardHeader>
+                <h2 className="text-sm font-semibold text-[var(--text)]">
+                  Screenshots <span className="text-[var(--text-muted)] font-normal">({screenshots.length})</span>
+                </h2>
+              </SectionCardHeader>
+              <SectionCardBody>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {screenshots.map((s) => (
+                    <div key={s.id} className="aspect-video rounded-lg bg-[var(--surface)] border border-[var(--border)] overflow-hidden relative group">
+                      <img src={`/api/devices/${device.id}/screenshots/${s.id}`} alt={`Screenshot ${s.takenAt}`}
+                        className="w-full h-full object-cover" loading="lazy"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      <div className="absolute inset-0 flex items-end justify-start p-1.5 bg-gradient-to-t from-black/60 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span className="text-white text-[10px]">{new Date(s.takenAt).toLocaleString()}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </SectionCardBody>
-        </SectionCard>
+              </SectionCardBody>
+            </SectionCard>
+          )}
+
+        </div>
       )}
 
       {replaceOpen && (
@@ -2455,6 +2886,7 @@ export default function DeviceDetailPage() {
         <LiveViewOverlay
           deviceId={deviceId}
           isOnline={isOnline}
+          deviceInfo={{ name: device.name, modelName: device.modelName, ipAddress: device.ipAddress, serialNumber: device.serialNumber }}
           onClose={() => setLiveViewOpen(false)}
           onPowerChange={setOptimisticPowerState}
         />

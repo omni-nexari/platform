@@ -84,10 +84,19 @@ export const ClaimDeviceSchema = z.object({
 });
 export type ClaimDeviceInput = z.infer<typeof ClaimDeviceSchema>;
 
+export const ZoneSourceSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('playlist'), playlistId: z.string().uuid(), playlistName: z.string().optional() }),
+  z.object({ type: z.literal('content'), contentId: z.string().uuid(), contentName: z.string().optional(), contentType: z.string().optional() }),
+  z.object({ type: z.literal('empty') }),
+]);
+export type ZoneSource = z.infer<typeof ZoneSourceSchema>;
+
 const ZoneConfigSchema = z.object({
   id: z.string(),
   rect: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }),
-  playlistId: z.string().uuid().optional().nullable(),
+  label: z.string().nullable().optional(),
+  playlistId: z.string().uuid().optional().nullable(), // backward compat
+  source: ZoneSourceSchema.optional().nullable(),
 });
 
 export const UpdateDeviceSchema = z.object({
@@ -313,7 +322,7 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
       rawHex: z.string().optional(),
       data: z.array(z.number().int()).optional(),
       error: z.string().optional(),
-    }),
+    }).passthrough(),
   }),
   z.object({
     type: z.literal('tizen_probe_result'),
