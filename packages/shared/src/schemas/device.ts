@@ -97,6 +97,8 @@ const ZoneConfigSchema = z.object({
   label: z.string().nullable().optional(),
   playlistId: z.string().uuid().optional().nullable(), // backward compat
   source: ZoneSourceSchema.optional().nullable(),
+  syncGroup: z.string().nullable().optional(),
+  fitMode: z.enum(['fill', 'contain']).optional().nullable(), // 'fill' = stretch to zone, 'contain' = letterbox (default)
 });
 
 export const UpdateDeviceSchema = z.object({

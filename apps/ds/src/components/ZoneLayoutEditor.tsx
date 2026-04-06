@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { LayoutGrid, Plus, Trash2, Film, Image, ListVideo, X } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { LayoutGrid, Plus, Trash2, Film, Image, ListVideo, X, Clock } from 'lucide-react';
+import AuthImg from './AuthImg.js';
 import { ActionButton } from './UiPrimitives.js';
 import ContentPickerModal, { type PickedItem } from './ContentPickerModal.js';
+import { api } from '../lib/api.js';
 
 export type ZoneSource =
-  | { type: 'playlist'; playlistId: string; playlistName?: string }
-  | { type: 'content'; contentId: string; contentName?: string; contentType?: string }
+  | { type: 'playlist'; playlistId: string; playlistName?: string; sourceDuration?: number | null }
+  | { type: 'content'; contentId: string; contentName?: string; contentType?: string; sourceDuration?: number | null }
   | { type: 'empty' };
 
 export interface ZoneConfig {
@@ -14,6 +17,8 @@ export interface ZoneConfig {
   label?: string | null;
   playlistId?: string | null; // backward compat
   source?: ZoneSource | null;
+  syncGroup?: string | null; // intra-device sync group label (e.g. 'A', 'B')
+  fitMode?: 'fill' | 'contain' | null; // fill = stretch to zone, contain = letterbox (default)
 }
 
 interface Props {
@@ -36,6 +41,17 @@ const CANVAS_H = 360;
 const DEVICE_W = 1920;
 const DEVICE_H = 1080;
 const MAX_ZONES = 8;
+
+const SYNC_GROUPS = [
+  { id: 'A', label: 'A', color: '#3b82f6', bg: 'rgba(59,130,246,0.15)' },
+  { id: 'B', label: 'B', color: '#22c55e', bg: 'rgba(34,197,94,0.15)' },
+  { id: 'C', label: 'C', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
+  { id: 'D', label: 'D', color: '#a855f7', bg: 'rgba(168,85,247,0.15)' },
+] as const;
+
+function syncGroupMeta(groupId?: string | null) {
+  return SYNC_GROUPS.find((g) => g.id === groupId) ?? null;
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -66,7 +82,76 @@ function sourceLabel(zone: ZoneConfig): string {
   return 'No source';
 }
 
-function SourceIcon({ source }: { source?: ZoneSource | null }) {
+function fmtDur(sec: number | null | undefined): string {
+  if (sec == null) return '–';
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s > 0 ? `${m}m ${s.toFixed(0)}s` : `${m}m`;
+}
+
+interface PlaylistItemRow {
+  id: string;
+  position: number;
+  duration: number | null;
+  content: { id: string; name: string; type: string; duration: number | null } | null;
+  nestedPlaylist: { id: string; name: string; totalDuration: number } | null;
+}
+interface PlaylistDetailResponse {
+  id: string;
+  name: string;
+  totalDuration: number;
+  items: PlaylistItemRow[];
+}
+
+function PlaylistZoneDetail({ playlistId }: { playlistId: string }) {
+  const { data, isLoading } = useQuery<PlaylistDetailResponse>({
+    queryKey: ['playlist-detail-zone', playlistId],
+    queryFn: () => api.get(`/playlists/${playlistId}`),
+    enabled: !!playlistId,
+  });
+
+  if (isLoading) {
+    return <p className="text-[10px] text-[var(--text-muted)] animate-pulse mt-1.5">Loading items…</p>;
+  }
+  if (!data) return null;
+
+  const items = data.items ?? [];
+  const total = items.reduce((acc, item) => acc + (item.duration ?? item.content?.duration ?? 0), 0);
+
+  return (
+    <div className="mt-2 rounded-lg border border-[var(--border)] overflow-hidden">
+      {items.length === 0 ? (
+        <p className="px-2 py-2 text-[10px] text-[var(--text-muted)]">No items in playlist</p>
+      ) : (
+        <>
+          {items.map((item, i) => {
+            const name = item.content?.name ?? item.nestedPlaylist?.name ?? `Item ${i + 1}`;
+            const dur = item.duration ?? item.content?.duration ?? null;
+            return (
+              <div
+                key={item.id}
+                className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-[10px] border-b border-[var(--border)] last:border-b-0 bg-[var(--surface)]"
+              >
+                <span className="text-[var(--text-muted)] shrink-0 font-mono w-4">{i + 1}.</span>
+                <span className="flex-1 truncate text-[var(--text)]">{name}</span>
+                <span className="shrink-0 text-[var(--text-muted)] font-mono tabular-nums">{fmtDur(dur)}</span>
+              </div>
+            );
+          })}
+          <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-[10px] font-semibold bg-[var(--surface-raised)]">
+            <span className="flex items-center gap-1 text-[var(--text)]">
+              <Clock className="w-3 h-3" /> Total
+            </span>
+            <span className="font-mono tabular-nums text-[var(--text)]">{fmtDur(total)}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SourceIcon({ source }: { source?: ZoneSource | null | undefined }) {
   if (source?.type === 'playlist') return <ListVideo className="w-3.5 h-3.5 shrink-0" />;
   if (source?.type === 'content') {
     const t = source.contentType?.toUpperCase() ?? '';
@@ -153,8 +238,8 @@ export default function ZoneLayoutEditor({ initialZones, workspaceId, saving, on
     if (!item || !pickerZoneId) return;
     const source: ZoneSource =
       item.type === 'playlist'
-        ? { type: 'playlist', playlistId: item.id, playlistName: item.name }
-        : { type: 'content', contentId: item.id, contentName: item.name };
+        ? { type: 'playlist', playlistId: item.id, playlistName: item.name, sourceDuration: item.duration ?? null }
+        : { type: 'content', contentId: item.id, contentName: item.name, contentType: item.contentType, sourceDuration: item.duration ?? null };
     setZones((prev) =>
       prev.map((zone) =>
         zone.id === pickerZoneId
@@ -162,7 +247,7 @@ export default function ZoneLayoutEditor({ initialZones, workspaceId, saving, on
               ...zone,
               source,
               // keep backward-compat playlistId in sync
-              playlistId: source.type === 'playlist' ? source.playlistId : zone.playlistId,
+              playlistId: source.type === 'playlist' ? source.playlistId : (zone.playlistId ?? null),
             }
           : zone,
       ),
@@ -172,7 +257,7 @@ export default function ZoneLayoutEditor({ initialZones, workspaceId, saving, on
 
   function clearZoneSource(zoneId: string) {
     setZones((prev) =>
-      prev.map((zone) =>
+      prev.map((zone): ZoneConfig =>
         zone.id === zoneId ? { ...zone, source: null, playlistId: null } : zone,
       ),
     );
@@ -223,11 +308,35 @@ export default function ZoneLayoutEditor({ initialZones, workspaceId, saving, on
                   top,
                   width,
                   height,
-                  borderColor: 'rgba(96,165,250,0.9)',
-                  background: 'rgba(59,130,246,0.18)',
+                  borderColor: syncGroupMeta(zone.syncGroup)?.color ?? 'rgba(96,165,250,0.9)',
                   boxShadow: '0 10px 25px rgba(0,0,0,0.25)',
+                  overflow: 'hidden',
+                  background: 'transparent',
                 }}
               >
+                {/* Content thumbnail fill */}
+                {zone.source?.type === 'content' && zone.source.contentId ? (
+                  <div className="absolute inset-0 rounded-xl overflow-hidden">
+                    <AuthImg
+                      itemId={zone.source.contentId}
+                      alt={zone.source.contentName ?? ''}
+                      className="w-full h-full object-cover"
+                      fallback={
+                        <div className="w-full h-full flex items-center justify-center" style={{ background: syncGroupMeta(zone.syncGroup)?.bg ?? 'rgba(59,130,246,0.18)' }}>
+                          <Image className="w-5 h-5 text-white/40" />
+                        </div>
+                      }
+                    />
+                    <div className="absolute inset-0 rounded-xl" style={{ border: `2px solid ${syncGroupMeta(zone.syncGroup)?.color ?? 'rgba(96,165,250,0.9)'}` }} />
+                  </div>
+                ) : zone.source?.type === 'playlist' ? (
+                  <div className="absolute inset-0 rounded-xl flex flex-col items-center justify-center gap-1" style={{ background: syncGroupMeta(zone.syncGroup)?.bg ?? 'rgba(59,130,246,0.18)', border: `2px solid ${syncGroupMeta(zone.syncGroup)?.color ?? 'rgba(96,165,250,0.9)'}` }}>
+                    <ListVideo className="w-5 h-5 text-white/60" />
+                    <span className="text-[9px] text-white/70 text-center px-2 truncate max-w-full">{zone.source.playlistName ?? 'Playlist'}</span>
+                  </div>
+                ) : (
+                  <div className="absolute inset-0 rounded-xl" style={{ background: syncGroupMeta(zone.syncGroup)?.bg ?? 'rgba(59,130,246,0.18)', border: `2px solid ${syncGroupMeta(zone.syncGroup)?.color ?? 'rgba(96,165,250,0.9)'}` }} />
+                )}
                 <button
                   onMouseDown={(e) => {
                     e.preventDefault();
@@ -235,8 +344,16 @@ export default function ZoneLayoutEditor({ initialZones, workspaceId, saving, on
                   }}
                   className="absolute inset-0 text-left p-3"
                 >
-                  <span className="inline-flex px-2 py-1 rounded-full text-[10px] font-semibold text-white bg-black/35">
+                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold text-white bg-black/50">
                     Zone {index + 1}
+                    {zone.syncGroup && (
+                      <span
+                        className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-[8px] font-bold text-white"
+                        style={{ background: syncGroupMeta(zone.syncGroup)?.color ?? '#666' }}
+                      >
+                        {zone.syncGroup}
+                      </span>
+                    )}
                   </span>
                 </button>
                 <button
@@ -275,6 +392,11 @@ export default function ZoneLayoutEditor({ initialZones, workspaceId, saving, on
                     <span className={`truncate ${zone.source && zone.source.type !== 'empty' ? 'text-[var(--text)]' : 'text-[var(--text-muted)]'}`}>
                       {sourceLabel(zone)}
                     </span>
+                    {zone.source?.type === 'content' && zone.source.sourceDuration != null && (
+                      <span className="shrink-0 ml-auto flex items-center gap-0.5 text-xs text-[var(--text-muted)] font-mono tabular-nums">
+                        <Clock className="w-3 h-3" />{fmtDur(zone.source.sourceDuration)}
+                      </span>
+                    )}
                   </div>
                   <ActionButton
                     onClick={() => setPickerZoneId(zone.id)}
@@ -291,6 +413,95 @@ export default function ZoneLayoutEditor({ initialZones, workspaceId, saving, on
                     >
                       <X className="w-4 h-4" />
                     </button>
+                  )}
+                </div>
+                {zone.source?.type === 'playlist' && (
+                  <PlaylistZoneDetail playlistId={zone.source.playlistId} />
+                )}
+              </div>
+
+              {/* Fill mode toggle */}
+              <div className="flex items-center gap-2">
+                <button
+                  role="checkbox"
+                  aria-checked={zone.fitMode === 'fill'}
+                  onClick={() =>
+                    setZones((prev) =>
+                      prev.map((item) =>
+                        item.id === zone.id
+                          ? { ...item, fitMode: item.fitMode === 'fill' ? 'contain' : 'fill' }
+                          : item,
+                      ),
+                    )
+                  }
+                  className={`w-4 h-4 rounded border-2 shrink-0 transition-colors ${
+                    zone.fitMode === 'fill'
+                      ? 'bg-[var(--blue)] border-[var(--blue)]'
+                      : 'bg-transparent border-[var(--border)]'
+                  }`}
+                  style={{ position: 'relative' }}
+                >
+                  {zone.fitMode === 'fill' && (
+                    <svg viewBox="0 0 10 8" className="absolute inset-0 w-full h-full p-0.5" fill="none">
+                      <polyline points="1,4 4,7 9,1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </button>
+                <span className="text-xs text-[var(--text-muted)]">
+                  Fill zone
+                  <span className="ml-1 text-[var(--text-muted)] opacity-60">
+                    {zone.fitMode === 'fill' ? '(stretch to fill entire zone)' : '(letterbox / contain, default)'}
+                  </span>
+                </span>
+              </div>
+
+              {/* Sync Group selector */}
+              <div>
+                <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Sync Group</label>
+                <div className="flex items-center gap-2">
+                  {SYNC_GROUPS.map((sg) => {
+                    const active = zone.syncGroup === sg.id;
+                    // count how many OTHER zones share this sync group
+                    const peers = zones.filter((z) => z.id !== zone.id && z.syncGroup === sg.id).length;
+                    return (
+                      <button
+                        key={sg.id}
+                        onClick={() =>
+                          setZones((prev) =>
+                            prev.map((item) =>
+                              item.id === zone.id
+                                ? { ...item, syncGroup: active ? null : sg.id }
+                                : item,
+                            ),
+                          )
+                        }
+                        className="relative w-8 h-8 rounded-lg text-xs font-bold transition-all"
+                        style={{
+                          borderWidth: 2,
+                          borderStyle: 'solid',
+                          borderColor: active ? sg.color : 'var(--border)',
+                          background: active ? sg.bg : 'transparent',
+                          color: active ? sg.color : 'var(--text-muted)',
+                          opacity: active ? 1 : 0.6,
+                        }}
+                        title={`Sync group ${sg.label}${peers > 0 ? ` (${peers} other zone${peers > 1 ? 's' : ''})` : ''}`}
+                      >
+                        {sg.label}
+                        {active && peers > 0 && (
+                          <span
+                            className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full text-[9px] font-bold flex items-center justify-center text-white"
+                            style={{ background: sg.color }}
+                          >
+                            {peers + 1}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                  {zone.syncGroup && (
+                    <span className="text-[10px] text-[var(--text-muted)] ml-1">
+                      Synced with {zones.filter((z) => z.id !== zone.id && z.syncGroup === zone.syncGroup).map((z, i) => `Zone ${zones.indexOf(z) + 1}`).join(', ') || 'none yet'}
+                    </span>
                   )}
                 </div>
               </div>

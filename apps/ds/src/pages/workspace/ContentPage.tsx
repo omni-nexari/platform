@@ -6,6 +6,7 @@ import {
   Plus, Grid3X3, Grid2X2, List, Image, Video,
   Globe, Code2, FileText, Presentation, Clock, Trash2,
   MoreVertical, Film, AlertTriangle, Check, Paintbrush, Monitor,
+  LayoutGrid, ListVideo,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import UploadModal from '../../components/UploadModal.js';
@@ -43,6 +44,7 @@ interface ContentItem {
   folderId?: string | null;
   playlistCount?: number;
   scheduleCount?: number;
+  metadata?: string | null;
 }
 
 interface ContentFolder {
@@ -61,7 +63,7 @@ interface ContentList {
 // ── Constants ─────────────────────────────────────────────────────────────────
 type FilterType = 'all' | ContentItem['type'];
 type ViewMode = 'grid-lg' | 'grid-sm' | 'list';
-type KnownContentType = 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url';
+type KnownContentType = 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout';
 
 const TYPE_FILTERS: { id: FilterType; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -71,6 +73,7 @@ const TYPE_FILTERS: { id: FilterType; label: string }[] = [
   { id: 'web_url', label: 'Web URL' },
   { id: 'pdf', label: 'PDF' },
   { id: 'presentation', label: 'PPTX' },
+  { id: 'zone_layout', label: 'Zone Layout' },
 ];
 
 const TYPE_META: Record<KnownContentType, { label: string; color: string; icon: React.ReactNode }> = {
@@ -80,6 +83,7 @@ const TYPE_META: Record<KnownContentType, { label: string; color: string; icon: 
   pdf: { label: 'PDF', color: 'bg-red-500/80', icon: <FileText size={10} /> },
   presentation: { label: 'PPTX', color: 'bg-orange-500/80', icon: <Presentation size={10} /> },
   web_url: { label: 'Web URL', color: 'bg-emerald-500/80', icon: <Globe size={10} /> },
+  zone_layout: { label: 'Zone Layout', color: 'bg-teal-500/80', icon: <LayoutGrid size={10} /> },
 };
 
 const UNKNOWN_TYPE_META = {
@@ -94,6 +98,98 @@ function getTypeMeta(type: string) {
 
 const attemptedThumbnailRegenerationIds = new Set<string>();
 const missingThumbnailSourceIds = new Set<string>();
+
+// ── Zone Layout Preview ───────────────────────────────────────────────────────
+const DEVICE_W = 1920;
+const DEVICE_H = 1080;
+const DEFAULT_IMAGE_SECS = 10;
+
+type ZoneMeta = {
+  id: string;
+  rect: { x: number; y: number; width: number; height: number };
+  source?: { type: string; contentId?: string; contentName?: string; contentType?: string; playlistId?: string; playlistName?: string; sourceDuration?: number | null } | null;
+};
+
+function parseZones(metadata?: string | null): ZoneMeta[] {
+  try { return JSON.parse(metadata ?? '{}').zones ?? []; } catch { return []; }
+}
+
+function computeZoneDuration(zones: ZoneMeta[]): number | null {
+  let max: number | null = null;
+  for (const z of zones) {
+    const src = z.source;
+    if (!src || src.type === 'empty') continue;
+    let d: number | null = src.sourceDuration ?? null;
+    if (d == null && src.type === 'content') {
+      const t = (src.contentType ?? '').toLowerCase();
+      if (t === 'image') d = DEFAULT_IMAGE_SECS;
+    }
+    if (d != null && (max == null || d > max)) max = d;
+  }
+  return max;
+}
+
+function ZoneLayoutPreview({ item, large = false }: { item: ContentItem; large?: boolean }) {
+  const size = large ? 'h-40' : 'h-28';
+  const zones = parseZones(item.metadata);
+  const autoDur = computeZoneDuration(zones);
+  const displayDur = item.duration ?? autoDur;
+
+  if (zones.length === 0) {
+    return (
+      <div className={`ui-media-frame w-full ${size} flex items-center justify-center rounded-t-[0.95rem]`}>
+        <LayoutGrid size={28} className="text-teal-400" />
+      </div>
+    );
+  }
+  return (
+    <div className={`ui-media-frame w-full ${size} relative rounded-t-[0.95rem] bg-[#0d1117]`}>
+      <div className="absolute inset-0 overflow-hidden rounded-t-[0.95rem]">
+        {zones.map((zone) => {
+          const left   = `${(zone.rect.x / DEVICE_W) * 100}%`;
+          const top    = `${(zone.rect.y / DEVICE_H) * 100}%`;
+          const width  = `${(zone.rect.width / DEVICE_W) * 100}%`;
+          const height = `${(zone.rect.height / DEVICE_H) * 100}%`;
+          const isContent = zone.source?.type === 'content' && zone.source.contentId;
+          const isPlaylist = zone.source?.type === 'playlist';
+          const label = isContent
+            ? (zone.source?.contentName ?? '')
+            : isPlaylist ? (zone.source?.playlistName ?? 'Playlist') : 'Empty';
+
+          return (
+            <div
+              key={zone.id}
+              className="absolute overflow-hidden"
+              style={{ left, top, width, height, border: '1px solid rgba(255,255,255,0.08)' }}
+            >
+              {isContent && zone.source?.contentId ? (
+                <AuthImg
+                  itemId={zone.source.contentId}
+                  alt={label}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center gap-0.5 bg-[#1a2234]">
+                  {isPlaylist
+                    ? <ListVideo size={10} className="text-sky-400 shrink-0" />
+                    : <LayoutGrid size={10} className="text-slate-500 shrink-0" />}
+                  <span className="text-[7px] leading-tight text-slate-400 text-center px-0.5 truncate max-w-full">{label}</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {displayDur != null && (
+        <div className="ui-media-badge absolute bottom-2 right-2 z-20">
+          <Clock size={9} />
+          {formatDuration(displayDur)}
+          {item.duration == null && <span className="opacity-60 ml-0.5">auto</span>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function formatDuration(s: number) {
   if (s < 60) return `${s.toFixed(1)} s`;
@@ -121,6 +217,8 @@ function ContentStatusBadge({ status, className }: { status: string; className?:
 
 // ── Thumbnail ─────────────────────────────────────────────────────────────────
 function Thumb({ item, large = false }: { item: ContentItem; large?: boolean }) {
+  if (item.type === 'zone_layout') return <ZoneLayoutPreview item={item} large={large} />;
+
   const [imgFailed, setImgFailed] = useState(false);
   const [thumbRev, setThumbRev] = useState(0);
   const [regenerating, setRegenerating] = useState(false);
@@ -146,6 +244,7 @@ function Thumb({ item, large = false }: { item: ContentItem; large?: boolean }) 
     if (item.type === 'pdf') return <FileText size={28} className="text-red-400" />;
     if (item.type === 'presentation') return <Presentation size={28} className="text-orange-400" />;
     if (item.type === 'web_url') return <Globe size={28} className="text-emerald-400" />;
+    if (item.type === 'zone_layout') return null; // handled by ZoneLayoutPreview
     return <span className="text-slate-300">{iconMeta.icon}</span>;
   };
 
@@ -253,7 +352,7 @@ function GridCard({
         </div>
       )}
 
-      {/* Duration overlay (video) */}
+      {/* Duration overlay (video only — zone_layout renders its own inside ZoneLayoutPreview) */}
       {item.duration != null && item.type === 'video' && (
         <div className="ui-media-badge absolute bottom-2 right-2 z-20">
           <Clock size={9} />
@@ -289,9 +388,42 @@ function GridCard({
           <p className="ui-entity-card-title text-xs truncate flex-1" title={item.name}>{item.name}</p>
           <ContentStatusBadge status={item.status} className="shrink-0 text-[9px]" />
         </div>
-        <div className="ui-entity-card-meta mt-1 justify-between">
-          <p className="text-[10px] text-[var(--text-muted)]">{formatSize(item.fileSize)}</p>
-        </div>
+        {item.type === 'zone_layout' ? (() => {
+          const zones = parseZones(item.metadata);
+          const autoDur = computeZoneDuration(zones);
+          const displayDur = item.duration ?? autoDur;
+          return (
+            <div className="mt-1 space-y-0.5">
+              {zones.slice(0, 4).map((z, i) => {
+                const src = z.source;
+                const name = src?.playlistName ?? src?.contentName ?? (src?.type === 'playlist' ? 'Playlist' : 'Empty');
+                const dur = src?.sourceDuration ?? (src?.contentType === 'image' ? DEFAULT_IMAGE_SECS : null);
+                const isDoc = src?.contentType != null && ['pdf', 'presentation', 'html5'].includes(src.contentType);
+                return (
+                  <div key={z.id} className="flex items-center justify-between gap-1">
+                    <span className="text-[9px] text-[var(--text-muted)] truncate">Z{i + 1}: {name}</span>
+                    <span className="text-[9px] text-[var(--text-muted)] shrink-0">
+                      {dur != null ? formatDuration(dur) : isDoc ? '—' : ''}
+                    </span>
+                  </div>
+                );
+              })}
+              {zones.length > 4 && <span className="text-[9px] text-[var(--text-muted)]">+{zones.length - 4} more</span>}
+              <div className="flex items-center gap-1 pt-0.5 border-t border-[var(--border)]">
+                <Clock size={8} className="text-[var(--text-muted)]" />
+                {displayDur != null
+                  ? <><span className="text-[9px] font-semibold text-[var(--text)]">{formatDuration(displayDur)}</span>
+                      {item.duration == null && <span className="text-[9px] text-[var(--text-muted)]">auto</span>}</>
+                  : <span className="text-[9px] text-[var(--text-muted)] italic">re-save to calc</span>
+                }
+              </div>
+            </div>
+          );
+        })() : (
+          <div className="ui-entity-card-meta mt-1 justify-between">
+            <p className="text-[10px] text-[var(--text-muted)]">{formatSize(item.fileSize)}</p>
+          </div>
+        )}
         <div className="mt-2">
           <AssignedTagPills tags={item.assignedTags} />
         </div>
@@ -570,6 +702,10 @@ export default function ContentPage() {
             <button onClick={() => navigate(`/workspaces/${wsId}/canvas/new`)} className="workspace-page-action !bg-violet-600 hover:!bg-violet-500">
               <Paintbrush size={16} />
               Create Design
+            </button>
+            <button onClick={() => navigate(`/workspaces/${wsId}/zone-layout/new`)} className="workspace-page-action !bg-teal-600 hover:!bg-teal-500">
+              <LayoutGrid size={16} />
+              Create Zone Layout
             </button>
             <button onClick={() => setUploadOpen(true)} className="workspace-page-action">
               <Plus size={16} />

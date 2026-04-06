@@ -57,7 +57,7 @@ import {
 } from 'lucide-react';
 import { formatDistanceToNow } from '../utils/time.js';
 import WorkspaceTagPicker from '../../components/WorkspaceTagPicker.js';
-import ZoneLayoutEditor, { type ZoneConfig } from '../../components/ZoneLayoutEditor.js';
+
 import {
   ActionButton,
   Badge,
@@ -174,7 +174,7 @@ interface Device {
   // Config
   screenshotIntervalMin: number | null;
   defaultPlaylistId: string | null;
-  zones: ZoneConfig[] | null;
+  zones: any[] | null;
   publishedTarget: {
     id: string;
     type: 'content' | 'playlist' | 'schedule';
@@ -833,7 +833,7 @@ export default function DeviceDetailPage() {
   const [urlLauncherBusy, setUrlLauncherBusy] = useState(false);
   const [selectedTimerSlot, setSelectedTimerSlot] = useState(1);
   const [timerSlots, setTimerSlots] = useState<Record<number, TimerSlotState>>({});
-  const [activeTab, setActiveTab] = useState<'info' | 'power' | 'network' | 'settings' | 'timers' | 'tags' | 'zones' | 'update' | 'logs'>('info');
+  const [activeTab, setActiveTab] = useState<'info' | 'power' | 'network' | 'settings' | 'timers' | 'tags' | 'update' | 'logs'>('info');
 
   // ── Network config state ────────────────────────────────────────────
   type IpMode   = 'dhcp'     | 'static';
@@ -1143,21 +1143,6 @@ export default function DeviceDetailPage() {
     staleTime: 60_000,
   });
 
-  const saveZones = useMutation({
-    mutationFn: async (zones: ZoneConfig[]) => {
-      await api.patch(`/devices/${deviceId}`, { zones });
-      if (isOnline) {
-        await api.post(`/devices/${deviceId}/command`, { command: 'set_zones', payload: { zones } });
-      }
-    },
-    onSuccess: () => {
-      toast.success(isOnline ? 'Zones saved and pushed to device' : 'Zones saved');
-      void queryClient.invalidateQueries({ queryKey: ['device', deviceId] });
-      void queryClient.invalidateQueries({ queryKey: ['devices', wsId] });
-    },
-    onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to save zones'),
-  });
-
   const cmdMutation = useMutation({
     mutationFn: (cmd: DeviceCommandInput) =>
       api.post(`/devices/${deviceId}/command`, cmd),
@@ -1380,7 +1365,6 @@ export default function DeviceDetailPage() {
           { id: 'settings', label: 'Settings' },
           { id: 'timers',   label: 'Timers' },
           { id: 'tags',     label: 'Tags' },
-          { id: 'zones',    label: 'Zone Layout' },
           { id: 'update',   label: 'Update' },
           { id: 'logs',     label: 'Logs' },
         ] as const;
@@ -2367,6 +2351,30 @@ export default function DeviceDetailPage() {
         </SectionCardBody>
       </SectionCard>
 
+      <SectionCard>
+        <SectionCardHeader>
+          <h2 className="text-sm font-semibold text-[var(--text)]">Default Playlist</h2>
+          <span className="text-xs text-[var(--text-muted)]">shown when no schedule slot is active</span>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <form onSubmit={handleSubmit((d) => { updateDevice.mutate(d); })} className="flex flex-col gap-3 max-w-md">
+            <select {...register('defaultPlaylistId')}
+              className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]">
+              <option value="">— Use workspace default —</option>
+              {playlists.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <div className="flex justify-end">
+              <ActionButton type="submit" disabled={!isDirty || isSubmitting || updateDevice.isPending}
+                tone="primary" className="px-4 py-2 text-sm">
+                Save
+              </ActionButton>
+            </div>
+          </form>
+        </SectionCardBody>
+      </SectionCard>
+
         </div>
       )}
 
@@ -2652,49 +2660,7 @@ export default function DeviceDetailPage() {
         </div>
       )}
 
-      {/* ── Zone Layout tab ─────────────────────────────────────────────── */}
-      {activeTab === 'zones' && (
-        <div className="space-y-6">
-          <SectionCard>
-            <SectionCardHeader>
-              <h2 className="text-sm font-semibold text-[var(--text)]">Default Playlist</h2>
-              <span className="text-xs text-[var(--text-muted)]">shown when no schedule slot is active</span>
-            </SectionCardHeader>
-            <SectionCardBody>
-              <form onSubmit={handleSubmit((d) => { updateDevice.mutate(d); })} className="flex flex-col gap-3 max-w-md">
-                <select {...register('defaultPlaylistId')}
-                  className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]">
-                  <option value="">— Use workspace default —</option>
-                  {playlists.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-                <div className="flex justify-end">
-                  <ActionButton type="submit" disabled={!isDirty || isSubmitting || updateDevice.isPending}
-                    tone="primary" className="px-4 py-2 text-sm">
-                    Save
-                  </ActionButton>
-                </div>
-              </form>
-            </SectionCardBody>
-          </SectionCard>
 
-          <SectionCard>
-            <SectionCardHeader>
-              <h2 className="text-sm font-semibold text-[var(--text)]">Zone Layout</h2>
-              <span className="text-xs text-[var(--text-muted)]">1920 × 1080 coordinate space</span>
-            </SectionCardHeader>
-            <SectionCardBody>
-              <ZoneLayoutEditor
-                initialZones={device.zones ?? []}
-                workspaceId={wsId ?? ''}
-                saving={saveZones.isPending}
-                onSave={(zones) => saveZones.mutate(zones)}
-              />
-            </SectionCardBody>
-          </SectionCard>
-        </div>
-      )}
 
       {/* ── Update tab ──────────────────────────────────────────────────── */}
       {activeTab === 'update' && (

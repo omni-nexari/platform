@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import {
   X, Monitor, Eye, Download, MoreVertical, Plus, Check,
   XCircle, Clock, AlertTriangle, Copy, Trash2,
   Image as ImageIcon, Video, Code2, FileText, Presentation,
-  Globe, Film, Tag as TagIcon, Calendar,
+  Globe, Film, Tag as TagIcon, Calendar, LayoutGrid, Pencil,
 } from 'lucide-react';
 import { api, buildApiUrl } from '../lib/api.js';
 import { useAuthStore } from '../lib/auth.js';
@@ -18,11 +19,47 @@ const APPROVE_ROLES = new Set(['prime_owner', 'owner', 'admin', 'a-manager']);
 import ConfirmDialog from './ConfirmDialog.js';
 import { ActionButton, Badge, Callout } from './UiPrimitives.js';
 
+// ── Zone panel preview ────────────────────────────────────────────────────────
+const ZONE_DW = 1920;
+const ZONE_DH = 1080;
+function ZonePanelPreview({ item }: { item: { metadata: string } }) {
+  type ZSrc = { type: string; contentId?: string; contentName?: string; contentType?: string; playlistName?: string; sourceDuration?: number | null } | null | undefined;
+  type ZEntry = { id?: string; rect?: { x: number; y: number; width: number; height: number }; source?: ZSrc };
+  let zones: ZEntry[] = [];
+  try { zones = JSON.parse(item.metadata ?? '{}').zones ?? []; } catch { /* */ }
+  if (zones.length === 0) return <LayoutGrid size={32} className="text-teal-400" />;
+  return (
+    <div className="relative w-full h-full bg-[#0d1117]">
+      {zones.map((z, i) => {
+        if (!z.rect) return null;
+        const left   = `${(z.rect.x / ZONE_DW) * 100}%`;
+        const top    = `${(z.rect.y / ZONE_DH) * 100}%`;
+        const width  = `${(z.rect.width / ZONE_DW) * 100}%`;
+        const height = `${(z.rect.height / ZONE_DH) * 100}%`;
+        const src = z.source;
+        const isContentSrc = src?.type === 'content' && src.contentId;
+        const label = src?.playlistName ?? src?.contentName ?? 'Empty';
+        return (
+          <div key={z.id ?? i} className="absolute overflow-hidden" style={{ left, top, width, height, border: '1px solid rgba(255,255,255,0.1)' }}>
+            {isContentSrc && src?.contentId ? (
+              <AuthImg itemId={src.contentId} alt={label} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-[#1a2234]">
+                <span className="text-[8px] text-slate-400 truncate px-1">{label}</span>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ContentDetail {
   id: string;
   name: string;
-  type: 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url';
+  type: 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout';
   mimeType: string | null;
   fileSize: number | null;
   width: number | null;
@@ -63,7 +100,8 @@ const TYPE_META: Record<ContentDetail['type'], { label: string; color: string; i
   html5:        { label: 'HTML5',    color: 'bg-amber-500/80',   icon: <Code2 size={10} /> },
   pdf:          { label: 'PDF',      color: 'bg-red-500/80',     icon: <FileText size={10} /> },
   presentation: { label: 'PPTX',    color: 'bg-orange-500/80',  icon: <Presentation size={10} /> },
-  web_url:      { label: 'Web URL',  color: 'bg-emerald-500/80', icon: <Globe size={10} /> },
+  web_url:      { label: 'Web URL',      color: 'bg-emerald-500/80', icon: <Globe size={10} /> },
+  zone_layout:  { label: 'Zone Layout',  color: 'bg-teal-500/80',    icon: <LayoutGrid size={10} /> },
 };
 
 function formatSize(bytes: number | null): string {
@@ -121,6 +159,7 @@ function TypePlaceholder({ type }: { type: ContentDetail['type'] }) {
     pdf:          <FileText size={32} className="text-red-400" />,
     presentation: <Presentation size={32} className="text-orange-400" />,
     web_url:      <Globe size={32} className="text-emerald-400" />,
+    zone_layout:  <LayoutGrid size={32} className="text-teal-400" />,
   };
   return <>{iconMap[type]}</>;
 }
@@ -305,6 +344,73 @@ function InfoTab({ item, onAddTag }: { item: ContentDetail; onAddTag: () => void
           <p className="text-xs text-[var(--text)] break-all leading-relaxed">{item.webUrl}</p>
         </div>
       )}
+
+      {/* Zone Layout */}
+      {item.type === 'zone_layout' && (() => {
+        const zonesArr = (parsedMeta['zones'] as unknown[] | undefined) ?? [];
+        type ZoneEntry = { id?: string; rect?: { x: number; y: number; width: number; height: number }; source?: { type: string; playlistName?: string; contentName?: string; contentType?: string; sourceDuration?: number | null } | null; syncGroup?: string | null };
+        const DEFAULT_IMG = 10;
+        const zones = zonesArr as ZoneEntry[];
+        const zoneDurs = zones.map((z) => {
+          const src = z.source;
+          if (!src || src.type === 'empty') return null;
+          if (src.sourceDuration != null) return src.sourceDuration;
+          if (src.type === 'content' && src.contentType === 'image') return DEFAULT_IMG;
+          return null;
+        });
+        const totalDur = item.duration ?? (zoneDurs.some((d) => d != null) ? Math.max(...zoneDurs.filter((d): d is number => d != null)) : null);
+        return (
+          <>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">Zones</p>
+              <p className="text-sm font-medium text-[var(--text)]">{zones.length} zone{zones.length !== 1 ? 's' : ''}</p>
+            </div>
+            {zones.length > 0 && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">Zone Details</p>
+                <div className="space-y-2">
+                  {zones.map((z, i) => {
+                    const src = z.source;
+                    const name = src?.playlistName ?? src?.contentName ?? (src && src.type !== 'empty' ? src.type : 'Empty');
+                    const dur = zoneDurs[i];
+                    const isDoc = src?.contentType != null && ['pdf', 'presentation', 'html5'].includes(src.contentType);
+                    return (
+                      <div key={i} className="rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] px-2.5 py-2 space-y-0.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-medium text-[var(--text)]">Zone {i + 1}</span>
+                          <div className="flex items-center gap-1">
+                            {z.syncGroup && (
+                              <span className="px-1 rounded text-[9px] font-bold bg-blue-500/20 text-blue-400">{z.syncGroup}</span>
+                            )}
+                            {dur != null
+                              ? <span className="text-[10px] text-[var(--text-muted)]">{dur < 60 ? `${dur.toFixed(1)} s` : `${Math.floor(dur / 60)}:${String(Math.floor(dur % 60)).padStart(2, '0')}`}</span>
+                              : isDoc ? <span className="text-[10px] text-[var(--text-muted)]">doc</span> : null}
+                          </div>
+                        </div>
+                        {src && src.type !== 'empty' && (
+                          <p className="text-[10px] text-[var(--accent)] truncate">{name}</p>
+                        )}
+                        {z.rect && (
+                          <p className="text-[9px] text-[var(--text-muted)]">{z.rect.width}×{z.rect.height} @ {z.rect.x},{z.rect.y}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {totalDur != null && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">Total Duration</p>
+                <p className="text-sm font-medium text-[var(--text)]">
+                  {totalDur < 60 ? `${totalDur.toFixed(1)} s` : `${Math.floor(totalDur / 60)}:${String(Math.floor(totalDur % 60)).padStart(2, '0')}`}
+                  {item.duration == null && <span className="text-[10px] text-[var(--text-muted)] ml-1">(auto)</span>}
+                </p>
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       {/* File Size */}
       {item.fileSize != null && (
@@ -623,6 +729,7 @@ function SettingsTab({
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDeleted }: Props) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<'info' | 'settings'>('info');
 
   // Role-based capabilities — also check designated reviewer list from workspace settings
@@ -780,6 +887,7 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
   if (!itemId) return null;
 
   const hasThumbnail = item && (item.type === 'image' || item.type === 'video');
+  const isZoneLayout = item?.type === 'zone_layout';
 
   return (
     <>
@@ -817,6 +925,8 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
         >
           {isLoading ? (
             <div className="w-full h-full animate-pulse bg-[var(--surface-raised)]" />
+          ) : isZoneLayout && item ? (
+            <ZonePanelPreview item={item} />
           ) : hasThumbnail ? (
             <AuthImg
               itemId={item.id}
@@ -838,6 +948,17 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
             <Monitor size={13} />
             Publish
           </ActionButton>
+
+          {/* Edit — zone layout */}
+          {item?.type === 'zone_layout' && (
+            <ActionButton
+              title="Edit Layout"
+              onClick={() => navigate(`/workspaces/${workspaceId}/zone-layout/${item.id}`)}
+              className="px-2.5"
+            >
+              <Pencil size={14} />
+            </ActionButton>
+          )}
 
           {/* Eye — open preview */}
           {item?.filePath && (

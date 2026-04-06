@@ -1199,15 +1199,6 @@ export async function deviceRoutes(app: FastifyInstance) {
       socket.send(JSON.stringify({ type: 'server_ack', payload: { timestamp: new Date().toISOString(), reason: 'connected' } }));
     } catch {}
 
-    // Push current zone layout so the device always restores it on reconnect
-    const deviceZones = (device.zones ?? []) as unknown[];
-    if (deviceZones.length > 0) {
-      setTimeout(() => {
-        sendCommand(deviceId, { type: 'set_zones', payload: { zones: deviceZones as any } });
-        app.log.info({ deviceId, zoneCount: deviceZones.length }, 'Pushed zone layout on WS connect');
-      }, 1500);
-    }
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     socket.on('message', async (rawData: any) => {
       const rawText = rawData.toString() as string;

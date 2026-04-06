@@ -44,6 +44,7 @@ import AnalyticsPage from './pages/workspace/AnalyticsPage.js';
 import SyncPlaylistsPage from './pages/workspace/SyncPlaylistsPage.js';
 import SyncPlaylistEditorPage from './pages/workspace/SyncPlaylistEditorPage.js';
 import SyncGroupsPage from './pages/workspace/SyncGroupsPage.js';
+import ZoneLayoutEditorPage from './pages/workspace/ZoneLayoutEditorPage.js';
 import { buildApiUrl } from './lib/api.js';
 
 function sleep(ms: number) {
@@ -284,6 +285,7 @@ export default function App() {
         <Route path="/workspaces/:wsId/sync-playlists" element={<SyncPlaylistsPage />} />
         <Route path="/workspaces/:wsId/sync-playlists/:id" element={<SyncPlaylistEditorPage />} />
         <Route path="/workspaces/:wsId/sync-groups" element={<SyncGroupsPage />} />
+        <Route path="/workspaces/:wsId/zone-layout/:id" element={<ZoneLayoutEditorPage />} />
       </Route>
 
       {/* Root redirect */}

@@ -526,6 +526,42 @@ export async function contentRoutes(app: FastifyInstance) {
     return reply.status(201).send(item);
   });
 
+  // ── POST /content/zone-layout ─────────────────────────────────────────────
+  app.post('/zone-layout', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as {
+      workspaceId?: string;
+      name?: string;
+      zones?: unknown[];
+    };
+    const wsId = body.workspaceId;
+    if (!wsId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (!body.name?.trim()) return reply.status(400).send({ error: 'name required' });
+    if (!Array.isArray(body.zones) || body.zones.length === 0) return reply.status(400).send({ error: 'zones required' });
+
+    const member = await checkWorkspaceAccess(wsId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+    // Determine initial approval state based on workspace settings
+    const wsRowZl = await db.query.workspaces.findFirst({ where: eq(workspaces.id, wsId), columns: { settings: true } });
+    let wsSettingsZl: { approvalRequired?: boolean } = {};
+    try { wsSettingsZl = JSON.parse(wsRowZl?.settings ?? '{}'); } catch { /* ignore */ }
+    const initialApprovalStateZl = wsSettingsZl.approvalRequired && !APPROVE_ROLES.has(user.role) ? 'draft' : 'approved';
+
+    const [item] = await db.insert(contentItems).values({
+      workspaceId: wsId,
+      uploadedBy: user.sub,
+      type: 'zone_layout',
+      name: body.name.trim(),
+      metadata: JSON.stringify({ zones: body.zones }),
+      status: 'ready',
+      approvalState: initialApprovalStateZl,
+    }).returning();
+
+    return reply.status(201).send(item);
+  });
+
   // ── GET /content/:id ──────────────────────────────────────────────────────
   app.get('/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
@@ -571,6 +607,7 @@ export async function contentRoutes(app: FastifyInstance) {
       validFrom?: string | null;
       validUntil?: string | null;
       folderId?: string | null;
+      zones?: unknown[];
     };
 
     const item = await db.query.contentItems.findFirst({
@@ -590,6 +627,7 @@ export async function contentRoutes(app: FastifyInstance) {
       ...(body.validFrom !== undefined && { validFrom: body.validFrom ? new Date(body.validFrom) : null }),
       ...(body.validUntil !== undefined && { validUntil: body.validUntil ? new Date(body.validUntil) : null }),
       ...(body.folderId !== undefined && { folderId: body.folderId }),
+      ...(body.zones !== undefined && item.type === 'zone_layout' && { metadata: JSON.stringify({ zones: body.zones }) }),
       updatedAt: new Date(),
     })
       .where(eq(contentItems.id, id))

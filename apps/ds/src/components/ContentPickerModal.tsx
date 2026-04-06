@@ -40,6 +40,7 @@ export interface PickedItem {
   id: string;
   type: 'content' | 'playlist';
   name: string;
+  contentType?: string;
   duration?: number | null;
   thumbnailContentId?: string | null; // content→its own id, playlist→thumbnailContentId
   orientation?: string; // 'landscape' | 'portrait' | 'any'
@@ -316,7 +317,7 @@ export default function ContentPickerModal({
     const picked: PickedItem[] = [...selected].map(id => {
       const c = contentMap[id];
       if (c) return {
-        id, type: 'content', name: c.name, duration: c.duration,
+        id, type: 'content', name: c.name, contentType: c.type, duration: c.duration,
         thumbnailContentId: c.id,
         orientation: c.orientation,
       };
