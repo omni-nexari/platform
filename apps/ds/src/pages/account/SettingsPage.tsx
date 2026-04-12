@@ -2669,9 +2669,68 @@ type PosKioskConfig = {
   qrOrderingEnabled: boolean;
 };
 
+type PosStoreStatus = {
+  isOpen: boolean;
+  note: string | null;
+  updatedAt: string | null;
+};
+
+type PosTodaysSpecial = {
+  itemId: string | null;
+  name: string;
+  description: string | null;
+  priceCents: number;
+  imageUrl: string | null;
+  updatedAt: string | null;
+  endsAt: string | null;
+};
+
+type PosPublicMenuItem = {
+  id: string;
+  name: string;
+  description: string | null;
+  imageUrl: string | null;
+  priceCents: number;
+  isAvailable: boolean;
+};
+
+type PosPublicMenu = {
+  id: string;
+  name: string;
+  description: string | null;
+  currency: string;
+  categories: Array<{
+    id: string;
+    name: string;
+    description: string | null;
+    items: PosPublicMenuItem[];
+  }>;
+};
+
+function createEmptyTodaysSpecialForm() {
+  return {
+    itemId: '',
+    name: '',
+    description: '',
+    priceCents: 0,
+    imageUrl: '',
+    endsAt: '',
+  };
+}
+
+function toDateTimeLocalValue(value: string | null | undefined) {
+  if (!value) return '';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const pad = (num: number) => String(num).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function PosRestaurantSection({ wsId }: { wsId: string | null }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState({
+  const defaultRestaurantForm = {
     name: '',
     address: '',
     phone: '',
@@ -2680,7 +2739,11 @@ function PosRestaurantSection({ wsId }: { wsId: string | null }) {
     taxRatePct: 0,
     receiptHeader: '',
     receiptFooter: '',
-  });
+  };
+
+  const [form, setForm] = useState(defaultRestaurantForm);
+  const [storeStatusForm, setStoreStatusForm] = useState({ isOpen: true, note: '' });
+  const [specialForm, setSpecialForm] = useState(createEmptyTodaysSpecialForm);
 
   const { data, isLoading } = useQuery<PosRestaurant | null>({
     queryKey: ['pos-restaurant', wsId],
@@ -2688,20 +2751,69 @@ function PosRestaurantSection({ wsId }: { wsId: string | null }) {
     enabled: !!wsId,
   });
 
+  const { data: storeStatus } = useQuery<PosStoreStatus>({
+    queryKey: ['pos-store-status', wsId],
+    queryFn: () => api.get<PosStoreStatus>(`/pos/store/status?workspaceId=${wsId}`),
+    enabled: !!wsId,
+  });
+
+  const { data: todaysSpecial } = useQuery<PosTodaysSpecial | null>({
+    queryKey: ['pos-todays-special', wsId],
+    queryFn: () => api.get<PosTodaysSpecial | null>(`/pos/todays-special?workspaceId=${wsId}`),
+    enabled: !!wsId,
+  });
+
+  const { data: activeMenu } = useQuery<PosPublicMenu | null>({
+    queryKey: ['pos-menu-public', wsId],
+    queryFn: async () => {
+      try {
+        return await api.get<PosPublicMenu>(`/pos/menu?workspaceId=${wsId}`);
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!wsId,
+    retry: false,
+  });
+
   useEffect(() => {
-    if (data) {
-      setForm({
-        name: data.name ?? '',
-        address: data.address ?? '',
-        phone: data.phone ?? '',
-        email: data.email ?? '',
-        currency: data.currency ?? 'USD',
-        taxRatePct: data.taxRatePct ?? 0,
-        receiptHeader: data.receiptHeader ?? '',
-        receiptFooter: data.receiptFooter ?? '',
-      });
-    }
+    setForm(
+      data
+        ? {
+            name: data.name ?? '',
+            address: data.address ?? '',
+            phone: data.phone ?? '',
+            email: data.email ?? '',
+            currency: data.currency ?? 'USD',
+            taxRatePct: data.taxRatePct ?? 0,
+            receiptHeader: data.receiptHeader ?? '',
+            receiptFooter: data.receiptFooter ?? '',
+          }
+        : defaultRestaurantForm,
+    );
   }, [data]);
+
+  useEffect(() => {
+    setStoreStatusForm({
+      isOpen: storeStatus?.isOpen !== false,
+      note: storeStatus?.note ?? '',
+    });
+  }, [storeStatus]);
+
+  useEffect(() => {
+    setSpecialForm(
+      todaysSpecial
+        ? {
+            itemId: todaysSpecial.itemId ?? '',
+            name: todaysSpecial.name ?? '',
+            description: todaysSpecial.description ?? '',
+            priceCents: todaysSpecial.priceCents ?? 0,
+            imageUrl: todaysSpecial.imageUrl ?? '',
+            endsAt: toDateTimeLocalValue(todaysSpecial.endsAt),
+          }
+        : createEmptyTodaysSpecialForm(),
+    );
+  }, [todaysSpecial]);
 
   const saveMut = useMutation({
     mutationFn: () => api.put(`/pos/restaurant?workspaceId=${wsId}`, form),
@@ -2712,10 +2824,105 @@ function PosRestaurantSection({ wsId }: { wsId: string | null }) {
     onError: () => toast.error('Failed to save'),
   });
 
+  const saveStoreStatusMut = useMutation({
+    mutationFn: () =>
+      api.put('/pos/store/status', {
+        workspaceId: wsId,
+        isOpen: storeStatusForm.isOpen,
+        note: storeStatusForm.note.trim() || null,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['pos-store-status', wsId] });
+      toast.success('Store status updated');
+    },
+    onError: () => toast.error('Failed to update store status'),
+  });
+
+  const saveSpecialMut = useMutation({
+    mutationFn: () => {
+      const payload: Record<string, unknown> = {
+        workspaceId: wsId,
+      };
+
+      if (specialForm.itemId) {
+        payload['itemId'] = specialForm.itemId;
+      } else {
+        payload['name'] = specialForm.name.trim();
+        payload['description'] = specialForm.description.trim() || null;
+        payload['priceCents'] = Math.max(0, specialForm.priceCents || 0);
+        payload['imageUrl'] = specialForm.imageUrl.trim() || null;
+      }
+
+      if (specialForm.endsAt) {
+        payload['endsAt'] = specialForm.endsAt;
+      }
+
+      return api.put('/pos/todays-special', payload);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['pos-todays-special', wsId] });
+      toast.success("Today's special published");
+    },
+    onError: () => toast.error("Failed to publish today's special"),
+  });
+
+  const clearSpecialMut = useMutation({
+    mutationFn: () => api.delete(`/pos/todays-special?workspaceId=${wsId}`),
+    onSuccess: () => {
+      setSpecialForm(createEmptyTodaysSpecialForm());
+      void qc.invalidateQueries({ queryKey: ['pos-todays-special', wsId] });
+      toast.success("Today's special cleared");
+    },
+    onError: () => toast.error("Failed to clear today's special"),
+  });
+
   if (!wsId) return <Callout tone="accent">Select a workspace above to manage restaurant settings.</Callout>;
   if (isLoading) return <Skeleton className="h-48 rounded-2xl" />;
 
   const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'CHF', 'SGD', 'HKD', 'JPY'];
+  const specialMenuItems = (activeMenu?.categories ?? []).reduce<Array<PosPublicMenuItem & { categoryName: string }>>((list, category) => {
+    for (const item of category.items ?? []) {
+      list.push({ ...item, categoryName: category.name });
+    }
+    return list;
+  }, []);
+  const selectedSpecialItem = specialForm.itemId
+    ? specialMenuItems.find((item) => item.id === specialForm.itemId) ?? null
+    : null;
+  const specialCurrency = form.currency || activeMenu?.currency || 'USD';
+
+  function handleSpecialItemChange(itemId: string) {
+    if (!itemId) {
+      setSpecialForm((current) => ({
+        ...createEmptyTodaysSpecialForm(),
+        endsAt: current.endsAt,
+      }));
+      return;
+    }
+
+    const item = specialMenuItems.find((entry) => entry.id === itemId);
+    if (!item) {
+      setSpecialForm((current) => ({ ...current, itemId }));
+      return;
+    }
+
+    setSpecialForm((current) => ({
+      ...current,
+      itemId,
+      name: item.name,
+      description: item.description ?? '',
+      priceCents: item.priceCents,
+      imageUrl: item.imageUrl ?? '',
+    }));
+  }
+
+  function handleSaveSpecial() {
+    if (!specialForm.itemId && !specialForm.name.trim()) {
+      toast.error('Select a menu item or enter a special name');
+      return;
+    }
+    saveSpecialMut.mutate();
+  }
 
   return (
     <div className="space-y-6">
@@ -2786,6 +2993,157 @@ function PosRestaurantSection({ wsId }: { wsId: string | null }) {
               style={{ width: 90 }}
             />
           </SettingRow>
+        </SectionCardBody>
+      </SectionCard>
+
+      <SectionCard>
+        <SectionCardHeader>
+          <h3 className="text-sm font-semibold">Service Status</h3>
+          <Badge tone={storeStatusForm.isOpen ? 'success' : 'danger'}>
+            {storeStatusForm.isOpen ? 'Open' : 'Closed'}
+          </Badge>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <SettingRow label="Store Open" hint="Shared with kiosk and POS surfaces that need current availability">
+            <ToggleSwitch
+              label=""
+              checked={storeStatusForm.isOpen}
+              onChange={() => setStoreStatusForm((current) => ({ ...current, isOpen: !current.isOpen }))}
+            />
+          </SettingRow>
+          <SettingRow label="Status Note" hint="Optional message such as holiday hours or kitchen delay">
+            <input
+              className="input text-sm w-56"
+              value={storeStatusForm.note}
+              onChange={(e) => setStoreStatusForm((current) => ({ ...current, note: e.target.value }))}
+              placeholder="Open until 10 PM"
+            />
+          </SettingRow>
+          <SettingRow label="Last Published" hint="Latest store status visible to public-facing screens">
+            <span className="text-xs text-[var(--text-muted)]">
+              {storeStatus?.updatedAt ? new Date(storeStatus.updatedAt).toLocaleString() : 'Not published yet'}
+            </span>
+          </SettingRow>
+          <div className="flex justify-end pt-4">
+            <button
+              className="btn-primary text-sm px-6"
+              disabled={saveStoreStatusMut.isPending}
+              onClick={() => saveStoreStatusMut.mutate()}
+            >
+              {saveStoreStatusMut.isPending ? 'Updating…' : 'Update Status'}
+            </button>
+          </div>
+        </SectionCardBody>
+      </SectionCard>
+
+      <SectionCard>
+        <SectionCardHeader>
+          <h3 className="text-sm font-semibold">Today's Special</h3>
+          <Badge tone={todaysSpecial ? 'accent' : 'neutral'}>
+            {todaysSpecial ? 'Live' : 'Optional'}
+          </Badge>
+        </SectionCardHeader>
+        <SectionCardBody>
+          {!activeMenu && (
+            <Callout tone="accent">
+              No active POS menu is published yet. You can still create a manual special below.
+            </Callout>
+          )}
+
+          <SettingRow label="Current Special" hint="The special currently published to kiosks and service surfaces">
+            <span className="text-sm font-medium text-[var(--text)]">
+              {todaysSpecial ? todaysSpecial.name : 'None published'}
+            </span>
+          </SettingRow>
+          <SettingRow label="Source Item" hint="Link the special to a live POS item or leave blank for a custom spotlight">
+            <select
+              className="input text-sm w-56"
+              value={specialForm.itemId}
+              onChange={(e) => handleSpecialItemChange(e.target.value)}
+            >
+              <option value="">Custom Special</option>
+              {specialMenuItems.map((item) => (
+                <option key={item.id} value={item.id}>
+                    {item.name} - {item.categoryName}
+                </option>
+              ))}
+            </select>
+          </SettingRow>
+          {selectedSpecialItem && (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-raised)]/50 px-4 py-3 text-sm text-[var(--text-muted)]">
+              Linked to <span className="font-medium text-[var(--text)]">{selectedSpecialItem.name}</span> in {selectedSpecialItem.categoryName}. Name, description, price, and image will stay in sync with Menu Builder.
+            </div>
+          )}
+          <SettingRow label="Name" hint={selectedSpecialItem ? 'Pulled from the linked menu item' : 'Headline shown for the current special'}>
+            <input
+              className="input text-sm w-56"
+              disabled={!!selectedSpecialItem}
+              value={specialForm.name}
+              onChange={(e) => setSpecialForm((current) => ({ ...current, name: e.target.value }))}
+              placeholder="Chef's Pasta"
+            />
+          </SettingRow>
+          <SettingRow label="Description" hint={selectedSpecialItem ? 'Pulled from the linked menu item' : 'Short supporting copy for the special'}>
+            <textarea
+              className="input text-sm w-56 resize-none"
+              rows={3}
+              disabled={!!selectedSpecialItem}
+              value={specialForm.description}
+              onChange={(e) => setSpecialForm((current) => ({ ...current, description: e.target.value }))}
+              placeholder="Handmade pasta with roasted tomato sauce"
+            />
+          </SettingRow>
+          <SettingRow label="Price" hint={selectedSpecialItem ? 'Pulled from the linked menu item' : `Displayed in ${specialCurrency}`}>
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              className="input text-sm"
+              disabled={!!selectedSpecialItem}
+              value={(specialForm.priceCents / 100).toFixed(2)}
+              onChange={(e) =>
+                setSpecialForm((current) => ({
+                  ...current,
+                  priceCents: Math.max(0, Math.round((parseFloat(e.target.value) || 0) * 100)),
+                }))
+              }
+              style={{ width: 100 }}
+            />
+          </SettingRow>
+          <SettingRow label="Image URL" hint={selectedSpecialItem ? 'Pulled from the linked menu item' : 'Optional image shown alongside the special'}>
+            <input
+              className="input text-sm w-56"
+              disabled={!!selectedSpecialItem}
+              value={specialForm.imageUrl}
+              onChange={(e) => setSpecialForm((current) => ({ ...current, imageUrl: e.target.value }))}
+              placeholder="https://example.com/special.jpg"
+            />
+          </SettingRow>
+          <SettingRow label="Ends At" hint="Optional expiry time for the currently promoted special">
+            <input
+              type="datetime-local"
+              className="input text-sm"
+              value={specialForm.endsAt}
+              onChange={(e) => setSpecialForm((current) => ({ ...current, endsAt: e.target.value }))}
+              style={{ width: 220 }}
+            />
+          </SettingRow>
+          <div className="flex justify-end gap-2 pt-4">
+            <button
+              className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--text)] transition-colors hover:bg-[var(--surface-raised)] disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={clearSpecialMut.isPending || !todaysSpecial}
+              onClick={() => clearSpecialMut.mutate()}
+            >
+              {clearSpecialMut.isPending ? 'Clearing…' : 'Clear Special'}
+            </button>
+            <button
+              className="btn-primary text-sm px-6"
+              disabled={saveSpecialMut.isPending}
+              onClick={handleSaveSpecial}
+            >
+              {saveSpecialMut.isPending ? 'Publishing…' : 'Publish Special'}
+            </button>
+          </div>
         </SectionCardBody>
       </SectionCard>
 
@@ -3185,8 +3543,9 @@ function PosKioskSection({ wsId }: { wsId: string | null }) {
           </SettingRow>
           <SettingRow label="QR Ordering" hint="Show QR code on kiosk for mobile ordering">
             <ToggleSwitch
+              label=""
               checked={form.qrOrderingEnabled}
-              onChange={(v) => setForm((f) => ({ ...f, qrOrderingEnabled: v }))}
+              onChange={() => setForm((f) => ({ ...f, qrOrderingEnabled: !f.qrOrderingEnabled }))}
             />
           </SettingRow>
         </SectionCardBody>
@@ -3250,8 +3609,9 @@ function PosLoyaltySection({ wsId }: { wsId: string | null }) {
         <SectionCardBody>
           <SettingRow label="Enable Loyalty Points" hint="Customers earn points on every order">
             <ToggleSwitch
+              label=""
               checked={form.loyaltyEnabled}
-              onChange={(v) => setForm((f) => ({ ...f, loyaltyEnabled: v }))}
+              onChange={() => setForm((f) => ({ ...f, loyaltyEnabled: !f.loyaltyEnabled }))}
             />
           </SettingRow>
           <SettingRow label="Points per Dollar" hint="Points awarded for each dollar spent">

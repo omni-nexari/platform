@@ -979,7 +979,7 @@ export default function ContentPage() {
         <CreateMenuBoardModal
           workspaceId={wsId}
           onClose={() => setMenuBoardOpen(false)}
-          onCreated={(id) => { setMenuBoardOpen(false); setSelectedItem(id); }}
+          onCreated={(id) => { setMenuBoardOpen(false); setSelectedId(id); }}
         />
       )}
 

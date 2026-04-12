@@ -740,9 +740,9 @@ window.ContentManager = {
           continue;
         }
 
-        // Zone layout is config-only (zones stored in metadata); no file to download
-        if (content.type === 'ZONE_LAYOUT') {
-          logger.info('Skipping download for ZONE_LAYOUT (config-only):', content.name);
+        // Config-only content stores its runtime data in metadata; there is no file to download
+        if (content.type === 'ZONE_LAYOUT' || content.type === 'MENU_BOARD') {
+          logger.info(`Skipping download for ${content.type} (config-only):`, content.name);
           downloadedItems.push(item);
           continue;
         }

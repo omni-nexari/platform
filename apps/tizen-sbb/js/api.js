@@ -292,6 +292,7 @@ window.API = {
       fileUrl,
       originalName: content.originalName,
       filePath: content.filePath,
+      metadata: content.metadata || '{}',
     };
   },
 };

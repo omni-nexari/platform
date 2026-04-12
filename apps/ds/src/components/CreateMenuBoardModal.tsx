@@ -38,7 +38,7 @@ export default function CreateMenuBoardModal({ workspaceId, onClose, onCreated }
   });
 
   const createMut = useMutation({
-    mutationFn: (body: object) => api.post('/content/menu-board', body),
+    mutationFn: (body: object) => api.post<{ id: string }>('/content/menu-board', body),
     onSuccess: (item: { id: string }) => {
       void qc.invalidateQueries({ queryKey: ['content', workspaceId] });
       toast.success('Menu board created');

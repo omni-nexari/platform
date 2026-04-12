@@ -1037,6 +1037,7 @@ const Player = {
         }
         // Clear existing content
         container.innerHTML = '';
+        container._menuBoardRequestId = undefined;
         if (!content || !content.type) {
             this.showIdleScreen();
             return;
@@ -1066,6 +1067,9 @@ const Player = {
                 break;
             case 'HTML':
                 this.renderHTML(container, content);
+                break;
+            case 'MENU_BOARD':
+                this.renderMenuBoard(container, content);
                 break;
             case 'CANVAS':
                 this.renderCanvas(container, content);
@@ -2325,6 +2329,468 @@ const Player = {
     },
     // Drift monitoring disabled - causes more problems than it solves
     // Loop-based resync is the correct approach for video walls
+    parseContentMetadata(content) {
+        if (!content || content.metadata == null) {
+            return {};
+        }
+        if (typeof content.metadata === 'string') {
+            try {
+                return JSON.parse(content.metadata);
+            }
+            catch (error) {
+                logger.warn('Failed to parse content metadata JSON:', error);
+                return {};
+            }
+        }
+        if (typeof content.metadata === 'object' && !Array.isArray(content.metadata)) {
+            return Object.assign({}, content.metadata);
+        }
+        return {};
+    },
+    sanitizeMenuBoardColor(value, fallback) {
+        if (typeof value !== 'string') {
+            return fallback;
+        }
+        const trimmed = value.trim();
+        if (!trimmed) {
+            return fallback;
+        }
+        if (/^#[0-9a-fA-F]{3,8}$/.test(trimmed)) {
+            return trimmed;
+        }
+        if (/^rgba?\([^)]*\)$/.test(trimmed) || /^hsla?\([^)]*\)$/.test(trimmed)) {
+            return trimmed;
+        }
+        return fallback;
+    },
+    escapeHtml(value) {
+        return String(value !== null && value !== void 0 ? value : '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    },
+    formatMenuBoardPrice(cents, currency) {
+        const normalizedCurrency = typeof currency === 'string' && currency ? currency : 'USD';
+        const amount = Math.max(Number(cents) || 0, 0) / 100;
+        const fractionDigits = normalizedCurrency === 'JPY' ? 0 : 2;
+        try {
+            return new Intl.NumberFormat(undefined, {
+                style: 'currency',
+                currency: normalizedCurrency,
+                minimumFractionDigits: fractionDigits,
+                maximumFractionDigits: fractionDigits,
+            }).format(amount);
+        }
+        catch (_) {
+            const prefixMap = {
+                USD: '$',
+                EUR: 'EUR ',
+                GBP: 'GBP ',
+                CAD: 'CAD ',
+                AUD: 'AUD ',
+                CHF: 'CHF ',
+                SGD: 'SGD ',
+                HKD: 'HKD ',
+                JPY: 'JPY ',
+            };
+            const prefix = prefixMap[normalizedCurrency] || `${normalizedCurrency} `;
+            return `${prefix}${amount.toFixed(fractionDigits)}`;
+        }
+    },
+    getMenuBoardSections(menu, metadata) {
+        const selectedCategoryIds = Array.isArray(metadata.categoryIds)
+            ? metadata.categoryIds.filter((value) => typeof value === 'string')
+            : [];
+        const sourceCategories = menu && Array.isArray(menu.categories) ? menu.categories : [];
+        const filteredCategories = selectedCategoryIds.length > 0
+            ? sourceCategories.filter((category) => selectedCategoryIds.indexOf(category.id) !== -1)
+            : sourceCategories;
+        return filteredCategories
+            .map((category) => (Object.assign(Object.assign({}, category), { items: Array.isArray(category.items) ? category.items.filter(Boolean) : [] })))
+            .filter((category) => category.items.length > 0);
+    },
+    buildMenuBoardStateHtml(title, message) {
+        return `
+      <div style="display:flex;align-items:center;justify-content:center;height:100%;padding:32px;background:linear-gradient(160deg,#1f1510 0%,#120d0a 100%);color:#f7f2eb;font-family:'Segoe UI',Arial,sans-serif;text-align:center;box-sizing:border-box;">
+        <div style="max-width:720px;">
+          <div style="font-size:30px;font-weight:700;letter-spacing:0.02em;">${this.escapeHtml(title)}</div>
+          <div style="margin-top:12px;font-size:16px;line-height:1.6;color:rgba(247,242,235,0.78);">${this.escapeHtml(message)}</div>
+        </div>
+      </div>
+    `;
+    },
+    buildMenuBoardHtml(content, menu, metadata) {
+        const layout = metadata.layout === '1-col' || metadata.layout === 'featured'
+            ? metadata.layout
+            : '2-col';
+        const showPrices = metadata.showPrices !== false;
+        const showImages = metadata.showImages !== false;
+        const showDescription = metadata.showDescription === true;
+        const fontScaleRaw = Number(metadata.fontScale);
+        const fontScale = Number.isFinite(fontScaleRaw)
+            ? Math.min(Math.max(fontScaleRaw, 0.8), 1.4)
+            : 1;
+        const accentColor = this.sanitizeMenuBoardColor(metadata.accentColor, '#dd6b20');
+        const sections = this.getMenuBoardSections(menu, metadata);
+        const currency = menu && typeof menu.currency === 'string' ? menu.currency : 'USD';
+        if (sections.length === 0) {
+            return this.buildMenuBoardStateHtml(content && content.name ? content.name : 'Menu Board', 'No active POS menu items are available for this board right now.');
+        }
+        let featuredItem = null;
+        if (layout === 'featured') {
+            for (const category of sections) {
+                const preferred = category.items.find((item) => showImages && !!item.imageUrl) || category.items[0];
+                if (preferred) {
+                    featuredItem = preferred;
+                    break;
+                }
+            }
+        }
+        const boardTitle = content && content.name ? content.name : (menu && menu.name ? menu.name : 'Menu Board');
+        const subtitleParts = [];
+        if (menu && menu.name && menu.name !== boardTitle) {
+            subtitleParts.push(menu.name);
+        }
+        if (menu && menu.description) {
+            subtitleParts.push(menu.description);
+        }
+        subtitleParts.push(`${sections.length} ${sections.length === 1 ? 'category' : 'categories'}`);
+        const subtitle = subtitleParts.join(' | ');
+        const sectionColumnCount = layout === '1-col' ? 1 : Math.min(2, sections.length || 1);
+        const featuredMarkup = layout === 'featured' && featuredItem
+            ? `
+        <aside class="menu-board-feature">
+          ${showImages && featuredItem.imageUrl ? `<div class="menu-board-feature-image"><img src="${this.escapeHtml(featuredItem.imageUrl)}" alt="${this.escapeHtml(featuredItem.name)}" /></div>` : ''}
+          <div class="menu-board-feature-copy">
+            <div class="menu-board-feature-kicker">Featured Item</div>
+            <div class="menu-board-feature-title">${this.escapeHtml(featuredItem.name)}</div>
+            ${showPrices ? `<div class="menu-board-feature-price">${this.escapeHtml(this.formatMenuBoardPrice(featuredItem.priceCents, currency))}</div>` : ''}
+            ${showDescription && featuredItem.description ? `<div class="menu-board-feature-description">${this.escapeHtml(featuredItem.description)}</div>` : ''}
+          </div>
+        </aside>
+      `
+            : '';
+        const sectionsMarkup = sections.map((category) => {
+            const categoryAccent = this.sanitizeMenuBoardColor(category.color, accentColor);
+            const itemsMarkup = category.items.map((item) => {
+                const imageMarkup = showImages && item.imageUrl
+                    ? `<div class="menu-board-item-image"><img src="${this.escapeHtml(item.imageUrl)}" alt="${this.escapeHtml(item.name)}" /></div>`
+                    : '';
+                const priceMarkup = showPrices
+                    ? `<div class="menu-board-item-price">${this.escapeHtml(this.formatMenuBoardPrice(item.priceCents, currency))}</div>`
+                    : '';
+                const descriptionMarkup = showDescription && item.description
+                    ? `<div class="menu-board-item-description">${this.escapeHtml(item.description)}</div>`
+                    : '';
+                return `
+          <article class="menu-board-item ${imageMarkup ? 'has-image' : 'no-image'}">
+            ${imageMarkup}
+            <div class="menu-board-item-copy">
+              <div class="menu-board-item-head">
+                <div class="menu-board-item-name">${this.escapeHtml(item.name)}</div>
+                ${priceMarkup}
+              </div>
+              ${descriptionMarkup}
+            </div>
+          </article>
+        `;
+            }).join('');
+            return `
+        <section class="menu-board-category" style="--menu-board-category-accent:${categoryAccent};">
+          <div class="menu-board-category-head">
+            <div>
+              <div class="menu-board-category-title">${this.escapeHtml(category.name)}</div>
+              ${category.description ? `<div class="menu-board-category-description">${this.escapeHtml(category.description)}</div>` : ''}
+            </div>
+            <div class="menu-board-category-count">${category.items.length}</div>
+          </div>
+          <div class="menu-board-item-list">${itemsMarkup}</div>
+        </section>
+      `;
+        }).join('');
+        return `
+      <div class="menu-board-root">
+        <style>
+          .menu-board-root, .menu-board-root * { box-sizing: border-box; }
+          .menu-board-root {
+            --menu-board-accent: ${accentColor};
+            --menu-board-scale: ${fontScale};
+            width: 100%;
+            height: 100%;
+            color: #f7f2eb;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(160deg, #231812 0%, #120d0a 62%, #241913 100%);
+          }
+          .menu-board-shell {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: calc(18px * var(--menu-board-scale));
+            padding: calc(28px * var(--menu-board-scale));
+            overflow: hidden;
+          }
+          .menu-board-header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 18px;
+          }
+          .menu-board-eyebrow {
+            font-size: calc(12px * var(--menu-board-scale));
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: var(--menu-board-accent);
+          }
+          .menu-board-title {
+            margin: 6px 0 0;
+            font-size: calc(34px * var(--menu-board-scale));
+            line-height: 1.05;
+            letter-spacing: -0.03em;
+          }
+          .menu-board-subtitle {
+            margin-top: 8px;
+            font-size: calc(14px * var(--menu-board-scale));
+            line-height: 1.5;
+            color: rgba(247, 242, 235, 0.7);
+          }
+          .menu-board-grid {
+            flex: 1;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: calc(18px * var(--menu-board-scale));
+          }
+          .menu-board-grid.is-featured {
+            grid-template-columns: minmax(320px, 0.95fr) minmax(0, 1.75fr);
+          }
+          .menu-board-feature {
+            min-height: 0;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 26px;
+            overflow: hidden;
+            background: linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 100%);
+            display: flex;
+            flex-direction: column;
+          }
+          .menu-board-feature-image {
+            height: 48%;
+            min-height: 210px;
+            background: rgba(255,255,255,0.04);
+          }
+          .menu-board-feature-image img {
+            width: 100%;
+            height: 100%;
+            display: block;
+            object-fit: cover;
+          }
+          .menu-board-feature-copy {
+            padding: calc(22px * var(--menu-board-scale));
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+          }
+          .menu-board-feature-kicker {
+            font-size: calc(11px * var(--menu-board-scale));
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: var(--menu-board-accent);
+            font-weight: 700;
+          }
+          .menu-board-feature-title {
+            font-size: calc(30px * var(--menu-board-scale));
+            line-height: 1.05;
+            font-weight: 800;
+          }
+          .menu-board-feature-price {
+            font-size: calc(22px * var(--menu-board-scale));
+            font-weight: 700;
+            color: #fff4cf;
+          }
+          .menu-board-feature-description {
+            font-size: calc(15px * var(--menu-board-scale));
+            line-height: 1.55;
+            color: rgba(247, 242, 235, 0.8);
+          }
+          .menu-board-sections {
+            min-height: 0;
+            display: grid;
+            align-content: start;
+            grid-template-columns: repeat(${sectionColumnCount}, minmax(0, 1fr));
+            gap: calc(16px * var(--menu-board-scale));
+            overflow: hidden;
+          }
+          .menu-board-category {
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            gap: calc(14px * var(--menu-board-scale));
+            padding: calc(18px * var(--menu-board-scale));
+            border-radius: 24px;
+            border: 1px solid rgba(255,255,255,0.09);
+            background: linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.035) 100%);
+            box-shadow: inset 4px 0 0 var(--menu-board-category-accent);
+          }
+          .menu-board-category-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+          }
+          .menu-board-category-title {
+            font-size: calc(22px * var(--menu-board-scale));
+            line-height: 1.1;
+            font-weight: 800;
+            overflow-wrap: anywhere;
+          }
+          .menu-board-category-description {
+            margin-top: 6px;
+            font-size: calc(12px * var(--menu-board-scale));
+            line-height: 1.45;
+            color: rgba(247, 242, 235, 0.62);
+          }
+          .menu-board-category-count {
+            min-width: calc(32px * var(--menu-board-scale));
+            height: calc(32px * var(--menu-board-scale));
+            padding: 0 10px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.08);
+            color: var(--menu-board-accent);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: calc(12px * var(--menu-board-scale));
+            font-weight: 700;
+          }
+          .menu-board-item-list {
+            display: flex;
+            flex-direction: column;
+            gap: calc(10px * var(--menu-board-scale));
+            min-height: 0;
+            overflow: hidden;
+          }
+          .menu-board-item {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 12px;
+            padding: calc(12px * var(--menu-board-scale));
+            border-radius: 18px;
+            background: rgba(255,255,255,0.045);
+            border: 1px solid rgba(255,255,255,0.06);
+          }
+          .menu-board-item.has-image {
+            grid-template-columns: calc(74px * var(--menu-board-scale)) minmax(0, 1fr);
+          }
+          .menu-board-item-image {
+            width: calc(74px * var(--menu-board-scale));
+            height: calc(74px * var(--menu-board-scale));
+            border-radius: 14px;
+            overflow: hidden;
+            background: rgba(255,255,255,0.06);
+          }
+          .menu-board-item-image img {
+            width: 100%;
+            height: 100%;
+            display: block;
+            object-fit: cover;
+          }
+          .menu-board-item-copy {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+          }
+          .menu-board-item-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 12px;
+          }
+          .menu-board-item-name {
+            min-width: 0;
+            font-size: calc(17px * var(--menu-board-scale));
+            line-height: 1.25;
+            font-weight: 700;
+            overflow-wrap: anywhere;
+          }
+          .menu-board-item-price {
+            white-space: nowrap;
+            font-size: calc(14px * var(--menu-board-scale));
+            font-weight: 700;
+            color: #fff4cf;
+          }
+          .menu-board-item-description {
+            font-size: calc(12px * var(--menu-board-scale));
+            line-height: 1.45;
+            color: rgba(247, 242, 235, 0.72);
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+          }
+          @media (max-width: 1280px) {
+            .menu-board-grid.is-featured {
+              grid-template-columns: 1fr;
+            }
+            .menu-board-sections {
+              grid-template-columns: 1fr;
+            }
+          }
+        </style>
+        <div class="menu-board-shell">
+          <header class="menu-board-header">
+            <div>
+              <div class="menu-board-eyebrow">Live POS Menu</div>
+              <h1 class="menu-board-title">${this.escapeHtml(boardTitle)}</h1>
+              <div class="menu-board-subtitle">${this.escapeHtml(subtitle)}</div>
+            </div>
+          </header>
+          <div class="menu-board-grid ${layout === 'featured' ? 'is-featured' : ''}">
+            ${featuredMarkup}
+            <div class="menu-board-sections">${sectionsMarkup}</div>
+          </div>
+        </div>
+      </div>
+    `;
+    },
+    renderMenuBoard(container, content) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const metadata = this.parseContentMetadata(content);
+            const posWorkspaceId = typeof metadata.posWorkspaceId === 'string' && metadata.posWorkspaceId
+                ? metadata.posWorkspaceId
+                : null;
+            if (!posWorkspaceId) {
+                logger.warn('Menu board is missing posWorkspaceId metadata:', content && content.id);
+                container.innerHTML = this.buildMenuBoardStateHtml(content && content.name ? content.name : 'Menu Board', 'This menu board is missing its POS workspace source.');
+                return;
+            }
+            const menuBoardContainer = container;
+            const requestId = `menu-board-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            menuBoardContainer._menuBoardRequestId = requestId;
+            container.innerHTML = this.buildMenuBoardStateHtml(content && content.name ? content.name : 'Menu Board', 'Loading the latest POS menu...');
+            try {
+                const response = yield fetch(`${CONFIG.API_BASE}/pos/menu?workspaceId=${encodeURIComponent(posWorkspaceId)}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                const menu = yield response.json();
+                if (!container.isConnected || menuBoardContainer._menuBoardRequestId !== requestId) {
+                    return;
+                }
+                container.innerHTML = this.buildMenuBoardHtml(content, menu, metadata);
+            }
+            catch (error) {
+                logger.error('Failed to load menu board data:', error);
+                if (!container.isConnected || menuBoardContainer._menuBoardRequestId !== requestId) {
+                    return;
+                }
+                container.innerHTML = this.buildMenuBoardStateHtml(content && content.name ? content.name : 'Menu Board', 'The live POS menu could not be loaded. Check the API connection or publish an active menu.');
+            }
+        });
+    },
     // Render HTML content
     renderHTML(container, content) {
         const iframe = document.createElement('iframe');
@@ -2753,6 +3219,7 @@ const Player = {
             if (!canReuseImage) {
                 container.innerHTML = '';
             }
+            container._menuBoardRequestId = undefined;
             // Render based on content type
             switch (content.type) {
                 case 'IMAGE':
@@ -2957,6 +3424,10 @@ const Player = {
                 case 'WEBPAGE':
                     this.renderHTML(container, content);
                     // Schedule next item
+                    scheduleNext(duration * 1000);
+                    break;
+                case 'MENU_BOARD':
+                    this.renderMenuBoard(container, content);
                     scheduleNext(duration * 1000);
                     break;
                 case 'CANVAS':
@@ -3765,6 +4236,7 @@ const Player = {
         }
         catch (_) { } });
         container.innerHTML = '';
+        container._menuBoardRequestId = undefined;
         if (type === 'IMAGE' || type === 'JPEG' || type === 'PNG' || type === 'GIF' || type === 'WEBP') {
             const objectFit = zone.fitMode === 'fill' ? 'fill' : 'contain';
             const img = document.createElement('img');
@@ -3794,6 +4266,15 @@ const Player = {
         }
         else if (type === 'OFFICE') {
             this._playZoneOffice(zone, container, content, items, itemIndex, durationMs, token, zoneIndex);
+        }
+        else if (type === 'MENU_BOARD') {
+            this.renderMenuBoard(container, content);
+            const t = setTimeout(() => {
+                if (this._zoneMode && container.parentNode) {
+                    this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex);
+                }
+            }, durationMs);
+            this._zoneTimers.push(t);
         }
         else {
             const t = setTimeout(() => {

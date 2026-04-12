@@ -20,6 +20,8 @@ import {
   posLoyaltyEvents,
   posExpenses,
   posPurchaseOrders,
+  devices,
+  deviceHeartbeats,
 } from '@signage/db';
 
 // ─── Device JWT helpers (same pattern as devices.ts) ────────────────────────────
@@ -78,10 +80,193 @@ const UpdateOrderStatusSchema = z.object({
   status: z.enum(['preparing', 'ready', 'completed', 'cancelled']),
 });
 
+const AddOrderItemsSchema = z.object({
+  items: z.array(OrderItemInputSchema).min(1).max(25),
+});
+
+const MarkOrderPaidSchema = z.object({
+  method: z.enum(['cash', 'card', 'split']).default('cash'),
+  amountCents: z.number().int().min(0).optional(),
+  tipCents: z.number().int().min(0).default(0),
+  reference: z.string().max(100).optional(),
+});
+
+const UpdateStoreStatusSchema = z.object({
+  workspaceId: z.string().uuid(),
+  isOpen: z.boolean(),
+  note: z.string().max(200).nullable().optional(),
+});
+
+const UpdateTodaysSpecialSchema = z.object({
+  workspaceId: z.string().uuid(),
+  itemId: z.string().uuid().optional(),
+  name: z.string().max(120).optional(),
+  description: z.string().max(400).nullable().optional(),
+  priceCents: z.number().int().min(0).optional(),
+  imageUrl: z.string().max(500).nullable().optional(),
+  endsAt: z.string().optional(),
+});
+
+const KioskLoyaltyVerifySchema = z.object({
+  workspaceId: z.string().uuid(),
+  phone: z.string().min(3).optional(),
+  email: z.string().email().optional(),
+}).refine((value) => Boolean(value.phone || value.email), {
+  message: 'phone or email required',
+});
+
+const KioskLoyaltyRedeemSchema = z.object({
+  workspaceId: z.string().uuid(),
+  customerId: z.string().uuid(),
+  points: z.number().int().positive(),
+  orderId: z.string().uuid().optional(),
+  notes: z.string().max(200).optional(),
+});
+
 const VALID_ACTIVE_STATUSES = ['pending', 'preparing', 'ready'] as const;
 
 // ─── Route plugin ───────────────────────────────────────────────────────────────
 export async function posRoutes(app: FastifyInstance) {
+  function getSettingsObject(value: unknown): Record<string, unknown> {
+    return value != null && typeof value === 'object' && !Array.isArray(value)
+      ? { ...(value as Record<string, unknown>) }
+      : {};
+  }
+
+  async function upsertRestaurantSettings(workspaceId: string, orgId: string, patch: Record<string, unknown>) {
+    const existing = await db.query.posRestaurants.findFirst({
+      where: and(eq(posRestaurants.workspaceId, workspaceId), eq(posRestaurants.orgId, orgId)),
+    });
+
+    const nextSettings = {
+      ...getSettingsObject(existing?.settings),
+      ...patch,
+    };
+
+    if (existing) {
+      const [updated] = await db
+        .update(posRestaurants)
+        .set({ settings: nextSettings, updatedAt: new Date() })
+        .where(eq(posRestaurants.id, existing.id))
+        .returning();
+      return updated;
+    }
+
+    const [created] = await db
+      .insert(posRestaurants)
+      .values({
+        orgId,
+        workspaceId,
+        name: '',
+        settings: nextSettings,
+      })
+      .returning();
+    return created;
+  }
+
+  async function getOrderByIdForOrg(orderId: string, orgId: string) {
+    return db.query.posOrders.findFirst({
+      where: and(eq(posOrders.id, orderId), eq(posOrders.orgId, orgId)),
+    });
+  }
+
+  async function releaseTrackedTable(trackedId: string | null, workspaceId: string) {
+    if (!trackedId) return;
+
+    const trackedTable = await db.query.posTables.findFirst({
+      where: and(eq(posTables.id, trackedId), eq(posTables.workspaceId, workspaceId)),
+      columns: { id: true, status: true },
+    });
+    if (!trackedTable) return;
+
+    await db
+      .update(posTables)
+      .set({ status: 'available', updatedAt: new Date() })
+      .where(eq(posTables.id, trackedTable.id));
+  }
+
+  async function recalculateOrderTotal(orderId: string) {
+    const rows = await db
+      .select({ total: sql<number>`coalesce(sum(${posOrderItems.lineTotalCents}), 0)` })
+      .from(posOrderItems)
+      .where(eq(posOrderItems.orderId, orderId));
+
+    const totalCents = Number(rows[0]?.total ?? 0);
+    await db
+      .update(posOrders)
+      .set({ totalCents, updatedAt: new Date() })
+      .where(eq(posOrders.id, orderId));
+    return totalCents;
+  }
+
+  async function transitionOrderStatus(
+    orderId: string,
+    orgId: string,
+    status: 'pending' | 'preparing' | 'ready' | 'completed' | 'cancelled',
+  ) {
+    const order = await getOrderByIdForOrg(orderId, orgId);
+    if (!order) return null;
+
+    const now = new Date();
+    const set: Record<string, unknown> = {
+      status,
+      updatedAt: now,
+    };
+    if (status === 'completed') set['completedAt'] = now;
+    if (status === 'cancelled') set['cancelledAt'] = now;
+
+    const [updated] = await db
+      .update(posOrders)
+      .set(set)
+      .where(and(eq(posOrders.id, orderId), eq(posOrders.orgId, orgId)))
+      .returning();
+
+    if (updated && (status === 'completed' || status === 'cancelled')) {
+      await releaseTrackedTable(order.deviceId, order.workspaceId);
+    }
+
+    return updated ?? null;
+  }
+
+  async function hydrateOrders<
+    T extends {
+      id: string;
+      orderNumber: number;
+      status: string;
+      customerName: string | null;
+      notes: string | null;
+      totalCents: number;
+      createdAt: Date;
+    },
+  >(orders: T[]) {
+    const orderIds = orders.map((order) => order.id);
+    const lineItems = orderIds.length > 0
+      ? await db.query.posOrderItems.findMany({
+          where: inArray(posOrderItems.orderId, orderIds),
+          orderBy: (t, { asc }) => [asc(t.createdAt)],
+        })
+      : [];
+
+    const itemsByOrder = new Map<string, typeof lineItems>();
+    for (const lineItem of lineItems) {
+      const list = itemsByOrder.get(lineItem.orderId) ?? [];
+      list.push(lineItem);
+      itemsByOrder.set(lineItem.orderId, list);
+    }
+
+    return orders.map((order) => ({
+      ...order,
+      items: (itemsByOrder.get(order.id) ?? []).map((lineItem) => ({
+        id: lineItem.id,
+        itemName: lineItem.itemName,
+        quantity: lineItem.quantity,
+        unitPriceCents: lineItem.itemPriceCents,
+        lineTotalCents: lineItem.lineTotalCents,
+        notes: lineItem.notes,
+      })),
+    }));
+  }
+
 
   // ── GET /pos/menu?workspaceId=:wsId ─────────────────────────────────────────
   // Public — returns the active menu with categories + items grouped
@@ -356,22 +541,8 @@ export async function posRoutes(app: FastifyInstance) {
 
     const { status } = parsed.data;
 
-    const order = await db.query.posOrders.findFirst({
-      where: eq(posOrders.id, orderId),
-      columns: { id: true, status: true, workspaceId: true },
-    });
-
-    if (!order) return reply.status(404).send({ error: 'Order not found' });
-
-    const now = new Date();
-    const extra: Record<string, unknown> = {};
-    if (status === 'completed') extra['completedAt'] = now;
-    if (status === 'cancelled') extra['cancelledAt'] = now;
-
-    await db
-      .update(posOrders)
-      .set({ status, updatedAt: now, ...extra })
-      .where(eq(posOrders.id, orderId));
+    const updated = await transitionOrderStatus(orderId, auth.orgId, status);
+    if (!updated) return reply.status(404).send({ error: 'Order not found' });
 
     return reply.send({ id: orderId, status });
   });
@@ -516,6 +687,308 @@ export async function posRoutes(app: FastifyInstance) {
     return reply.send(config);
   });
 
+  // ─── Store status + today's special ────────────────────────────────────────
+
+  app.get('/store/status', async (req, reply) => {
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const restaurant = await db.query.posRestaurants.findFirst({
+      where: eq(posRestaurants.workspaceId, workspaceId),
+      columns: { settings: true },
+    });
+    const settings = getSettingsObject(restaurant?.settings);
+    const storeStatus = getSettingsObject(settings['storeStatus']);
+
+    return reply.send({
+      isOpen: storeStatus['isOpen'] !== false,
+      note: typeof storeStatus['note'] === 'string' ? storeStatus['note'] : null,
+      updatedAt: typeof storeStatus['updatedAt'] === 'string' ? storeStatus['updatedAt'] : null,
+    });
+  });
+
+  app.put('/store/status', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const parsed = UpdateStoreStatusSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
+    }
+
+    const now = new Date().toISOString();
+    const restaurant = await upsertRestaurantSettings(parsed.data.workspaceId, user.orgId, {
+      storeStatus: {
+        isOpen: parsed.data.isOpen,
+        note: parsed.data.note ?? null,
+        updatedAt: now,
+      },
+    });
+
+    return reply.send({
+      workspaceId: parsed.data.workspaceId,
+      isOpen: parsed.data.isOpen,
+      note: parsed.data.note ?? null,
+      updatedAt: now,
+      restaurantId: restaurant?.id ?? null,
+    });
+  });
+
+  app.get('/todays-special', async (req, reply) => {
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const restaurant = await db.query.posRestaurants.findFirst({
+      where: eq(posRestaurants.workspaceId, workspaceId),
+      columns: { settings: true },
+    });
+    const settings = getSettingsObject(restaurant?.settings);
+    const todaysSpecial = getSettingsObject(settings['todaysSpecial']);
+
+    if (Object.keys(todaysSpecial).length === 0) return reply.send(null);
+    return reply.send(todaysSpecial);
+  });
+
+  app.put('/todays-special', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const parsed = UpdateTodaysSpecialSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
+    }
+
+    const parsedEndsAt = parsed.data.endsAt ? new Date(parsed.data.endsAt) : null;
+    if (parsed.data.endsAt && Number.isNaN(parsedEndsAt?.getTime())) {
+      return reply.status(400).send({ error: 'Invalid endsAt' });
+    }
+
+    let special = {
+      name: parsed.data.name ?? '',
+      description: parsed.data.description ?? null,
+      priceCents: parsed.data.priceCents ?? 0,
+      imageUrl: parsed.data.imageUrl ?? null,
+      itemId: parsed.data.itemId ?? null,
+      updatedAt: new Date().toISOString(),
+      endsAt: parsedEndsAt ? parsedEndsAt.toISOString() : null,
+    };
+
+    if (parsed.data.itemId) {
+      const item = await db.query.posItems.findFirst({
+        where: eq(posItems.id, parsed.data.itemId),
+      });
+      if (!item) return reply.status(404).send({ error: 'Item not found' });
+
+      const category = await db.query.posCategories.findFirst({
+        where: eq(posCategories.id, item.categoryId),
+        columns: { menuId: true },
+      });
+      if (!category) return reply.status(404).send({ error: 'Category not found' });
+
+      const menu = await db.query.posMenus.findFirst({
+        where: and(eq(posMenus.id, category.menuId), eq(posMenus.workspaceId, parsed.data.workspaceId)),
+        columns: { id: true },
+      });
+      if (!menu) return reply.status(400).send({ error: 'Item does not belong to this workspace menu' });
+
+      special = {
+        ...special,
+        name: item.name,
+        description: item.description ?? special.description,
+        priceCents: item.priceCents,
+        imageUrl: item.imageUrl ?? special.imageUrl,
+      };
+    }
+
+    await upsertRestaurantSettings(parsed.data.workspaceId, user.orgId, {
+      todaysSpecial: special,
+    });
+    return reply.send(special);
+  });
+
+  app.delete('/todays-special', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    await upsertRestaurantSettings(workspaceId, user.orgId, {
+      todaysSpecial: null,
+    });
+    return reply.status(204).send();
+  });
+
+  // ─── Kiosk device utility routes ───────────────────────────────────────────
+
+  app.get('/kiosk/loyalty/settings', async (req, reply) => {
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const restaurant = await db.query.posRestaurants.findFirst({
+      where: eq(posRestaurants.workspaceId, workspaceId),
+      columns: {
+        loyaltyEnabled: true,
+        loyaltyPointsPerDollar: true,
+        loyaltyRedemptionRate: true,
+      },
+    });
+
+    return reply.send({
+      loyaltyEnabled: restaurant?.loyaltyEnabled ?? false,
+      loyaltyPointsPerDollar: restaurant?.loyaltyPointsPerDollar ?? 1,
+      loyaltyRedemptionRate: restaurant?.loyaltyRedemptionRate ?? 100,
+    });
+  });
+
+  app.post('/kiosk/loyalty/verify', async (req, reply) => {
+    const auth = authenticateDeviceRequest(req as never, reply as never, app);
+    if (!auth) return;
+
+    const parsed = KioskLoyaltyVerifySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
+    }
+
+    const restaurant = await db.query.posRestaurants.findFirst({
+      where: and(eq(posRestaurants.workspaceId, parsed.data.workspaceId), eq(posRestaurants.orgId, auth.orgId)),
+      columns: {
+        loyaltyEnabled: true,
+        loyaltyPointsPerDollar: true,
+        loyaltyRedemptionRate: true,
+      },
+    });
+
+    const customers = await db.query.posLoyaltyCustomers.findMany({
+      where: and(eq(posLoyaltyCustomers.workspaceId, parsed.data.workspaceId), eq(posLoyaltyCustomers.orgId, auth.orgId)),
+      limit: 250,
+    });
+
+    const customer = customers.find((entry) => {
+      const phoneMatch = parsed.data.phone ? entry.phone === parsed.data.phone : false;
+      const emailMatch = parsed.data.email ? entry.email?.toLowerCase() === parsed.data.email.toLowerCase() : false;
+      return phoneMatch || emailMatch;
+    }) ?? null;
+
+    return reply.send({
+      found: Boolean(customer),
+      customer,
+      loyaltyEnabled: restaurant?.loyaltyEnabled ?? false,
+      loyaltyPointsPerDollar: restaurant?.loyaltyPointsPerDollar ?? 1,
+      loyaltyRedemptionRate: restaurant?.loyaltyRedemptionRate ?? 100,
+      maxRedeemablePoints: customer?.points ?? 0,
+    });
+  });
+
+  app.post('/kiosk/loyalty/redeem', async (req, reply) => {
+    const auth = authenticateDeviceRequest(req as never, reply as never, app);
+    if (!auth) return;
+
+    const parsed = KioskLoyaltyRedeemSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
+    }
+
+    const restaurant = await db.query.posRestaurants.findFirst({
+      where: and(eq(posRestaurants.workspaceId, parsed.data.workspaceId), eq(posRestaurants.orgId, auth.orgId)),
+      columns: { loyaltyEnabled: true, loyaltyRedemptionRate: true },
+    });
+    if (!restaurant?.loyaltyEnabled) return reply.status(400).send({ error: 'Loyalty is disabled' });
+
+    const customer = await db.query.posLoyaltyCustomers.findFirst({
+      where: and(
+        eq(posLoyaltyCustomers.id, parsed.data.customerId),
+        eq(posLoyaltyCustomers.workspaceId, parsed.data.workspaceId),
+        eq(posLoyaltyCustomers.orgId, auth.orgId),
+      ),
+    });
+    if (!customer) return reply.status(404).send({ error: 'Customer not found' });
+
+    const redemptionRate = Math.max(1, restaurant.loyaltyRedemptionRate);
+    const redeemablePoints = Math.floor(Math.min(parsed.data.points, customer.points) / redemptionRate) * redemptionRate;
+    if (redeemablePoints <= 0) {
+      return reply.status(400).send({ error: 'Insufficient redeemable points' });
+    }
+
+    const discountCents = Math.floor(redeemablePoints / redemptionRate) * 100;
+    const newPoints = customer.points - redeemablePoints;
+    const tier = newPoints >= 1000 ? 'gold' : newPoints >= 300 ? 'silver' : 'bronze';
+
+    await db.transaction(async (tx) => {
+      await tx.insert(posLoyaltyEvents).values({
+        customerId: customer.id,
+        orderId: parsed.data.orderId ?? null,
+        type: 'redeem',
+        pointsDelta: -redeemablePoints,
+        notes: parsed.data.notes ?? 'Kiosk redemption',
+      });
+      await tx
+        .update(posLoyaltyCustomers)
+        .set({ points: newPoints, tier, updatedAt: new Date() })
+        .where(eq(posLoyaltyCustomers.id, customer.id));
+    });
+
+    return reply.send({
+      customerId: customer.id,
+      redeemedPoints: redeemablePoints,
+      discountCents,
+      remainingPoints: newPoints,
+      tier,
+    });
+  });
+
+  app.post('/kiosk/heartbeat', async (req, reply) => {
+    const auth = authenticateDeviceRequest(req as never, reply as never, app);
+    if (!auth) return;
+
+    const payload = (req.body as Record<string, unknown> | undefined) ?? {};
+    const readiness = payload['readiness'];
+    const hb = readiness != null && typeof readiness === 'object' && !Array.isArray(readiness)
+      ? {
+          ...payload,
+          clockDriftMs: (readiness as Record<string, unknown>)['driftMs'],
+          currentContentId: (readiness as Record<string, unknown>)['currentContentId'],
+          nextContentId: (readiness as Record<string, unknown>)['nextContentId'],
+          nextStartsAt: (readiness as Record<string, unknown>)['nextStartsAt'],
+        }
+      : payload;
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const currentContentId = typeof hb['currentContentId'] === 'string' && uuidPattern.test(hb['currentContentId'])
+      ? hb['currentContentId']
+      : null;
+    const nextContentId = typeof hb['nextContentId'] === 'string' && uuidPattern.test(hb['nextContentId'])
+      ? hb['nextContentId']
+      : null;
+    const nextStartsAt = typeof hb['nextStartsAt'] === 'string'
+      ? new Date(hb['nextStartsAt'])
+      : null;
+
+    await db
+      .update(devices)
+      .set({
+        status: 'online',
+        lastSeen: new Date(),
+        ...(typeof hb['playerVersion'] === 'string' ? { playerVersion: hb['playerVersion'] } : {}),
+        ...(typeof hb['firmwareVersion'] === 'string' ? { firmwareVersion: hb['firmwareVersion'] } : {}),
+        ...(typeof hb['powerState'] === 'string' ? { powerState: hb['powerState'] } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(devices.id, auth.deviceId));
+
+    await db.insert(deviceHeartbeats).values({
+      deviceId: auth.deviceId,
+      playerVersion: typeof hb['playerVersion'] === 'string' ? hb['playerVersion'] : null,
+      firmwareVersion: typeof hb['firmwareVersion'] === 'string' ? hb['firmwareVersion'] : null,
+      powerState: typeof hb['powerState'] === 'string' ? hb['powerState'] : null,
+      clockDriftMs: typeof hb['clockDriftMs'] === 'number' ? hb['clockDriftMs'] : null,
+      cpuLoad: typeof hb['cpuLoad'] === 'number' ? hb['cpuLoad'] : null,
+      storageFreeBytes: typeof hb['storageFreeBytes'] === 'number' ? hb['storageFreeBytes'] : null,
+      memoryFreeBytes: typeof hb['memoryFreeBytes'] === 'number' ? hb['memoryFreeBytes'] : null,
+      memoryTotalBytes: typeof hb['memoryTotalBytes'] === 'number' ? hb['memoryTotalBytes'] : null,
+      deviceUptimeSec: typeof hb['deviceUptimeSec'] === 'number' ? hb['deviceUptimeSec'] : null,
+      temperatureC: typeof hb['temperatureCelsius'] === 'number' ? hb['temperatureCelsius'] : null,
+      currentContentId,
+      nextContentId,
+      nextStartsAt: nextStartsAt && !Number.isNaN(nextStartsAt.getTime()) ? nextStartsAt : null,
+    });
+
+    return reply.send({ ok: true, timestamp: new Date().toISOString() });
+  });
+
   // ─── Menu management (session auth) ──────────────────────────────────────────
 
   app.get('/mgmt/menus', { onRequest: [app.authenticate] }, async (req, reply) => {
@@ -600,6 +1073,7 @@ export async function posRoutes(app: FastifyInstance) {
   // ─── Orders management (session auth — for portal views) ────────────────────
 
   app.get('/mgmt/orders', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
     const { workspaceId, status } = req.query as { workspaceId?: string; status?: string };
     if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
 
@@ -610,64 +1084,285 @@ export async function posRoutes(app: FastifyInstance) {
     const orders = await db.query.posOrders.findMany({
       where: and(
         eq(posOrders.workspaceId, workspaceId),
+        eq(posOrders.orgId, user.orgId),
         requestedStatuses.length > 0 ? inArray(posOrders.status, requestedStatuses as string[]) : undefined,
       ),
       orderBy: (t, { desc }) => [desc(t.createdAt)],
     });
 
-    const orderIds = orders.map((o) => o.id);
-    const lineItems = orderIds.length > 0
-      ? await db.query.posOrderItems.findMany({
-          where: inArray(posOrderItems.orderId, orderIds),
-        })
-      : [];
+    return reply.send(await hydrateOrders(orders));
+  });
 
-    const itemsByOrder = new Map<string, typeof lineItems>();
-    for (const li of lineItems) {
-      const list = itemsByOrder.get(li.orderId) ?? [];
-      list.push(li);
-      itemsByOrder.set(li.orderId, list);
+  app.get('/mgmt/orders/open/list', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const orders = await db.query.posOrders.findMany({
+      where: and(
+        eq(posOrders.workspaceId, workspaceId),
+        eq(posOrders.orgId, user.orgId),
+        inArray(posOrders.status, [...VALID_ACTIVE_STATUSES]),
+      ),
+      orderBy: (t, { desc }) => [desc(t.createdAt)],
+    });
+
+    return reply.send(await hydrateOrders(orders));
+  });
+
+  app.get('/mgmt/orders/completed/list', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const orders = await db.query.posOrders.findMany({
+      where: and(
+        eq(posOrders.workspaceId, workspaceId),
+        eq(posOrders.orgId, user.orgId),
+        eq(posOrders.status, 'completed'),
+      ),
+      orderBy: (t, { desc }) => [desc(t.completedAt), desc(t.createdAt)],
+    });
+
+    return reply.send(await hydrateOrders(orders));
+  });
+
+  app.get('/mgmt/orders/in-kitchen/list', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const orders = await db.query.posOrders.findMany({
+      where: and(
+        eq(posOrders.workspaceId, workspaceId),
+        eq(posOrders.orgId, user.orgId),
+        inArray(posOrders.status, ['pending', 'preparing', 'ready']),
+      ),
+      orderBy: (t, { desc }) => [desc(t.createdAt)],
+    });
+
+    return reply.send(await hydrateOrders(orders));
+  });
+
+  app.get('/mgmt/orders/table/:tableId/current', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { tableId } = req.params as { tableId: string };
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const order = await db.query.posOrders.findFirst({
+      where: and(
+        eq(posOrders.workspaceId, workspaceId),
+        eq(posOrders.orgId, user.orgId),
+        eq(posOrders.deviceId, tableId),
+        inArray(posOrders.status, [...VALID_ACTIVE_STATUSES]),
+      ),
+      orderBy: (t, { desc }) => [desc(t.createdAt)],
+    });
+
+    if (!order) return reply.send(null);
+    const [hydrated] = await hydrateOrders([order]);
+    return reply.send(hydrated ?? null);
+  });
+
+  app.get('/mgmt/orders/by-number/:orderNumber', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { orderNumber } = req.params as { orderNumber: string };
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const parsedOrderNumber = Number(orderNumber);
+    if (!Number.isInteger(parsedOrderNumber) || parsedOrderNumber <= 0) {
+      return reply.status(400).send({ error: 'Invalid order number' });
     }
 
-    return reply.send(
-      orders.map((o) => ({
-        id: o.id,
-        orderNumber: o.orderNumber,
-        status: o.status,
-        customerName: o.customerName,
-        notes: o.notes,
-        totalCents: o.totalCents,
-        createdAt: o.createdAt,
-        items: (itemsByOrder.get(o.id) ?? []).map((li) => ({
-          id: li.id,
-          itemName: li.itemName,
-          quantity: li.quantity,
-          unitPriceCents: li.itemPriceCents,
-          lineTotalCents: li.lineTotalCents,
-          notes: li.notes,
-        })),
+    const order = await db.query.posOrders.findFirst({
+      where: and(
+        eq(posOrders.workspaceId, workspaceId),
+        eq(posOrders.orgId, user.orgId),
+        eq(posOrders.orderNumber, parsedOrderNumber),
+      ),
+    });
+    if (!order) return reply.status(404).send({ error: 'Order not found' });
+
+    const [hydrated] = await hydrateOrders([order]);
+    return reply.send(hydrated);
+  });
+
+  app.get('/mgmt/orders/stats/summary', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { workspaceId, from, to } = req.query as { workspaceId?: string; from?: string; to?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 86_400_000);
+    const toDate = to ? new Date(to) : new Date();
+
+    const rows = await db
+      .select({
+        totalOrders: sql<number>`count(*)`,
+        pendingOrders: sql<number>`count(*) filter (where ${posOrders.status} = 'pending')`,
+        preparingOrders: sql<number>`count(*) filter (where ${posOrders.status} = 'preparing')`,
+        readyOrders: sql<number>`count(*) filter (where ${posOrders.status} = 'ready')`,
+        completedOrders: sql<number>`count(*) filter (where ${posOrders.status} = 'completed')`,
+        cancelledOrders: sql<number>`count(*) filter (where ${posOrders.status} = 'cancelled')`,
+        revenueCents: sql<number>`coalesce(sum(case when ${posOrders.status} = 'completed' then ${posOrders.totalCents} else 0 end), 0)`,
+        avgTicketCents: sql<number>`coalesce(avg(case when ${posOrders.status} = 'completed' then ${posOrders.totalCents} end), 0)`,
+      })
+      .from(posOrders)
+      .where(and(
+        eq(posOrders.workspaceId, workspaceId),
+        eq(posOrders.orgId, user.orgId),
+        gte(posOrders.createdAt, fromDate),
+        lte(posOrders.createdAt, toDate),
+      ));
+
+    const summary = rows[0];
+    return reply.send({
+      totalOrders: Number(summary?.totalOrders ?? 0),
+      pendingOrders: Number(summary?.pendingOrders ?? 0),
+      preparingOrders: Number(summary?.preparingOrders ?? 0),
+      readyOrders: Number(summary?.readyOrders ?? 0),
+      completedOrders: Number(summary?.completedOrders ?? 0),
+      cancelledOrders: Number(summary?.cancelledOrders ?? 0),
+      revenueCents: Number(summary?.revenueCents ?? 0),
+      avgTicketCents: Number(summary?.avgTicketCents ?? 0),
+    });
+  });
+
+  app.get('/mgmt/orders/stats/timing-metrics', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { workspaceId, from, to } = req.query as { workspaceId?: string; from?: string; to?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 86_400_000);
+    const toDate = to ? new Date(to) : new Date();
+
+    const [completed, active] = await Promise.all([
+      db
+        .select({
+          completedCount: sql<number>`count(*)`,
+          avgCompletionMinutes: sql<number>`coalesce(avg(extract(epoch from (${posOrders.completedAt} - ${posOrders.createdAt})) / 60.0), 0)`,
+          medianCompletionMinutes: sql<number>`coalesce(percentile_cont(0.5) within group (order by extract(epoch from (${posOrders.completedAt} - ${posOrders.createdAt})) / 60.0), 0)`,
+        })
+        .from(posOrders)
+        .where(and(
+          eq(posOrders.workspaceId, workspaceId),
+          eq(posOrders.orgId, user.orgId),
+          eq(posOrders.status, 'completed'),
+          sql`${posOrders.completedAt} is not null`,
+          gte(posOrders.createdAt, fromDate),
+          lte(posOrders.createdAt, toDate),
+        )),
+      db
+        .select({
+          activeCount: sql<number>`count(*)`,
+          avgActiveMinutes: sql<number>`coalesce(avg(extract(epoch from (now() - ${posOrders.createdAt})) / 60.0), 0)`,
+        })
+        .from(posOrders)
+        .where(and(
+          eq(posOrders.workspaceId, workspaceId),
+          eq(posOrders.orgId, user.orgId),
+          inArray(posOrders.status, [...VALID_ACTIVE_STATUSES]),
+        )),
+    ]);
+
+    return reply.send({
+      completedCount: Number(completed[0]?.completedCount ?? 0),
+      avgCompletionMinutes: Number(completed[0]?.avgCompletionMinutes ?? 0),
+      medianCompletionMinutes: Number(completed[0]?.medianCompletionMinutes ?? 0),
+      activeCount: Number(active[0]?.activeCount ?? 0),
+      avgActiveMinutes: Number(active[0]?.avgActiveMinutes ?? 0),
+    });
+  });
+
+  app.get('/mgmt/orders/stats/hourly-heatmap', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { workspaceId, from, to } = req.query as { workspaceId?: string; from?: string; to?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 86_400_000);
+    const toDate = to ? new Date(to) : new Date();
+
+    const rows = await db
+      .select({
+        weekday: sql<number>`extract(isodow from ${posOrders.createdAt})`,
+        hour: sql<number>`extract(hour from ${posOrders.createdAt})`,
+        orders: sql<number>`count(*)`,
+        revenueCents: sql<number>`coalesce(sum(case when ${posOrders.status} = 'completed' then ${posOrders.totalCents} else 0 end), 0)`,
+      })
+      .from(posOrders)
+      .where(and(
+        eq(posOrders.workspaceId, workspaceId),
+        eq(posOrders.orgId, user.orgId),
+        gte(posOrders.createdAt, fromDate),
+        lte(posOrders.createdAt, toDate),
+      ))
+      .groupBy(sql`extract(isodow from ${posOrders.createdAt})`, sql`extract(hour from ${posOrders.createdAt})`)
+      .orderBy(sql`extract(isodow from ${posOrders.createdAt})`, sql`extract(hour from ${posOrders.createdAt})`);
+
+    return reply.send(rows.map((row) => ({
+      weekday: Number(row.weekday),
+      hour: Number(row.hour),
+      orders: Number(row.orders),
+      revenueCents: Number(row.revenueCents),
+    })));
+  });
+
+  app.get('/mgmt/orders/:id/history', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const order = await getOrderByIdForOrg(id, user.orgId);
+    if (!order) return reply.status(404).send({ error: 'Order not found' });
+
+    const [hydrated, payments] = await Promise.all([
+      hydrateOrders([order]),
+      db.query.posPayments.findMany({
+        where: eq(posPayments.orderId, id),
+        orderBy: (t, { asc }) => [asc(t.createdAt)],
+      }),
+    ]);
+
+    const history = [
+      { type: 'created', at: order.createdAt, label: 'Order created' },
+      ...(order.completedAt ? [{ type: 'completed', at: order.completedAt, label: 'Order completed' }] : []),
+      ...(order.cancelledAt ? [{ type: 'cancelled', at: order.cancelledAt, label: 'Order cancelled' }] : []),
+      ...payments.map((payment) => ({
+        type: 'payment',
+        at: payment.createdAt,
+        label: `Payment recorded (${payment.method})`,
+        amountCents: payment.amountCents,
       })),
-    );
+    ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+
+    return reply.send({
+      order: hydrated[0],
+      payments,
+      history,
+    });
+  });
+
+  app.get('/mgmt/orders/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const order = await getOrderByIdForOrg(id, user.orgId);
+    if (!order) return reply.status(404).send({ error: 'Order not found' });
+
+    const [hydrated] = await hydrateOrders([order]);
+    return reply.send(hydrated);
   });
 
   app.patch('/mgmt/orders/:id/status', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
     const { id } = req.params as { id: string };
     const parsed = UpdateOrderStatusSchema.safeParse(req.body);
     if (!parsed.success) return reply.status(400).send({ error: 'Invalid status' });
 
-    const now = new Date();
-    const extra: Record<string, unknown> = {};
-    if (parsed.data.status === 'completed') extra['completedAt'] = now;
-    if (parsed.data.status === 'cancelled') extra['cancelledAt'] = now;
-
-    const [updated] = await db
-      .update(posOrders)
-      .set({ status: parsed.data.status, updatedAt: now, ...extra })
-      .where(eq(posOrders.id, id))
-      .returning({ id: posOrders.id, status: posOrders.status });
+    const updated = await transitionOrderStatus(id, user.orgId, parsed.data.status);
 
     if (!updated) return reply.status(404).send({ error: 'Order not found' });
-    return reply.send(updated);
+    return reply.send({ id: updated.id, status: updated.status });
   });
 
   // ── POST /pos/mgmt/orders ────────────────────────────────────────────────────
@@ -768,6 +1463,160 @@ export async function posRoutes(app: FastifyInstance) {
     });
   });
 
+  app.post('/mgmt/orders/:id/confirm', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const order = await getOrderByIdForOrg(id, user.orgId);
+    if (!order) return reply.status(404).send({ error: 'Order not found' });
+    if (order.status !== 'pending') return reply.status(409).send({ error: 'Only pending orders can be confirmed' });
+
+    const updated = await transitionOrderStatus(id, user.orgId, 'preparing');
+    return reply.send({ id: updated!.id, status: updated!.status });
+  });
+
+  app.post('/mgmt/orders/:id/cancel', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const order = await getOrderByIdForOrg(id, user.orgId);
+    if (!order) return reply.status(404).send({ error: 'Order not found' });
+    if (order.status === 'completed' || order.status === 'cancelled') {
+      return reply.status(409).send({ error: `Order is already ${order.status}` });
+    }
+
+    const updated = await transitionOrderStatus(id, user.orgId, 'cancelled');
+    return reply.send({ id: updated!.id, status: updated!.status });
+  });
+
+  app.post('/mgmt/orders/:id/items', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const parsed = AddOrderItemsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
+    }
+
+    const order = await getOrderByIdForOrg(id, user.orgId);
+    if (!order) return reply.status(404).send({ error: 'Order not found' });
+    if (order.status === 'completed' || order.status === 'cancelled') {
+      return reply.status(409).send({ error: `Order is already ${order.status}` });
+    }
+
+    const itemIds = [...new Set(parsed.data.items.map((item) => item.itemId))];
+    const menu = await db.query.posMenus.findFirst({
+      where: and(eq(posMenus.workspaceId, order.workspaceId), eq(posMenus.orgId, user.orgId), eq(posMenus.isActive, true), isNull(posMenus.deletedAt)),
+      columns: { id: true },
+    });
+    if (!menu) return reply.status(400).send({ error: 'No active menu for this workspace' });
+
+    const menuItems = await db.query.posItems.findMany({
+      where: and(inArray(posItems.id, itemIds), eq(posItems.isAvailable, true), isNull(posItems.deletedAt)),
+    });
+    const categories = menuItems.length > 0
+      ? await db.query.posCategories.findMany({
+          where: inArray(posCategories.id, [...new Set(menuItems.map((item) => item.categoryId))]),
+        })
+      : [];
+    const validCategoryIds = new Set(categories.filter((category) => category.menuId === menu.id).map((category) => category.id));
+    const itemMap = new Map(menuItems.filter((item) => validCategoryIds.has(item.categoryId)).map((item) => [item.id, item]));
+    for (const input of parsed.data.items) {
+      if (!itemMap.has(input.itemId)) {
+        return reply.status(400).send({ error: `Item ${input.itemId} not found or unavailable` });
+      }
+    }
+
+    const lineItems = parsed.data.items.map((input) => {
+      const dbItem = itemMap.get(input.itemId)!;
+      const modifierTotal = (input.selectedModifiers ?? []).reduce((sum, modifier) => sum + modifier.priceCents, 0);
+      const unitCents = dbItem.priceCents + modifierTotal;
+      return {
+        orderId: id,
+        itemId: input.itemId,
+        itemName: dbItem.name,
+        itemPriceCents: dbItem.priceCents,
+        quantity: input.quantity,
+        notes: input.notes || null,
+        selectedModifiers: input.selectedModifiers ?? [],
+        lineTotalCents: unitCents * input.quantity,
+      };
+    });
+
+    await db.insert(posOrderItems).values(lineItems);
+    const totalCents = await recalculateOrderTotal(id);
+
+    return reply.status(201).send({
+      orderId: id,
+      totalCents,
+      itemsAdded: lineItems.length,
+    });
+  });
+
+  app.post('/mgmt/orders/:orderId/items/:itemId/cancel', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { orderId, itemId } = req.params as { orderId: string; itemId: string };
+
+    const order = await getOrderByIdForOrg(orderId, user.orgId);
+    if (!order) return reply.status(404).send({ error: 'Order not found' });
+    if (order.status === 'completed' || order.status === 'cancelled') {
+      return reply.status(409).send({ error: `Order is already ${order.status}` });
+    }
+
+    const lineItem = await db.query.posOrderItems.findFirst({
+      where: and(eq(posOrderItems.id, itemId), eq(posOrderItems.orderId, orderId)),
+      columns: { id: true },
+    });
+    if (!lineItem) return reply.status(404).send({ error: 'Order item not found' });
+
+    await db.delete(posOrderItems).where(and(eq(posOrderItems.id, itemId), eq(posOrderItems.orderId, orderId)));
+    const totalCents = await recalculateOrderTotal(orderId);
+
+    if (totalCents === 0) {
+      const updated = await transitionOrderStatus(orderId, user.orgId, 'cancelled');
+      return reply.send({ orderId, itemId, totalCents, status: updated?.status ?? 'cancelled' });
+    }
+
+    return reply.send({ orderId, itemId, totalCents, status: order.status });
+  });
+
+  app.post('/mgmt/orders/:id/mark-paid', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const parsed = MarkOrderPaidSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
+    }
+
+    const order = await getOrderByIdForOrg(id, user.orgId);
+    if (!order) return reply.status(404).send({ error: 'Order not found' });
+    if (order.status === 'completed' || order.status === 'cancelled') {
+      return reply.status(409).send({ error: `Order is already ${order.status}` });
+    }
+
+    const tipCents = parsed.data.tipCents ?? 0;
+    const totalWithTip = order.totalCents + tipCents;
+    const amountCents = parsed.data.amountCents ?? totalWithTip;
+    if (parsed.data.method === 'cash' && amountCents < totalWithTip) {
+      return reply.status(400).send({ error: 'Tendered amount is less than total' });
+    }
+
+    const changeCents = parsed.data.method === 'cash' ? Math.max(0, amountCents - totalWithTip) : 0;
+    const [payment] = await db
+      .insert(posPayments)
+      .values({
+        orderId: id,
+        method: parsed.data.method,
+        amountCents,
+        tipCents,
+        changeCents,
+        reference: parsed.data.reference ?? null,
+      })
+      .returning({ id: posPayments.id });
+
+    await transitionOrderStatus(id, user.orgId, 'completed');
+    return reply.status(201).send({ paymentId: payment!.id, changeCents, orderId: id });
+  });
+
   // ── POST /pos/mgmt/orders/:id/payment ────────────────────────────────────────
   // Session auth — record payment and mark order completed
   const MgmtPaymentSchema = z.object({
@@ -778,6 +1627,7 @@ export async function posRoutes(app: FastifyInstance) {
   });
 
   app.post('/mgmt/orders/:id/payment', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
     const { id } = req.params as { id: string };
     const parsed = MgmtPaymentSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -785,10 +1635,7 @@ export async function posRoutes(app: FastifyInstance) {
     }
     const { method, amountCents, tipCents, reference } = parsed.data;
 
-    const order = await db.query.posOrders.findFirst({
-      where: eq(posOrders.id, id),
-      columns: { id: true, status: true, totalCents: true, workspaceId: true },
-    });
+    const order = await getOrderByIdForOrg(id, user.orgId);
     if (!order) return reply.status(404).send({ error: 'Order not found' });
     if (order.status === 'completed' || order.status === 'cancelled') {
       return reply.status(409).send({ error: `Order is already ${order.status}` });
@@ -802,11 +1649,7 @@ export async function posRoutes(app: FastifyInstance) {
       .values({ orderId: id, method, amountCents, tipCents, changeCents, reference: reference ?? null })
       .returning({ id: posPayments.id });
 
-    const now = new Date();
-    await db
-      .update(posOrders)
-      .set({ status: 'completed', completedAt: now, updatedAt: now })
-      .where(eq(posOrders.id, id));
+    await transitionOrderStatus(id, user.orgId, 'completed');
 
     return reply.status(201).send({ paymentId: payment!.id, changeCents, orderId: id });
   });
