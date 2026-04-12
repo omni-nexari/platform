@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { createReadStream, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
-import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups } from '@signage/db';
+import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncPlaylists, syncPlaylistItems } from '@signage/db';
 import { eq, and, isNull, desc, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -1347,6 +1347,52 @@ export async function deviceRoutes(app: FastifyInstance) {
         : Promise.resolve(null),
     ]);
 
+    // Resolve sync group + its sync playlist when publishedSyncGroupId is set
+    let publishedSyncGroup: {
+      id: string; groupId: number; mode: string;
+      syncPlaylist: { id: string; name: string; items: Array<{ id: string; contentId: string | null; durationSeconds: number | null; sortOrder: number; content: typeof contentItems.$inferSelect | null }> } | null;
+    } | null = null;
+
+    if (device.publishedSyncGroupId) {
+      const sg = await db.query.syncGroups.findFirst({
+        where: and(eq(syncGroups.id, device.publishedSyncGroupId), isNull(syncGroups.deletedAt)),
+      });
+      if (sg && sg.syncPlaylistId) {
+        const sp = await db.query.syncPlaylists.findFirst({
+          where: and(eq(syncPlaylists.id, sg.syncPlaylistId), isNull(syncPlaylists.deletedAt)),
+        });
+        if (sp) {
+          const spItems = await db.query.syncPlaylistItems.findMany({
+            where: eq(syncPlaylistItems.syncPlaylistId, sp.id),
+            orderBy: [syncPlaylistItems.sortOrder],
+          });
+          const spContentIds = [...new Set(spItems.map((i) => i.contentId).filter((v): v is string => !!v))];
+          const spContentRows = spContentIds.length > 0
+            ? await db.query.contentItems.findMany({
+                where: and(inArray(contentItems.id, spContentIds), isNull(contentItems.deletedAt)),
+              })
+            : [];
+          const spContentMap = Object.fromEntries(spContentRows.map((c) => [c.id, c]));
+          publishedSyncGroup = {
+            id: sg.id,
+            groupId: sg.groupId,
+            mode: sg.mode,
+            syncPlaylist: {
+              id: sp.id,
+              name: sp.name,
+              items: spItems.map((item) => ({
+                id: item.id,
+                contentId: item.contentId,
+                durationSeconds: item.durationSeconds,
+                sortOrder: item.sortOrder,
+                content: item.contentId ? (spContentMap[item.contentId] ?? null) : null,
+              })),
+            },
+          };
+        }
+      }
+    }
+
     const compatibilityDefaultPlaylist = publishedPlaylist
       ?? (publishedContent ? buildSingleContentPlaylist(publishedContent) : null)
       ?? defaultPlaylist;
@@ -1357,6 +1403,7 @@ export async function deviceRoutes(app: FastifyInstance) {
       publishedContent,
       publishedPlaylist,
       publishedSchedule,
+      publishedSyncGroup,
       zones: device.zones ?? [],
     });
   });

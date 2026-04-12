@@ -136,12 +136,17 @@ export default function SyncPlaylistsPage() {
 
   const publishMutation = useMutation({
     mutationFn: async ({ syncPlaylistId, deviceIds }: { syncPlaylistId: string; deviceIds: string[] }) => {
-      const group = await api.post<{ id: string }>('/sync-groups', {
-        workspaceId: wsId,
-        name: publishTarget?.name ?? 'Group',
-        syncPlaylistId,
-      });
-      return api.post(`/sync-groups/${group.id}/members`, { deviceIds });
+      // Check if a sync group already exists for this playlist — reuse it instead of creating duplicates
+      const existingGroups = await api.get<Array<{ id: string; syncPlaylist?: { id: string } | null }>>(`/sync-groups?workspaceId=${wsId}`);
+      const existing = existingGroups.find(g => g.syncPlaylist?.id === syncPlaylistId);
+      const groupId = existing
+        ? existing.id
+        : (await api.post<{ id: string }>('/sync-groups', {
+            workspaceId: wsId,
+            name: publishTarget?.name ?? 'Group',
+            syncPlaylistId,
+          })).id;
+      return api.post(`/sync-groups/${groupId}/members`, { deviceIds });
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['sync-groups', wsId] });

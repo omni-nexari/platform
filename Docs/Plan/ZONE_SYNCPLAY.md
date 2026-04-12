@@ -1,20 +1,72 @@
-# Zone SyncPlay — Cross-Device + Multi-Zone Sync
+# Zone SyncPlay — Intra-Device Sync + Cross-Device Design
 
-## Status: Future / Design Phase
+## Status
 
-Seamless per-zone looping (dual-player ping-pong) is implemented and shipped.
-This document describes the next step: synchronising zone video playback **across multiple physical devices** on the same LAN.
+| Scope | Status |
+|---|---|
+| Intra-device zone sync (multiple zones, one QB24C) | ✅ Shipped (`20260406-001205Z`) |
+| Cross-device zone sync (multiple QB24C displays) | 🔲 Design phase — see §2 onwards |
 
 ---
 
-## 1. Background
+## 0. Intra-Device Zone Sync — Implemented
+
+Multiple video zones on a **single device** are synchronised using AVPlay VideoMixer + app-layer count-based gating.
+
+### Architecture
+
+```
+activateZoneMode()
+  → _zoneSyncExpectedCount = count of zones with syncGroup set
+  → setAvPlayVisualMode(true)  [body transparent so hardware layer shows through]
+  → each zone: download → prepareAsync (serialised) → _enqueueZoneSync(play)
+
+_enqueueZoneSync(playFn):
+  → pushes to _zoneSyncReadyQueue
+  → when queue.length === _zoneSyncExpectedCount → _flushZoneSyncQueue() immediately
+  → fallback: 10s timer fires remaining zones if any zone failed to prepare
+
+_flushZoneSyncQueue():
+  → calls play() on all zones in same JS tick
+
+onstreamcompleted (single-video loop zone):
+  → pushes {avp, zoneIndex} to _zoneSyncLoopQueue
+  → when queue.length === _zoneSyncExpectedCount:
+      → seekTo(0) + play() all at once  [prevents loop drift accumulation]
+```
+
+### Key implementation details
+
+- **Serialised `prepareAsync`**: `_videoMixerQueue` is a chained Promise — Samsung rejects concurrent `prepareAsync()` calls across players (`PLAYER_ERROR_NOT_SUPPORTED_FILE`). Each zone's prepare runs only after the previous completes.
+- **Count-based flush (not timer-based)**: Timer-based debounce failed because zones download at different speeds (e.g. Zone 0 takes 4s, Zone 2 takes 4.8s). Counting guarantees all prepared zones start in the same JS tick regardless of download timing.
+- **Loop re-sync**: `onstreamcompleted` fires independently per zone. Without re-sync, drift accumulates ~60ms/loop. `_zoneSyncLoopQueue` gates the re-loop the same way the initial start is gated.
+- **HTML5 fallback**: Zones without `syncGroup` use HTML5 `<video>` (no body transparency needed, no AVPlay required). Only zones with `syncGroup` use AVPlay VideoMixer.
+- **Local files only**: All zone video is downloaded to `file:///opt/usr/home/owner/apps_rw/EBDSignage/data/content/` before playback. No HTTP streaming.
+
+### Zone config fields (`ZoneConfig`)
+
+| Field | Values | Effect |
+|---|---|---|
+| `syncGroup` | `'A'`\|`'B'`\|`'C'`\|`'D'`\|`null` | Zones with same non-null group → AVPlay VideoMixer, count-based sync |
+| `fitMode` | `'fill'`\|`'contain'`\|`null` | `fill` = `PLAYER_DISPLAY_MODE_FULL_SCREEN`; `contain` = `PLAYER_DISPLAY_MODE_LETTER_BOX` |
+
+### Validated on QB24C-T (QBCTF, build `20260406-001205Z`)
+
+- 2 synced video zones + 1 image playlist zone: all playing simultaneously ✅
+- `[Zone sync] Starting 2 zone(s) simultaneously` fires once for both zones ✅
+- `[Zone sync] Re-looping 2 zone(s) simultaneously` fires on each loop iteration ✅
+- No decoder contention (AVPlay VideoMixer handles multiple streams) ✅
+
+---
+
+## 1. Background — Cross-Device Sync
 
 ### What we have today
 
 | Feature | Status |
 |---|---|
-| AVPlay VideoMixer zones | ✅ Implemented |
-| Dual-player seamless loop (per zone) | ✅ Implemented (`20260405-044644Z`) |
+| AVPlay VideoMixer multi-zone | ✅ Implemented |
+| Intra-device zone sync (count-based gate + loop re-sync) | ✅ Implemented (`20260406-001205Z`) |
 | Samsung native SyncPlay (`webapis.syncplay`) | ✅ Implemented for full-screen content |
 | NTP clock alignment (our custom, cross-platform) | ✅ Implemented |
 
@@ -28,7 +80,7 @@ Samsung's `webapis.syncplay` cannot be used directly for zones because:
 
 ---
 
-## 2. Proposed Architecture: Firmware Clock + App-Layer Execution
+## 2. Cross-Device Design: Firmware Clock + App-Layer Execution
 
 The insight is to **decouple clock alignment from player control**.
 
@@ -51,7 +103,7 @@ The insight is to **decouple clock alignment from player control**.
 
 ---
 
-## 3. Implementation Plan
+## 3. Cross-Device Implementation Plan
 
 ### Phase 1 — Dummy SyncPlay for clock sync
 
@@ -149,12 +201,12 @@ The server decides which tier to enable per device based on firmware version rep
 
 ---
 
-## 8. Validation Checklist (on QB24C hardware)
+## 8. Validation Checklist — Cross-Device (on QB24C hardware)
 
 - [ ] `webapis.syncplay.start()` + `webapis.avplaystore.getPlayer()` can coexist
 - [ ] Dummy 1px rect video does not visually appear over zone content
 - [ ] `SYNC_PLAY_START_DONE` fires within acceptable tolerance across 2+ devices
-- [ ] `avplaystore` ping-pong stays aligned after 10+ loop iterations
+- [ ] `avplaystore` loop re-sync stays aligned after 10+ iterations across devices
 - [ ] `seekTo(drift)` on standby player before play() corrects inter-device drift
 - [ ] `stopZoneMode()` + `syncplay.stop()` cleans up without player handle leak
 - [ ] SBB `b2bsyncplay` + Tizen 6.5 `webapis.syncplay` in same group ID (if applicable)
