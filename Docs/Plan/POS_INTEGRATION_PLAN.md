@@ -96,7 +96,7 @@ left-side navigation of the org workspace.
 | Expense management    | business+             |
 | Purchase orders       | business+             |
 | Kiosk / QR ordering   | business+             |
-| Multi-location cross-analytics | enterprise+ |
+| Multi-location cross-analytics | enterprise+  |
 | White-label / SSO     | enterprise+           |
 
 ### 2.4 POS components to keep / restyle / remove

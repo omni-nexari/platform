@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { CreditCard, Banknote, CheckCircle2, ArrowLeft } from 'lucide-react';
 import { api } from '../../lib/api.js';
@@ -50,6 +50,7 @@ function parseCents(value: string): number {
 export default function PosPaymentPage() {
   const { wsId } = useParams<{ wsId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
 
   const orderId    = searchParams.get('orderId') ?? '';
@@ -68,14 +69,8 @@ export default function PosPaymentPage() {
 
   const { data: order, isLoading: orderLoading } = useQuery<OrderDetail>({
     queryKey: ['pos-order-detail', orderId],
-    queryFn:  () => api.get(`/pos/mgmt/orders?workspaceId=${wsId}&status=pending,preparing,ready`).then(
-      (orders: OrderDetail[]) => {
-        const found = orders.find((o) => o.id === orderId);
-        if (!found) throw new Error('Order not found');
-        return found;
-      },
-    ),
-    enabled: !!orderId && !!wsId,
+    queryFn:  () => api.get(`/pos/mgmt/orders/${orderId}`),
+    enabled: !!orderId,
   });
 
   const { data: restaurant } = useQuery<Restaurant | null>({
@@ -105,8 +100,16 @@ export default function PosPaymentPage() {
   // ─── Submit ──────────────────────────────────────────────────────────────
 
   const payMut = useMutation({
-    mutationFn: (body: object) => api.post(`/pos/mgmt/orders/${orderId}/payment`, body),
-    onSuccess: (data: { paymentId: string; changeCents: number; orderId: string }) => {
+    mutationFn: (body: object) => api.post(`/pos/mgmt/orders/${orderId}/mark-paid`, body),
+    onSuccess: async (data: { paymentId: string; changeCents: number; orderId: string }) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-order-detail'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-order-history'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-orders-kitchen'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-orders-stats'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-analytics-top-items'] }),
+      ]);
       setChangeCents(data.changeCents);
       setOrderNumber(order?.orderNumber ?? null);
       setDone(true);
@@ -331,9 +334,13 @@ export default function PosPaymentPage() {
         <Callout tone="accent">This order has already been paid.</Callout>
       )}
 
+      {order?.status === 'cancelled' && (
+        <Callout tone="danger">This order was cancelled and can no longer be paid.</Callout>
+      )}
+
       <button
         onClick={handlePay}
-        disabled={payMut.isPending || !orderId || order?.status === 'completed'}
+        disabled={payMut.isPending || !orderId || order?.status === 'completed' || order?.status === 'cancelled'}
         className="w-full flex items-center justify-center gap-2 rounded-xl bg-[var(--accent)] px-4 py-3.5 text-base font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
       >
         {payMut.isPending ? 'Processing…' : `Charge ${fmt(grandTotal, currency)}`}

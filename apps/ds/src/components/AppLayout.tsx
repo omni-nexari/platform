@@ -42,7 +42,9 @@ import {
   ShoppingCart,
   ClipboardList,
   ChefHat,
+  Heart,
   Package,
+  Smartphone,
   Users,
   CloudSun,
 } from 'lucide-react';
@@ -428,6 +430,19 @@ export default function AppLayout() {
                     Orders
                   </NavLink>
                   <NavLink
+                    to={`/workspaces/${currentWsId}/pos/kiosk`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <Smartphone className="w-4 h-4" />
+                    Kiosk
+                  </NavLink>
+                  <NavLink
                     to={`/workspaces/${currentWsId}/pos/kitchen`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
@@ -465,6 +480,32 @@ export default function AppLayout() {
                   >
                     <Users className="w-4 h-4" />
                     Employees
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/pos/loyalty`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <Heart className="w-4 h-4" />
+                    Loyalty
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/pos/analytics`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <BarChart2 className="w-4 h-4" />
+                    POS Analytics
                   </NavLink>
                 </>
               )}

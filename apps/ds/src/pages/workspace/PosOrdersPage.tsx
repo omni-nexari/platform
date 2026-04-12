@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ClipboardList, CreditCard, RefreshCw, Search, XCircle } from 'lucide-react';
+import { ClipboardList, CreditCard, Download, Plus, Printer, RefreshCw, Search, Trash2, XCircle } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
 import { formatDistanceToNow } from '../utils/time.js';
@@ -73,6 +73,22 @@ interface OrderHistoryResponse {
   history: OrderHistoryEntry[];
 }
 
+interface PosMenuItemOption {
+  id: string;
+  name: string;
+  categoryName: string;
+  priceCents: number;
+  isAvailable: boolean;
+}
+
+interface PosMenu {
+  categories: Array<{
+    id: string;
+    name: string;
+    items: PosMenuItemOption[];
+  }>;
+}
+
 const STATUS_TONES = {
   pending: 'warning',
   preparing: 'accent',
@@ -95,7 +111,20 @@ function formatPrice(cents: number, currency = 'USD') {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(cents / 100);
 }
 
+function escapeHtml(value: unknown) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function buildOrdersUrl(wsId: string, statusFilter: StatusFilter) {
+  if (statusFilter === 'completed') {
+    return `/pos/mgmt/orders/completed/list?workspaceId=${wsId}`;
+  }
+
   if (statusFilter === 'all') {
     return `/pos/mgmt/orders?workspaceId=${wsId}`;
   }
@@ -111,6 +140,10 @@ export default function PosOrdersPage() {
   const [orderSearch, setOrderSearch] = useState('');
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<PosOrder | null>(null);
+  const [addItemSearch, setAddItemSearch] = useState('');
+  const [selectedAddItemId, setSelectedAddItemId] = useState('');
+  const [addQuantity, setAddQuantity] = useState(1);
+  const [addItemNotes, setAddItemNotes] = useState('');
 
   const orderLookup = orderSearch.trim();
   const isSearchActive = orderLookup.length > 0;
@@ -173,6 +206,44 @@ export default function PosOrdersPage() {
   });
 
   const detailOrder = orderHistory?.order ?? selectedOrder;
+  const editableOrder = detailOrder ? detailOrder.status !== 'completed' && detailOrder.status !== 'cancelled' : false;
+
+  const { data: activeMenu } = useQuery<PosMenu | null>({
+    queryKey: ['pos-order-edit-menu', wsId, selectedOrderId],
+    queryFn: () => api.get(`/pos/menu?workspaceId=${wsId}`),
+    enabled: !!wsId && !!selectedOrderId && editableOrder,
+    retry: false,
+  });
+
+  const menuItems = useMemo(() => {
+    return (activeMenu?.categories ?? []).flatMap((category) =>
+      (category.items ?? []).map((item) => ({
+        ...item,
+        categoryName: category.name,
+      })),
+    );
+  }, [activeMenu]);
+
+  const filteredMenuItems = useMemo(() => {
+    const query = addItemSearch.trim().toLowerCase();
+    return menuItems.filter((item) => {
+      if (!item.isAvailable) return false;
+      if (!query) return true;
+      return `${item.name} ${item.categoryName}`.toLowerCase().includes(query);
+    });
+  }, [menuItems, addItemSearch]);
+
+  const paymentSummary = useMemo(() => {
+    return (orderHistory?.payments ?? []).reduce(
+      (acc, payment) => {
+        acc.amountCents += payment.amountCents;
+        acc.tipCents += payment.tipCents;
+        acc.changeCents += payment.changeCents;
+        return acc;
+      },
+      { amountCents: 0, tipCents: 0, changeCents: 0 },
+    );
+  }, [orderHistory]);
 
   const statusMut = useMutation({
     mutationFn: ({ orderId, action }: { orderId: string; action: 'confirm' | 'ready' }) => {
@@ -204,15 +275,130 @@ export default function PosOrdersPage() {
     onError: () => toast.error('Failed to cancel order'),
   });
 
+  const addItemsMut = useMutation({
+    mutationFn: ({ orderId, itemId, quantity, notes }: { orderId: string; itemId: string; quantity: number; notes: string }) =>
+      api.post(`/pos/mgmt/orders/${orderId}/items`, {
+        items: [{ itemId, quantity, notes: notes.trim() || undefined, selectedModifiers: [] }],
+      }),
+    onSuccess: async () => {
+      await invalidatePosQueries();
+      setSelectedAddItemId('');
+      setAddQuantity(1);
+      setAddItemNotes('');
+      setAddItemSearch('');
+      toast.success('Item added to order');
+    },
+    onError: () => toast.error('Failed to add item'),
+  });
+
+  const removeItemMut = useMutation({
+    mutationFn: ({ orderId, itemId }: { orderId: string; itemId: string }) =>
+      api.post(`/pos/mgmt/orders/${orderId}/items/${itemId}/cancel`),
+    onSuccess: async () => {
+      await invalidatePosQueries();
+      toast.success('Order line removed');
+    },
+    onError: () => toast.error('Failed to remove order line'),
+  });
+
   function openPayment(order: Pick<PosOrder, 'id' | 'totalCents'>) {
     navigate(`/workspaces/${wsId}/pos/payment?orderId=${order.id}&total=${order.totalCents}`);
+  }
+
+  function handleAddItem() {
+    if (!detailOrder) return;
+
+    const itemId = selectedAddItemId || filteredMenuItems[0]?.id;
+    if (!itemId) {
+      toast.error('Select a menu item to add');
+      return;
+    }
+
+    addItemsMut.mutate({
+      orderId: detailOrder.id,
+      itemId,
+      quantity: Math.max(1, addQuantity),
+      notes: addItemNotes,
+    });
+  }
+
+  function exportOrder(orderData: OrderHistoryResponse) {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      order: orderData.order,
+      payments: orderData.payments,
+      history: orderData.history,
+      totals: paymentSummary,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `order-${orderData.order.orderNumber}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  }
+
+  function printOrder(orderData: OrderHistoryResponse) {
+    const receiptWindow = window.open('', '_blank', 'noopener,noreferrer,width=480,height=720');
+    if (!receiptWindow) {
+      toast.error('Allow pop-ups to print the receipt');
+      return;
+    }
+
+    const paymentRows = orderData.payments.map((payment) => `
+      <div class="row small">
+        <span>${escapeHtml(payment.method.toUpperCase())}${payment.reference ? ` · ${escapeHtml(payment.reference)}` : ''}</span>
+        <span>${escapeHtml(formatPrice(payment.amountCents, currency))}</span>
+      </div>
+    `).join('');
+
+    const itemRows = orderData.order.items.map((item) => `
+      <div class="row item-row">
+        <span>${escapeHtml(`${item.quantity}× ${item.itemName}`)}</span>
+        <span>${escapeHtml(formatPrice(item.lineTotalCents ?? item.unitPriceCents * item.quantity, currency))}</span>
+      </div>
+      ${item.notes ? `<div class="note">${escapeHtml(item.notes)}</div>` : ''}
+    `).join('');
+
+    receiptWindow.document.write(`<!doctype html>
+      <html>
+        <head>
+          <title>Order #${orderData.order.orderNumber}</title>
+          <style>
+            body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 24px; color: #111827; }
+            h1 { font-size: 20px; margin: 0 0 6px; }
+            .muted { color: #6b7280; font-size: 12px; }
+            .section { margin-top: 18px; padding-top: 12px; border-top: 1px dashed #d1d5db; }
+            .row { display: flex; justify-content: space-between; gap: 12px; margin: 8px 0; font-size: 14px; }
+            .row.small { font-size: 12px; color: #4b5563; }
+            .item-row { font-weight: 600; }
+            .note { margin-top: -4px; font-size: 12px; color: #6b7280; }
+            .total { font-size: 16px; font-weight: 700; }
+          </style>
+        </head>
+        <body>
+          <h1>Order #${orderData.order.orderNumber}</h1>
+          <div class="muted">${escapeHtml(orderData.order.customerName || 'Walk-in')} · ${escapeHtml(new Date(orderData.order.createdAt).toLocaleString())}</div>
+          <div class="section">${itemRows}</div>
+          <div class="section">
+            <div class="row total"><span>Total</span><span>${escapeHtml(formatPrice(orderData.order.totalCents, currency))}</span></div>
+          </div>
+          ${orderData.payments.length > 0 ? `<div class="section"><div class="muted">Payments</div>${paymentRows}</div>` : ''}
+        </body>
+      </html>`);
+    receiptWindow.document.close();
+    receiptWindow.focus();
+    receiptWindow.print();
   }
 
   return (
     <div className="flex flex-col gap-6 p-4 sm:p-6 max-w-screen-xl mx-auto">
       <PageHeader
         title="Orders"
-        subtitle="Live order queue with detail history"
+        subtitle="Queue management, editing, and completed-order receipts"
         action={
           <button
             className="ui-btn-secondary flex items-center gap-1.5"
@@ -258,6 +444,10 @@ export default function PosOrdersPage() {
           ) : null}
         </label>
       </div>
+
+      {statusFilter === 'completed' && !isLoading ? (
+        <Callout tone="accent">Completed history is optimized for receipts and payment audit. Open Details to print or export the order.</Callout>
+      ) : null}
 
       {isFetching && !isLoading ? (
         <p className="text-xs text-[var(--text-muted)]">Refreshing order queue…</p>
@@ -420,12 +610,81 @@ export default function PosOrdersPage() {
                                 <p className="mt-1 text-xs text-[var(--text-muted)]">{item.notes}</p>
                               ) : null}
                             </div>
-                            <span className="shrink-0 text-sm font-semibold text-[var(--text)]">
-                              {formatPrice((item.lineTotalCents ?? item.unitPriceCents * item.quantity), currency)}
-                            </span>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-sm font-semibold text-[var(--text)]">
+                                {formatPrice((item.lineTotalCents ?? item.unitPriceCents * item.quantity), currency)}
+                              </span>
+                              {editableOrder ? (
+                                <button
+                                  type="button"
+                                  className="rounded-lg border border-red-300/30 bg-red-500/10 p-2 text-red-300 transition-colors hover:bg-red-500/15"
+                                  onClick={() => removeItemMut.mutate({ orderId: detailOrder.id, itemId: item.id })}
+                                  disabled={removeItemMut.isPending}
+                                  title="Remove line item"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              ) : null}
+                            </div>
                           </div>
                         </div>
                       ))}
+
+                      {editableOrder ? (
+                        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-4 space-y-3">
+                          <div>
+                            <h4 className="text-sm font-semibold text-[var(--text)] flex items-center gap-2">
+                              <Plus className="h-4 w-4" />Add item to order
+                            </h4>
+                            <p className="mt-1 text-xs text-[var(--text-muted)]">Uses the active menu and the existing order item add/remove endpoints.</p>
+                          </div>
+
+                          <input
+                            type="search"
+                            value={addItemSearch}
+                            onChange={(event) => setAddItemSearch(event.target.value)}
+                            placeholder="Search menu items"
+                            className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
+                          />
+
+                          <select
+                            value={selectedAddItemId}
+                            onChange={(event) => setSelectedAddItemId(event.target.value)}
+                            className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
+                          >
+                            <option value="">Select menu item…</option>
+                            {filteredMenuItems.slice(0, 50).map((item) => (
+                              <option key={item.id} value={item.id}>
+                                {item.name} · {item.categoryName} · {formatPrice(item.priceCents, currency)}
+                              </option>
+                            ))}
+                          </select>
+
+                          <div className="grid gap-3 sm:grid-cols-[120px_minmax(0,1fr)]">
+                            <input
+                              type="number"
+                              min={1}
+                              step={1}
+                              value={addQuantity}
+                              onChange={(event) => setAddQuantity(Math.max(1, parseInt(event.target.value, 10) || 1))}
+                              className="rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
+                            />
+                            <input
+                              type="text"
+                              value={addItemNotes}
+                              onChange={(event) => setAddItemNotes(event.target.value)}
+                              placeholder="Optional prep note"
+                              className="rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
+                            />
+                          </div>
+
+                          <div className="flex justify-end">
+                            <button className="ui-btn-primary text-sm" disabled={addItemsMut.isPending} onClick={handleAddItem}>
+                              {addItemsMut.isPending ? 'Adding…' : 'Add Item'}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                     </SectionCardBody>
                   </SectionCard>
 
@@ -488,6 +747,14 @@ export default function PosOrdersPage() {
                           <dt className="text-[11px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Customer</dt>
                           <dd className="mt-2 text-sm font-medium text-[var(--text)]">{detailOrder.customerName || 'Walk-in'}</dd>
                         </div>
+                        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-3">
+                          <dt className="text-[11px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Paid</dt>
+                          <dd className="mt-2 text-sm font-medium text-[var(--text)]">{formatPrice(paymentSummary.amountCents, currency)}</dd>
+                        </div>
+                        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-3">
+                          <dt className="text-[11px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Tips</dt>
+                          <dd className="mt-2 text-sm font-medium text-[var(--text)]">{formatPrice(paymentSummary.tipCents, currency)}</dd>
+                        </div>
                       </dl>
                     </SectionCardBody>
                   </SectionCard>
@@ -531,7 +798,9 @@ export default function PosOrdersPage() {
                         ))}
                       </SectionCardBody>
                     </SectionCard>
-                  ) : null}
+                  ) : (
+                    <Callout tone="warning">No payments are recorded for this order yet.</Callout>
+                  )}
                 </div>
               </div>
             ) : (
@@ -540,26 +809,31 @@ export default function PosOrdersPage() {
           </ModalBody>
 
           <ModalFooter className="flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="w-full sm:w-auto">
-              {detailOrder && detailOrder.status !== 'completed' && detailOrder.status !== 'cancelled' ? (
-                <button
-                  className="w-full sm:w-auto rounded-lg border border-red-300/30 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300 transition-colors hover:bg-red-500/15"
-                  onClick={() => setCancelTarget(detailOrder)}
-                >
-                  Cancel Order
-                </button>
-              ) : (
-                <p className="text-xs text-[var(--text-muted)]">
-                  {detailOrder?.status === 'completed'
-                    ? 'Completed orders remain read-only in the queue.'
-                    : detailOrder?.status === 'cancelled'
-                      ? 'Cancelled orders are kept for audit history.'
-                      : ' '}
-                </p>
-              )}
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              {orderHistory ? (
+                <>
+                  <button className="ui-btn-secondary flex items-center justify-center gap-2" onClick={() => exportOrder(orderHistory)}>
+                    <Download className="h-4 w-4" />Export
+                  </button>
+                  <button className="ui-btn-secondary flex items-center justify-center gap-2" onClick={() => printOrder(orderHistory)}>
+                    <Printer className="h-4 w-4" />Print Receipt
+                  </button>
+                </>
+              ) : null}
             </div>
 
             <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row">
+              <div className="w-full sm:w-auto">
+                {detailOrder && detailOrder.status !== 'completed' && detailOrder.status !== 'cancelled' ? (
+                  <button
+                    className="w-full sm:w-auto rounded-lg border border-red-300/30 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300 transition-colors hover:bg-red-500/15"
+                    onClick={() => setCancelTarget(detailOrder)}
+                  >
+                    Cancel Order
+                  </button>
+                ) : null}
+              </div>
+
               <ModalSecondaryButton onClick={() => setSelectedOrderId(null)}>
                 Close
               </ModalSecondaryButton>

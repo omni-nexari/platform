@@ -127,10 +127,124 @@ const VALID_ACTIVE_STATUSES = ['pending', 'preparing', 'ready'] as const;
 
 // ─── Route plugin ───────────────────────────────────────────────────────────────
 export async function posRoutes(app: FastifyInstance) {
+  function createHttpError(statusCode: number, message: string) {
+    const error = new Error(message) as Error & { statusCode: number };
+    error.statusCode = statusCode;
+    return error;
+  }
+
   function getSettingsObject(value: unknown): Record<string, unknown> {
     return value != null && typeof value === 'object' && !Array.isArray(value)
       ? { ...(value as Record<string, unknown>) }
       : {};
+  }
+
+  async function getLoyaltyConfig(workspaceId: string, orgId?: string) {
+    const restaurant = await db.query.posRestaurants.findFirst({
+      where: orgId
+        ? and(eq(posRestaurants.workspaceId, workspaceId), eq(posRestaurants.orgId, orgId))
+        : eq(posRestaurants.workspaceId, workspaceId),
+      columns: {
+        loyaltyEnabled: true,
+        loyaltyPointsPerDollar: true,
+        loyaltyRedemptionRate: true,
+      },
+    });
+
+    return {
+      loyaltyEnabled: restaurant?.loyaltyEnabled ?? false,
+      loyaltyPointsPerDollar: restaurant?.loyaltyPointsPerDollar ?? 1,
+      loyaltyRedemptionRate: restaurant?.loyaltyRedemptionRate ?? 100,
+    };
+  }
+
+  async function findLoyaltyCustomerByContact(
+    workspaceId: string,
+    orgId: string,
+    contact: { phone?: string; email?: string },
+  ) {
+    const customers = await db.query.posLoyaltyCustomers.findMany({
+      where: and(eq(posLoyaltyCustomers.workspaceId, workspaceId), eq(posLoyaltyCustomers.orgId, orgId)),
+      limit: 250,
+    });
+
+    return customers.find((entry) => {
+      const phoneMatch = contact.phone ? entry.phone === contact.phone : false;
+      const emailMatch = contact.email ? entry.email?.toLowerCase() === contact.email.toLowerCase() : false;
+      return phoneMatch || emailMatch;
+    }) ?? null;
+  }
+
+  async function buildKioskLoyaltyVerifyResponse(
+    workspaceId: string,
+    orgId: string,
+    contact: { phone?: string; email?: string },
+  ) {
+    const [settings, customer] = await Promise.all([
+      getLoyaltyConfig(workspaceId, orgId),
+      findLoyaltyCustomerByContact(workspaceId, orgId, contact),
+    ]);
+
+    return {
+      found: Boolean(customer),
+      customer,
+      ...settings,
+      maxRedeemablePoints: customer?.points ?? 0,
+    };
+  }
+
+  async function redeemKioskLoyaltyPoints(
+    workspaceId: string,
+    orgId: string,
+    payload: z.infer<typeof KioskLoyaltyRedeemSchema>,
+  ) {
+    const settings = await getLoyaltyConfig(workspaceId, orgId);
+    if (!settings.loyaltyEnabled) {
+      throw createHttpError(400, 'Loyalty is disabled');
+    }
+
+    const customer = await db.query.posLoyaltyCustomers.findFirst({
+      where: and(
+        eq(posLoyaltyCustomers.id, payload.customerId),
+        eq(posLoyaltyCustomers.workspaceId, workspaceId),
+        eq(posLoyaltyCustomers.orgId, orgId),
+      ),
+    });
+    if (!customer) {
+      throw createHttpError(404, 'Customer not found');
+    }
+
+    const redemptionRate = Math.max(1, settings.loyaltyRedemptionRate);
+    const redeemablePoints = Math.floor(Math.min(payload.points, customer.points) / redemptionRate) * redemptionRate;
+    if (redeemablePoints <= 0) {
+      throw createHttpError(400, 'Insufficient redeemable points');
+    }
+
+    const discountCents = Math.floor(redeemablePoints / redemptionRate) * 100;
+    const newPoints = customer.points - redeemablePoints;
+    const tier = newPoints >= 1000 ? 'gold' : newPoints >= 300 ? 'silver' : 'bronze';
+
+    await db.transaction(async (tx) => {
+      await tx.insert(posLoyaltyEvents).values({
+        customerId: customer.id,
+        orderId: payload.orderId ?? null,
+        type: 'redeem',
+        pointsDelta: -redeemablePoints,
+        notes: payload.notes ?? 'Kiosk redemption',
+      });
+      await tx
+        .update(posLoyaltyCustomers)
+        .set({ points: newPoints, tier, updatedAt: new Date() })
+        .where(eq(posLoyaltyCustomers.id, customer.id));
+    });
+
+    return {
+      customerId: customer.id,
+      redeemedPoints: redeemablePoints,
+      discountCents,
+      remainingPoints: newPoints,
+      tier,
+    };
   }
 
   async function upsertRestaurantSettings(workspaceId: string, orgId: string, patch: Record<string, unknown>) {
@@ -819,20 +933,7 @@ export async function posRoutes(app: FastifyInstance) {
     const { workspaceId } = req.query as { workspaceId?: string };
     if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
 
-    const restaurant = await db.query.posRestaurants.findFirst({
-      where: eq(posRestaurants.workspaceId, workspaceId),
-      columns: {
-        loyaltyEnabled: true,
-        loyaltyPointsPerDollar: true,
-        loyaltyRedemptionRate: true,
-      },
-    });
-
-    return reply.send({
-      loyaltyEnabled: restaurant?.loyaltyEnabled ?? false,
-      loyaltyPointsPerDollar: restaurant?.loyaltyPointsPerDollar ?? 1,
-      loyaltyRedemptionRate: restaurant?.loyaltyRedemptionRate ?? 100,
-    });
+    return reply.send(await getLoyaltyConfig(workspaceId));
   });
 
   app.post('/kiosk/loyalty/verify', async (req, reply) => {
@@ -844,34 +945,7 @@ export async function posRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
     }
 
-    const restaurant = await db.query.posRestaurants.findFirst({
-      where: and(eq(posRestaurants.workspaceId, parsed.data.workspaceId), eq(posRestaurants.orgId, auth.orgId)),
-      columns: {
-        loyaltyEnabled: true,
-        loyaltyPointsPerDollar: true,
-        loyaltyRedemptionRate: true,
-      },
-    });
-
-    const customers = await db.query.posLoyaltyCustomers.findMany({
-      where: and(eq(posLoyaltyCustomers.workspaceId, parsed.data.workspaceId), eq(posLoyaltyCustomers.orgId, auth.orgId)),
-      limit: 250,
-    });
-
-    const customer = customers.find((entry) => {
-      const phoneMatch = parsed.data.phone ? entry.phone === parsed.data.phone : false;
-      const emailMatch = parsed.data.email ? entry.email?.toLowerCase() === parsed.data.email.toLowerCase() : false;
-      return phoneMatch || emailMatch;
-    }) ?? null;
-
-    return reply.send({
-      found: Boolean(customer),
-      customer,
-      loyaltyEnabled: restaurant?.loyaltyEnabled ?? false,
-      loyaltyPointsPerDollar: restaurant?.loyaltyPointsPerDollar ?? 1,
-      loyaltyRedemptionRate: restaurant?.loyaltyRedemptionRate ?? 100,
-      maxRedeemablePoints: customer?.points ?? 0,
-    });
+    return reply.send(await buildKioskLoyaltyVerifyResponse(parsed.data.workspaceId, auth.orgId, parsed.data));
   });
 
   app.post('/kiosk/loyalty/redeem', async (req, reply) => {
@@ -883,52 +957,39 @@ export async function posRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
     }
 
-    const restaurant = await db.query.posRestaurants.findFirst({
-      where: and(eq(posRestaurants.workspaceId, parsed.data.workspaceId), eq(posRestaurants.orgId, auth.orgId)),
-      columns: { loyaltyEnabled: true, loyaltyRedemptionRate: true },
-    });
-    if (!restaurant?.loyaltyEnabled) return reply.status(400).send({ error: 'Loyalty is disabled' });
+    try {
+      return reply.send(await redeemKioskLoyaltyPoints(parsed.data.workspaceId, auth.orgId, parsed.data));
+    } catch (error) {
+      const statusCode = error instanceof Error && 'statusCode' in error ? Number((error as Error & { statusCode?: number }).statusCode) : 500;
+      const message = error instanceof Error ? error.message : 'Failed to redeem loyalty points';
+      return reply.status(statusCode).send({ error: message });
+    }
+  });
 
-    const customer = await db.query.posLoyaltyCustomers.findFirst({
-      where: and(
-        eq(posLoyaltyCustomers.id, parsed.data.customerId),
-        eq(posLoyaltyCustomers.workspaceId, parsed.data.workspaceId),
-        eq(posLoyaltyCustomers.orgId, auth.orgId),
-      ),
-    });
-    if (!customer) return reply.status(404).send({ error: 'Customer not found' });
-
-    const redemptionRate = Math.max(1, restaurant.loyaltyRedemptionRate);
-    const redeemablePoints = Math.floor(Math.min(parsed.data.points, customer.points) / redemptionRate) * redemptionRate;
-    if (redeemablePoints <= 0) {
-      return reply.status(400).send({ error: 'Insufficient redeemable points' });
+  app.post('/mgmt/kiosk/loyalty/verify', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const parsed = KioskLoyaltyVerifySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
     }
 
-    const discountCents = Math.floor(redeemablePoints / redemptionRate) * 100;
-    const newPoints = customer.points - redeemablePoints;
-    const tier = newPoints >= 1000 ? 'gold' : newPoints >= 300 ? 'silver' : 'bronze';
+    return reply.send(await buildKioskLoyaltyVerifyResponse(parsed.data.workspaceId, user.orgId, parsed.data));
+  });
 
-    await db.transaction(async (tx) => {
-      await tx.insert(posLoyaltyEvents).values({
-        customerId: customer.id,
-        orderId: parsed.data.orderId ?? null,
-        type: 'redeem',
-        pointsDelta: -redeemablePoints,
-        notes: parsed.data.notes ?? 'Kiosk redemption',
-      });
-      await tx
-        .update(posLoyaltyCustomers)
-        .set({ points: newPoints, tier, updatedAt: new Date() })
-        .where(eq(posLoyaltyCustomers.id, customer.id));
-    });
+  app.post('/mgmt/kiosk/loyalty/redeem', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const parsed = KioskLoyaltyRedeemSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
+    }
 
-    return reply.send({
-      customerId: customer.id,
-      redeemedPoints: redeemablePoints,
-      discountCents,
-      remainingPoints: newPoints,
-      tier,
-    });
+    try {
+      return reply.send(await redeemKioskLoyaltyPoints(parsed.data.workspaceId, user.orgId, parsed.data));
+    } catch (error) {
+      const statusCode = error instanceof Error && 'statusCode' in error ? Number((error as Error & { statusCode?: number }).statusCode) : 500;
+      const message = error instanceof Error ? error.message : 'Failed to redeem loyalty points';
+      return reply.status(statusCode).send({ error: message });
+    }
   });
 
   app.post('/kiosk/heartbeat', async (req, reply) => {

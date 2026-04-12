@@ -39,6 +39,7 @@ import PosMenuPage from './pages/workspace/PosMenuPage.js';
 import PosOrderPage from './pages/workspace/PosOrderPage.js';
 import PosPaymentPage from './pages/workspace/PosPaymentPage.js';
 import PosOrdersPage from './pages/workspace/PosOrdersPage.js';
+import PosKioskPage from './pages/workspace/PosKioskPage.js';
 import PosKitchenPage from './pages/workspace/PosKitchenPage.js';
 import PosInventoryPage from './pages/workspace/PosInventoryPage.js';
 import PosEmployeesPage from './pages/workspace/PosEmployeesPage.js';
@@ -309,6 +310,7 @@ export default function App() {
         <Route path="/workspaces/:wsId/pos" element={<PosOrderPage />} />
         <Route path="/workspaces/:wsId/pos/payment" element={<PosPaymentPage />} />
         <Route path="/workspaces/:wsId/pos/orders" element={<PosOrdersPage />} />
+        <Route path="/workspaces/:wsId/pos/kiosk" element={<PosKioskPage />} />
         <Route path="/workspaces/:wsId/pos/kitchen" element={<PosKitchenPage />} />
         <Route path="/workspaces/:wsId/pos/inventory" element={<PosInventoryPage />} />
         <Route path="/workspaces/:wsId/pos/employees" element={<PosEmployeesPage />} />

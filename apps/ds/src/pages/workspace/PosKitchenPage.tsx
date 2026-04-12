@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
-import { ChefHat, ExternalLink } from 'lucide-react';
+import { ChefHat, CreditCard, ExternalLink } from 'lucide-react';
 import { formatDistanceToNow } from '../utils/time.js';
 import {
   Badge,
@@ -33,14 +33,27 @@ export default function PosKitchenPage() {
 
   const { data: active = [], isLoading } = useQuery<PosOrder[]>({
     queryKey: ['pos-orders-kitchen', wsId],
-    queryFn: () => api.get(`/pos/mgmt/orders?workspaceId=${wsId}&status=pending,preparing`),
+    queryFn: () => api.get(`/pos/mgmt/orders/in-kitchen/list?workspaceId=${wsId}`),
     refetchInterval: 5_000,
   });
 
   const advanceMut = useMutation({
-    mutationFn: ({ orderId, status }: { orderId: string; status: string }) =>
-      api.patch(`/pos/mgmt/orders/${orderId}/status`, { status }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['pos-orders-kitchen', wsId] }),
+    mutationFn: ({ orderId, action }: { orderId: string; action: 'confirm' | 'ready' }) => {
+      if (action === 'confirm') {
+        return api.post(`/pos/mgmt/orders/${orderId}/confirm`);
+      }
+
+      return api.patch(`/pos/mgmt/orders/${orderId}/status`, { status: 'ready' });
+    },
+    onSuccess: async (_data, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-orders-kitchen'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-order-history'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos-orders-stats'] }),
+      ]);
+      toast.success(variables.action === 'confirm' ? 'Order started' : 'Order marked ready');
+    },
     onError: () => toast.error('Failed to update order'),
   });
 
@@ -48,8 +61,8 @@ export default function PosKitchenPage() {
     <div className="flex flex-col gap-6 p-4 sm:p-6 max-w-screen-xl mx-auto">
       <PageHeader
         title="Kitchen Monitor"
-        description="Active orders — auto-refreshes every 5s"
-        actions={
+        subtitle="Pending, preparing, and ready orders — auto-refreshes every 5s"
+        action={
           <button
             className="ui-btn-secondary flex items-center gap-1.5"
             onClick={() => window.open(`/kitchen/${wsId}`, '_blank')}
@@ -70,7 +83,7 @@ export default function PosKitchenPage() {
         <EmptyState
           icon={<ChefHat className="w-8 h-8" />}
           title="Queue clear"
-          description="No pending or preparing orders right now."
+          description="No pending, preparing, or ready orders right now."
         />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -78,16 +91,18 @@ export default function PosKitchenPage() {
             <div
               key={order.id}
               className={`ui-card p-4 space-y-3 border-l-4 ${
-                order.status === 'preparing'
-                  ? 'border-l-[var(--blue)]'
-                  : 'border-l-[var(--warning)]'
+                order.status === 'ready'
+                  ? 'border-l-emerald-500'
+                  : order.status === 'preparing'
+                    ? 'border-l-[var(--accent)]'
+                    : 'border-l-[var(--warning)]'
               }`}
             >
               <div className="flex items-center justify-between">
                 <span className="text-xl font-bold tabular-nums text-[var(--text)]">
                   #{order.orderNumber}
                 </span>
-                <Badge tone={order.status === 'preparing' ? 'info' : 'warning'}>
+                <Badge tone={order.status === 'ready' ? 'success' : order.status === 'preparing' ? 'accent' : 'warning'}>
                   {order.status}
                 </Badge>
               </div>
@@ -106,7 +121,7 @@ export default function PosKitchenPage() {
                 {order.status === 'pending' && (
                   <button
                     className="flex-1 ui-btn-primary text-xs py-1.5"
-                    onClick={() => advanceMut.mutate({ orderId: order.id, status: 'preparing' })}
+                    onClick={() => advanceMut.mutate({ orderId: order.id, action: 'confirm' })}
                   >
                     Start
                   </button>
@@ -114,9 +129,18 @@ export default function PosKitchenPage() {
                 {order.status === 'preparing' && (
                   <button
                     className="flex-1 ui-btn-primary text-xs py-1.5"
-                    onClick={() => advanceMut.mutate({ orderId: order.id, status: 'ready' })}
+                    onClick={() => advanceMut.mutate({ orderId: order.id, action: 'ready' })}
                   >
                     Ready
+                  </button>
+                )}
+                {order.status === 'ready' && (
+                  <button
+                    className="flex-1 ui-btn-primary text-xs py-1.5 flex items-center justify-center gap-1.5"
+                    onClick={() => navigate(`/workspaces/${wsId}/pos/payment?orderId=${order.id}&total=${order.totalCents}`)}
+                  >
+                    <CreditCard className="h-3.5 w-3.5" />
+                    Payment
                   </button>
                 )}
               </div>
