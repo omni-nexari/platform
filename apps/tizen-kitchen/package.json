@@ -1,0 +1,16 @@
+{
+  "name": "tizen-kitchen",
+  "version": "1.0.0",
+  "description": "Nexari Kitchen — POS Kitchen Order Display (Tizen 5+)",
+  "scripts": {
+    "build": "node scripts/generate-build-info.cjs",
+    "build:dev": "cross-env API_BASE=http://192.168.1.110:3000/api/v1 node scripts/generate-build-info.cjs",
+    "version:patch": "npm version patch --no-git-tag-version && node scripts/generate-build-info.cjs",
+    "version:minor": "npm version minor --no-git-tag-version && node scripts/generate-build-info.cjs",
+    "version:major": "npm version major --no-git-tag-version && node scripts/generate-build-info.cjs"
+  },
+  "type": "commonjs",
+  "devDependencies": {
+    "cross-env": "^10.1.0"
+  }
+}

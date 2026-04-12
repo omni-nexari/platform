@@ -1,10 +1,11 @@
 # Tizen App — Auto Build, Host & Deploy Plan
 
 > **Status:** Plan / Design  
-> **Scope:** `apps/tizen` (Tizen 5+, Smart TV) · `apps/tizen-sbb` (Tizen 4, SBB/SSSP)  
+> **Scope:** `apps/tizen` (Tizen 5+, Signage) · `apps/tizen-sbb` (Tizen 4, SBB/SSSP) · `apps/tizen-kiosk` (Kiosk portrait/landscape) · `apps/tizen-kitchen` (Kitchen display)  
 > **Build OS:** Ubuntu (headless, CI server)  
 > **Updated:** 2026-04-12  
-> **Certs:** `.p12` author + distributor certificates and password are already in hand
+> **Certs:** `.p12` author + distributor certificates and password are already in hand  
+> **Builder UI:** Tizen Builder — controlled by Superadmin and Management (owner/admin)
 
 ---
 
@@ -19,7 +20,7 @@
 7. [TV Auto-Update Mechanism](#7-tv-auto-update-mechanism)
 8. [Branding & Reskinning System](#8-branding--reskinning-system)
 9. [App Rename — Custom Brand per Management Company](#9-app-rename--custom-brand-per-management-company)
-10. [Management & SuperAdmin UI Capabilities](#10-management--superadmin-ui-capabilities)
+10. [Management & SuperAdmin UI — Tizen Builder](#10-management--superadmin-ui--tizen-builder)
 11. [CI/CD Pipeline (GitHub Actions)](#11-cicd-pipeline-github-actions)
 12. [Extended Automation Opportunities](#12-extended-automation-opportunities)
 13. [Open Questions](#13-open-questions)
@@ -40,24 +41,31 @@ Currently the WGT is built by hand in Tizen Studio GUI and the resulting file is
 | G3 | Host WGT + sssp_config files on a static file server | TVs pull from URL |
 | G4 | TVs detect a new version and self-update without manual action | Version-check via API |
 | G5 | Management / SuperAdmin can reskin the app (CSS, logo) from the portal UI | Runtime skin, no rebuild required |
-| G6 | CI/CD pipeline triggers build on every git push to `main` | GitHub Actions on Ubuntu runner |
+| G6 | CI/CD pipeline triggers build on tag push | GitHub Actions on Ubuntu runner |
+| G7 | **Tizen Builder UI** — Superadmin and Management (owner/admin) can trigger, monitor, and rollback builds for all app types from within the portal | Replaces manual CLI / GitHub UI access |
+| G8 | **4 app types** — Signage (Tizen 5+ and SBB), Kiosk (portrait/landscape), Kitchen display — all managed under one build pipeline | Same API, separate WGT builds, same cert pair |
 
 ---
 
 ## 2. App Inventory
 
-| App folder | WGT name | Package ID | Default `<name>` (launcher) | Default `<description>` | Tizen target | TV type |
+| App folder | WGT name | Package ID | Default `<name>` | Purpose | Tizen target | Hardware target |
 |---|---|---|---|---|---|---|
-| `apps/tizen` | `NexariOmniHub.wgt` | `EBDSignage` | **Nexari OmniHub** | Nexari OmniHub — Samsung Smart TV (Tizen 5+) | Tizen 5+ (required_version 5.0) | Samsung Smart TV 2020+ |
-| `apps/tizen-sbb` | `NexariOmniHubSBB.wgt` | `EBDSbbPlay` | **Nexari OmniHub** | Nexari OmniHub — Samsung SBB/SSSP (Tizen 4.0) | Tizen 4 (required_version 4.0) | Samsung SBB / SSSP |
+| `apps/tizen` | `NexariSignage.wgt` | `NexariSignage` | **Nexari Signage** | CMS signage player | Tizen 5+ | Samsung Smart TV 2020+ |
+| `apps/tizen-sbb` | `NexariSignageSBB.wgt` | `NexariSignageSBB` | **Nexari Signage SBB** | CMS signage player (SBB) | Tizen 4 | Samsung SBB / SSSP |
+| `apps/tizen-kiosk` | `NexariKiosk.wgt` | `NexariKiosk` | **Nexari Kiosk** | POS self-order kiosk (portrait + landscape) | Tizen 5+ | Samsung Kiosk / consumer touch display |
+| `apps/tizen-kitchen` | `NexariKitchen.wgt` | `NexariKitchen` | **Nexari Kitchen** | POS kitchen order display | Tizen 5+ | Any Samsung commercial display |
 
-> **Note:** WGT files are named after the Nexari OmniHub brand and kept separate by app type: `NexariOmniHub.wgt` (tizen, Tizen 5+) and `NexariOmniHubSBB.wgt` (tizen-sbb, Tizen 4 / SBB). The `update-sssp.js` script in each app must reference these exact filenames. `config.xml` `<name>` should be updated to **Nexari OmniHub** in the first CI build. Package IDs (`EBDSignage`, `EBDSbbPlay`) are internal Tizen identifiers and do not appear in the launcher UI.
+> **App type responsibilities:**
+> - **Signage (tizen / tizen-sbb):** Renders CMS playlists and zones. Connects to heartbeat + content API. Supports MDC power commands, timers, sync groups.
+> - **Kiosk (tizen-kiosk):** Renders `/kiosk/:wsId/portrait` or `/kiosk/:wsId/landscape` public pages. Full-screen touch UI. No CMS playlist — reads POS menu via kiosk-public API. Registered as `type: 'kiosk'` in the unified Devices page.
+> - **Kitchen (tizen-kitchen):** Renders kitchen order board. Connects to POS orders WebSocket. Registered as `type: 'kitchen'` in the unified Devices page.
 
-Each app has its own:
-- `config.xml` — Tizen/WGT manifest (package ID, version, privileges)
-- `package.json` — npm version source of truth
-- `scripts/generate-build-info.cjs` — syncs version into `config.xml` + writes `js/build-info.js`
-- `scripts/update-sssp.js` — patches `<size>` in `sssp_config.xml` after WGT is built
+All four apps share:
+- The same `.p12` author + distributor cert pair (different Package IDs, same signing identity)
+- Same `generate-build-info.cjs` + `update-sssp.js` script pattern
+- Same heartbeat endpoint (`POST /devices/heartbeat`) — `type` declared at registration
+- Same platform CSS vars and brand skin API (`GET /api/v1/orgs/:orgId/player-skin`)
 
 ---
 
@@ -130,8 +138,9 @@ node apps/tizen-sbb/scripts/update-sssp.js
 | `API_BASE` | Backend API URL injected into `build-info.js` at build time |
 | `WS_URL` | WebSocket URL injected at build time |
 | `TIZEN_CERT_PASSWORD` | `.p12` password (secret) |
-| `TIZEN_AUTHOR_CERT_B64` | base64-encoded author `.p12` (secret) |
-| `TIZEN_DIST_CERT_B64` | base64-encoded distributor `.p12` (secret) |
+| `TIZEN_AUTHOR_CERT_B64` | base64-encoded author `.p12` (secret, shared across all 4 apps) |
+| `TIZEN_DIST_CERT_B64` | base64-encoded distributor `.p12` (secret, shared across all 4 apps) |
+| `APP_TYPE` | `tizen` \| `tizen-sbb` \| `tizen-kiosk` \| `tizen-kitchen` — selects which app folder to build |
 
 ---
 
@@ -168,19 +177,37 @@ Each command already calls `generate-build-info.cjs` automatically.
 <!-- tizen (Tizen 5+ / Smart TV) -->
 <ServerConfig>
   <Type>URL</Type>
-  <ApplicationName>Nexari OmniHub</ApplicationName>
-  <Version>1.0.5</Version>                       <!-- ← auto-patched from package.json -->
-  <URL>https://your-home-server/signage-apps/default/tizen/latest/NexariOmniHub.wgt</URL>
-  <Size>4718592</Size>                           <!-- ← auto-patched by update-sssp.js -->
+  <ApplicationName>Nexari Signage</ApplicationName>
+  <Version>1.0.5</Version>
+  <URL>https://your-home-server/signage-apps/default/tizen/latest/NexariSignage.wgt</URL>
+  <Size>4718592</Size>
 </ServerConfig>
 
 <!-- tizen-sbb (Tizen 4 / SBB) -->
 <ServerConfig>
   <Type>URL</Type>
-  <ApplicationName>Nexari OmniHub</ApplicationName>
+  <ApplicationName>Nexari Signage SBB</ApplicationName>
   <Version>1.0.3</Version>
-  <URL>https://your-home-server/signage-apps/default/tizen-sbb/latest/NexariOmniHubSBB.wgt</URL>
+  <URL>https://your-home-server/signage-apps/default/tizen-sbb/latest/NexariSignageSBB.wgt</URL>
   <Size>3145728</Size>
+</ServerConfig>
+
+<!-- tizen-kiosk -->
+<ServerConfig>
+  <Type>URL</Type>
+  <ApplicationName>Nexari Kiosk</ApplicationName>
+  <Version>1.0.0</Version>
+  <URL>https://your-home-server/signage-apps/default/tizen-kiosk/latest/NexariKiosk.wgt</URL>
+  <Size>3670016</Size>
+</ServerConfig>
+
+<!-- tizen-kitchen -->
+<ServerConfig>
+  <Type>URL</Type>
+  <ApplicationName>Nexari Kitchen</ApplicationName>
+  <Version>1.0.0</Version>
+  <URL>https://your-home-server/signage-apps/default/tizen-kitchen/latest/NexariKitchen.wgt</URL>
+  <Size>2621440</Size>
 </ServerConfig>
 ```
 
@@ -203,20 +230,20 @@ Each app has its own config file. On the file server:
 
 ```
 /srv/signage-apps/
-  default/                          ← Nexari OmniHub (platform default)
+  default/                          ← Nexari brand (platform default)
     tizen/
       sssp_config.xml               ← always points to latest WGT
       latest/
-        NexariOmniHub.wgt
+        NexariSignage.wgt
       1.0.5/
-        NexariOmniHub.wgt
+        NexariSignage.wgt
         sssp_config.xml             ← version-pinned copy
     tizen-sbb/
       sssp_config.xml
       latest/
-        NexariOmniHubSBB.wgt
+        NexariSignageSBB.wgt
       1.0.3/
-        NexariOmniHubSBB.wgt
+        NexariSignageSBB.wgt
         sssp_config.xml
   {mgmtCompanyId}/                  ← custom-branded builds (see Section 9)
     tizen/
@@ -233,9 +260,9 @@ Each app has its own config file. On the file server:
 <SamsungSDP version="1">
   <ServerConfig>
     <Type>URL</Type>
-    <ApplicationName>Nexari OmniHub</ApplicationName>
+    <ApplicationName>{{APP_NAME}}</ApplicationName>
     <Version>{{VERSION}}</Version>
-    <URL>{{BASE_URL}}/default/tizen/latest/NexariOmniHub.wgt</URL>
+    <URL>{{BASE_URL}}/{{MGMT_ID}}/tizen/latest/NexariSignage.wgt</URL>
     <Size>{{SIZE_BYTES}}</Size>
   </ServerConfig>
 </SamsungSDP>
@@ -247,16 +274,43 @@ Each app has its own config file. On the file server:
 <SamsungSDP version="1">
   <ServerConfig>
     <Type>URL</Type>
-    <ApplicationName>Nexari OmniHub</ApplicationName>
+    <ApplicationName>{{APP_NAME}}</ApplicationName>
     <Version>{{VERSION}}</Version>
-    <URL>{{BASE_URL}}/default/tizen-sbb/latest/NexariOmniHubSBB.wgt</URL>
+    <URL>{{BASE_URL}}/{{MGMT_ID}}/tizen-sbb/latest/NexariSignageSBB.wgt</URL>
     <Size>{{SIZE_BYTES}}</Size>
   </ServerConfig>
 </SamsungSDP>
 ```
 
-The build script fills `{{VERSION}}`, `{{SIZE_BYTES}}`, and `{{BASE_URL}}` at build time.
-For custom-branded management company builds, `<ApplicationName>` and the WGT URL path (`{mgmtCompanyId}/`) are substituted accordingly (see Section 9).
+**tizen-kiosk** (`apps/tizen-kiosk`):
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<SamsungSDP version="1">
+  <ServerConfig>
+    <Type>URL</Type>
+    <ApplicationName>{{APP_NAME}}</ApplicationName>
+    <Version>{{VERSION}}</Version>
+    <URL>{{BASE_URL}}/{{MGMT_ID}}/tizen-kiosk/latest/NexariKiosk.wgt</URL>
+    <Size>{{SIZE_BYTES}}</Size>
+  </ServerConfig>
+</SamsungSDP>
+```
+
+**tizen-kitchen** (`apps/tizen-kitchen`):
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<SamsungSDP version="1">
+  <ServerConfig>
+    <Type>URL</Type>
+    <ApplicationName>{{APP_NAME}}</ApplicationName>
+    <Version>{{VERSION}}</Version>
+    <URL>{{BASE_URL}}/{{MGMT_ID}}/tizen-kitchen/latest/NexariKitchen.wgt</URL>
+    <Size>{{SIZE_BYTES}}</Size>
+  </ServerConfig>
+</SamsungSDP>
+```
+
+The build script fills `{{APP_NAME}}`, `{{VERSION}}`, `{{SIZE_BYTES}}`, `{{BASE_URL}}`, and `{{MGMT_ID}}` at build time. For the default platform build `MGMT_ID` = `default`.
 
 ---
 
@@ -269,12 +323,24 @@ For custom-branded management company builds, `<ApplicationName>` and the WGT UR
 Mount `/srv/signage-apps` as the Nginx root and serve over HTTPS (Let's Encrypt or a local cert).
 
 ```
-https://your-home-server/signage-apps/default/tizen/sssp_config.xml         ← Samsung TV entry point (tizen)
-https://your-home-server/signage-apps/default/tizen/latest/NexariOmniHub.wgt
-https://your-home-server/signage-apps/default/tizen/1.0.5/NexariOmniHub.wgt
-https://your-home-server/signage-apps/default/tizen-sbb/sssp_config.xml     ← Samsung TV entry point (SBB)
-https://your-home-server/signage-apps/default/tizen-sbb/latest/NexariOmniHubSBB.wgt
-https://your-home-server/signage-apps/manifest.json                         ← version manifest
+# Signage (Tizen 5+)
+https://your-home-server/signage-apps/default/tizen/sssp_config.xml
+https://your-home-server/signage-apps/default/tizen/latest/NexariSignage.wgt
+
+# Signage (SBB)
+https://your-home-server/signage-apps/default/tizen-sbb/sssp_config.xml
+https://your-home-server/signage-apps/default/tizen-sbb/latest/NexariSignageSBB.wgt
+
+# Kiosk
+https://your-home-server/signage-apps/default/tizen-kiosk/sssp_config.xml
+https://your-home-server/signage-apps/default/tizen-kiosk/latest/NexariKiosk.wgt
+
+# Kitchen
+https://your-home-server/signage-apps/default/tizen-kitchen/sssp_config.xml
+https://your-home-server/signage-apps/default/tizen-kitchen/latest/NexariKitchen.wgt
+
+# Master manifest (all apps + all mgmt company variants)
+https://your-home-server/signage-apps/manifest.json
 ```
 
 ### 6.2 Nginx Config (additions to infra/nginx/signage.conf)
@@ -306,7 +372,7 @@ A machine-readable file the TV app queries to check for updates:
     "tizen": {
       "version": "1.0.5",
       "buildId": "20260412-143000Z",
-      "wgtUrl": "https://your-home-server/signage-apps/default/tizen/1.0.5/NexariOmniHub.wgt",
+      "wgtUrl": "https://your-home-server/signage-apps/default/tizen/1.0.5/NexariSignage.wgt",
       "ssspConfig": "https://your-home-server/signage-apps/default/tizen/sssp_config.xml",
       "size": 4718592,
       "sha256": "abc123..."
@@ -314,10 +380,26 @@ A machine-readable file the TV app queries to check for updates:
     "tizen-sbb": {
       "version": "1.0.3",
       "buildId": "20260412-143000Z",
-      "wgtUrl": "https://your-home-server/signage-apps/default/tizen-sbb/1.0.3/NexariOmniHubSBB.wgt",
+      "wgtUrl": "https://your-home-server/signage-apps/default/tizen-sbb/1.0.3/NexariSignageSBB.wgt",
       "ssspConfig": "https://your-home-server/signage-apps/default/tizen-sbb/sssp_config.xml",
       "size": 3145728,
       "sha256": "def456..."
+    },
+    "tizen-kiosk": {
+      "version": "1.0.0",
+      "buildId": "20260412-143000Z",
+      "wgtUrl": "https://your-home-server/signage-apps/default/tizen-kiosk/1.0.0/NexariKiosk.wgt",
+      "ssspConfig": "https://your-home-server/signage-apps/default/tizen-kiosk/sssp_config.xml",
+      "size": 3670016,
+      "sha256": "ghi789..."
+    },
+    "tizen-kitchen": {
+      "version": "1.0.0",
+      "buildId": "20260412-143000Z",
+      "wgtUrl": "https://your-home-server/signage-apps/default/tizen-kitchen/1.0.0/NexariKitchen.wgt",
+      "ssspConfig": "https://your-home-server/signage-apps/default/tizen-kitchen/sssp_config.xml",
+      "size": 2621440,
+      "sha256": "jkl012..."
     }
   }
 }
@@ -332,21 +414,19 @@ This manifest is generated at the end of the CI pipeline and uploaded to the fil
 DEPLOY=deploy@your-home-server
 VERSION=$(cat /artifacts/default/tizen/version.txt)
 
-rsync -az /artifacts/default/tizen/     $DEPLOY:/srv/signage-apps/default/tizen/$VERSION/
-rsync -az /artifacts/default/tizen-sbb/ $DEPLOY:/srv/signage-apps/default/tizen-sbb/$VERSION/
+for APP_TYPE in tizen tizen-sbb tizen-kiosk tizen-kitchen; do
+  for MGMT_ID in default $(ls /artifacts | grep -v default); do
+    rsync -az /artifacts/$MGMT_ID/$APP_TYPE/ \
+      $DEPLOY:/srv/signage-apps/$MGMT_ID/$APP_TYPE/$VERSION/
+    ssh $DEPLOY "ln -sfn /srv/signage-apps/$MGMT_ID/$APP_TYPE/$VERSION \
+      /srv/signage-apps/$MGMT_ID/$APP_TYPE/latest"
+    scp /artifacts/$MGMT_ID/$APP_TYPE/sssp_config.xml \
+      $DEPLOY:/srv/signage-apps/$MGMT_ID/$APP_TYPE/sssp_config.xml
+  done
+done
 
-# Update latest symlinks
-ssh $DEPLOY "
-  ln -sfn /srv/signage-apps/default/tizen/$VERSION     /srv/signage-apps/default/tizen/latest
-  ln -sfn /srv/signage-apps/default/tizen-sbb/$VERSION /srv/signage-apps/default/tizen-sbb/latest
-"
-
-# Upload top-level sssp_config.xml (pointing to new latest)
-scp /artifacts/default/tizen/sssp_config.xml      $DEPLOY:/srv/signage-apps/default/tizen/sssp_config.xml
-scp /artifacts/default/tizen-sbb/sssp_config.xml  $DEPLOY:/srv/signage-apps/default/tizen-sbb/sssp_config.xml
-
-# Upload master manifest
-scp /artifacts/manifest.json                       $DEPLOY:/srv/signage-apps/manifest.json
+# Upload master manifest (covers all app types + all mgmt company variants)
+scp /artifacts/manifest.json $DEPLOY:/srv/signage-apps/manifest.json
 ```
 
 ---
@@ -372,7 +452,7 @@ Configure the TV's launcher URL to point at `sssp_config.xml` on the file server
 For TVs already running the app, the app can check for a newer version:
 
 ```
-Boot → call GET /api/v1/app/version-check?app=tizen
+Boot → call GET /api/v1/app/version-check?app=tizen|tizen-sbb|tizen-kiosk|tizen-kitchen
      ← { latestVersion, wgtUrl, releaseNotes }
 → if latestVersion > installedVersion:
     show "Updating app…" overlay
@@ -391,19 +471,19 @@ This requires:
 
 ```
 GET /api/v1/app/version-check
-Query: app=tizen | app=tizen-sbb
+Query: app=tizen | tizen-sbb | tizen-kiosk | tizen-kitchen
 Returns:
   {
     latestVersion: "1.0.5",
     buildId: "20260412-143000Z",
-    wgtUrl: "https://your-home-server/signage-apps/default/tizen/1.0.5/NexariOmniHub.wgt",
-    ssspConfigUrl: "https://your-home-server/signage-apps/default/tizen/sssp_config.xml",
+    wgtUrl: "https://your-home-server/signage-apps/default/{app}/1.0.5/{WgtName}.wgt",
+    ssspConfigUrl: "https://your-home-server/signage-apps/default/{app}/sssp_config.xml",
     releaseNotes: "Bug fixes"
   }
 ```
 
-The backend reads this from the versioned manifest.json on the file server
-(or from a DB row updated at deployment time).
+The backend reads this from the versioned `manifest.json` on the file server
+(or from a `tizen_builds` DB row updated at deployment time).
 
 ---
 
@@ -423,9 +503,9 @@ The backend reads this from the versioned manifest.json on the file server
 | TV boot → fetch org skin → inject CSS vars + swap logo | ⬜ To build | New JS module in `apps/tizen/js/` |
 | Management UI: "TV Player Skin" section | ⬜ To build | Extend `ManagementBrandingPage.tsx` |
 
-### 8.2 Default Platform Brand (Nexari · OmniHub)
+### 8.2 Default Platform Brand (Nexari)
 
-The platform brand is **Nexari**, the product suite is **OmniHub** (`Docs/sample/Brand/`).
+The platform brand is **Nexari**. The four app names are **Nexari Signage**, **Nexari Signage SBB**, **Nexari Kiosk**, and **Nexari Kitchen** (`Docs/sample/Brand/`).
 The default WGT ships with Nexari brand values:
 
 | Token | Value | Usage |
@@ -508,13 +588,13 @@ The management UI sets these values; the TV app applies them:
 
 ### 9.1 What "Rename" Means
 
-The default WGT displays **"Nexari OmniHub"** in:
+The default WGT displays the app name (e.g. **"Nexari Signage"**) in:
 - The Samsung TV launcher / app list
 - The Tizen TaskManager / app switcher
 - `config.xml` `<name>` field
 - `sssp_config.xml` `<ApplicationName>` field
 
-A management company (reseller) may want their TVs to show **their own brand name** here — e.g., "AcmeCorp Display" — instead of the Nexari OmniHub default.
+A management company (reseller) may want their TVs to show **their own brand name** here — e.g., "AcmeCorp Display" — instead of the Nexari Signage default.
 
 **This requires a custom build** — it cannot be changed at runtime because it is baked into the WGT manifest at package time.
 
@@ -537,8 +617,8 @@ The `generate-build-info.cjs` script (already syncs `version` into `config.xml`)
 
 ```bash
 # Default (Nexari brand) — no env vars needed:
-# <name>Nexari OmniHub</name>
-# <description>Nexari OmniHub — Samsung Smart TV (Tizen 5+)</description>
+# <name>Nexari Signage</name>  (or Nexari Signage SBB / Nexari Kiosk / Nexari Kitchen)
+# <description>Nexari Signage — Samsung Smart TV (Tizen 5+)</description>
 
 # Custom-branded build for a management company:
 PLAYER_APP_NAME="AcmeCorp Display"
@@ -549,8 +629,8 @@ MGMT_COMPANY_ID="abc-123"
 The script patches `config.xml`:
 ```xml
 <!-- Default Nexari brand -->
-<name>Nexari OmniHub</name>
-<description>Nexari OmniHub — Samsung Smart TV (Tizen 5+)</description>
+<name>Nexari Signage</name>
+<description>Nexari Signage — Samsung Smart TV (Tizen 5+)</description>
 
 <!-- Custom management company brand -->
 <name>AcmeCorp Display</name>
@@ -560,7 +640,7 @@ The script patches `config.xml`:
 And `sssp_config.xml`:
 ```xml
 <!-- Default -->
-<ApplicationName>Nexari OmniHub</ApplicationName>
+<ApplicationName>Nexari Signage</ApplicationName>
 
 <!-- Custom -->
 <ApplicationName>AcmeCorp Display</ApplicationName>
@@ -568,20 +648,25 @@ And `sssp_config.xml`:
 
 ### 9.4 Per-Management-Company WGT File Layout on the File Server
 
-Each management company that requests a custom-branded build gets their own directory:
+Each management company that requests a custom-branded build gets their own directory, mirroring the `default/` structure across all 4 app types:
 
 ```
 /srv/signage-apps/
-  default/                               ← Nexari OmniHub brand (platform default)
+  default/                               ← Nexari brand (platform default)
     tizen/sssp_config.xml
-    tizen/latest/NexariOmniHub.wgt
+    tizen/latest/NexariSignage.wgt
     tizen-sbb/sssp_config.xml
-    tizen-sbb/latest/NexariOmniHubSBB.wgt
+    tizen-sbb/latest/NexariSignageSBB.wgt
+    tizen-kiosk/sssp_config.xml
+    tizen-kiosk/latest/NexariKiosk.wgt
+    tizen-kitchen/sssp_config.xml
+    tizen-kitchen/latest/NexariKitchen.wgt
   {mgmtCompanyId}/                       ← custom-branded builds
-    tizen/sssp_config.xml                ← <ApplicationName>AcmeCorp Display</ApplicationName>
-    tizen/latest/NexariOmniHub.wgt       ← same WGT binary, <name> baked in as "AcmeCorp Display"
-    tizen-sbb/sssp_config.xml
-    tizen-sbb/latest/NexariOmniHubSBB.wgt
+    tizen/sssp_config.xml
+    tizen/latest/NexariSignage.wgt        ← <name> baked in as "AcmeCorp Display"
+    tizen-sbb/...
+    tizen-kiosk/...
+    tizen-kitchen/...
 ```
 
 When a TV is provisioned for an org that belongs to a management company with a custom app name, it is given the `sssp_config.xml` URL for that management company's folder.
@@ -596,17 +681,24 @@ A custom-branded build is triggered when:
 
 ### 9.6 Build Matrix (CI)
 
-On each platform release, CI builds one WGT per management company that has a custom app name, plus the default Nexari WGT:
+On each platform release, CI builds **all 4 app types** per management company entry, plus the default Nexari set:
 
 ```
-Build matrix:
-  - { mgmtId: "default",  appName: "Nexari OmniHub",   appDesc: "Nexari OmniHub — Samsung Smart TV (Tizen 5+)" }
-  - { mgmtId: "abc-123",  appName: "AcmeCorp Display", appDesc: "AcmeCorp Digital Signage Player" }
-  - { mgmtId: "def-456",  appName: "RetailCo Screens", appDesc: "RetailCo Signage" }
+Build matrix (app_type × mgmt_company):
+
+  app_type: tizen        mgmtId: default   → NexariSignage.wgt       (Nexari brand)
+  app_type: tizen-sbb    mgmtId: default   → NexariSignageSBB.wgt    (Nexari brand)
+  app_type: tizen-kiosk  mgmtId: default   → NexariKiosk.wgt         (Nexari brand)
+  app_type: tizen-kitchen mgmtId: default  → NexariKitchen.wgt       (Nexari brand)
+
+  app_type: tizen        mgmtId: abc-123   → NexariSignage.wgt       ("AcmeCorp Display")
+  app_type: tizen-sbb    mgmtId: abc-123   → NexariSignageSBB.wgt    ("AcmeCorp Display")
+  app_type: tizen-kiosk  mgmtId: abc-123   → NexariKiosk.wgt         ("AcmeCorp Kiosk")
+  app_type: tizen-kitchen mgmtId: abc-123  → NexariKitchen.wgt       ("AcmeCorp Kitchen")
   ...
 ```
 
-This scales well because WGT builds are fast (< 60 seconds each). 10 management companies = ~10 minutes total.
+Builder note: management companies may optionally override app names **per app type** (`playerAppNameKiosk`, `playerAppNameKitchen`) — or fall back to the same custom brand name used for signage. WGT builds are fast (< 60 seconds each). 4 app types × 10 management companies = ~40 builds = ~40 minutes, parallelised to ~10 minutes with 4 concurrent runners.
 
 ---
 
@@ -707,43 +799,39 @@ GET    /api/v1/app/version-check?app=tizen            → TV calls on boot
 ### 11.1 Pipeline Overview
 
 ```
-push to main (apps/tizen/** or apps/tizen-sbb/**)
+Tag push v1.x.x  OR  manual trigger from Tizen Builder UI
   │
   ├─ Job: build-matrix
-  │     Reads all mgmtCompanies with playerAppName set from DB (API call)
-  │     Produces build matrix: [default, mgmt-abc-123, mgmt-def-456, ...]
+  │     Queries /api/v1/platform/tizen-builds/matrix
+  │     Returns: [ { mgmtId, appType, appName } ] for ALL 4 app types × all mgmt companies
   │
-  ├─ Job: build-tizen  (runs N times, once per matrix entry)
+  ├─ Job: build-app  (runs N×4 times — once per matrix entry)
   │     1. Checkout repo
-  │     2. Decode + install signing certs from secrets (already in hand)
-  │     3. npm ci
-  │     4. npm run version:patch (only on default build; custom builds use same version)
+  │     2. Decode + install signing certs (same cert pair for all 4 apps)
+  │     3. npm ci in apps/{appType}/
+  │     4. npm run version:patch (default build) OR inherit version (custom builds)
   │     5. node scripts/generate-build-info.cjs
-  │        (+ patch <name>/<description> if PLAYER_APP_NAME env set)
-  │     6. tizen package --type wgt --sign signage --output /artifacts/{mgmtId}/
-  │     7. node scripts/update-sssp.js (patches <size> in sssp_config.xml)
-  │     8. Generate per-entry manifest fragment (version, sha256, size, wgtUrl)
+  │        + patch <name>/<description> if PLAYER_APP_NAME env set
+  │     6. tizen package --type wgt --sign {profile} --output /artifacts/{mgmtId}/{appType}/
+  │     7. node scripts/update-sssp.js (patches <Size> and <Version>)
+  │     8. Generate per-entry manifest fragment
   │     9. Upload artifacts
   │
-  ├─ Job: deploy (depends on: all build-tizen jobs)
-  │     1. rsync /artifacts/default/tizen/   → /srv/signage-apps/default/tizen/{version}/
-  │     2. rsync /artifacts/{mgmtId}/tizen/  → /srv/signage-apps/{mgmtId}/tizen/{version}/
-  │     3. Update latest/ symlinks for each
-  │     4. Upload sssp_config.xml files
-  │     5. Upload master manifest.json
-  │     6. POST to /api/v1/platform/tizen-builds/complete (records in DB + sets playerReleases.isLatest)
-  │     7. WebSocket broadcast: { type: "update_available", version }
+  ├─ Job: deploy (depends on: all build-app jobs)
+  │     1. For each {mgmtId}/{appType}: rsync to file server, update latest/ symlink
+  │     2. Upload all sssp_config.xml files
+  │     3. Merge + upload master manifest.json
+  │     4. POST /api/v1/platform/tizen-builds/complete (records DB rows, sets playerReleases.isLatest)
+  │     5. WebSocket broadcast: { type: "update_available", version, appType }
   │
   └─ Job: notify
-        Slack/email: version, build ID, how many WGTs built, any failures
+        Email/Slack: total WGTs built, any failures, version, build ID
 ```
 
 ### 11.2 Workflow File Sketch
 
 ```yaml
 # .github/workflows/tizen-build.yml
-# Trigger: push a tag matching v* (e.g. v1.2.3) to start a release build.
-# This ensures only intentional releases reach TVs in the field.
 on:
   push:
     tags:
@@ -751,71 +839,68 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: 'Version bump type (only used when manually triggered without a tag)'
+        description: 'Version bump type'
         type: choice
         options: [patch, minor, major]
         default: patch
       mgmt_company_id:
         description: 'Management company ID (leave blank for all)'
         default: ''
+      app_types:
+        description: 'App types to build (comma-separated, blank = all)'
+        default: ''
 
 jobs:
-  build-tizen:
-    runs-on: ubuntu-latest   # or self-hosted with Tizen CLI Docker image
+  build-app:
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
-          - mgmtId: default
-            appName: 'Nexari OmniHub'
-            appDesc: 'Nexari OmniHub — Samsung Smart TV (Tizen 5+)'
-          # Additional entries fetched dynamically from the API in a prior step
-          # (or hardcoded if preferred)
+          - { mgmtId: default, appType: tizen,          appName: 'Nexari Signage' }
+          - { mgmtId: default, appType: tizen-sbb,      appName: 'Nexari Signage SBB' }
+          - { mgmtId: default, appType: tizen-kiosk,    appName: 'Nexari Kiosk' }
+          - { mgmtId: default, appType: tizen-kitchen,  appName: 'Nexari Kitchen' }
+          # + runtime entries from API for each mgmt company
     steps:
       - uses: actions/checkout@v4
 
       - name: Restore signing certs
         run: |
-          echo "${{ secrets.TIZEN_AUTHOR_CERT_B64 }}" | base64 -d > apps/tizen/.sign/author.p12
-          echo "${{ secrets.TIZEN_DIST_CERT_B64 }}"   | base64 -d > apps/tizen/.sign/distributor.p12
-          echo "${{ secrets.TIZEN_AUTHOR_CERT_B64 }}" | base64 -d > apps/tizen-sbb/.sign/author.p12
-          echo "${{ secrets.TIZEN_DIST_CERT_B64 }}"   | base64 -d > apps/tizen-sbb/.sign/distributor.p12
+          for APP in tizen tizen-sbb tizen-kiosk tizen-kitchen; do
+            mkdir -p apps/$APP/.sign
+            echo "${{ secrets.TIZEN_AUTHOR_CERT_B64 }}" | base64 -d > apps/$APP/.sign/author.p12
+            echo "${{ secrets.TIZEN_DIST_CERT_B64 }}"   | base64 -d > apps/$APP/.sign/distributor.p12
+          done
 
-      - name: Setup Tizen certificate profiles
+      - name: Setup Tizen certificate profile
         run: |
           tizen certificate-profile add \
             --name signage \
-            --author-cert apps/tizen/.sign/author.p12 \
+            --author-cert apps/${{ matrix.appType }}/.sign/author.p12 \
             --author-password "${{ secrets.TIZEN_CERT_PASSWORD }}" \
-            --dist-cert apps/tizen/.sign/distributor.p12 \
+            --dist-cert apps/${{ matrix.appType }}/.sign/distributor.p12 \
             --dist-password "${{ secrets.TIZEN_CERT_PASSWORD }}"
 
-      - name: Build tizen
+      - name: Build ${{ matrix.appType }}
         env:
           PLAYER_APP_NAME: ${{ matrix.appName }}
+          MGMT_ID: ${{ matrix.mgmtId }}
           API_BASE: ${{ secrets.API_BASE }}
           WS_URL: ${{ secrets.WS_URL }}
         run: |
-          cd apps/tizen
+          cd apps/${{ matrix.appType }}
           npm ci
           npm run version:patch
-          tizen package --type wgt --sign signage --output ../../dist/${{ matrix.mgmtId }}/tizen
-          node scripts/update-sssp.js
-
-      - name: Build tizen-sbb
-        env:
-          PLAYER_APP_NAME: ${{ matrix.appName }}
-        run: |
-          cd apps/tizen-sbb
-          npm ci
-          npm run version:patch
-          tizen package --type wgt --sign signage --output ../../dist/${{ matrix.mgmtId }}/tizen-sbb
+          tizen package --type wgt --sign signage \
+            --output ../../dist/${{ matrix.mgmtId }}/${{ matrix.appType }}
           node scripts/update-sssp.js
 
       - name: Clean up certs
         if: always()
         run: |
-          rm -f apps/tizen/.sign/author.p12 apps/tizen/.sign/distributor.p12
-          rm -f apps/tizen-sbb/.sign/author.p12 apps/tizen-sbb/.sign/distributor.p12
+          for APP in tizen tizen-sbb tizen-kiosk tizen-kitchen; do
+            rm -f apps/$APP/.sign/author.p12 apps/$APP/.sign/distributor.p12
+          done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -823,7 +908,7 @@ jobs:
           path: dist/
 
   deploy:
-    needs: build-tizen
+    needs: build-app
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -831,11 +916,25 @@ jobs:
         run: |
           for DIR in dist/*/; do
             MGMT_ID=$(basename $DIR)
-            VERSION=$(cat $DIR/tizen/version.txt)
-            rsync -az $DIR/tizen/     ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/signage-apps/$MGMT_ID/tizen/$VERSION/
-            rsync -az $DIR/tizen-sbb/ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/signage-apps/$MGMT_ID/tizen-sbb/$VERSION/
+            for APP_TYPE in tizen tizen-sbb tizen-kiosk tizen-kitchen; do
+              [ -d "$DIR/$APP_TYPE" ] || continue
+              VERSION=$(cat $DIR/$APP_TYPE/version.txt)
+              rsync -az $DIR/$APP_TYPE/ \
+                ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/signage-apps/$MGMT_ID/$APP_TYPE/$VERSION/
+              ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+                "ln -sfn /srv/signage-apps/$MGMT_ID/$APP_TYPE/$VERSION \
+                         /srv/signage-apps/$MGMT_ID/$APP_TYPE/latest"
+              scp $DIR/$APP_TYPE/sssp_config.xml \
+                ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/signage-apps/$MGMT_ID/$APP_TYPE/sssp_config.xml
+            done
           done
-          # Symlinks + sssp_config update via SSH ...
+          # Merge + upload master manifest
+          node scripts/merge-manifest.js dist/ > manifest.json
+          scp manifest.json ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/signage-apps/manifest.json
+          # Notify platform API
+          curl -X POST ${{ secrets.API_BASE }}/api/v1/platform/tizen-builds/complete \
+            -H "Authorization: Bearer ${{ secrets.PLATFORM_API_KEY }}" \
+            -d @dist/build-summary.json
 ```
 
 ### 11.3 Docker Image for CI (Recommended)
@@ -862,15 +961,16 @@ With this pipeline in place, the following capabilities are available for free o
 
 | Capability | Approach |
 |---|---|
-| **Rollback** | SuperAdmin API call re-points `latest/` symlink + sets `playerReleases.isLatest`. TVs auto-update back on next check. |
-| **Staged rollout** | Per-management-company or per-org `sssp_config.xml`. Point a subset of TVs at `v-next/` for canary testing. |
-| **Integrity verification** | `sha256` of WGT generated at build time; app verifies before install. |
-| **Real-time push on deploy** | Deploy job sends WebSocket event `{ type: "update_available", version }` to all connected TVs. |
-| **Automatic cert expiry alert** | CI step checks `.p12` expiry date; alerts when `< 30 days` remain. |
-| **Device version dashboard** | `PLAYER_BUILD_INFO.version` already sent in heartbeat — superadmin can see per-device build version. |
+| **Rollback** | SuperAdmin or Management triggers rollback in Tizen Builder UI → re-points `latest/` symlink + sets `playerReleases.isLatest`. TVs auto-update back on next check. |
+| **Staged rollout** | Per-management-company or per-org `sssp_config.xml`. Point a subset of TVs at `v-next/` for canary testing. Kiosk/kitchen can be staged independently from signage. |
+| **Integrity verification** | `sha256` of WGT generated at build time; app verifies before install. Prevents corrupt downloads from deploying. |
+| **Real-time push on deploy** | Deploy job sends WebSocket event `{ type: "update_available", version, appType }` to all connected devices of that type. |
+| **Automatic cert expiry alert** | CI step checks `.p12` expiry date; alerts superadmin when `< 30 days` remain. Builder UI also shows expiry warning. |
+| **Device version dashboard** | `PLAYER_BUILD_INFO.version` already sent in heartbeat — Devices page and Tizen Builder both show per-device app version and `appType`. |
 | **Dependency audit** | `npm audit` in CI fails build on high-severity vulnerabilities. |
-| **Build size tracking** | CI records WGT size in `tizen_builds` table; alert if growth > threshold. |
-| **Per-org skin live preview** | Management portal skin page can render a mock TV frame with their colors/logo applied in real time. |
+| **Build size tracking** | CI records WGT size per `appType` in `tizen_builds`; alert if growth > threshold. |
+| **Per-org skin live preview** | Management portal skin page renders a mock TV frame with their colors/logo applied in real time. |
+| **Kiosk/Kitchen selective rebuild** | Management can trigger a rebuild of `tizen-kiosk` only (e.g. after POS kiosk UI update) without rebuilding all signage WGTs. |
 
 ---
 
@@ -885,9 +985,9 @@ With this pipeline in place, the following capabilities are available for free o
 | ~~Q1~~ | ✅ `sssp_config.xml` `<Version>` **is** used for update comparison. `update-sssp.js` must patch both `<size>` **and** `<Version>` after every build. |
 | ~~Q2~~ | ✅ TVs are in **Custom URL launcher mode** pointed directly at the file server. No MagicINFO / SCM server in the chain. |
 | ~~Q4~~ | ✅ Infrastructure: **Ubuntu home AI server + Nginx**. Config reference: `infra/nginx/signage.conf`. Serve `/srv/signage-apps` over HTTPS. |
-| ~~Q5~~ | ✅ WGT files renamed to Nexari brand: `NexariOmniHub.wgt` (tizen) and `NexariOmniHubSBB.wgt` (tizen-sbb). `update-sssp.js` in each app must be updated to reference the new filenames. |
+| ~~Q5~~ | ✅ WGT files named to Nexari brand: `NexariSignage.wgt` (tizen), `NexariSignageSBB.wgt` (tizen-sbb), `NexariKiosk.wgt` (tizen-kiosk), `NexariKitchen.wgt` (tizen-kitchen). `update-sssp.js` in each app references its own filename. |
 | ~~Q6~~ | ✅ Runtime CSS injection is sufficient for all current branding scenarios. Per-org WGT builds are not needed. |
-| ~~Q3~~ | ✅ **Manual release tag** (`v1.0.5` etc.) triggers builds. Push to `main` does NOT trigger a build — prevents test/dev builds from reaching TVs in the field. `workflow_dispatch` is kept for emergency manual runs. |
+| ~~Q3~~ | ✅ **Manual release tag** (`v1.0.5` etc.) triggers builds — or via Tizen Builder UI trigger. Push to `main` does NOT auto-trigger. `workflow_dispatch` + Builder UI both supported for manual runs. |
 
 ---
 

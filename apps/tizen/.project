@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <projectDescription>
-	<name>TestNodeMdcSbb</name>
-	<comment>EBD Node.js + MDC Test App — Samsung SBB/SSSP (Tizen 4.0)</comment>
+	<name>SignagePlayer</name>
+	<comment>EBD Digital Signage Player — Samsung Smart TV (Tizen 10.0)</comment>
 	<projects>
 	</projects>
 	<buildSpec>
@@ -23,7 +23,7 @@
 	</natures>
 	<filteredResources>
 		<filter>
-			<id>1734134400010</id>
+			<id>1734134400000</id>
 			<name></name>
 			<type>30</type>
 			<matcher>
@@ -32,7 +32,7 @@
 			</matcher>
 		</filter>
 		<filter>
-			<id>1734134400011</id>
+			<id>1734134400001</id>
 			<name></name>
 			<type>30</type>
 			<matcher>

@@ -1,4 +1,3 @@
-
 # Dev only
 dev.ps1
 node_modules/
@@ -22,11 +21,3 @@ tmp/
 .cache/
 
 Docs/sample/
-
-#Tizen apps
-apps/tizen
-apps/tizen-sbb
-apps/tizen-rateboard
-apps/tizen-sbb - backup
-
-

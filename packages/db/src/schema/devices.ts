@@ -32,6 +32,12 @@ export const devices = pgTable('devices', {
   settings: text('settings').notNull().default('{}'),
   deviceToken: text('device_token'),
 
+  // ── Device classification ──────────────────────────────────────────────────
+  // type: what the device is used for
+  type: text('device_type').notNull().default('signage'), // signage | kiosk | kitchen
+  // platform: the Player OS/runtime
+  platform: text('platform').notNull().default('tizen'),  // tizen | tizen-sbb | browser | android | webos | linux
+
   // ── Tizen hardware identity ────────────────────────────────────────────────
   duid: text('duid').unique(),
   modelName: text('model_name'),

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexari Kitchen</title>
+    <script>
+    (function() {
+      function showErr(msg) {
+        var show = function() {
+          var b = document.getElementById('_jserr');
+          if (!b) {
+            b = document.createElement('div');
+            b.id = '_jserr';
+            b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#b00040;color:#fff;padding:10px 16px;font:13px monospace;word-break:break-all;white-space:pre-line;max-height:35vh;overflow-y:auto;';
+            (document.body || document.documentElement).appendChild(b);
+          }
+          b.textContent += msg + '\n';
+        };
+        if (document.body) show(); else document.addEventListener('DOMContentLoaded', show);
+      }
+      window.onerror = function(msg, src, line) { showErr('[JS ERROR] ' + msg + '\n  ' + src + ':' + line); return false; };
+      window.addEventListener('unhandledrejection', function(e) {
+        var r = e.reason; showErr('[REJECTION] ' + (r && r.message ? r.message : String(r)));
+      });
+    })();
+    </script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+    <!-- Pairing Screen -->
+    <div id="pairing-screen" class="screen">
+        <div class="pairing-container">
+            <div class="logo">
+                <img src="logo.png" alt="Nexari" />
+            </div>
+            <h1>Nexari Kitchen</h1>
+            <div class="pairing-code-container">
+                <p class="pairing-label">Enter this code in your dashboard:</p>
+                <div id="pairing-code" class="pairing-code">------</div>
+                <div id="pairing-status" class="pairing-status">Generating code...</div>
+            </div>
+            <div class="device-info">
+                <div id="device-model" class="info-item">Model: Detecting...</div>
+                <div id="device-ip" class="info-item">IP: Connecting...</div>
+                <div id="device-serial" class="info-item">Serial: Detecting...</div>
+            </div>
+            <div class="conn-settings-wrap">
+                <button id="conn-settings-toggle" class="conn-settings-toggle" onclick="KitchenBoot.toggleSettings()">
+                    &#9881; Connection settings <span id="conn-settings-arrow">&#9660;</span>
+                </button>
+                <div id="conn-settings-panel" class="conn-settings-panel hidden">
+                    <div class="conn-field">
+                        <label for="input-api-base">API Base URL</label>
+                        <input id="input-api-base" type="url" spellcheck="false" placeholder="http://192.168.1.10:3000/api/v1" />
+                        <span class="conn-hint">e.g. http://192.168.1.10:3000/api/v1</span>
+                    </div>
+                    <div class="conn-actions">
+                        <button class="conn-btn conn-btn-apply" onclick="KitchenBoot.applySettings()">Save &amp; Reconnect</button>
+                        <button class="conn-btn conn-btn-reset" onclick="KitchenBoot.resetSettings()">Reset</button>
+                    </div>
+                    <div id="conn-settings-msg" class="conn-settings-msg"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Launching Screen -->
+    <div id="launch-screen" class="screen hidden">
+        <div class="launch-container">
+            <div class="launch-spinner"></div>
+            <h2>Launching Kitchen Display</h2>
+            <p id="launch-status">Connecting to server...</p>
+        </div>
+    </div>
+
+    <!-- Error Screen -->
+    <div id="error-screen" class="screen hidden">
+        <div class="error-container">
+            <div class="error-icon">⚠</div>
+            <h2 id="error-title">Connection Error</h2>
+            <p id="error-message">Unable to connect to server</p>
+            <button class="retry-button" onclick="KitchenBoot.retry()">Retry</button>
+        </div>
+    </div>
+
+    <script src="js/build-info.js"></script>
+    <script src="js/config.js"></script>
+    <script type="text/javascript" src="$WEBAPIS/webapis/webapis.js"></script>
+    <script src="js/telemetry.js"></script>
+    <script src="js/boot.js"></script>
+</body>
+</html>
