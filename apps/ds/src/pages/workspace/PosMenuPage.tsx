@@ -75,7 +75,7 @@ export default function PosMenuPage() {
   });
 
   const createMenuMut = useMutation({
-    mutationFn: () => api.post('/pos/mgmt/menus', { workspaceId: wsId, name: newMenuName }),
+    mutationFn: () => api.post<PosMenu>('/pos/mgmt/menus', { workspaceId: wsId, name: newMenuName }),
     onSuccess: (m: PosMenu) => {
       toast.success('Menu created');
       setNewMenuOpen(false);
@@ -87,7 +87,7 @@ export default function PosMenuPage() {
   });
 
   const createCategoryMut = useMutation({
-    mutationFn: () => api.post('/pos/mgmt/categories', { menuId: selectedMenuId, name: newCategoryName }),
+    mutationFn: () => api.post<PosCategory>('/pos/mgmt/categories', { menuId: selectedMenuId, name: newCategoryName }),
     onSuccess: (c: PosCategory) => {
       toast.success('Category created');
       setNewCategoryOpen(false);

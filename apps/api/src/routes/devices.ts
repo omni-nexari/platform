@@ -1474,7 +1474,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (rangeHeader) {
       // Parse "bytes=start-end"
       const [startStr, endStr] = rangeHeader.replace(/^bytes=/, '').split('-');
-      const start = parseInt(startStr, 10) || 0;
+      const start = startStr ? parseInt(startStr, 10) || 0 : 0;
       const end = endStr ? Math.min(parseInt(endStr, 10), fileSize - 1) : fileSize - 1;
       if (start > end || start >= fileSize) {
         reply.header('Content-Range', `bytes */${fileSize}`);

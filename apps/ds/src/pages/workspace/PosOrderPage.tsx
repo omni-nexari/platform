@@ -142,7 +142,7 @@ export default function PosOrderPage() {
   // ─── Submit ──────────────────────────────────────────────────────────────
 
   const createOrderMut = useMutation({
-    mutationFn: (body: object) => api.post('/pos/mgmt/orders', body),
+    mutationFn: (body: object) => api.post<{ id: string; orderNumber: number; totalCents: number }>('/pos/mgmt/orders', body),
     onSuccess: (data: { id: string; orderNumber: number; totalCents: number }) => {
       toast.success(`Order #${data.orderNumber} created`);
       navigate(`/workspaces/${wsId}/pos/payment?orderId=${data.id}&total=${data.totalCents}`);

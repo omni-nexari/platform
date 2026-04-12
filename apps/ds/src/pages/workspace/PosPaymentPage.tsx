@@ -100,7 +100,7 @@ export default function PosPaymentPage() {
   // ─── Submit ──────────────────────────────────────────────────────────────
 
   const payMut = useMutation({
-    mutationFn: (body: object) => api.post(`/pos/mgmt/orders/${orderId}/mark-paid`, body),
+    mutationFn: (body: object) => api.post<{ paymentId: string; changeCents: number; orderId: string }>(`/pos/mgmt/orders/${orderId}/mark-paid`, body),
     onSuccess: async (data: { paymentId: string; changeCents: number; orderId: string }) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pos-orders'] }),
@@ -243,7 +243,7 @@ export default function PosPaymentPage() {
               key={p}
               onClick={() => { setTipPreset(p); setCustomTip(''); }}
               className={`px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
-                tipPreset === p && tipPreset !== -1
+                tipPreset === p
                   ? 'bg-[var(--accent)] border-[var(--accent)] text-white'
                   : 'border-[var(--border)] text-[var(--text)] hover:border-[var(--accent)]'
               }`}

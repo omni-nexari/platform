@@ -483,6 +483,29 @@ const MDC_INPUT_SOURCE_NAMES: Record<number, string> = {
 // ── LiveViewOverlay ───────────────────────────────────────────────────────────
 function LiveViewOverlay({ deviceId, isOnline, deviceInfo, onClose, onPowerChange }: { deviceId: string; isOnline: boolean; deviceInfo?: { name?: string | null; modelName?: string | null; ipAddress?: string | null; serialNumber?: string | null }; onClose: () => void; onPowerChange?: (state: 'on' | 'off') => void }) {
   type LiveStatus = 'idle' | 'buffering' | 'playing';
+  type MdcStatusResponse = {
+    ok: boolean;
+    nodeRunning?: boolean | undefined;
+    serial?: string | undefined;
+    deviceName?: string | undefined;
+    modelName?: string | undefined;
+    ipAddress?: string | undefined;
+    remoteControl?: number | undefined;
+    rawHex?: string | undefined;
+    error?: string | undefined;
+    status?: {
+      displayId: number;
+      ack: 'A' | 'N';
+      rCmd: number;
+      power?: number;
+      volume?: number;
+      mute?: number;
+      input?: number;
+      aspect?: number;
+      nTime?: number;
+      fTime?: number;
+    } | undefined;
+  };
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [status, setStatus] = useState<LiveStatus>('idle');
   const [sseError, setSseError] = useState<string | null>(null);
@@ -491,10 +514,7 @@ function LiveViewOverlay({ deviceId, isOnline, deviceInfo, onClose, onPowerChang
   const [isStale, setIsStale] = useState(false);
   const [measuredCadenceMs, setMeasuredCadenceMs] = useState(0);
   const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
-  const [mdcStatusResponse, setMdcStatusResponse] = useState<{
-    ok: boolean; nodeRunning?: boolean; serial?: string; deviceName?: string; modelName?: string; ipAddress?: string; remoteControl?: number; rawHex?: string; error?: string;
-    status?: { displayId: number; ack: 'A'|'N'; rCmd: number; power?: number; volume?: number; mute?: number; input?: number; aspect?: number; nTime?: number; fTime?: number };
-  } | null>({
+  const [mdcStatusResponse, setMdcStatusResponse] = useState<MdcStatusResponse | null>({
     ok: false,
     deviceName: deviceInfo?.name ?? undefined,
     modelName: deviceInfo?.modelName ?? undefined,
@@ -806,6 +826,7 @@ function LiveViewOverlay({ deviceId, isOnline, deviceInfo, onClose, onPowerChang
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function DeviceDetailPage() {
+  type DeviceTabId = 'info' | 'power' | 'network' | 'settings' | 'timers' | 'tags' | 'update' | 'logs' | 'kiosk-config' | 'order-filter';
   const { wsId, deviceId } = useParams<{ wsId: string; deviceId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -836,7 +857,7 @@ export default function DeviceDetailPage() {
   const [urlLauncherBusy, setUrlLauncherBusy] = useState(false);
   const [selectedTimerSlot, setSelectedTimerSlot] = useState(1);
   const [timerSlots, setTimerSlots] = useState<Record<number, TimerSlotState>>({});
-  const [activeTab, setActiveTab] = useState<'info' | 'power' | 'network' | 'settings' | 'timers' | 'tags' | 'update' | 'logs' | 'kiosk-config' | 'order-filter'>('info');
+  const [activeTab, setActiveTab] = useState<DeviceTabId>('info');
 
   // ── Network config state ────────────────────────────────────────────
   type IpMode   = 'dhcp'     | 'static';
@@ -1363,18 +1384,18 @@ export default function DeviceDetailPage() {
       {(() => {
         const deviceType = device.type ?? 'signage';
         const isTizen = (device.platform ?? 'tizen') === 'tizen';
-        const TABS = [
+        const TABS: Array<{ id: DeviceTabId; label: string }> = [
           { id: 'info',         label: 'Info' },
-          ...(deviceType !== 'kitchen' && isTizen ? [{ id: 'power', label: 'Power / Control' }] : []),
+          ...(deviceType !== 'kitchen' && isTizen ? [{ id: 'power' as DeviceTabId, label: 'Power / Control' }] : []),
           { id: 'network',      label: 'Network' },
           { id: 'settings',     label: 'Settings' },
-          ...(deviceType !== 'kitchen' ? [{ id: 'timers', label: 'Timers' }] : []),
-          ...(deviceType === 'kiosk'   ? [{ id: 'kiosk-config', label: 'Kiosk Config' }] : []),
-          ...(deviceType === 'kitchen' ? [{ id: 'order-filter', label: 'Order Filter' }] : []),
+          ...(deviceType !== 'kitchen' ? [{ id: 'timers' as DeviceTabId, label: 'Timers' }] : []),
+          ...(deviceType === 'kiosk'   ? [{ id: 'kiosk-config' as DeviceTabId, label: 'Kiosk Config' }] : []),
+          ...(deviceType === 'kitchen' ? [{ id: 'order-filter' as DeviceTabId, label: 'Order Filter' }] : []),
           { id: 'tags',         label: 'Tags' },
-          ...(deviceType === 'signage' ? [{ id: 'update', label: 'Update' }] : []),
+          ...(deviceType === 'signage' ? [{ id: 'update' as DeviceTabId, label: 'Update' }] : []),
           { id: 'logs',         label: 'Logs' },
-        ] as const;
+        ];
         return (
           <div className="flex flex-wrap gap-1 border-b border-[var(--border)] pb-0">
             {TABS.map((tab) => (
@@ -1950,11 +1971,11 @@ export default function DeviceDetailPage() {
                     setNetBusy(true);
                     try {
                       const [cfgRes, modeRes] = await Promise.all([
-                        api.post(`/devices/${deviceId}/mdc-control`, { action: 'network_config_get' }),
-                        api.post(`/devices/${deviceId}/mdc-control`, { action: 'network_ip_mode_get' }),
+                        api.post<{ ok: boolean; ipAddress?: string; subnetMask?: string; gateway?: string; dns?: string }>(`/devices/${deviceId}/mdc-control`, { action: 'network_config_get' }),
+                        api.post<{ ok: boolean; ipMode?: number }>(`/devices/${deviceId}/mdc-control`, { action: 'network_ip_mode_get' }),
                       ]);
-                      const cfg  = cfgRes.data  as { ok: boolean; ipAddress?: string; subnetMask?: string; gateway?: string; dns?: string };
-                      const mode = modeRes.data as { ok: boolean; ipMode?: number };
+                      const cfg = cfgRes;
+                      const mode = modeRes;
                       if (cfg.ok) {
                         setNetIp(cfg.ipAddress ?? '');
                         setNetSubnet(cfg.subnetMask ?? '');
@@ -2065,7 +2086,7 @@ export default function DeviceDetailPage() {
                           action: 'network_ip_mode_set',
                           dhcp: netIpMode === 'dhcp',
                         });
-                        const modeData = modeRes.data as { ok: boolean; error?: string };
+                        const modeData = modeRes as { ok: boolean; error?: string };
                         if (!modeData.ok) toast.warning(`IP mode: ${modeData.error ?? 'NAK'}`);
 
                         // 2. If static, push IP config
@@ -2077,7 +2098,7 @@ export default function DeviceDetailPage() {
                             gateway: netGateway,
                             dns: netDns,
                           });
-                          const cfgData = cfgRes.data as { ok: boolean; error?: string };
+                          const cfgData = cfgRes as { ok: boolean; error?: string };
                           if (!cfgData.ok) toast.warning(`IP config: ${cfgData.error ?? 'NAK'}`);
                         }
 
@@ -2088,7 +2109,7 @@ export default function DeviceDetailPage() {
                             ssid: netSsid,
                             password: netPassword,
                           });
-                          const wifiData = wifiRes.data as { ok: boolean; error?: string };
+                          const wifiData = wifiRes as { ok: boolean; error?: string };
                           if (!wifiData.ok) {
                             toast.warning(`Wi-Fi: ${wifiData.error ?? 'NAK'} — ensure panel has Wi-Fi adapter and is connected`);
                           } else {

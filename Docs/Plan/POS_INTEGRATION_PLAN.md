@@ -1,7 +1,7 @@
 # POS Integration Plan
 
 **Approach:** Option 4 — POS as an org-level module, fully refactored onto the platform stack  
-**Status:** Planning — Refined  
+**Status:** Implementation — In Progress  
 **Created:** April 2026
 
 ---
@@ -761,22 +761,22 @@ These are hard dependencies that must be complete before POS goes live:
 
 | # | Integration                      | Status        | Notes                                                   |
 |---|----------------------------------|---------------|---------------------------------------------------------|
-| 1 | Platform auth — POS routes       | Not started   | All POS pages must use `useAuthStore` session cookie    |
-| 2 | Org module guard on sidebar nav  | Not started   | `usePosEnabled()` / `useCmsEnabled()` hooks             |
-| 3 | Superadmin plan UI (modules)     | Not started   | `OrgDetailPage.tsx` — module toggle + plan dropdown     |
-| 4 | Management plan UI (modules)     | Not started   | `ManagementCompanyDetailPage.tsx` — same controls       |
-| 5 | `pos_restaurants` + core DB schema | Not started | Drizzle schema + migration                              |
-| 6 | `pos_menu_items` + API CRUD      | Not started   | Minimum viable: get/create/update/delete menu items     |
-| 7 | `pos_orders` + `pos_order_items` | Not started   | Core order flow                                         |
-| 8 | `pos_payments` API               | Not started   | Record payment against order                           |
-| 9 | `pos_tables` API                 | Not started   | Table config + live status (occupied/available)         |
-|10 | POS Settings sections in `SettingsPage.tsx` | Not started | Restaurant, menu, tables, hardware, kiosk, loyalty |
-|11 | Public kiosk routes (no auth)    | Not started   | `/kiosk/:wsId/portrait` and `/kiosk/:wsId/landscape`   |
-|12 | Receipt print (browser print API)| Not started   | `window.print()` + receipt CSS template                 |
-|13 | Unified Devices page             | Not started   | `devices.type/platform/manufacturer` columns, filter chips, adaptive detail tabs, list/card view |
-|14 | Device Groups                    | Not started   | `device_groups` + `device_group_members` tables; sync, videowall, location, tag group types |
-|15 | Weather widget content type      | Not started   | `GET /content/widgets/weather` proxy route, widget config in content item settings              |
-|16 | Tizen Kiosk WGT build            | Not started   | Separate `apps/tizen-kiosk/` WGT for kiosk portrait/landscape and kitchen display              |
+| 1 | Platform auth — POS routes       | Completed     | Workspace POS routes are session-authenticated; kiosk/kitchen remain public by design |
+| 2 | Org module guard on sidebar nav  | Completed     | `usePosEnabled()` / `useCmsEnabled()` are live in the DS app |
+| 3 | Superadmin plan UI (modules)     | Completed     | `OrgDetailPage.tsx` supports plan + module changes      |
+| 4 | Management plan UI (modules)     | Not started   | `ManagementCompanyDetailPage.tsx` parity still pending  |
+| 5 | `pos_restaurants` + core DB schema | Completed   | POS schema and migrations exist in `packages/db`        |
+| 6 | `pos_menu_items` + API CRUD      | Completed     | Menu/category/item CRUD is wired through the Fastify POS routes |
+| 7 | `pos_orders` + `pos_order_items` | Completed     | Core order flow, history, kitchen, and editing endpoints are in place |
+| 8 | `pos_payments` API               | Completed     | Payment capture / mark-paid flow is implemented         |
+| 9 | `pos_tables` API                 | Completed     | Table config CRUD exists in the POS route set           |
+|10 | POS Settings sections in `SettingsPage.tsx` | In progress | Restaurant/menu/tables/kiosk/loyalty exist; hardware is still a placeholder |
+|11 | Public kiosk routes (no auth)    | Completed     | `/kiosk/:wsId/:orientation` and `/kitchen/:wsId` are live |
+|12 | Receipt print (browser print API)| Completed     | Orders history now supports browser receipt printing and export |
+|13 | Unified Devices page             | In progress   | Type/platform handling exists, but the unified UX still needs polish and deeper feature completion |
+|14 | Device Groups                    | In progress   | Group schema and DS pages exist; richer group workflows still need completion |
+|15 | Weather widget content type      | In progress   | Weather proxy route exists; full content-type/editor wiring is still pending |
+|16 | Tizen Kiosk WGT build            | In progress   | `apps/tizen-kiosk/` exists, but rollout validation and final integration remain |
 
 **Phase 4–6 screens can be worked on in parallel with items 5–13 above.**
 

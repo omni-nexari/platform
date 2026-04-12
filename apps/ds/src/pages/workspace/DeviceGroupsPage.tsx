@@ -51,7 +51,7 @@ export default function DeviceGroupsPage() {
 
   const createMut = useMutation({
     mutationFn: () =>
-      api.post('/device-groups', { workspaceId: wsId, name: newName, type: newType, description: newDesc || null }),
+      api.post<DeviceGroup>('/device-groups', { workspaceId: wsId, name: newName, type: newType, description: newDesc || null }),
     onSuccess: (group: DeviceGroup) => {
       toast.success('Group created');
       setCreateOpen(false);

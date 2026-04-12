@@ -161,7 +161,7 @@ export async function posRoutes(app: FastifyInstance) {
   async function findLoyaltyCustomerByContact(
     workspaceId: string,
     orgId: string,
-    contact: { phone?: string; email?: string },
+    contact: { phone?: string | undefined; email?: string | undefined },
   ) {
     const customers = await db.query.posLoyaltyCustomers.findMany({
       where: and(eq(posLoyaltyCustomers.workspaceId, workspaceId), eq(posLoyaltyCustomers.orgId, orgId)),
@@ -178,7 +178,7 @@ export async function posRoutes(app: FastifyInstance) {
   async function buildKioskLoyaltyVerifyResponse(
     workspaceId: string,
     orgId: string,
-    contact: { phone?: string; email?: string },
+    contact: { phone?: string | undefined; email?: string | undefined },
   ) {
     const [settings, customer] = await Promise.all([
       getLoyaltyConfig(workspaceId, orgId),

@@ -76,7 +76,7 @@ export default function PosEmployeesPage() {
   });
 
   const clockMut = useMutation({
-    mutationFn: (id: string) => api.post(`/pos/mgmt/employees/${id}/clock`, { workspaceId: wsId }),
+    mutationFn: (id: string) => api.post<{ action: string }>(`/pos/mgmt/employees/${id}/clock`, { workspaceId: wsId }),
     onSuccess: (data: { action: string }) => {
       void qc.invalidateQueries({ queryKey: ['pos-employees', wsId] });
       toast.success(data.action === 'clock-in' ? 'Clocked in' : 'Clocked out');

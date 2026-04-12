@@ -4,9 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "pnpm --filter @signage/db build",
     "dev": "tsx watch --env-file=.env src/index.ts",
+    "prebuild": "pnpm --filter @signage/db build",
     "build": "tsc",
     "start": "node dist/index.js",
+    "pretypecheck": "pnpm --filter @signage/db build",
     "typecheck": "tsc --noEmit",
     "seed:sa": "tsx --env-file=.env scripts/seed-superadmin.ts",
     "seed:test": "tsx --env-file=.env scripts/seed-test-org.ts",

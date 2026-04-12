@@ -101,7 +101,11 @@ export default function PosPurchaseOrdersPage() {
   function advance(po: PurchaseOrder) {
     const next = NEXT_STATUS[po.status];
     if (!next) return;
-    advanceMut.mutate({ id: po.id, status: next, deliveredAt: next === 'received' ? new Date().toISOString() : undefined });
+    advanceMut.mutate(
+      next === 'received'
+        ? { id: po.id, status: next, deliveredAt: new Date().toISOString() }
+        : { id: po.id, status: next },
+    );
   }
 
   return (

@@ -45,7 +45,7 @@ export default function PosLoyaltyPage() {
   });
 
   const pointsMut = useMutation({
-    mutationFn: (body: object) => api.post('/pos/mgmt/loyalty/points', body),
+    mutationFn: (body: object) => api.post<{ points: number; tier: string }>('/pos/mgmt/loyalty/points', body),
     onSuccess: (data: { points: number; tier: string }) => {
       void qc.invalidateQueries({ queryKey: ['pos-loyalty', wsId] });
       setPointsTarget(null);

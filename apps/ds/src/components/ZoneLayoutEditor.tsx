@@ -7,8 +7,8 @@ import ContentPickerModal, { type PickedItem } from './ContentPickerModal.js';
 import { api } from '../lib/api.js';
 
 export type ZoneSource =
-  | { type: 'playlist'; playlistId: string; playlistName?: string; sourceDuration?: number | null }
-  | { type: 'content'; contentId: string; contentName?: string; contentType?: string; sourceDuration?: number | null }
+  | { type: 'playlist'; playlistId: string; playlistName?: string | undefined; sourceDuration?: number | null | undefined }
+  | { type: 'content'; contentId: string; contentName?: string | undefined; contentType?: string | undefined; sourceDuration?: number | null | undefined }
   | { type: 'empty' };
 
 export interface ZoneConfig {
@@ -239,7 +239,13 @@ export default function ZoneLayoutEditor({ initialZones, workspaceId, saving, on
     const source: ZoneSource =
       item.type === 'playlist'
         ? { type: 'playlist', playlistId: item.id, playlistName: item.name, sourceDuration: item.duration ?? null }
-        : { type: 'content', contentId: item.id, contentName: item.name, contentType: item.contentType, sourceDuration: item.duration ?? null };
+        : {
+            type: 'content',
+            contentId: item.id,
+            contentName: item.name,
+            ...(item.contentType ? { contentType: item.contentType } : {}),
+            sourceDuration: item.duration ?? null,
+          };
     setZones((prev) =>
       prev.map((zone) =>
         zone.id === pickerZoneId

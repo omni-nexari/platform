@@ -145,7 +145,7 @@ export default function DevicesPage() {
 
   const claimMutation = useMutation({
     mutationFn: (data: ClaimDeviceInput) =>
-      api.post('/devices/claim', { ...data, workspaceId: wsId }),
+      api.post<Device>('/devices/claim', { ...data, workspaceId: wsId }),
     onSuccess: (device: Device) => {
       toast.success('Device claimed');
       setPairOpen(false);
@@ -198,7 +198,17 @@ export default function DevicesPage() {
         }
       />
 
-      <SmartViewsBar workspaceId={wsId!} />
+      <SmartViewsBar
+        workspaceId={wsId!}
+        entityType="device"
+        currentFilters={{ tagIds: selectedTagIds, status: selectedStatus, type: selectedType }}
+        onApplyFilters={(filters) => {
+          const next = filters as { tagIds?: string[]; status?: StatusFilter; type?: TypeFilter };
+          setSelectedTagIds(Array.isArray(next.tagIds) ? next.tagIds : []);
+          setSelectedStatus(next.status ?? 'all');
+          setSelectedType(next.type ?? 'all');
+        }}
+      />
 
       {/* Filters row */}
       <div className="flex flex-wrap items-center gap-3">
@@ -239,7 +249,7 @@ export default function DevicesPage() {
         <TagFilterBar
           workspaceId={wsId!}
           selectedTagIds={selectedTagIds}
-          onChange={setSelectedTagIds}
+          onTagIdsChange={setSelectedTagIds}
         />
       </div>
 
@@ -362,13 +372,13 @@ export default function DevicesPage() {
             <div>
               <label className="ui-label">Pairing Code</label>
               <input
-                {...register('pairingCode')}
+                {...register('code')}
                 className="ui-input w-full font-mono uppercase"
-                placeholder="XXXX-XXXX"
+                placeholder="ABC123"
                 autoFocus
               />
-              {errors.pairingCode && (
-                <p className="text-xs text-red-400 mt-1">{errors.pairingCode.message}</p>
+              {errors.code && (
+                <p className="text-xs text-red-400 mt-1">{errors.code.message}</p>
               )}
             </div>
             <div>
@@ -398,9 +408,10 @@ export default function DevicesPage() {
       {bulkTagOpen && (
         <BulkTagModal
           workspaceId={wsId!}
-          deviceIds={Array.from(selectedItems)}
+          entityType="device"
+          entityIds={Array.from(selectedItems)}
           onClose={() => { setBulkTagOpen(false); setSelectedItems(new Set()); }}
-          onSuccess={() => {
+          onApplied={() => {
             setBulkTagOpen(false);
             setSelectedItems(new Set());
             void queryClient.invalidateQueries({ queryKey: ['devices', wsId] });
