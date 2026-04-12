@@ -2364,6 +2364,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
       .object({
         name: z.string().min(2).max(100).optional(),
         plan: z.enum(['starter', 'pro', 'enterprise']).optional(),
+        modules: z.enum(['signage', 'pos', 'both']).optional(),
         suspended: z.boolean().optional(),
       })
       .safeParse(req.body);
@@ -2376,11 +2377,24 @@ export async function superAdminRoutes(app: FastifyInstance) {
           ? null
           : (org.suspendedAt ?? null);
 
+    // Merge `modules` into the settings JSON (preserves other settings fields)
+    let newSettings = org.settings;
+    if (body.data.modules !== undefined) {
+      try {
+        const parsed = JSON.parse(org.settings || '{}') as Record<string, unknown>;
+        parsed.modules = body.data.modules;
+        newSettings = JSON.stringify(parsed);
+      } catch {
+        newSettings = JSON.stringify({ modules: body.data.modules });
+      }
+    }
+
     const [updated] = await db
       .update(organisations)
       .set({
         name: body.data.name ?? org.name,
         plan: body.data.plan ?? org.plan,
+        settings: newSettings,
         suspendedAt: newSuspendedAt,
         updatedAt: new Date(),
       })

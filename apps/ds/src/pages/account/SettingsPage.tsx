@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router';
+import { useSearchParams, useNavigate } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -41,10 +41,17 @@ import {
   CheckCheck,
   BellOff,
   Ban,
+  Store,
+  Utensils,
+  TableProperties,
+  Printer,
+  Smartphone,
+  Gift,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
 import { useAuthStore } from '../../lib/auth.js';
+import { usePosEnabled, useCmsEnabled } from '../../lib/modules.js';
 import {
   Badge,
   Callout,
@@ -138,13 +145,21 @@ type SectionId =
   | 'emergency'
   | 'audit'
   | 'api-keys'
-  | 'notifications';
+  | 'notifications'
+  | 'pos-restaurant'
+  | 'pos-menu'
+  | 'pos-tables'
+  | 'pos-hardware'
+  | 'pos-kiosk'
+  | 'pos-loyalty';
 
 const SECTIONS: {
   id: SectionId;
   label: string;
   icon: React.ComponentType<{ className?: string; size?: number }>;
   group: string;
+  posOnly?: boolean;
+  cmsOnly?: boolean;
 }[] = [
   { id: 'general',      label: 'General',         icon: User,          group: 'Account' },
   { id: 'security',     label: 'Security',         icon: Shield,        group: 'Account' },
@@ -155,18 +170,31 @@ const SECTIONS: {
   { id: 'audit',        label: 'Audit Log',        icon: ClipboardList, group: 'Workspace' },
   { id: 'api-keys',     label: 'API Keys',         icon: Key,           group: 'Workspace' },
   { id: 'notifications',label: 'Notifications',    icon: Bell,          group: 'Preferences' },
+  // POS sections — rendered conditionally when posEnabled
+  { id: 'pos-restaurant', label: 'Restaurant',   icon: Store,           group: 'Point of Sale', posOnly: true },
+  { id: 'pos-menu',       label: 'Menu',          icon: Utensils,        group: 'Point of Sale', posOnly: true },
+  { id: 'pos-tables',     label: 'Tables',        icon: TableProperties, group: 'Point of Sale', posOnly: true },
+  { id: 'pos-hardware',   label: 'Hardware',      icon: Printer,         group: 'Point of Sale', posOnly: true },
+  { id: 'pos-kiosk',      label: 'Kiosk',         icon: Smartphone,      group: 'Point of Sale', posOnly: true },
+  { id: 'pos-loyalty',    label: 'Loyalty',       icon: Gift,            group: 'Point of Sale', posOnly: true },
 ];
 
 const SECTION_LABELS: Record<SectionId, string> = {
-  general:       'General',
-  security:      'Security',
-  organization:  'Organization',
-  workspace:     'Workspace',
-  tags:          'Tags',
-  emergency:     'Emergency Alert',
-  audit:         'Audit Log',
-  'api-keys':    'API Keys',
-  notifications: 'Notifications',
+  general:          'General',
+  security:         'Security',
+  organization:     'Organization',
+  workspace:        'Workspace',
+  tags:             'Tags',
+  emergency:        'Emergency Alert',
+  audit:            'Audit Log',
+  'api-keys':       'API Keys',
+  notifications:    'Notifications',
+  'pos-restaurant': 'Restaurant',
+  'pos-menu':       'Menu',
+  'pos-tables':     'Tables',
+  'pos-hardware':   'Hardware',
+  'pos-kiosk':      'Kiosk',
+  'pos-loyalty':    'Loyalty',
 };
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
@@ -2608,11 +2636,674 @@ function NotificationsSection() {
   );
 }
 
+// ─── POS Settings Sections ───────────────────────────────────────────────────
+
+type PosRestaurant = {
+  id: string;
+  name: string;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  currency: string;
+  taxRatePct: number;
+  receiptHeader: string | null;
+  receiptFooter: string | null;
+  loyaltyEnabled: boolean;
+  loyaltyPointsPerDollar: number;
+  loyaltyRedemptionRate: number;
+};
+
+type PosTable = {
+  id: string;
+  number: number | null;
+  name: string | null;
+  seats: number | null;
+  location: string | null;
+};
+
+type PosKioskConfig = {
+  workspaceId: string;
+  orientation: string;
+  welcomeMessage: string | null;
+  idleTimeoutSeconds: number;
+  qrOrderingEnabled: boolean;
+};
+
+function PosRestaurantSection({ wsId }: { wsId: string | null }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({
+    name: '',
+    address: '',
+    phone: '',
+    email: '',
+    currency: 'USD',
+    taxRatePct: 0,
+    receiptHeader: '',
+    receiptFooter: '',
+  });
+
+  const { data, isLoading } = useQuery<PosRestaurant | null>({
+    queryKey: ['pos-restaurant', wsId],
+    queryFn: () => api.get<PosRestaurant | null>(`/pos/restaurant?workspaceId=${wsId}`),
+    enabled: !!wsId,
+  });
+
+  useEffect(() => {
+    if (data) {
+      setForm({
+        name: data.name ?? '',
+        address: data.address ?? '',
+        phone: data.phone ?? '',
+        email: data.email ?? '',
+        currency: data.currency ?? 'USD',
+        taxRatePct: data.taxRatePct ?? 0,
+        receiptHeader: data.receiptHeader ?? '',
+        receiptFooter: data.receiptFooter ?? '',
+      });
+    }
+  }, [data]);
+
+  const saveMut = useMutation({
+    mutationFn: () => api.put(`/pos/restaurant?workspaceId=${wsId}`, form),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['pos-restaurant', wsId] });
+      toast.success('Restaurant profile saved');
+    },
+    onError: () => toast.error('Failed to save'),
+  });
+
+  if (!wsId) return <Callout tone="accent">Select a workspace above to manage restaurant settings.</Callout>;
+  if (isLoading) return <Skeleton className="h-48 rounded-2xl" />;
+
+  const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'CHF', 'SGD', 'HKD', 'JPY'];
+
+  return (
+    <div className="space-y-6">
+      <SectionCard>
+        <SectionCardHeader>
+          <h3 className="text-sm font-semibold">Restaurant Profile</h3>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <SettingRow label="Name" hint="Your restaurant's display name">
+            <input
+              className="input text-sm w-56"
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="e.g. The Corner Bistro"
+            />
+          </SettingRow>
+          <SettingRow label="Address" hint="Physical address for receipts">
+            <input
+              className="input text-sm w-56"
+              value={form.address}
+              onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
+              placeholder="123 Main St, City"
+            />
+          </SettingRow>
+          <SettingRow label="Phone" hint="Contact number on receipts">
+            <input
+              className="input text-sm w-56"
+              value={form.phone}
+              onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+              placeholder="+1 555 123 4567"
+            />
+          </SettingRow>
+          <SettingRow label="Email" hint="Contact email on receipts">
+            <input
+              className="input text-sm w-56"
+              value={form.email}
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+              placeholder="hello@restaurant.com"
+            />
+          </SettingRow>
+        </SectionCardBody>
+      </SectionCard>
+
+      <SectionCard>
+        <SectionCardHeader>
+          <h3 className="text-sm font-semibold">Pricing &amp; Tax</h3>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <SettingRow label="Currency" hint="Default currency for all transactions">
+            <select
+              className="input text-sm"
+              value={form.currency}
+              onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
+              style={{ width: 100 }}
+            >
+              {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </SettingRow>
+          <SettingRow label="Tax Rate %" hint="Applied to all taxable items">
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={0.01}
+              className="input text-sm"
+              value={form.taxRatePct}
+              onChange={(e) => setForm((f) => ({ ...f, taxRatePct: parseFloat(e.target.value) || 0 }))}
+              style={{ width: 90 }}
+            />
+          </SettingRow>
+        </SectionCardBody>
+      </SectionCard>
+
+      <SectionCard>
+        <SectionCardHeader>
+          <h3 className="text-sm font-semibold">Receipt</h3>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <SettingRow label="Header Text" hint="Printed at the top of every receipt">
+            <textarea
+              className="input text-sm w-56 resize-none"
+              rows={2}
+              value={form.receiptHeader}
+              onChange={(e) => setForm((f) => ({ ...f, receiptHeader: e.target.value }))}
+              placeholder="Welcome to our restaurant!"
+            />
+          </SettingRow>
+          <SettingRow label="Footer Text" hint="Printed at the bottom of every receipt">
+            <textarea
+              className="input text-sm w-56 resize-none"
+              rows={2}
+              value={form.receiptFooter}
+              onChange={(e) => setForm((f) => ({ ...f, receiptFooter: e.target.value }))}
+              placeholder="Thank you for dining with us."
+            />
+          </SettingRow>
+        </SectionCardBody>
+      </SectionCard>
+
+      <div className="flex justify-end">
+        <button
+          className="btn-primary text-sm px-6"
+          disabled={saveMut.isPending}
+          onClick={() => saveMut.mutate()}
+        >
+          {saveMut.isPending ? 'Saving…' : 'Save Changes'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PosMenuSection({ wsId }: { wsId: string | null }) {
+  const navigate = useNavigate();
+
+  const { data: menus = [] } = useQuery<{ id: string; name: string; isActive: boolean }[]>({
+    queryKey: ['pos-menus-brief', wsId],
+    queryFn: () => api.get(`/pos/mgmt/menus?workspaceId=${wsId}`),
+    enabled: !!wsId,
+  });
+
+  if (!wsId) return <Callout tone="accent">Select a workspace above to manage menus.</Callout>;
+
+  const activeCount = menus.filter((m) => m.isActive).length;
+
+  return (
+    <div className="space-y-6">
+      <SectionCard>
+        <SectionCardHeader>
+          <h3 className="text-sm font-semibold">Menu Builder</h3>
+          <Badge tone="neutral">{menus.length} menu{menus.length !== 1 ? 's' : ''}</Badge>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <p className="text-sm text-[var(--text-muted)] mb-4">
+            Build and manage your menus, categories, and items from the Menu Builder.
+            {activeCount > 0 && ` ${activeCount} active menu${activeCount !== 1 ? 's' : ''} currently published.`}
+          </p>
+          {menus.length > 0 && (
+            <div className="space-y-2 mb-4">
+              {menus.map((m) => (
+                <div
+                  key={m.id}
+                  className="flex items-center justify-between py-2 px-3 rounded-lg border border-[var(--border)]"
+                >
+                  <span className="text-sm font-medium">{m.name}</span>
+                  <Badge tone={m.isActive ? 'success' : 'neutral'}>
+                    {m.isActive ? 'Active' : 'Inactive'}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          )}
+          <button
+            className="btn-primary text-sm px-4 flex items-center gap-2"
+            onClick={() => navigate(`/workspaces/${wsId}/pos/menu`)}
+          >
+            <Utensils size={14} />
+            Open Menu Builder
+          </button>
+        </SectionCardBody>
+      </SectionCard>
+    </div>
+  );
+}
+
+function PosTablesSection({ wsId }: { wsId: string | null }) {
+  const qc = useQueryClient();
+  const [addForm, setAddForm] = useState({ number: '', name: '', seats: '', location: '' });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ number: '', name: '', seats: '', location: '' });
+
+  const { data: tables = [], isLoading } = useQuery<PosTable[]>({
+    queryKey: ['pos-tables', wsId],
+    queryFn: () => api.get(`/pos/tables?workspaceId=${wsId}`),
+    enabled: !!wsId,
+  });
+
+  const addMut = useMutation({
+    mutationFn: () =>
+      api.post('/pos/tables', {
+        workspaceId: wsId,
+        number: addForm.number ? parseInt(addForm.number) : null,
+        name: addForm.name.trim() || null,
+        seats: addForm.seats ? parseInt(addForm.seats) : null,
+        location: addForm.location.trim() || null,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['pos-tables', wsId] });
+      setAddForm({ number: '', name: '', seats: '', location: '' });
+      toast.success('Table added');
+    },
+    onError: () => toast.error('Failed to add table'),
+  });
+
+  const editMut = useMutation({
+    mutationFn: (id: string) =>
+      api.patch(`/pos/tables/${id}`, {
+        number: editForm.number ? parseInt(editForm.number) : null,
+        name: editForm.name.trim() || null,
+        seats: editForm.seats ? parseInt(editForm.seats) : null,
+        location: editForm.location.trim() || null,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['pos-tables', wsId] });
+      setEditingId(null);
+      toast.success('Table updated');
+    },
+    onError: () => toast.error('Failed to update table'),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => api.delete(`/pos/tables/${id}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['pos-tables', wsId] });
+      toast.success('Table removed');
+    },
+    onError: () => toast.error('Failed to remove table'),
+  });
+
+  if (!wsId) return <Callout tone="accent">Select a workspace above to manage tables.</Callout>;
+  if (isLoading) return <Skeleton className="h-48 rounded-2xl" />;
+
+  return (
+    <div className="space-y-6">
+      <SectionCard>
+        <SectionCardHeader>
+          <h3 className="text-sm font-semibold">Tables</h3>
+          <Badge tone="neutral">{tables.length} table{tables.length !== 1 ? 's' : ''}</Badge>
+        </SectionCardHeader>
+        <SectionCardBody>
+          {tables.length === 0 && (
+            <p className="text-sm text-[var(--text-muted)] mb-4">No tables configured yet.</p>
+          )}
+          <div className="space-y-2 mb-4">
+            {tables.map((t) => (
+              <div key={t.id} className="border border-[var(--border)] rounded-lg overflow-hidden">
+                {editingId === t.id ? (
+                  <div className="p-3 space-y-2">
+                    <div className="grid grid-cols-4 gap-2">
+                      <div>
+                        <label className="text-xs text-[var(--text-muted)] block mb-1">#</label>
+                        <input
+                          className="input text-sm w-full"
+                          value={editForm.number}
+                          onChange={(e) => setEditForm((f) => ({ ...f, number: e.target.value }))}
+                          placeholder="1"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-[var(--text-muted)] block mb-1">Name</label>
+                        <input
+                          className="input text-sm w-full"
+                          value={editForm.name}
+                          onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                          placeholder="Table A"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-[var(--text-muted)] block mb-1">Seats</label>
+                        <input
+                          className="input text-sm w-full"
+                          value={editForm.seats}
+                          onChange={(e) => setEditForm((f) => ({ ...f, seats: e.target.value }))}
+                          placeholder="4"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-[var(--text-muted)] block mb-1">Location</label>
+                        <input
+                          className="input text-sm w-full"
+                          value={editForm.location}
+                          onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))}
+                          placeholder="Patio"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-2 justify-end">
+                      <button className="btn-ghost text-xs px-3 py-1" onClick={() => setEditingId(null)}>
+                        Cancel
+                      </button>
+                      <button
+                        className="btn-primary text-xs px-3 py-1"
+                        disabled={editMut.isPending}
+                        onClick={() => editMut.mutate(t.id)}
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between px-4 py-3">
+                    <div className="flex items-center gap-4">
+                      {t.number != null && (
+                        <span className="text-xs text-[var(--text-muted)] font-mono w-6">#{t.number}</span>
+                      )}
+                      <span className="text-sm font-medium">
+                        {t.name ?? `Table ${t.number ?? '?'}`}
+                      </span>
+                      {t.seats != null && (
+                        <span className="text-xs text-[var(--text-muted)]">{t.seats} seats</span>
+                      )}
+                      {t.location && (
+                        <span className="text-xs text-[var(--text-muted)] italic">{t.location}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        className="btn-ghost text-xs p-1.5 rounded"
+                        onClick={() => {
+                          setEditingId(t.id);
+                          setEditForm({
+                            number: t.number != null ? String(t.number) : '',
+                            name: t.name ?? '',
+                            seats: t.seats != null ? String(t.seats) : '',
+                            location: t.location ?? '',
+                          });
+                        }}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        className="btn-ghost text-xs p-1.5 rounded text-red-400 hover:text-red-500"
+                        disabled={deleteMut.isPending}
+                        onClick={() => deleteMut.mutate(t.id)}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Add row */}
+          <div className="border border-dashed border-[var(--border)] rounded-lg p-3">
+            <p className="text-xs font-medium text-[var(--text-muted)] mb-2">Add Table</p>
+            <div className="grid grid-cols-4 gap-2 mb-2">
+              <div>
+                <label className="text-xs text-[var(--text-muted)] block mb-1">#</label>
+                <input
+                  className="input text-sm w-full"
+                  value={addForm.number}
+                  onChange={(e) => setAddForm((f) => ({ ...f, number: e.target.value }))}
+                  placeholder="1"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-[var(--text-muted)] block mb-1">Name</label>
+                <input
+                  className="input text-sm w-full"
+                  value={addForm.name}
+                  onChange={(e) => setAddForm((f) => ({ ...f, name: e.target.value }))}
+                  placeholder="Table A"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-[var(--text-muted)] block mb-1">Seats</label>
+                <input
+                  className="input text-sm w-full"
+                  value={addForm.seats}
+                  onChange={(e) => setAddForm((f) => ({ ...f, seats: e.target.value }))}
+                  placeholder="4"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-[var(--text-muted)] block mb-1">Location</label>
+                <input
+                  className="input text-sm w-full"
+                  value={addForm.location}
+                  onChange={(e) => setAddForm((f) => ({ ...f, location: e.target.value }))}
+                  placeholder="Patio"
+                />
+              </div>
+            </div>
+            <button
+              className="btn-primary text-xs px-4 py-1.5 flex items-center gap-1.5"
+              disabled={addMut.isPending}
+              onClick={() => addMut.mutate()}
+            >
+              <Plus size={12} />
+              Add Table
+            </button>
+          </div>
+        </SectionCardBody>
+      </SectionCard>
+    </div>
+  );
+}
+
+function PosKioskSection({ wsId }: { wsId: string | null }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({
+    orientation: 'landscape',
+    welcomeMessage: '',
+    idleTimeoutSeconds: 60,
+    qrOrderingEnabled: false,
+  });
+
+  const { data, isLoading } = useQuery<PosKioskConfig | null>({
+    queryKey: ['pos-kiosk-config', wsId],
+    queryFn: () => api.get<PosKioskConfig | null>(`/pos/kiosk-config?workspaceId=${wsId}`),
+    enabled: !!wsId,
+  });
+
+  useEffect(() => {
+    if (data) {
+      setForm({
+        orientation: data.orientation ?? 'landscape',
+        welcomeMessage: data.welcomeMessage ?? '',
+        idleTimeoutSeconds: data.idleTimeoutSeconds ?? 60,
+        qrOrderingEnabled: data.qrOrderingEnabled ?? false,
+      });
+    }
+  }, [data]);
+
+  const saveMut = useMutation({
+    mutationFn: () => api.put(`/pos/kiosk-config?workspaceId=${wsId}`, form),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['pos-kiosk-config', wsId] });
+      toast.success('Kiosk config saved');
+    },
+    onError: () => toast.error('Failed to save kiosk config'),
+  });
+
+  if (!wsId) return <Callout tone="accent">Select a workspace above to configure kiosk settings.</Callout>;
+  if (isLoading) return <Skeleton className="h-48 rounded-2xl" />;
+
+  return (
+    <div className="space-y-6">
+      <SectionCard>
+        <SectionCardHeader>
+          <h3 className="text-sm font-semibold">Kiosk Display</h3>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <SettingRow label="Orientation" hint="Screen orientation for kiosk displays">
+            <select
+              className="input text-sm"
+              value={form.orientation}
+              onChange={(e) => setForm((f) => ({ ...f, orientation: e.target.value }))}
+              style={{ width: 140 }}
+            >
+              <option value="landscape">Landscape</option>
+              <option value="portrait">Portrait</option>
+            </select>
+          </SettingRow>
+          <SettingRow label="Welcome Message" hint="Displayed on the idle / home screen">
+            <input
+              className="input text-sm w-56"
+              value={form.welcomeMessage}
+              onChange={(e) => setForm((f) => ({ ...f, welcomeMessage: e.target.value }))}
+              placeholder="Touch to order"
+            />
+          </SettingRow>
+          <SettingRow label="Idle Timeout (s)" hint="Seconds before returning to home screen">
+            <input
+              type="number"
+              min={10}
+              max={600}
+              className="input text-sm"
+              value={form.idleTimeoutSeconds}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, idleTimeoutSeconds: parseInt(e.target.value) || 60 }))
+              }
+              style={{ width: 90 }}
+            />
+          </SettingRow>
+          <SettingRow label="QR Ordering" hint="Show QR code on kiosk for mobile ordering">
+            <ToggleSwitch
+              checked={form.qrOrderingEnabled}
+              onChange={(v) => setForm((f) => ({ ...f, qrOrderingEnabled: v }))}
+            />
+          </SettingRow>
+        </SectionCardBody>
+      </SectionCard>
+
+      <div className="flex justify-end">
+        <button
+          className="btn-primary text-sm px-6"
+          disabled={saveMut.isPending}
+          onClick={() => saveMut.mutate()}
+        >
+          {saveMut.isPending ? 'Saving…' : 'Save Changes'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PosLoyaltySection({ wsId }: { wsId: string | null }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({
+    loyaltyEnabled: false,
+    loyaltyPointsPerDollar: 1,
+    loyaltyRedemptionRate: 100,
+  });
+
+  const { data, isLoading } = useQuery<PosRestaurant | null>({
+    queryKey: ['pos-restaurant', wsId],
+    queryFn: () => api.get<PosRestaurant | null>(`/pos/restaurant?workspaceId=${wsId}`),
+    enabled: !!wsId,
+  });
+
+  useEffect(() => {
+    if (data) {
+      setForm({
+        loyaltyEnabled: data.loyaltyEnabled ?? false,
+        loyaltyPointsPerDollar: data.loyaltyPointsPerDollar ?? 1,
+        loyaltyRedemptionRate: data.loyaltyRedemptionRate ?? 100,
+      });
+    }
+  }, [data]);
+
+  const saveMut = useMutation({
+    mutationFn: () => api.put(`/pos/restaurant?workspaceId=${wsId}`, form),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['pos-restaurant', wsId] });
+      toast.success('Loyalty settings saved');
+    },
+    onError: () => toast.error('Failed to save'),
+  });
+
+  if (!wsId) return <Callout tone="accent">Select a workspace above to configure loyalty settings.</Callout>;
+  if (isLoading) return <Skeleton className="h-48 rounded-2xl" />;
+
+  return (
+    <div className="space-y-6">
+      <SectionCard>
+        <SectionCardHeader>
+          <h3 className="text-sm font-semibold">Loyalty Program</h3>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <SettingRow label="Enable Loyalty Points" hint="Customers earn points on every order">
+            <ToggleSwitch
+              checked={form.loyaltyEnabled}
+              onChange={(v) => setForm((f) => ({ ...f, loyaltyEnabled: v }))}
+            />
+          </SettingRow>
+          <SettingRow label="Points per Dollar" hint="Points awarded for each dollar spent">
+            <input
+              type="number"
+              min={0}
+              step={0.1}
+              className="input text-sm"
+              disabled={!form.loyaltyEnabled}
+              value={form.loyaltyPointsPerDollar}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, loyaltyPointsPerDollar: parseFloat(e.target.value) || 1 }))
+              }
+              style={{ width: 90 }}
+            />
+          </SettingRow>
+          <SettingRow label="Redemption Rate" hint="Points required to redeem $1 discount">
+            <input
+              type="number"
+              min={1}
+              className="input text-sm"
+              disabled={!form.loyaltyEnabled}
+              value={form.loyaltyRedemptionRate}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, loyaltyRedemptionRate: parseInt(e.target.value) || 100 }))
+              }
+              style={{ width: 90 }}
+            />
+          </SettingRow>
+        </SectionCardBody>
+      </SectionCard>
+
+      <div className="flex justify-end">
+        <button
+          className="btn-primary text-sm px-6"
+          disabled={saveMut.isPending}
+          onClick={() => saveMut.mutate()}
+        >
+          {saveMut.isPending ? 'Saving…' : 'Save Changes'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main SettingsPage ────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeSection = (searchParams.get('section') ?? 'general') as SectionId;
+
+  const posEnabled = usePosEnabled();
 
   const { data: workspaces = [] } = useQuery<Workspace[]>({
     queryKey: ['workspaces'],
@@ -2628,10 +3319,16 @@ export default function SettingsPage() {
     setSearchParams({ section: id }, { replace: true });
   }
 
-  // Group sections for sidebar rendering
-  const groups = Array.from(new Set(SECTIONS.map((s) => s.group)));
+  // Filter sections based on enabled modules
+  const visibleSections = SECTIONS.filter((s) => !s.posOnly || posEnabled);
 
-  const WORKSPACE_SECTIONS: SectionId[] = ['workspace', 'tags', 'emergency', 'api-keys'];
+  // Group sections for sidebar rendering
+  const groups = Array.from(new Set(visibleSections.map((s) => s.group)));
+
+  const WORKSPACE_SECTIONS: SectionId[] = [
+    'workspace', 'tags', 'emergency', 'api-keys',
+    'pos-restaurant', 'pos-menu', 'pos-tables', 'pos-hardware', 'pos-kiosk', 'pos-loyalty',
+  ];
   const needsWorkspacePicker = WORKSPACE_SECTIONS.includes(activeSection);
 
   return (
@@ -2651,7 +3348,7 @@ export default function SettingsPage() {
               <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 {group}
               </p>
-              {SECTIONS.filter((s) => s.group === group).map(({ id, label, icon: Icon }) => (
+              {visibleSections.filter((s) => s.group === group).map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
                   onClick={() => setSection(id)}
@@ -2696,6 +3393,12 @@ export default function SettingsPage() {
           {activeSection === 'audit'         && <AuditSection />}
           {activeSection === 'api-keys'      && <ApiKeysSection selectedWsId={resolvedWsId} />}
           {activeSection === 'notifications' && <NotificationsSection />}
+          {activeSection === 'pos-restaurant' && <PosRestaurantSection wsId={resolvedWsId} />}
+          {activeSection === 'pos-menu'       && <PosMenuSection wsId={resolvedWsId} />}
+          {activeSection === 'pos-tables'     && <PosTablesSection wsId={resolvedWsId} />}
+          {activeSection === 'pos-hardware'   && <ComingSoon title="Hardware" description="Receipt printer, barcode scanner, and cash drawer setup coming soon." />}
+          {activeSection === 'pos-kiosk'      && <PosKioskSection wsId={resolvedWsId} />}
+          {activeSection === 'pos-loyalty'    && <PosLoyaltySection wsId={resolvedWsId} />}
         </div>
       </div>
     </div>

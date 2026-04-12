@@ -6,7 +6,7 @@ import {
   X, Monitor, Eye, Download, MoreVertical, Plus, Check,
   XCircle, Clock, AlertTriangle, Copy, Trash2,
   Image as ImageIcon, Video, Code2, FileText, Presentation,
-  Globe, Film, Tag as TagIcon, Calendar, LayoutGrid, Pencil,
+  Globe, Film, Tag as TagIcon, Calendar, LayoutGrid, Pencil, Tv2,
 } from 'lucide-react';
 import { api, buildApiUrl } from '../lib/api.js';
 import { useAuthStore } from '../lib/auth.js';
@@ -14,6 +14,7 @@ import AuthImg from './AuthImg.js';
 import AssignedTagPills, { type AssignedTag } from './AssignedTagPills.js';
 import DevicePickerModal from './DevicePickerModal.js';
 import WorkspaceTagPicker from './WorkspaceTagPicker.js';
+import EditMenuBoardModal from './EditMenuBoardModal.js';
 
 const APPROVE_ROLES = new Set(['prime_owner', 'owner', 'admin', 'a-manager']);
 import ConfirmDialog from './ConfirmDialog.js';
@@ -59,7 +60,7 @@ function ZonePanelPreview({ item }: { item: { metadata: string } }) {
 interface ContentDetail {
   id: string;
   name: string;
-  type: 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout';
+  type: 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout' | 'menu_board';
   mimeType: string | null;
   fileSize: number | null;
   width: number | null;
@@ -102,6 +103,7 @@ const TYPE_META: Record<ContentDetail['type'], { label: string; color: string; i
   presentation: { label: 'PPTX',    color: 'bg-orange-500/80',  icon: <Presentation size={10} /> },
   web_url:      { label: 'Web URL',      color: 'bg-emerald-500/80', icon: <Globe size={10} /> },
   zone_layout:  { label: 'Zone Layout',  color: 'bg-teal-500/80',    icon: <LayoutGrid size={10} /> },
+  menu_board:   { label: 'Menu Board',   color: 'bg-rose-500/80',    icon: <Tv2 size={10} /> },
 };
 
 function formatSize(bytes: number | null): string {
@@ -160,6 +162,7 @@ function TypePlaceholder({ type }: { type: ContentDetail['type'] }) {
     presentation: <Presentation size={32} className="text-orange-400" />,
     web_url:      <Globe size={32} className="text-emerald-400" />,
     zone_layout:  <LayoutGrid size={32} className="text-teal-400" />,
+    menu_board:   <Tv2 size={32} className="text-rose-400" />,
   };
   return <>{iconMap[type]}</>;
 }
@@ -406,6 +409,33 @@ function InfoTab({ item, onAddTag }: { item: ContentDetail; onAddTag: () => void
                   {totalDur < 60 ? `${totalDur.toFixed(1)} s` : `${Math.floor(totalDur / 60)}:${String(Math.floor(totalDur % 60)).padStart(2, '0')}`}
                   {item.duration == null && <span className="text-[10px] text-[var(--text-muted)] ml-1">(auto)</span>}
                 </p>
+              </div>
+            )}
+          </>
+        );
+      })()}
+
+      {/* Menu Board config */}
+      {item.type === 'menu_board' && (() => {
+        const meta = (() => { try { return JSON.parse(item.metadata ?? '{}'); } catch { return {}; } })();
+        return (
+          <>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">Layout</p>
+              <p className="text-sm font-medium text-[var(--text)] capitalize">{(meta.layout as string | undefined)?.replace('-', ' ') ?? '2 col'}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">Display</p>
+              <div className="flex flex-wrap gap-1.5">
+                {meta.showPrices     !== false && <span className="text-[11px] bg-[var(--surface-raised)] rounded px-1.5 py-0.5">Prices</span>}
+                {meta.showImages     !== false && <span className="text-[11px] bg-[var(--surface-raised)] rounded px-1.5 py-0.5">Images</span>}
+                {meta.showDescription           && <span className="text-[11px] bg-[var(--surface-raised)] rounded px-1.5 py-0.5">Descriptions</span>}
+              </div>
+            </div>
+            {item.duration != null && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">Duration</p>
+                <p className="text-sm font-medium text-[var(--text)]">{item.duration} s</p>
               </div>
             )}
           </>
@@ -888,6 +918,8 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
 
   const hasThumbnail = item && (item.type === 'image' || item.type === 'video');
   const isZoneLayout = item?.type === 'zone_layout';
+  const isMenuBoard  = item?.type === 'menu_board';
+  const [menuBoardEditOpen, setMenuBoardEditOpen] = useState(false);
 
   return (
     <>
@@ -954,6 +986,17 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
             <ActionButton
               title="Edit Layout"
               onClick={() => navigate(`/workspaces/${workspaceId}/zone-layout/${item.id}`)}
+              className="px-2.5"
+            >
+              <Pencil size={14} />
+            </ActionButton>
+          )}
+
+          {/* Edit — menu board */}
+          {isMenuBoard && (
+            <ActionButton
+              title="Edit Menu Board"
+              onClick={() => setMenuBoardEditOpen(true)}
               className="px-2.5"
             >
               <Pencil size={14} />
@@ -1052,6 +1095,21 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
           title={`Publish ${item?.name ?? 'Content'}`}
           confirmLabel={publishMut.isPending ? 'Publishing…' : 'Publish'}
         />
+
+        {/* Edit menu board modal */}
+        {menuBoardEditOpen && item && (() => {
+          const meta = (() => { try { return JSON.parse(item.metadata ?? '{}'); } catch { return {}; } })();
+          return (
+            <EditMenuBoardModal
+              itemId={item.id}
+              itemName={item.name}
+              workspaceId={workspaceId}
+              initialConfig={meta}
+              initialDuration={item.duration ?? 30}
+              onClose={() => setMenuBoardEditOpen(false)}
+            />
+          );
+        })()}
 
         {/* ── Tabs ── */}
         <div className="flex border-b border-[var(--border)] shrink-0">

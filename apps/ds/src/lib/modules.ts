@@ -1,0 +1,29 @@
+import { useAuthStore } from './auth.js';
+
+export type OrgModules = 'signage' | 'pos' | 'both';
+
+function parseModules(settingsJson: string | null | undefined): OrgModules {
+  try {
+    const s = JSON.parse(settingsJson ?? '{}') as { modules?: string };
+    if (s.modules === 'pos' || s.modules === 'both') return s.modules;
+  } catch { /* ignore */ }
+  return 'signage';
+}
+
+/** Returns the active module set for the authenticated org. Defaults to 'signage'. */
+export function useOrgModules(): OrgModules {
+  const settings = useAuthStore((s) => s.org?.settings);
+  return parseModules(settings);
+}
+
+/** True when the org has the CMS/signage module active (signage | both). */
+export function useCmsEnabled(): boolean {
+  const modules = useOrgModules();
+  return modules === 'signage' || modules === 'both';
+}
+
+/** True when the org has the POS module active (pos | both). */
+export function usePosEnabled(): boolean {
+  const modules = useOrgModules();
+  return modules === 'pos' || modules === 'both';
+}

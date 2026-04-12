@@ -31,8 +31,21 @@ import SettingsPage from './pages/account/SettingsPage.js';
 import AppLayout from './components/AppLayout.js';
 import OrgDashboardPage from './pages/OrgDashboardPage.js';
 import WorkspaceDashboardPage from './pages/workspace/WorkspaceDashboardPage.js';
+import DevicesPage from './pages/workspace/DevicesPage.js';
 import DeviceDetailPage from './pages/workspace/DeviceDetailPage.js';
+import DeviceGroupsPage from './pages/workspace/DeviceGroupsPage.js';
 import TizenTestPage from './pages/workspace/TizenTestPage.js';
+import PosMenuPage from './pages/workspace/PosMenuPage.js';
+import PosOrderPage from './pages/workspace/PosOrderPage.js';
+import PosPaymentPage from './pages/workspace/PosPaymentPage.js';
+import PosOrdersPage from './pages/workspace/PosOrdersPage.js';
+import PosKitchenPage from './pages/workspace/PosKitchenPage.js';
+import PosInventoryPage from './pages/workspace/PosInventoryPage.js';
+import PosEmployeesPage from './pages/workspace/PosEmployeesPage.js';
+import PosLoyaltyPage from './pages/workspace/PosLoyaltyPage.js';
+import PosAnalyticsPage from './pages/workspace/PosAnalyticsPage.js';
+import PosExpensesPage from './pages/workspace/PosExpensesPage.js';
+import PosPurchaseOrdersPage from './pages/workspace/PosPurchaseOrdersPage.js';
 import ContentPage from './pages/workspace/ContentPage.js';
 import PlaylistPage from './pages/workspace/PlaylistPage.js';
 import PlaylistEditorPage from './pages/workspace/PlaylistEditorPage.js';
@@ -93,9 +106,16 @@ function AuthBootstrap({ children }: { children: React.ReactNode }) {
             orgRole: string;
             impersonatedBy?: string | null;
           };
+          org: {
+            id: string;
+            name: string;
+            slug: string;
+            plan: string;
+            settings: string;
+          } | null;
         }>('/auth/me', pendingBootstrap ? 2 : 0);
         if (!cancelled) {
-          setUser(me.user);
+          setUser(me.user, me.org);
         }
       } catch {
         if (!cancelled) {
@@ -282,7 +302,20 @@ export default function App() {
         <Route path="/dashboard" element={<OrgDashboardPage />} />
         <Route path="/tizen-test" element={<TizenTestPage />} />
         <Route path="/workspaces/:wsId" element={<WorkspaceDashboardPage />} />
+        <Route path="/workspaces/:wsId/devices" element={<DevicesPage />} />
+        <Route path="/workspaces/:wsId/devices/groups" element={<DeviceGroupsPage />} />
         <Route path="/workspaces/:wsId/devices/:deviceId" element={<DeviceDetailPage />} />
+        <Route path="/workspaces/:wsId/pos/menu" element={<PosMenuPage />} />
+        <Route path="/workspaces/:wsId/pos" element={<PosOrderPage />} />
+        <Route path="/workspaces/:wsId/pos/payment" element={<PosPaymentPage />} />
+        <Route path="/workspaces/:wsId/pos/orders" element={<PosOrdersPage />} />
+        <Route path="/workspaces/:wsId/pos/kitchen" element={<PosKitchenPage />} />
+        <Route path="/workspaces/:wsId/pos/inventory" element={<PosInventoryPage />} />
+        <Route path="/workspaces/:wsId/pos/employees" element={<PosEmployeesPage />} />
+        <Route path="/workspaces/:wsId/pos/loyalty" element={<PosLoyaltyPage />} />
+        <Route path="/workspaces/:wsId/pos/analytics" element={<PosAnalyticsPage />} />
+        <Route path="/workspaces/:wsId/pos/expenses" element={<PosExpensesPage />} />
+        <Route path="/workspaces/:wsId/pos/purchase-orders" element={<PosPurchaseOrdersPage />} />
         <Route path="/workspaces/:wsId/content" element={<ContentPage />} />
         <Route path="/workspaces/:wsId/playlist" element={<PlaylistPage />} />
         <Route path="/workspaces/:wsId/playlist/:id" element={<PlaylistEditorPage />} />

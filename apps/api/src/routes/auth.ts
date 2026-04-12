@@ -922,7 +922,7 @@ export async function authRoutes(app: FastifyInstance) {
 
     const org = await db.query.organisations.findFirst({
       where: and(eq(organisations.id, orgId), isNull(organisations.deletedAt)),
-      columns: { id: true, name: true, slug: true, plan: true },
+      columns: { id: true, name: true, slug: true, plan: true, settings: true },
     });
     if (!org) {
       if (process.env['NODE_ENV'] !== 'production') {

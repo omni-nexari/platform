@@ -157,6 +157,72 @@ async function checkWorkspaceAccess(wsId: string, userId: string) {
 
 export async function contentRoutes(app: FastifyInstance) {
 
+  // ── GET /content/widgets/weather?lat=&lon=&units= ─────────────────────────
+  const weatherCache = new Map<string, { data: unknown; cachedAt: number }>();
+  const WEATHER_TTL_MS = 15 * 60 * 1000;
+
+  function weatherLabel(code: number): string {
+    if (code === 0) return 'Clear sky';
+    if (code <= 3) return 'Partly cloudy';
+    if (code <= 48) return 'Fog';
+    if (code <= 55) return 'Drizzle';
+    if (code <= 65) return 'Rain';
+    if (code <= 75) return 'Snow';
+    if (code <= 82) return 'Showers';
+    if (code <= 99) return 'Thunderstorm';
+    return 'Unknown';
+  }
+
+  function weatherIcon(code: number): string {
+    if (code === 0)  return '☀️';
+    if (code <= 2)   return '🌤️';
+    if (code === 3)  return '☁️';
+    if (code <= 48)  return '🌫️';
+    if (code <= 55)  return '🌦️';
+    if (code <= 65)  return '🌧️';
+    if (code <= 75)  return '❄️';
+    if (code <= 82)  return '🌦️';
+    if (code <= 99)  return '⛈️';
+    return '🌡️';
+  }
+
+  app.get('/widgets/weather', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { lat, lon, units = 'metric' } = req.query as { lat?: string; lon?: string; units?: string };
+    if (!lat || !lon) return reply.status(400).send({ error: 'lat and lon are required' });
+
+    const latNum = parseFloat(lat);
+    const lonNum = parseFloat(lon);
+    if (isNaN(latNum) || isNaN(lonNum)) return reply.status(400).send({ error: 'Invalid lat/lon' });
+
+    const cacheKey = `${latNum.toFixed(2)}_${lonNum.toFixed(2)}_${units}`;
+    const cached = weatherCache.get(cacheKey);
+    if (cached && Date.now() - cached.cachedAt < WEATHER_TTL_MS) {
+      return reply.send(cached.data);
+    }
+
+    const tempUnit = units === 'imperial' ? 'fahrenheit' : 'celsius';
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${latNum}&longitude=${lonNum}&current=temperature_2m,weather_code&temperature_unit=${tempUnit}&timezone=auto`;
+
+    const res = await fetch(url);
+    if (!res.ok) return reply.status(502).send({ error: 'Weather service unavailable' });
+
+    const raw = await res.json() as Record<string, unknown>;
+    const current = raw['current'] as Record<string, unknown> | undefined;
+    const code = typeof current?.['weather_code'] === 'number' ? current['weather_code'] : 0;
+    const temp = typeof current?.['temperature_2m'] === 'number' ? current['temperature_2m'] : null;
+
+    const data = {
+      temp,
+      unit: units === 'imperial' ? '°F' : '°C',
+      code,
+      label: weatherLabel(code),
+      icon: weatherIcon(code),
+    };
+
+    weatherCache.set(cacheKey, { data, cachedAt: Date.now() });
+    return reply.send(data);
+  });
+
   // ── GET /content/folders?workspaceId= ────────────────────────────────────
   app.get('/folders', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
@@ -560,6 +626,113 @@ export async function contentRoutes(app: FastifyInstance) {
     }).returning();
 
     return reply.status(201).send(item);
+  });
+
+  // ── POST /content/menu-board ──────────────────────────────────────────────
+  app.post('/menu-board', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as {
+      workspaceId?: string;
+      name?: string;
+      posWorkspaceId?: string;
+      layout?: string;
+      showPrices?: boolean;
+      showImages?: boolean;
+      showDescription?: boolean;
+      categoryIds?: string[];
+      fontScale?: number;
+      accentColor?: string;
+      duration?: number;
+    };
+
+    const wsId = body.workspaceId;
+    if (!wsId)                  return reply.status(400).send({ error: 'workspaceId required' });
+    if (!body.name?.trim())     return reply.status(400).send({ error: 'name required' });
+    if (!body.posWorkspaceId)   return reply.status(400).send({ error: 'posWorkspaceId required' });
+
+    const member = await checkWorkspaceAccess(wsId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+    const wsRowMb = await db.query.workspaces.findFirst({ where: eq(workspaces.id, wsId), columns: { settings: true } });
+    let wsSettingsMb: { approvalRequired?: boolean } = {};
+    try { wsSettingsMb = JSON.parse(wsRowMb?.settings ?? '{}'); } catch { /* ignore */ }
+    const initialApprovalStateMb = wsSettingsMb.approvalRequired && !APPROVE_ROLES.has(user.role) ? 'draft' : 'approved';
+
+    const metadata = JSON.stringify({
+      posWorkspaceId:  body.posWorkspaceId,
+      layout:          body.layout ?? '2-col',
+      showPrices:      body.showPrices    ?? true,
+      showImages:      body.showImages    ?? true,
+      showDescription: body.showDescription ?? false,
+      categoryIds:     body.categoryIds   ?? [],
+      fontScale:       body.fontScale     ?? 1,
+      accentColor:     body.accentColor   ?? null,
+    });
+
+    const [item] = await db.insert(contentItems).values({
+      workspaceId: wsId,
+      uploadedBy:  user.sub,
+      type:        'menu_board',
+      name:        body.name.trim(),
+      duration:    body.duration ?? 30,
+      status:      'ready',
+      approvalState: initialApprovalStateMb,
+      metadata,
+    }).returning();
+
+    return reply.status(201).send(item);
+  });
+
+  // ── PATCH /content/:id/menu-board ─────────────────────────────────────────
+  app.patch('/:id/menu-board', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const body = req.body as {
+      name?: string;
+      posWorkspaceId?: string;
+      layout?: string;
+      showPrices?: boolean;
+      showImages?: boolean;
+      showDescription?: boolean;
+      categoryIds?: string[];
+      fontScale?: number;
+      accentColor?: string;
+      duration?: number;
+    };
+
+    const item = await db.query.contentItems.findFirst({
+      where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)),
+    });
+    if (!item) return reply.status(404).send({ error: 'Not found' });
+    if (item.type !== 'menu_board') return reply.status(400).send({ error: 'Not a menu board' });
+
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+
+    const current = (() => { try { return JSON.parse(item.metadata ?? '{}'); } catch { return {}; } })();
+    const updated = {
+      posWorkspaceId:  body.posWorkspaceId  ?? current.posWorkspaceId,
+      layout:          body.layout          ?? current.layout,
+      showPrices:      body.showPrices      ?? current.showPrices,
+      showImages:      body.showImages      ?? current.showImages,
+      showDescription: body.showDescription ?? current.showDescription,
+      categoryIds:     body.categoryIds     ?? current.categoryIds,
+      fontScale:       body.fontScale       ?? current.fontScale,
+      accentColor:     body.accentColor     ?? current.accentColor,
+    };
+
+    const [patched] = await db.update(contentItems)
+      .set({
+        ...(body.name ? { name: body.name.trim() } : {}),
+        ...(body.duration != null ? { duration: body.duration } : {}),
+        metadata: JSON.stringify(updated),
+        updatedAt: new Date(),
+      })
+      .where(eq(contentItems.id, id))
+      .returning();
+
+    return reply.send(patched);
   });
 
   // ── GET /content/:id ──────────────────────────────────────────────────────

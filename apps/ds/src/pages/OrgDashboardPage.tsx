@@ -165,15 +165,17 @@ function DeviceCard({
 // ── Content Card ──────────────────────────────────────────────────────────────
 
 const CONTENT_TYPE_META: Record<string, { label: string; color: string }> = {
-  image:        { label: 'Image',   color: '#f59e0b' },
-  video:        { label: 'Video',   color: '#38bdf8' },
-  html5:        { label: 'HTML5',   color: '#4ade80' },
-  pdf:          { label: 'PDF',     color: '#f87171' },
-  presentation: { label: 'PPTX',   color: '#c084fc' },
-  web_url:      { label: 'Web URL', color: '#60a5fa' },
+  image:        { label: 'Image',      color: '#f59e0b' },
+  video:        { label: 'Video',      color: '#38bdf8' },
+  html5:        { label: 'HTML5',      color: '#4ade80' },
+  pdf:          { label: 'PDF',        color: '#f87171' },
+  presentation: { label: 'PPTX',      color: '#c084fc' },
+  web_url:      { label: 'Web URL',    color: '#60a5fa' },
+  zone_layout:  { label: 'Zone',       color: '#2dd4bf' },
+  menu_board:   { label: 'Menu Board', color: '#fb7185' },
 };
 
-const TYPE_ORDER = ['image', 'video', 'html5', 'pdf', 'presentation', 'web_url'];
+const TYPE_ORDER = ['image', 'video', 'html5', 'pdf', 'presentation', 'web_url', 'zone_layout', 'menu_board'];
 
 function ContentCard({
   stats,

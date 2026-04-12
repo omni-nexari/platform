@@ -113,6 +113,9 @@ interface Device {
   id: string;
   name: string;
   status: 'unclaimed' | 'online' | 'offline' | 'error';
+  type: 'signage' | 'kiosk' | 'kitchen';
+  platform: 'tizen' | 'webos' | 'android' | 'linux' | 'browser' | 'other';
+  manufacturer: string | null;
   lastSeen: string | null;
   playerVersion: string | null;
   firmwareVersion: string | null;
@@ -833,7 +836,7 @@ export default function DeviceDetailPage() {
   const [urlLauncherBusy, setUrlLauncherBusy] = useState(false);
   const [selectedTimerSlot, setSelectedTimerSlot] = useState(1);
   const [timerSlots, setTimerSlots] = useState<Record<number, TimerSlotState>>({});
-  const [activeTab, setActiveTab] = useState<'info' | 'power' | 'network' | 'settings' | 'timers' | 'tags' | 'update' | 'logs'>('info');
+  const [activeTab, setActiveTab] = useState<'info' | 'power' | 'network' | 'settings' | 'timers' | 'tags' | 'update' | 'logs' | 'kiosk-config' | 'order-filter'>('info');
 
   // ── Network config state ────────────────────────────────────────────
   type IpMode   = 'dhcp'     | 'static';
@@ -1358,15 +1361,19 @@ export default function DeviceDetailPage() {
 
       {/* ── Tab bar ─────────────────────────────────────────────────────── */}
       {(() => {
+        const deviceType = device.type ?? 'signage';
+        const isTizen = (device.platform ?? 'tizen') === 'tizen';
         const TABS = [
-          { id: 'info',     label: 'Info' },
-          { id: 'power',    label: 'Power / Control' },
-          { id: 'network',  label: 'Network' },
-          { id: 'settings', label: 'Settings' },
-          { id: 'timers',   label: 'Timers' },
-          { id: 'tags',     label: 'Tags' },
-          { id: 'update',   label: 'Update' },
-          { id: 'logs',     label: 'Logs' },
+          { id: 'info',         label: 'Info' },
+          ...(deviceType !== 'kitchen' && isTizen ? [{ id: 'power', label: 'Power / Control' }] : []),
+          { id: 'network',      label: 'Network' },
+          { id: 'settings',     label: 'Settings' },
+          ...(deviceType !== 'kitchen' ? [{ id: 'timers', label: 'Timers' }] : []),
+          ...(deviceType === 'kiosk'   ? [{ id: 'kiosk-config', label: 'Kiosk Config' }] : []),
+          ...(deviceType === 'kitchen' ? [{ id: 'order-filter', label: 'Order Filter' }] : []),
+          { id: 'tags',         label: 'Tags' },
+          ...(deviceType === 'signage' ? [{ id: 'update', label: 'Update' }] : []),
+          { id: 'logs',         label: 'Logs' },
         ] as const;
         return (
           <div className="flex flex-wrap gap-1 border-b border-[var(--border)] pb-0">
@@ -1391,6 +1398,23 @@ export default function DeviceDetailPage() {
       {/* ── Info tab ────────────────────────────────────────────────────── */}
       {activeTab === 'info' && (
         <div className="space-y-6">
+
+      {/* Device type + platform badges */}
+      {(device.type || device.platform) && (
+        <div className="flex flex-wrap gap-2">
+          {device.type && device.type !== 'signage' && (
+            <Badge tone={device.type === 'kiosk' ? 'accent' : 'warning'} className="capitalize">
+              {device.type}
+            </Badge>
+          )}
+          {device.platform && (
+            <Badge tone="neutral" className="capitalize">{device.platform}</Badge>
+          )}
+          {device.manufacturer && (
+            <Badge tone="neutral">{device.manufacturer}</Badge>
+          )}
+        </div>
+      )}
 
       {/* ── #14 Hardware identity  +  #15 Network ────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -2698,6 +2722,69 @@ export default function DeviceDetailPage() {
             </SectionCardBody>
           </SectionCard>
 
+        </div>
+      )}
+
+      {/* ── Kiosk Config tab ─────────────────────────────────────────────── */}
+      {activeTab === 'kiosk-config' && (
+        <div className="space-y-6">
+          <SectionCard>
+            <SectionCardHeader>
+              <h2 className="text-sm font-semibold text-[var(--text)]">Kiosk Display Config</h2>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <p className="text-sm text-[var(--text-muted)]">
+                Workspace-level kiosk defaults are managed in{' '}
+                <strong className="text-[var(--text)]">Settings → Point of Sale → Kiosk</strong>.
+              </p>
+              <div className="rounded-lg bg-[var(--surface)] border border-[var(--border)] p-4 space-y-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--text-muted)]">Orientation</span>
+                  <span className="font-medium capitalize">{device.screenOrientation ?? 'landscape'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--text-muted)]">Power state</span>
+                  <span className="font-medium capitalize">{device.powerState ?? '—'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--text-muted)]">Platform</span>
+                  <span className="font-medium capitalize">{device.platform ?? 'tizen'}</span>
+                </div>
+              </div>
+            </SectionCardBody>
+          </SectionCard>
+        </div>
+      )}
+
+      {/* ── Order Filter tab (Kitchen) ────────────────────────────────────── */}
+      {activeTab === 'order-filter' && (
+        <div className="space-y-6">
+          <SectionCard>
+            <SectionCardHeader>
+              <h2 className="text-sm font-semibold text-[var(--text)]">Order Filter</h2>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <p className="text-sm text-[var(--text-muted)]">
+                Configure which order types and stations this kitchen display shows.
+                Advanced station routing is coming in a future update.
+              </p>
+              <div className="rounded-lg bg-[var(--surface)] border border-[var(--border)] p-4 space-y-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--text-muted)]">Show dine-in orders</span>
+                  <ToggleSwitch checked={true} onChange={() => {}} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--text-muted)]">Show takeout orders</span>
+                  <ToggleSwitch checked={true} onChange={() => {}} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--text-muted)]">Show kiosk orders</span>
+                  <ToggleSwitch checked={true} onChange={() => {}} />
+                </div>
+              </div>
+              <p className="text-xs text-[var(--text-muted)]">Per-device station routing coming soon.</p>
+            </SectionCardBody>
+          </SectionCard>
         </div>
       )}
 

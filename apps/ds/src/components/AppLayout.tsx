@@ -15,6 +15,7 @@ import {
   ModalPrimaryButton,
   ModalSecondaryButton,
 } from './UiPrimitives.js';
+import { useCmsEnabled, usePosEnabled } from '../lib/modules.js';
 import {
   LayoutDashboard,
   Monitor,
@@ -36,9 +37,14 @@ import {
   Paintbrush,
   Menu,
   BarChart2,
-  Bug,
   Layers2,
   Tv2,
+  ShoppingCart,
+  ClipboardList,
+  ChefHat,
+  Package,
+  Users,
+  CloudSun,
 } from 'lucide-react';
 
 interface Workspace {
@@ -72,6 +78,26 @@ export default function AppLayout() {
   const [emergencyScope, setEmergencyScope] = useState('org');
   const [searchOpen, setSearchOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [geoCoords, setGeoCoords] = useState<{ lat: number; lon: number } | null>(null);
+
+  // Request geolocation once on mount
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setGeoCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => { /* silently ignore if denied */ },
+      { timeout: 5000, maximumAge: 3_600_000 },
+    );
+  }, []);
+
+  interface WeatherData { temp: number | null; unit: string; code: number; label: string; icon: string }
+  const { data: weather } = useQuery<WeatherData>({
+    queryKey: ['weather', geoCoords?.lat?.toFixed(2), geoCoords?.lon?.toFixed(2)],
+    queryFn: () => api.get(`/content/widgets/weather?lat=${geoCoords!.lat}&lon=${geoCoords!.lon}&units=metric`),
+    enabled: !!geoCoords && bootstrapped && !!user,
+    staleTime: 15 * 60 * 1000,
+    retry: false,
+  });
 
   // Cmd+K / Ctrl+K shortcut
   useEffect(() => {
@@ -195,6 +221,8 @@ export default function AppLayout() {
   }
 
   const canManageEmergency = user?.orgRole === 'owner' || user?.orgRole === 'admin';
+  const cmsEnabled = useCmsEnabled();
+  const posEnabled = usePosEnabled();
 
   return (
     <div className="flex h-screen bg-[var(--surface)] overflow-hidden">
@@ -211,7 +239,7 @@ export default function AppLayout() {
       <aside className={`ui-mobile-drawer fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col border-r border-[var(--border)] bg-[var(--card)] transition-transform duration-200 lg:static lg:z-auto lg:w-56 lg:max-w-none lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {/* Logo */}
         <div className="px-4 py-5 border-b border-[var(--border)]">
-          <span className="text-lg font-bold tracking-tight text-[var(--text)]">OmniHub</span>
+          <span className="text-lg font-bold tracking-tight text-[var(--text)]">Nexari</span>
           <span className="text-[var(--blue)] text-lg font-bold">.</span>
         </div>
 
@@ -230,20 +258,6 @@ export default function AppLayout() {
             <LayoutDashboard className="w-4 h-4" />
             Dashboard
           </NavLink>
-          <NavLink
-            to="/tizen-test"
-            className={({ isActive }) =>
-              `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                isActive
-                  ? 'bg-[var(--blue)] text-white'
-                  : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-              }`
-            }
-          >
-            <Bug className="w-4 h-4" />
-            Tizen Test
-          </NavLink>
-
           {/* Workspace-specific nav */}
           {currentWsId && (
             <>
@@ -252,9 +266,10 @@ export default function AppLayout() {
                   {currentWs?.name ?? 'Workspace'}
                 </p>
               </div>
+
+              {/* Devices — always visible */}
               <NavLink
-                to={`/workspaces/${currentWsId}`}
-                end
+                to={`/workspaces/${currentWsId}/devices`}
                 className={({ isActive }) =>
                   `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                     isActive
@@ -266,110 +281,193 @@ export default function AppLayout() {
                 <Monitor className="w-4 h-4" />
                 Devices
               </NavLink>
-              <NavLink
-                to={`/workspaces/${currentWsId}/content`}
-                className={({ isActive }) =>
-                  `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    isActive
-                      ? 'bg-[var(--blue)] text-white'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                  }`
-                }
-              >
-                <Image className="w-4 h-4" />
-                Content
-              </NavLink>
-              <NavLink
-                to={`/workspaces/${currentWsId}/playlist`}
-                className={({ isActive }) =>
-                  `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    isActive
-                      ? 'bg-[var(--blue)] text-white'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                  }`
-                }
-              >
-                <Layers className="w-4 h-4" />
-                Playlists
-              </NavLink>
-              <NavLink
-                to={`/workspaces/${currentWsId}/schedule`}
-                className={({ isActive }) =>
-                  `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    isActive
-                      ? 'bg-[var(--blue)] text-white'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                  }`
-                }
-              >
-                <CalendarDays className="w-4 h-4" />
-                Schedules
-              </NavLink>
-              <NavLink
-                to={`/workspaces/${currentWsId}/canvas/new`}
-                className={({ isActive }) =>
-                  `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    isActive
-                      ? 'bg-[var(--blue)] text-white'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                  }`
-                }
-              >
-                <Paintbrush className="w-4 h-4" />
-                Canvas
-              </NavLink>
-              <NavLink
-                to={`/workspaces/${currentWsId}/tags`}
-                className={({ isActive }) =>
-                  `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    isActive
-                      ? 'bg-[var(--blue)] text-white'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                  }`
-                }
-              >
-                <Tag className="w-4 h-4" />
-                Tags
-              </NavLink>
-              <NavLink
-                to={`/workspaces/${currentWsId}/analytics`}
-                className={({ isActive }) =>
-                  `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    isActive
-                      ? 'bg-[var(--blue)] text-white'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                  }`
-                }
-              >
-                <BarChart2 className="w-4 h-4" />
-                Analytics
-              </NavLink>
-              <NavLink
-                to={`/workspaces/${currentWsId}/sync-playlists`}
-                className={({ isActive }) =>
-                  `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    isActive
-                      ? 'bg-[var(--blue)] text-white'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                  }`
-                }
-              >
-                <Layers2 className="w-4 h-4" />
-                Sync Playlists
-              </NavLink>
-              <NavLink
-                to={`/workspaces/${currentWsId}/sync-groups`}
-                className={({ isActive }) =>
-                  `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    isActive
-                      ? 'bg-[var(--blue)] text-white'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                  }`
-                }
-              >
-                <Tv2 className="w-4 h-4" />
-                Sync Groups
-              </NavLink>
+
+              {/* CMS / Signage section */}
+              {cmsEnabled && (
+                <>
+                  <div className="pt-3 pb-1 px-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Signage</p>
+                  </div>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/content`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <Image className="w-4 h-4" />
+                    Content
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/playlist`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <Layers className="w-4 h-4" />
+                    Playlists
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/schedule`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <CalendarDays className="w-4 h-4" />
+                    Schedules
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/canvas/new`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <Paintbrush className="w-4 h-4" />
+                    Canvas
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/tags`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <Tag className="w-4 h-4" />
+                    Tags
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/analytics`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <BarChart2 className="w-4 h-4" />
+                    Analytics
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/sync-playlists`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <Layers2 className="w-4 h-4" />
+                    Sync Playlists
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/sync-groups`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <Tv2 className="w-4 h-4" />
+                    Sync Groups
+                  </NavLink>
+                </>
+              )}
+
+              {/* POS section */}
+              {posEnabled && (
+                <>
+                  <div className="pt-3 pb-1 px-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Point of Sale</p>
+                  </div>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/pos/menu`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <ShoppingCart className="w-4 h-4" />
+                    Menu
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/pos/orders`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <ClipboardList className="w-4 h-4" />
+                    Orders
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/pos/kitchen`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <ChefHat className="w-4 h-4" />
+                    Kitchen
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/pos/inventory`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <Package className="w-4 h-4" />
+                    Inventory
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/pos/employees`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <Users className="w-4 h-4" />
+                    Employees
+                  </NavLink>
+                </>
+              )}
             </>
           )}
 
@@ -485,6 +583,17 @@ export default function AppLayout() {
               </button>
             </div>
             <NotificationTray />
+            {/* Weather chip */}
+            {weather && weather.temp !== null && (
+              <div
+                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs border"
+                style={{ borderColor: 'var(--card-border)', color: 'var(--text-muted)' }}
+                title={weather.label}
+              >
+                <span className="text-sm leading-none">{weather.icon}</span>
+                <span className="tabular-nums font-medium text-[var(--text)]">{Math.round(weather.temp)}{weather.unit}</span>
+              </div>
+            )}
             <button
               onClick={() => navigate('/settings')}
               className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors"

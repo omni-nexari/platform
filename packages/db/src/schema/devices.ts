@@ -40,6 +40,7 @@ export const devices = pgTable('devices', {
 
   // ── Tizen hardware identity ────────────────────────────────────────────────
   duid: text('duid').unique(),
+  manufacturer: text('manufacturer'),   // e.g. 'Samsung', 'LG', 'Philips'
   modelName: text('model_name'),
   modelCode: text('model_code'),
   serialNumber: text('serial_number'),

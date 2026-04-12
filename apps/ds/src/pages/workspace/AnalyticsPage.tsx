@@ -15,10 +15,15 @@ import {
   Layers,
   Wifi,
   HardDrive,
+  ShoppingCart,
+  TrendingUp,
+  DollarSign,
+  Receipt,
 } from 'lucide-react';
 import { api, buildApiUrl } from '../../lib/api.js';
 import { useAuthStore } from '../../lib/auth.js';
-import { PageHeader, Skeleton } from '../../components/UiPrimitives.js';
+import { PageHeader, Skeleton, Badge } from '../../components/UiPrimitives.js';
+import { usePosEnabled } from '../../lib/modules.js';
 
 interface Summary {
   totalPlays: number;
@@ -104,8 +109,22 @@ function toDateInput(d: Date) {
   return d.toISOString().slice(0, 10);
 }
 
+// ─── POS Revenue types ────────────────────────────────────────────────────────
+interface PosAnalyticsSummary {
+  totalOrders: number;
+  totalRevenue: number;
+  avgTicket: number;
+  byDay: { date: string; orders: number; revenue: number }[];
+  topItems: { name: string | null; qty: number; revenue: number }[];
+}
+
+function formatMoney(n: number) {
+  return `$${n.toFixed(2)}`;
+}
+
 export default function AnalyticsPage() {
   const { wsId } = useParams<{ wsId: string }>();
+  const posEnabled = usePosEnabled();
 
   const defaultTo = new Date();
   const defaultFrom = new Date(defaultTo.getTime() - 30 * 86_400_000);
@@ -114,6 +133,9 @@ export default function AnalyticsPage() {
   const [to, setTo] = useState(toDateInput(defaultTo));
   const [page, setPage] = useState(1);
   const LIMIT = 50;
+
+  type AnalyticsTab = 'signage' | 'pos' | 'combined';
+  const [activeTab, setAnalyticsTab] = useState<AnalyticsTab>('signage');
 
   const params = new URLSearchParams({
     workspaceId: wsId ?? '',
@@ -135,6 +157,18 @@ export default function AnalyticsPage() {
     queryKey: ['analytics-events', wsId, from, to, page],
     queryFn: () => api.get(`/analytics/play-events?${eventParams}`),
     enabled: !!wsId,
+  });
+
+  const posParams = new URLSearchParams({
+    workspaceId: wsId ?? '',
+    from: `${from}T00:00:00.000Z`,
+    to: `${to}T23:59:59.999Z`,
+  });
+
+  const { data: posSummary, isLoading: loadingPos } = useQuery<PosAnalyticsSummary>({
+    queryKey: ['pos-analytics', wsId, from, to],
+    queryFn: () => api.get(`/pos/analytics/summary?${posParams}`),
+    enabled: !!wsId && posEnabled && (activeTab === 'pos' || activeTab === 'combined'),
   });
 
   const exportReport = useCallback(async (kind: 'csv' | 'pdf') => {
@@ -166,7 +200,7 @@ export default function AnalyticsPage() {
         <PageHeader
           icon={<BarChart2 size={22} />}
           title="Analytics"
-          subtitle="Proof of Play, uptime, connectivity, and playlist completion"
+          subtitle={posEnabled ? 'Signage proof of play, POS revenue, and combined insights' : 'Proof of Play, uptime, connectivity, and playlist completion'}
           action={(
             <div className="flex items-center gap-2 flex-wrap">
               <input
@@ -200,6 +234,32 @@ export default function AnalyticsPage() {
           )}
         />
 
+        {/* ── Tab bar (only when POS is enabled) ── */}
+        {posEnabled && (
+          <div className="flex gap-1 border-b border-[var(--border)] -mt-2">
+            {([
+              { id: 'signage',  label: 'Signage',      icon: Monitor },
+              { id: 'pos',      label: 'POS Revenue',  icon: ShoppingCart },
+              { id: 'combined', label: 'Combined',      icon: TrendingUp },
+            ] as const).map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => setAnalyticsTab(id)}
+                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors -mb-px border-b-2 ${
+                  activeTab === id
+                    ? 'border-[var(--blue)] text-[var(--blue)]'
+                    : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                }`}
+              >
+                <Icon size={14} />
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ── Signage tab (or default when no POS) ── */}
+        {(!posEnabled || activeTab === 'signage') && (<>
         {loadingSummary ? (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -499,6 +559,141 @@ export default function AnalyticsPage() {
             </table>
           )}
         </div>
+        </>)}
+
+        {/* ── POS Revenue tab ── */}
+        {posEnabled && activeTab === 'pos' && (
+          <div className="space-y-6">
+            {loadingPos ? (
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-2xl" />)}
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                  {[
+                    { label: 'Total Orders', value: String(posSummary?.totalOrders ?? 0), icon: <Receipt size={16} className="text-[var(--blue)]" /> },
+                    { label: 'Total Revenue', value: formatMoney(posSummary?.totalRevenue ?? 0), icon: <DollarSign size={16} className="text-[var(--blue)]" /> },
+                    { label: 'Avg Ticket', value: formatMoney(posSummary?.avgTicket ?? 0), icon: <ShoppingCart size={16} className="text-[var(--blue)]" /> },
+                  ].map(({ label, value, icon }) => (
+                    <div key={label} className="rounded-2xl border p-4" style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}>
+                      <div className="flex items-center gap-2 mb-2 text-[var(--text-muted)]">
+                        {icon}
+                        <span className="text-xs font-medium">{label}</span>
+                      </div>
+                      <p className="text-2xl font-bold tabular-nums text-[var(--text)]">{value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {posSummary && posSummary.byDay.length > 0 && (
+                  <div className="rounded-2xl border p-5" style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}>
+                    <p className="text-sm font-semibold text-[var(--text)] mb-4">Revenue per day</p>
+                    {(() => {
+                      const maxRev = Math.max(1, ...posSummary.byDay.map((d) => d.revenue));
+                      return (
+                        <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+                          {posSummary.byDay.map((day) => (
+                            <div key={day.date} className="flex items-center gap-3">
+                              <span className="text-xs text-[var(--text-muted)] w-24 shrink-0 tabular-nums">{day.date}</span>
+                              <div className="flex-1 h-4 rounded-full overflow-hidden" style={{ background: 'var(--surface)' }}>
+                                <div
+                                  className="h-4 rounded-full transition-all"
+                                  style={{ width: `${((day.revenue / maxRev) * 100).toFixed(1)}%`, background: 'var(--blue)', opacity: 0.85 }}
+                                />
+                              </div>
+                              <span className="text-xs tabular-nums text-[var(--text-muted)] w-10 text-right">{day.orders}</span>
+                              <span className="text-xs tabular-nums text-[var(--text-muted)] w-20 text-right">{formatMoney(day.revenue)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {posSummary && posSummary.topItems.length > 0 && (
+                  <div className="rounded-2xl border overflow-hidden" style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}>
+                    <div className="px-5 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
+                      <p className="text-sm font-semibold text-[var(--text)]">Top Menu Items</p>
+                    </div>
+                    <table className="ui-data-table">
+                      <thead><tr><th>Item</th><th>Qty Sold</th><th>Revenue</th></tr></thead>
+                      <tbody>
+                        {posSummary.topItems.map((item, i) => (
+                          <tr key={i}>
+                            <td className="font-medium">{item.name ?? '(deleted)'}</td>
+                            <td className="tabular-nums">{item.qty}</td>
+                            <td className="tabular-nums">{formatMoney(item.revenue)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {!posSummary && (
+                  <div className="rounded-2xl border p-8 text-center text-[var(--text-muted)] text-sm" style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}>
+                    No POS orders found in the selected period.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── Combined tab ── */}
+        {posEnabled && activeTab === 'combined' && (
+          <div className="space-y-6">
+            <div className="rounded-2xl border p-5" style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}>
+              <p className="text-sm font-semibold text-[var(--text)] mb-4">Signage Plays vs POS Revenue — Daily</p>
+              {(loadingSummary || loadingPos) ? (
+                <Skeleton className="h-48 rounded-xl" />
+              ) : (
+                (() => {
+                  const allDates = Array.from(new Set([
+                    ...(summary?.byDay ?? []).map((d) => d.date),
+                    ...(posSummary?.byDay ?? []).map((d) => d.date),
+                  ])).sort();
+                  const playMap = Object.fromEntries((summary?.byDay ?? []).map((d) => [d.date, d.plays]));
+                  const revMap = Object.fromEntries((posSummary?.byDay ?? []).map((d) => [d.date, d.revenue]));
+                  const maxPlays = Math.max(1, ...allDates.map((d) => playMap[d] ?? 0));
+                  const maxRev = Math.max(1, ...allDates.map((d) => revMap[d] ?? 0));
+                  return (
+                    <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+                      <div className="flex gap-4 mb-2 text-xs text-[var(--text-muted)]">
+                        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full" style={{ background: 'var(--blue)' }} /> Plays</span>
+                        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full bg-emerald-400" /> Revenue</span>
+                      </div>
+                      {allDates.map((date) => {
+                        const plays = playMap[date] ?? 0;
+                        const rev = revMap[date] ?? 0;
+                        return (
+                          <div key={date} className="space-y-0.5">
+                            <span className="text-xs text-[var(--text-muted)] tabular-nums">{date}</span>
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'var(--surface)' }}>
+                                <div className="h-3 rounded-full" style={{ width: `${((plays / maxPlays) * 100).toFixed(1)}%`, background: 'var(--blue)', opacity: 0.8 }} />
+                              </div>
+                              <span className="text-xs tabular-nums text-[var(--text-muted)] w-10 text-right">{plays}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'var(--surface)' }}>
+                                <div className="h-3 rounded-full bg-emerald-400" style={{ width: `${((rev / maxRev) * 100).toFixed(1)}%`, opacity: 0.8 }} />
+                              </div>
+                              <span className="text-xs tabular-nums text-[var(--text-muted)] w-20 text-right">{formatMoney(rev)}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()
+              )}
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );

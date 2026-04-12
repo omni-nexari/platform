@@ -39,6 +39,7 @@ interface OrgRow {
   createdAt: string;
   memberCount: number;
   managementCompanyId: string | null;
+  settings: string;
 }
 
 interface CompanyOption {
@@ -51,6 +52,26 @@ const PLAN_TONES = {
   pro: 'accent',
   enterprise: 'success',
 } as const;
+
+const MODULE_TONES = {
+  signage: 'neutral',
+  pos: 'accent',
+  both: 'success',
+} as const;
+
+const MODULE_LABELS = {
+  signage: 'CMS Only',
+  pos:     'POS Only',
+  both:    'CMS + POS',
+} as const;
+
+function getOrgModules(settings: string): 'signage' | 'pos' | 'both' {
+  try {
+    const s = JSON.parse(settings || '{}') as { modules?: string };
+    if (s.modules === 'pos' || s.modules === 'both') return s.modules;
+  } catch { /* ignore */ }
+  return 'signage';
+}
 
 const ORG_STATUS_TONES = {
   active: 'success',
@@ -188,9 +209,12 @@ export default function OrgsListPage() {
                   <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
                     <div>
                       <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Plan</p>
-                      <div className="mt-1">
+                      <div className="mt-1 flex flex-wrap gap-1">
                         <Badge tone={PLAN_TONES[org.plan as keyof typeof PLAN_TONES] ?? 'neutral'} className="capitalize">
                           {org.plan}
+                        </Badge>
+                        <Badge tone={MODULE_TONES[getOrgModules(org.settings)]}>
+                          {MODULE_LABELS[getOrgModules(org.settings)]}
                         </Badge>
                       </div>
                     </div>
@@ -224,7 +248,7 @@ export default function OrgsListPage() {
                 <thead>
                   <tr>
                     <th>Client Organization</th>
-                    <th>Plan</th>
+                    <th>Plan &amp; Modules</th>
                     <th>
                       <span className="flex items-center gap-1">
                         <Users size={13} /> Members
@@ -252,9 +276,14 @@ export default function OrgsListPage() {
                         <p className="text-xs text-[var(--text-muted)] mt-0.5 font-mono">{org.name === '(pending)' ? '' : org.slug}</p>
                       </td>
                       <td>
-                        <Badge tone={PLAN_TONES[org.plan as keyof typeof PLAN_TONES] ?? 'neutral'} className="capitalize">
-                          {org.plan}
-                        </Badge>
+                        <div className="flex flex-wrap gap-1">
+                          <Badge tone={PLAN_TONES[org.plan as keyof typeof PLAN_TONES] ?? 'neutral'} className="capitalize">
+                            {org.plan}
+                          </Badge>
+                          <Badge tone={MODULE_TONES[getOrgModules(org.settings)]}>
+                            {MODULE_LABELS[getOrgModules(org.settings)]}
+                          </Badge>
+                        </div>
                       </td>
                       <td className="tabular-nums">{org.memberCount}</td>
                       <td>

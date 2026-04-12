@@ -3,6 +3,7 @@ export * from './management.js';
 export * from './users.js';
 export * from './workspaces.js';
 export * from './devices.js';
+export * from './device-groups.js';
 export * from './emergency.js';
 export * from './quotas.js';
 export * from './notifications.js';

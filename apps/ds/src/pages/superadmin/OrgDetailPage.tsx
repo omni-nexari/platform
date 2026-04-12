@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
-import { ArrowLeft, Mail, Users, Clock, Trash2, HardDrive, LogIn } from 'lucide-react';
+import { ArrowLeft, Mail, Users, Clock, Trash2, HardDrive, LogIn, Settings2 } from 'lucide-react';
 import { saApi, saImpersonateOrg } from '../../lib/superadmin-auth.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
 import {
@@ -16,11 +16,23 @@ import {
   Skeleton,
 } from '../../components/UiPrimitives.js';
 
+type OrgModules = 'signage' | 'pos' | 'both';
+type OrgPlan = 'starter' | 'pro' | 'enterprise';
+
+function parseModules(settingsJson: string | undefined): OrgModules {
+  try {
+    const s = JSON.parse(settingsJson ?? '{}') as { modules?: string };
+    if (s.modules === 'pos' || s.modules === 'both') return s.modules;
+  } catch { /* ignore */ }
+  return 'signage';
+}
+
 interface Org {
   id: string;
   name: string;
   slug: string;
   plan: string;
+  settings: string;
   suspendedAt: string | null;
   createdAt: string;
 }
@@ -113,6 +125,8 @@ export default function OrgDetailPage() {
   const [inviteRole, setInviteRole] = useState<'owner' | 'admin' | 'member'>('owner');
   const [showDelete, setShowDelete] = useState(false);
   const [quotaInput, setQuotaInput] = useState('');
+  const [selectedPlan, setSelectedPlan] = useState<OrgPlan | null>(null);
+  const [selectedModules, setSelectedModules] = useState<OrgModules | null>(null);
   const [showImpersonateConfirm, setShowImpersonateConfirm] = useState(false);
 
   const { data, isLoading } = useQuery({
@@ -136,6 +150,19 @@ export default function OrgDetailPage() {
       void qc.invalidateQueries({ queryKey: ['sa-org-quota', id] });
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to update quota'),
+  });
+
+  const planModulesMut = useMutation({
+    mutationFn: (payload: { plan?: OrgPlan; modules?: OrgModules }) =>
+      saApi.patch<Org>(`/superadmin/orgs/${id}`, payload),
+    onSuccess: () => {
+      toast.success('Plan & modules updated');
+      setSelectedPlan(null);
+      setSelectedModules(null);
+      void qc.invalidateQueries({ queryKey: ['sa-org', id] });
+      void qc.invalidateQueries({ queryKey: ['sa-orgs'] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Update failed'),
   });
 
   const suspendMut = useMutation({
@@ -212,6 +239,23 @@ export default function OrgDetailPage() {
 
   const { org, members, pendingInvites } = data;
 
+  const currentModules = parseModules(org.settings);
+  const activePlan   = (selectedPlan   ?? org.plan)    as OrgPlan;
+  const activeModules = (selectedModules ?? currentModules) as OrgModules;
+  const planDirty    = selectedPlan !== null && selectedPlan !== org.plan;
+  const modulesDirty = selectedModules !== null && selectedModules !== currentModules;
+
+  const PLANS: { value: OrgPlan; label: string }[] = [
+    { value: 'starter',    label: 'Starter' },
+    { value: 'pro',        label: 'Pro' },
+    { value: 'enterprise', label: 'Enterprise' },
+  ];
+  const MODULE_OPTIONS: { value: OrgModules; label: string; sub: string }[] = [
+    { value: 'signage', label: 'CMS Only',    sub: 'Signage & content management' },
+    { value: 'pos',     label: 'POS Only',    sub: 'Point of sale & kiosk' },
+    { value: 'both',    label: 'Both',        sub: 'Full platform access' },
+  ];
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto space-y-8">
       {/* Back */}
@@ -259,6 +303,12 @@ export default function OrgDetailPage() {
           <Badge tone={ORG_PLAN_TONES[org.plan as keyof typeof ORG_PLAN_TONES] ?? 'neutral'} className="capitalize">{org.plan}</Badge>
           </div>
           <div>
+          <p className="text-xs text-[var(--text-muted)] mb-1">Modules</p>
+          <Badge tone={currentModules === 'both' ? 'success' : currentModules === 'pos' ? 'accent' : 'neutral'}>
+            {currentModules === 'both' ? 'CMS + POS' : currentModules === 'pos' ? 'POS Only' : 'CMS Only'}
+          </Badge>
+          </div>
+          <div>
           <p className="text-xs text-[var(--text-muted)] mb-1">Members</p>
           <p className="font-semibold">{members.length}</p>
           </div>
@@ -266,6 +316,79 @@ export default function OrgDetailPage() {
           <p className="text-xs text-[var(--text-muted)] mb-1">Created</p>
           <p className="font-semibold">{new Date(org.createdAt).toLocaleDateString()}</p>
           </div>
+        </SectionCardBody>
+      </SectionCard>
+
+      {/* Plan & Modules */}
+      <SectionCard>
+        <SectionCardHeader>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <Settings2 size={16} /> Plan &amp; Modules
+          </h2>
+        </SectionCardHeader>
+        <SectionCardBody className="space-y-6">
+          {/* Plan selector */}
+          <div>
+            <p className="text-sm font-medium mb-3">Subscription plan</p>
+            <div className="flex flex-wrap gap-2">
+              {PLANS.map((p) => (
+                <button
+                  key={p.value}
+                  onClick={() => setSelectedPlan(p.value)}
+                  className={
+                    activePlan === p.value
+                      ? 'btn-primary text-sm px-4 py-2'
+                      : 'workspace-page-action text-sm px-4 py-2'
+                  }
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Module selector */}
+          <div>
+            <p className="text-sm font-medium mb-3">Active modules</p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {MODULE_OPTIONS.map((m) => (
+                <button
+                  key={m.value}
+                  onClick={() => setSelectedModules(m.value)}
+                  className="text-left rounded-xl border p-4 transition-colors"
+                  style={{
+                    background: activeModules === m.value ? 'rgba(58,123,255,0.12)' : 'var(--card)',
+                    borderColor: activeModules === m.value ? 'var(--blue)' : 'var(--card-border)',
+                  }}
+                >
+                  <div className="font-semibold text-sm mb-1">{m.label}</div>
+                  <div className="text-xs text-[var(--text-muted)]">{m.sub}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Save */}
+          {(planDirty || modulesDirty) && (
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                onClick={() => planModulesMut.mutate({
+                  ...(planDirty    ? { plan: activePlan }     : {}),
+                  ...(modulesDirty ? { modules: activeModules } : {}),
+                })}
+                disabled={planModulesMut.isPending}
+                className="btn-primary"
+              >
+                {planModulesMut.isPending ? 'Saving…' : 'Save Changes'}
+              </button>
+              <button
+                onClick={() => { setSelectedPlan(null); setSelectedModules(null); }}
+                className="workspace-page-action"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </SectionCardBody>
       </SectionCard>
 

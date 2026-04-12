@@ -6,10 +6,11 @@ import {
   Plus, Grid3X3, Grid2X2, List, Image, Video,
   Globe, Code2, FileText, Presentation, Clock, Trash2,
   MoreVertical, Film, AlertTriangle, Check, Paintbrush, Monitor,
-  LayoutGrid, ListVideo,
+  LayoutGrid, ListVideo, Tv2,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import UploadModal from '../../components/UploadModal.js';
+import CreateMenuBoardModal from '../../components/CreateMenuBoardModal.js';
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import AuthImg from '../../components/AuthImg.js';
 import ContentDetailPanel from '../../components/ContentDetailPanel.js';
@@ -63,7 +64,7 @@ interface ContentList {
 // ── Constants ─────────────────────────────────────────────────────────────────
 type FilterType = 'all' | ContentItem['type'];
 type ViewMode = 'grid-lg' | 'grid-sm' | 'list';
-type KnownContentType = 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout';
+type KnownContentType = 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout' | 'menu_board';
 
 const TYPE_FILTERS: { id: FilterType; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -74,16 +75,18 @@ const TYPE_FILTERS: { id: FilterType; label: string }[] = [
   { id: 'pdf', label: 'PDF' },
   { id: 'presentation', label: 'PPTX' },
   { id: 'zone_layout', label: 'Zone Layout' },
+  { id: 'menu_board', label: 'Menu Board' },
 ];
 
 const TYPE_META: Record<KnownContentType, { label: string; color: string; icon: React.ReactNode }> = {
-  image: { label: 'Image', color: 'bg-sky-500/80', icon: <Image size={10} /> },
-  video: { label: 'Video', color: 'bg-violet-500/80', icon: <Video size={10} /> },
-  html5: { label: 'HTML5', color: 'bg-amber-500/80', icon: <Code2 size={10} /> },
-  pdf: { label: 'PDF', color: 'bg-red-500/80', icon: <FileText size={10} /> },
-  presentation: { label: 'PPTX', color: 'bg-orange-500/80', icon: <Presentation size={10} /> },
-  web_url: { label: 'Web URL', color: 'bg-emerald-500/80', icon: <Globe size={10} /> },
-  zone_layout: { label: 'Zone Layout', color: 'bg-teal-500/80', icon: <LayoutGrid size={10} /> },
+  image:       { label: 'Image',      color: 'bg-sky-500/80',      icon: <Image size={10} /> },
+  video:       { label: 'Video',      color: 'bg-violet-500/80',   icon: <Video size={10} /> },
+  html5:       { label: 'HTML5',      color: 'bg-amber-500/80',    icon: <Code2 size={10} /> },
+  pdf:         { label: 'PDF',        color: 'bg-red-500/80',      icon: <FileText size={10} /> },
+  presentation:{ label: 'PPTX',       color: 'bg-orange-500/80',   icon: <Presentation size={10} /> },
+  web_url:     { label: 'Web URL',    color: 'bg-emerald-500/80',  icon: <Globe size={10} /> },
+  zone_layout: { label: 'Zone Layout',color: 'bg-teal-500/80',     icon: <LayoutGrid size={10} /> },
+  menu_board:  { label: 'Menu Board', color: 'bg-rose-500/80',     icon: <Tv2 size={10} /> },
 };
 
 const UNKNOWN_TYPE_META = {
@@ -537,7 +540,8 @@ export default function ContentPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
 
-  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadOpen, setUploadOpen]         = useState(false);
+  const [menuBoardOpen, setMenuBoardOpen]   = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -706,6 +710,10 @@ export default function ContentPage() {
             <button onClick={() => navigate(`/workspaces/${wsId}/zone-layout/new`)} className="workspace-page-action !bg-teal-600 hover:!bg-teal-500">
               <LayoutGrid size={16} />
               Create Zone Layout
+            </button>
+            <button onClick={() => setMenuBoardOpen(true)} className="workspace-page-action !bg-rose-600 hover:!bg-rose-500">
+              <Tv2 size={16} />
+              Menu Board
             </button>
             <button onClick={() => setUploadOpen(true)} className="workspace-page-action">
               <Plus size={16} />
@@ -964,6 +972,15 @@ export default function ContentPage() {
       {/* ── Upload modal ── */}
       {uploadOpen && wsId && (
         <UploadModal workspaceId={wsId} onClose={() => setUploadOpen(false)} />
+      )}
+
+      {/* ── Menu Board create modal ── */}
+      {menuBoardOpen && wsId && (
+        <CreateMenuBoardModal
+          workspaceId={wsId}
+          onClose={() => setMenuBoardOpen(false)}
+          onCreated={(id) => { setMenuBoardOpen(false); setSelectedItem(id); }}
+        />
       )}
 
       {bulkTagOpen && wsId && (
