@@ -25,7 +25,7 @@ interface KitchenOrder {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 function resolveApiBase() {
-  return '/api/v1';
+  return '/api';
 }
 
 function timeAgo(isoString: string): string {
@@ -39,7 +39,9 @@ function timeAgo(isoString: string): string {
 export default function KitchenDisplayPage() {
   const { wsId } = useParams<{ wsId: string }>();
   const [searchParams] = useSearchParams();
-  const deviceToken = searchParams.get('dt') ?? localStorage.getItem('kitchen.deviceToken') ?? '';
+  const routeDeviceToken = searchParams.get('dt') ?? '';
+  const storedDeviceToken = localStorage.getItem('kitchen.deviceToken') ?? '';
+  const deviceToken = routeDeviceToken || storedDeviceToken;
 
   const [orders, setOrders] = useState<KitchenOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,8 +51,51 @@ export default function KitchenDisplayPage() {
 
   // Persist token
   useEffect(() => {
-    if (deviceToken) localStorage.setItem('kitchen.deviceToken', deviceToken);
-  }, [deviceToken]);
+    if (routeDeviceToken) localStorage.setItem('kitchen.deviceToken', routeDeviceToken);
+  }, [routeDeviceToken]);
+
+  async function requestOrders(workspaceId: string) {
+    const sessionResponse = !routeDeviceToken
+      ? await fetch(`${resolveApiBase()}/pos/mgmt/orders/in-kitchen/list?workspaceId=${workspaceId}`)
+      : null;
+
+    if (sessionResponse?.ok) return sessionResponse;
+    if (sessionResponse && (sessionResponse.status !== 401 || !deviceToken)) {
+      return sessionResponse;
+    }
+
+    return fetch(
+      `${resolveApiBase()}/pos/orders?workspaceId=${workspaceId}&status=pending,preparing`,
+      {
+        headers: deviceToken ? { 'X-Device-Token': deviceToken } : {},
+      },
+    );
+  }
+
+  async function requestStatusUpdate(orderId: string, newStatus: OrderStatus) {
+    const payload = JSON.stringify({ status: newStatus });
+    const sessionResponse = !routeDeviceToken
+      ? await fetch(`${resolveApiBase()}/pos/mgmt/orders/${orderId}/status`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+        })
+      : null;
+
+    if (sessionResponse?.ok) return sessionResponse;
+    if (sessionResponse && (sessionResponse.status !== 401 || !deviceToken)) {
+      return sessionResponse;
+    }
+
+    return fetch(`${resolveApiBase()}/pos/orders/${orderId}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(deviceToken ? { 'X-Device-Token': deviceToken } : {}),
+      },
+      body: payload,
+    });
+  }
 
   // ── Fetch orders ──────────────────────────────────────────────────────────────
   const loadOrders = useCallback(async (silent = false) => {
@@ -58,12 +103,7 @@ export default function KitchenDisplayPage() {
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const res = await fetch(
-        `${resolveApiBase()}/pos/orders?workspaceId=${wsId}&status=pending,preparing`,
-        {
-          headers: deviceToken ? { 'X-Device-Token': deviceToken } : {},
-        },
-      );
+      const res = await requestOrders(wsId);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: KitchenOrder[] = await res.json();
       setOrders(data);
@@ -72,7 +112,7 @@ export default function KitchenDisplayPage() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [wsId, deviceToken]);
+  }, [wsId, routeDeviceToken, deviceToken]);
 
   // Initial load + polling every 5 seconds
   useEffect(() => {
@@ -87,14 +127,7 @@ export default function KitchenDisplayPage() {
   async function updateStatus(orderId: string, newStatus: OrderStatus) {
     setUpdatingId(orderId);
     try {
-      const res = await fetch(`${resolveApiBase()}/pos/orders/${orderId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(deviceToken ? { 'X-Device-Token': deviceToken } : {}),
-        },
-        body: JSON.stringify({ status: newStatus }),
-      });
+      const res = await requestStatusUpdate(orderId, newStatus);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       // Optimistic update
       if (newStatus === 'completed' || newStatus === 'cancelled') {

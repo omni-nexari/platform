@@ -51,8 +51,8 @@ function formatPrice(cents: number, currency = 'USD') {
 }
 
 function resolveApiBase() {
-  // In Tizen webview, the ds app runs at the server origin
-  return '/api/v1';
+  // Match the shared DS client base so dev proxy and deployed routing behave the same.
+  return '/api';
 }
 
 // ─── Main Component ────────────────────────────────────────────────────────────

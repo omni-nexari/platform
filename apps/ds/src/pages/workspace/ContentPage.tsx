@@ -10,7 +10,6 @@ import {
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import UploadModal from '../../components/UploadModal.js';
-import CreateMenuBoardModal from '../../components/CreateMenuBoardModal.js';
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import AuthImg from '../../components/AuthImg.js';
 import ContentDetailPanel from '../../components/ContentDetailPanel.js';
@@ -541,7 +540,6 @@ export default function ContentPage() {
   const queryClient = useQueryClient();
 
   const [uploadOpen, setUploadOpen]         = useState(false);
-  const [menuBoardOpen, setMenuBoardOpen]   = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -710,10 +708,6 @@ export default function ContentPage() {
             <button onClick={() => navigate(`/workspaces/${wsId}/zone-layout/new`)} className="workspace-page-action !bg-teal-600 hover:!bg-teal-500">
               <LayoutGrid size={16} />
               Create Zone Layout
-            </button>
-            <button onClick={() => setMenuBoardOpen(true)} className="workspace-page-action !bg-rose-600 hover:!bg-rose-500">
-              <Tv2 size={16} />
-              Menu Board
             </button>
             <button onClick={() => setUploadOpen(true)} className="workspace-page-action">
               <Plus size={16} />
@@ -972,15 +966,6 @@ export default function ContentPage() {
       {/* ── Upload modal ── */}
       {uploadOpen && wsId && (
         <UploadModal workspaceId={wsId} onClose={() => setUploadOpen(false)} />
-      )}
-
-      {/* ── Menu Board create modal ── */}
-      {menuBoardOpen && wsId && (
-        <CreateMenuBoardModal
-          workspaceId={wsId}
-          onClose={() => setMenuBoardOpen(false)}
-          onCreated={(id) => { setMenuBoardOpen(false); setSelectedId(id); }}
-        />
       )}
 
       {bulkTagOpen && wsId && (

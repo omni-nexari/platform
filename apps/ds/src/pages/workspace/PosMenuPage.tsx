@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
-import { ShoppingCart, Plus, Pencil, Trash2, ChevronRight, GripVertical } from 'lucide-react';
+import CreateMenuBoardModal from '../../components/CreateMenuBoardModal.js';
+import { ShoppingCart, Plus, Pencil, Trash2, ChevronRight, GripVertical, Tv2 } from 'lucide-react';
 import {
   Badge,
   EmptyState,
@@ -48,6 +49,7 @@ export default function PosMenuPage() {
   const queryClient = useQueryClient();
   const [selectedMenuId, setSelectedMenuId] = useState<string | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [menuBoardOpen, setMenuBoardOpen] = useState(false);
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [newMenuName, setNewMenuName] = useState('');
   const [newCategoryOpen, setNewCategoryOpen] = useState(false);
@@ -129,10 +131,16 @@ export default function PosMenuPage() {
         title="Menu Builder"
         description="Manage menus, categories, and items"
         actions={
-          <button className="ui-btn-primary flex items-center gap-1.5" onClick={() => setNewMenuOpen(true)}>
-            <Plus className="w-4 h-4" />
-            New Menu
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <button className="ui-btn-secondary flex items-center gap-1.5" onClick={() => setMenuBoardOpen(true)}>
+              <Tv2 className="w-4 h-4" />
+              Create Menu Board
+            </button>
+            <button className="ui-btn-primary flex items-center gap-1.5" onClick={() => setNewMenuOpen(true)}>
+              <Plus className="w-4 h-4" />
+              New Menu
+            </button>
+          </div>
         }
       />
 
@@ -340,6 +348,17 @@ export default function PosMenuPage() {
           </ModalPrimaryButton>
         </ModalFooter>
       </Modal>
+
+      {menuBoardOpen && wsId && (
+        <CreateMenuBoardModal
+          workspaceId={wsId}
+          onClose={() => setMenuBoardOpen(false)}
+          onCreated={() => {
+            setMenuBoardOpen(false);
+            toast.success('Menu board is now available in Content');
+          }}
+        />
+      )}
     </div>
   );
 }
