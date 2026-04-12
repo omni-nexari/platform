@@ -46,6 +46,8 @@ import SyncPlaylistEditorPage from './pages/workspace/SyncPlaylistEditorPage.js'
 import SyncGroupsPage from './pages/workspace/SyncGroupsPage.js';
 import ZoneLayoutEditorPage from './pages/workspace/ZoneLayoutEditorPage.js';
 import { buildApiUrl } from './lib/api.js';
+import KioskDisplayPage from './pages/kiosk/KioskDisplayPage.js';
+import KitchenDisplayPage from './pages/kitchen/KitchenDisplayPage.js';
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -148,7 +150,10 @@ function isMainPublicAuthPath(pathname: string) {
     || pathname.startsWith('/reset-password/')
     || pathname.startsWith('/accept-invite/')
     || pathname.startsWith('/accept-management-company-invite/')
-    || pathname.startsWith('/accept-client-org-invite/');
+    || pathname.startsWith('/accept-client-org-invite/')
+    // Public device display pages — no session auth needed
+    || pathname.startsWith('/kiosk/')
+    || pathname.startsWith('/kitchen/');
 }
 
 function isPortalPublicAuthPath(pathname: string) {
@@ -204,6 +209,10 @@ export default function App() {
     <AuthBootstrap>
       <PortalAuthBootstrap>
         <Routes>
+      {/* Public device display pages — no auth */}
+      <Route path="/kiosk/:wsId/:orientation" element={<KioskDisplayPage />} />
+      <Route path="/kitchen/:wsId" element={<KitchenDisplayPage />} />
+
       {/* Public auth */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/login/2fa" element={<TwoFactorPage />} />

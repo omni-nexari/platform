@@ -1,0 +1,402 @@
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { useParams, useSearchParams } from 'react-router';
+
+// ─── Types ─────────────────────────────────────────────────────────────────────
+type OrderStatus = 'pending' | 'preparing' | 'ready' | 'completed' | 'cancelled';
+
+interface KitchenOrderItem {
+  id: string;
+  itemName: string;
+  quantity: number;
+  notes: string | null;
+  lineTotalCents: number;
+}
+
+interface KitchenOrder {
+  id: string;
+  orderNumber: number;
+  status: OrderStatus;
+  customerName: string | null;
+  notes: string | null;
+  totalCents: number;
+  createdAt: string;
+  items: KitchenOrderItem[];
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+function resolveApiBase() {
+  return '/api/v1';
+}
+
+function timeAgo(isoString: string): string {
+  const diff = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  return `${Math.floor(diff / 3600)}h ago`;
+}
+
+// ─── Main Component ────────────────────────────────────────────────────────────
+export default function KitchenDisplayPage() {
+  const { wsId } = useParams<{ wsId: string }>();
+  const [searchParams] = useSearchParams();
+  const deviceToken = searchParams.get('dt') ?? localStorage.getItem('kitchen.deviceToken') ?? '';
+
+  const [orders, setOrders] = useState<KitchenOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const pollRef = useRef<number | null>(null);
+
+  // Persist token
+  useEffect(() => {
+    if (deviceToken) localStorage.setItem('kitchen.deviceToken', deviceToken);
+  }, [deviceToken]);
+
+  // ── Fetch orders ──────────────────────────────────────────────────────────────
+  const loadOrders = useCallback(async (silent = false) => {
+    if (!wsId) return;
+    if (!silent) setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `${resolveApiBase()}/pos/orders?workspaceId=${wsId}&status=pending,preparing`,
+        {
+          headers: deviceToken ? { 'X-Device-Token': deviceToken } : {},
+        },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: KitchenOrder[] = await res.json();
+      setOrders(data);
+    } catch (e: unknown) {
+      if (!silent) setError(e instanceof Error ? e.message : 'Failed to load orders');
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, [wsId, deviceToken]);
+
+  // Initial load + polling every 5 seconds
+  useEffect(() => {
+    void loadOrders(false);
+    pollRef.current = window.setInterval(() => void loadOrders(true), 5000);
+    return () => {
+      if (pollRef.current !== null) window.clearInterval(pollRef.current);
+    };
+  }, [loadOrders]);
+
+  // ── Update order status ───────────────────────────────────────────────────────
+  async function updateStatus(orderId: string, newStatus: OrderStatus) {
+    setUpdatingId(orderId);
+    try {
+      const res = await fetch(`${resolveApiBase()}/pos/orders/${orderId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(deviceToken ? { 'X-Device-Token': deviceToken } : {}),
+        },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Optimistic update
+      if (newStatus === 'completed' || newStatus === 'cancelled') {
+        setOrders((prev) => prev.filter((o) => o.id !== orderId));
+      } else {
+        setOrders((prev) =>
+          prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)),
+        );
+      }
+    } catch (e: unknown) {
+      alert('Failed to update: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  const pending   = orders.filter((o) => o.status === 'pending');
+  const preparing = orders.filter((o) => o.status === 'preparing');
+
+  // ── Loading / Error ───────────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div style={S.root}>
+        <div style={S.centered}>
+          <div style={S.spinner} />
+          <p style={S.dim}>Loading orders…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={S.root}>
+        <div style={S.centered}>
+          <div style={{ fontSize: 64 }}>⚠</div>
+          <h2 style={{ color: '#ff3ea5', fontSize: 28, fontWeight: 700 }}>Display Error</h2>
+          <p style={S.dim}>{error}</p>
+          <button style={S.retryBtn} onClick={() => void loadOrders(false)}>Retry</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main display ──────────────────────────────────────────────────────────────
+  return (
+    <div style={S.root}>
+      {/* Header */}
+      <div style={S.header}>
+        <span style={S.headerTitle}>Kitchen Display</span>
+        <span style={S.headerSub}>
+          {orders.length === 0 ? 'All clear' : `${orders.length} active order${orders.length !== 1 ? 's' : ''}`}
+        </span>
+        <div style={S.liveIndicator}>
+          <span style={S.liveDot} />
+          LIVE
+        </div>
+      </div>
+
+      {/* Columns */}
+      <div style={S.columns}>
+
+        {/* NEW ORDERS */}
+        <div style={S.column}>
+          <div style={{ ...S.columnHeader, borderColor: '#f59e0b' }}>
+            <span style={{ color: '#f59e0b' }}>🟡 NEW ORDERS</span>
+            <span style={S.columnCount}>{pending.length}</span>
+          </div>
+          <div style={S.cardList}>
+            {pending.length === 0 && (
+              <div style={S.empty}>No new orders</div>
+            )}
+            {pending.map((order) => (
+              <OrderCard
+                key={order.id}
+                order={order}
+                updating={updatingId === order.id}
+                primaryAction={{ label: 'Start Preparing', status: 'preparing', color: '#3a7bff' }}
+                secondaryAction={{ label: 'Cancel', status: 'cancelled', color: '#ff3ea5' }}
+                onAction={updateStatus}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* PREPARING */}
+        <div style={S.column}>
+          <div style={{ ...S.columnHeader, borderColor: '#3a7bff' }}>
+            <span style={{ color: '#3a7bff' }}>🔵 PREPARING</span>
+            <span style={S.columnCount}>{preparing.length}</span>
+          </div>
+          <div style={S.cardList}>
+            {preparing.length === 0 && (
+              <div style={S.empty}>Nothing preparing</div>
+            )}
+            {preparing.map((order) => (
+              <OrderCard
+                key={order.id}
+                order={order}
+                updating={updatingId === order.id}
+                primaryAction={{ label: 'Mark Ready', status: 'ready', color: '#22c55e' }}
+                secondaryAction={{ label: 'Cancel', status: 'cancelled', color: '#ff3ea5' }}
+                onAction={updateStatus}
+              />
+            ))}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+// ─── Order Card ────────────────────────────────────────────────────────────────
+interface OrderCardProps {
+  order: KitchenOrder;
+  updating: boolean;
+  primaryAction:   { label: string; status: OrderStatus; color: string };
+  secondaryAction: { label: string; status: OrderStatus; color: string };
+  onAction: (orderId: string, status: OrderStatus) => void;
+}
+
+function OrderCard({ order, updating, primaryAction, secondaryAction, onAction }: OrderCardProps) {
+  const urgent = (Date.now() - new Date(order.createdAt).getTime()) > 10 * 60 * 1000; // > 10 min
+
+  return (
+    <div style={{ ...S.card, ...(urgent ? S.cardUrgent : {}) }}>
+      <div style={S.cardTop}>
+        <span style={S.orderNum}>#{String(order.orderNumber).padStart(3, '0')}</span>
+        {order.customerName && <span style={S.customerName}>{order.customerName}</span>}
+        <span style={{ ...S.timeAgo, ...(urgent ? { color: '#f59e0b' } : {}) }}>
+          {urgent ? '⚠ ' : ''}{timeAgo(order.createdAt)}
+        </span>
+      </div>
+
+      <div style={S.itemsList}>
+        {order.items.map((item) => (
+          <div key={item.id} style={S.itemRow}>
+            <span style={S.qty}>×{item.quantity}</span>
+            <span style={S.itemName}>{item.itemName}</span>
+            {item.notes && <span style={S.itemNote}>{item.notes}</span>}
+          </div>
+        ))}
+      </div>
+
+      {order.notes && (
+        <div style={S.orderNote}>📝 {order.notes}</div>
+      )}
+
+      <div style={S.actions}>
+        <button
+          style={{ ...S.actionBtn, background: primaryAction.color, opacity: updating ? 0.5 : 1 }}
+          disabled={updating}
+          onClick={() => onAction(order.id, primaryAction.status)}
+        >
+          {updating ? '…' : primaryAction.label}
+        </button>
+        <button
+          style={{ ...S.actionBtnOutline, borderColor: secondaryAction.color, color: secondaryAction.color, opacity: updating ? 0.5 : 1 }}
+          disabled={updating}
+          onClick={() => onAction(order.id, secondaryAction.status)}
+        >
+          {secondaryAction.label}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Styles ────────────────────────────────────────────────────────────────────
+const S: Record<string, React.CSSProperties> = {
+  root: {
+    display: 'flex', flexDirection: 'column',
+    width: '100vw', height: '100vh',
+    background: '#0b0d11',
+    color: '#e8eaf0',
+    fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
+    overflow: 'hidden',
+  },
+  centered: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center',
+    justifyContent: 'center', width: '100vw', height: '100vh', gap: 16,
+  },
+  spinner: {
+    width: 56, height: 56,
+    border: '4px solid rgba(255,255,255,0.1)',
+    borderTopColor: '#f59e0b',
+    borderRadius: '50%',
+    animation: 'kitchen-spin 0.8s linear infinite',
+  },
+  dim: { fontSize: 16, color: '#7a8299' },
+  retryBtn: {
+    background: '#f59e0b', border: 'none', borderRadius: 12,
+    color: '#0f1115', cursor: 'pointer', fontSize: 16, fontWeight: 700,
+    padding: '14px 36px',
+  },
+
+  // Header
+  header: {
+    display: 'flex', alignItems: 'center', gap: 16,
+    padding: '14px 24px',
+    background: 'rgba(255,255,255,0.04)',
+    borderBottom: '1px solid rgba(255,255,255,0.08)',
+    flexShrink: 0,
+  },
+  headerTitle: { fontSize: 22, fontWeight: 800 },
+  headerSub:   { fontSize: 14, color: '#7a8299', flex: 1 },
+  liveIndicator: {
+    display: 'flex', alignItems: 'center', gap: 6,
+    fontSize: 12, fontWeight: 700, color: '#22c55e', letterSpacing: '0.1em',
+  },
+  liveDot: {
+    width: 8, height: 8, borderRadius: '50%', background: '#22c55e',
+    animation: 'kitchen-pulse 1.5s ease-in-out infinite',
+  },
+
+  // Columns
+  columns: {
+    display: 'flex', gap: 0, flex: 1, overflow: 'hidden',
+  },
+  column: {
+    flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+    borderRight: '1px solid rgba(255,255,255,0.08)',
+  },
+  columnHeader: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    padding: '14px 20px',
+    borderBottom: '3px solid',
+    fontSize: 18, fontWeight: 800, flexShrink: 0,
+    letterSpacing: '0.03em',
+  },
+  columnCount: {
+    background: 'rgba(255,255,255,0.08)', borderRadius: 20,
+    fontSize: 14, fontWeight: 700,
+    padding: '3px 12px', color: '#e8eaf0',
+  },
+  cardList: {
+    flex: 1, overflowY: 'auto', padding: 16,
+    display: 'flex', flexDirection: 'column', gap: 14,
+  },
+  empty: {
+    textAlign: 'center', color: '#7a8299', fontSize: 15,
+    padding: '40px 0',
+  },
+
+  // Card
+  card: {
+    background: 'rgba(255,255,255,0.06)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 16, padding: 18,
+    display: 'flex', flexDirection: 'column', gap: 12,
+  },
+  cardUrgent: {
+    borderColor: 'rgba(245, 158, 11, 0.5)',
+    background: 'rgba(245,158,11,0.06)',
+    boxShadow: '0 0 16px rgba(245,158,11,0.15)',
+  },
+  cardTop: {
+    display: 'flex', alignItems: 'baseline', gap: 10,
+  },
+  orderNum: {
+    fontSize: 28, fontWeight: 900, color: '#f59e0b',
+    letterSpacing: '0.05em',
+  },
+  customerName: { fontSize: 16, fontWeight: 600, flex: 1 },
+  timeAgo:  { fontSize: 13, color: '#7a8299', marginLeft: 'auto' },
+
+  itemsList: { display: 'flex', flexDirection: 'column', gap: 6 },
+  itemRow: { display: 'flex', alignItems: 'baseline', gap: 10 },
+  qty: {
+    fontSize: 16, fontWeight: 800, color: '#4ff2d1',
+    minWidth: 36, textAlign: 'right',
+  },
+  itemName: { fontSize: 18, fontWeight: 600 },
+  itemNote: { fontSize: 13, color: '#7a8299', fontStyle: 'italic' },
+
+  orderNote: {
+    fontSize: 14, color: '#f59e0b',
+    background: 'rgba(245,158,11,0.1)',
+    border: '1px solid rgba(245,158,11,0.2)',
+    borderRadius: 8, padding: '8px 12px',
+  },
+
+  actions: { display: 'flex', gap: 10, marginTop: 4 },
+  actionBtn: {
+    flex: 1, border: 'none', borderRadius: 12,
+    color: '#0f1115', cursor: 'pointer', fontSize: 15, fontWeight: 700,
+    padding: '12px', transition: 'opacity 0.15s',
+  },
+  actionBtnOutline: {
+    flex: 0.5, background: 'transparent', borderRadius: 12,
+    border: '2px solid', cursor: 'pointer', fontSize: 15, fontWeight: 700,
+    padding: '12px', transition: 'opacity 0.15s',
+  },
+};
+
+// Inject keyframes
+if (typeof document !== 'undefined') {
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes kitchen-spin    { to { transform: rotate(360deg); } }
+    @keyframes kitchen-pulse   { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+  `;
+  document.head.appendChild(style);
+}

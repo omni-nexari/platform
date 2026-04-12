@@ -21,6 +21,7 @@ import { syncPlaylistRoutes } from './sync-playlists.js';
 import { syncGroupRoutes } from './sync-groups.js';
 import { playerReleasesRoutes } from './player-releases.js';
 import { logsRoutes } from './logs.js';
+import { posRoutes } from './pos.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoute);
@@ -45,5 +46,6 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(syncGroupRoutes, { prefix: '/sync-groups' });
   await app.register(playerReleasesRoutes, { prefix: '/player-releases' });
   await app.register(logsRoutes, { prefix: '/logs' });
+  await app.register(posRoutes, { prefix: '/pos' });
 }
 
