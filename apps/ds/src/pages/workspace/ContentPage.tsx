@@ -6,10 +6,12 @@ import {
   Plus, Grid3X3, Grid2X2, List, Image, Video,
   Globe, Code2, FileText, Presentation, Clock, Trash2,
   MoreVertical, Film, AlertTriangle, Check, Paintbrush, Monitor,
+  ShoppingCart,
   LayoutGrid, ListVideo, Tv2,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import UploadModal from '../../components/UploadModal.js';
+import CreateMenuBoardModal from '../../components/CreateMenuBoardModal.js';
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import AuthImg from '../../components/AuthImg.js';
 import ContentDetailPanel from '../../components/ContentDetailPanel.js';
@@ -540,6 +542,7 @@ export default function ContentPage() {
   const queryClient = useQueryClient();
 
   const [uploadOpen, setUploadOpen]         = useState(false);
+  const [menuBoardOpen, setMenuBoardOpen]   = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -653,6 +656,50 @@ export default function ContentPage() {
   const total = data?.total ?? 0;
   const publishSelection = items.filter((item) => selectedItems.has(item.id));
   const publishCandidate = publishSelection.length === 1 ? publishSelection[0] : null;
+  const quickActions = wsId
+    ? [
+        {
+          id: 'add-content',
+          label: 'Add Content',
+          description: 'Upload files and media',
+          icon: <Plus size={18} />,
+          iconClassName: 'bg-[var(--blue)]/15 text-[var(--blue)]',
+          onClick: () => setUploadOpen(true),
+        },
+        {
+          id: 'create-design',
+          label: 'Create Design',
+          description: 'Build a new canvas layout',
+          icon: <Paintbrush size={18} />,
+          iconClassName: 'bg-violet-500/15 text-violet-400',
+          onClick: () => navigate(`/workspaces/${wsId}/canvas/new`),
+        },
+        {
+          id: 'zone-layout',
+          label: 'Zone Layout',
+          description: 'Compose multi-zone signage',
+          icon: <LayoutGrid size={18} />,
+          iconClassName: 'bg-teal-500/15 text-teal-400',
+          onClick: () => navigate(`/workspaces/${wsId}/zone-layout/new`),
+        },
+        {
+          id: 'menu-builder',
+          label: 'Menu Builder',
+          description: 'Manage POS menus and items',
+          icon: <ShoppingCart size={18} />,
+          iconClassName: 'bg-emerald-500/15 text-emerald-400',
+          onClick: () => navigate(`/workspaces/${wsId}/pos/menu`),
+        },
+        {
+          id: 'menu-board',
+          label: 'Create Menu Board',
+          description: 'Generate menu-board content',
+          icon: <Tv2 size={18} />,
+          iconClassName: 'bg-rose-500/15 text-rose-400',
+          onClick: () => setMenuBoardOpen(true),
+        },
+      ]
+    : [];
 
   const publishMut = useMutation({
     mutationFn: (deviceIds: string[]) => {
@@ -699,23 +746,26 @@ export default function ContentPage() {
         icon={<Image size={22} />}
         title="Content"
         subtitle={`${total} item${total !== 1 ? 's' : ''}`}
-        action={(
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <button onClick={() => navigate(`/workspaces/${wsId}/canvas/new`)} className="workspace-page-action !bg-violet-600 hover:!bg-violet-500">
-              <Paintbrush size={16} />
-              Create Design
-            </button>
-            <button onClick={() => navigate(`/workspaces/${wsId}/zone-layout/new`)} className="workspace-page-action !bg-teal-600 hover:!bg-teal-500">
-              <LayoutGrid size={16} />
-              Create Zone Layout
-            </button>
-            <button onClick={() => setUploadOpen(true)} className="workspace-page-action">
-              <Plus size={16} />
-              Add Content
-            </button>
-          </div>
-        )}
       />
+
+      {quickActions.length > 0 && (
+        <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-5">
+          {quickActions.map((action) => (
+            <button
+              key={action.id}
+              type="button"
+              onClick={action.onClick}
+              className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 text-left transition-colors hover:bg-[var(--surface)]"
+            >
+              <div className={`mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl ${action.iconClassName}`}>
+                {action.icon}
+              </div>
+              <p className="text-sm font-semibold text-[var(--text)]">{action.label}</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">{action.description}</p>
+            </button>
+          ))}
+        </div>
+      )}
 
       {wsId && (
         <div className="mb-5">
@@ -966,6 +1016,17 @@ export default function ContentPage() {
       {/* ── Upload modal ── */}
       {uploadOpen && wsId && (
         <UploadModal workspaceId={wsId} onClose={() => setUploadOpen(false)} />
+      )}
+
+      {menuBoardOpen && wsId && (
+        <CreateMenuBoardModal
+          workspaceId={wsId}
+          onClose={() => setMenuBoardOpen(false)}
+          onCreated={(id) => {
+            setMenuBoardOpen(false);
+            setSelectedId(id);
+          }}
+        />
       )}
 
       {bulkTagOpen && wsId && (

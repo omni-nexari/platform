@@ -1,6 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { and, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import path from 'node:path';
+import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import {
   db,
   posMenus,
@@ -126,6 +130,8 @@ const KioskLoyaltyRedeemSchema = z.object({
 const VALID_ACTIVE_STATUSES = ['pending', 'preparing', 'ready'] as const;
 
 // ─── Route plugin ───────────────────────────────────────────────────────────────
+const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
+
 export async function posRoutes(app: FastifyInstance) {
   function createHttpError(statusCode: number, message: string) {
     const error = new Error(message) as Error & { statusCode: number };
@@ -1115,7 +1121,7 @@ export async function posRoutes(app: FastifyInstance) {
 
   app.patch('/mgmt/items/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = req.body as { name?: string; priceCents?: number; description?: string | null; isAvailable?: boolean };
+    const body = req.body as { name?: string; priceCents?: number; description?: string | null; isAvailable?: boolean; imageUrl?: string | null; tags?: string[] };
     const [updated] = await db
       .update(posItems)
       .set({ ...body, updatedAt: new Date() })
@@ -1129,6 +1135,97 @@ export async function posRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     await db.update(posItems).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(posItems.id, id));
     return reply.status(204).send();
+  });
+
+  // ─── Menu PATCH / DELETE ─────────────────────────────────────────────────────
+
+  app.patch('/mgmt/menus/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as { name?: string; description?: string | null; isActive?: boolean; currency?: string };
+    const [updated] = await db
+      .update(posMenus)
+      .set({ ...body, updatedAt: new Date() })
+      .where(eq(posMenus.id, id))
+      .returning();
+    if (!updated) return reply.status(404).send({ error: 'Menu not found' });
+    return reply.send(updated);
+  });
+
+  app.delete('/mgmt/menus/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await db.update(posMenus).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(posMenus.id, id));
+    return reply.status(204).send();
+  });
+
+  // ─── Category PATCH / DELETE ─────────────────────────────────────────────────
+
+  app.patch('/mgmt/categories/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as { name?: string; description?: string | null; color?: string | null; sortOrder?: number };
+    const [updated] = await db
+      .update(posCategories)
+      .set({ ...body, updatedAt: new Date() })
+      .where(eq(posCategories.id, id))
+      .returning();
+    if (!updated) return reply.status(404).send({ error: 'Category not found' });
+    return reply.send(updated);
+  });
+
+  app.delete('/mgmt/categories/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await db.update(posCategories).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(posCategories.id, id));
+    return reply.status(204).send();
+  });
+
+  // ─── POS image upload ────────────────────────────────────────────────────────
+
+  app.post('/mgmt/upload-image', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const data = await req.file();
+    if (!data) return reply.status(400).send({ error: 'No file provided' });
+
+    const mime = data.mimetype;
+    if (!mime.startsWith('image/')) return reply.status(400).send({ error: 'Only image files are allowed' });
+
+    const ext = path.extname(data.filename) || '.jpg';
+    const fileId = crypto.randomUUID();
+    const relDir = path.join(user.orgId, 'pos');
+    const relPath = path.join(relDir, `${fileId}${ext}`);
+    const absDir = path.resolve(STORAGE_ROOT, relDir);
+    const absPath = path.resolve(STORAGE_ROOT, relPath);
+
+    await fs.mkdir(absDir, { recursive: true });
+
+    let fileSize = 0;
+    const chunks: Buffer[] = [];
+    for await (const chunk of data.file) {
+      chunks.push(chunk);
+      fileSize += chunk.length;
+      if (fileSize > 5 * 1024 * 1024) {
+        return reply.status(413).send({ error: 'Image too large (max 5 MB)' });
+      }
+    }
+    await fs.writeFile(absPath, Buffer.concat(chunks));
+
+    const imageUrl = `/pos/image/${user.orgId}/pos/${fileId}${ext}`;
+    return reply.send({ imageUrl });
+  });
+
+  // Serve POS images
+  app.get('/image/*', async (req, reply) => {
+    const wildcard = (req.params as { '*': string })['*'];
+    if (!wildcard || wildcard.includes('..')) return reply.status(400).send({ error: 'Invalid path' });
+    const absPath = path.resolve(STORAGE_ROOT, wildcard);
+    // Ensure resolved path is inside STORAGE_ROOT
+    if (!absPath.startsWith(path.resolve(STORAGE_ROOT))) return reply.status(403).send({ error: 'Forbidden' });
+    try { await fs.access(absPath); } catch { return reply.status(404).send({ error: 'Not found' }); }
+    const stat = await fs.stat(absPath);
+    const ext = path.extname(absPath).toLowerCase();
+    const mimeMap: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
+    reply.header('Content-Type', mimeMap[ext] ?? 'application/octet-stream');
+    reply.header('Content-Length', stat.size);
+    reply.header('Cache-Control', 'public, max-age=86400');
+    return reply.send(createReadStream(absPath));
   });
 
   // ─── Orders management (session auth — for portal views) ────────────────────

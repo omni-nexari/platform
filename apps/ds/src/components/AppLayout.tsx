@@ -39,7 +39,6 @@ import {
   BarChart2,
   Layers2,
   Tv2,
-  ShoppingCart,
   ClipboardList,
   ChefHat,
   Heart,
@@ -225,6 +224,7 @@ export default function AppLayout() {
   const canManageEmergency = user?.orgRole === 'owner' || user?.orgRole === 'admin';
   const cmsEnabled = useCmsEnabled();
   const posEnabled = usePosEnabled();
+  const contentEnabled = cmsEnabled || posEnabled;
 
   return (
     <div className="flex h-screen bg-[var(--surface)] overflow-hidden">
@@ -284,25 +284,28 @@ export default function AppLayout() {
                 Devices
               </NavLink>
 
+              {contentEnabled && (
+                <NavLink
+                  to={`/workspaces/${currentWsId}/content`}
+                  className={({ isActive }) =>
+                    `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                      isActive
+                        ? 'bg-[var(--blue)] text-white'
+                        : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                    }`
+                  }
+                >
+                  <Image className="w-4 h-4" />
+                  Content
+                </NavLink>
+              )}
+
               {/* CMS / Signage section */}
               {cmsEnabled && (
                 <>
                   <div className="pt-3 pb-1 px-3">
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Signage</p>
                   </div>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/content`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <Image className="w-4 h-4" />
-                    Content
-                  </NavLink>
                   <NavLink
                     to={`/workspaces/${currentWsId}/playlist`}
                     className={({ isActive }) =>
@@ -403,19 +406,6 @@ export default function AppLayout() {
                   <div className="pt-3 pb-1 px-3">
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Point of Sale</p>
                   </div>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/pos/menu`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <ShoppingCart className="w-4 h-4" />
-                    Menu
-                  </NavLink>
                   <NavLink
                     to={`/workspaces/${currentWsId}/pos/orders`}
                     className={({ isActive }) =>
