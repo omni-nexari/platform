@@ -490,6 +490,7 @@ export async function deviceRoutes(app: FastifyInstance) {
         orgId: user.orgId,
         workspaceId: body.data.workspaceId,
         name: body.data.name ?? device.name,
+        type: body.data.type ?? 'signage',
         status: 'offline',
         deviceToken,
         updatedAt: new Date(),
@@ -1399,6 +1400,7 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     return reply.send({
       workspace,
+      deviceType: device.type ?? 'signage',
       defaultPlaylist: compatibilityDefaultPlaylist,
       publishedContent,
       publishedPlaylist,

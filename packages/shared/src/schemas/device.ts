@@ -81,6 +81,7 @@ export const ClaimDeviceSchema = z.object({
   code: z.string().length(6),
   workspaceId: z.string().uuid(),
   name: z.string().min(1).max(255).optional(),
+  type: z.enum(['signage', 'kiosk', 'kitchen']).optional(),
 });
 export type ClaimDeviceInput = z.infer<typeof ClaimDeviceSchema>;
 

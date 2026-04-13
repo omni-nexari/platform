@@ -4,9 +4,9 @@ import { useState, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
 import { api, buildApiUrl } from '../../lib/api.js';
 import {
-  Plus, Pencil, Trash2, ChevronRight, GripVertical, X,
-  ImagePlus, Tag, DollarSign, Eye, EyeOff, MoreVertical,
-  Upload, Camera, Utensils, ChefHat,
+  Plus, Pencil, Trash2, ChevronRight, X, Check,
+  ImagePlus, Eye, EyeOff,
+  Camera, Utensils, ChefHat,
 } from 'lucide-react';
 import {
   Badge,
@@ -126,7 +126,7 @@ function ImageUploadArea({
           ) : (
             <>
               <ImagePlus className="w-5 h-5" />
-              <span className="text-[10px] mt-1">Photo</span>
+              <span className="text-xs mt-1">Photo</span>
             </>
           )}
         </button>
@@ -229,12 +229,15 @@ export default function PosMenuPage() {
   const [selectedMenuId, setSelectedMenuId] = useState<string | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
 
-  // Modal state
-  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  // Inline create state
+  const [creatingMenu, setCreatingMenu] = useState(false);
+  const [newMenuName, setNewMenuName] = useState('');
   const [editMenuOpen, setEditMenuOpen] = useState<PosMenu | null>(null);
   const [deleteMenu, setDeleteMenu] = useState<PosMenu | null>(null);
 
-  const [newCategoryOpen, setNewCategoryOpen] = useState(false);
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [newCatColor, setNewCatColor] = useState<string | null>(null);
   const [editCategory, setEditCategory] = useState<PosCategory | null>(null);
   const [deleteCategory, setDeleteCategory] = useState<PosCategory | null>(null);
 
@@ -272,6 +275,8 @@ export default function PosMenuPage() {
       api.post<PosMenu>('/pos/mgmt/menus', { workspaceId: wsId, ...body }),
     onSuccess: (m: PosMenu) => {
       toast.success('Menu created');
+      setCreatingMenu(false);
+      setNewMenuName('');
       void qc.invalidateQueries({ queryKey: ['pos-menus', wsId] });
       setSelectedMenuId(m.id);
       setSelectedCategoryId(null);
@@ -309,6 +314,9 @@ export default function PosMenuPage() {
       api.post<PosCategory>('/pos/mgmt/categories', { menuId: selectedMenuId, ...body }),
     onSuccess: (c: PosCategory) => {
       toast.success('Category created');
+      setCreatingCategory(false);
+      setNewCatName('');
+      setNewCatColor(null);
       void qc.invalidateQueries({ queryKey: ['pos-categories', selectedMenuId] });
       setSelectedCategoryId(c.id);
     },
@@ -406,7 +414,7 @@ export default function PosMenuPage() {
         title="Menu Builder"
         description="Create and manage your restaurant menus, categories, and items"
         actions={
-          <button className="ui-btn-primary flex items-center gap-1.5" onClick={() => setNewMenuOpen(true)}>
+          <button className="ui-btn-primary flex items-center gap-1.5" onClick={() => { setCreatingMenu(true); setNewMenuName(''); }}>
             <Plus className="w-4 h-4" />
             New Menu
           </button>
@@ -421,21 +429,55 @@ export default function PosMenuPage() {
               <Utensils className="w-4 h-4 text-[var(--blue)]" />
               <h3 className="text-sm font-semibold text-[var(--text)]">Menus</h3>
             </div>
-            <button className="text-[var(--blue)] text-xs hover:underline" onClick={() => setNewMenuOpen(true)}>
+            <button className="text-[var(--blue)] text-xs hover:underline" onClick={() => { setCreatingMenu(true); setNewMenuName(''); }}>
               + Add
             </button>
           </div>
           <div className="p-2 space-y-1 max-h-[calc(100vh-280px)] overflow-y-auto">
+            {/* Inline create form */}
+            {creatingMenu && (
+              <div className="rounded-xl bg-gradient-to-br from-[var(--blue)]/10 to-[var(--blue)]/5 border border-[var(--blue)]/20 p-3 animate-in slide-in-from-top-2 fade-in duration-200">
+                <input
+                  className="w-full bg-transparent border-b border-[var(--blue)]/30 focus:border-[var(--blue)] text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] outline-none pb-2 transition-colors"
+                  placeholder="Menu name..."
+                  value={newMenuName}
+                  onChange={(e) => setNewMenuName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newMenuName.trim()) createMenuMut.mutate({ name: newMenuName.trim() });
+                    if (e.key === 'Escape') { setCreatingMenu(false); setNewMenuName(''); }
+                  }}
+                  autoFocus
+                />
+                <div className="flex items-center justify-between mt-2">
+                  <span className="text-xs text-[var(--text-muted)]">Enter to create · Esc to cancel</span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => { setCreatingMenu(false); setNewMenuName(''); }}
+                      className="p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => newMenuName.trim() && createMenuMut.mutate({ name: newMenuName.trim() })}
+                      disabled={!newMenuName.trim() || createMenuMut.isPending}
+                      className="p-1 rounded-lg text-[var(--blue)] hover:bg-[var(--blue)]/10 disabled:opacity-30 transition-colors"
+                    >
+                      <Check className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
             {menusLoading ? (
               <>
                 <Skeleton className="h-14 rounded-lg" />
                 <Skeleton className="h-14 rounded-lg" />
               </>
-            ) : menus.length === 0 ? (
+            ) : menus.length === 0 && !creatingMenu ? (
               <div className="text-center py-8 px-4">
                 <ChefHat className="w-10 h-10 mx-auto text-[var(--text-muted)] mb-2" />
                 <p className="text-sm text-[var(--text-muted)]">No menus yet</p>
-                <p className="text-xs text-[var(--text-muted)] mt-1">Create your first menu to get started</p>
+                <button className="text-xs text-[var(--blue)] hover:underline mt-1" onClick={() => { setCreatingMenu(true); setNewMenuName(''); }}>Create your first menu</button>
               </div>
             ) : (
               menus.map((m) => (
@@ -485,18 +527,63 @@ export default function PosMenuPage() {
           <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
             <h3 className="text-sm font-semibold text-[var(--text)]">Categories</h3>
             {selectedMenuId && (
-              <button className="text-[var(--blue)] text-xs hover:underline" onClick={() => setNewCategoryOpen(true)}>
+              <button className="text-[var(--blue)] text-xs hover:underline" onClick={() => { setCreatingCategory(true); setNewCatName(''); setNewCatColor(null); }}>
                 + Add
               </button>
             )}
           </div>
           <div className="p-2 space-y-1 max-h-[calc(100vh-280px)] overflow-y-auto">
+            {/* Inline create form */}
+            {creatingCategory && selectedMenuId && (
+              <div className="rounded-xl bg-gradient-to-br from-[var(--blue)]/10 to-[var(--blue)]/5 border border-[var(--blue)]/20 p-3 animate-in slide-in-from-top-2 fade-in duration-200">
+                <input
+                  className="w-full bg-transparent border-b border-[var(--blue)]/30 focus:border-[var(--blue)] text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] outline-none pb-2 transition-colors"
+                  placeholder="Category name..."
+                  value={newCatName}
+                  onChange={(e) => setNewCatName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newCatName.trim()) createCategoryMut.mutate({ name: newCatName.trim(), color: newCatColor ?? undefined });
+                    if (e.key === 'Escape') { setCreatingCategory(false); setNewCatName(''); setNewCatColor(null); }
+                  }}
+                  autoFocus
+                />
+                <div className="flex items-center gap-1.5 mt-2">
+                  {CATEGORY_COLORS.map((c) => (
+                    <button
+                      key={c.value}
+                      type="button"
+                      onClick={() => setNewCatColor(newCatColor === c.value ? null : c.value)}
+                      className={`w-5 h-5 rounded-full border-2 transition-all ${newCatColor === c.value ? 'border-white scale-125' : 'border-transparent scale-100'}`}
+                      style={{ backgroundColor: c.value }}
+                    />
+                  ))}
+                </div>
+                <div className="flex items-center justify-between mt-2">
+                  <span className="text-xs text-[var(--text-muted)]">Enter · Esc</span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => { setCreatingCategory(false); setNewCatName(''); setNewCatColor(null); }}
+                      className="p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => newCatName.trim() && createCategoryMut.mutate({ name: newCatName.trim(), color: newCatColor ?? undefined })}
+                      disabled={!newCatName.trim() || createCategoryMut.isPending}
+                      className="p-1 rounded-lg text-[var(--blue)] hover:bg-[var(--blue)]/10 disabled:opacity-30 transition-colors"
+                    >
+                      <Check className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
             {!selectedMenuId ? (
               <p className="text-xs text-[var(--text-muted)] text-center py-8">Select a menu first</p>
-            ) : categories.length === 0 ? (
+            ) : categories.length === 0 && !creatingCategory ? (
               <div className="text-center py-8 px-4">
                 <p className="text-sm text-[var(--text-muted)]">No categories yet</p>
-                <button className="text-xs text-[var(--blue)] hover:underline mt-1" onClick={() => setNewCategoryOpen(true)}>
+                <button className="text-xs text-[var(--blue)] hover:underline mt-1" onClick={() => { setCreatingCategory(true); setNewCatName(''); setNewCatColor(null); }}>
                   Create your first category
                 </button>
               </div>
@@ -585,7 +672,7 @@ export default function PosMenuPage() {
                       ) : (
                         <div className="w-full h-full flex flex-col items-center justify-center text-[var(--text-muted)]">
                           <ImagePlus className="w-8 h-8 mb-1" />
-                          <span className="text-[10px]">No photo</span>
+                          <span className="text-xs">No photo</span>
                         </div>
                       )}
                       {/* Upload overlay on hover */}
@@ -602,7 +689,7 @@ export default function PosMenuPage() {
                       <div className="absolute top-2 right-2">
                         <button
                           onClick={() => updateItemMut.mutate({ id: item.id, isAvailable: !item.isAvailable })}
-                          className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition-colors ${
+                          className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium backdrop-blur-sm transition-colors ${
                             item.isAvailable
                               ? 'bg-green-500/90 text-white'
                               : 'bg-red-500/90 text-white'
@@ -623,7 +710,7 @@ export default function PosMenuPage() {
                             <p className="text-xs text-[var(--text-muted)] mt-0.5 line-clamp-2">{item.description}</p>
                           )}
                         </div>
-                        <span className="text-sm font-bold text-[var(--blue)] whitespace-nowrap">
+                        <span className="text-sm font-semibold text-[var(--blue)] whitespace-nowrap">
                           {formatPrice(item.priceCents)}
                         </span>
                       </div>
@@ -632,7 +719,7 @@ export default function PosMenuPage() {
                       {item.tags && item.tags.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-2">
                           {item.tags.map((tag) => (
-                            <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--blue)]/10 text-[var(--blue)]">
+                            <span key={tag} className="text-xs px-1.5 py-0.5 rounded-full bg-[var(--blue)]/10 text-[var(--blue)]">
                               {tag}
                             </span>
                           ))}
@@ -677,13 +764,7 @@ export default function PosMenuPage() {
 
       {/* ═══ MODALS ═══ */}
 
-      {/* New Menu */}
-      <NewMenuModal
-        open={newMenuOpen}
-        onClose={() => setNewMenuOpen(false)}
-        onSubmit={(data) => { createMenuMut.mutate(data); setNewMenuOpen(false); }}
-        pending={createMenuMut.isPending}
-      />
+      {/* New Menu — handled inline above */}
 
       {/* Edit Menu */}
       {editMenuOpen && (
@@ -705,13 +786,7 @@ export default function PosMenuPage() {
         pending={deleteMenuMut.isPending}
       />
 
-      {/* New Category */}
-      <NewCategoryModal
-        open={newCategoryOpen}
-        onClose={() => setNewCategoryOpen(false)}
-        onSubmit={(data) => { createCategoryMut.mutate(data); setNewCategoryOpen(false); }}
-        pending={createCategoryMut.isPending}
-      />
+      {/* New Category — handled inline above */}
 
       {/* Edit Category */}
       {editCategory && (
@@ -770,50 +845,6 @@ export default function PosMenuPage() {
 // Modal Components
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function NewMenuModal({
-  open,
-  onClose,
-  onSubmit,
-  pending,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onSubmit: (data: { name: string; description?: string }) => void;
-  pending?: boolean;
-}) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-
-  const handleSubmit = () => {
-    if (!name.trim()) return;
-    onSubmit({ name: name.trim(), description: description.trim() || undefined });
-    setName('');
-    setDescription('');
-  };
-
-  return (
-    <Modal open={open} onClose={onClose}>
-      <ModalHeader>New Menu</ModalHeader>
-      <ModalBody>
-        <div className="space-y-3">
-          <div>
-            <label className="ui-label">Name *</label>
-            <input className="ui-input w-full" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Lunch Menu" autoFocus />
-          </div>
-          <div>
-            <label className="ui-label">Description</label>
-            <textarea className="ui-input w-full resize-none" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Available 11am – 3pm" />
-          </div>
-        </div>
-      </ModalBody>
-      <ModalFooter>
-        <ModalSecondaryButton onClick={onClose}>Cancel</ModalSecondaryButton>
-        <ModalPrimaryButton onClick={handleSubmit} disabled={!name.trim() || pending}>Create</ModalPrimaryButton>
-      </ModalFooter>
-    </Modal>
-  );
-}
-
 function EditMenuModal({
   menu,
   onClose,
@@ -856,67 +887,6 @@ function EditMenuModal({
         >
           Save
         </ModalPrimaryButton>
-      </ModalFooter>
-    </Modal>
-  );
-}
-
-function NewCategoryModal({
-  open,
-  onClose,
-  onSubmit,
-  pending,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onSubmit: (data: { name: string; description?: string; color?: string }) => void;
-  pending?: boolean;
-}) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [color, setColor] = useState<string | null>(null);
-
-  const handleSubmit = () => {
-    if (!name.trim()) return;
-    onSubmit({ name: name.trim(), description: description.trim() || undefined, color: color ?? undefined });
-    setName('');
-    setDescription('');
-    setColor(null);
-  };
-
-  return (
-    <Modal open={open} onClose={onClose}>
-      <ModalHeader>New Category</ModalHeader>
-      <ModalBody>
-        <div className="space-y-3">
-          <div>
-            <label className="ui-label">Name *</label>
-            <input className="ui-input w-full" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Starters, Mains, Desserts" autoFocus />
-          </div>
-          <div>
-            <label className="ui-label">Description</label>
-            <textarea className="ui-input w-full resize-none" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="A brief description of this section" />
-          </div>
-          <div>
-            <label className="ui-label">Accent Color</label>
-            <div className="flex flex-wrap gap-2 mt-1">
-              {CATEGORY_COLORS.map((c) => (
-                <button
-                  key={c.value}
-                  type="button"
-                  onClick={() => setColor(color === c.value ? null : c.value)}
-                  className={`w-7 h-7 rounded-full border-2 transition-transform ${color === c.value ? 'border-[var(--text)] scale-110' : 'border-transparent'}`}
-                  style={{ backgroundColor: c.value }}
-                  title={c.label}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-      </ModalBody>
-      <ModalFooter>
-        <ModalSecondaryButton onClick={onClose}>Cancel</ModalSecondaryButton>
-        <ModalPrimaryButton onClick={handleSubmit} disabled={!name.trim() || pending}>Create</ModalPrimaryButton>
       </ModalFooter>
     </Modal>
   );

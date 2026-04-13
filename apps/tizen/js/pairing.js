@@ -138,10 +138,12 @@ window.Pairing = {
 
         let workspaceName = '';
         let workspaceId = '';
+        let deviceType = 'signage';
         try {
           const wsData = await API.getWorkspaceInfo(response.deviceToken);
           workspaceId = (wsData.workspace && wsData.workspace.id) || '';
           workspaceName = (wsData.workspace && wsData.workspace.name) || '';
+          deviceType = wsData.deviceType || 'signage';
         } catch (error) {
           logger.warn('Could not fetch workspace info for existing pairing:', error);
         }
@@ -151,6 +153,7 @@ window.Pairing = {
           deviceToken: response.deviceToken,
           name: workspaceName || localStorage.getItem('deviceName') || 'Signage Player',
           workspaceId,
+          deviceType,
         });
         return;
       }
@@ -190,10 +193,12 @@ window.Pairing = {
           const token = result.deviceToken;
           let workspaceName = '';
           let workspaceId = '';
+          let deviceType = 'signage';
           try {
             const wsData = await API.getWorkspaceInfo(token);
             workspaceId = (wsData.workspace && wsData.workspace.id) || '';
             workspaceName = (wsData.workspace && wsData.workspace.name) || '';
+            deviceType = wsData.deviceType || 'signage';
           } catch (e) {
             logger.warn('Could not fetch workspace info:', e);
           }
@@ -202,6 +207,7 @@ window.Pairing = {
             deviceToken: token,
             name: workspaceName || 'Signage Player',
             workspaceId,
+            deviceType,
           });
         }
       } catch (error) {
@@ -228,7 +234,30 @@ window.Pairing = {
     localStorage.setItem('deviceName', device.name);
     localStorage.setItem('workspaceId', device.workspaceId || '');
     localStorage.setItem('isPaired', 'true');
-    
+
+    const deviceType = device.deviceType || 'signage';
+
+    // Kiosk / Kitchen modes: hand off to DS web app
+    if (deviceType === 'kiosk' || deviceType === 'kitchen') {
+      const serverBase = CONFIG.API_BASE.replace(/\/api\/v1\/?$/, '').replace(/\/api\/?$/, '');
+      const wsId = device.workspaceId;
+      if (!wsId) {
+        this.showError('Launch Failed', 'No workspace assigned to this device.');
+        return;
+      }
+      let target;
+      if (deviceType === 'kiosk') {
+        const orientation = window.screen.width < window.screen.height ? 'portrait' : 'landscape';
+        target = serverBase + '/kiosk/' + wsId + '/' + orientation + '?dt=' + encodeURIComponent(device.deviceToken);
+      } else {
+        target = serverBase + '/kitchen/' + wsId + '?dt=' + encodeURIComponent(device.deviceToken);
+      }
+      logger.info('Navigating to mode URL:', target);
+      window.location.href = target;
+      return;
+    }
+
+    // Signage mode: start the player
     // Debug logging
     logger.debug('Checking Player availability...');
     logger.debug('window.Player exists:', typeof window.Player);

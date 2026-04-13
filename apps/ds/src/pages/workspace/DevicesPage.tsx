@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
 import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
-import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers } from 'lucide-react';
+import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag } from 'lucide-react';
 import { formatDistanceToNow } from '../utils/time.js';
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import BulkTagModal from '../../components/BulkTagModal.js';
@@ -253,7 +253,7 @@ export default function DevicesPage() {
         />
       </div>
 
-      {/* Device grid */}
+      {/* Device sections */}
       {isLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -272,95 +272,116 @@ export default function DevicesPage() {
           }
         />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredDevices.map((device) => (
-            <div
-              key={device.id}
-              className={`ui-card p-4 flex flex-col gap-3 cursor-pointer hover:border-[var(--blue)] transition-colors relative ${
-                selectedItems.has(device.id) ? 'border-[var(--blue)]' : ''
-              }`}
-              onClick={() => navigate(`/workspaces/${wsId}/devices/${device.id}`)}
-            >
-              {/* Selection checkbox */}
-              <input
-                type="checkbox"
-                checked={selectedItems.has(device.id)}
-                onChange={(e) => { e.stopPropagation(); toggleItem(device.id); }}
-                onClick={(e) => e.stopPropagation()}
-                className="absolute top-3 right-3 w-4 h-4 accent-[var(--blue)]"
-              />
+        <div className="flex flex-col gap-8">
+          {(
+            [
+              { key: 'signage', label: 'Signage Displays', icon: <Monitor className="w-4 h-4" /> },
+              { key: 'kitchen', label: 'Kitchen Monitor', icon: <Utensils className="w-4 h-4" /> },
+              { key: 'kiosk',   label: 'Kiosk Ops',       icon: <ShoppingBag className="w-4 h-4" /> },
+            ] as const
+          ).map(({ key, label, icon }) => {
+            if (selectedType !== 'all' && selectedType !== key) return null;
+            const sectionDevices = filteredDevices.filter((d) => (d.type ?? 'signage') === key);
+            if (sectionDevices.length === 0) return null;
+            return (
+              <div key={key}>
+                <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-[var(--text)]">
+                  {icon}
+                  {label}
+                  <span className="ml-1 text-[var(--text-muted)] font-normal">({sectionDevices.length})</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {sectionDevices.map((device) => (
+                    <div
+                      key={device.id}
+                      className={`ui-card p-4 flex flex-col gap-3 cursor-pointer hover:border-[var(--blue)] transition-colors relative ${
+                        selectedItems.has(device.id) ? 'border-[var(--blue)]' : ''
+                      }`}
+                      onClick={() => navigate(`/workspaces/${wsId}/devices/${device.id}`)}
+                    >
+                      {/* Selection checkbox */}
+                      <input
+                        type="checkbox"
+                        checked={selectedItems.has(device.id)}
+                        onChange={(e) => { e.stopPropagation(); toggleItem(device.id); }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="absolute top-3 right-3 w-4 h-4 accent-[var(--blue)]"
+                      />
 
-              {/* Header */}
-              <div className="flex items-start justify-between gap-2 pr-6">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                    device.status === 'online'
-                      ? 'bg-[var(--success)]/15 text-[var(--success)]'
-                      : device.status === 'error'
-                      ? 'bg-red-500/15 text-red-400'
-                      : 'bg-[var(--surface)] text-[var(--text-muted)]'
-                  }`}>
-                    <Monitor className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-[var(--text)] truncate">{device.name}</p>
-                    {device.modelName && (
-                      <p className="text-xs text-[var(--text-muted)] truncate">
-                        {device.manufacturer ? `${device.manufacturer} ` : ''}{device.modelName}
-                      </p>
-                    )}
-                  </div>
+                      {/* Header */}
+                      <div className="flex items-start justify-between gap-2 pr-6">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                            device.status === 'online'
+                              ? 'bg-[var(--success)]/15 text-[var(--success)]'
+                              : device.status === 'error'
+                              ? 'bg-red-500/15 text-red-400'
+                              : 'bg-[var(--surface)] text-[var(--text-muted)]'
+                          }`}>
+                            <Monitor className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-[var(--text)] truncate">{device.name}</p>
+                            {device.modelName && (
+                              <p className="text-xs text-[var(--text-muted)] truncate">
+                                {device.manufacturer ? `${device.manufacturer} ` : ''}{device.modelName}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Badges */}
+                      <div className="flex flex-wrap gap-1.5">
+                        <StatusBadge status={device.status} />
+                        {device.platform && device.platform !== 'tizen' && (
+                          <Badge tone="neutral">{device.platform}</Badge>
+                        )}
+                      </div>
+
+                      {/* Meta */}
+                      <div className="space-y-1 text-xs text-[var(--text-muted)]">
+                        {device.status === 'online' && device.lastSeen && (
+                          <div className="flex items-center gap-1">
+                            <Cpu className="w-3 h-3" />
+                            <span>Online</span>
+                          </div>
+                        )}
+                        {device.status !== 'online' && device.lastSeen && (
+                          <div className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            <span>{formatDistanceToNow(device.lastSeen)}</span>
+                          </div>
+                        )}
+                        {device.status !== 'online' && !device.lastSeen && device.status !== 'unclaimed' && (
+                          <div className="flex items-center gap-1">
+                            <WifiOff className="w-3 h-3" />
+                            <span>Never seen</span>
+                          </div>
+                        )}
+                        {device.publishedTarget && (
+                          <div className="flex items-center gap-1">
+                            <Check className="w-3 h-3 text-[var(--success)]" />
+                            <span className="truncate">{device.publishedTarget.name}</span>
+                          </div>
+                        )}
+                        {device.ipAddress && (
+                          <span className="font-mono">{device.ipAddress}</span>
+                        )}
+                      </div>
+
+                      {/* Tags */}
+                      {(device.assignedTags?.length ?? 0) > 0 && (
+                        <AssignedTagPills tags={device.assignedTags!} />
+                      )}
+
+                      <ChevronRight className="w-4 h-4 text-[var(--text-muted)] self-end" />
+                    </div>
+                  ))}
                 </div>
               </div>
-
-              {/* Badges */}
-              <div className="flex flex-wrap gap-1.5">
-                <StatusBadge status={device.status} />
-                <TypeBadge type={device.type ?? 'signage'} />
-                {device.platform && device.platform !== 'tizen' && (
-                  <Badge tone="neutral">{device.platform}</Badge>
-                )}
-              </div>
-
-              {/* Meta */}
-              <div className="space-y-1 text-xs text-[var(--text-muted)]">
-                {device.status === 'online' && device.lastSeen && (
-                  <div className="flex items-center gap-1">
-                    <Cpu className="w-3 h-3" />
-                    <span>Online</span>
-                  </div>
-                )}
-                {device.status !== 'online' && device.lastSeen && (
-                  <div className="flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    <span>{formatDistanceToNow(device.lastSeen)}</span>
-                  </div>
-                )}
-                {device.status !== 'online' && !device.lastSeen && device.status !== 'unclaimed' && (
-                  <div className="flex items-center gap-1">
-                    <WifiOff className="w-3 h-3" />
-                    <span>Never seen</span>
-                  </div>
-                )}
-                {device.publishedTarget && (
-                  <div className="flex items-center gap-1">
-                    <Check className="w-3 h-3 text-[var(--success)]" />
-                    <span className="truncate">{device.publishedTarget.name}</span>
-                  </div>
-                )}
-                {device.ipAddress && (
-                  <span className="font-mono">{device.ipAddress}</span>
-                )}
-              </div>
-
-              {/* Tags */}
-              {(device.assignedTags?.length ?? 0) > 0 && (
-                <AssignedTagPills tags={device.assignedTags!} />
-              )}
-
-              <ChevronRight className="w-4 h-4 text-[var(--text-muted)] self-end" />
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -391,6 +412,17 @@ export default function DevicesPage() {
               {errors.name && (
                 <p className="text-xs text-red-400 mt-1">{errors.name.message}</p>
               )}
+            </div>
+            <div>
+              <label className="ui-label">Display Mode</label>
+              <select {...register('type')} className="ui-input w-full">
+                <option value="signage">Signage Display</option>
+                <option value="kitchen">Kitchen Monitor</option>
+                <option value="kiosk">Kiosk</option>
+              </select>
+              <p className="text-xs text-[var(--text-muted)] mt-1">
+                Kiosk and Kitchen devices auto-redirect to their purpose-built UI after pairing.
+              </p>
             </div>
           </form>
         </ModalBody>
