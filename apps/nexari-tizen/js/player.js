@@ -4525,7 +4525,7 @@ const Player = {
       <div class="idle-screen">
         <div class="idle-card">
           <div class="idle-icon">ðŸ“¡</div>
-          <div class="idle-title">Digital Signage</div>
+          <div class="idle-title">Nexari</div>
           <div class="idle-subtitle">${this.deviceName || 'Device'}</div>
           <div class="idle-status">${statusText}</div>
           ${progressBar}

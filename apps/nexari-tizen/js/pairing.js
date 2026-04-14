@@ -151,7 +151,7 @@ window.Pairing = {
         this.onPaired({
           id: response.deviceId,
           deviceToken: response.deviceToken,
-          name: workspaceName || localStorage.getItem('deviceName') || 'Signage Player',
+          name: workspaceName || localStorage.getItem('deviceName') || 'Nexari Player',
           workspaceId,
           deviceType,
         });
@@ -205,7 +205,7 @@ window.Pairing = {
           this.onPaired({
             id: result.deviceId,
             deviceToken: token,
-            name: workspaceName || 'Signage Player',
+            name: workspaceName || 'Nexari Player',
             workspaceId,
             deviceType,
           });

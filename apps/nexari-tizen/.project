@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <projectDescription>
-	<name>SignagePlayer</name>
-	<comment>EBD Digital Signage Player — Samsung Smart TV (Tizen 10.0)</comment>
+	<name>NexariTizen</name>
+	<comment>Nexari Player — Samsung Smart Signage (Tizen 4+)</comment>
 	<projects>
 	</projects>
 	<buildSpec>

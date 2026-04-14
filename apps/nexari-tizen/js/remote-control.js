@@ -276,7 +276,7 @@ window.RemoteControl = {
   },
 
   confirmExit() {
-    if (confirm('Exit Digital Signage Player?')) {
+    if (confirm('Exit Nexari Player?')) {
       try {
         tizen.application.getCurrentApplication().exit();
       } catch (error) {

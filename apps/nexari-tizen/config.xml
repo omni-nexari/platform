@@ -2,7 +2,7 @@
 <widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://nexari.app/tizen/NexariTizen" version="1.0.0" viewmodes="maximized">
     <access origin="*" subdomains="true"></access>
     <tizen:allow-navigation>*</tizen:allow-navigation>
-    <tizen:application id="NexariTizen.NexariPlayer" package="NexariTizen" required_version="4.0"/>
+    <tizen:application id="ynk5O3qX0W.NexariPlayer" package="ynk5O3qX0W" required_version="4.0"/>
     <content src="index.html"/>
     <tizen:content-security-policy>default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; img-src * data: blob:; frame-src *; style-src * 'unsafe-inline';</tizen:content-security-policy>
     <tizen:content-security-policy-report-only></tizen:content-security-policy-report-only>
@@ -46,5 +46,5 @@
     <tizen:privilege name="http://developer.samsung.com/privilege/dpm"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/sso"/>
     <tizen:profile name="tv-samsung"/>
-    <tizen:setting screen-orientation="auto-rotation" context-menu="disable" background-support="enable" encryption="disable" install-location="auto" hwkey-event="enable"/>
+    <tizen:setting screen-orientation="auto-rotation" context-menu="enable" background-support="enable" encryption="disable" install-location="auto" hwkey-event="enable"/>
 </widget>
