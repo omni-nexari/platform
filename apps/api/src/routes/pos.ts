@@ -742,13 +742,23 @@ export async function posRoutes(app: FastifyInstance) {
   });
 
   app.post('/tables', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const { workspaceId } = req.query as { workspaceId?: string };
+    const body = req.body as { workspaceId?: string; number?: number | null; name?: string; seats?: number; location?: string };
+    const workspaceId = (req.query as { workspaceId?: string }).workspaceId ?? body.workspaceId;
     if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
 
-    const body = req.body as { number: number; name?: string; seats?: number; location?: string };
+    let tableNumber = body.number != null ? Number(body.number) : null;
+    if (!tableNumber) {
+      // Auto-assign next available number for this workspace
+      const [row] = await db
+        .select({ max: sql<number>`coalesce(max(${posTables.number}), 0)` })
+        .from(posTables)
+        .where(eq(posTables.workspaceId, workspaceId));
+      tableNumber = (row?.max ?? 0) + 1;
+    }
+
     const [table] = await db
       .insert(posTables)
-      .values({ workspaceId, number: body.number, name: body.name ?? null, seats: body.seats ?? 4, location: body.location ?? null })
+      .values({ workspaceId, number: tableNumber, name: body.name ?? null, seats: body.seats ?? 4, location: body.location ?? null })
       .returning();
     return reply.status(201).send(table);
   });
