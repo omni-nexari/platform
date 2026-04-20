@@ -46,6 +46,10 @@ import {
   Smartphone,
   Users,
   CloudSun,
+  UtensilsCrossed,
+  DollarSign,
+  FileText,
+  Receipt,
 } from 'lucide-react';
 
 interface Workspace {
@@ -496,6 +500,45 @@ export default function AppLayout() {
                   >
                     <BarChart2 className="w-4 h-4" />
                     POS Analytics
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/pos/menu`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <UtensilsCrossed className="w-4 h-4" />
+                    Menu
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/pos/expenses`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <DollarSign className="w-4 h-4" />
+                    Expenses
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/pos/purchase-orders`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <FileText className="w-4 h-4" />
+                    Purchase Orders
                   </NavLink>
                 </>
               )}

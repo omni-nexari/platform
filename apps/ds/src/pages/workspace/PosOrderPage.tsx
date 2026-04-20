@@ -226,6 +226,10 @@ export default function PosOrderPage() {
   const [customerName, setCustomerName] = useState('');
   const [orderNotes, setOrderNotes] = useState('');
 
+  // Modifier picker
+  const [modifierTarget, setModifierTarget] = useState<MenuItem | null>(null);
+  const [modifierSelections, setModifierSelections] = useState<Record<string, string[]>>({});
+
   // ─── Data ───────────────────────────────────────────────────────────────
 
   const { data: tables = [] } = useQuery<PosTable[]>({
@@ -247,15 +251,57 @@ export default function PosOrderPage() {
 
   // ─── Cart helpers ────────────────────────────────────────────────────────
 
-  function addItem(item: MenuItem) {
+  function openItemPicker(item: MenuItem) {
+    if (item.modifiers.length === 0) { addItem(item, []); return; }
+    setModifierTarget(item);
+    setModifierSelections({});
+  }
+
+  function toggleModOpt(group: ModifierGroup, optId: string) {
+    setModifierSelections((prev) => {
+      const current = prev[group.id] ?? [];
+      if (group.maxSelect === 1) {
+        return { ...prev, [group.id]: current[0] === optId ? [] : [optId] };
+      }
+      if (current.includes(optId)) {
+        return { ...prev, [group.id]: current.filter((id) => id !== optId) };
+      }
+      if (current.length >= group.maxSelect) return prev;
+      return { ...prev, [group.id]: [...current, optId] };
+    });
+  }
+
+  function confirmModifiers() {
+    if (!modifierTarget) return;
+    const required = modifierTarget.modifiers.filter((g) => g.required);
+    for (const g of required) {
+      if (!modifierSelections[g.id]?.length) {
+        toast.error(`Please select an option for "${g.name}"`);
+        return;
+      }
+    }
+    const mods: CartLine['selectedModifiers'] = [];
+    for (const g of modifierTarget.modifiers) {
+      for (const optId of modifierSelections[g.id] ?? []) {
+        const opt = g.options.find((o) => o.id === optId);
+        if (opt) mods.push({ groupName: g.name, optionName: opt.name, priceCents: opt.priceCents });
+      }
+    }
+    addItem(modifierTarget, mods);
+    setModifierTarget(null);
+  }
+
+  function addItem(item: MenuItem, mods: CartLine['selectedModifiers']) {
     setCart((prev) => {
-      const idx = prev.findIndex((l) => l.itemId === item.id && l.selectedModifiers.length === 0);
-      if (idx >= 0) {
-        return prev.map((l, i) => i === idx ? { ...l, quantity: l.quantity + 1 } : l);
+      if (mods.length === 0) {
+        const idx = prev.findIndex((l) => l.itemId === item.id && l.selectedModifiers.length === 0);
+        if (idx >= 0) {
+          return prev.map((l, i) => i === idx ? { ...l, quantity: l.quantity + 1 } : l);
+        }
       }
       return [...prev, {
         itemId: item.id, itemName: item.name, priceCents: item.priceCents,
-        quantity: 1, notes: '', selectedModifiers: [],
+        quantity: 1, notes: '', selectedModifiers: mods,
       }];
     });
   }
@@ -379,6 +425,69 @@ export default function PosOrderPage() {
                     onClose={() => setShowTablePicker(false)}
                   />
                 )}
+
+      {/* Modifier picker modal */}
+      {modifierTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={() => setModifierTarget(null)}
+        >
+          <div
+            className="w-full max-w-md bg-[var(--bg)] rounded-2xl border border-[var(--border)] shadow-2xl flex flex-col overflow-hidden"
+            style={{ maxHeight: '80vh' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between px-5 py-4 border-b border-[var(--border)] shrink-0">
+              <div>
+                <h2 className="font-semibold text-[var(--text)]">{modifierTarget.name}</h2>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">{fmt(modifierTarget.priceCents, menu?.currency)} + options</p>
+              </div>
+              <button onClick={() => setModifierTarget(null)} className="p-1.5 rounded-lg hover:bg-[var(--surface)] text-[var(--text-muted)] transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+              {modifierTarget.modifiers.map((group) => (
+                <div key={group.id}>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-2">
+                    {group.name}{group.required ? ' *' : ''}
+                    {group.maxSelect > 1 ? ` (up to ${group.maxSelect})` : ''}
+                  </p>
+                  <div className="flex flex-col gap-2">
+                    {group.options.map((opt) => {
+                      const selected = modifierSelections[group.id]?.includes(opt.id) ?? false;
+                      return (
+                        <button
+                          key={opt.id}
+                          onClick={() => toggleModOpt(group, opt.id)}
+                          className={`flex items-center justify-between px-3 py-2.5 rounded-xl border-2 text-sm transition-all text-left ${
+                            selected
+                              ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--text)]'
+                              : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] hover:border-[var(--accent)]/50'
+                          }`}
+                        >
+                          <span className="font-medium">{opt.name}</span>
+                          <span className="text-xs text-[var(--accent)] font-medium">
+                            {opt.priceCents > 0 ? `+${fmt(opt.priceCents, menu?.currency)}` : 'Free'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="px-5 py-4 border-t border-[var(--border)] shrink-0">
+              <button
+                onClick={confirmModifiers}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+              >
+                <Plus size={16} /> Add to Order
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
               </>
             )}
 
@@ -440,7 +549,7 @@ export default function PosOrderPage() {
                   {activeCategory.items.filter((it) => it.isAvailable).map((item) => (
                     <button
                       key={item.id}
-                      onClick={() => addItem(item)}
+                      onClick={() => openItemPicker(item)}
                       className="group relative flex flex-col gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-left transition-all hover:border-[var(--accent)] hover:shadow-sm active:scale-[0.98]"
                     >
                       {item.imageUrl ? (
@@ -456,6 +565,9 @@ export default function PosOrderPage() {
                       )}
                       <span className="text-sm font-semibold text-[var(--text)] leading-tight line-clamp-2">{item.name}</span>
                       <span className="text-xs text-[var(--accent)] font-medium">{fmt(item.priceCents, menu?.currency)}</span>
+                      {item.modifiers.length > 0 && (
+                        <span className="text-[10px] text-[var(--text-muted)]">Customizable</span>
+                      )}
                       <div className="absolute top-2 right-2 bg-[var(--accent)] rounded-full p-0.5 text-white opacity-0 group-hover:opacity-100 transition-opacity">
                         <Plus size={14} />
                       </div>
@@ -491,6 +603,11 @@ export default function PosOrderPage() {
                 <div key={idx} className="flex items-start gap-2 px-3 py-2.5">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-[var(--text)] truncate">{line.itemName}</p>
+                    {line.selectedModifiers.length > 0 && (
+                      <p className="text-[10px] text-[var(--text-muted)] truncate">
+                        {line.selectedModifiers.map((m) => m.optionName).join(', ')}
+                      </p>
+                    )}
                     <p className="text-xs text-[var(--text-muted)]">{fmt(cartLineTotal(line), menu?.currency)}</p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">

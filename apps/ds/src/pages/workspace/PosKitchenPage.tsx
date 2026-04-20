@@ -1,16 +1,32 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { api, buildWebSocketUrl } from '../../lib/api.js';
-import { ChefHat, CreditCard, ExternalLink } from 'lucide-react';
+import { ChefHat, CreditCard, ExternalLink, Settings2 } from 'lucide-react';
 import { formatDistanceToNow } from '../utils/time.js';
 import {
   Badge,
+  Callout,
   EmptyState,
   PageHeader,
+  SectionCard,
+  SectionCardBody,
+  SectionCardHeader,
   Skeleton,
 } from '../../components/UiPrimitives.js';
+
+interface DisplayTokens {
+  kiosk: string | null;
+  kitchen: string | null;
+}
+
+interface KitchenConfig {
+  columnCount: number;
+  soundEnabled: boolean;
+  alertIntervalSec: number;
+  theme: string;
+}
 
 interface PosOrder {
   id: string;
@@ -31,6 +47,33 @@ export default function PosKitchenPage() {
   const { wsId } = useParams<{ wsId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+
+  const { data: displayTokens } = useQuery<DisplayTokens>({
+    queryKey: ['pos-display-tokens', wsId],
+    queryFn: () => api.get(`/pos/mgmt/display-tokens?workspaceId=${wsId}`),
+    enabled: !!wsId,
+  });
+
+  const { data: kitchenConfig } = useQuery<KitchenConfig | null>({
+    queryKey: ['pos-kitchen-config', wsId],
+    queryFn: () => api.get(`/pos/kitchen-config?workspaceId=${wsId}`),
+    enabled: !!wsId,
+  });
+
+  const [configDraft, setConfigDraft] = useState<Partial<KitchenConfig>>({});
+
+  const saveConfigMut = useMutation({
+    mutationFn: (patch: Partial<KitchenConfig>) =>
+      api.put(`/pos/kitchen-config?workspaceId=${wsId}`, patch),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['pos-kitchen-config', wsId] });
+      setConfigDraft({});
+      toast.success('Kitchen config saved');
+    },
+    onError: () => toast.error('Failed to save kitchen config'),
+  });
+
+  const merged = { columnCount: 2, soundEnabled: true, alertIntervalSec: 30, theme: 'dark', ...kitchenConfig, ...configDraft } as KitchenConfig;
   const wsRef = useRef<WebSocket | null>(null);
 
   const { data: active = [], isLoading } = useQuery<PosOrder[]>({
@@ -119,13 +162,90 @@ export default function PosKitchenPage() {
         action={
           <button
             className="ui-btn-secondary flex items-center gap-1.5"
-            onClick={() => window.open(`/kitchen/${wsId}`, '_blank')}
+            onClick={() => {
+              const token = displayTokens?.kitchen;
+              const url = token ? `/kitchen/${wsId}?dt=${token}` : `/kitchen/${wsId}`;
+              window.open(url, '_blank');
+            }}
           >
             <ExternalLink className="w-4 h-4" />
             Open Display
           </button>
         }
       />
+
+      {/* Kitchen Display Settings */}
+      <SectionCard>
+        <SectionCardHeader>
+          <div className="flex items-center gap-2">
+            <Settings2 className="h-4 w-4 text-[var(--accent)]" />
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--text)]">Kitchen Display Settings</h2>
+              <p className="mt-0.5 text-xs text-[var(--text-muted)]">Configure the public kitchen screen layout, sound alerts, and theme.</p>
+            </div>
+          </div>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-[0.16em]">Columns</label>
+              <select
+                value={merged.columnCount}
+                onChange={(e) => setConfigDraft((d) => ({ ...d, columnCount: Number(e.target.value) }))}
+                className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              >
+                <option value={2}>2 — New / Preparing</option>
+                <option value={3}>3 — New / Preparing / Ready</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-[0.16em]">Sound Alerts</label>
+              <select
+                value={merged.soundEnabled ? 'on' : 'off'}
+                onChange={(e) => setConfigDraft((d) => ({ ...d, soundEnabled: e.target.value === 'on' }))}
+                className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              >
+                <option value="on">On</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-[0.16em]">Alert Every (sec)</label>
+              <input
+                type="number"
+                min={10}
+                max={300}
+                step={10}
+                value={merged.alertIntervalSec}
+                onChange={(e) => setConfigDraft((d) => ({ ...d, alertIntervalSec: Number(e.target.value) }))}
+                className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-[0.16em]">Theme</label>
+              <select
+                value={merged.theme}
+                onChange={(e) => setConfigDraft((d) => ({ ...d, theme: e.target.value }))}
+                className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              >
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+              </select>
+            </div>
+          </div>
+          {Object.keys(configDraft).length > 0 && (
+            <div className="flex justify-end mt-4">
+              <button
+                className="ui-btn-primary"
+                disabled={saveConfigMut.isPending}
+                onClick={() => saveConfigMut.mutate(configDraft)}
+              >
+                {saveConfigMut.isPending ? 'Saving…' : 'Save Settings'}
+              </button>
+            </div>
+          )}
+        </SectionCardBody>
+      </SectionCard>
 
       {isLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

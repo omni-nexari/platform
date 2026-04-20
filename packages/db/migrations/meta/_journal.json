@@ -260,6 +260,13 @@
       "when": 1774092600000,
       "tag": "0036_pos_phase6",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1774094400000,
+      "tag": "0037_pos_kitchen_config",
+      "breakpoints": true
     }
   ]
 }

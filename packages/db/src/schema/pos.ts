@@ -8,9 +8,9 @@ import {
   jsonb,
   index,
 } from 'drizzle-orm/pg-core';
-import { organisations } from './auth.js';
-import { workspaces } from './workspaces.js';
-import { devices } from './devices.js';
+import { organisations } from './auth.ts';
+import { workspaces } from './workspaces.ts';
+import { devices } from './devices.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POS Menus — one active menu per workspace
@@ -223,6 +223,15 @@ export const posKioskConfig = pgTable('pos_kiosk_config', {
   qrOrderingEnabled:  boolean('qr_ordering_enabled').notNull().default(false),
   primaryColor:       text('primary_color'),
   updatedAt:          timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const posKitchenConfig = pgTable('pos_kitchen_config', {
+  workspaceId:      uuid('workspace_id').primaryKey().references(() => workspaces.id),
+  columnCount:      integer('column_count').notNull().default(3),
+  soundEnabled:     boolean('sound_enabled').notNull().default(true),
+  alertIntervalSec: integer('alert_interval_sec').notNull().default(30),
+  theme:            text('theme').notNull().default('dark'),   // 'dark' | 'light'
+  updatedAt:        timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

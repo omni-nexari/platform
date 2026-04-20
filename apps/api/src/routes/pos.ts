@@ -17,6 +17,7 @@ import {
   posRestaurants,
   posTables,
   posKioskConfig,
+  posKitchenConfig,
   posInventoryItems,
   posEmployees,
   posTimeEntries,
@@ -57,6 +58,82 @@ function authenticateDeviceRequest(
     return { deviceId: p.sub, orgId: p.orgId, workspaceId: p.workspaceId };
   } catch {
     reply.status(401).send({ error: 'Invalid or expired device token' });
+    return null;
+  }
+}
+
+// ─── Combined kiosk / display request authentication ────────────────────────
+// Accepts both hardware device JWTs (type: 'device') and display-screen JWTs (type: 'display').
+// Used for kiosk-facing routes that must work for both token kinds.
+function authenticateKioskOrDisplayRequest(
+  req: { headers: Record<string, string | string[] | undefined>; query: unknown },
+  reply: { status: (n: number) => { send: (b: unknown) => void } },
+  app: FastifyInstance,
+): { orgId: string; workspaceId: string } | null {
+  // 1. Try display token (X-Display-Token header OR ?dt= query param)
+  const xDisplayHeader = req.headers['x-display-token'];
+  const dtParam = (req.query as Record<string, string | undefined>).dt;
+  const displayToken = typeof xDisplayHeader === 'string' ? xDisplayHeader : dtParam;
+
+  if (displayToken) {
+    try {
+      const p = app.jwt.verify<{ type: string; orgId: string; workspaceId: string }>(displayToken);
+      if (p.type === 'display') return { orgId: p.orgId, workspaceId: p.workspaceId };
+    } catch { /* fall through to device token */ }
+  }
+
+  // 2. Fall back to device token (Authorization Bearer / X-Device-Token / ?token= query param)
+  const authHeader = req.headers['authorization'];
+  const xDeviceHeader = req.headers['x-device-token'];
+  const deviceToken =
+    typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7)
+      : typeof xDeviceHeader === 'string'
+        ? xDeviceHeader
+        : (req.query as Record<string, string | undefined>).token;
+
+  if (!deviceToken) {
+    reply.status(401).send({ error: 'Missing kiosk token' });
+    return null;
+  }
+  try {
+    const p = app.jwt.verify<{ sub: string; type: string; orgId: string; workspaceId: string }>(deviceToken);
+    if (p.type !== 'device') {
+      reply.status(403).send({ error: 'Invalid token type' });
+      return null;
+    }
+    return { orgId: p.orgId, workspaceId: p.workspaceId };
+  } catch {
+    reply.status(401).send({ error: 'Invalid or expired token' });
+    return null;
+  }
+}
+
+// ─── Display token helper (kiosk / kitchen public display JWT) ─────────────────
+function authenticateDisplayRequest(
+  req: { headers: Record<string, string | string[] | undefined>; query: unknown },
+  reply: { status: (n: number) => { send: (b: unknown) => void } },
+  app: FastifyInstance,
+): { workspaceId: string; orgId: string; displayType: string } | null {
+  const xHeader = req.headers['x-display-token'];
+  const token =
+    typeof xHeader === 'string'
+      ? xHeader
+      : (req.query as Record<string, string | undefined>).dt;
+
+  if (!token) {
+    reply.status(401).send({ error: 'Missing display token' });
+    return null;
+  }
+  try {
+    const p = app.jwt.verify<{ sub: string; type: string; displayType: string; orgId: string; workspaceId: string }>(token);
+    if (p.type !== 'display') {
+      reply.status(403).send({ error: 'Invalid token type' });
+      return null;
+    }
+    return { workspaceId: p.workspaceId, orgId: p.orgId, displayType: p.displayType };
+  } catch {
+    reply.status(401).send({ error: 'Invalid or expired display token' });
     return null;
   }
 }
@@ -126,6 +203,11 @@ const KioskLoyaltyRedeemSchema = z.object({
   points: z.number().int().positive(),
   orderId: z.string().uuid().optional(),
   notes: z.string().max(200).optional(),
+});
+
+const DisplayTokenTypeSchema = z.object({
+  displayType: z.enum(['kiosk', 'kitchen']),
+  workspaceId: z.string().uuid(),
 });
 
 const VALID_ACTIVE_STATUSES = ['pending', 'preparing', 'ready'] as const;
@@ -570,7 +652,7 @@ export async function posRoutes(app: FastifyInstance) {
   // ── POST /pos/orders ─────────────────────────────────────────────────────────
   // Device token auth — kiosk creates a new order
   app.post('/orders', async (req, reply) => {
-    const auth = authenticateDeviceRequest(req as never, reply as never, app);
+    const auth = authenticateKioskOrDisplayRequest(req as never, reply as never, app);
     if (!auth) return;
 
     const parsed = CreateOrderSchema.safeParse(req.body);
@@ -857,6 +939,57 @@ export async function posRoutes(app: FastifyInstance) {
     return reply.send(config);
   });
 
+  // ─── Kitchen config ────────────────────────────────────────────────────────
+
+  app.get('/kitchen-config', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    const config = await db.query.posKitchenConfig.findFirst({
+      where: eq(posKitchenConfig.workspaceId, workspaceId),
+    });
+    return reply.send(config ?? null);
+  });
+
+  app.put('/kitchen-config', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    const body = req.body as {
+      columnCount?: number;
+      soundEnabled?: boolean;
+      alertIntervalSec?: number;
+      theme?: string;
+    };
+    const [config] = await db
+      .insert(posKitchenConfig)
+      .values({ workspaceId, ...body, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: posKitchenConfig.workspaceId,
+        set: { ...body, updatedAt: new Date() },
+      })
+      .returning();
+    return reply.send(config);
+  });
+
+  // Public kitchen config — display-token authenticated, used by KitchenDisplayPage
+  app.get('/kiosk/kitchen-config', async (req, reply) => {
+    const auth = authenticateDisplayRequest(req as never, reply as never, app);
+    if (!auth) return;
+    const config = await db.query.posKitchenConfig.findFirst({
+      where: eq(posKitchenConfig.workspaceId, auth.workspaceId),
+    });
+    return reply.send(config ?? null);
+  });
+
+  // Public kiosk config — display-token authenticated, used by KioskDisplayPage
+  app.get('/kiosk/kiosk-config', async (req, reply) => {
+    const auth = authenticateDisplayRequest(req as never, reply as never, app);
+    if (!auth) return;
+    const config = await db.query.posKioskConfig.findFirst({
+      where: eq(posKioskConfig.workspaceId, auth.workspaceId),
+    });
+    return reply.send(config ?? null);
+  });
+
   // ─── Store status + today's special ────────────────────────────────────────
 
   app.get('/store/status', async (req, reply) => {
@@ -983,17 +1116,65 @@ export async function posRoutes(app: FastifyInstance) {
     return reply.status(204).send();
   });
 
+  // ─── Kitchen display device routes (display-token authenticated) ────────────
+
+  app.get('/kiosk/kitchen-orders', async (req, reply) => {
+    const auth = authenticateDisplayRequest(req as never, reply as never, app);
+    if (!auth) return;
+    if (auth.displayType !== 'kitchen') {
+      return reply.status(403).send({ error: 'This token is not a kitchen display token' });
+    }
+
+    const orders = await db.query.posOrders.findMany({
+      where: and(
+        eq(posOrders.workspaceId, auth.workspaceId),
+        inArray(posOrders.status, ['pending', 'preparing', 'ready']),
+        isNull(posOrders.deletedAt),
+      ),
+      with: { items: true },
+      orderBy: (t, { asc }) => [asc(t.createdAt)],
+    });
+    return reply.send(orders);
+  });
+
+  app.patch('/kiosk/kitchen-orders/:orderId/status', async (req, reply) => {
+    const auth = authenticateDisplayRequest(req as never, reply as never, app);
+    if (!auth) return;
+    if (auth.displayType !== 'kitchen') {
+      return reply.status(403).send({ error: 'This token is not a kitchen display token' });
+    }
+
+    const { orderId } = req.params as { orderId: string };
+    const parsed = UpdateOrderStatusSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid status', details: parsed.error.flatten() });
+    }
+
+    const order = await db.query.posOrders.findFirst({
+      where: and(eq(posOrders.id, orderId), eq(posOrders.workspaceId, auth.workspaceId)),
+    });
+    if (!order) return reply.status(404).send({ error: 'Order not found' });
+
+    const [updated] = await db
+      .update(posOrders)
+      .set({ status: parsed.data.status, updatedAt: new Date() })
+      .where(eq(posOrders.id, orderId))
+      .returning();
+
+    broadcastKitchenEvent(auth.workspaceId, { type: 'order_updated', order: updated });
+    return reply.send(updated);
+  });
+
   // ─── Kiosk device utility routes ───────────────────────────────────────────
 
   app.get('/kiosk/loyalty/settings', async (req, reply) => {
-    const { workspaceId } = req.query as { workspaceId?: string };
-    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
-
-    return reply.send(await getLoyaltyConfig(workspaceId));
+    const auth = authenticateDisplayRequest(req as never, reply as never, app);
+    if (!auth) return;
+    return reply.send(await getLoyaltyConfig(auth.workspaceId, auth.orgId));
   });
 
   app.post('/kiosk/loyalty/verify', async (req, reply) => {
-    const auth = authenticateDeviceRequest(req as never, reply as never, app);
+    const auth = authenticateKioskOrDisplayRequest(req as never, reply as never, app);
     if (!auth) return;
 
     const parsed = KioskLoyaltyVerifySchema.safeParse(req.body);
@@ -1005,7 +1186,7 @@ export async function posRoutes(app: FastifyInstance) {
   });
 
   app.post('/kiosk/loyalty/redeem', async (req, reply) => {
-    const auth = authenticateDeviceRequest(req as never, reply as never, app);
+    const auth = authenticateKioskOrDisplayRequest(req as never, reply as never, app);
     if (!auth) return;
 
     const parsed = KioskLoyaltyRedeemSchema.safeParse(req.body);
@@ -2261,5 +2442,86 @@ export async function posRoutes(app: FastifyInstance) {
     const [updated] = await db.update(posPurchaseOrders).set(set).where(eq(posPurchaseOrders.id, id)).returning();
     if (!updated) return reply.status(404).send({ error: 'Purchase order not found' });
     return reply.send(updated);
+  });
+
+  // ─── Display Tokens ─────────────────────────────────────────────────────────
+  // Generate JWT tokens for public-display devices (kiosk screens, kitchen displays)
+  // that cannot use session cookies. Tokens are workspace-scoped and stored in
+  // posRestaurants.settings.displayTokens so they can be revoked by regeneration.
+
+  app.get('/mgmt/display-tokens', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const restaurant = await db.query.posRestaurants.findFirst({
+      where: and(eq(posRestaurants.workspaceId, workspaceId), eq(posRestaurants.orgId, user.orgId)),
+      columns: { settings: true },
+    });
+    const tokens = getSettingsObject(getSettingsObject(restaurant?.settings)['displayTokens']);
+
+    return reply.send({
+      kiosk:   typeof tokens['kiosk']   === 'string' ? tokens['kiosk']   : null,
+      kitchen: typeof tokens['kitchen'] === 'string' ? tokens['kitchen'] : null,
+    });
+  });
+
+  app.post('/mgmt/display-tokens', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const parsed = DisplayTokenTypeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
+    }
+    const { displayType, workspaceId } = parsed.data;
+
+    const token = app.jwt.sign(
+      { sub: workspaceId, type: 'display', displayType, orgId: user.orgId, workspaceId },
+      { expiresIn: '87600h' },  // 10 years
+    );
+
+    await upsertRestaurantSettings(workspaceId, user.orgId, {
+      displayTokens: {
+        ...getSettingsObject(
+          getSettingsObject(
+            (await db.query.posRestaurants.findFirst({
+              where: and(eq(posRestaurants.workspaceId, workspaceId), eq(posRestaurants.orgId, user.orgId)),
+              columns: { settings: true },
+            }))?.settings,
+          )['displayTokens'],
+        ),
+        [displayType]: token,
+      },
+    });
+
+    return reply.status(201).send({ token, displayType });
+  });
+
+  // DELETE regenerates (invalidates old, issues new)
+  app.delete('/mgmt/display-tokens/:displayType', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { displayType } = req.params as { displayType: string };
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (displayType !== 'kiosk' && displayType !== 'kitchen') {
+      return reply.status(400).send({ error: 'displayType must be kiosk or kitchen' });
+    }
+
+    const token = app.jwt.sign(
+      { sub: workspaceId, type: 'display', displayType, orgId: user.orgId, workspaceId },
+      { expiresIn: '87600h' },
+    );
+
+    const existing = await db.query.posRestaurants.findFirst({
+      where: and(eq(posRestaurants.workspaceId, workspaceId), eq(posRestaurants.orgId, user.orgId)),
+      columns: { settings: true },
+    });
+    await upsertRestaurantSettings(workspaceId, user.orgId, {
+      displayTokens: {
+        ...getSettingsObject(getSettingsObject(existing?.settings)['displayTokens']),
+        [displayType]: token,
+      },
+    });
+
+    return reply.send({ token, displayType });
   });
 }

@@ -5,10 +5,14 @@ import { toast } from 'sonner';
 import {
   Activity,
   ArrowUpRight,
+  ChefHat,
   Clock3,
+  Copy,
   Cpu,
   Heart,
+  Monitor,
   RefreshCw,
+  RotateCcw,
   Smartphone,
   Wifi,
   WifiOff,
@@ -91,6 +95,11 @@ interface KioskRedeemResponse {
   tier: LoyaltyCustomer['tier'];
 }
 
+interface DisplayTokens {
+  kiosk: string | null;
+  kitchen: string | null;
+}
+
 const TIER_TONE = {
   bronze: 'neutral',
   silver: 'accent',
@@ -124,6 +133,40 @@ export default function PosKioskPage() {
   const [lookupEmail, setLookupEmail] = useState('');
   const [verifyResult, setVerifyResult] = useState<KioskVerifyResponse | null>(null);
   const [redeemPoints, setRedeemPoints] = useState('');
+  const [copiedType, setCopiedType] = useState<'kiosk' | 'kitchen' | null>(null);
+
+  const { data: displayTokens, refetch: refetchTokens } = useQuery<DisplayTokens>({
+    queryKey: ['pos-display-tokens', wsId],
+    queryFn: () => api.get(`/pos/mgmt/display-tokens?workspaceId=${wsId}`),
+    enabled: !!wsId,
+  });
+
+  const generateTokenMut = useMutation({
+    mutationFn: (displayType: 'kiosk' | 'kitchen') =>
+      api.post<{ token: string; displayType: string }>('/pos/mgmt/display-tokens', { workspaceId: wsId, displayType }),
+    onSuccess: () => { void refetchTokens(); },
+    onError: () => toast.error('Failed to generate display token'),
+  });
+
+  const regenerateTokenMut = useMutation({
+    mutationFn: (displayType: 'kiosk' | 'kitchen') =>
+      api.delete<{ token: string; displayType: string }>(`/pos/mgmt/display-tokens/${displayType}?workspaceId=${wsId}`),
+    onSuccess: () => { void refetchTokens(); toast.success('Token regenerated — update the display URL on your device'); },
+    onError: () => toast.error('Failed to regenerate display token'),
+  });
+
+  function buildDisplayUrl(type: 'kiosk' | 'kitchen', token: string) {
+    const base = window.location.origin;
+    return type === 'kiosk'
+      ? `${base}/kiosk/${wsId}/portrait?dt=${token}`
+      : `${base}/kitchen/${wsId}?dt=${token}`;
+  }
+
+  async function handleCopy(type: 'kiosk' | 'kitchen', token: string) {
+    await navigator.clipboard.writeText(buildDisplayUrl(type, token));
+    setCopiedType(type);
+    setTimeout(() => setCopiedType(null), 2000);
+  }
 
   const { data: devices = [], isLoading: devicesLoading } = useQuery<DeviceListItem[]>({
     queryKey: ['devices', wsId],
@@ -231,6 +274,127 @@ export default function PosKioskPage() {
           ) : undefined
         }
       />
+
+      {/* ── Display URLs ─────────────────────────────────────────── */}
+      <SectionCard>
+        <SectionCardHeader>
+          <div>
+            <h2 className="text-sm font-semibold text-[var(--text)]">Display URLs</h2>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">Generate long-lived tokens for kiosk and kitchen screens. Share the URL or scan the QR code on the display device.</p>
+          </div>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Kiosk */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Monitor className="h-4 w-4 text-[var(--accent)]" />
+                <span className="text-sm font-semibold text-[var(--text)]">Kiosk Display</span>
+              </div>
+              {displayTokens?.kiosk ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <input
+                      readOnly
+                      value={buildDisplayUrl('kiosk', displayTokens.kiosk)}
+                      className="flex-1 truncate rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-muted)] outline-none"
+                    />
+                    <button
+                      className="ui-btn-secondary shrink-0 flex items-center gap-1.5 text-xs"
+                      onClick={() => void handleCopy('kiosk', displayTokens.kiosk!)}
+                    >
+                      <Copy className="h-3.5 w-3.5" />{copiedType === 'kiosk' ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                  <div className="flex items-start gap-4">
+                    <img
+                      src={`https://chart.apis.google.com/chart?chs=160x160&cht=qr&chl=${encodeURIComponent(buildDisplayUrl('kiosk', displayTokens.kiosk))}`}
+                      alt="Kiosk QR code"
+                      className="h-[100px] w-[100px] rounded-xl border border-[var(--border)]"
+                    />
+                    <button
+                      className="ui-btn-secondary flex items-center gap-1.5 text-xs mt-1"
+                      disabled={regenerateTokenMut.isPending}
+                      onClick={() => {
+                        if (window.confirm('Regenerate kiosk token? The current URL will stop working.')) {
+                          regenerateTokenMut.mutate('kiosk');
+                        }
+                      }}
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />Regenerate
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs text-[var(--text-muted)]">No kiosk display token yet.</p>
+                  <button
+                    className="ui-btn-primary self-start flex items-center gap-1.5"
+                    disabled={generateTokenMut.isPending}
+                    onClick={() => generateTokenMut.mutate('kiosk')}
+                  >
+                    <Monitor className="h-4 w-4" />{generateTokenMut.isPending ? 'Generating…' : 'Generate Kiosk URL'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Kitchen */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <ChefHat className="h-4 w-4 text-[var(--accent)]" />
+                <span className="text-sm font-semibold text-[var(--text)]">Kitchen Display</span>
+              </div>
+              {displayTokens?.kitchen ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <input
+                      readOnly
+                      value={buildDisplayUrl('kitchen', displayTokens.kitchen)}
+                      className="flex-1 truncate rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-muted)] outline-none"
+                    />
+                    <button
+                      className="ui-btn-secondary shrink-0 flex items-center gap-1.5 text-xs"
+                      onClick={() => void handleCopy('kitchen', displayTokens.kitchen!)}
+                    >
+                      <Copy className="h-3.5 w-3.5" />{copiedType === 'kitchen' ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                  <div className="flex items-start gap-4">
+                    <img
+                      src={`https://chart.apis.google.com/chart?chs=160x160&cht=qr&chl=${encodeURIComponent(buildDisplayUrl('kitchen', displayTokens.kitchen))}`}
+                      alt="Kitchen QR code"
+                      className="h-[100px] w-[100px] rounded-xl border border-[var(--border)]"
+                    />
+                    <button
+                      className="ui-btn-secondary flex items-center gap-1.5 text-xs mt-1"
+                      disabled={regenerateTokenMut.isPending}
+                      onClick={() => {
+                        if (window.confirm('Regenerate kitchen token? The current URL will stop working.')) {
+                          regenerateTokenMut.mutate('kitchen');
+                        }
+                      }}
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />Regenerate
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs text-[var(--text-muted)]">No kitchen display token yet.</p>
+                  <button
+                    className="ui-btn-primary self-start flex items-center gap-1.5"
+                    disabled={generateTokenMut.isPending}
+                    onClick={() => generateTokenMut.mutate('kitchen')}
+                  >
+                    <ChefHat className="h-4 w-4" />{generateTokenMut.isPending ? 'Generating…' : 'Generate Kitchen URL'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </SectionCardBody>
+      </SectionCard>
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.05fr)_minmax(340px,0.95fr)] gap-6">
         <SectionCard>
