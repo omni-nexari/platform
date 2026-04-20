@@ -49,9 +49,16 @@ export default function PosKitchenPage() {
     function connect() {
       if (unmounted) return;
       try {
-        const url = buildWebSocketUrl(`/api/pos/ws/kitchen?workspaceId=${wsId}`);
+        const url = buildWebSocketUrl(`/pos/ws/kitchen?workspaceId=${wsId}`);
         const ws = new WebSocket(url);
         wsRef.current = ws;
+
+        // If the effect was cleaned up while the socket was still CONNECTING,
+        // close it once the handshake completes to avoid the "closed before
+        // connection established" browser error.
+        ws.addEventListener('open', () => {
+          if (unmounted) { ws.close(); return; }
+        });
 
         ws.addEventListener('message', () => {
           // Any kitchen event → immediately refetch
@@ -59,12 +66,13 @@ export default function PosKitchenPage() {
         });
 
         ws.addEventListener('close', () => {
-          wsRef.current = null;
+          if (wsRef.current === ws) wsRef.current = null;
           if (!unmounted) reconnectTimer = setTimeout(connect, 5_000);
         });
 
         ws.addEventListener('error', () => {
-          ws.close();
+          // Don't call ws.close() here — the browser fires 'close' right after
+          // 'error', which triggers the reconnect logic above.
         });
       } catch {
         if (!unmounted) reconnectTimer = setTimeout(connect, 5_000);
@@ -76,8 +84,10 @@ export default function PosKitchenPage() {
     return () => {
       unmounted = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      wsRef.current?.close();
+      const ws = wsRef.current;
       wsRef.current = null;
+      // Only close OPEN sockets; CONNECTING ones are handled by the open handler.
+      if (ws && ws.readyState === WebSocket.OPEN) ws.close();
     };
   }, [wsId, queryClient]);
 

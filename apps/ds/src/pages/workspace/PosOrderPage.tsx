@@ -233,9 +233,10 @@ export default function PosOrderPage() {
     queryFn: () => api.get(`/pos/tables?workspaceId=${wsId}`),
   });
 
-  const { data: menu, isLoading: menuLoading } = useQuery<Menu>({
+  const { data: menu, isLoading: menuLoading, isError: menuError } = useQuery<Menu>({
     queryKey: ['pos-menu-full', wsId],
     queryFn: () => api.get(`/pos/menu?workspaceId=${wsId}`),
+    retry: false,
   });
 
   const categories = menu?.categories ?? [];
@@ -421,6 +422,16 @@ export default function PosOrderPage() {
                   {Array.from({ length: 6 }).map((_, i) => (
                     <Skeleton key={i} className="h-28 rounded-xl" />
                   ))}
+                </div>
+              ) : menuError ? (
+                <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
+                  <p className="text-[var(--text-muted)] text-sm">No active menu found for this workspace.</p>
+                  <button
+                    onClick={() => navigate(`/workspaces/${wsId}/pos/menu`)}
+                    className="ui-btn-primary text-sm"
+                  >
+                    Set up Menu
+                  </button>
                 </div>
               ) : !activeCategory || activeCategory.items.length === 0 ? (
                 <EmptyState title="No items" subtitle="This category has no available items." />
