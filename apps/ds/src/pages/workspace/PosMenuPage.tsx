@@ -542,7 +542,7 @@ export default function PosMenuPage() {
                   value={newCatName}
                   onChange={(e) => setNewCatName(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && newCatName.trim()) createCategoryMut.mutate({ name: newCatName.trim(), color: newCatColor ?? undefined });
+                    if (e.key === 'Enter' && newCatName.trim()) createCategoryMut.mutate({ name: newCatName.trim(), ...(newCatColor ? { color: newCatColor } : {}) });
                     if (e.key === 'Escape') { setCreatingCategory(false); setNewCatName(''); setNewCatColor(null); }
                   }}
                   autoFocus
@@ -568,7 +568,7 @@ export default function PosMenuPage() {
                       <X className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={() => newCatName.trim() && createCategoryMut.mutate({ name: newCatName.trim(), color: newCatColor ?? undefined })}
+                      onClick={() => newCatName.trim() && createCategoryMut.mutate({ name: newCatName.trim(), ...(newCatColor ? { color: newCatColor } : {}) })}
                       disabled={!newCatName.trim() || createCategoryMut.isPending}
                       className="p-1 rounded-lg text-[var(--blue)] hover:bg-[var(--blue)]/10 disabled:opacity-30 transition-colors"
                     >
@@ -974,7 +974,7 @@ function NewItemModal({
       name: name.trim(),
       priceCents: Math.round(parseFloat(price) * 100),
       description: description.trim() || null,
-      tags: tags.length > 0 ? tags : undefined,
+      ...(tags.length > 0 ? { tags } : {}),
     });
     setName('');
     setPrice('');
