@@ -1166,9 +1166,26 @@ export async function posRoutes(app: FastifyInstance) {
   // ─── Kiosk device utility routes ───────────────────────────────────────────
 
   app.get('/kiosk/loyalty/settings', async (req, reply) => {
-    const auth = authenticateDisplayRequest(req as never, reply as never, app);
-    if (!auth) return;
-    return reply.send(await getLoyaltyConfig(auth.workspaceId, auth.orgId));
+    const query = req.query as Record<string, string | undefined>;
+
+    // Accept display token (display screens) OR session cookie (management portal)
+    const dtToken = (req.headers as Record<string, string | undefined>)['x-display-token'] ?? query.dt;
+    if (dtToken) {
+      const auth = authenticateDisplayRequest(req as never, reply as never, app);
+      if (!auth) return;
+      return reply.send(await getLoyaltyConfig(auth.workspaceId, auth.orgId));
+    }
+
+    // Fall back to session auth (management page calling without a display token)
+    try {
+      await (app.authenticate as (req: unknown, reply: unknown) => Promise<void>)(req, reply);
+    } catch {
+      return reply.status(401).send({ error: 'Unauthorized' });
+    }
+    const user = req.user as AuthUser;
+    const workspaceId = query.workspaceId;
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    return reply.send(await getLoyaltyConfig(workspaceId, user.orgId));
   });
 
   app.post('/kiosk/loyalty/verify', async (req, reply) => {

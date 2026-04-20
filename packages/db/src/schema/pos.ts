@@ -8,6 +8,7 @@ import {
   jsonb,
   index,
 } from 'drizzle-orm/pg-core';
+import { relations } from 'drizzle-orm';
 import { organisations } from './auth.js';
 import { workspaces } from './workspaces.js';
 import { devices } from './devices.js';
@@ -414,3 +415,14 @@ export const posPayments = pgTable('pos_payments', {
   reference:   text('reference'),   // card auth code, receipt #, etc.
   createdAt:   timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Relations
+// ─────────────────────────────────────────────────────────────────────────────
+export const posOrdersRelations = relations(posOrders, ({ many }) => ({
+  items: many(posOrderItems),
+}));
+
+export const posOrderItemsRelations = relations(posOrderItems, ({ one }) => ({
+  order: one(posOrders, { fields: [posOrderItems.orderId], references: [posOrders.id] }),
+}));

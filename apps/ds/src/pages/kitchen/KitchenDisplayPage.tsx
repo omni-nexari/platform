@@ -269,7 +269,7 @@ export default function KitchenDisplayPage() {
         {/* NEW ORDERS */}
         <div style={{ ...S.column, borderColor: T.border }}>
           <div style={{ ...S.columnHeader, borderColor: '#f59e0b' }}>
-            <span style={{ color: '#f59e0b' }}>ðŸŸ¡ NEW ORDERS</span>
+            <span style={{ color: '#f59e0b' }}>NEW ORDERS</span>
             <span style={{ ...S.columnCount, background: T.badge, color: T.text }}>{pending.length}</span>
           </div>
           <div style={S.cardList}>
@@ -287,7 +287,7 @@ export default function KitchenDisplayPage() {
         {/* PREPARING */}
         <div style={{ ...S.column, borderColor: T.border }}>
           <div style={{ ...S.columnHeader, borderColor: '#3a7bff' }}>
-            <span style={{ color: '#3a7bff' }}>ðŸ”µ PREPARING</span>
+            <span style={{ color: '#3a7bff' }}>PREPARING</span>
             <span style={{ ...S.columnCount, background: T.badge, color: T.text }}>{preparing.length}</span>
           </div>
           <div style={S.cardList}>
@@ -306,7 +306,7 @@ export default function KitchenDisplayPage() {
         {showReady && (
           <div style={{ ...S.column, borderColor: T.border }}>
             <div style={{ ...S.columnHeader, borderColor: '#22c55e' }}>
-              <span style={{ color: '#22c55e' }}>ðŸŸ¢ READY</span>
+              <span style={{ color: '#22c55e' }}>READY</span>
               <span style={{ ...S.columnCount, background: T.badge, color: T.text }}>{ready.length}</span>
             </div>
             <div style={S.cardList}>
@@ -359,7 +359,7 @@ function OrderCard({ order, updating, theme: T, primaryAction, secondaryAction, 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {order.items.map((item) => (
           <div key={item.id} style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-            <span style={{ fontSize: 16, fontWeight: 800, color: '#4ff2d1', minWidth: 36, textAlign: 'right' }}>Ã—{item.quantity}</span>
+            <span style={{ fontSize: 16, fontWeight: 800, color: '#4ff2d1', minWidth: 36, textAlign: 'right' }}>x{item.quantity}</span>
             <span style={{ fontSize: 18, fontWeight: 600 }}>{item.itemName}</span>
             {item.notes && <span style={{ fontSize: 13, color: T.itemNote, fontStyle: 'italic' }}>{item.notes}</span>}
           </div>

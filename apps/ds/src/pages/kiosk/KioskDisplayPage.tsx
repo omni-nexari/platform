@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router';
 
 // â”€â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -316,7 +316,11 @@ export default function KioskDisplayPage() {
         <div style={S.centered}>
           {kioskConfig?.logoUrl
             ? <img src={kioskConfig.logoUrl} alt="Logo" style={{ height: 80, objectFit: 'contain', marginBottom: 16 }} />
-            : <div style={{ fontSize: 64, marginBottom: 16 }}>ðŸ½ï¸</div>}
+            : (
+              <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke={primaryColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 16 }}>
+                <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2" /><path d="M7 2v20" /><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7" />
+              </svg>
+            )}
           <h1 style={{ fontSize: 48, fontWeight: 900, color: primaryColor }}>
             {kioskConfig?.welcomeMessage ?? 'Touch to Order'}
           </h1>
@@ -331,7 +335,9 @@ export default function KioskDisplayPage() {
     return (
       <div style={{ ...S.root, background: '#0b0d11' }}>
         <div style={S.centered}>
-          <div style={{ fontSize: 80 }}>ðŸ”’</div>
+          <svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="#ff3ea5" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 16 }}>
+            <circle cx="12" cy="12" r="10" /><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+          </svg>
           <h1 style={{ fontSize: 40, fontWeight: 800 }}>We're Closed</h1>
           {storeStatus.note && <p style={{ fontSize: 18, color: '#7a8299' }}>{storeStatus.note}</p>}
         </div>
@@ -355,7 +361,9 @@ export default function KioskDisplayPage() {
     return (
       <div style={S.root}>
         <div style={S.centered}>
-          <div style={{ fontSize: 72 }}>âš </div>
+          <svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="#ff3ea5" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 8 }}>
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
           <h2 style={S.errorTitle}>Menu Unavailable</h2>
           <p style={S.errorMsg}>{error ?? 'No active menu found.'}</p>
           <button style={{ ...S.retryBtn, background: primaryColor }} onClick={() => void loadAll()}>Retry</button>
@@ -369,8 +377,10 @@ export default function KioskDisplayPage() {
     return (
       <div style={S.root}>
         <div style={S.centered}>
-          <div style={{ fontSize: 80 }}>âœ…</div>
-          <h1 style={{ fontSize: 40, fontWeight: 800, marginTop: 24 }}>Order Placed!</h1>
+          <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 8 }}>
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
+          </svg>
+          <h1 style={{ fontSize: 40, fontWeight: 800, marginTop: 16 }}>Order Placed!</h1>
           <div style={{ fontSize: 96, fontWeight: 900, color: accentColor, textShadow: '0 0 32px rgba(79,242,209,0.4)' }}>
             #{String(orderPlaced.orderNumber).padStart(3, '0')}
           </div>
@@ -391,7 +401,10 @@ export default function KioskDisplayPage() {
           <span style={S.headerTitle}>{menu.name}</span>
         </div>
         <button style={{ ...S.cartBtn, background: primaryColor }} onClick={() => setCartOpen(true)}>
-          ðŸ›’{cartCount > 0 ? <span style={{ ...S.cartBadge, background: accentColor }}>{cartCount}</span> : null}
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+          </svg>
+          {cartCount > 0 ? <span style={{ ...S.cartBadge, background: accentColor }}>{cartCount}</span> : null}
           {formatPrice(cartTotal, menu.currency)}
         </button>
       </div>
@@ -423,7 +436,7 @@ export default function KioskDisplayPage() {
               </div>
               <div style={{ ...S.itemPrice, color: accentColor }}>{formatPrice(item.priceCents, menu.currency)}</div>
             </div>
-            <div style={{ ...S.addIcon, background: primaryColor }}>ï¼‹</div>
+            <div style={{ ...S.addIcon, background: primaryColor }}>+</div>
           </button>
         ))}
       </div>
@@ -499,10 +512,10 @@ export default function KioskDisplayPage() {
                     <div style={{ ...S.cartItemPrice, color: accentColor }}>{formatPrice(c.lineTotalCents, menu.currency)}</div>
                   </div>
                   <div style={S.qtyRow}>
-                    <button style={S.qtyBtn} onClick={() => updateQty(idx, -1)}>âˆ’</button>
+                    <button style={S.qtyBtn} onClick={() => updateQty(idx, -1)}>-</button>
                     <span style={S.qtyNum}>{c.quantity}</span>
-                    <button style={S.qtyBtn} onClick={() => updateQty(idx, +1)}>ï¼‹</button>
-                    <button style={{ ...S.qtyBtn, color: '#ff3ea5' }} onClick={() => removeFromCart(idx)}>âœ•</button>
+                    <button style={S.qtyBtn} onClick={() => updateQty(idx, +1)}>+</button>
+                    <button style={{ ...S.qtyBtn, color: '#ff3ea5' }} onClick={() => removeFromCart(idx)}>x</button>
                   </div>
                 </div>
               ))}
