@@ -742,7 +742,6 @@ export async function posRoutes(app: FastifyInstance) {
       .values({
         orgId:        menu.orgId,
         workspaceId,
-        deviceId:     auth.deviceId,
         orderNumber,
         status:       'pending',
         totalCents,
@@ -1129,7 +1128,6 @@ export async function posRoutes(app: FastifyInstance) {
       where: and(
         eq(posOrders.workspaceId, auth.workspaceId),
         inArray(posOrders.status, ['pending', 'preparing', 'ready']),
-        isNull(posOrders.deletedAt),
       ),
       with: { items: true },
       orderBy: (t, { asc }) => [asc(t.createdAt)],

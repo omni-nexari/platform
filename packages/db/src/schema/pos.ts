@@ -8,9 +8,9 @@ import {
   jsonb,
   index,
 } from 'drizzle-orm/pg-core';
-import { organisations } from './auth.ts';
-import { workspaces } from './workspaces.ts';
-import { devices } from './devices.ts';
+import { organisations } from './auth.js';
+import { workspaces } from './workspaces.js';
+import { devices } from './devices.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POS Menus — one active menu per workspace
