@@ -4,6 +4,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   ShoppingCart, Plus, Minus, Trash2, UtensilsCrossed, ChevronRight,
+  LayoutGrid, Users, X,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { Badge, EmptyState, PageHeader, Skeleton } from '../../components/UiPrimitives.js';
@@ -14,6 +15,7 @@ interface PosTable {
   id: string;
   number: number;
   name: string | null;
+  seats: number;
   location: string | null;
   status: string;
 }
@@ -70,6 +72,141 @@ function fmt(cents: number, currency = 'USD') {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100);
 }
 
+// ─── Table Picker Modal ───────────────────────────────────────────────────────
+
+function TablePickerModal({
+  tables,
+  onSelect,
+  onClose,
+}: {
+  tables: PosTable[];
+  onSelect: (table: PosTable) => void;
+  onClose: () => void;
+}) {
+  const [locationFilter, setLocationFilter] = useState<string>('all');
+
+  const locations = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const t of tables) {
+      if (t.location && !seen.has(t.location)) { seen.add(t.location); out.push(t.location); }
+    }
+    return out;
+  }, [tables]);
+
+  const filtered = locationFilter === 'all'
+    ? tables
+    : tables.filter((t) => t.location === locationFilter);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl bg-[var(--bg)] rounded-2xl border border-[var(--border)] shadow-2xl overflow-hidden flex flex-col"
+        style={{ maxHeight: '85vh' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] shrink-0">
+          <h2 className="font-semibold text-[var(--text)] flex items-center gap-2">
+            <LayoutGrid size={18} />
+            Pick a Table
+          </h2>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-[var(--surface)] text-[var(--text-muted)] transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Location filter chips */}
+        {locations.length > 0 && (
+          <div className="flex items-center gap-2 px-5 py-3 border-b border-[var(--border)] flex-wrap shrink-0">
+            {['all', ...locations].map((loc) => (
+              <button
+                key={loc}
+                onClick={() => setLocationFilter(loc)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors capitalize ${
+                  locationFilter === loc
+                    ? 'bg-[var(--accent)] text-white'
+                    : 'bg-[var(--surface)] text-[var(--text-muted)] hover:bg-[var(--surface-raised)]'
+                }`}
+              >
+                {loc === 'all' ? 'All Zones' : loc}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Table grid */}
+        <div className="p-5 overflow-y-auto flex-1">
+          {filtered.length === 0 ? (
+            <div className="text-center py-12 text-[var(--text-muted)] text-sm">No tables in this zone</div>
+          ) : (
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
+              {filtered.map((table) => {
+                const isAvailable = table.status === 'available';
+                const isOccupied  = table.status === 'occupied';
+                return (
+                  <button
+                    key={table.id}
+                    onClick={() => isAvailable && onSelect(table)}
+                    disabled={!isAvailable}
+                    className={`flex flex-col items-center gap-1.5 rounded-xl border-2 p-3 transition-all ${
+                      isAvailable
+                        ? 'border-emerald-500 bg-emerald-500/5 hover:bg-emerald-500/15 hover:scale-105 cursor-pointer'
+                        : isOccupied
+                        ? 'border-amber-400 bg-amber-400/5 opacity-70 cursor-not-allowed'
+                        : 'border-[var(--border)] bg-[var(--surface)] opacity-50 cursor-not-allowed'
+                    }`}
+                  >
+                    <span className={`text-2xl font-bold leading-none ${
+                      isAvailable ? 'text-emerald-500' : isOccupied ? 'text-amber-500' : 'text-[var(--text-muted)]'
+                    }`}>
+                      {table.number}
+                    </span>
+                    {table.name && (
+                      <span className="text-[10px] text-[var(--text-muted)] truncate w-full text-center leading-tight">{table.name}</span>
+                    )}
+                    <div className="flex items-center gap-1 text-[var(--text-muted)]">
+                      <Users size={10} />
+                      <span className="text-[10px]">{table.seats ?? 4}</span>
+                    </div>
+                    <span className={`text-[9px] font-bold uppercase tracking-wider ${
+                      isAvailable ? 'text-emerald-500' : isOccupied ? 'text-amber-500' : 'text-[var(--text-muted)]'
+                    }`}>
+                      {table.status}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Legend */}
+        <div className="flex items-center gap-5 px-5 py-3 border-t border-[var(--border)] bg-[var(--surface-raised)] shrink-0">
+          <div className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+            <div className="w-3 h-3 rounded border-2 border-emerald-500" />
+            Available
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+            <div className="w-3 h-3 rounded border-2 border-amber-400" />
+            Occupied
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+            <div className="w-3 h-3 rounded border-2 border-[var(--border)]" />
+            Reserved
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function cartLineTotal(line: CartLine) {
   const modTotal = line.selectedModifiers.reduce((s, m) => s + m.priceCents, 0);
   return (line.priceCents + modTotal) * line.quantity;
@@ -83,6 +220,7 @@ export default function PosOrderPage() {
 
   const [orderType, setOrderType] = useState<OrderType>('dine-in');
   const [selectedTableId, setSelectedTableId] = useState<string>('');
+  const [showTablePicker, setShowTablePicker] = useState(false);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
   const [cart, setCart] = useState<CartLine[]>([]);
   const [customerName, setCustomerName] = useState('');
@@ -206,18 +344,41 @@ export default function PosOrderPage() {
             </div>
 
             {orderType === 'dine-in' && (
-              <select
-                value={selectedTableId}
-                onChange={(e) => setSelectedTableId(e.target.value)}
-                className="text-sm px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
-              >
-                <option value="">— Select table —</option>
-                {tables.map((t) => (
-                  <option key={t.id} value={t.id} disabled={t.status === 'occupied'}>
-                    Table {t.number}{t.name ? ` (${t.name})` : ''}{t.status === 'occupied' ? ' [occupied]' : ''}
-                  </option>
-                ))}
-              </select>
+              <>
+                <button
+                  onClick={() => setShowTablePicker(true)}
+                  className={`flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border transition-colors ${
+                    selectedTableId
+                      ? 'border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                      : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] hover:bg-[var(--surface-raised)]'
+                  }`}
+                >
+                  <LayoutGrid size={14} />
+                  {selectedTableId
+                    ? (() => {
+                        const t = tables.find((tb) => tb.id === selectedTableId);
+                        return t ? `Table ${t.number}${t.name ? ` · ${t.name}` : ''}` : 'Table selected';
+                      })()
+                    : 'Pick Table'
+                  }
+                </button>
+                {selectedTableId && (
+                  <button
+                    onClick={() => setSelectedTableId('')}
+                    className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors"
+                    title="Clear table selection"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+                {showTablePicker && (
+                  <TablePickerModal
+                    tables={tables}
+                    onSelect={(t) => { setSelectedTableId(t.id); setShowTablePicker(false); }}
+                    onClose={() => setShowTablePicker(false)}
+                  />
+                )}
+              </>
             )}
 
             <input

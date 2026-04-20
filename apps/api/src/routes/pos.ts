@@ -93,6 +93,7 @@ const MarkOrderPaidSchema = z.object({
   amountCents: z.number().int().min(0).optional(),
   tipCents: z.number().int().min(0).default(0),
   reference: z.string().max(100).optional(),
+  loyaltyCustomerId: z.string().uuid().optional(),
 });
 
 const UpdateStoreStatusSchema = z.object({
@@ -387,6 +388,45 @@ export async function posRoutes(app: FastifyInstance) {
     }));
   }
 
+
+  // ── Kitchen WebSocket registry ───────────────────────────────────────────────
+  // Map of workspaceId → Set of connected WebSocket clients
+  const kitchenClients = new Map<string, Set<import('@fastify/websocket').WebSocket>>();
+
+  function broadcastKitchenEvent(workspaceId: string, payload: Record<string, unknown>) {
+    const clients = kitchenClients.get(workspaceId);
+    if (!clients || clients.size === 0) return;
+    const msg = JSON.stringify(payload);
+    for (const ws of clients) {
+      try {
+        if (ws.readyState === 1 /* OPEN */) ws.send(msg);
+      } catch {
+        // ignore send errors; client will be cleaned up on close
+      }
+    }
+  }
+
+  // ── GET /pos/ws/kitchen?workspaceId=:wsId ───────────────────────────────────
+  // Cookie-authenticated WebSocket — browser sends access_token cookie automatically
+  app.get('/ws/kitchen', { websocket: true, onRequest: [app.authenticate] }, async (socket, req) => {
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) {
+      socket.close(4001, 'workspaceId required');
+      return;
+    }
+
+    // Register client
+    if (!kitchenClients.has(workspaceId)) kitchenClients.set(workspaceId, new Set());
+    kitchenClients.get(workspaceId)!.add(socket);
+
+    socket.on('close', () => {
+      kitchenClients.get(workspaceId)?.delete(socket);
+    });
+
+    socket.on('error', () => {
+      kitchenClients.get(workspaceId)?.delete(socket);
+    });
+  });
 
   // ── GET /pos/menu?workspaceId=:wsId ─────────────────────────────────────────
   // Public — returns the active menu with categories + items grouped
@@ -1530,6 +1570,7 @@ export async function posRoutes(app: FastifyInstance) {
     const updated = await transitionOrderStatus(id, user.orgId, parsed.data.status);
 
     if (!updated) return reply.status(404).send({ error: 'Order not found' });
+    broadcastKitchenEvent(updated.workspaceId, { type: 'order_updated', orderId: id, status: updated.status });
     return reply.send({ id: updated.id, status: updated.status });
   });
 
@@ -1623,12 +1664,15 @@ export async function posRoutes(app: FastifyInstance) {
       await db.update(posTables).set({ status: 'occupied', updatedAt: new Date() }).where(eq(posTables.id, tableId));
     }
 
-    return reply.status(201).send({
+    const responsePayload = {
       id: order.id,
       orderNumber: order.orderNumber,
       totalCents,
       items: lineItems.map((li) => ({ itemName: li.itemName, quantity: li.quantity, lineTotalCents: li.lineTotalCents })),
-    });
+    };
+    broadcastKitchenEvent(workspaceId, { type: 'order_created', order: responsePayload });
+
+    return reply.status(201).send(responsePayload);
   });
 
   app.post('/mgmt/orders/:id/confirm', { onRequest: [app.authenticate] }, async (req, reply) => {
@@ -1640,6 +1684,7 @@ export async function posRoutes(app: FastifyInstance) {
     if (order.status !== 'pending') return reply.status(409).send({ error: 'Only pending orders can be confirmed' });
 
     const updated = await transitionOrderStatus(id, user.orgId, 'preparing');
+    broadcastKitchenEvent(order.workspaceId, { type: 'order_confirmed', orderId: id, status: 'preparing' });
     return reply.send({ id: updated!.id, status: updated!.status });
   });
 
@@ -1712,6 +1757,7 @@ export async function posRoutes(app: FastifyInstance) {
 
     await db.insert(posOrderItems).values(lineItems);
     const totalCents = await recalculateOrderTotal(id);
+    broadcastKitchenEvent(order.workspaceId, { type: 'item_added', orderId: id });
 
     return reply.status(201).send({
       orderId: id,
@@ -1741,9 +1787,11 @@ export async function posRoutes(app: FastifyInstance) {
 
     if (totalCents === 0) {
       const updated = await transitionOrderStatus(orderId, user.orgId, 'cancelled');
+      broadcastKitchenEvent(order.workspaceId, { type: 'item_cancelled', orderId, status: 'cancelled' });
       return reply.send({ orderId, itemId, totalCents, status: updated?.status ?? 'cancelled' });
     }
 
+    broadcastKitchenEvent(order.workspaceId, { type: 'item_cancelled', orderId, status: order.status });
     return reply.send({ orderId, itemId, totalCents, status: order.status });
   });
 
@@ -1782,7 +1830,44 @@ export async function posRoutes(app: FastifyInstance) {
       .returning({ id: posPayments.id });
 
     await transitionOrderStatus(id, user.orgId, 'completed');
-    return reply.status(201).send({ paymentId: payment!.id, changeCents, orderId: id });
+
+    // ── Auto-earn loyalty points ──────────────────────────────────────────────
+    let loyaltyPointsEarned = 0;
+    if (parsed.data.loyaltyCustomerId) {
+      const loyaltyConfig = await getLoyaltyConfig(order.workspaceId, user.orgId);
+      if (loyaltyConfig.loyaltyEnabled && loyaltyConfig.loyaltyPointsPerDollar > 0) {
+        const customer = await db.query.posLoyaltyCustomers.findFirst({
+          where: and(
+            eq(posLoyaltyCustomers.id, parsed.data.loyaltyCustomerId),
+            eq(posLoyaltyCustomers.workspaceId, order.workspaceId),
+            eq(posLoyaltyCustomers.orgId, user.orgId),
+          ),
+        });
+        if (customer) {
+          const earnedPoints = Math.floor((order.totalCents / 100) * loyaltyConfig.loyaltyPointsPerDollar);
+          if (earnedPoints > 0) {
+            const newPoints = customer.points + earnedPoints;
+            const tier = newPoints >= 1000 ? 'gold' : newPoints >= 300 ? 'silver' : 'bronze';
+            await db.transaction(async (tx) => {
+              await tx.insert(posLoyaltyEvents).values({
+                customerId: customer.id,
+                orderId: id,
+                type: 'earn',
+                pointsDelta: earnedPoints,
+                notes: 'Auto-earn on payment',
+              });
+              await tx
+                .update(posLoyaltyCustomers)
+                .set({ points: newPoints, tier, updatedAt: new Date() })
+                .where(eq(posLoyaltyCustomers.id, customer.id));
+            });
+            loyaltyPointsEarned = earnedPoints;
+          }
+        }
+      }
+    }
+
+    return reply.status(201).send({ paymentId: payment!.id, changeCents, orderId: id, loyaltyPointsEarned });
   });
 
   // ── POST /pos/mgmt/orders/:id/payment ────────────────────────────────────────
