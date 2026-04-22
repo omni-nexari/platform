@@ -267,6 +267,90 @@
       "when": 1774094400000,
       "tag": "0037_pos_kitchen_config",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1774096200000,
+      "tag": "0038_content_hash",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1774098000000,
+      "tag": "0039_content_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1774099800000,
+      "tag": "0040_playlist_shuffle_weight",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1774101600000,
+      "tag": "0041_smart_playlists",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1774103400000,
+      "tag": "0042_playlist_folders",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1774105200000,
+      "tag": "0043_schedule_timezone",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1774107000000,
+      "tag": "0044_schedule_recurrence",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1774108800000,
+      "tag": "0045_schedule_blackouts",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1774110600000,
+      "tag": "0046_device_config_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1774112400000,
+      "tag": "0047_device_alert_thresholds",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1774114200000,
+      "tag": "0048_webhooks",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1774116000000,
+      "tag": "0049_sensors",
+      "breakpoints": true
     }
   ]
 }
