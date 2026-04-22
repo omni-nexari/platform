@@ -4,14 +4,16 @@ import {
   playEvents,
   devices,
   workspaces,
+  workspaceMembers,
   contentItems,
   deviceHeartbeats,
   playlists,
   notifications,
   orgStorageQuotas,
   schedules,
+  scheduleSlots,
 } from '@signage/db';
-import { eq, and, gte, lte, desc, asc, sql, count, sum, isNull, inArray } from 'drizzle-orm';
+import { eq, and, gte, lte, desc, asc, sql, count, sum, isNull, inArray, gt } from 'drizzle-orm';
 import PDFDocument from 'pdfkit';
 import { createHash, createPublicKey, createSign } from 'node:crypto';
 
@@ -522,5 +524,385 @@ export async function analyticsRoutes(app: FastifyInstance) {
     void reply.header('Content-Type', 'application/pdf');
     void reply.header('Content-Disposition', `attachment; filename="proof-of-play-${Date.now()}.pdf"`);
     return reply.send(pdfBuffer);
+  });
+
+  // ── GET /analytics/schedule-adherence (4-G) ───────────────────────────────
+  app.get('/schedule-adherence', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { scheduleId, deviceId, from: fromStr, to: toStr } = req.query as {
+      scheduleId?: string;
+      deviceId?: string;
+      from?: string;
+      to?: string;
+    };
+
+    if (!scheduleId) return reply.status(400).send({ error: 'scheduleId required' });
+
+    const schedule = await db.query.schedules.findFirst({
+      where: eq(schedules.id, scheduleId),
+    });
+    if (!schedule) return reply.status(404).send({ error: 'Schedule not found' });
+
+    const member = await db.query.workspaceMembers.findFirst({
+      where: and(
+        eq(workspaceMembers.workspaceId, schedule.workspaceId),
+        eq(workspaceMembers.userId, user.sub),
+      ),
+    });
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+
+    const now = new Date();
+    const from = fromStr ? new Date(fromStr) : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const to   = toStr   ? new Date(toStr)   : now;
+
+    // Fetch all slots for this schedule
+    const slots = await db.query.scheduleSlots.findMany({
+      where: eq(scheduleSlots.scheduleId, scheduleId),
+    });
+
+    // Fetch actual play events in the window, optionally filtered by device
+    const events = await db.select({
+      playlistId: playEvents.playlistId,
+      contentId: playEvents.contentId,
+      deviceId: playEvents.deviceId,
+      startedAt: playEvents.startedAt,
+      durationMs: playEvents.durationMs,
+    }).from(playEvents)
+      .where(
+        and(
+          deviceId ? eq(playEvents.deviceId, deviceId) : undefined,
+          gte(playEvents.startedAt, from),
+          lte(playEvents.startedAt, to),
+        ),
+      );
+
+    // Build per-slot adherence
+    const adherence = slots.map(slot => {
+      // Expected duration per day in seconds: endTime - startTime
+      const [sh = '0', sm = '0'] = slot.startTime.split(':');
+      const [eh = '0', em = '0'] = slot.endTime.split(':');
+      const slotMinutes = (parseInt(eh, 10) * 60 + parseInt(em, 10)) - (parseInt(sh, 10) * 60 + parseInt(sm, 10));
+      const expectedSecondsPerOccurrence = Math.max(slotMinutes, 0) * 60;
+
+      // Count how many times the slot should have occurred in the window
+      let occurrenceCount = 0;
+      const cursor = new Date(from);
+      cursor.setHours(0, 0, 0, 0);
+      while (cursor <= to) {
+        // simple daily check — for a full implementation use slotMatchesDate
+        if (slot.recurrenceType === 'daily') occurrenceCount++;
+        else if (slot.recurrenceType === 'weekly') {
+          const jsDay = cursor.getDay();
+          const schemaDay = jsDay === 0 ? 6 : jsDay - 1;
+          if ((slot.daysOfWeek ?? []).includes(schemaDay)) occurrenceCount++;
+        } else if (slot.recurrenceType === 'once' && slot.date === cursor.toISOString().slice(0, 10)) {
+          occurrenceCount++;
+        }
+        cursor.setDate(cursor.getDate() + 1);
+      }
+
+      const expectedSeconds = occurrenceCount * expectedSecondsPerOccurrence;
+
+      // Actual seconds for events matching this slot's playlist/content
+      const matchingEvents = events.filter(e =>
+        (slot.playlistId && e.playlistId === slot.playlistId) ||
+        (slot.contentId && e.contentId === slot.contentId),
+      );
+      const actualSeconds = matchingEvents.reduce((acc, e) => acc + Number(e.durationMs ?? 0) / 1000, 0);
+
+      return {
+        slotId: slot.id,
+        label: slot.label,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        recurrenceType: slot.recurrenceType,
+        playlistId: slot.playlistId,
+        contentId: slot.contentId,
+        occurrenceCount,
+        expectedSeconds,
+        actualSeconds,
+        adherencePercent: expectedSeconds > 0
+          ? Math.min(100, Math.round((actualSeconds / expectedSeconds) * 100))
+          : null,
+      };
+    });
+
+    return reply.send({
+      scheduleId,
+      deviceId: deviceId ?? null,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      slots: adherence,
+    });
+  });
+
+  // ── GET /analytics/content/:id  (6-B) ─────────────────────────────────────
+  app.get('/content/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const actor = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const q = req.query as { from?: string; to?: string };
+
+    const content = await db.query.contentItems.findFirst({
+      where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)),
+      columns: { id: true, name: true, type: true, workspaceId: true },
+    });
+    if (!content) return reply.status(404).send({ error: 'Content not found' });
+
+    // Verify org access
+    const ws = await db.query.workspaces.findFirst({
+      where: and(eq(workspaces.id, content.workspaceId), eq(workspaces.orgId, actor.orgId)),
+    });
+    if (!ws) return reply.status(403).send({ error: 'Forbidden' });
+
+    const to   = parseDate(q.to,   new Date());
+    const from = parseDate(q.from, new Date(to.getTime() - 30 * 86_400_000));
+
+    const [totals] = await db.select({
+      plays: count(),
+      totalDurationMs: sum(playEvents.durationMs),
+      completedPlays: sql<number>`COUNT(*) FILTER (WHERE ${playEvents.completedFull})::int`,
+      uniqueDevices: sql<number>`COUNT(DISTINCT ${playEvents.deviceId})::int`,
+    }).from(playEvents)
+      .where(and(
+        eq(playEvents.contentId, id),
+        gte(playEvents.startedAt, from),
+        lte(playEvents.startedAt, to),
+      ));
+
+    const byDay = await db.select({
+      date: sql<string>`DATE_TRUNC('day', ${playEvents.startedAt})::DATE::TEXT`,
+      plays: count(),
+      durationMs: sum(playEvents.durationMs),
+    }).from(playEvents)
+      .where(and(
+        eq(playEvents.contentId, id),
+        gte(playEvents.startedAt, from),
+        lte(playEvents.startedAt, to),
+      ))
+      .groupBy(sql`DATE_TRUNC('day', ${playEvents.startedAt})`)
+      .orderBy(asc(sql`DATE_TRUNC('day', ${playEvents.startedAt})`))
+      .limit(90);
+
+    const byDevice = await db.select({
+      deviceId: playEvents.deviceId,
+      deviceName: devices.name,
+      plays: count(),
+      durationMs: sum(playEvents.durationMs),
+    }).from(playEvents)
+      .innerJoin(devices, eq(playEvents.deviceId, devices.id))
+      .where(and(
+        eq(playEvents.contentId, id),
+        gte(playEvents.startedAt, from),
+        lte(playEvents.startedAt, to),
+      ))
+      .groupBy(playEvents.deviceId, devices.name)
+      .orderBy(desc(count()))
+      .limit(20);
+
+    const plays = Number(totals?.plays ?? 0);
+    return reply.send({
+      content: { id: content.id, name: content.name, type: content.type },
+      from: from.toISOString(),
+      to: to.toISOString(),
+      plays,
+      totalDurationMs: Number(totals?.totalDurationMs ?? 0),
+      completedPlays: Number(totals?.completedPlays ?? 0),
+      completionRatePct: plays > 0
+        ? Number(((Number(totals?.completedPlays ?? 0) / plays) * 100).toFixed(1))
+        : 0,
+      uniqueDevices: Number(totals?.uniqueDevices ?? 0),
+      byDay: byDay.map(r => ({ date: r.date, plays: Number(r.plays), durationMs: Number(r.durationMs ?? 0) })),
+      byDevice: byDevice.map(r => ({ deviceId: r.deviceId, deviceName: r.deviceName, plays: Number(r.plays), durationMs: Number(r.durationMs ?? 0) })),
+    });
+  });
+
+  // ── GET /analytics/playlists/:id  (6-C) ───────────────────────────────────
+  app.get('/playlists/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const actor = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const q = req.query as { from?: string; to?: string };
+
+    const playlist = await db.query.playlists.findFirst({
+      where: and(eq(playlists.id, id), isNull(playlists.deletedAt)),
+      columns: { id: true, name: true, workspaceId: true },
+    });
+    if (!playlist) return reply.status(404).send({ error: 'Playlist not found' });
+
+    const ws = await db.query.workspaces.findFirst({
+      where: and(eq(workspaces.id, playlist.workspaceId), eq(workspaces.orgId, actor.orgId)),
+    });
+    if (!ws) return reply.status(403).send({ error: 'Forbidden' });
+
+    const to   = parseDate(q.to,   new Date());
+    const from = parseDate(q.from, new Date(to.getTime() - 30 * 86_400_000));
+
+    const [totals] = await db.select({
+      plays: count(),
+      totalDurationMs: sum(playEvents.durationMs),
+      completedPlays: sql<number>`COUNT(*) FILTER (WHERE ${playEvents.completedFull})::int`,
+      uniqueDevices: sql<number>`COUNT(DISTINCT ${playEvents.deviceId})::int`,
+    }).from(playEvents)
+      .where(and(
+        eq(playEvents.playlistId, id),
+        gte(playEvents.startedAt, from),
+        lte(playEvents.startedAt, to),
+      ));
+
+    const byContent = await db.select({
+      contentId: playEvents.contentId,
+      contentName: contentItems.name,
+      contentType: contentItems.type,
+      plays: count(),
+      completedPlays: sql<number>`COUNT(*) FILTER (WHERE ${playEvents.completedFull})::int`,
+      durationMs: sum(playEvents.durationMs),
+    }).from(playEvents)
+      .leftJoin(contentItems, eq(playEvents.contentId, contentItems.id))
+      .where(and(
+        eq(playEvents.playlistId, id),
+        gte(playEvents.startedAt, from),
+        lte(playEvents.startedAt, to),
+      ))
+      .groupBy(playEvents.contentId, contentItems.name, contentItems.type)
+      .orderBy(desc(count()))
+      .limit(50);
+
+    const plays = Number(totals?.plays ?? 0);
+    return reply.send({
+      playlist: { id: playlist.id, name: playlist.name },
+      from: from.toISOString(),
+      to: to.toISOString(),
+      plays,
+      totalDurationMs: Number(totals?.totalDurationMs ?? 0),
+      completedPlays: Number(totals?.completedPlays ?? 0),
+      completionRatePct: plays > 0
+        ? Number(((Number(totals?.completedPlays ?? 0) / plays) * 100).toFixed(1))
+        : 0,
+      uniqueDevices: Number(totals?.uniqueDevices ?? 0),
+      byContent: byContent.map(r => {
+        const p = Number(r.plays);
+        const c = Number(r.completedPlays ?? 0);
+        return {
+          contentId: r.contentId,
+          contentName: r.contentName,
+          contentType: r.contentType,
+          plays: p,
+          completedPlays: c,
+          completionRatePct: p > 0 ? Number(((c / p) * 100).toFixed(1)) : 0,
+          durationMs: Number(r.durationMs ?? 0),
+        };
+      }),
+    });
+  });
+
+  // ── GET /analytics/storage  (6-D) ─────────────────────────────────────────
+  app.get('/storage', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const actor = req.user as AuthUser;
+    const { workspaceId } = req.query as { workspaceId?: string };
+
+    if (workspaceId) {
+      const member = await db.query.workspaceMembers.findFirst({
+        where: and(
+          eq(workspaceMembers.workspaceId, workspaceId),
+          eq(workspaceMembers.userId, actor.sub),
+        ),
+      });
+      if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    }
+
+    const byType = await db.select({
+      type: contentItems.type,
+      count: count(),
+      totalBytes: sum(contentItems.fileSize),
+    }).from(contentItems)
+      .innerJoin(workspaces, eq(contentItems.workspaceId, workspaces.id))
+      .where(and(
+        eq(workspaces.orgId, actor.orgId),
+        isNull(workspaces.deletedAt),
+        isNull(contentItems.deletedAt),
+        workspaceId ? eq(contentItems.workspaceId, workspaceId) : undefined,
+      ))
+      .groupBy(contentItems.type)
+      .orderBy(desc(sum(contentItems.fileSize)));
+
+    const [totalRow] = await db.select({ totalBytes: sum(contentItems.fileSize) })
+      .from(contentItems)
+      .innerJoin(workspaces, eq(contentItems.workspaceId, workspaces.id))
+      .where(and(
+        eq(workspaces.orgId, actor.orgId),
+        isNull(workspaces.deletedAt),
+        isNull(contentItems.deletedAt),
+        workspaceId ? eq(contentItems.workspaceId, workspaceId) : undefined,
+      ));
+
+    const [quotaRow] = await db.select({ limitBytes: orgStorageQuotas.limitBytes })
+      .from(orgStorageQuotas)
+      .where(eq(orgStorageQuotas.orgId, actor.orgId));
+
+    const usedBytes  = Number(totalRow?.totalBytes ?? 0);
+    const limitBytes = Number(quotaRow?.limitBytes ?? 0);
+
+    return reply.send({
+      usedBytes,
+      limitBytes,
+      usedPct: limitBytes > 0 ? Number(((usedBytes / limitBytes) * 100).toFixed(1)) : null,
+      byType: byType.map(r => ({
+        type: r.type,
+        count: Number(r.count),
+        totalBytes: Number(r.totalBytes ?? 0),
+      })),
+    });
+  });
+
+  // ── GET /analytics/expiring-content  (6-E) ────────────────────────────────
+  app.get('/expiring-content', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const actor = req.user as AuthUser;
+    const { workspaceId, days: rawDays } = req.query as { workspaceId?: string; days?: string };
+
+    if (workspaceId) {
+      const member = await db.query.workspaceMembers.findFirst({
+        where: and(
+          eq(workspaceMembers.workspaceId, workspaceId),
+          eq(workspaceMembers.userId, actor.sub),
+        ),
+      });
+      if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    }
+
+    const days = Math.min(Math.max(1, Number(rawDays ?? 30)), 365);
+    const now  = new Date();
+    const until = new Date(now.getTime() + days * 86_400_000);
+
+    const expiring = await db.select({
+      id: contentItems.id,
+      name: contentItems.name,
+      type: contentItems.type,
+      workspaceId: contentItems.workspaceId,
+      workspaceName: workspaces.name,
+      validUntil: contentItems.validUntil,
+      fileSize: contentItems.fileSize,
+    }).from(contentItems)
+      .innerJoin(workspaces, eq(contentItems.workspaceId, workspaces.id))
+      .where(and(
+        eq(workspaces.orgId, actor.orgId),
+        isNull(workspaces.deletedAt),
+        isNull(contentItems.deletedAt),
+        workspaceId ? eq(contentItems.workspaceId, workspaceId) : undefined,
+        gt(contentItems.validUntil, now),
+        lte(contentItems.validUntil, until),
+      ))
+      .orderBy(asc(contentItems.validUntil))
+      .limit(200);
+
+    return reply.send({
+      days,
+      until: until.toISOString(),
+      count: expiring.length,
+      items: expiring.map(r => ({
+        ...r,
+        fileSize: Number(r.fileSize ?? 0),
+        validUntil: r.validUntil ? new Date(r.validUntil).toISOString() : null,
+        expiresInMs: r.validUntil ? new Date(r.validUntil).getTime() - now.getTime() : null,
+      })),
+    });
   });
 }

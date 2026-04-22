@@ -60,20 +60,23 @@ type ItemSeed = {
   name: string;
   description: string;
   priceCents: number;
+  imageUrl: string;
   tags: string[];
   sortOrder: number;
 };
 
-const categoryData: { name: string; color: string; sortOrder: number; items: ItemSeed[] }[] = [
+const categoryData: { name: string; color: string; imageUrl: string; sortOrder: number; items: ItemSeed[] }[] = [
   {
     name: 'Burgers',
     color: '#f59e0b',
+    imageUrl: 'https://images.pexels.com/photos/70497/pexels-photo-70497.jpeg?auto=compress&cs=tinysrgb&w=1200',
     sortOrder: 0,
     items: [
       {
         name: 'Classic Cheeseburger',
         description: 'Beef patty, cheddar, lettuce, tomato, pickles, house sauce',
         priceCents: 1299,
+        imageUrl: 'https://images.pexels.com/photos/1639557/pexels-photo-1639557.jpeg?auto=compress&cs=tinysrgb&w=1200',
         tags: ['popular'],
         sortOrder: 0,
       },
@@ -81,6 +84,7 @@ const categoryData: { name: string; color: string; sortOrder: number; items: Ite
         name: 'BBQ Bacon Burger',
         description: 'Beef patty, crispy bacon, BBQ sauce, onion rings, cheddar',
         priceCents: 1499,
+        imageUrl: 'https://images.pexels.com/photos/3756523/pexels-photo-3756523.jpeg?auto=compress&cs=tinysrgb&w=1200',
         tags: ['popular'],
         sortOrder: 1,
       },
@@ -88,6 +92,7 @@ const categoryData: { name: string; color: string; sortOrder: number; items: Ite
         name: 'Veggie Smash Burger',
         description: 'Black bean patty, avocado, roasted peppers, vegan mayo',
         priceCents: 1350,
+        imageUrl: 'https://images.pexels.com/photos/6546026/pexels-photo-6546026.jpeg?auto=compress&cs=tinysrgb&w=1200',
         tags: ['vegan', 'popular'],
         sortOrder: 2,
       },
@@ -96,12 +101,14 @@ const categoryData: { name: string; color: string; sortOrder: number; items: Ite
   {
     name: 'Sides',
     color: '#10b981',
+    imageUrl: 'https://images.pexels.com/photos/1893557/pexels-photo-1893557.jpeg?auto=compress&cs=tinysrgb&w=1200',
     sortOrder: 1,
     items: [
       {
         name: 'Seasoned Fries',
         description: 'Crispy fries with house seasoning blend',
         priceCents: 499,
+        imageUrl: 'https://images.pexels.com/photos/1583884/pexels-photo-1583884.jpeg?auto=compress&cs=tinysrgb&w=1200',
         tags: ['vegan'],
         sortOrder: 0,
       },
@@ -109,6 +116,7 @@ const categoryData: { name: string; color: string; sortOrder: number; items: Ite
         name: 'Onion Rings',
         description: 'Beer-battered onion rings with dipping sauce',
         priceCents: 599,
+        imageUrl: 'https://images.pexels.com/photos/533325/pexels-photo-533325.jpeg?auto=compress&cs=tinysrgb&w=1200',
         tags: [],
         sortOrder: 1,
       },
@@ -116,6 +124,7 @@ const categoryData: { name: string; color: string; sortOrder: number; items: Ite
         name: 'Coleslaw',
         description: 'Creamy house coleslaw with fresh herbs',
         priceCents: 349,
+        imageUrl: 'https://images.pexels.com/photos/1640774/pexels-photo-1640774.jpeg?auto=compress&cs=tinysrgb&w=1200',
         tags: ['gluten-free'],
         sortOrder: 2,
       },
@@ -124,12 +133,14 @@ const categoryData: { name: string; color: string; sortOrder: number; items: Ite
   {
     name: 'Drinks',
     color: '#3b82f6',
+    imageUrl: 'https://images.pexels.com/photos/2983101/pexels-photo-2983101.jpeg?auto=compress&cs=tinysrgb&w=1200',
     sortOrder: 2,
     items: [
       {
         name: 'Soft Drink',
         description: 'Choice of Coke, Diet Coke, Sprite, or Fanta — 500 ml',
         priceCents: 299,
+        imageUrl: 'https://images.pexels.com/photos/2983101/pexels-photo-2983101.jpeg?auto=compress&cs=tinysrgb&w=1200',
         tags: [],
         sortOrder: 0,
       },
@@ -137,6 +148,7 @@ const categoryData: { name: string; color: string; sortOrder: number; items: Ite
         name: 'Fresh Lemonade',
         description: 'House-made lemonade with mint and ginger',
         priceCents: 450,
+        imageUrl: 'https://images.pexels.com/photos/96974/pexels-photo-96974.jpeg?auto=compress&cs=tinysrgb&w=1200',
         tags: ['vegan', 'gluten-free'],
         sortOrder: 1,
       },
@@ -144,6 +156,7 @@ const categoryData: { name: string; color: string; sortOrder: number; items: Ite
         name: 'Iced Coffee',
         description: 'Cold brew over ice with oat milk',
         priceCents: 550,
+        imageUrl: 'https://images.pexels.com/photos/312418/pexels-photo-312418.jpeg?auto=compress&cs=tinysrgb&w=1200',
         tags: [],
         sortOrder: 2,
       },
@@ -152,12 +165,14 @@ const categoryData: { name: string; color: string; sortOrder: number; items: Ite
   {
     name: 'Desserts',
     color: '#ec4899',
+    imageUrl: 'https://images.pexels.com/photos/1854652/pexels-photo-1854652.jpeg?auto=compress&cs=tinysrgb&w=1200',
     sortOrder: 3,
     items: [
       {
         name: 'Chocolate Brownie',
         description: 'Warm fudge brownie with vanilla ice cream',
         priceCents: 799,
+        imageUrl: 'https://images.pexels.com/photos/291528/pexels-photo-291528.jpeg?auto=compress&cs=tinysrgb&w=1200',
         tags: ['popular'],
         sortOrder: 0,
       },
@@ -174,6 +189,7 @@ for (const cat of categoryData) {
       menuId:    menu.id,
       name:      cat.name,
       color:     cat.color,
+      imageUrl:  cat.imageUrl,
       sortOrder: cat.sortOrder,
       isActive:  true,
     })
@@ -186,6 +202,7 @@ for (const cat of categoryData) {
       categoryId:   category.id,
       name:         item.name,
       description:  item.description,
+      imageUrl:     item.imageUrl,
       priceCents:   item.priceCents,
       tags:         item.tags,
       isAvailable:  true,

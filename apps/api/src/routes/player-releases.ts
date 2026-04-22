@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
-import { db, playerReleases } from '@signage/db';
-import { eq, desc } from 'drizzle-orm';
+import { db, playerReleases, devices, workspaceMembers } from '@signage/db';
+import { eq, desc, and, isNull, inArray } from 'drizzle-orm';
 import { z } from 'zod';
+import { sendCommand } from '../services/ws.js';
 
 const CreateReleaseSchema = z.object({
   version: z.string().min(1),
@@ -66,5 +67,52 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     await db.delete(playerReleases).where(eq(playerReleases.id, id));
     return reply.status(204).send();
+  });
+
+  // ── POST /player-releases/:id/deploy  (5-H) ──────────────────────────────
+  app.post('/:id/deploy', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as { role: string; sub: string; orgId: string };
+    if (user.role !== 'superadmin') return reply.status(403).send({ error: 'Forbidden' });
+
+    const { id } = req.params as { id: string };
+    const body = req.body as { workspaceId?: string; deviceIds?: string[] };
+
+    const release = await db.query.playerReleases.findFirst({ where: eq(playerReleases.id, id) });
+    if (!release) return reply.status(404).send({ error: 'Release not found' });
+
+    // Resolve target device IDs
+    let targetDevices: { id: string }[];
+
+    if (body.deviceIds && body.deviceIds.length > 0) {
+      targetDevices = await db.query.devices.findMany({
+        where: and(isNull(devices.deletedAt), inArray(devices.id, body.deviceIds)),
+        columns: { id: true },
+      });
+    } else if (body.workspaceId) {
+      targetDevices = await db.query.devices.findMany({
+        where: and(eq(devices.workspaceId, body.workspaceId), isNull(devices.deletedAt)),
+        columns: { id: true },
+      });
+    } else {
+      // Deploy to all devices
+      targetDevices = await db.query.devices.findMany({
+        where: isNull(devices.deletedAt),
+        columns: { id: true },
+      });
+    }
+
+    let sent = 0;
+    for (const device of targetDevices) {
+      sendCommand(device.id, {
+        type: 'update_player',
+        payload: {
+          version: release.version,
+          downloadUrl: release.downloadUrl,
+        },
+      });
+      sent++;
+    }
+
+    return reply.send({ releaseId: id, version: release.version, sentToDevices: sent });
   });
 }

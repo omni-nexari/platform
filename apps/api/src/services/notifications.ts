@@ -1,5 +1,6 @@
 import { db, notifications, users, workspaceMembers } from '@signage/db';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { dispatchWebhookEvent } from './webhooks.js';
 
 export type NotificationEventKey =
   | 'device_offline'
@@ -215,6 +216,13 @@ export async function notifyDeviceStatusChange(input: {
         : `${input.deviceName} went offline.`,
     entityType: 'device',
     entityId: input.deviceId,
+  });
+
+  // Dispatch outbound webhook event
+  void dispatchWebhookEvent(input.orgId, input.status === 'online' ? 'device.online' : 'device.offline', {
+    deviceId:   input.deviceId,
+    deviceName: input.deviceName,
+    workspaceId: input.workspaceId,
   });
 }
 

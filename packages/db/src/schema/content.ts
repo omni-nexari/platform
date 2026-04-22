@@ -40,6 +40,7 @@ export const contentItems = pgTable('content_items', {
   originalName: text('original_name'),
   mimeType: text('mime_type'),
   fileSize: bigint('file_size', { mode: 'number' }),
+  fileHash: text('file_hash'),           // SHA-256 hex digest; NULL for non-file types
 
   // Media properties
   duration: integer('duration'),         // seconds; 0 = manual advance

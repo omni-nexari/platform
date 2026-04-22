@@ -310,6 +310,7 @@ export default function PosPaymentPage() {
       method,
       amountCents: method === 'cash' ? tenderedCents : grandTotal,
       tipCents,
+      taxCents,
       reference: cardRef.trim() || undefined,
       ...(loyaltyCustomer ? { loyaltyCustomerId: loyaltyCustomer.id } : {}),
     });

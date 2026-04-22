@@ -12,10 +12,18 @@ export const playlists = pgTable('playlists', {
   name: text('name').notNull(),
   description: text('description'),
   loop: boolean('loop').notNull().default(true),
+  shuffle: boolean('shuffle').notNull().default(false),
   totalDuration: integer('total_duration').notNull().default(0),
   itemCount: integer('item_count').notNull().default(0),
   // ID of the first content item — used to serve a thumbnail via /content/:id/thumbnail
   thumbnailContentId: uuid('thumbnail_content_id').references((): AnyPgColumn => contentItems.id, { onDelete: 'set null' }),
+  // Smart playlist
+  isSmartPlaylist: boolean('is_smart_playlist').notNull().default(false),
+  smartFilters: text('smart_filters'), // JSON string: { types?, tagIds?, folderId?, maxItems?, sortBy? }
+  // Folder organisation
+  folderId: uuid('folder_id'), // references playlist_folders.id — FK defined in migration (avoids circular dep)
+  // Approval workflow
+  approvalState: text('approval_state').notNull().default('approved'), // draft | pending_review | approved | rejected
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -26,6 +34,8 @@ export const playlistItems = pgTable('playlist_items', {
   playlistId: uuid('playlist_id').notNull().references(() => playlists.id, { onDelete: 'cascade' }),
   // 0-based position
   position: integer('position').notNull().default(0),
+  // Shuffle weight (higher = played more frequently in shuffle mode)
+  weight: integer('weight').notNull().default(1),
   // Exactly one of these must be non-null
   contentId: uuid('content_id').references(() => contentItems.id, { onDelete: 'set null' }),
   nestedPlaylistId: uuid('nested_playlist_id').references((): AnyPgColumn => playlists.id, { onDelete: 'set null' }),

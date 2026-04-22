@@ -154,7 +154,17 @@ export default function AppLayout() {
 
       socket.onclose = () => {
         if (cancelled || !useAuthStore.getState().user) return;
-        reconnectTimer = setTimeout(connect, 3000);
+        // Refresh the session before reconnecting so an expired access_token
+        // cookie doesn't cause an immediate 4001 close again.
+        reconnectTimer = setTimeout(async () => {
+          try {
+            await api.post('/auth/refresh', {});
+          } catch {
+            // If refresh fails the user will be logged out by api.ts; stop reconnecting.
+            return;
+          }
+          if (!cancelled) connect();
+        }, 3000);
       };
 
       socket.onerror = () => {

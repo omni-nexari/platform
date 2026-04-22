@@ -5,6 +5,7 @@ import { eq, and, isNull, desc } from 'drizzle-orm';
 import { broadcastToDevices } from '../services/ws.js';
 import { writeAuditLog } from '../services/audit.js';
 import { notifyEmergencyActivated } from '../services/notifications.js';
+import { dispatchWebhookEvent } from '../services/webhooks.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -81,6 +82,14 @@ export async function emergencyRoutes(app: FastifyInstance) {
       emergencyId: override!.id,
     });
 
+    void dispatchWebhookEvent(user.orgId, 'emergency.activated', {
+      emergencyId: override!.id,
+      scope: body.data.scope,
+      scopeId: body.data.scopeId ?? null,
+      contentType: body.data.contentType,
+      affectedDevices: affectedDevices.length,
+    });
+
     return reply.status(201).send(override);
   });
 
@@ -139,6 +148,11 @@ export async function emergencyRoutes(app: FastifyInstance) {
       entityType: 'emergency_override',
       entityId: id,
       ipAddress: req.ip,
+    });
+
+    void dispatchWebhookEvent(user.orgId, 'emergency.cleared', {
+      emergencyId: id,
+      clearedBy: user.sub,
     });
 
     return reply.status(204).send();

@@ -14,6 +14,11 @@ export const schedules = pgTable('schedules', {
   /** 'general' | 'override' */
   type: text('type').notNull().default('general'),
   isActive: boolean('is_active').notNull().default(true),
+  /** IANA timezone name, e.g. 'America/New_York' */
+  timezone: text('timezone').notNull().default('UTC'),
+  // 4-B: Fallback slot — no .references() to avoid circular dep with playlists/content
+  defaultPlaylistId: uuid('default_playlist_id'),
+  defaultContentId: uuid('default_content_id'),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -32,12 +37,20 @@ export const scheduleSlots = pgTable('schedule_slots', {
   /** Time of day as HH:MM */
   startTime: text('start_time').notNull(),
   endTime: text('end_time').notNull(),
-  /** 'once' | 'daily' | 'weekly' */
+  /** 'once' | 'daily' | 'weekly' | 'monthly' | 'bi-weekly' */
   recurrenceType: text('recurrence_type').notNull().default('weekly'),
   /** ISO date string YYYY-MM-DD — only for recurrenceType='once' */
   date: text('date'),
-  /** Day indices 0=Mon … 6=Sun — only for recurrenceType='weekly' */
+  /** Day indices 0=Mon … 6=Sun — only for recurrenceType='weekly'/'bi-weekly' */
   daysOfWeek: integer('days_of_week').array(),
+  /** Day of month 1–31 — only for recurrenceType='monthly' */
+  monthDay: integer('month_day'),
+  /** Number of weeks between occurrences — for recurrenceType='bi-weekly' (default 1) */
+  intervalWeeks: integer('interval_weeks').notNull().default(1),
+  /** ISO date YYYY-MM-DD — first date to consider this slot active */
+  recurrenceStartDate: text('recurrence_start_date'),
+  /** ISO date YYYY-MM-DD — last date to consider this slot active */
+  recurrenceEndDate: text('recurrence_end_date'),
   /** Optional display name override */
   label: text('label'),
   /** Hex colour for the slot block in the calendar */
@@ -57,6 +70,7 @@ export const schedulesRelations = relations(schedules, ({ one, many }) => ({
     references: [users.id],
   }),
   slots: many(scheduleSlots),
+  blackouts: many(scheduleBlackouts),
 }));
 
 export const scheduleSlotsRelations = relations(scheduleSlots, ({ one }) => ({
@@ -71,5 +85,23 @@ export const scheduleSlotsRelations = relations(scheduleSlots, ({ one }) => ({
   content: one(contentItems, {
     fields: [scheduleSlots.contentId],
     references: [contentItems.id],
+  }),
+}));
+
+// ── Phase 4-H: Holiday / Blackout Dates ──────────────────────────────────
+
+export const scheduleBlackouts = pgTable('schedule_blackouts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  scheduleId: uuid('schedule_id').notNull().references(() => schedules.id, { onDelete: 'cascade' }),
+  /** ISO date YYYY-MM-DD */
+  date: text('date').notNull(),
+  label: text('label'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const scheduleBlackoutsRelations = relations(scheduleBlackouts, ({ one }) => ({
+  schedule: one(schedules, {
+    fields: [scheduleBlackouts.scheduleId],
+    references: [schedules.id],
   }),
 }));

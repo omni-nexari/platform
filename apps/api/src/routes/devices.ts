@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { createReadStream, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
-import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncPlaylists, syncPlaylistItems } from '@signage/db';
-import { eq, and, isNull, desc, inArray, sql } from 'drizzle-orm';
+import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncPlaylists, syncPlaylistItems, playerReleases, playEvents } from '@signage/db';
+import { eq, and, isNull, desc, asc, inArray, sql, ilike, gte, lte, lt } from 'drizzle-orm';
 import { z } from 'zod';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
@@ -11,6 +11,7 @@ import { ClaimDeviceSchema, UpdateDeviceSchema, DeviceCommandSchema, PairRequest
 import { writeAuditLog } from '../services/audit.js';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
 import { MDC_ALL_COMMAND_NAMES } from '../services/mdc.js';
+import { dispatchWebhookEvent } from '../services/webhooks.js';
 import {
   sendCommand,
   requestRemoteStatus,
@@ -339,6 +340,40 @@ function buildLegacyPublishedSchedule(target: {
   return null;
 }
 
+/** 5-C: Compute a 0–100 device health score from the latest heartbeat + device row. */
+function computeHealthScore(
+  device: { lastSeen?: Date | string | null; playerVersion?: string | null },
+  heartbeat: {
+    temperatureC?: number | null;
+    cpuLoad?: number | null;
+    storageFreeBytes?: number | null;
+    playerVersion?: string | null;
+  } | null,
+  latestReleaseVersion: string | null,
+): number {
+  let score = 0;
+  // 30 pts — last seen within 90s
+  if (hasRecentDeviceActivity(device.lastSeen)) score += 30;
+  else if (device.lastSeen) {
+    const age = Date.now() - new Date(device.lastSeen).getTime();
+    if (age < 5 * 60 * 1000) score += 15; // within 5 min
+  }
+  // 20 pts — temperature < 60°C
+  const temp = heartbeat?.temperatureC;
+  if (temp != null) score += temp < 60 ? 20 : temp < 75 ? 10 : 0;
+  // 20 pts — cpu load < 80
+  const cpu = heartbeat?.cpuLoad;
+  if (cpu != null) score += cpu < 80 ? 20 : cpu < 90 ? 10 : 0;
+  // 15 pts — storage free > 100 MB
+  const free = heartbeat?.storageFreeBytes;
+  if (free != null) score += free > 100 * 1024 * 1024 ? 15 : free > 10 * 1024 * 1024 ? 7 : 0;
+  // 15 pts — player version current
+  const pv = heartbeat?.playerVersion ?? device.playerVersion;
+  if (pv && latestReleaseVersion && pv === latestReleaseVersion) score += 15;
+  else if (!latestReleaseVersion) score += 15; // unknown — assume ok
+  return Math.min(100, score);
+}
+
 export async function deviceRoutes(app: FastifyInstance) {
 
   // ── POST /devices/pair/request ─ unauthenticated, called by the Tizen device ─
@@ -513,7 +548,9 @@ export async function deviceRoutes(app: FastifyInstance) {
   // ── GET /devices ─ list devices for org (optional ?workspaceId=) ───────────
   app.get('/', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
-    const { workspaceId, tagIds: rawTagIds } = req.query as { workspaceId?: string; tagIds?: string };
+    const { workspaceId, tagIds: rawTagIds, q, status } = req.query as {
+      workspaceId?: string; tagIds?: string; q?: string; status?: string;
+    };
     const tagIds = (rawTagIds ?? '').split(',').map((value) => value.trim()).filter(Boolean);
     const matchingIds = workspaceId && tagIds.length > 0
       ? await getEntityIdsForTags(workspaceId, 'device', tagIds)
@@ -526,6 +563,7 @@ export async function deviceRoutes(app: FastifyInstance) {
         isNull(devices.deletedAt),
         workspaceId ? eq(devices.workspaceId, workspaceId) : undefined,
         matchingIds ? inArray(devices.id, matchingIds) : undefined,
+        q ? ilike(devices.name, `%${q}%`) : undefined,
       ),
       orderBy: [desc(devices.createdAt)],
     });
@@ -558,7 +596,8 @@ export async function deviceRoutes(app: FastifyInstance) {
       latestScreenshotId: latestScreenshotMap[d.id] ?? null,
     }));
 
-    return reply.send(enriched);
+    const result = status ? enriched.filter((d) => d.status === status) : enriched;
+    return reply.send(result);
   });
 
   // ── GET /devices/:id ───────────────────────────────────────────────────────
@@ -571,7 +610,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
     if (!device) return reply.status(404).send({ error: 'Not found' });
 
-    const [screenshots, latestHeartbeat] = await Promise.all([
+    const [screenshots, latestHeartbeat, latestRelease] = await Promise.all([
       db.query.deviceScreenshots.findMany({
         where: eq(deviceScreenshots.deviceId, id),
         orderBy: [desc(deviceScreenshots.takenAt)],
@@ -580,6 +619,10 @@ export async function deviceRoutes(app: FastifyInstance) {
       db.query.deviceHeartbeats.findFirst({
         where: eq(deviceHeartbeats.deviceId, id),
         orderBy: [desc(deviceHeartbeats.createdAt)],
+      }),
+      db.query.playerReleases.findFirst({
+        where: eq(playerReleases.isLatest, true),
+        columns: { version: true },
       }),
     ]);
 
@@ -606,6 +649,7 @@ export async function deviceRoutes(app: FastifyInstance) {
         assignedTags: assignedTagMap[id] ?? [],
         publishedTarget: publishedTargetMap[id] ?? null,
         status: resolveReportedDeviceStatus(device),
+        healthScore: computeHealthScore(device, latestHeartbeat ?? null, latestRelease?.version ?? null),
       },
       screenshots,
       latestHeartbeat: latestHeartbeat
@@ -1704,6 +1748,256 @@ export async function deviceRoutes(app: FastifyInstance) {
       const msg = err instanceof Error ? err.message : String(err);
       return reply.status(504).send({ error: msg });
     }
+  });
+
+  // ── GET /devices/:id/heartbeats  (5-A) ────────────────────────────────────
+  app.get('/:id/heartbeats', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const { from: fromStr, to: toStr, limit: rawLimit } = req.query as {
+      from?: string; to?: string; limit?: string;
+    };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    const limit = Math.min(Number(rawLimit ?? 200), 500);
+    const now = new Date();
+    const to   = toStr   ? new Date(toStr)   : now;
+    const from = fromStr ? new Date(fromStr) : new Date(to.getTime() - 48 * 60 * 60 * 1000);
+
+    const rows = await db.query.deviceHeartbeats.findMany({
+      where: and(
+        eq(deviceHeartbeats.deviceId, id),
+        gte(deviceHeartbeats.createdAt, from),
+        lte(deviceHeartbeats.createdAt, to),
+      ),
+      orderBy: [desc(deviceHeartbeats.createdAt)],
+      limit,
+    });
+
+    return reply.send({ deviceId: id, from: from.toISOString(), to: to.toISOString(), rows });
+  });
+
+  // ── GET /devices/health  (5-B) ─────────────────────────────────────────────
+  // Must be registered BEFORE /:id routes so it doesn't match as an id
+  app.get('/health', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { workspaceId, notSeenMinutes: rawMin } = req.query as {
+      workspaceId?: string; notSeenMinutes?: string;
+    };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const member = await db.query.workspaceMembers.findFirst({
+      where: and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        eq(workspaceMembers.userId, user.sub),
+      ),
+    });
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+
+    const notSeenMinutes = Math.max(1, Number(rawMin ?? 5));
+    const cutoff = new Date(Date.now() - notSeenMinutes * 60 * 1000);
+
+    const offlineDevices = await db.query.devices.findMany({
+      where: and(
+        eq(devices.workspaceId, workspaceId),
+        isNull(devices.deletedAt),
+        lt(devices.lastSeen, cutoff),
+      ),
+      columns: { id: true, name: true, status: true, lastSeen: true, playerVersion: true },
+    });
+
+    const result = offlineDevices.filter(d => d.status !== 'unclaimed').map(d => ({
+      ...d,
+      status: resolveReportedDeviceStatus(d),
+      lastSeenAgoMs: d.lastSeen ? Date.now() - new Date(d.lastSeen).getTime() : null,
+    }));
+
+    return reply.send({ workspaceId, notSeenMinutes, devices: result });
+  });
+
+  // ── GET /devices/:id/screenshots  (5-G — separate paginated endpoint) ─────
+  app.get('/:id/screenshots', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const { limit: rawLimit, before } = req.query as { limit?: string; before?: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    const limit = Math.min(Number(rawLimit ?? 20), 100);
+
+    const rows = await db.query.deviceScreenshots.findMany({
+      where: and(
+        eq(deviceScreenshots.deviceId, id),
+        before
+          ? lt(deviceScreenshots.id, before)
+          : undefined,
+      ),
+      orderBy: [desc(deviceScreenshots.takenAt)],
+      limit,
+    });
+
+    const nextCursor = rows.length === limit ? rows[rows.length - 1]?.id ?? null : null;
+    return reply.send({ screenshots: rows, nextCursor });
+  });
+
+  // ── POST /devices/:id/move  (5-E) ──────────────────────────────────────────
+  app.post('/:id/move', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const body = req.body as { targetWorkspaceId?: string };
+
+    if (!body.targetWorkspaceId) return reply.status(400).send({ error: 'targetWorkspaceId required' });
+
+    if (!['prime_owner', 'owner', 'admin', 'superadmin'].includes(user.role)) {
+      return reply.status(403).send({ error: 'Only owners and admins can move devices' });
+    }
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    const targetWs = await db.query.workspaces.findFirst({
+      where: and(
+        eq(workspaces.id, body.targetWorkspaceId),
+        eq(workspaces.orgId, user.orgId),
+        isNull(workspaces.deletedAt),
+      ),
+    });
+    if (!targetWs) return reply.status(404).send({ error: 'Target workspace not found or outside your org' });
+
+    if (device.workspaceId === body.targetWorkspaceId) {
+      return reply.status(400).send({ error: 'Device is already in that workspace' });
+    }
+
+    // Clear published targets when moving
+    const [updated] = await db.update(devices).set({
+      workspaceId: body.targetWorkspaceId,
+      publishedContentId: null,
+      publishedPlaylistId: null,
+      publishedScheduleId: null,
+      publishedSyncGroupId: null,
+      updatedAt: new Date(),
+    }).where(eq(devices.id, id)).returning();
+
+    return reply.send(updated);
+  });
+
+  // ── POST /devices/bulk-command  (5-F) ──────────────────────────────────────
+  app.post('/bulk-command', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as {
+      workspaceId?: string;
+      deviceIds?: string[];
+      command?: Record<string, unknown>;
+    };
+
+    if (!body.workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (!body.deviceIds || body.deviceIds.length === 0) return reply.status(400).send({ error: 'deviceIds required' });
+    if (!body.command) return reply.status(400).send({ error: 'command required' });
+
+    const member = await db.query.workspaceMembers.findFirst({
+      where: and(
+        eq(workspaceMembers.workspaceId, body.workspaceId),
+        eq(workspaceMembers.userId, user.sub),
+      ),
+    });
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+
+    const targetDevices = await db.query.devices.findMany({
+      where: and(
+        eq(devices.orgId, user.orgId),
+        eq(devices.workspaceId, body.workspaceId),
+        inArray(devices.id, body.deviceIds),
+        isNull(devices.deletedAt),
+      ),
+      columns: { id: true, status: true, lastSeen: true },
+    });
+
+    const sent: string[] = [];
+    const skipped: string[] = [];
+
+    for (const device of targetDevices) {
+      const online = resolveReportedDeviceStatus(device) === 'online';
+      if (online) {
+        sendCommand(device.id, body.command as Parameters<typeof sendCommand>[1]);
+        sent.push(device.id);
+      } else {
+        skipped.push(device.id);
+      }
+    }
+
+    return reply.send({ sent, skipped });
+  });
+
+  // ── POST /devices/device/play-events ─ batch proof-of-play ingest ─────────
+  // Authenticated with a device JWT (type === 'device').
+  // Accepts up to 100 events per request; discards entries with invalid timestamps.
+  app.post('/device/play-events', async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+
+    const body = req.body as {
+      events?: Array<{
+        contentId?: string;
+        playlistId?: string;
+        scheduleId?: string;
+        zoneId?: string;
+        startedAt: string;
+        endedAt: string;
+        durationMs: number;
+        completedFull?: boolean;
+        source?: string;
+      }>;
+    };
+
+    if (!Array.isArray(body?.events) || body.events.length === 0) {
+      return reply.status(400).send({ error: 'events array required' });
+    }
+
+    const MAX_BATCH = 100;
+    const VALID_SOURCES = new Set(['schedule', 'playlist', 'default', 'emergency']);
+
+    const rows = body.events.slice(0, MAX_BATCH)
+      .map(e => {
+        const startedAt = new Date(e.startedAt);
+        const endedAt   = new Date(e.endedAt);
+        if (isNaN(startedAt.getTime()) || isNaN(endedAt.getTime())) return null;
+        if (endedAt < startedAt) return null;
+        return {
+          deviceId:      auth.deviceId,
+          contentId:     e.contentId  ?? null,
+          playlistId:    e.playlistId ?? null,
+          scheduleId:    e.scheduleId ?? null,
+          zoneId:        e.zoneId     ?? null,
+          startedAt,
+          endedAt,
+          durationMs:    Math.max(0, Math.round(Number(e.durationMs))),
+          completedFull: e.completedFull ?? true,
+          source:        VALID_SOURCES.has(e.source ?? '') ? (e.source as string) : 'schedule',
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+
+    if (rows.length === 0) {
+      return reply.status(400).send({ error: 'No valid events in batch' });
+    }
+
+    await db.insert(playEvents).values(rows);
+
+    void dispatchWebhookEvent(auth.orgId, 'play_event.created', {
+      deviceId: auth.deviceId,
+      count: rows.length,
+    });
+
+    return reply.status(201).send({ inserted: rows.length });
   });
 }
 

@@ -123,4 +123,47 @@ export async function smartViewsRoutes(app: FastifyInstance) {
 
     return reply.status(204).send();
   });
+
+  // ── PATCH /smart-views/:id ────────────────────────────────────────────────
+  app.patch('/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    if (!['owner', 'admin', 'editor'].includes(user.role)) {
+      return reply.status(403).send({ error: 'Forbidden' });
+    }
+
+    const { id } = req.params as { id: string };
+    const body = req.body as { name?: string; filters?: Record<string, unknown> };
+
+    const existing = await db.query.smartViews.findFirst({
+      where: eq(smartViews.id, id),
+    });
+    if (!existing) return reply.status(404).send({ error: 'Smart view not found' });
+
+    const workspace = await db.query.workspaces.findFirst({
+      where: and(
+        eq(workspaces.id, existing.workspaceId),
+        eq(workspaces.orgId, user.orgId),
+        isNull(workspaces.deletedAt),
+      ),
+    });
+    if (!workspace) return reply.status(404).send({ error: 'Smart view not found' });
+
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    if (body.name !== undefined) patch['name'] = body.name.trim();
+    if (body.filters !== undefined) patch['filters'] = body.filters;
+
+    const [updated] = await db.update(smartViews).set(patch).where(eq(smartViews.id, id)).returning();
+
+    await writeAuditLog({
+      orgId: user.orgId,
+      actorId: user.sub,
+      action: 'SMART_VIEW_UPDATED',
+      entityType: 'smart_view',
+      entityId: id,
+      ipAddress: req.ip,
+      meta: { workspaceId: existing.workspaceId, entityType: existing.entityType },
+    });
+
+    return reply.send(updated);
+  });
 }

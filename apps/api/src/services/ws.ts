@@ -76,7 +76,9 @@ export type WsCommand =
   | { type: 'SYNC_PLAY'; action: 'STOP' | 'CANCEL' | 'START_SYNCPLAY' }
   | { type: 'tizen_probe'; payload: { requestId: string } }
   | { type: 'tizen_command'; payload: { requestId: string; action: string; params?: unknown } }
-  | { type: 'ntp_resync' };
+  | { type: 'ntp_resync' }
+  | { type: 'switch_playlist'; payload: { playlistId: string | null } }
+  | { type: 'switch_content'; payload: { contentId: string | null } };
 
 const connections = new Map<string, Conn>();
 const deviceLogs = new Map<string, DeviceConsoleLogEntry[]>();

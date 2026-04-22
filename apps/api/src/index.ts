@@ -3,6 +3,7 @@ import pino from 'pino';
 import { registerPlugins } from './plugins/index.js';
 import { registerRoutes } from './routes/index.js';
 import { startLogCleanup } from './services/log-cleanup.js';
+import { startJobs } from './services/jobs.js';
 import { createPinoDbStream } from './services/pino-db-stream.js';
 
 const PORT = Number(process.env['API_PORT'] ?? 3000);
@@ -29,6 +30,7 @@ async function start() {
   const app = Fastify({ loggerInstance: logger });
 
   startLogCleanup();
+  startJobs();
 
   await registerPlugins(app);
   await app.register(registerRoutes, { prefix: '/api/v1' });

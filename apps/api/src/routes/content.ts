@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { db, contentItems, contentFolders, playlistItems, workspaceMembers, workspaces, orgStorageQuotas, users } from '@signage/db';
-import { eq, and, isNull, desc, ilike, or, sql, getTableColumns, asc, inArray } from 'drizzle-orm';
+import { db, contentItems, contentFolders, contentVersions, playlistItems, workspaceMembers, workspaces, orgStorageQuotas, users, scheduleSlots, devices } from '@signage/db';
+import { eq, and, isNull, isNotNull, desc, ilike, or, sql, getTableColumns, asc, inArray } from 'drizzle-orm';
 import { createReadStream, promises as fs } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import sharp from 'sharp';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
 import { notifyContentFailed, notifyStorageThresholdCrossing } from '../services/notifications.js';
+import { dispatchWebhookEvent } from '../services/webhooks.js';
 
 const execFileAsync = promisify(execFile);
 const FFMPEG_BIN = process.env['FFMPEG_PATH'] ?? 'ffmpeg';
@@ -340,11 +341,12 @@ export async function contentRoutes(app: FastifyInstance) {
     const limit = Math.min(Number(q['limit'] ?? 50), 200);
     const offset = (Math.max(Number(q['page'] ?? 1), 1) - 1) * limit;
     const tagIds = (q['tagIds'] ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+    const trashed = q['trashed'] === 'true';
 
     // Build filters
     const conditions: ReturnType<typeof and>[] = [
       eq(contentItems.workspaceId, wsId),
-      isNull(contentItems.deletedAt),
+      trashed ? isNotNull(contentItems.deletedAt) : isNull(contentItems.deletedAt),
     ] as ReturnType<typeof and>[];
 
     if (tagIds.length > 0) {
@@ -372,6 +374,7 @@ export async function contentRoutes(app: FastifyInstance) {
 
     const sortField = q['sort'] === 'name' ? contentItems.name
       : q['sort'] === 'size' ? contentItems.fileSize
+      : q['sort'] === 'updatedAt' ? contentItems.updatedAt
       : contentItems.createdAt;
     const orderDir = q['order'] === 'asc' ? sortField : desc(sortField);
 
@@ -445,11 +448,13 @@ export async function contentRoutes(app: FastifyInstance) {
 
     await fs.mkdir(absDir, { recursive: true });
 
-    // Stream to disk
+    // Stream to disk while computing SHA-256 for duplicate detection
     let fileSize = 0;
+    const hashStream = crypto.createHash('sha256');
     const writeStream = (await import('node:fs')).createWriteStream(absPath);
     for await (const chunk of data.file) {
       writeStream.write(chunk);
+      hashStream.update(chunk);
       fileSize += chunk.length;
     }
     await new Promise<void>((resolve, reject) => {
@@ -457,6 +462,20 @@ export async function contentRoutes(app: FastifyInstance) {
       writeStream.on('finish', resolve);
       writeStream.on('error', reject);
     });
+    const fileHash = hashStream.digest('hex');
+
+    // Check for duplicate within workspace
+    const duplicate = await db.query.contentItems.findFirst({
+      where: and(
+        eq(contentItems.workspaceId, wsId),
+        eq(contentItems.fileHash, fileHash),
+        isNull(contentItems.deletedAt),
+      ),
+    });
+    if (duplicate) {
+      await fs.unlink(absPath).catch(() => undefined);
+      return reply.status(409).send({ error: 'Duplicate file detected', conflict: duplicate });
+    }
 
     // Content name defaults to original file name without extension
     const name = path.basename(originalName, ext);
@@ -521,6 +540,7 @@ export async function contentRoutes(app: FastifyInstance) {
       originalName,
       mimeType: mime,
       fileSize,
+      fileHash,
       filePath: relPath.replace(/\\/g, '/'),
       ...(thumbnailRelPath && { thumbnailPath: thumbnailRelPath }),
       ...(probeWidth != null && { width: probeWidth }),
@@ -899,6 +919,13 @@ export async function contentRoutes(app: FastifyInstance) {
       .where(eq(contentItems.id, id))
       .returning();
 
+    void dispatchWebhookEvent(user.orgId, 'content.published', {
+      contentId: id,
+      contentName: item.name,
+      contentType: item.type,
+      workspaceId: item.workspaceId,
+    });
+
     return reply.send(updated);
   });
 
@@ -985,8 +1012,8 @@ export async function contentRoutes(app: FastifyInstance) {
 
     const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
     if (!member) return reply.status(403).send({ error: 'Forbidden' });
-    if (item.type !== 'image' && item.type !== 'video') {
-      return reply.status(400).send({ error: 'Thumbnails only supported for image/video' });
+    if (item.type !== 'image' && item.type !== 'video' && item.type !== 'pdf' && item.type !== 'presentation') {
+      return reply.status(400).send({ error: 'Thumbnails only supported for image/video/pdf/presentation' });
     }
 
     const absPath = path.resolve(STORAGE_ROOT, item.filePath);
@@ -1002,8 +1029,30 @@ export async function contentRoutes(app: FastifyInstance) {
     try {
       if (item.type === 'image') {
         await generateImageThumb(absPath, thumbAbs);
-      } else {
+      } else if (item.type === 'video') {
         await generateVideoThumb(absPath, thumbAbs);
+      } else if (item.type === 'pdf') {
+        // Use Ghostscript to render first page to JPEG
+        const GS_BIN = process.env['GHOSTSCRIPT_PATH'] ?? 'gs';
+        await execFileAsync(GS_BIN, [
+          '-dNOPAUSE', '-dBATCH', '-dSAFER',
+          '-sDEVICE=jpeg', '-r72',
+          '-dFirstPage=1', '-dLastPage=1',
+          `-sOutputFile=${thumbAbs}`,
+          absPath,
+        ]);
+      } else if (item.type === 'presentation') {
+        // Use LibreOffice to convert first slide to image, then resize
+        const SOFFICE_BIN = process.env['LIBREOFFICE_PATH'] ?? 'soffice';
+        const tmpDir = path.dirname(thumbAbs);
+        await execFileAsync(SOFFICE_BIN, [
+          '--headless', '--convert-to', 'png', '--outdir', tmpDir, absPath,
+        ]);
+        // LibreOffice outputs file with same basename + .png
+        const baseName = path.basename(absPath, path.extname(absPath));
+        const pngPath = path.join(tmpDir, `${baseName}.png`);
+        await generateImageThumb(pngPath, thumbAbs);
+        await fs.unlink(pngPath).catch(() => undefined);
       }
     } catch (e) {
       await db.update(contentItems)
@@ -1091,5 +1140,731 @@ export async function contentRoutes(app: FastifyInstance) {
     reply.header('Content-Length', stat.size);
     reply.header('Content-Disposition', `inline; filename="${item.originalName ?? id}"`);
     return reply.send(createReadStream(absPath));
+  });
+
+  // ── DELETE /content/bulk ─────────────────────────────────────────────────
+  app.delete('/bulk', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as { workspaceId?: string; contentIds?: string[] };
+    if (!body.workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (!body.contentIds || body.contentIds.length === 0) return reply.status(400).send({ error: 'contentIds required' });
+
+    const member = await checkWorkspaceAccess(body.workspaceId, user.sub);
+    if (!member || member.role === 'viewer') return reply.status(403).send({ error: 'Forbidden' });
+
+    // Load items to calculate quota decrement
+    const toDelete = await db.select({ id: contentItems.id, fileSize: contentItems.fileSize })
+      .from(contentItems)
+      .where(and(
+        eq(contentItems.workspaceId, body.workspaceId),
+        inArray(contentItems.id, body.contentIds),
+        isNull(contentItems.deletedAt),
+      ));
+
+    if (toDelete.length === 0) return reply.send({ deleted: 0 });
+
+    await db.update(contentItems)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(and(
+        eq(contentItems.workspaceId, body.workspaceId),
+        inArray(contentItems.id, toDelete.map((i) => i.id)),
+      ));
+
+    const totalFreed = toDelete.reduce((sum, i) => sum + (i.fileSize ?? 0), 0);
+    if (totalFreed > 0) {
+      const quota = await db.query.orgStorageQuotas.findFirst({ where: eq(orgStorageQuotas.orgId, user.orgId) });
+      if (quota) {
+        await db.update(orgStorageQuotas)
+          .set({ usedBytes: Math.max(0, quota.usedBytes - totalFreed), updatedAt: new Date() })
+          .where(eq(orgStorageQuotas.orgId, user.orgId));
+      }
+    }
+
+    return reply.send({ deleted: toDelete.length });
+  });
+
+  // ── POST /content/bulk-approve ──────────────────────────────────────────
+  app.post('/bulk-approve', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as { workspaceId?: string; contentIds?: string[] };
+    if (!body.workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (!body.contentIds || body.contentIds.length === 0) return reply.status(400).send({ error: 'contentIds required' });
+    if (!APPROVE_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions to approve content' });
+
+    const member = await checkWorkspaceAccess(body.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+
+    await db.update(contentItems)
+      .set({ approvalState: 'approved', reviewedBy: user.sub, reviewedAt: new Date(), updatedAt: new Date() })
+      .where(and(
+        eq(contentItems.workspaceId, body.workspaceId),
+        inArray(contentItems.id, body.contentIds),
+        isNull(contentItems.deletedAt),
+      ));
+
+    return reply.send({ approved: body.contentIds.length });
+  });
+
+  // ── POST /content/bulk-reject ───────────────────────────────────────────
+  app.post('/bulk-reject', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as { workspaceId?: string; contentIds?: string[]; note?: string };
+    if (!body.workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (!body.contentIds || body.contentIds.length === 0) return reply.status(400).send({ error: 'contentIds required' });
+    if (!APPROVE_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions to reject content' });
+
+    const member = await checkWorkspaceAccess(body.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+
+    await db.update(contentItems)
+      .set({
+        approvalState: 'rejected',
+        reviewNote: body.note ?? null,
+        reviewedBy: user.sub,
+        reviewedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(contentItems.workspaceId, body.workspaceId),
+        inArray(contentItems.id, body.contentIds),
+        isNull(contentItems.deletedAt),
+      ));
+
+    return reply.send({ rejected: body.contentIds.length });
+  });
+
+  // ── POST /content/:id/restore ────────────────────────────────────────────
+  app.post('/:id/restore', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const item = await db.query.contentItems.findFirst({
+      where: and(eq(contentItems.id, id), isNotNull(contentItems.deletedAt)),
+    });
+    if (!item) return reply.status(404).send({ error: 'Trashed item not found' });
+
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member || member.role === 'viewer') return reply.status(403).send({ error: 'Forbidden' });
+
+    const [restored] = await db.update(contentItems)
+      .set({ deletedAt: null, updatedAt: new Date() })
+      .where(eq(contentItems.id, id))
+      .returning();
+
+    // Re-credit quota if file still exists on disk
+    if (item.fileSize && item.filePath) {
+      const absPath = path.resolve(STORAGE_ROOT, item.filePath);
+      const fileExists = await fs.access(absPath).then(() => true).catch(() => false);
+      if (fileExists) {
+        const quota = await db.query.orgStorageQuotas.findFirst({ where: eq(orgStorageQuotas.orgId, user.orgId) });
+        if (quota) {
+          await db.update(orgStorageQuotas)
+            .set({ usedBytes: quota.usedBytes + item.fileSize, updatedAt: new Date() })
+            .where(eq(orgStorageQuotas.orgId, user.orgId));
+        }
+      }
+    }
+
+    return reply.send(restored);
+  });
+
+  // ── PUT /content/folders/reorder ─────────────────────────────────────────
+  app.put('/folders/reorder', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as { workspaceId?: string; items?: Array<{ id: string; position: number }> };
+    if (!body.workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (!Array.isArray(body.items) || body.items.length === 0) return reply.status(400).send({ error: 'items required' });
+
+    const member = await checkWorkspaceAccess(body.workspaceId, user.sub);
+    if (!member || member.role === 'viewer') return reply.status(403).send({ error: 'Forbidden' });
+
+    await Promise.all(
+      body.items.map(({ id, position }) =>
+        db.update(contentFolders)
+          .set({ position, updatedAt: new Date() })
+          .where(and(eq(contentFolders.id, id), eq(contentFolders.workspaceId, body.workspaceId!))),
+      ),
+    );
+
+    return reply.send({ success: true });
+  });
+
+  // ── GET /content/:id/usage ───────────────────────────────────────────────
+  app.get('/:id/usage', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const item = await db.query.contentItems.findFirst({
+      where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)),
+    });
+    if (!item) return reply.status(404).send({ error: 'Not found' });
+
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+
+    const [playlistRows, scheduleRows, deviceRows] = await Promise.all([
+      db.select({
+        playlistItemId: playlistItems.id,
+        playlistId: playlistItems.playlistId,
+        position: playlistItems.position,
+      }).from(playlistItems).where(eq(playlistItems.contentId, id)),
+
+      db.select({
+        slotId: scheduleSlots.id,
+        scheduleId: scheduleSlots.scheduleId,
+        daysOfWeek: scheduleSlots.daysOfWeek,
+        startTime: scheduleSlots.startTime,
+        endTime: scheduleSlots.endTime,
+      }).from(scheduleSlots).where(eq(scheduleSlots.contentId, id)),
+
+      db.select({
+        deviceId: devices.id,
+        deviceName: devices.name,
+      }).from(devices).where(eq(devices.publishedContentId, id)),
+    ]);
+
+    return reply.send({
+      playlists: playlistRows,
+      schedules: scheduleRows,
+      devices: deviceRows,
+    });
+  });
+
+  // ── POST /content/:id/validate-html5 ────────────────────────────────────
+  app.post('/:id/validate-html5', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const item = await db.query.contentItems.findFirst({
+      where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)),
+    });
+    if (!item || !item.filePath) return reply.status(404).send({ error: 'Not found' });
+    if (item.type !== 'html5') return reply.status(400).send({ error: 'Content is not HTML5 type' });
+
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+
+    const absPath = path.resolve(STORAGE_ROOT, item.filePath);
+    try { await fs.access(absPath); } catch {
+      return reply.status(404).send({ error: 'File not found on disk' });
+    }
+
+    // Parse ZIP local file headers to extract filenames
+    const MAX_READ = 4 * 1024 * 1024; // 4 MB
+    const stat = await fs.stat(absPath);
+    const readSize = Math.min(stat.size, MAX_READ);
+    const fd = await fs.open(absPath, 'r');
+    const buf = Buffer.allocUnsafe(readSize);
+    await fd.read(buf, 0, readSize, 0);
+    await fd.close();
+
+    const LOCAL_HEADER_SIG = 0x04034b50;
+    const filenames: string[] = [];
+    let offset = 0;
+    while (offset + 30 <= buf.length) {
+      const sig = buf.readUInt32LE(offset);
+      if (sig !== LOCAL_HEADER_SIG) {
+        offset++;
+        continue;
+      }
+      const nameLen = buf.readUInt16LE(offset + 26);
+      const extraLen = buf.readUInt16LE(offset + 28);
+      const nameEnd = offset + 30 + nameLen;
+      if (nameEnd > buf.length) break;
+      const filename = buf.subarray(offset + 30, nameEnd).toString('utf8');
+      filenames.push(filename);
+      offset = nameEnd + extraLen;
+    }
+
+    if (filenames.length === 0) {
+      return reply.send({ valid: false, reason: 'Could not read ZIP contents — file may be corrupt or too large' });
+    }
+
+    const hasRootIndex = filenames.some((f) => f === 'index.html' || f === './index.html');
+    if (!hasRootIndex) {
+      return reply.send({ valid: false, reason: 'index.html not found at the root of the ZIP archive', files: filenames });
+    }
+
+    return reply.send({ valid: true, files: filenames });
+  });
+
+  // ── POST /content/import-url ─────────────────────────────────────────────
+  app.post('/import-url', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as { workspaceId?: string; name?: string; sourceUrl?: string };
+    if (!body.workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (!body.name?.trim()) return reply.status(400).send({ error: 'name required' });
+    if (!body.sourceUrl) return reply.status(400).send({ error: 'sourceUrl required' });
+
+    // Validate URL — only http/https allowed
+    let parsedUrl: URL;
+    try { parsedUrl = new URL(body.sourceUrl); } catch {
+      return reply.status(400).send({ error: 'Invalid URL' });
+    }
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      return reply.status(400).send({ error: 'Only http and https URLs are supported' });
+    }
+    // Reject private/loopback hostnames
+    const hostname = parsedUrl.hostname.toLowerCase();
+    const blockedHosts = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|0\.0\.0\.0)/;
+    if (blockedHosts.test(hostname)) {
+      return reply.status(400).send({ error: 'Private or loopback URLs are not allowed' });
+    }
+
+    const member = await checkWorkspaceAccess(body.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions to upload content' });
+
+    // Check quota
+    const quota = await db.query.orgStorageQuotas.findFirst({ where: eq(orgStorageQuotas.orgId, user.orgId) });
+    if (quota && quota.usedBytes >= quota.limitBytes) {
+      return reply.status(507).send({ error: 'Storage quota exceeded' });
+    }
+
+    const response = await fetch(body.sourceUrl, { signal: AbortSignal.timeout(30_000) });
+    if (!response.ok || !response.body) {
+      return reply.status(502).send({ error: `Remote URL returned ${response.status}` });
+    }
+
+    const contentType = response.headers.get('content-type') ?? 'application/octet-stream';
+    const mime = contentType.split(';')[0]!.trim();
+
+    // Infer extension from URL path
+    const urlPath = parsedUrl.pathname;
+    const ext = path.extname(urlPath) || '';
+    const type = detectType(mime, urlPath);
+
+    const fileId = crypto.randomUUID();
+    const relDir = path.join(user.orgId, body.workspaceId);
+    const relPath = path.join(relDir, `${fileId}${ext}`);
+    const absDir = path.resolve(STORAGE_ROOT, relDir);
+    const absPath = path.resolve(STORAGE_ROOT, relPath);
+
+    await fs.mkdir(absDir, { recursive: true });
+
+    const MAX_IMPORT_BYTES = 500 * 1024 * 1024; // 500 MB limit
+    let fileSize = 0;
+    const writeStream = (await import('node:fs')).createWriteStream(absPath);
+    for await (const chunk of response.body) {
+      const buf = chunk instanceof Uint8Array ? chunk : Buffer.from(chunk as ArrayBufferLike);
+      fileSize += buf.length;
+      if (fileSize > MAX_IMPORT_BYTES) {
+        writeStream.destroy();
+        await fs.unlink(absPath).catch(() => undefined);
+        return reply.status(413).send({ error: 'Remote file exceeds 500 MB import limit' });
+      }
+      writeStream.write(buf);
+    }
+    await new Promise<void>((resolve, reject) => {
+      writeStream.end();
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+
+    // Generate thumbnail (best-effort)
+    let thumbnailRelPath: string | undefined;
+    if (type === 'image' || type === 'video') {
+      const thumbRel = path.join(relDir, `${fileId}_thumb.jpg`);
+      const thumbAbs = path.resolve(STORAGE_ROOT, thumbRel);
+      try {
+        if (type === 'image') await generateImageThumb(absPath, thumbAbs);
+        else await generateVideoThumb(absPath, thumbAbs);
+        thumbnailRelPath = thumbRel.replace(/\\/g, '/');
+      } catch { /* non-fatal */ }
+    }
+
+    const wsRow = await db.query.workspaces.findFirst({ where: eq(workspaces.id, body.workspaceId), columns: { settings: true } });
+    let wsSettings: { approvalRequired?: boolean } = {};
+    try { wsSettings = JSON.parse(wsRow?.settings ?? '{}'); } catch { /* ignore */ }
+    const initialApprovalState = wsSettings.approvalRequired && !APPROVE_ROLES.has(user.role) ? 'draft' : 'approved';
+
+    const [item] = await db.insert(contentItems).values({
+      workspaceId: body.workspaceId,
+      uploadedBy: user.sub,
+      type,
+      name: body.name.trim(),
+      originalName: path.basename(urlPath) || body.name.trim(),
+      mimeType: mime,
+      fileSize,
+      filePath: relPath.replace(/\\/g, '/'),
+      ...(thumbnailRelPath && { thumbnailPath: thumbnailRelPath }),
+      status: 'ready',
+      approvalState: initialApprovalState,
+      metadata: JSON.stringify({ importedFrom: body.sourceUrl }),
+    }).returning();
+
+    if (quota) {
+      await db.update(orgStorageQuotas)
+        .set({ usedBytes: quota.usedBytes + fileSize, updatedAt: new Date() })
+        .where(eq(orgStorageQuotas.orgId, user.orgId));
+    }
+
+    return reply.status(201).send(item);
+  });
+
+  // ── POST /content/widget-rss ─────────────────────────────────────────────
+  app.post('/widget-rss', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as { workspaceId?: string; name?: string; feedUrl?: string; maxItems?: number; duration?: number };
+    if (!body.workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (!body.name?.trim()) return reply.status(400).send({ error: 'name required' });
+    if (!body.feedUrl) return reply.status(400).send({ error: 'feedUrl required' });
+    try { new URL(body.feedUrl); } catch { return reply.status(400).send({ error: 'Invalid feedUrl' }); }
+
+    const member = await checkWorkspaceAccess(body.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+    const wsRow = await db.query.workspaces.findFirst({ where: eq(workspaces.id, body.workspaceId), columns: { settings: true } });
+    let wsSettings: { approvalRequired?: boolean } = {};
+    try { wsSettings = JSON.parse(wsRow?.settings ?? '{}'); } catch { /* ignore */ }
+    const approvalState = wsSettings.approvalRequired && !APPROVE_ROLES.has(user.role) ? 'draft' : 'approved';
+
+    const [item] = await db.insert(contentItems).values({
+      workspaceId: body.workspaceId,
+      uploadedBy: user.sub,
+      type: 'widget',
+      name: body.name.trim(),
+      duration: body.duration ?? 30,
+      status: 'ready',
+      approvalState,
+      metadata: JSON.stringify({ widgetType: 'rss', feedUrl: body.feedUrl, maxItems: body.maxItems ?? 5 }),
+    }).returning();
+
+    return reply.status(201).send(item);
+  });
+
+  // ── PATCH /content/:id/widget-rss ───────────────────────────────────────
+  app.patch('/:id/widget-rss', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const body = req.body as { name?: string; feedUrl?: string; maxItems?: number; duration?: number };
+
+    const item = await db.query.contentItems.findFirst({ where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)) });
+    if (!item) return reply.status(404).send({ error: 'Not found' });
+
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member || member.role === 'viewer') return reply.status(403).send({ error: 'Forbidden' });
+
+    const current = (() => { try { return JSON.parse(item.metadata ?? '{}'); } catch { return {}; } })();
+    if (current.widgetType !== 'rss') return reply.status(400).send({ error: 'Not an RSS widget' });
+
+    if (body.feedUrl) { try { new URL(body.feedUrl); } catch { return reply.status(400).send({ error: 'Invalid feedUrl' }); } }
+
+    const [patched] = await db.update(contentItems).set({
+      ...(body.name !== undefined && { name: body.name.trim() }),
+      ...(body.duration !== undefined && { duration: body.duration }),
+      metadata: JSON.stringify({ ...current, ...(body.feedUrl && { feedUrl: body.feedUrl }), ...(body.maxItems !== undefined && { maxItems: body.maxItems }) }),
+      updatedAt: new Date(),
+    }).where(eq(contentItems.id, id)).returning();
+
+    return reply.send(patched);
+  });
+
+  // ── POST /content/widget-countdown ──────────────────────────────────────
+  app.post('/widget-countdown', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as { workspaceId?: string; name?: string; targetDate?: string; title?: string; duration?: number };
+    if (!body.workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (!body.name?.trim()) return reply.status(400).send({ error: 'name required' });
+    if (!body.targetDate) return reply.status(400).send({ error: 'targetDate required' });
+    if (isNaN(Date.parse(body.targetDate))) return reply.status(400).send({ error: 'Invalid targetDate' });
+
+    const member = await checkWorkspaceAccess(body.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+    const wsRow = await db.query.workspaces.findFirst({ where: eq(workspaces.id, body.workspaceId), columns: { settings: true } });
+    let wsSettings: { approvalRequired?: boolean } = {};
+    try { wsSettings = JSON.parse(wsRow?.settings ?? '{}'); } catch { /* ignore */ }
+    const approvalState = wsSettings.approvalRequired && !APPROVE_ROLES.has(user.role) ? 'draft' : 'approved';
+
+    const [item] = await db.insert(contentItems).values({
+      workspaceId: body.workspaceId,
+      uploadedBy: user.sub,
+      type: 'widget',
+      name: body.name.trim(),
+      duration: body.duration ?? 30,
+      status: 'ready',
+      approvalState,
+      metadata: JSON.stringify({ widgetType: 'countdown', targetDate: body.targetDate, title: body.title ?? '' }),
+    }).returning();
+
+    return reply.status(201).send(item);
+  });
+
+  // ── PATCH /content/:id/widget-countdown ─────────────────────────────────
+  app.patch('/:id/widget-countdown', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const body = req.body as { name?: string; targetDate?: string; title?: string; duration?: number };
+
+    const item = await db.query.contentItems.findFirst({ where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)) });
+    if (!item) return reply.status(404).send({ error: 'Not found' });
+
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member || member.role === 'viewer') return reply.status(403).send({ error: 'Forbidden' });
+
+    const current = (() => { try { return JSON.parse(item.metadata ?? '{}'); } catch { return {}; } })();
+    if (current.widgetType !== 'countdown') return reply.status(400).send({ error: 'Not a countdown widget' });
+
+    if (body.targetDate && isNaN(Date.parse(body.targetDate))) return reply.status(400).send({ error: 'Invalid targetDate' });
+
+    const [patched] = await db.update(contentItems).set({
+      ...(body.name !== undefined && { name: body.name.trim() }),
+      ...(body.duration !== undefined && { duration: body.duration }),
+      metadata: JSON.stringify({ ...current, ...(body.targetDate && { targetDate: body.targetDate }), ...(body.title !== undefined && { title: body.title }) }),
+      updatedAt: new Date(),
+    }).where(eq(contentItems.id, id)).returning();
+
+    return reply.send(patched);
+  });
+
+  // ── POST /content/widget-json-feed ───────────────────────────────────────
+  app.post('/widget-json-feed', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as { workspaceId?: string; name?: string; feedUrl?: string; jsonPath?: string; template?: string; refreshInterval?: number; duration?: number };
+    if (!body.workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (!body.name?.trim()) return reply.status(400).send({ error: 'name required' });
+    if (!body.feedUrl) return reply.status(400).send({ error: 'feedUrl required' });
+    try { new URL(body.feedUrl); } catch { return reply.status(400).send({ error: 'Invalid feedUrl' }); }
+
+    const member = await checkWorkspaceAccess(body.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+    const wsRow = await db.query.workspaces.findFirst({ where: eq(workspaces.id, body.workspaceId), columns: { settings: true } });
+    let wsSettings: { approvalRequired?: boolean } = {};
+    try { wsSettings = JSON.parse(wsRow?.settings ?? '{}'); } catch { /* ignore */ }
+    const approvalState = wsSettings.approvalRequired && !APPROVE_ROLES.has(user.role) ? 'draft' : 'approved';
+
+    const [item] = await db.insert(contentItems).values({
+      workspaceId: body.workspaceId,
+      uploadedBy: user.sub,
+      type: 'widget',
+      name: body.name.trim(),
+      duration: body.duration ?? 30,
+      refreshInterval: body.refreshInterval ?? 3600,
+      status: 'ready',
+      approvalState,
+      metadata: JSON.stringify({
+        widgetType: 'json_feed',
+        feedUrl: body.feedUrl,
+        jsonPath: body.jsonPath ?? '$',
+        template: body.template ?? '',
+      }),
+    }).returning();
+
+    return reply.status(201).send(item);
+  });
+
+  // ── PATCH /content/:id/widget-json-feed ─────────────────────────────────
+  app.patch('/:id/widget-json-feed', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const body = req.body as { name?: string; feedUrl?: string; jsonPath?: string; template?: string; refreshInterval?: number; duration?: number };
+
+    const item = await db.query.contentItems.findFirst({ where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)) });
+    if (!item) return reply.status(404).send({ error: 'Not found' });
+
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member || member.role === 'viewer') return reply.status(403).send({ error: 'Forbidden' });
+
+    const current = (() => { try { return JSON.parse(item.metadata ?? '{}'); } catch { return {}; } })();
+    if (current.widgetType !== 'json_feed') return reply.status(400).send({ error: 'Not a JSON feed widget' });
+
+    if (body.feedUrl) { try { new URL(body.feedUrl); } catch { return reply.status(400).send({ error: 'Invalid feedUrl' }); } }
+
+    const [patched] = await db.update(contentItems).set({
+      ...(body.name !== undefined && { name: body.name.trim() }),
+      ...(body.duration !== undefined && { duration: body.duration }),
+      ...(body.refreshInterval !== undefined && { refreshInterval: body.refreshInterval }),
+      metadata: JSON.stringify({
+        ...current,
+        ...(body.feedUrl && { feedUrl: body.feedUrl }),
+        ...(body.jsonPath !== undefined && { jsonPath: body.jsonPath }),
+        ...(body.template !== undefined && { template: body.template }),
+      }),
+      updatedAt: new Date(),
+    }).where(eq(contentItems.id, id)).returning();
+
+    return reply.send(patched);
+  });
+
+  // ── POST /content/:id/replace  (replace file, archive old version) ───────
+  app.post('/:id/replace', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const item = await db.query.contentItems.findFirst({
+      where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)),
+    });
+    if (!item || !item.filePath) return reply.status(404).send({ error: 'Not found' });
+
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+    // Archive current version before replacing
+    await db.insert(contentVersions).values({
+      contentItemId: item.id,
+      filePath: item.filePath,
+      thumbnailPath: item.thumbnailPath ?? null,
+      originalName: item.originalName ?? null,
+      mimeType: item.mimeType ?? null,
+      fileSize: item.fileSize ?? null,
+      fileHash: (item as Record<string, unknown>)['fileHash'] as string ?? null,
+      uploadedBy: item.uploadedBy,
+    });
+
+    const data = await req.file();
+    if (!data) return reply.status(400).send({ error: 'No file provided' });
+
+    const mime = data.mimetype;
+    const originalName = data.filename;
+    const type = detectType(mime, originalName);
+    const ext = path.extname(originalName) || '';
+    const fileId = crypto.randomUUID();
+    const relDir = path.join(user.orgId, item.workspaceId);
+    const relPath = path.join(relDir, `${fileId}${ext}`);
+    const absDir = path.resolve(STORAGE_ROOT, relDir);
+    const absPath = path.resolve(STORAGE_ROOT, relPath);
+
+    await fs.mkdir(absDir, { recursive: true });
+
+    let fileSize = 0;
+    const hashStream = crypto.createHash('sha256');
+    const writeStream = (await import('node:fs')).createWriteStream(absPath);
+    for await (const chunk of data.file) {
+      writeStream.write(chunk);
+      hashStream.update(chunk);
+      fileSize += chunk.length;
+    }
+    await new Promise<void>((resolve, reject) => {
+      writeStream.end();
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+    const fileHash = hashStream.digest('hex');
+
+    // Generate thumbnail (best-effort)
+    let thumbnailRelPath: string | undefined;
+    if (type === 'image' || type === 'video') {
+      const thumbRel = path.join(relDir, `${fileId}_thumb.jpg`);
+      const thumbAbs = path.resolve(STORAGE_ROOT, thumbRel);
+      try {
+        if (type === 'image') await generateImageThumb(absPath, thumbAbs);
+        else await generateVideoThumb(absPath, thumbAbs);
+        thumbnailRelPath = thumbRel.replace(/\\/g, '/');
+      } catch { /* non-fatal */ }
+    }
+
+    // Update quota delta
+    const sizeDelta = fileSize - (item.fileSize ?? 0);
+    if (sizeDelta !== 0) {
+      const quota = await db.query.orgStorageQuotas.findFirst({ where: eq(orgStorageQuotas.orgId, user.orgId) });
+      if (quota) {
+        await db.update(orgStorageQuotas)
+          .set({ usedBytes: Math.max(0, quota.usedBytes + sizeDelta), updatedAt: new Date() })
+          .where(eq(orgStorageQuotas.orgId, user.orgId));
+      }
+    }
+
+    const [replaced] = await db.update(contentItems).set({
+      type,
+      originalName,
+      mimeType: mime,
+      fileSize,
+      fileHash,
+      filePath: relPath.replace(/\\/g, '/'),
+      ...(thumbnailRelPath ? { thumbnailPath: thumbnailRelPath } : {}),
+      updatedAt: new Date(),
+    }).where(eq(contentItems.id, id)).returning();
+
+    return reply.send(replaced);
+  });
+
+  // ── GET /content/:id/versions ────────────────────────────────────────────
+  app.get('/:id/versions', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const item = await db.query.contentItems.findFirst({
+      where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)),
+    });
+    if (!item) return reply.status(404).send({ error: 'Not found' });
+
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+
+    const versions = await db.select().from(contentVersions)
+      .where(eq(contentVersions.contentItemId, id))
+      .orderBy(desc(contentVersions.createdAt));
+
+    return reply.send(versions);
+  });
+
+  // ── POST /content/:id/versions/:versionId/restore ────────────────────────
+  app.post('/:id/versions/:versionId/restore', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id, versionId } = req.params as { id: string; versionId: string };
+
+    const item = await db.query.contentItems.findFirst({
+      where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)),
+    });
+    if (!item || !item.filePath) return reply.status(404).send({ error: 'Not found' });
+
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+    const version = await db.query.contentVersions.findFirst({
+      where: and(eq(contentVersions.id, versionId), eq(contentVersions.contentItemId, id)),
+    });
+    if (!version) return reply.status(404).send({ error: 'Version not found' });
+
+    // Verify the version file still exists on disk
+    const versionAbsPath = path.resolve(STORAGE_ROOT, version.filePath);
+    try { await fs.access(versionAbsPath); } catch {
+      return reply.status(410).send({ error: 'Version file no longer available on disk' });
+    }
+
+    // Archive the current file as a new version before restoring
+    await db.insert(contentVersions).values({
+      contentItemId: item.id,
+      filePath: item.filePath,
+      thumbnailPath: item.thumbnailPath ?? null,
+      originalName: item.originalName ?? null,
+      mimeType: item.mimeType ?? null,
+      fileSize: item.fileSize ?? null,
+      fileHash: (item as Record<string, unknown>)['fileHash'] as string ?? null,
+      uploadedBy: item.uploadedBy,
+    });
+
+    // Swap to the version's file
+    const sizeDelta = (version.fileSize ?? 0) - (item.fileSize ?? 0);
+    if (sizeDelta !== 0) {
+      const quota = await db.query.orgStorageQuotas.findFirst({ where: eq(orgStorageQuotas.orgId, user.orgId) });
+      if (quota) {
+        await db.update(orgStorageQuotas)
+          .set({ usedBytes: Math.max(0, quota.usedBytes + sizeDelta), updatedAt: new Date() })
+          .where(eq(orgStorageQuotas.orgId, user.orgId));
+      }
+    }
+
+    const [restored] = await db.update(contentItems).set({
+      filePath: version.filePath,
+      thumbnailPath: version.thumbnailPath,
+      originalName: version.originalName,
+      mimeType: version.mimeType,
+      fileSize: version.fileSize,
+      fileHash: version.fileHash,
+      updatedAt: new Date(),
+    }).where(eq(contentItems.id, id)).returning();
+
+    // Remove the restored version entry (it's now the current)
+    await db.delete(contentVersions).where(eq(contentVersions.id, versionId));
+
+    return reply.send(restored);
   });
 }

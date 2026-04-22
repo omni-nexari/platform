@@ -1,64 +1,135 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useParams, useSearchParams } from 'react-router';
 
-// â”€â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-interface ModifierOption { id: string; name: string; priceCents: number }
+interface ModifierOption {
+  id: string;
+  name: string;
+  priceCents: number;
+}
+
 interface ModifierGroup {
-  id: string; name: string; required: boolean;
-  maxSelect: number; options: ModifierOption[];
+  id: string;
+  name: string;
+  required: boolean;
+  maxSelect: number;
+  options: ModifierOption[];
 }
 
 interface PosItem {
-  id: string; name: string; description: string | null;
-  imageUrl: string | null; priceCents: number;
-  isAvailable: boolean; tags: string[];
+  id: string;
+  name: string;
+  description: string | null;
+  imageUrl: string | null;
+  priceCents: number;
+  isAvailable: boolean;
+  tags: string[];
   modifiers: ModifierGroup[];
 }
 
 interface PosCategory {
-  id: string; name: string; description: string | null;
-  imageUrl: string | null; color: string | null; items: PosItem[];
+  id: string;
+  name: string;
+  description: string | null;
+  imageUrl: string | null;
+  color: string | null;
+  items: PosItem[];
 }
 
-interface PosMenu { id: string; name: string; currency: string; categories: PosCategory[] }
+interface PosMenu {
+  id: string;
+  name: string;
+  currency: string;
+  categories: PosCategory[];
+}
 
 interface CartItem {
-  itemId: string; itemName: string; itemPriceCents: number;
-  quantity: number; notes: string;
+  itemId: string;
+  itemName: string;
+  itemPriceCents: number;
+  quantity: number;
+  notes: string;
   selectedModifiers: { groupName: string; optionName: string; priceCents: number }[];
   lineTotalCents: number;
 }
 
 interface KioskConfig {
-  orientation: string; welcomeMessage: string | null;
-  idleTimeoutSeconds: number; logoUrl: string | null;
-  primaryColor: string | null; qrOrderingEnabled: boolean;
+  orientation: string;
+  welcomeMessage: string | null;
+  idleTimeoutSeconds: number;
+  logoUrl: string | null;
+  primaryColor: string | null;
+  qrOrderingEnabled: boolean;
 }
 
-interface StoreStatus { isOpen: boolean; note: string | null }
+interface StoreStatus {
+  isOpen: boolean;
+  note: string | null;
+}
 
-interface LoyaltyCustomer { id: string; name: string | null; points: number; tier: string }
+interface LoyaltyCustomer {
+  id: string;
+  name: string | null;
+  points: number;
+  tier: string;
+}
+
 interface LoyaltyVerifyResponse {
-  found: boolean; customer: LoyaltyCustomer | null;
-  loyaltyEnabled: boolean; loyaltyPointsPerDollar: number; loyaltyRedemptionRate: number;
+  found: boolean;
+  customer: LoyaltyCustomer | null;
+  loyaltyEnabled: boolean;
+  loyaltyPointsPerDollar: number;
+  loyaltyRedemptionRate: number;
   maxRedeemablePoints: number;
 }
 
-// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const BADGE_COLORS: Record<string, string> = {
+  new: '#22c55e',
+  best: '#f59e0b',
+  popular: '#06b6d4',
+  hot: '#ef4444',
+  featured: '#8b5cf6',
+};
+
+const DESCRIPTION_CLAMP: CSSProperties = {
+  display: '-webkit-box',
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+};
+
 function formatPrice(cents: number, currency = 'USD') {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100);
 }
 
-function resolveApiBase() { return '/api'; }
+function resolveApiBase() {
+  return '/api';
+}
 
-// â”€â”€â”€ Main Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function hexWithAlpha(color: string, alphaHex: string) {
+  if (!color.startsWith('#')) return color;
+  if (color.length === 7) return `${color}${alphaHex}`;
+  return color;
+}
+
+function readDensity(value: string | null, fallback: 'compact' | 'comfortable') {
+  if (value === 'compact' || value === 'comfortable') return value;
+  return fallback;
+}
+
+function readFlavor(value: string | null) {
+  if (value === 'sample') return 'sample';
+  return 'classic';
+}
+
 export default function KioskDisplayPage() {
   const { wsId, orientation: routeOrientation = 'portrait' } = useParams<{ wsId: string; orientation: string }>();
   const [searchParams] = useSearchParams();
   const routeToken = searchParams.get('dt') ?? '';
   const displayToken = routeToken || localStorage.getItem('kiosk.deviceToken') || '';
+  const flavor = readFlavor(searchParams.get('kf'));
+  const portraitDensity = readDensity(searchParams.get('pd'), 'comfortable');
+  const landscapeDensity = readDensity(searchParams.get('ld'), 'compact');
 
-  // Config
   const [kioskConfig, setKioskConfig] = useState<KioskConfig | null>(null);
   const [storeStatus, setStoreStatus] = useState<StoreStatus | null>(null);
   const [menu, setMenu] = useState<PosMenu | null>(null);
@@ -71,11 +142,9 @@ export default function KioskDisplayPage() {
   const [placing, setPlacing] = useState(false);
   const [customerName, setCustomerName] = useState('');
 
-  // Modifier picker
   const [modifierItem, setModifierItem] = useState<PosItem | null>(null);
   const [selectedOpts, setSelectedOpts] = useState<Record<string, string[]>>({});
 
-  // Loyalty
   const [loyaltyPhone, setLoyaltyPhone] = useState('');
   const [loyaltyEmail, setLoyaltyEmail] = useState('');
   const [loyaltyResult, setLoyaltyResult] = useState<LoyaltyVerifyResponse | null>(null);
@@ -83,21 +152,20 @@ export default function KioskDisplayPage() {
   const [loyaltyDiscountCents, setLoyaltyDiscountCents] = useState(0);
   const [loyaltyCustomerId, setLoyaltyCustomerId] = useState<string | null>(null);
 
-  // Idle
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isIdle, setIsIdle] = useState(false);
 
-  // Persist token
   useEffect(() => {
     if (routeToken) localStorage.setItem('kiosk.deviceToken', routeToken);
   }, [routeToken]);
 
-  const primaryColor = kioskConfig?.primaryColor ?? '#3a7bff';
-  const accentColor  = '#4ff2d1';
-  const orientation  = kioskConfig?.orientation ?? routeOrientation;
-  const idleTimeout  = (kioskConfig?.idleTimeoutSeconds ?? 60) * 1000;
+  const primaryColor = kioskConfig?.primaryColor ?? '#ea5c25';
+  const accentColor = '#72c54a';
+  const orientation = kioskConfig?.orientation ?? routeOrientation;
+  const isPortrait = orientation === 'portrait';
+  const density = isPortrait ? portraitDensity : landscapeDensity;
+  const idleTimeout = (kioskConfig?.idleTimeoutSeconds ?? 60) * 1000;
 
-  // â”€â”€ Idle timeout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const resetIdle = useCallback(() => {
     if (isIdle) setIsIdle(false);
     if (idleTimer.current) clearTimeout(idleTimer.current);
@@ -107,27 +175,33 @@ export default function KioskDisplayPage() {
   useEffect(() => {
     resetIdle();
     const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'pointerdown'];
-    events.forEach((e) => document.addEventListener(e, resetIdle, { passive: true }));
+    events.forEach((event) => document.addEventListener(event, resetIdle, { passive: true }));
     return () => {
-      events.forEach((e) => document.removeEventListener(e, resetIdle));
+      events.forEach((event) => document.removeEventListener(event, resetIdle));
       if (idleTimer.current) clearTimeout(idleTimer.current);
     };
-  }, [idleTimeout]);
+  }, [resetIdle, idleTimeout]);
 
-  // When idle, reset to welcome state
   useEffect(() => {
-    if (isIdle) {
-      setCart([]); setCartOpen(false); setOrderPlaced(null);
-      setLoyaltyResult(null); setLoyaltyDiscountCents(0); setLoyaltyCustomerId(null);
-      setLoyaltyPhone(''); setLoyaltyEmail('');
-      setCustomerName(''); setModifierItem(null);
-    }
+    if (!isIdle) return;
+    setCart([]);
+    setCartOpen(false);
+    setOrderPlaced(null);
+    setLoyaltyResult(null);
+    setLoyaltyDiscountCents(0);
+    setLoyaltyCustomerId(null);
+    setLoyaltyPhone('');
+    setLoyaltyEmail('');
+    setCustomerName('');
+    setModifierItem(null);
   }, [isIdle]);
 
-  // â”€â”€ Fetch config + menu + store status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const loadAll = useCallback(async () => {
     if (!wsId) return;
-    setLoading(true); setError(null);
+
+    setLoading(true);
+    setError(null);
+
     try {
       const headers: Record<string, string> = {};
       if (displayToken) headers['X-Display-Token'] = displayToken;
@@ -141,38 +215,54 @@ export default function KioskDisplayPage() {
       ]);
 
       if (configRes?.ok) {
-        const cfg = await configRes.json() as KioskConfig | null;
+        const cfg = (await configRes.json()) as KioskConfig | null;
         if (cfg) setKioskConfig(cfg);
       }
-      if (storeRes.ok) setStoreStatus(await storeRes.json() as StoreStatus);
-      if (!menuRes.ok) throw new Error(`Menu HTTP ${menuRes.status}`);
-      const menuData: PosMenu = await menuRes.json();
+
+      if (storeRes.ok) {
+        setStoreStatus((await storeRes.json()) as StoreStatus);
+      }
+
+      if (!menuRes.ok) {
+        throw new Error(`Menu HTTP ${menuRes.status}`);
+      }
+
+      const menuData = (await menuRes.json()) as PosMenu;
       setMenu(menuData);
-      if (menuData.categories.length > 0) setActiveCategoryId(menuData.categories[0]!.id);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to load');
+      if (menuData.categories.length > 0) {
+        setActiveCategoryId(menuData.categories[0]!.id);
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load');
     } finally {
       setLoading(false);
     }
-  }, [wsId, displayToken]);
+  }, [displayToken, wsId]);
 
-  useEffect(() => { void loadAll(); }, [loadAll]);
-
-  // Poll menu every 60s
   useEffect(() => {
+    void loadAll();
+  }, [loadAll]);
+
+  useEffect(() => {
+    if (!wsId) return;
     const timer = setInterval(() => {
-      if (!wsId) return;
       fetch(`${resolveApiBase()}/pos/menu?workspaceId=${wsId}`)
-        .then((r) => r.ok ? r.json() : null)
-        .then((data: PosMenu | null) => { if (data) setMenu(data); })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data: PosMenu | null) => {
+          if (data) setMenu(data);
+        })
         .catch(() => {});
     }, 60_000);
+
     return () => clearInterval(timer);
   }, [wsId]);
 
-  // â”€â”€ Modifier picker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   function openModifierPicker(item: PosItem) {
-    if (item.modifiers.length === 0) { addItemToCart(item, []); return; }
+    if (item.modifiers.length === 0) {
+      addItemToCart(item, []);
+      return;
+    }
+
     setModifierItem(item);
     setSelectedOpts({});
   }
@@ -180,75 +270,114 @@ export default function KioskDisplayPage() {
   function toggleModifierOption(group: ModifierGroup, optId: string) {
     setSelectedOpts((prev) => {
       const current = prev[group.id] ?? [];
+
       if (group.maxSelect === 1) {
         return { ...prev, [group.id]: current[0] === optId ? [] : [optId] };
       }
+
       if (current.includes(optId)) {
         return { ...prev, [group.id]: current.filter((id) => id !== optId) };
       }
-      if (current.length >= group.maxSelect) return prev;
+
+      if (current.length >= group.maxSelect) {
+        return prev;
+      }
+
       return { ...prev, [group.id]: [...current, optId] };
     });
   }
 
   function confirmModifiers() {
     if (!modifierItem) return;
-    const requiredGroups = modifierItem.modifiers.filter((g) => g.required);
+
+    const requiredGroups = modifierItem.modifiers.filter((group) => group.required);
     for (const group of requiredGroups) {
       if (!selectedOpts[group.id]?.length) {
         alert(`Please select an option for "${group.name}"`);
         return;
       }
     }
+
     const mods: CartItem['selectedModifiers'] = [];
     for (const group of modifierItem.modifiers) {
       for (const optId of selectedOpts[group.id] ?? []) {
-        const opt = group.options.find((o) => o.id === optId);
-        if (opt) mods.push({ groupName: group.name, optionName: opt.name, priceCents: opt.priceCents });
+        const found = group.options.find((option) => option.id === optId);
+        if (found) {
+          mods.push({
+            groupName: group.name,
+            optionName: found.name,
+            priceCents: found.priceCents,
+          });
+        }
       }
     }
+
     addItemToCart(modifierItem, mods);
     setModifierItem(null);
   }
 
-  // â”€â”€ Cart helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   function addItemToCart(item: PosItem, mods: CartItem['selectedModifiers']) {
-    const modExtra = mods.reduce((s, m) => s + m.priceCents, 0);
-    const unitPrice = item.priceCents + modExtra;
+    const modifierExtra = mods.reduce((sum, modifier) => sum + modifier.priceCents, 0);
+    const unitPrice = item.priceCents + modifierExtra;
+
     setCart((prev) => {
-      // Only merge if identical item + zero modifiers
       if (mods.length === 0) {
-        const existing = prev.find((c) => c.itemId === item.id && c.selectedModifiers.length === 0);
+        const existing = prev.find((entry) => entry.itemId === item.id && entry.selectedModifiers.length === 0);
         if (existing) {
-          return prev.map((c) => c === existing
-            ? { ...c, quantity: c.quantity + 1, lineTotalCents: (c.quantity + 1) * unitPrice }
-            : c,
-          );
+          return prev.map((entry) => {
+            if (entry !== existing) return entry;
+            const quantity = entry.quantity + 1;
+            return {
+              ...entry,
+              quantity,
+              lineTotalCents: quantity * unitPrice,
+            };
+          });
         }
       }
-      return [...prev, {
-        itemId: item.id, itemName: item.name, itemPriceCents: unitPrice,
-        quantity: 1, notes: '', selectedModifiers: mods, lineTotalCents: unitPrice,
-      }];
+
+      return [
+        ...prev,
+        {
+          itemId: item.id,
+          itemName: item.name,
+          itemPriceCents: unitPrice,
+          quantity: 1,
+          notes: '',
+          selectedModifiers: mods,
+          lineTotalCents: unitPrice,
+        },
+      ];
     });
   }
 
-  function removeFromCart(idx: number) { setCart((p) => p.filter((_, i) => i !== idx)); }
-  function updateQty(idx: number, delta: number) {
-    setCart((prev) => prev
-      .map((c, i) => i === idx
-        ? { ...c, quantity: c.quantity + delta, lineTotalCents: (c.quantity + delta) * c.itemPriceCents }
-        : c)
-      .filter((c) => c.quantity > 0));
+  function removeFromCart(index: number) {
+    setCart((prev) => prev.filter((_, idx) => idx !== index));
   }
 
-  const cartTotal = cart.reduce((s, c) => s + c.lineTotalCents, 0);
-  const cartCount = cart.reduce((s, c) => s + c.quantity, 0);
+  function updateQty(index: number, delta: number) {
+    setCart((prev) =>
+      prev
+        .map((entry, idx) => {
+          if (idx !== index) return entry;
+          const quantity = entry.quantity + delta;
+          return {
+            ...entry,
+            quantity,
+            lineTotalCents: quantity * entry.itemPriceCents,
+          };
+        })
+        .filter((entry) => entry.quantity > 0),
+    );
+  }
+
+  const cartTotal = cart.reduce((sum, entry) => sum + entry.lineTotalCents, 0);
+  const cartCount = cart.reduce((sum, entry) => sum + entry.quantity, 0);
   const finalTotal = Math.max(0, cartTotal - loyaltyDiscountCents);
 
-  // â”€â”€ Loyalty verify â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async function verifyLoyalty() {
     if (!loyaltyPhone.trim() && !loyaltyEmail.trim()) return;
+
     setLoyaltyVerifying(true);
     try {
       const res = await fetch(`${resolveApiBase()}/pos/kiosk/loyalty/verify?dt=${displayToken}`, {
@@ -260,26 +389,33 @@ export default function KioskDisplayPage() {
           email: loyaltyEmail.trim() || undefined,
         }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: LoyaltyVerifyResponse = await res.json();
-      setLoyaltyResult(data);
-    } catch { /* ignore */ } finally {
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      setLoyaltyResult((await res.json()) as LoyaltyVerifyResponse);
+    } catch {
+      // Ignore verify failures to keep kiosk flow smooth.
+    } finally {
       setLoyaltyVerifying(false);
     }
   }
 
   function applyLoyaltyDiscount(points: number) {
     if (!loyaltyResult?.customer) return;
+
     const rate = Math.max(1, loyaltyResult.loyaltyRedemptionRate);
     const redeemable = Math.floor(Math.min(points, loyaltyResult.maxRedeemablePoints) / rate) * rate;
     const discountCents = Math.floor(redeemable / rate) * 100;
+
     setLoyaltyDiscountCents(discountCents);
     setLoyaltyCustomerId(loyaltyResult.customer.id);
   }
 
-  // â”€â”€ Place order â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async function placeOrder() {
     if (cart.length === 0 || !wsId) return;
+
     setPlacing(true);
     try {
       const res = await fetch(`${resolveApiBase()}/pos/orders?dt=${displayToken}`, {
@@ -293,65 +429,94 @@ export default function KioskDisplayPage() {
           loyaltyDiscountCents: loyaltyDiscountCents > 0 ? loyaltyDiscountCents : undefined,
         }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as { orderNumber: number };
+
+      if (!res.ok) {
+        let message = `HTTP ${res.status}`;
+        try {
+          const payload = (await res.json()) as { error?: string; details?: unknown };
+          message = payload.error ?? message;
+          if (payload.details) message += `: ${JSON.stringify(payload.details)}`;
+        } catch {
+          // Ignore JSON parse errors and keep fallback message.
+        }
+        throw new Error(message);
+      }
+
+      const data = (await res.json()) as { orderNumber: number };
       setOrderPlaced({ orderNumber: data.orderNumber });
-      setCart([]); setCartOpen(false); setCustomerName('');
-      setLoyaltyDiscountCents(0); setLoyaltyCustomerId(null); setLoyaltyResult(null);
-      setTimeout(() => { setOrderPlaced(null); setIsIdle(false); }, 8000);
-    } catch (e: unknown) {
-      alert('Failed to place order: ' + (e instanceof Error ? e.message : String(e)));
+      setCart([]);
+      setCartOpen(false);
+      setCustomerName('');
+      setLoyaltyDiscountCents(0);
+      setLoyaltyCustomerId(null);
+      setLoyaltyResult(null);
+
+      setTimeout(() => {
+        setOrderPlaced(null);
+        setIsIdle(false);
+      }, 8000);
+    } catch (err: unknown) {
+      alert(`Failed to place order: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setPlacing(false);
     }
   }
 
-  const isPortrait = orientation === 'portrait';
-  const activeCategory = menu?.categories.find((c) => c.id === activeCategoryId) ?? null;
+  const activeCategory = menu?.categories.find((category) => category.id === activeCategoryId) ?? null;
+  const availableItems = (activeCategory?.items ?? []).filter((item) => item.isAvailable);
+  const menuItemCount = menu?.categories.reduce((sum, category) => sum + category.items.filter((item) => item.isAvailable).length, 0) ?? 0;
 
-  // â”€â”€ Idle / welcome screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const rootStyle = {
+    '--kiosk-primary': primaryColor,
+    '--kiosk-primary-soft': hexWithAlpha(primaryColor, '22'),
+    '--kiosk-accent': accentColor,
+  } as CSSProperties;
+
   if (isIdle && !loading) {
     return (
-      <div style={{ ...S.root, background: '#0b0d11', cursor: 'pointer' }} onClick={() => setIsIdle(false)}>
-        <div style={S.centered}>
-          {kioskConfig?.logoUrl
-            ? <img src={kioskConfig.logoUrl} alt="Logo" style={{ height: 80, objectFit: 'contain', marginBottom: 16 }} />
-            : (
-              <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke={primaryColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 16 }}>
-                <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2" /><path d="M7 2v20" /><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7" />
-              </svg>
-            )}
-          <h1 style={{ fontSize: 48, fontWeight: 900, color: primaryColor }}>
-            {kioskConfig?.welcomeMessage ?? 'Touch to Order'}
-          </h1>
-          <p style={{ fontSize: 18, color: '#7a8299', marginTop: 12 }}>Tap anywhere to get started</p>
+      <div className={`kiosk kiosk-idle ${isPortrait ? 'portrait' : 'landscape'}`} style={rootStyle} onClick={() => setIsIdle(false)}>
+        <style>{KIOSK_CSS}</style>
+        <div className="kiosk-idle-video-glow" />
+        <div className="kiosk-idle-center">
+          {kioskConfig?.logoUrl ? (
+            <img src={kioskConfig.logoUrl} alt="logo" className="kiosk-idle-logo kiosk-float" />
+          ) : (
+            <div className="kiosk-idle-badge kiosk-float">
+              <span>ORDER</span>
+            </div>
+          )}
+          <h1 className="kiosk-idle-title">{menu?.name ?? 'Welcome'}</h1>
+          <p className="kiosk-idle-subtitle">Fresh meals, quick pickup, zero waiting.</p>
+        </div>
+        <div className="kiosk-idle-strip kiosk-blink">
+          <div className="kiosk-idle-strip-main">{(kioskConfig?.welcomeMessage ?? 'Touch To Order').toUpperCase()}</div>
+          <div className="kiosk-idle-strip-sub">Tap anywhere to start</div>
         </div>
       </div>
     );
   }
 
-  // â”€â”€ Store closed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (storeStatus && !storeStatus.isOpen) {
     return (
-      <div style={{ ...S.root, background: '#0b0d11' }}>
-        <div style={S.centered}>
-          <svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="#ff3ea5" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 16 }}>
-            <circle cx="12" cy="12" r="10" /><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
-          </svg>
-          <h1 style={{ fontSize: 40, fontWeight: 800 }}>We're Closed</h1>
-          {storeStatus.note && <p style={{ fontSize: 18, color: '#7a8299' }}>{storeStatus.note}</p>}
+      <div className={`kiosk kiosk-state ${isPortrait ? 'portrait' : 'landscape'}`} style={rootStyle}>
+        <style>{KIOSK_CSS}</style>
+        <div className="kiosk-state-card">
+          <div className="kiosk-state-icon danger">X</div>
+          <h1>We Are Closed</h1>
+          {storeStatus.note ? <p>{storeStatus.note}</p> : null}
         </div>
       </div>
     );
   }
 
-  // â”€â”€ Loading / error â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (loading) {
     return (
-      <div style={S.root}>
-        <div style={S.centered}>
-          <div style={{ ...S.spinner, borderTopColor: primaryColor }} />
-          <p style={S.spinnerText}>Loading menu...</p>
+      <div className={`kiosk kiosk-state ${isPortrait ? 'portrait' : 'landscape'}`} style={rootStyle}>
+        <style>{KIOSK_CSS}</style>
+        <div className="kiosk-state-card">
+          <div className="kiosk-spinner" />
+          <h1>Loading Menu</h1>
+          <p>Please wait...</p>
         </div>
       </div>
     );
@@ -359,116 +524,173 @@ export default function KioskDisplayPage() {
 
   if (error || !menu) {
     return (
-      <div style={S.root}>
-        <div style={S.centered}>
-          <svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="#ff3ea5" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 8 }}>
-            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
-          </svg>
-          <h2 style={S.errorTitle}>Menu Unavailable</h2>
-          <p style={S.errorMsg}>{error ?? 'No active menu found.'}</p>
-          <button style={{ ...S.retryBtn, background: primaryColor }} onClick={() => void loadAll()}>Retry</button>
+      <div className={`kiosk kiosk-state ${isPortrait ? 'portrait' : 'landscape'}`} style={rootStyle}>
+        <style>{KIOSK_CSS}</style>
+        <div className="kiosk-state-card">
+          <div className="kiosk-state-icon danger">!</div>
+          <h1>Menu Unavailable</h1>
+          <p>{error ?? 'No active menu found.'}</p>
+          <button className="kiosk-btn primary" onClick={() => void loadAll()}>
+            Try Again
+          </button>
         </div>
       </div>
     );
   }
 
-  // â”€â”€ Thank-you screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (orderPlaced) {
     return (
-      <div style={S.root}>
-        <div style={S.centered}>
-          <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 8 }}>
-            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
-          </svg>
-          <h1 style={{ fontSize: 40, fontWeight: 800, marginTop: 16 }}>Order Placed!</h1>
-          <div style={{ fontSize: 96, fontWeight: 900, color: accentColor, textShadow: '0 0 32px rgba(79,242,209,0.4)' }}>
-            #{String(orderPlaced.orderNumber).padStart(3, '0')}
-          </div>
-          <p style={S.spinnerText}>Please wait for your order to be called.</p>
+      <div className={`kiosk kiosk-state ${isPortrait ? 'portrait' : 'landscape'}`} style={rootStyle}>
+        <style>{KIOSK_CSS}</style>
+        <div className="kiosk-state-card success">
+          <div className="kiosk-state-icon success">OK</div>
+          <h1>Order Placed</h1>
+          <div className="kiosk-order-number">#{String(orderPlaced.orderNumber).padStart(3, '0')}</div>
+          <p>Please wait while we prepare your order.</p>
         </div>
       </div>
     );
   }
 
-  // â”€â”€ Main kiosk UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   return (
-    <div style={{ ...S.root, flexDirection: isPortrait ? 'column' : 'row' }}>
+    <div className={`kiosk kiosk-main ${isPortrait ? 'portrait' : 'landscape'} density-${density} flavor-${flavor}`} style={rootStyle}>
+      <style>{KIOSK_CSS}</style>
 
-      {/* Header */}
-      <div style={isPortrait ? S.headerPortrait : S.headerLandscape}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {kioskConfig?.logoUrl && <img src={kioskConfig.logoUrl} alt="" style={{ height: 36, objectFit: 'contain' }} />}
-          <span style={S.headerTitle}>{menu.name}</span>
+      <header className="k-header">
+        <div className="k-brand">
+          {kioskConfig?.logoUrl ? <img src={kioskConfig.logoUrl} alt="logo" className="k-brand-logo" /> : null}
+          <div className="k-brand-text">
+            <div className="k-brand-name">{menu.name}</div>
+            <div className="k-brand-sub">Dynamic Kiosk Mode</div>
+          </div>
         </div>
-        <button style={{ ...S.cartBtn, background: primaryColor }} onClick={() => setCartOpen(true)}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
-          </svg>
-          {cartCount > 0 ? <span style={{ ...S.cartBadge, background: accentColor }}>{cartCount}</span> : null}
-          {formatPrice(cartTotal, menu.currency)}
+        <button className="k-cart-pill" onClick={() => setCartOpen(true)}>
+          <span className="k-cart-pill-label">Cart</span>
+          <span className="k-cart-pill-count">{cartCount}</span>
+          <span>{formatPrice(cartTotal, menu.currency)}</span>
         </button>
+      </header>
+
+      <section className="k-hero">
+        <div>
+          <div className="k-overline">Self Service</div>
+          <h1>Order Here</h1>
+          <p>{kioskConfig?.welcomeMessage ?? 'Build your meal and check out in seconds.'}</p>
+        </div>
+        <div className="k-hero-stats">
+          <div className="k-stat-box">
+            <span className="k-stat-label">Items</span>
+            <span className="k-stat-value">{menuItemCount}</span>
+          </div>
+          <div className="k-stat-box">
+            <span className="k-stat-label">Categories</span>
+            <span className="k-stat-value">{menu.categories.length}</span>
+          </div>
+        </div>
+      </section>
+
+      <div className="k-ticker-wrap">
+        <div className="k-ticker-track">
+          <span>Freshly prepared</span>
+          <span>Fast pickup</span>
+          <span>Customizable orders</span>
+          <span>Loyalty rewards</span>
+          <span>Freshly prepared</span>
+          <span>Fast pickup</span>
+          <span>Customizable orders</span>
+          <span>Loyalty rewards</span>
+        </div>
       </div>
 
-      {/* Category tabs */}
-      <div style={isPortrait ? S.tabsPortrait : S.tabsLandscape}>
-        {menu.categories.map((cat) => (
-          <button
-            key={cat.id}
-            style={{ ...S.tabBtn, ...(activeCategoryId === cat.id ? { ...S.tabBtnActive, background: primaryColor, borderColor: primaryColor } : {}) }}
-            onClick={() => setActiveCategoryId(cat.id)}
-          >
-            {cat.name}
-          </button>
-        ))}
-      </div>
+      <nav className="k-categories">
+        {menu.categories.map((category) => {
+          const isActive = category.id === activeCategoryId;
+          const categoryColor = category.color ?? primaryColor;
+          return (
+            <button
+              key={category.id}
+              className={`k-category-pill ${isActive ? 'active' : ''}`}
+              style={
+                {
+                  '--cat-color': categoryColor,
+                } as CSSProperties
+              }
+              onClick={() => setActiveCategoryId(category.id)}
+            >
+              {category.imageUrl ? <img src={category.imageUrl} alt="" /> : null}
+              <span>{category.name}</span>
+            </button>
+          );
+        })}
+      </nav>
 
-      {/* Items grid */}
-      <div style={S.itemsGrid}>
-        {(activeCategory?.items ?? []).filter((i) => i.isAvailable).map((item) => (
-          <button key={item.id} style={S.itemCard} onClick={() => openModifierPicker(item)}>
-            {item.imageUrl && <img src={item.imageUrl} alt={item.name} style={S.itemImg} />}
-            <div style={S.itemBody}>
-              <div style={S.itemName}>{item.name}</div>
-              {item.description && <div style={S.itemDesc}>{item.description}</div>}
-              {item.modifiers.length > 0 && <div style={{ fontSize: 11, color: '#7a8299', marginTop: 2 }}>Customizable</div>}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {item.tags.map((t) => <span key={t} style={S.tag}>{t}</span>)}
-              </div>
-              <div style={{ ...S.itemPrice, color: accentColor }}>{formatPrice(item.priceCents, menu.currency)}</div>
-            </div>
-            <div style={{ ...S.addIcon, background: primaryColor }}>+</div>
-          </button>
-        ))}
-      </div>
+      <main className="k-items-grid">
+        {availableItems.map((item) => {
+          const badge = item.tags.find((tag) => Object.prototype.hasOwnProperty.call(BADGE_COLORS, tag.toLowerCase()));
+          const badgeColor = badge ? BADGE_COLORS[badge.toLowerCase()] : null;
+          const categoryColor = activeCategory?.color ?? primaryColor;
 
-      {/* Modifier picker modal */}
-      {modifierItem && (
-        <div style={S.overlay} onClick={() => setModifierItem(null)}>
-          <div style={{ ...S.drawer, width: 'min(94vw, 520px)', height: 'auto', maxHeight: '85vh', borderRadius: 20 }} onClick={(e) => e.stopPropagation()}>
-            <div style={S.drawerHeader}>
-              <div>
-                <div style={{ fontSize: 18, fontWeight: 700 }}>{modifierItem.name}</div>
-                <div style={{ fontSize: 14, color: '#7a8299', marginTop: 4 }}>{formatPrice(modifierItem.priceCents, menu.currency)} + options</div>
-              </div>
-              <button style={S.closeBtn} onClick={() => setModifierItem(null)}>âœ•</button>
-            </div>
-            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
-              {modifierItem.modifiers.map((group) => (
-                <div key={group.id}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: '#7a8299', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 10 }}>
-                    {group.name}{group.required ? ' *' : ''} {group.maxSelect > 1 ? `(up to ${group.maxSelect})` : ''}
+          return (
+            <button key={item.id} className="k-item-card" onClick={() => openModifierPicker(item)}>
+              <div className="k-item-image-wrap">
+                {item.imageUrl ? (
+                  <img src={item.imageUrl} alt={item.name} className="k-item-image" />
+                ) : (
+                  <div className="k-item-image-placeholder" style={{ background: `linear-gradient(135deg, ${hexWithAlpha(categoryColor, '33')}, ${hexWithAlpha(categoryColor, '14')})` }}>
+                    <span>{item.name.charAt(0).toUpperCase()}</span>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                )}
+                {badge && badgeColor ? (
+                  <div className="k-badge" style={{ background: badgeColor }}>
+                    {badge}
+                  </div>
+                ) : null}
+                {item.modifiers.length > 0 ? <div className="k-custom-pill">Customize</div> : null}
+              </div>
+              <div className="k-item-body">
+                <div className="k-item-name">{item.name}</div>
+                {item.description ? <div className="k-item-description" style={DESCRIPTION_CLAMP}>{item.description}</div> : null}
+                <div className="k-item-bottom">
+                  <div className="k-item-price">{formatPrice(item.priceCents, menu.currency)}</div>
+                  <div className="k-item-add">+</div>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </main>
+
+      {modifierItem ? (
+        <div className="k-overlay k-overlay-center" onClick={() => setModifierItem(null)}>
+          <div className="k-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="k-modal-header">
+              <div>
+                <h3>{modifierItem.name}</h3>
+                <p>{formatPrice(modifierItem.priceCents, menu.currency)} base price</p>
+              </div>
+              <button className="k-icon-btn" onClick={() => setModifierItem(null)}>
+                X
+              </button>
+            </div>
+            <div className="k-modal-body">
+              {modifierItem.modifiers.map((group) => (
+                <div key={group.id} className="k-modifier-group">
+                  <div className="k-modifier-title">
+                    {group.name}
+                    {group.required ? ' (required)' : ''}
+                    {group.maxSelect > 1 ? ` - up to ${group.maxSelect}` : ''}
+                  </div>
+                  <div className="k-modifier-options">
                     {group.options.map((opt) => {
-                      const isSelected = selectedOpts[group.id]?.includes(opt.id) ?? false;
+                      const selected = selectedOpts[group.id]?.includes(opt.id) ?? false;
                       return (
                         <button
                           key={opt.id}
-                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderRadius: 12, border: `2px solid ${isSelected ? primaryColor : 'rgba(255,255,255,0.1)'}`, background: isSelected ? `${primaryColor}22` : 'rgba(255,255,255,0.04)', cursor: 'pointer', color: '#e8eaf0' }}
+                          className={`k-modifier-option ${selected ? 'selected' : ''}`}
                           onClick={() => toggleModifierOption(group, opt.id)}
                         >
-                          <span style={{ fontSize: 15, fontWeight: 500 }}>{opt.name}</span>
-                          <span style={{ fontSize: 14, color: accentColor }}>{opt.priceCents > 0 ? `+${formatPrice(opt.priceCents, menu.currency)}` : 'Free'}</span>
+                          <span>{opt.name}</span>
+                          <span>{opt.priceCents > 0 ? `+${formatPrice(opt.priceCents, menu.currency)}` : 'Free'}</span>
                         </button>
                       );
                     })}
@@ -476,182 +698,1167 @@ export default function KioskDisplayPage() {
                 </div>
               ))}
             </div>
-            <div style={{ padding: '16px 24px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-              <button
-                style={{ ...S.orderBtn, background: primaryColor, width: '100%' }}
-                onClick={confirmModifiers}
-              >
-                Add to Order
+            <div className="k-modal-footer">
+              <button className="kiosk-btn primary full" onClick={confirmModifiers}>
+                Add To Order
               </button>
             </div>
           </div>
         </div>
-      )}
+      ) : null}
 
-      {/* Cart drawer */}
-      {cartOpen && (
-        <div style={S.overlay} onClick={() => setCartOpen(false)}>
-          <div style={S.drawer} onClick={(e) => e.stopPropagation()}>
-            <div style={S.drawerHeader}>
-              <span style={S.drawerTitle}>Your Order</span>
-              <button style={S.closeBtn} onClick={() => setCartOpen(false)}>âœ•</button>
+      {cartOpen ? (
+        <div className="k-overlay k-overlay-end" onClick={() => setCartOpen(false)}>
+          <aside className={`k-cart-drawer ${isPortrait ? 'portrait' : 'landscape'}`} onClick={(event) => event.stopPropagation()}>
+            <div className="k-drawer-header">
+              <h3>Your Order</h3>
+              <button className="k-icon-btn" onClick={() => setCartOpen(false)}>
+                X
+              </button>
             </div>
 
-            <div style={S.cartItems}>
+            <div className="k-drawer-items">
               {cart.length === 0 ? (
-                <p style={{ color: '#7a8299', textAlign: 'center', padding: 24 }}>Cart is empty</p>
-              ) : cart.map((c, idx) => (
-                <div key={idx} style={S.cartRow}>
-                  <div style={{ flex: 1 }}>
-                    <div style={S.cartItemName}>{c.itemName}</div>
-                    {c.selectedModifiers.length > 0 && (
-                      <div style={{ fontSize: 12, color: '#7a8299', marginTop: 2 }}>
-                        {c.selectedModifiers.map((m) => m.optionName).join(', ')}
-                      </div>
-                    )}
-                    <div style={{ ...S.cartItemPrice, color: accentColor }}>{formatPrice(c.lineTotalCents, menu.currency)}</div>
+                <div className="k-empty-cart">Your cart is empty.</div>
+              ) : (
+                cart.map((entry, idx) => (
+                  <div key={idx} className="k-cart-row">
+                    <div className="k-cart-row-main">
+                      <div className="k-cart-item-name">{entry.itemName}</div>
+                      {entry.selectedModifiers.length > 0 ? (
+                        <div className="k-cart-item-mods">{entry.selectedModifiers.map((modifier) => modifier.optionName).join(', ')}</div>
+                      ) : null}
+                      <div className="k-cart-item-price">{formatPrice(entry.lineTotalCents, menu.currency)}</div>
+                    </div>
+                    <div className="k-qty-controls">
+                      <button onClick={() => updateQty(idx, -1)}>-</button>
+                      <span>{entry.quantity}</span>
+                      <button onClick={() => updateQty(idx, +1)}>+</button>
+                      <button onClick={() => removeFromCart(idx)}>x</button>
+                    </div>
                   </div>
-                  <div style={S.qtyRow}>
-                    <button style={S.qtyBtn} onClick={() => updateQty(idx, -1)}>-</button>
-                    <span style={S.qtyNum}>{c.quantity}</span>
-                    <button style={S.qtyBtn} onClick={() => updateQty(idx, +1)}>+</button>
-                    <button style={{ ...S.qtyBtn, color: '#ff3ea5' }} onClick={() => removeFromCart(idx)}>x</button>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
 
-              {/* Loyalty section */}
-              <div style={{ marginTop: 16, padding: '16px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)' }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#7a8299', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 12 }}>Loyalty Rewards</div>
+              <div className="k-loyalty-card">
+                <div className="k-loyalty-title">Loyalty Rewards</div>
                 {!loyaltyResult ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <input style={S.nameInput} placeholder="Phone number" value={loyaltyPhone}
-                      onChange={(e) => setLoyaltyPhone(e.target.value)} />
-                    <input style={S.nameInput} placeholder="Email" type="email" value={loyaltyEmail}
-                      onChange={(e) => setLoyaltyEmail(e.target.value)} />
+                  <div className="k-loyalty-form">
+                    <input
+                      className="k-text-input"
+                      placeholder="Phone number"
+                      value={loyaltyPhone}
+                      onChange={(event) => setLoyaltyPhone(event.target.value)}
+                    />
+                    <input
+                      className="k-text-input"
+                      type="email"
+                      placeholder="Email"
+                      value={loyaltyEmail}
+                      onChange={(event) => setLoyaltyEmail(event.target.value)}
+                    />
                     <button
-                      style={{ ...S.orderBtn, background: '#6366f1', padding: '12px', fontSize: 14, opacity: loyaltyVerifying ? 0.5 : 1 }}
+                      className="kiosk-btn"
                       disabled={loyaltyVerifying || (!loyaltyPhone.trim() && !loyaltyEmail.trim())}
                       onClick={() => void verifyLoyalty()}
                     >
-                      {loyaltyVerifying ? 'Looking upâ€¦' : 'Look up loyalty account'}
+                      {loyaltyVerifying ? 'Looking up...' : 'Look up loyalty account'}
                     </button>
                   </div>
                 ) : loyaltyResult.found && loyaltyResult.customer ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <div style={{ fontSize: 15, fontWeight: 600 }}>
-                      {loyaltyResult.customer.name ?? 'Loyalty Member'} â€” {loyaltyResult.customer.points.toLocaleString()} pts
+                  <div className="k-loyalty-found">
+                    <div className="k-loyalty-user">
+                      {(loyaltyResult.customer.name ?? 'Loyalty Member') +
+                        ` - ${loyaltyResult.customer.points.toLocaleString()} pts`}
                     </div>
+
                     {loyaltyDiscountCents > 0 ? (
-                      <div style={{ color: '#22c55e', fontSize: 14, fontWeight: 600 }}>
-                        âœ“ {formatPrice(loyaltyDiscountCents, menu.currency)} discount applied
-                        <button style={{ marginLeft: 8, background: 'none', border: 'none', color: '#ff3ea5', cursor: 'pointer', fontSize: 12 }}
-                          onClick={() => { setLoyaltyDiscountCents(0); setLoyaltyCustomerId(null); }}>
+                      <div className="k-loyalty-discount-row">
+                        <span>Discount applied: {formatPrice(loyaltyDiscountCents, menu.currency)}</span>
+                        <button
+                          onClick={() => {
+                            setLoyaltyDiscountCents(0);
+                            setLoyaltyCustomerId(null);
+                          }}
+                        >
                           Remove
                         </button>
                       </div>
                     ) : loyaltyResult.maxRedeemablePoints > 0 ? (
-                      <button
-                        style={{ ...S.orderBtn, background: '#22c55e', padding: '10px', fontSize: 14 }}
-                        onClick={() => applyLoyaltyDiscount(loyaltyResult.maxRedeemablePoints)}
-                      >
-                        Redeem {loyaltyResult.maxRedeemablePoints} pts = {formatPrice(Math.floor(loyaltyResult.maxRedeemablePoints / Math.max(1, loyaltyResult.loyaltyRedemptionRate)) * 100, menu.currency)}
+                      <button className="kiosk-btn success" onClick={() => applyLoyaltyDiscount(loyaltyResult.maxRedeemablePoints)}>
+                        Redeem {loyaltyResult.maxRedeemablePoints} pts ={' '}
+                        {formatPrice(
+                          Math.floor(loyaltyResult.maxRedeemablePoints / Math.max(1, loyaltyResult.loyaltyRedemptionRate)) * 100,
+                          menu.currency,
+                        )}
                       </button>
                     ) : (
-                      <div style={{ fontSize: 13, color: '#7a8299' }}>Not enough points to redeem yet.</div>
+                      <div className="k-loyalty-muted">Not enough points to redeem yet.</div>
                     )}
-                    <button style={{ background: 'none', border: 'none', color: '#7a8299', cursor: 'pointer', fontSize: 12, textAlign: 'left' }}
-                      onClick={() => { setLoyaltyResult(null); setLoyaltyPhone(''); setLoyaltyEmail(''); setLoyaltyDiscountCents(0); }}>
+
+                    <button
+                      className="k-link-btn"
+                      onClick={() => {
+                        setLoyaltyResult(null);
+                        setLoyaltyPhone('');
+                        setLoyaltyEmail('');
+                        setLoyaltyDiscountCents(0);
+                      }}
+                    >
                       Use different account
                     </button>
                   </div>
                 ) : (
-                  <div style={{ fontSize: 13, color: '#7a8299' }}>
+                  <div className="k-loyalty-muted">
                     No account found.{' '}
-                    <button style={{ background: 'none', border: 'none', color: '#7a8299', cursor: 'pointer', textDecoration: 'underline', fontSize: 13 }}
-                      onClick={() => { setLoyaltyResult(null); setLoyaltyPhone(''); setLoyaltyEmail(''); }}>Try again</button>
+                    <button
+                      className="k-link-btn inline"
+                      onClick={() => {
+                        setLoyaltyResult(null);
+                        setLoyaltyPhone('');
+                        setLoyaltyEmail('');
+                      }}
+                    >
+                      Try again
+                    </button>
                   </div>
                 )}
               </div>
             </div>
 
-            <div style={S.drawerFooter}>
-              <input style={S.nameInput} placeholder="Your name (optional)" value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)} maxLength={50} />
-              <div style={{ fontSize: 18, textAlign: 'right' }}>
-                {loyaltyDiscountCents > 0 && (
-                  <div style={{ fontSize: 14, color: '#22c55e', marginBottom: 4 }}>
-                    Discount: âˆ’{formatPrice(loyaltyDiscountCents, menu.currency)}
-                  </div>
-                )}
-                Total: <strong>{formatPrice(finalTotal, menu.currency)}</strong>
+            <div className="k-drawer-footer">
+              <input
+                className="k-text-input"
+                placeholder="Your name (optional)"
+                maxLength={50}
+                value={customerName}
+                onChange={(event) => setCustomerName(event.target.value)}
+              />
+
+              {loyaltyDiscountCents > 0 ? (
+                <div className="k-total-row discount">
+                  <span>Loyalty discount</span>
+                  <span>-{formatPrice(loyaltyDiscountCents, menu.currency)}</span>
+                </div>
+              ) : null}
+
+              <div className="k-total-row total">
+                <span>Total</span>
+                <span>{formatPrice(finalTotal, menu.currency)}</span>
               </div>
-              <button
-                style={{ ...S.orderBtn, background: primaryColor, opacity: cart.length === 0 || placing ? 0.5 : 1 }}
-                disabled={cart.length === 0 || placing}
-                onClick={() => void placeOrder()}
-              >
+
+              <button className="kiosk-btn primary full" disabled={cart.length === 0 || placing} onClick={() => void placeOrder()}>
                 {placing ? 'Placing...' : 'Place Order'}
               </button>
             </div>
-          </div>
+          </aside>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
 
-// â”€â”€â”€ Inline styles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-const S: Record<string, React.CSSProperties> = {
-  root: { display: 'flex', width: '100vw', height: '100vh', background: '#0b0d11', color: '#e8eaf0', fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif", overflow: 'hidden', position: 'relative' },
-  centered: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: '100vw', height: '100vh', gap: 16, textAlign: 'center', padding: 32 },
-  spinner: { width: 56, height: 56, border: '4px solid rgba(255,255,255,0.1)', borderRadius: '50%', animation: 'kiosk-spin 0.8s linear infinite' },
-  spinnerText: { fontSize: 16, color: '#7a8299' },
-  errorTitle: { fontSize: 28, fontWeight: 700, color: '#ff3ea5' },
-  errorMsg: { fontSize: 16, color: '#7a8299', maxWidth: 480 },
-  retryBtn: { border: 'none', borderRadius: 12, color: '#fff', cursor: 'pointer', fontSize: 16, fontWeight: 600, padding: '14px 36px', marginTop: 8 },
-  headerPortrait: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', background: 'rgba(255,255,255,0.04)', borderBottom: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 },
-  headerLandscape: { display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '20px 16px', background: 'rgba(255,255,255,0.04)', borderRight: '1px solid rgba(255,255,255,0.08)', width: 200, flexShrink: 0 },
-  headerTitle: { fontSize: 20, fontWeight: 800 },
-  cartBtn: { display: 'flex', alignItems: 'center', gap: 8, border: 'none', borderRadius: 12, color: '#fff', cursor: 'pointer', fontSize: 15, fontWeight: 600, padding: '10px 20px' },
-  cartBadge: { color: '#0f1115', borderRadius: '50%', width: 22, height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 800 },
-  tabsPortrait: { display: 'flex', overflowX: 'auto', gap: 8, padding: '12px 16px', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.08)' },
-  tabsLandscape: { display: 'flex', flexDirection: 'column', gap: 6, padding: '12px', overflowY: 'auto', flexShrink: 0, width: 160, borderRight: '1px solid rgba(255,255,255,0.08)' },
-  tabBtn: { background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, color: '#7a8299', cursor: 'pointer', fontSize: 14, fontWeight: 500, padding: '10px 18px', whiteSpace: 'nowrap', flexShrink: 0 },
-  tabBtnActive: { color: '#fff' },
-  itemsGrid: { flex: 1, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 16, padding: 16, alignContent: 'start' },
-  itemCard: { display: 'flex', flexDirection: 'column', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, cursor: 'pointer', overflow: 'hidden', textAlign: 'left', position: 'relative' },
-  itemImg: { width: '100%', aspectRatio: '16/9', objectFit: 'cover' },
-  itemBody: { padding: '12px 14px', flex: 1, display: 'flex', flexDirection: 'column', gap: 6 },
-  itemName: { fontSize: 15, fontWeight: 700 },
-  itemDesc: { fontSize: 13, color: '#7a8299', lineHeight: 1.4 },
-  tag: { background: 'rgba(79,242,209,0.12)', border: '1px solid rgba(79,242,209,0.2)', borderRadius: 6, color: '#4ff2d1', fontSize: 11, fontWeight: 600, padding: '2px 8px' },
-  itemPrice: { fontSize: 16, fontWeight: 800, marginTop: 4 },
-  addIcon: { position: 'absolute', bottom: 12, right: 12, borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, color: '#fff', fontWeight: 800 },
-  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', zIndex: 100 },
-  drawer: { background: '#12151c', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '20px 0 0 0', display: 'flex', flexDirection: 'column', width: 'min(90vw, 480px)', height: '85vh', overflow: 'hidden' },
-  drawerHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.08)' },
-  drawerTitle: { fontSize: 20, fontWeight: 700 },
-  closeBtn: { background: 'none', border: 'none', color: '#7a8299', cursor: 'pointer', fontSize: 20, padding: 4 },
-  cartItems: { flex: 1, overflowY: 'auto', padding: '12px 24px' },
-  cartRow: { display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' },
-  cartItemName: { fontSize: 15, fontWeight: 600 },
-  cartItemPrice: { fontSize: 14, marginTop: 2 },
-  qtyRow: { display: 'flex', alignItems: 'center', gap: 8 },
-  qtyBtn: { background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#e8eaf0', cursor: 'pointer', fontSize: 16, fontWeight: 700, width: 36, height: 36 },
-  qtyNum: { fontSize: 16, fontWeight: 700, minWidth: 24, textAlign: 'center' },
-  drawerFooter: { padding: '16px 24px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: 12 },
-  nameInput: { background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, color: '#e8eaf0', fontSize: 15, padding: '12px 16px', outline: 'none', width: '100%', boxSizing: 'border-box' },
-  orderBtn: { border: 'none', borderRadius: 14, color: '#fff', cursor: 'pointer', fontSize: 18, fontWeight: 700, padding: '16px', transition: 'opacity 0.15s' },
-};
-
-if (typeof document !== 'undefined') {
-  const existing = document.getElementById('kiosk-keyframes');
-  if (!existing) {
-    const style = document.createElement('style');
-    style.id = 'kiosk-keyframes';
-    style.textContent = '@keyframes kiosk-spin { to { transform: rotate(360deg); } }';
-    document.head.appendChild(style);
+const KIOSK_CSS = `
+  .kiosk {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    position: relative;
+    color: #ffffff;
+    background: radial-gradient(circle at 12% 14%, rgba(234,92,37,0.24), transparent 44%),
+      radial-gradient(circle at 86% 4%, rgba(114,197,74,0.22), transparent 36%),
+      linear-gradient(165deg, #090a10 0%, #10131b 58%, #111722 100%);
+    font-family: 'Samsung Sharp Sans', 'Avenir Next', 'Futura', 'Trebuchet MS', sans-serif;
   }
-}
 
+  .kiosk.flavor-sample {
+    background: radial-gradient(circle at 10% 16%, rgba(242,120,45,0.3), transparent 48%),
+      radial-gradient(circle at 88% 8%, rgba(114,197,67,0.24), transparent 40%),
+      linear-gradient(160deg, #07090f 0%, #0d111a 52%, #111827 100%);
+  }
+
+  .kiosk button,
+  .kiosk input {
+    font-family: inherit;
+  }
+
+  .kiosk-state {
+    display: grid;
+    place-items: center;
+    padding: 24px;
+  }
+
+  .kiosk-state-card {
+    width: min(92vw, 640px);
+    border-radius: 22px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(16,20,30,0.86);
+    box-shadow: 0 28px 56px rgba(0,0,0,0.45);
+    text-align: center;
+    padding: 30px;
+  }
+
+  .kiosk-state-card h1 {
+    margin: 14px 0 8px;
+    font-size: clamp(28px, 4vw, 42px);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .kiosk-state-card p {
+    margin: 0;
+    color: #a6afc2;
+    font-size: clamp(16px, 2vw, 20px);
+  }
+
+  .kiosk-state-icon {
+    width: 82px;
+    height: 82px;
+    margin: 0 auto;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 24px;
+    font-weight: 900;
+  }
+
+  .kiosk-state-icon.danger {
+    color: #ff9ca2;
+    background: rgba(239,68,68,0.2);
+    border: 2px solid rgba(239,68,68,0.5);
+  }
+
+  .kiosk-state-icon.success {
+    color: #98f5b5;
+    background: rgba(34,197,94,0.2);
+    border: 2px solid rgba(34,197,94,0.5);
+  }
+
+  .kiosk-order-number {
+    font-size: clamp(62px, 10vw, 118px);
+    font-weight: 900;
+    letter-spacing: 0.03em;
+    color: var(--kiosk-accent);
+    margin: 10px 0;
+    text-shadow: 0 0 34px rgba(114,197,74,0.45);
+  }
+
+  .kiosk-spinner {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    border: 4px solid rgba(255,255,255,0.16);
+    border-top-color: var(--kiosk-primary);
+    margin: 0 auto;
+    animation: kiosk-spin 0.9s linear infinite;
+  }
+
+  .kiosk-idle {
+    cursor: pointer;
+  }
+
+  .kiosk-idle-video-glow {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 50% 40%, rgba(255,255,255,0.08), transparent 62%);
+  }
+
+  .kiosk-idle-center {
+    position: absolute;
+    left: 50%;
+    top: 42%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    width: min(84vw, 900px);
+  }
+
+  .kiosk-idle-logo {
+    height: clamp(90px, 17vw, 140px);
+    object-fit: contain;
+  }
+
+  .kiosk-idle-badge {
+    margin: 0 auto;
+    width: 132px;
+    height: 132px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 24px;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+    background: linear-gradient(145deg, var(--kiosk-primary), #ff8a4d);
+    box-shadow: 0 0 44px rgba(234,92,37,0.45);
+  }
+
+  .kiosk-idle-title {
+    font-size: clamp(40px, 8vw, 76px);
+    margin: 18px 0 8px;
+    line-height: 1;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .kiosk-idle-subtitle {
+    margin: 0;
+    color: #d9deeb;
+    font-size: clamp(18px, 2.8vw, 30px);
+  }
+
+  .kiosk-idle-strip {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 24px 10px;
+    text-align: center;
+    background: #ffffff;
+    color: #0f1220;
+  }
+
+  .kiosk-idle-strip-main {
+    font-size: clamp(36px, 8vw, 68px);
+    font-weight: 900;
+    letter-spacing: 0.05em;
+    line-height: 1;
+  }
+
+  .kiosk-idle-strip-sub {
+    margin-top: 8px;
+    color: #4d5569;
+    font-size: clamp(14px, 2.4vw, 22px);
+  }
+
+  .kiosk-main {
+    display: grid;
+    grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  }
+
+  .k-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: rgba(8,10,18,0.46);
+    backdrop-filter: blur(8px);
+    gap: 10px;
+  }
+
+  .k-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .k-brand-logo {
+    height: 42px;
+    width: auto;
+    object-fit: contain;
+  }
+
+  .k-brand-text {
+    min-width: 0;
+  }
+
+  .k-brand-name {
+    font-size: clamp(20px, 2.8vw, 32px);
+    line-height: 1;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .k-brand-sub {
+    margin-top: 4px;
+    font-size: clamp(11px, 1.5vw, 14px);
+    color: #9ba4b8;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .k-cart-pill {
+    border: none;
+    border-radius: 999px;
+    background: var(--kiosk-primary);
+    color: #fff;
+    font-size: clamp(13px, 1.8vw, 17px);
+    font-weight: 700;
+    padding: 10px 16px;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    cursor: pointer;
+    white-space: nowrap;
+    box-shadow: 0 14px 28px rgba(0,0,0,0.3);
+  }
+
+  .k-cart-pill-label {
+    opacity: 0.9;
+  }
+
+  .k-cart-pill-count {
+    min-width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.92);
+    color: #122;
+    display: inline-grid;
+    place-items: center;
+    font-size: 12px;
+    font-weight: 900;
+  }
+
+  .k-hero {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    align-items: stretch;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(120deg, rgba(234,92,37,0.2), rgba(10,13,22,0.78));
+    padding: 12px 18px;
+  }
+
+  .k-overline {
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #ffd7c7;
+    font-weight: 700;
+  }
+
+  .k-hero h1 {
+    margin: 3px 0 6px;
+    font-size: clamp(28px, 5vw, 56px);
+    line-height: 1;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .k-hero p {
+    margin: 0;
+    color: #dee4f2;
+    font-size: clamp(13px, 1.9vw, 19px);
+  }
+
+  .k-hero-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    min-width: min(44vw, 280px);
+  }
+
+  .k-stat-box {
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.16);
+    background: rgba(7,9,14,0.5);
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 64px;
+  }
+
+  .k-stat-label {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #97a0b5;
+  }
+
+  .k-stat-value {
+    margin-top: 6px;
+    font-size: clamp(24px, 4.2vw, 36px);
+    line-height: 1;
+    font-weight: 900;
+  }
+
+  .k-ticker-wrap {
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    overflow: hidden;
+    white-space: nowrap;
+    background: rgba(15,19,29,0.92);
+  }
+
+  .k-ticker-track {
+    display: inline-flex;
+    gap: 24px;
+    padding: 10px 0;
+    animation: kiosk-ticker 24s linear infinite;
+  }
+
+  .k-ticker-track span {
+    color: #c5d0e4;
+    font-size: clamp(13px, 1.7vw, 17px);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .k-categories {
+    display: flex;
+    gap: 10px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: rgba(7,10,16,0.78);
+    scrollbar-width: none;
+  }
+
+  .k-categories::-webkit-scrollbar {
+    display: none;
+  }
+
+  .k-category-pill {
+    border: 2px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #e5ebf9;
+    border-radius: 999px;
+    padding: 14px 22px;
+    display: inline-flex;
+    gap: 10px;
+    align-items: center;
+    font-size: clamp(16px, 2.2vw, 22px);
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    min-height: 58px;
+    transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+  }
+
+  .k-category-pill:active {
+    transform: scale(0.96);
+  }
+
+  .k-category-pill.active {
+    background: var(--cat-color);
+    border-color: var(--cat-color);
+    color: #fff;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.38);
+  }
+
+  .k-category-pill img {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+
+  .k-items-grid {
+    min-height: 0;
+    overflow-y: auto;
+    display: grid;
+    gap: 12px;
+    padding: 12px;
+    align-content: start;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .kiosk.portrait.density-compact .k-items-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .kiosk.portrait.density-compact .k-item-image-wrap {
+    height: 110px;
+  }
+
+  .kiosk.portrait.density-compact .k-item-card {
+    grid-template-rows: 110px auto;
+    min-height: 220px;
+  }
+
+  .kiosk.portrait.density-compact .k-item-name {
+    font-size: clamp(14px, 1.8vw, 18px);
+  }
+
+  .kiosk.portrait.density-compact .k-item-price {
+    font-size: clamp(16px, 2.1vw, 22px);
+  }
+
+  .k-item-card {
+    border: 1px solid rgba(255,255,255,0.12);
+    background: linear-gradient(170deg, rgba(23,28,40,0.95), rgba(16,21,30,0.95));
+    border-radius: 18px;
+    overflow: hidden;
+    text-align: left;
+    cursor: pointer;
+    display: grid;
+    grid-template-rows: 140px auto;
+    min-height: 250px;
+    transition: transform 120ms ease, box-shadow 120ms ease;
+    position: relative;
+  }
+
+  .k-item-card:active {
+    transform: scale(0.985);
+  }
+
+  .k-item-image-wrap {
+    position: relative;
+    height: 140px;
+    overflow: hidden;
+  }
+
+  .k-item-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .k-item-image-placeholder {
+    width: 100%;
+    height: 100%;
+    display: grid;
+    place-items: center;
+    color: rgba(255,255,255,0.65);
+  }
+
+  .k-item-image-placeholder span {
+    font-size: clamp(46px, 7vw, 74px);
+    font-weight: 900;
+  }
+
+  .k-badge {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #fff;
+  }
+
+  .k-custom-pill {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    color: #f4f7ff;
+    background: rgba(5,8,14,0.72);
+    border: 1px solid rgba(255,255,255,0.14);
+  }
+
+  .k-item-body {
+    padding: 10px 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 100px;
+  }
+
+  .k-item-name {
+    font-size: clamp(14px, 1.9vw, 18px);
+    font-weight: 800;
+    line-height: 1.2;
+  }
+
+  .k-item-description {
+    color: #a2acc0;
+    font-size: clamp(12px, 1.6vw, 15px);
+    line-height: 1.35;
+  }
+
+  .k-item-bottom {
+    margin-top: auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .k-item-price {
+    color: var(--kiosk-primary);
+    font-size: clamp(16px, 2.2vw, 22px);
+    font-weight: 900;
+  }
+
+  .k-item-add {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: var(--kiosk-primary);
+    color: #fff;
+    display: grid;
+    place-items: center;
+    font-size: 24px;
+    font-weight: 800;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.35);
+  }
+
+  .k-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.72);
+    backdrop-filter: blur(5px);
+    z-index: 120;
+    display: flex;
+  }
+
+  .k-overlay-center {
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+
+  .k-overlay-end {
+    align-items: flex-end;
+    justify-content: flex-end;
+  }
+
+  .k-modal {
+    width: min(96vw, 560px);
+    max-height: 88vh;
+    border-radius: 20px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: #121827;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .k-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.12);
+  }
+
+  .k-modal-header h3 {
+    margin: 0;
+    font-size: clamp(20px, 2.6vw, 28px);
+  }
+
+  .k-modal-header p {
+    margin: 6px 0 0;
+    color: #96a2b8;
+    font-size: 14px;
+  }
+
+  .k-icon-btn {
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 10px;
+    width: 36px;
+    height: 36px;
+    background: rgba(255,255,255,0.04);
+    color: #d7dfef;
+    cursor: pointer;
+    font-weight: 700;
+  }
+
+  .k-modal-body {
+    overflow: auto;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-height: 0;
+  }
+
+  .k-modifier-title {
+    font-size: 11px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: #96a2b8;
+    margin-bottom: 8px;
+    font-weight: 800;
+  }
+
+  .k-modifier-options {
+    display: grid;
+    gap: 8px;
+  }
+
+  .k-modifier-option {
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px;
+    background: rgba(255,255,255,0.04);
+    color: #ecf2ff;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 12px;
+    font-size: 14px;
+  }
+
+  .k-modifier-option.selected {
+    border-color: var(--kiosk-primary);
+    background: var(--kiosk-primary-soft);
+  }
+
+  .k-modal-footer {
+    padding: 14px 18px;
+    border-top: 1px solid rgba(255,255,255,0.12);
+  }
+
+  .k-cart-drawer {
+    border: 1px solid rgba(255,255,255,0.14);
+    background: #121827;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .k-cart-drawer.landscape {
+    width: min(90vw, 480px);
+    height: 100vh;
+    border-radius: 0;
+  }
+
+  .k-cart-drawer.portrait {
+    width: 100%;
+    height: 88vh;
+    border-radius: 20px 20px 0 0;
+  }
+
+  .k-drawer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.12);
+  }
+
+  .k-drawer-header h3 {
+    margin: 0;
+    font-size: clamp(22px, 2.8vw, 30px);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  .k-drawer-items {
+    flex: 1;
+    overflow: auto;
+    padding: 8px 16px 14px;
+    min-height: 0;
+  }
+
+  .k-empty-cart {
+    text-align: center;
+    color: #99a4ba;
+    padding: 22px 0;
+    font-size: 16px;
+  }
+
+  .k-cart-row {
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    display: flex;
+    gap: 10px;
+  }
+
+  .k-cart-row-main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .k-cart-item-name {
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  .k-cart-item-mods {
+    margin-top: 3px;
+    color: #95a0b6;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .k-cart-item-price {
+    margin-top: 5px;
+    color: var(--kiosk-primary);
+    font-size: 15px;
+    font-weight: 800;
+  }
+
+  .k-qty-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .k-qty-controls button {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.16);
+    background: rgba(255,255,255,0.07);
+    color: #e8eeff;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .k-qty-controls span {
+    min-width: 20px;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .k-loyalty-card {
+    margin-top: 12px;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 14px;
+    background: rgba(255,255,255,0.04);
+    padding: 12px;
+  }
+
+  .k-loyalty-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #9ca7bc;
+    font-weight: 800;
+    margin-bottom: 9px;
+  }
+
+  .k-loyalty-form {
+    display: grid;
+    gap: 8px;
+  }
+
+  .k-loyalty-user {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  .k-loyalty-discount-row {
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    color: #98f5b5;
+    margin-bottom: 8px;
+  }
+
+  .k-loyalty-discount-row button {
+    border: none;
+    background: transparent;
+    color: #ff9ca2;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .k-loyalty-muted {
+    color: #9ca8c0;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  .k-link-btn {
+    border: none;
+    background: none;
+    color: #b9c4db;
+    cursor: pointer;
+    font-size: 12px;
+    text-decoration: underline;
+    padding: 0;
+    margin-top: 8px;
+  }
+
+  .k-link-btn.inline {
+    margin-top: 0;
+    font-size: 13px;
+  }
+
+  .k-drawer-footer {
+    padding: 12px 16px 14px;
+    border-top: 1px solid rgba(255,255,255,0.12);
+    display: grid;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .k-text-input {
+    width: 100%;
+    box-sizing: border-box;
+    border-radius: 11px;
+    border: 1px solid rgba(255,255,255,0.16);
+    background: rgba(255,255,255,0.06);
+    color: #f0f5ff;
+    font-size: 15px;
+    padding: 10px 12px;
+    outline: none;
+  }
+
+  .kiosk-btn {
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 12px;
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 14px;
+    padding: 10px 12px;
+  }
+
+  .kiosk-btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  .kiosk-btn.primary {
+    border: none;
+    background: var(--kiosk-primary);
+  }
+
+  .kiosk-btn.success {
+    border: none;
+    background: #22c55e;
+  }
+
+  .kiosk-btn.full {
+    width: 100%;
+    padding: 13px 16px;
+    font-size: 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .k-total-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+  }
+
+  .k-total-row.discount {
+    color: #98f5b5;
+  }
+
+  .k-total-row.total {
+    font-size: clamp(22px, 3vw, 30px);
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .kiosk.landscape.kiosk-main {
+    grid-template-rows: auto auto auto auto minmax(0,1fr);
+  }
+
+  .kiosk.landscape .k-header {
+    padding: 14px 24px;
+  }
+
+  .kiosk.landscape .k-hero {
+    padding: 12px 24px;
+    align-items: center;
+  }
+
+  .kiosk.landscape .k-hero h1 {
+    font-size: clamp(28px, 4vw, 48px);
+  }
+
+  .kiosk.landscape .k-items-grid {
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    padding: 14px 16px;
+    gap: 11px;
+  }
+
+  .kiosk.landscape .k-item-image-wrap {
+    height: 130px;
+  }
+
+  .kiosk.landscape .k-item-card {
+    grid-template-rows: 130px auto;
+    min-height: 240px;
+  }
+
+  .kiosk.landscape.density-comfortable .k-items-grid {
+    grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+    gap: 13px;
+  }
+
+  .kiosk.landscape.density-comfortable .k-item-image-wrap {
+    height: 145px;
+  }
+
+  .kiosk.landscape.density-comfortable .k-item-card {
+    grid-template-rows: 145px auto;
+    min-height: 260px;
+  }
+
+  .kiosk.landscape.density-comfortable .k-item-name {
+    font-size: clamp(15px, 2vw, 20px);
+  }
+
+  .kiosk.flavor-sample .k-brand-sub,
+  .kiosk.flavor-sample .k-stat-label,
+  .kiosk.flavor-sample .k-overline {
+    color: #ffd8c0;
+  }
+
+  .kiosk.flavor-sample .k-cart-pill {
+    background: linear-gradient(140deg, #ea5c25, #f28d3f);
+  }
+
+  .kiosk.flavor-sample .k-item-card {
+    background: linear-gradient(170deg, rgba(29,35,51,0.97), rgba(18,24,36,0.97));
+  }
+
+  .kiosk.landscape .k-idle-center {
+    top: 38%;
+  }
+
+  .kiosk.landscape .kiosk-idle-strip {
+    padding: 18px 10px;
+  }
+
+  @media (max-width: 900px) {
+    .k-hero {
+      flex-direction: column;
+    }
+
+    .k-hero-stats {
+      min-width: 0;
+    }
+  }
+
+  @keyframes kiosk-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes kiosk-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-11px); }
+  }
+
+  @keyframes kiosk-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.84; }
+  }
+
+  @keyframes kiosk-ticker {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+
+  .kiosk-float {
+    animation: kiosk-float 3.4s ease-in-out infinite;
+  }
+
+  .kiosk-blink {
+    animation: kiosk-blink 2.2s ease-in-out infinite;
+  }
+`;

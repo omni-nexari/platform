@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
+import QRCode from 'qrcode';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -124,6 +125,16 @@ function formatUptime(seconds: number | null) {
   return `${hours}h ${minutes}m`;
 }
 
+function QrCanvas({ url }: { url: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    if (canvasRef.current && url) {
+      void QRCode.toCanvas(canvasRef.current, url, { width: 120, margin: 1 });
+    }
+  }, [url]);
+  return <canvas ref={canvasRef} className="rounded-xl border border-[var(--border)]" />;
+}
+
 export default function PosKioskPage() {
   const { wsId } = useParams<{ wsId: string }>();
   const navigate = useNavigate();
@@ -133,7 +144,7 @@ export default function PosKioskPage() {
   const [lookupEmail, setLookupEmail] = useState('');
   const [verifyResult, setVerifyResult] = useState<KioskVerifyResponse | null>(null);
   const [redeemPoints, setRedeemPoints] = useState('');
-  const [copiedType, setCopiedType] = useState<'kiosk' | 'kitchen' | null>(null);
+  const [copiedType, setCopiedType] = useState<'kiosk-portrait' | 'kiosk-landscape' | 'kitchen' | null>(null);
 
   const { data: displayTokens, refetch: refetchTokens } = useQuery<DisplayTokens>({
     queryKey: ['pos-display-tokens', wsId],
@@ -155,14 +166,14 @@ export default function PosKioskPage() {
     onError: () => toast.error('Failed to regenerate display token'),
   });
 
-  function buildDisplayUrl(type: 'kiosk' | 'kitchen', token: string) {
+  function buildDisplayUrl(type: 'kiosk-portrait' | 'kiosk-landscape' | 'kitchen', token: string) {
     const base = window.location.origin;
-    return type === 'kiosk'
-      ? `${base}/kiosk/${wsId}/portrait?dt=${token}`
-      : `${base}/kitchen/${wsId}?dt=${token}`;
+    if (type === 'kiosk-portrait') return `${base}/kiosk/${wsId}/portrait?dt=${token}`;
+    if (type === 'kiosk-landscape') return `${base}/kiosk/${wsId}/landscape?dt=${token}`;
+    return `${base}/kitchen/${wsId}?dt=${token}`;
   }
 
-  async function handleCopy(type: 'kiosk' | 'kitchen', token: string) {
+  async function handleCopy(type: 'kiosk-portrait' | 'kiosk-landscape' | 'kitchen', token: string) {
     await navigator.clipboard.writeText(buildDisplayUrl(type, token));
     setCopiedType(type);
     setTimeout(() => setCopiedType(null), 2000);
@@ -284,58 +295,80 @@ export default function PosKioskPage() {
           </div>
         </SectionCardHeader>
         <SectionCardBody>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Kiosk */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Kiosk — Portrait */}
             <div className="space-y-3">
               <div className="flex items-center gap-2">
-                <Monitor className="h-4 w-4 text-[var(--accent)]" />
-                <span className="text-sm font-semibold text-[var(--text)]">Kiosk Display</span>
+                <Smartphone className="h-4 w-4 text-[var(--accent)]" />
+                <span className="text-sm font-semibold text-[var(--text)]">Kiosk — Portrait</span>
               </div>
               {displayTokens?.kiosk ? (
                 <>
                   <div className="flex items-center gap-2">
                     <input
                       readOnly
-                      value={buildDisplayUrl('kiosk', displayTokens.kiosk)}
+                      value={buildDisplayUrl('kiosk-portrait', displayTokens.kiosk)}
                       className="flex-1 truncate rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-muted)] outline-none"
                     />
                     <button
                       className="ui-btn-secondary shrink-0 flex items-center gap-1.5 text-xs"
-                      onClick={() => void handleCopy('kiosk', displayTokens.kiosk!)}
+                      onClick={() => void handleCopy('kiosk-portrait', displayTokens.kiosk!)}
                     >
-                      <Copy className="h-3.5 w-3.5" />{copiedType === 'kiosk' ? 'Copied!' : 'Copy'}
+                      <Copy className="h-3.5 w-3.5" />{copiedType === 'kiosk-portrait' ? 'Copied!' : 'Copy'}
                     </button>
                   </div>
-                  <div className="flex items-start gap-4">
-                    <img
-                      src={`https://chart.apis.google.com/chart?chs=160x160&cht=qr&chl=${encodeURIComponent(buildDisplayUrl('kiosk', displayTokens.kiosk))}`}
-                      alt="Kiosk QR code"
-                      className="h-[100px] w-[100px] rounded-xl border border-[var(--border)]"
-                    />
-                    <button
-                      className="ui-btn-secondary flex items-center gap-1.5 text-xs mt-1"
-                      disabled={regenerateTokenMut.isPending}
-                      onClick={() => {
-                        if (window.confirm('Regenerate kiosk token? The current URL will stop working.')) {
-                          regenerateTokenMut.mutate('kiosk');
-                        }
-                      }}
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />Regenerate
-                    </button>
-                  </div>
+                  <QrCanvas url={buildDisplayUrl('kiosk-portrait', displayTokens.kiosk)} />
                 </>
               ) : (
                 <div className="flex flex-col gap-2">
-                  <p className="text-xs text-[var(--text-muted)]">No kiosk display token yet.</p>
+                  <p className="text-xs text-[var(--text-muted)]">No kiosk token yet.</p>
                   <button
                     className="ui-btn-primary self-start flex items-center gap-1.5"
                     disabled={generateTokenMut.isPending}
                     onClick={() => generateTokenMut.mutate('kiosk')}
                   >
-                    <Monitor className="h-4 w-4" />{generateTokenMut.isPending ? 'Generating…' : 'Generate Kiosk URL'}
+                    <Smartphone className="h-4 w-4" />{generateTokenMut.isPending ? 'Generating…' : 'Generate Kiosk URL'}
                   </button>
                 </div>
+              )}
+            </div>
+
+            {/* Kiosk — Landscape */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Monitor className="h-4 w-4 text-[var(--accent)]" />
+                <span className="text-sm font-semibold text-[var(--text)]">Kiosk — Landscape</span>
+              </div>
+              {displayTokens?.kiosk ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <input
+                      readOnly
+                      value={buildDisplayUrl('kiosk-landscape', displayTokens.kiosk)}
+                      className="flex-1 truncate rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-muted)] outline-none"
+                    />
+                    <button
+                      className="ui-btn-secondary shrink-0 flex items-center gap-1.5 text-xs"
+                      onClick={() => void handleCopy('kiosk-landscape', displayTokens.kiosk!)}
+                    >
+                      <Copy className="h-3.5 w-3.5" />{copiedType === 'kiosk-landscape' ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                  <QrCanvas url={buildDisplayUrl('kiosk-landscape', displayTokens.kiosk)} />
+                  <button
+                    className="ui-btn-secondary flex items-center gap-1.5 text-xs"
+                    disabled={regenerateTokenMut.isPending}
+                    onClick={() => {
+                      if (window.confirm('Regenerate kiosk token? Both portrait and landscape URLs will stop working.')) {
+                        regenerateTokenMut.mutate('kiosk');
+                      }
+                    }}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />Regenerate Token
+                  </button>
+                </>
+              ) : (
+                <p className="text-xs text-[var(--text-muted)]">Generate a kiosk token first.</p>
               )}
             </div>
 
@@ -361,11 +394,7 @@ export default function PosKioskPage() {
                     </button>
                   </div>
                   <div className="flex items-start gap-4">
-                    <img
-                      src={`https://chart.apis.google.com/chart?chs=160x160&cht=qr&chl=${encodeURIComponent(buildDisplayUrl('kitchen', displayTokens.kitchen))}`}
-                      alt="Kitchen QR code"
-                      className="h-[100px] w-[100px] rounded-xl border border-[var(--border)]"
-                    />
+                    <QrCanvas url={buildDisplayUrl('kitchen', displayTokens.kitchen)} />
                     <button
                       className="ui-btn-secondary flex items-center gap-1.5 text-xs mt-1"
                       disabled={regenerateTokenMut.isPending}

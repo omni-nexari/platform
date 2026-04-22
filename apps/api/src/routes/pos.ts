@@ -151,9 +151,9 @@ const OrderItemInputSchema = z.object({
 });
 
 const CreateOrderSchema = z.object({
-  workspaceId:  z.string().uuid(),
-  customerName: z.string().max(80).optional(),
-  notes:        z.string().max(500).optional(),
+  workspaceId:  z.string().uuid().optional(), // ignored server-side; taken from token
+  customerName: z.string().max(80).nullable().optional(),
+  notes:        z.string().max(500).nullable().optional(),
   items:        z.array(OrderItemInputSchema).min(1).max(50),
 });
 
@@ -169,6 +169,7 @@ const MarkOrderPaidSchema = z.object({
   method: z.enum(['cash', 'card', 'split']).default('cash'),
   amountCents: z.number().int().min(0).optional(),
   tipCents: z.number().int().min(0).default(0),
+  taxCents: z.number().int().min(0).default(0),
   reference: z.string().max(100).optional(),
   loyaltyCustomerId: z.string().uuid().optional(),
 });
@@ -510,6 +511,41 @@ export async function posRoutes(app: FastifyInstance) {
     });
   });
 
+  // ── GET /pos/ws/kitchen-public?dt=:token ────────────────────────────────────
+  // Display-token authenticated WebSocket — used by KitchenDisplayPage
+  app.get('/ws/kitchen-public', { websocket: true }, async (socket, req) => {
+    const query = req.query as Record<string, string | undefined>;
+    const dtToken = (req.headers as Record<string, string | undefined>)['x-display-token'] ?? query['dt'];
+    if (!dtToken) {
+      socket.close(4001, 'Display token required');
+      return;
+    }
+
+    let workspaceId: string;
+    try {
+      const payload = app.jwt.verify(dtToken) as { workspaceId?: string; type?: string; displayType?: string };
+      if (payload.type !== 'display' || payload.displayType !== 'kitchen' || !payload.workspaceId) {
+        socket.close(4003, 'Invalid display token');
+        return;
+      }
+      workspaceId = payload.workspaceId;
+    } catch {
+      socket.close(4003, 'Invalid display token');
+      return;
+    }
+
+    if (!kitchenClients.has(workspaceId)) kitchenClients.set(workspaceId, new Set());
+    kitchenClients.get(workspaceId)!.add(socket);
+
+    socket.on('close', () => {
+      kitchenClients.get(workspaceId)?.delete(socket);
+    });
+
+    socket.on('error', () => {
+      kitchenClients.get(workspaceId)?.delete(socket);
+    });
+  });
+
   // ── GET /pos/menu?workspaceId=:wsId ─────────────────────────────────────────
   // Public — returns the active menu with categories + items grouped
   app.get('/menu', async (req, reply) => {
@@ -660,7 +696,9 @@ export async function posRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
     }
 
-    const { workspaceId, customerName, notes, items: inputItems } = parsed.data;
+    // Use workspaceId from the verified token, not the client-supplied body value
+    const workspaceId = auth.workspaceId;
+    const { customerName, notes, items: inputItems } = parsed.data;
 
     // ── Resolve item prices from DB (never trust client-sent prices) ──────────
     const itemIds = [...new Set(inputItems.map((i) => i.itemId))];
@@ -764,6 +802,11 @@ export async function posRoutes(app: FastifyInstance) {
         lineTotalCents:    li.lineTotalCents,
       })),
     );
+
+    broadcastKitchenEvent(workspaceId, {
+      type: 'order_created',
+      order: { id: order.id, orderNumber: order.orderNumber, totalCents, status: 'pending' },
+    });
 
     return reply.status(201).send({ id: order.id, orderNumber: order.orderNumber, totalCents });
   });
@@ -2006,7 +2049,8 @@ export async function posRoutes(app: FastifyInstance) {
     }
 
     const tipCents = parsed.data.tipCents ?? 0;
-    const totalWithTip = order.totalCents + tipCents;
+    const taxCents = parsed.data.taxCents ?? 0;
+    const totalWithTip = order.totalCents + taxCents + tipCents;
     const amountCents = parsed.data.amountCents ?? totalWithTip;
     if (parsed.data.method === 'cash' && amountCents < totalWithTip) {
       return reply.status(400).send({ error: 'Tendered amount is less than total' });

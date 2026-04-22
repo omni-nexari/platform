@@ -104,6 +104,8 @@ export const devices = pgTable('devices', {
   publishedScheduleId: uuid('published_schedule_id').references(() => schedules.id, { onDelete: 'set null' }),  // Note: no .references() here — sync.ts imports devices.ts so adding a back-reference would be circular.
   // The FK constraint is enforced by the DB (see migration 0020_syncplay.sql).
   publishedSyncGroupId: uuid('published_sync_group_id'),
+  /** Per-device alert threshold overrides. Shape: { notSeenMinutes?, tempC?, cpuLoad?, storageFreeBytes? } */
+  alertThresholds: jsonb('alert_thresholds'),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

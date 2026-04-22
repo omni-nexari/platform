@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { registerSwagger } from './swagger.js';
 import fastifyCors from '@fastify/cors';
 import fastifyHelmet from '@fastify/helmet';
 import fastifyCookie from '@fastify/cookie';
@@ -31,6 +32,8 @@ function getAllowedOrigins(): Set<string> {
 }
 
 export async function registerPlugins(app: FastifyInstance) {
+  await registerSwagger(app);
+
   const allowedOrigins = getAllowedOrigins();
   const jwtSecret = process.env['JWT_SECRET'];
   const shouldLogAuthDiagnostics = process.env['NODE_ENV'] !== 'production';
