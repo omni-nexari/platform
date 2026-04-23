@@ -15,7 +15,8 @@
     "smoke:test": "node ./tools/smoke-test.mjs",
     "db:generate": "pnpm --filter @signage/db db:generate",
     "db:migrate": "pnpm --filter @signage/db db:migrate",
-    "db:studio": "pnpm --filter @signage/db db:studio"
+    "db:studio": "pnpm --filter @signage/db db:studio",
+    "sync-tizen": "node tools/sync-tizen-shared.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

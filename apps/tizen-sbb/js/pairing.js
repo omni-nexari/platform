@@ -161,10 +161,12 @@ window.Pairing = {
 
         let workspaceName = '';
         let workspaceId = '';
+        let deviceType = 'signage';
         try {
           const wsData = await API.getWorkspaceInfo(response.deviceToken);
           workspaceId = (wsData.workspace && wsData.workspace.id) || '';
           workspaceName = (wsData.workspace && wsData.workspace.name) || '';
+          deviceType = wsData.deviceType || 'signage';
         } catch (error) {
           logger.warn('Could not fetch workspace info for existing pairing:', error);
         }
@@ -174,6 +176,7 @@ window.Pairing = {
           deviceToken: response.deviceToken,
           name: workspaceName || localStorage.getItem('deviceName') || 'SBB Player',
           workspaceId,
+          deviceType,
         });
         return;
       }
@@ -213,10 +216,12 @@ window.Pairing = {
           const token = result.deviceToken;
           let workspaceName = '';
           let workspaceId = '';
+          let deviceType = 'signage';
           try {
             const wsData = await API.getWorkspaceInfo(token);
             workspaceId = (wsData.workspace && wsData.workspace.id) || '';
             workspaceName = (wsData.workspace && wsData.workspace.name) || '';
+            deviceType = wsData.deviceType || 'signage';
           } catch (e) {
             logger.warn('Could not fetch workspace info:', e);
           }
@@ -225,6 +230,7 @@ window.Pairing = {
             deviceToken: token,
             name: workspaceName || 'SBB Player',
             workspaceId,
+            deviceType,
           });
         }
       } catch (error) {
@@ -251,7 +257,41 @@ window.Pairing = {
     localStorage.setItem('deviceName', device.name);
     localStorage.setItem('workspaceId', device.workspaceId || '');
     localStorage.setItem('isPaired', 'true');
-    
+
+    const deviceType = device.deviceType || 'signage';
+
+    // Kiosk / Kitchen modes: load DS web app in iframe, keep Tizen context alive
+    if (deviceType === 'kiosk' || deviceType === 'kitchen') {
+      const serverBase = CONFIG.API_BASE.replace(/\/api\/v1\/?$/, '').replace(/\/api\/?$/, '');
+      const wsId = device.workspaceId;
+      if (!wsId) {
+        this.showError('Launch Failed', 'No workspace assigned to this device.');
+        return;
+      }
+      let target;
+      if (deviceType === 'kiosk') {
+        const orientation = window.screen.width < window.screen.height ? 'portrait' : 'landscape';
+        target = serverBase + '/kiosk/' + wsId + '/' + orientation + '?dt=' + encodeURIComponent(device.deviceToken);
+      } else {
+        target = serverBase + '/kitchen/' + wsId + '?dt=' + encodeURIComponent(device.deviceToken);
+      }
+      logger.info('Launching kiosk/kitchen mode in iframe:', target);
+      document.getElementById('pairing-screen').classList.add('hidden');
+      document.getElementById('player-screen').classList.add('hidden');
+      var existingFrame = document.getElementById('kiosk-frame');
+      if (existingFrame) existingFrame.remove();
+      var frame = document.createElement('iframe');
+      frame.id = 'kiosk-frame';
+      frame.src = target;
+      frame.allow = 'fullscreen';
+      frame.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:none;z-index:100;background:#000;';
+      document.body.appendChild(frame);
+      if (typeof KioskHealth !== 'undefined') {
+        KioskHealth.start(device.id, device.deviceToken);
+      }
+      return;
+    }
+
     // Debug logging
     logger.debug('Checking Player availability...');
     logger.debug('window.Player exists:', typeof window.Player);

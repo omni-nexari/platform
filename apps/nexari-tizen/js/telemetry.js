@@ -168,6 +168,16 @@ window.Telemetry = {
       } catch (e) {
         logger.debug('b2bcontrol.getSerialNumber not available');
       }
+
+      // Try b2bapis.b2bcontrol.getSerialNumber (Tizen 4 / SBB fallback)
+      try {
+        if (!serialNumber && typeof b2bapis !== 'undefined' && b2bapis.b2bcontrol && typeof b2bapis.b2bcontrol.getSerialNumber === 'function') {
+          serialNumber = b2bapis.b2bcontrol.getSerialNumber();
+          serialAttempts.push('b2bapis.b2bcontrol.getSerialNumber');
+        }
+      } catch (e) {
+        logger.debug('b2bapis.b2bcontrol.getSerialNumber not available');
+      }
       
       // Fallback to BUILD info
       model = model || (build && build.model) || 'Unknown TV';

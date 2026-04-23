@@ -1,4 +1,4 @@
-﻿// Content Player Module - TypeScript Edition
+// Content Player Module - TypeScript Edition
 /// <reference types="tizen-tv-webapis" />
 
 // Type definitions
@@ -92,6 +92,7 @@ const Player = {
   isSyncStarting: false,
   syncPlayMode: 'none' as 'none' | 'native',
   syncPlayListener: null as ((data: any) => void) | null,
+  syncplayBackend: null as 'b2bapis' | 'webapis' | null,
   deviceToken: null as string | null,
   _scannedMdcId: null as number | null, // MDC device ID found by scan; persisted to DB once WS is open
   _mdcStartupDone: false, // Set to true once Phase 1 ID scan completes; gates sendMdcHeartbeat
@@ -430,14 +431,33 @@ const Player = {
                   b2b.captureScreen((filePath: string) => {
                     try {
                       const normalizedPath = String(filePath || '').replace(/^file:\/\//, '');
-                      const fh = (window as any).tizen.filesystem.openFile(normalizedPath, 'r');
-                      try {
-                        const bytes = fh.readData();
-                        let binary = '';
-                        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-                        send(btoa(binary));
-                      } finally {
-                        try { fh.close(); } catch (_) {}
+                      const platform = (window as any).Platform;
+                      if (platform && platform.isLegacy) {
+                        // Tizen 4: use filesystem.resolve + openStream
+                        (window as any).tizen.filesystem.resolve(normalizedPath, (file: any) => {
+                          file.openStream('r', (stream: any) => {
+                            try {
+                              const bytes = stream.readBytes(file.fileSize);
+                              stream.close();
+                              let binary = '';
+                              for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                              send(btoa(binary));
+                            } catch (e) {
+                              logger.warn('[LiveCapture] read stream bytes failed:', e);
+                              done();
+                            }
+                          }, (e: any) => { logger.warn('[LiveCapture] openStream error:', e); done(); }, 'ISO-8859-1');
+                        }, (e: any) => { logger.warn('[LiveCapture] filesystem.resolve failed:', e); done(); }, 'r');
+                      } else {
+                        const fh = (window as any).tizen.filesystem.openFile(normalizedPath, 'r');
+                        try {
+                          const bytes = fh.readData();
+                          let binary = '';
+                          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                          send(btoa(binary));
+                        } finally {
+                          try { fh.close(); } catch (_) {}
+                        }
                       }
                     } catch (e) {
                       logger.warn('[LiveCapture] filesystem failed:', e);
@@ -5722,14 +5742,30 @@ const Player = {
             logger.info('[Screenshot] captureScreen succeeded, path:', filePath);
             try {
               const normalizedPath = String(filePath || '').replace(/^file:\/\//, '');
-              const fh = (tizen as any).filesystem.openFile(normalizedPath, 'r');
-              try {
-                const bytes = fh.readData();
-                let binary = '';
-                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-                send(btoa(binary));
-              } finally {
-                try { fh.close(); } catch (_) {}
+              const platform = (window as any).Platform;
+              if (platform && platform.isLegacy) {
+                // Tizen 4: filesystem.openFile does not exist — use resolve + openStream
+                (tizen as any).filesystem.resolve(normalizedPath, (file: any) => {
+                  file.openStream('r', (stream: any) => {
+                    try {
+                      const bytes = stream.readBytes(file.fileSize);
+                      stream.close();
+                      let binary = '';
+                      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                      send(btoa(binary));
+                    } catch (e) { logger.warn('[Screenshot] read stream bytes failed:', e); }
+                  }, (e: any) => logger.warn('[Screenshot] openStream error:', e), 'ISO-8859-1');
+                }, (e: any) => logger.warn('[Screenshot] filesystem.resolve failed:', e), 'r');
+              } else {
+                const fh = (tizen as any).filesystem.openFile(normalizedPath, 'r');
+                try {
+                  const bytes = fh.readData();
+                  let binary = '';
+                  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                  send(btoa(binary));
+                } finally {
+                  try { fh.close(); } catch (_) {}
+                }
               }
             } catch (e) { logger.warn('[Screenshot] filesystem access failed:', e); }
           },
@@ -5879,19 +5915,34 @@ const Player = {
   },
 
   // --- Tizen Syncplay (native) helpers ---
+  // SBB (Tizen 4 / SSSP4) uses b2bapis.b2bsyncplay; Tizen 6.5+ uses webapis.syncplay.
+  // Detect which backend is available and store it in syncplayBackend for use across sync methods.
   isSyncplayAvailable() {
-    const available = typeof webapis !== 'undefined' &&
-      !!(webapis as any).syncplay &&
-      typeof (webapis as any).syncplay.start === 'function' &&
-      typeof (webapis as any).syncplay.createPlaylist === 'function' &&
-      typeof (webapis as any).syncplay.stop === 'function';
-    if (available) {
+    const b2b = typeof (window as any).b2bapis !== 'undefined' ? (window as any).b2bapis : null;
+    // Try b2bapis.b2bsyncplay first (Tizen 4 SBB / SSSP4)
+    if (b2b &&
+        !!b2b.b2bsyncplay &&
+        typeof b2b.b2bsyncplay.startSyncPlay === 'function' &&
+        typeof b2b.b2bsyncplay.makeSyncPlayList === 'function' &&
+        typeof b2b.b2bsyncplay.stopSyncPlay === 'function') {
+      this.syncplayBackend = 'b2bapis';
+      return true;
+    }
+    // Fallback: webapis.syncplay (Tizen 6.5+ / SSSP6+)
+    if (typeof webapis !== 'undefined' &&
+        !!(webapis as any).syncplay &&
+        typeof (webapis as any).syncplay.start === 'function' &&
+        typeof (webapis as any).syncplay.createPlaylist === 'function' &&
+        typeof (webapis as any).syncplay.stop === 'function') {
+      this.syncplayBackend = 'webapis';
       try {
         const version = (webapis as any).syncplay.getVersion?.();
         if (version) logger.debug('Syncplay API version:', version);
       } catch (_) {}
+      return true;
     }
-    return available;
+    this.syncplayBackend = null;
+    return false;
   },
 
   deriveSyncplayGroupId(input: any): number {
@@ -6029,27 +6080,41 @@ const Player = {
         return false;
       }
 
-      try {
-        (webapis as any).syncplay.removePlaylist(
-          (res: SyncplayResult) => logger.debug('Syncplay: pre-clean removePlaylist ok', res?.result),
-          (err: SyncplayError) => logger.debug('Syncplay: pre-clean removePlaylist error (ignored)', err?.message)
-        );
-      } catch (e) {
-        logger.debug('Syncplay: removePlaylist pre-clean failed (ignored)', e);
+      // Pre-clean: remove any existing playlist
+      if (this.syncplayBackend === 'b2bapis') {
+        try {
+          (window as any).b2bapis.b2bsyncplay.clearSyncPlayList(
+            (res: any) => logger.debug('Syncplay: pre-clean clearSyncPlayList ok', res?.result),
+            (err: any) => logger.debug('Syncplay: pre-clean clearSyncPlayList error (ignored)', err?.message)
+          );
+        } catch (e) {
+          logger.debug('Syncplay: clearSyncPlayList pre-clean failed (ignored)', e);
+        }
+      } else {
+        try {
+          (webapis as any).syncplay.removePlaylist(
+            (res: SyncplayResult) => logger.debug('Syncplay: pre-clean removePlaylist ok', res?.result),
+            (err: SyncplayError) => logger.debug('Syncplay: pre-clean removePlaylist error (ignored)', err?.message)
+          );
+        } catch (e) {
+          logger.debug('Syncplay: removePlaylist pre-clean failed (ignored)', e);
+        }
       }
 
       await new Promise((resolve, reject) => {
-        (webapis as any).syncplay.createPlaylist(
-          contentsArr,
-          (res: SyncplayResult) => {
-            logger.info('Syncplay: playlist created', res?.result, res?.data);
-            resolve(true);
-          },
-          (err: SyncplayError) => {
-            logger.error('Syncplay: createPlaylist failed', err?.name, err?.message, '(code:', err?.code, ')');
-            reject(err);
-          }
-        );
+        const onSuccess = (res: any) => {
+          logger.info('Syncplay: playlist created', res?.result, res?.data);
+          resolve(true);
+        };
+        const onError = (err: any) => {
+          logger.error('Syncplay: createPlaylist failed', err?.name, err?.message, '(code:', err?.code, ')');
+          reject(err);
+        };
+        if (this.syncplayBackend === 'b2bapis') {
+          (window as any).b2bapis.b2bsyncplay.makeSyncPlayList(contentsArr, onSuccess, onError);
+        } else {
+          (webapis as any).syncplay.createPlaylist(contentsArr, onSuccess, onError);
+        }
       });
 
       // New playlist prepared => treat as not-started yet.
@@ -6184,25 +6249,34 @@ const Player = {
     };
 
     try {
-      const sp: any = (webapis as any).syncplay;
-      
-      logger.info(`[SYNC TIMING] calling sp.start() now at ${Date.now()}`);
-      
+      logger.info(`[SYNC TIMING] calling syncplay start now at ${Date.now()}`);
+
       // CRITICAL: Stop any previous SyncPlay session to unregister old listener.
       // Calling start() when a listener is already registered causes "Can't register callback".
       if (this.syncPlayListener) {
         try {
           logger.debug('Stopping previous SyncPlay session before starting new one');
-          sp.stop(this.syncPlayListener);
+          if (this.syncplayBackend === 'b2bapis') {
+            (window as any).b2bapis.b2bsyncplay.stopSyncPlay(this.syncPlayListener);
+          } else {
+            (webapis as any).syncplay.stop(this.syncPlayListener);
+          }
         } catch (stopErr) {
           logger.debug('Previous SyncPlay stop failed (ignored):', stopErr);
         }
       }
 
-      // Samsung docs: start(syncinfo: SyncInfo, onlistener: SyncplayListener) â€” official 2-arg signature.
-      // Per spec the listener receives DOMString events: SYNC_PLAY_START_DONE, SYNC_PLAY_STOP_DONE, SYNC_PLAY_FINISH_DONE.
+      // b2bapis: startSyncPlay(x, y, w, h, groupID, rotate, onChange)  — positional args (Tizen 4 SBB)
+      // webapis:  start(syncinfo, listener)                             — object arg   (Tizen 6.5+)
       const invokeStart = (syncinfo: SyncInfo) => {
-        sp.start(syncinfo, listener);
+        if (this.syncplayBackend === 'b2bapis') {
+          (window as any).b2bapis.b2bsyncplay.startSyncPlay(
+            syncinfo.rectX, syncinfo.rectY, syncinfo.rectWidth, syncinfo.rectHeight,
+            syncinfo.groupID, syncinfo.rotate, listener
+          );
+        } else {
+          (webapis as any).syncplay.start(syncinfo, listener);
+        }
       };
 
       // Best-effort: some firmwares tie the video plane to tvwindow state.
@@ -6230,8 +6304,10 @@ const Player = {
           // Stop the just-attempted listener before retrying, otherwise fallback start can fail
           // with "Can't register callback".
           try {
-            if (sp && typeof sp.stop === 'function') {
-              try { sp.stop(listener); } catch (_) {}
+            if (this.syncplayBackend === 'b2bapis') {
+              try { (window as any).b2bapis.b2bsyncplay.stopSyncPlay(listener); } catch (_) {}
+            } else {
+              try { (webapis as any).syncplay.stop(listener); } catch (_) {}
             }
           } catch (_) {}
           invokeStart(baseSyncinfo);
@@ -6253,9 +6329,10 @@ const Player = {
       logger.error('Syncplay: start failed', err);
       // Best-effort cleanup: some firmwares keep the callback registered even after an exception.
       try {
-        const sp: any = (webapis as any).syncplay;
-        if (sp && typeof sp.stop === 'function') {
-          try { sp.stop(this.syncPlayListener || (() => {})); } catch (_) {}
+        if (this.syncplayBackend === 'b2bapis') {
+          try { (window as any).b2bapis.b2bsyncplay.stopSyncPlay(this.syncPlayListener || (() => {})); } catch (_) {}
+        } else {
+          try { (webapis as any).syncplay.stop(this.syncPlayListener || (() => {})); } catch (_) {}
         }
       } catch (_) {}
       this.isSyncStarting = false;
@@ -6269,18 +6346,44 @@ const Player = {
 
     try {
       const listener = this.syncPlayListener || ((msg: string) => logger.info('Syncplay stop status:', msg));
-      (webapis as any).syncplay.stop(listener);
+      if (this.syncplayBackend === 'b2bapis') {
+        (window as any).b2bapis.b2bsyncplay.stopSyncPlay(listener);
+      } else {
+      if (this.syncplayBackend === 'b2bapis') {
+        (window as any).b2bapis.b2bsyncplay.stopSyncPlay(listener);
+      } else {
+        if (this.syncplayBackend === 'b2bapis') {
+        (window as any).b2bapis.b2bsyncplay.stopSyncPlay(listener);
+      } else {
+        (webapis as any).syncplay.stop(listener);
+      }
+      }
+      }
     } catch (err) {
       logger.warn('Syncplay: stop failed', err);
     }
 
     try {
-      (webapis as any).syncplay.removePlaylist(
-        (res: SyncplayResult) => logger.debug('Syncplay: removePlaylist ok', res?.result),
-        (err: SyncplayError) => logger.debug('Syncplay: removePlaylist error (ignored)', err?.message)
-      );
+      if (this.syncplayBackend === 'b2bapis') {
+        (window as any).b2bapis.b2bsyncplay.clearSyncPlayList(
+          (res: any) => logger.debug('Syncplay: clearSyncPlayList ok', res?.result),
+          (err: any) => logger.debug('Syncplay: clearSyncPlayList error (ignored)', err?.message)
+        );
+      } else {
+      if (this.syncplayBackend === 'b2bapis') {
+        (window as any).b2bapis.b2bsyncplay.clearSyncPlayList(
+          (res: any) => logger.debug('Syncplay: clearSyncPlayList ok', res?.result),
+          (err: any) => logger.debug('Syncplay: clearSyncPlayList error (ignored)', err?.message)
+        );
+      } else {
+        (webapis as any).syncplay.removePlaylist(
+          (res: SyncplayResult) => logger.debug('Syncplay: removePlaylist ok', res?.result),
+          (err: SyncplayError) => logger.debug('Syncplay: removePlaylist error (ignored)', err?.message)
+        );
+      }
+      }
     } catch (err) {
-      logger.debug('Syncplay: removePlaylist failed (ignored)', err);
+      logger.debug('Syncplay: removePlaylist/clearSyncPlayList failed (ignored)', err);
     }
 
     // Remove fullscreen rendering class

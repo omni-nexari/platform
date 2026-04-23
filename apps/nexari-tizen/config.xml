@@ -6,11 +6,11 @@
     <content src="index.html"/>
     <tizen:content-security-policy>default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; img-src * data: blob:; frame-src *; style-src * 'unsafe-inline';</tizen:content-security-policy>
     <tizen:content-security-policy-report-only></tizen:content-security-policy-report-only>
-    <description>Nexari — Samsung Smart TV (Tizen 4+)</description>
+    <description>Nexari Signage — Samsung Smart TV (Tizen 4+)</description>
     <icon src="icon.png"/>
     <tizen:metadata key="http://samsung.com/tv/metadata/use.network" value="true"/>
     <tizen:metadata key="http://samsung.com/tv/metadata/prelaunch.support" value="true"/>
-    <name>Nexari Player</name>
+    <name>Signage Player</name>
     <tizen:privilege name="http://tizen.org/privilege/internet"/>
     <tizen:privilege name="http://tizen.org/privilege/filesystem.read"/>
     <tizen:privilege name="http://tizen.org/privilege/filesystem.write"/>
@@ -46,5 +46,5 @@
     <tizen:privilege name="http://developer.samsung.com/privilege/dpm"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/sso"/>
     <tizen:profile name="tv-samsung"/>
-    <tizen:setting screen-orientation="auto-rotation" context-menu="enable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>
+    <tizen:setting screen-orientation="auto-rotation" context-menu="disable" background-support="enable" encryption="disable" install-location="auto" hwkey-event="enable"/>
 </widget>
