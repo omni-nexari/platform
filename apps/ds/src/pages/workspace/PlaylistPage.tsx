@@ -79,17 +79,19 @@ function PlaylistCard({
       onKeyDown={e => e.key === 'Enter' && onEdit()}
       className="ui-entity-card relative flex flex-col cursor-pointer group"
     >
+      {/* Selection checkbox — outside ui-media-frame so overflow:hidden doesn't interfere */}
+      {(hovered || checked) && (
+        <div
+          onClick={(e) => { e.stopPropagation(); onCheck(); }}
+          className="absolute top-2 left-2 z-30 w-5 h-5 rounded-md flex items-center justify-center cursor-pointer transition-colors"
+          style={{ background: checked ? 'var(--accent)' : 'rgba(0,0,0,0.55)', border: '1.5px solid rgba(255,255,255,0.3)' }}
+        >
+          {checked && <Check size={11} className="text-white" />}
+        </div>
+      )}
+
       {/* Thumbnail */}
       <div className="ui-media-frame aspect-video">
-        {(hovered || checked) && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onCheck(); }}
-            className="absolute top-2 left-2 z-20 w-5 h-5 rounded-md flex items-center justify-center transition-colors"
-            style={{ background: checked ? 'var(--accent)' : 'rgba(0,0,0,0.55)', border: '1.5px solid rgba(255,255,255,0.3)' }}
-          >
-            {checked && <Check size={11} className="text-white" />}
-          </button>
-        )}
         {pl.thumbnailContentId ? (
           <AuthImg
             itemId={pl.thumbnailContentId}
@@ -197,17 +199,19 @@ export default function PlaylistPage() {
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [publishPickerOpen, setPublishPickerOpen] = useState(false);
 
   const currentFilters = { selectedTagIds };
 
   const tagIdsParam = selectedTagIds.length > 0 ? `&tagIds=${selectedTagIds.join(',')}` : '';
 
-  const { data: items = [], isLoading } = useQuery<Playlist[]>({
+  const { data: playlistData, isLoading } = useQuery<{ items: Playlist[]; total: number }>({
     queryKey: ['playlists', wsId, selectedTagIds],
     queryFn: () => api.get(`/playlists?workspaceId=${wsId!}${tagIdsParam}`),
     enabled: !!wsId,
   });
+  const items = playlistData?.items ?? [];
 
   const createMut = useMutation({
     mutationFn: (name: string) => api.post<Playlist>('/playlists', { workspaceId: wsId, name }),
@@ -244,6 +248,18 @@ export default function PlaylistPage() {
       void queryClient.invalidateQueries({ queryKey: ['picker-playlists', wsId] });
     },
     onError: () => toast.error('Failed to delete'),
+  });
+
+  const bulkDeleteMut = useMutation({
+    mutationFn: (ids: string[]) => Promise.all(ids.map((id) => api.delete(`/playlists/${id}`))),
+    onSuccess: (_data, ids) => {
+      toast.success(`Deleted ${ids.length} playlist(s)`);
+      setConfirmBulkDelete(false);
+      setSelectedItems(new Set());
+      void queryClient.invalidateQueries({ queryKey: ['playlists', wsId] });
+      void queryClient.invalidateQueries({ queryKey: ['picker-playlists', wsId] });
+    },
+    onError: () => toast.error('Failed to delete some playlists'),
   });
 
   const publishSelection = items.filter((item) => selectedItems.has(item.id));
@@ -364,6 +380,13 @@ export default function PlaylistPage() {
             >
               <Monitor size={12} /> Publish
             </button>
+            <button
+              onClick={() => setConfirmBulkDelete(true)}
+              disabled={bulkDeleteMut.isPending}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/15 border border-red-500/30 text-red-400 text-xs font-semibold hover:bg-red-500/25 disabled:opacity-40 transition-colors"
+            >
+              <Trash2 size={12} /> Delete {selectedItems.size}
+            </button>
           </div>
         )}
       </div>
@@ -420,6 +443,18 @@ export default function PlaylistPage() {
           </ModalFooter>
         </Modal>
       )}
+
+      <ConfirmDialog
+        open={confirmBulkDelete}
+        title="Delete Playlists"
+        message={`Delete ${selectedItems.size} playlist(s)? This cannot be undone.`}
+        confirmLabel="Delete"
+        confirmPendingLabel="Deleting…"
+        isConfirming={bulkDeleteMut.isPending}
+        closeOnConfirm={false}
+        onConfirm={() => bulkDeleteMut.mutate([...selectedItems])}
+        onClose={() => setConfirmBulkDelete(false)}
+      />
 
       <ConfirmDialog
         open={confirmId !== null}

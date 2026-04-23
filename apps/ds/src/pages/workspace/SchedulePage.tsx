@@ -268,17 +268,19 @@ export default function SchedulePage() {
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [publishPickerOpen, setPublishPickerOpen] = useState(false);
 
   const currentFilters = { selectedTagIds };
 
   const tagIdsParam = selectedTagIds.length > 0 ? `&tagIds=${selectedTagIds.join(',')}` : '';
 
-  const { data: scheduleList = [], isLoading } = useQuery<Schedule[]>({
+  const { data: scheduleData, isLoading } = useQuery<{ items: Schedule[]; total: number }>({
     queryKey: ['schedules', wsId, selectedTagIds],
     queryFn: () => api.get(`/schedules?workspaceId=${wsId!}${tagIdsParam}`),
     enabled: !!wsId,
   });
+  const scheduleList = scheduleData?.items ?? [];
 
   const createMut = useMutation({
     mutationFn: () => api.post<Schedule>('/schedules', {
@@ -316,6 +318,17 @@ export default function SchedulePage() {
       void queryClient.invalidateQueries({ queryKey: ['schedules', wsId] });
     },
     onError: () => toast.error('Failed to delete'),
+  });
+
+  const bulkDeleteMut = useMutation({
+    mutationFn: (ids: string[]) => Promise.all(ids.map((id) => api.delete(`/schedules/${id}`))),
+    onSuccess: (_data, ids) => {
+      toast.success(`Deleted ${ids.length} schedule(s)`);
+      setConfirmBulkDelete(false);
+      setSelectedItems(new Set());
+      void queryClient.invalidateQueries({ queryKey: ['schedules', wsId] });
+    },
+    onError: () => toast.error('Failed to delete some schedules'),
   });
 
   const publishSelection = scheduleList.filter((item) => selectedItems.has(item.id));
@@ -515,6 +528,13 @@ export default function SchedulePage() {
             >
               <Monitor size={12} /> Publish
             </button>
+            <button
+              onClick={() => setConfirmBulkDelete(true)}
+              disabled={bulkDeleteMut.isPending}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/15 border border-red-500/30 text-red-400 text-xs font-semibold hover:bg-red-500/25 disabled:opacity-40 transition-colors"
+            >
+              <Trash2 size={12} /> Delete {selectedItems.size}
+            </button>
           </div>
         )}
       </div>
@@ -597,6 +617,18 @@ export default function SchedulePage() {
             </ModalFooter>
         </Modal>
       )}
+
+      <ConfirmDialog
+        open={confirmBulkDelete}
+        title="Delete Schedules"
+        message={`Delete ${selectedItems.size} schedule(s)? This cannot be undone.`}
+        confirmLabel="Delete"
+        confirmPendingLabel="Deleting…"
+        isConfirming={bulkDeleteMut.isPending}
+        closeOnConfirm={false}
+        onConfirm={() => bulkDeleteMut.mutate([...selectedItems])}
+        onClose={() => setConfirmBulkDelete(false)}
+      />
 
       <ConfirmDialog
         open={confirmDeleteId !== null}

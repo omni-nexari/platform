@@ -238,7 +238,7 @@ export default function AppLayout() {
   const canManageEmergency = user?.orgRole === 'owner' || user?.orgRole === 'admin';
   const cmsEnabled = useCmsEnabled();
   const posEnabled = usePosEnabled();
-  const contentEnabled = cmsEnabled || posEnabled;
+  const contentEnabled = cmsEnabled;
 
   return (
     <div className="flex h-screen bg-[var(--surface)] overflow-hidden">
@@ -522,7 +522,20 @@ export default function AppLayout() {
                     }
                   >
                     <UtensilsCrossed className="w-4 h-4" />
-                    Menu
+                    Menu Builder
+                  </NavLink>
+                  <NavLink
+                    to={`/workspaces/${currentWsId}/pos/menu-boards`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <Menu className="w-4 h-4" />
+                    Menu Boards
                   </NavLink>
                   <NavLink
                     to={`/workspaces/${currentWsId}/pos/expenses`}

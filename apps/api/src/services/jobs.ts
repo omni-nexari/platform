@@ -187,7 +187,7 @@ async function runPlayEventsPartition(): Promise<void> {
       const toDate = `${toYear}-${toMonth}-01`;
 
       await db.execute(
-        sql`CREATE TABLE IF NOT EXISTS ${sql.raw(`"${tableName}"`)} PARTITION OF play_events FOR VALUES FROM (${fromDate}) TO (${toDate})`,
+        sql.raw(`CREATE TABLE IF NOT EXISTS "${tableName}" PARTITION OF play_events FOR VALUES FROM ('${fromDate}') TO ('${toDate}')`),
       );
     }
   } catch (err) {

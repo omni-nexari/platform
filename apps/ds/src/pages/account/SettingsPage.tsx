@@ -994,12 +994,13 @@ function WorkspaceSection({ selectedWsId }: { selectedWsId: string | null }) {
     enabled: approvalEnabled,
   });
 
-  const { data: wsPls = [] } = useQuery<{ id: string; name: string }[]>({
+  const { data: wsPlsData } = useQuery<{ items: { id: string; name: string }[]; total: number }>({
     queryKey: ['ws-playlists-brief', selectedWsId],
     queryFn: () => api.get(`/playlists?workspaceId=${selectedWsId}`),
     enabled: !!selectedWsId,
     staleTime: 60_000,
   });
+  const wsPls = wsPlsData?.items ?? [];
 
   const eligibleReviewers = (membersData?.members ?? []).filter((m) => APPROVER_ROLES.has(m.orgRole));
 

@@ -84,7 +84,7 @@ export async function registerPlugins(app: FastifyInstance) {
   });
 
   await app.register(fastifyRateLimit, {
-    max: 100,
+    max: 600,
     timeWindow: '1 minute',
   });
 

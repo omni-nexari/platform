@@ -7,10 +7,11 @@ import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
 import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
-import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag } from 'lucide-react';
+import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from '../utils/time.js';
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import BulkTagModal from '../../components/BulkTagModal.js';
+import ConfirmDialog from '../../components/ConfirmDialog.js';
 import SmartViewsBar from '../../components/SmartViewsBar.js';
 import TagFilterBar from '../../components/TagFilterBar.js';
 import {
@@ -96,6 +97,7 @@ export default function DevicesPage() {
   );
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
 
   const tagIdsParam = selectedTagIds.length > 0 ? `&tagIds=${selectedTagIds.join(',')}` : '';
 
@@ -165,6 +167,17 @@ export default function DevicesPage() {
     });
   };
 
+  const bulkDeleteMut = useMutation({
+    mutationFn: (ids: string[]) => Promise.all(ids.map((id) => api.delete(`/devices/${id}`))),
+    onSuccess: (_data, ids) => {
+      toast.success(`Deleted ${ids.length} device(s)`);
+      setConfirmBulkDelete(false);
+      setSelectedItems(new Set());
+      void queryClient.invalidateQueries({ queryKey: ['devices', wsId] });
+    },
+    onError: () => toast.error('Failed to delete some devices'),
+  });
+
   return (
     <div className="flex flex-col gap-6 p-4 sm:p-6 max-w-screen-xl mx-auto">
       <PageHeader
@@ -172,14 +185,6 @@ export default function DevicesPage() {
         description={`${devices.length} device${devices.length !== 1 ? 's' : ''} in this workspace`}
         actions={
           <div className="flex items-center gap-2">
-            {selectedItems.size > 0 && (
-              <button
-                className="ui-btn-secondary text-xs"
-                onClick={() => setBulkTagOpen(true)}
-              >
-                Tag {selectedItems.size} selected
-              </button>
-            )}
             <button
               className="ui-btn-primary flex items-center gap-1.5"
               onClick={() => setPairOpen(true)}
@@ -450,6 +455,47 @@ export default function DevicesPage() {
           }}
         />
       )}
+
+      {selectedItems.size > 0 && (
+        <div
+          className="fixed bottom-4 left-1/2 z-50 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-3 rounded-2xl border px-4 py-3 shadow-2xl sm:bottom-6 sm:px-5"
+          style={{ background: 'var(--surface)', borderColor: 'var(--card-border)' }}
+        >
+          <span className="text-sm font-semibold text-[var(--text)]">{selectedItems.size} selected</span>
+          <div className="w-px h-5 bg-[var(--border)]" />
+          <button
+            onClick={() => setSelectedItems(new Set())}
+            className="text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+          >
+            Deselect all
+          </button>
+          <button
+            onClick={() => setBulkTagOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent)]/15 border border-[var(--accent)]/30 text-[var(--accent)] text-xs font-semibold hover:bg-[var(--accent)]/25 transition-colors"
+          >
+            <Check size={12} /> Apply Tags
+          </button>
+          <button
+            onClick={() => setConfirmBulkDelete(true)}
+            disabled={bulkDeleteMut.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/15 border border-red-500/30 text-red-400 text-xs font-semibold hover:bg-red-500/25 disabled:opacity-40 transition-colors"
+          >
+            <Trash2 size={12} /> Delete {selectedItems.size}
+          </button>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={confirmBulkDelete}
+        title="Delete Devices"
+        message={`Delete ${selectedItems.size} device(s)? This cannot be undone.`}
+        confirmLabel="Delete"
+        confirmPendingLabel="Deleting…"
+        isConfirming={bulkDeleteMut.isPending}
+        closeOnConfirm={false}
+        onConfirm={() => bulkDeleteMut.mutate([...selectedItems])}
+        onClose={() => setConfirmBulkDelete(false)}
+      />
     </div>
   );
 }

@@ -6,12 +6,11 @@ import {
   Plus, Grid3X3, Grid2X2, List, Image, Video,
   Globe, Code2, FileText, Presentation, Clock, Trash2,
   MoreVertical, Film, AlertTriangle, Check, Paintbrush, Monitor,
-  ShoppingCart,
-  LayoutGrid, ListVideo, Tv2,
+  LayoutGrid, ListVideo,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import UploadModal from '../../components/UploadModal.js';
-import CreateMenuBoardModal from '../../components/CreateMenuBoardModal.js';
+
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import AuthImg from '../../components/AuthImg.js';
 import ContentDetailPanel from '../../components/ContentDetailPanel.js';
@@ -76,7 +75,6 @@ const TYPE_FILTERS: { id: FilterType; label: string }[] = [
   { id: 'pdf', label: 'PDF' },
   { id: 'presentation', label: 'PPTX' },
   { id: 'zone_layout', label: 'Zone Layout' },
-  { id: 'menu_board', label: 'Menu Board' },
 ];
 
 const TYPE_META: Record<KnownContentType, { label: string; color: string; icon: React.ReactNode }> = {
@@ -87,7 +85,6 @@ const TYPE_META: Record<KnownContentType, { label: string; color: string; icon: 
   presentation:{ label: 'PPTX',       color: 'bg-orange-500/80',   icon: <Presentation size={10} /> },
   web_url:     { label: 'Web URL',    color: 'bg-emerald-500/80',  icon: <Globe size={10} /> },
   zone_layout: { label: 'Zone Layout',color: 'bg-teal-500/80',     icon: <LayoutGrid size={10} /> },
-  menu_board:  { label: 'Menu Board', color: 'bg-rose-500/80',     icon: <Tv2 size={10} /> },
 };
 
 const UNKNOWN_TYPE_META = {
@@ -542,7 +539,6 @@ export default function ContentPage() {
   const queryClient = useQueryClient();
 
   const [uploadOpen, setUploadOpen]         = useState(false);
-  const [menuBoardOpen, setMenuBoardOpen]   = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -681,22 +677,6 @@ export default function ContentPage() {
           icon: <LayoutGrid size={18} />,
           iconClassName: 'bg-teal-500/15 text-teal-400',
           onClick: () => navigate(`/workspaces/${wsId}/zone-layout/new`),
-        },
-        {
-          id: 'menu-builder',
-          label: 'Menu Builder',
-          description: 'Manage POS menus and items',
-          icon: <ShoppingCart size={18} />,
-          iconClassName: 'bg-emerald-500/15 text-emerald-400',
-          onClick: () => navigate(`/workspaces/${wsId}/pos/menu`),
-        },
-        {
-          id: 'menu-board',
-          label: 'Create Menu Board',
-          description: 'Generate menu-board content',
-          icon: <Tv2 size={18} />,
-          iconClassName: 'bg-rose-500/15 text-rose-400',
-          onClick: () => setMenuBoardOpen(true),
         },
       ]
     : [];
@@ -1016,17 +996,6 @@ export default function ContentPage() {
       {/* ── Upload modal ── */}
       {uploadOpen && wsId && (
         <UploadModal workspaceId={wsId} onClose={() => setUploadOpen(false)} />
-      )}
-
-      {menuBoardOpen && wsId && (
-        <CreateMenuBoardModal
-          workspaceId={wsId}
-          onClose={() => setMenuBoardOpen(false)}
-          onCreated={(id) => {
-            setMenuBoardOpen(false);
-            setSelectedId(id);
-          }}
-        />
       )}
 
       {bulkTagOpen && wsId && (
