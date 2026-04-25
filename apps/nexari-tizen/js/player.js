@@ -1748,6 +1748,7 @@ const Player = {
                         newSignature === this.lastContentSignature &&
                         this.currentContent &&
                         isPlaying &&
+                        !this.documentActive &&
                         true) {
                         logger.info('Content unchanged since last refresh, skipping re-render');
                         return;
@@ -1868,84 +1869,9 @@ const Player = {
     // Render image content
     renderImage(container, content) {
         return __awaiter(this, void 0, void 0, function* () {
-            // For local file:// URLs, we need to read the file and create a blob URL
-            if (content.url && content.url.startsWith('file://')) {
-                try {
-                    logger.info('Converting local file to blob URL:', content.url);
-                    // Extract file path from file:// URL
-                    const filePath = content.url.replace('file://', '');
-                    // Read file using Tizen filesystem
-                    const pathParts = filePath.split('/');
-                    const fileName = pathParts[pathParts.length - 1];
-                    try {
-                        const fh = window.tizen.filesystem.openFile(filePath, 'r');
-                        try {
-                            const buffer = fh.readData();
-                            const mimeType = this.getMimeType(fileName, content.contentType) || 'application/octet-stream';
-                            let blobUrl = null;
-                            let dataUrl = null;
-                            try {
-                                const blob = new Blob([buffer], { type: mimeType });
-                                blobUrl = URL.createObjectURL(blob);
-                            }
-                            catch (blobError) {
-                                logger.warn('Failed to create blob URL, falling back to data URL:', blobError.message);
-                                dataUrl = this.bytesToDataUrl(buffer, mimeType);
-                            }
-                            const img = document.createElement('img');
-                            img.style.width = '100%';
-                            img.style.height = '100%';
-                            img.style.objectFit = 'contain';
-                            img.style.backgroundColor = '#000';
-                            const useDataUrlFallback = () => {
-                                if (!dataUrl) {
-                                    dataUrl = this.bytesToDataUrl(buffer, mimeType);
-                                }
-                                img.src = dataUrl;
-                            };
-                            img.onload = () => {
-                                logger.info('Image loaded successfully from local cache');
-                                if (blobUrl) {
-                                    URL.revokeObjectURL(blobUrl);
-                                }
-                            };
-                            img.onerror = (error) => {
-                                if (blobUrl) {
-                                    logger.warn('Blob URL failed to load, retrying with data URL');
-                                    URL.revokeObjectURL(blobUrl);
-                                    blobUrl = null;
-                                    useDataUrlFallback();
-                                    return;
-                                }
-                                logger.error('Image failed to load even after data URL fallback:', error);
-                                this.showImageError(container, content);
-                            };
-                            if (blobUrl) {
-                                img.src = blobUrl;
-                            }
-                            else {
-                                useDataUrlFallback();
-                            }
-                            container.appendChild(img);
-                        }
-                        finally {
-                            try {
-                                fh.close();
-                            }
-                            catch (_) { }
-                        }
-                    }
-                    catch (error) {
-                        logger.error('Failed to read local file:', error);
-                        this.showImageError(container, content);
-                    }
-                    return;
-                }
-                catch (error) {
-                    logger.error('Error converting file to blob:', error);
-                }
-            }
-            // For remote URLs, use img tag directly
+            // Tizen 4.0 Chromium can load file:// URLs directly in <img src> —
+            // no need to read via tizen.filesystem (which requires virtual paths,
+            // not the absolute /opt/usr/... paths stored in content.url).
             const img = document.createElement('img');
             img.src = content.url;
             img.style.width = '100%';
@@ -3598,60 +3524,158 @@ const Player = {
         container.innerHTML = '';
         this.documentActive = true;
         this.documentItemKey = this.getPlaylistItemKey(content);
-        const localUrl = content.url || ''; // file:///opt/usr/home/owner/apps_rw/.../uuid.pdf
-        // Native API needs a real filesystem path — strip the file:// scheme prefix.
-        const filePath = localUrl.replace(/^file:\/\//, '');
-        if (!filePath) {
-            logger.warn('[B2BDoc] No local path for document, skipping:', content.name);
-            this.documentActive = false;
-            this.documentItemKey = null;
-            return;
-        }
-        // Resolve the native document API:
-        //   Tizen 4 (SSSP6, Platform.isLegacy=true) → b2bapis.b2bdoc
-        //   Tizen 5+                                 → webapis.document (different method names)
-        var docApi = null;
-        if (typeof b2bapis !== 'undefined' && b2bapis.b2bdoc &&
-                typeof b2bapis.b2bdoc.openDoc === 'function') {
-            docApi = b2bapis.b2bdoc;
-        } else if (typeof webapis !== 'undefined' && webapis.document &&
-                typeof webapis.document.open === 'function') {
-            docApi = {
-                openDoc:     function (p, s, e) { webapis.document.open(p, s, e); },
-                closeDoc:    function (s, e)    { webapis.document.close(s, e); },
-                nextPageDoc: function (s, e)    { webapis.document.nextPage(s, e); },
-            };
-        }
-        if (!docApi) {
-            logger.warn('[B2BDoc] No native document API available, skipping PDF:', content.name);
-            this.documentActive = false;
-            this.documentItemKey = null;
-            return;
-        }
         var self = this;
-        var perPageMs = 10000; // advance to next page every 10 s
-        var scheduleNextPage = function () {
-            if (!self.documentActive) return;
-            docApi.nextPageDoc(
-                function () { logger.debug('[B2BDoc] next page'); },
-                function (e) { logger.debug('[B2BDoc] nextPage end/error:', e && e.message); }
-            );
-            self.documentPageInterval = setTimeout(scheduleNextPage, perPageMs);
-        };
-        logger.info('[B2BDoc] Opening document:', content.name, filePath);
-        docApi.openDoc(
-            filePath,
-            function () {
-                logger.info('[B2BDoc] Document opened:', content.name);
-                // Start page cycling after the first page has been visible for perPageMs
-                self.documentPageInterval = setTimeout(scheduleNextPage, perPageMs);
-            },
-            function (err) {
-                logger.error('[B2BDoc] openDoc failed:', content.name, err && err.message);
-                self.documentActive = false;
-                self.documentItemKey = null;
+        var localUrl = content.url || '';
+        var fileName = localUrl.split('/').pop() || '';
+        // pdf.js v1.x exposes window.PDFJS; v2+ exposes window.pdfjsLib
+        var pdfLib = window.PDFJS || window.pdfjsLib;
+        if (!pdfLib) {
+            logger.error('[PDF] pdfjsLib not loaded — cannot render:', content.name);
+            container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#333;flex-direction:column;"><div style="font-size:24px;">PDF Viewer Not Available</div></div>';
+            return;
+        }
+        // v1.x: workerSrc is a plain property; v2+: GlobalWorkerOptions.workerSrc
+        if (pdfLib.GlobalWorkerOptions) {
+            pdfLib.GlobalWorkerOptions.workerSrc = 'js/modules/pdf.worker.min.js';
+        } else {
+            pdfLib.workerSrc = 'js/modules/pdf.worker.min.js';
+        }
+        container.style.position = 'relative';
+        container.style.background = '#000';
+        var pdfDoc = null;
+        var currentPage = 1;
+        var activeCanvas = null;
+        var nextCanvas = null;
+        var currentRenderTask = null;
+        var advanceInProgress = false;
+        var perPageMs = 10000;
+        var renderToOffscreen = function (num) {
+            if (currentRenderTask) {
+                try { currentRenderTask.cancel(); } catch (_) {}
+                currentRenderTask = null;
             }
-        );
+            return pdfDoc.getPage(num).then(function (page) {
+                var cw = Math.max(container.offsetWidth || window.innerWidth || 1920, 1);
+                var ch = Math.max(container.offsetHeight || window.innerHeight || 1080, 1);
+                // v1.x getViewport(scale) — v2+ getViewport({scale})
+                var nativeVp = page.getViewport ? page.getViewport(1) : page.getViewport({ scale: 1 });
+                var scale = Math.min(cw / nativeVp.width, ch / nativeVp.height);
+                var viewport = page.getViewport ? page.getViewport(scale) : page.getViewport({ scale: scale });
+                var offscreen = document.createElement('canvas');
+                offscreen.width = Math.max(Math.floor(viewport.width), 1);
+                offscreen.height = Math.max(Math.floor(viewport.height), 1);
+                var ctx = offscreen.getContext('2d');
+                if (!ctx) { logger.error('[PDF] no 2d ctx for page', num); return null; }
+                var left = Math.floor((cw - viewport.width) / 2);
+                var top = Math.floor((ch - viewport.height) / 2);
+                offscreen.style.cssText = 'position:absolute;left:' + left + 'px;top:' + top + 'px;';
+                currentRenderTask = page.render({ canvasContext: ctx, viewport: viewport });
+                return currentRenderTask.promise.then(function () {
+                    currentRenderTask = null;
+                    logger.debug('[PDF] page', num, '/', pdfDoc.numPages, 'rendered');
+                    return offscreen;
+                });
+            }).catch(function (e) {
+                if (e && e.name === 'RenderingCancelledException') return null;
+                logger.error('[PDF] page render error p' + num + ':', e && e.message);
+                return null;
+            });
+        };
+        var showPrerenderedAndAdvance = function () {
+            if (!container.isConnected || advanceInProgress) return;
+            advanceInProgress = true;
+            try {
+                if (nextCanvas) {
+                    if (activeCanvas && activeCanvas.parentNode === container) {
+                        container.replaceChild(nextCanvas, activeCanvas);
+                    } else {
+                        container.appendChild(nextCanvas);
+                    }
+                    activeCanvas = nextCanvas;
+                    nextCanvas = null;
+                    currentPage = (currentPage % pdfDoc.numPages) + 1;
+                }
+                var nextPageNum = (currentPage % pdfDoc.numPages) + 1;
+                renderToOffscreen(nextPageNum).then(function (c) {
+                    nextCanvas = c;
+                    advanceInProgress = false;
+                }).catch(function () { advanceInProgress = false; });
+            } catch (e) {
+                advanceInProgress = false;
+            }
+        };
+        var onPdfLoaded = function (pdf) {
+            pdfDoc = pdf;
+            logger.info('[PDF] loaded:', content.name, pdf.numPages, 'pages');
+            renderToOffscreen(1).then(function (first) {
+                if (first) { container.appendChild(first); activeCanvas = first; }
+                if (pdf.numPages > 1) {
+                    renderToOffscreen(2).then(function (c) {
+                        nextCanvas = c;
+                        currentPage = 1;
+                        self.documentPageInterval = setInterval(function () {
+                            if (!container.isConnected) { clearInterval(self.documentPageInterval); return; }
+                            showPrerenderedAndAdvance();
+                        }, perPageMs);
+                    });
+                }
+            });
+        };
+        var showError = function (reason) {
+            logger.error('[PDF] load failed:', content.name, reason);
+            self.documentActive = false;
+            self.documentItemKey = null;
+            container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#222;flex-direction:column;"><div style="font-size:48px;margin-bottom:20px;">&#9888;</div><div style="font-size:24px;">PDF Load Error</div><div style="font-size:14px;margin-top:10px;opacity:0.6;">' + (content.name || '') + '</div><div style="font-size:12px;margin-top:8px;opacity:0.4;">' + reason + '</div></div>';
+        };
+        var loadViaXhr = function (url) {
+            logger.info('[PDF] XHR load:', url);
+            try {
+                var xhr = new XMLHttpRequest();
+                xhr.open('GET', url);
+                xhr.responseType = 'arraybuffer';
+                xhr.timeout = 20000;
+                xhr.onload = function () {
+                    if (xhr.response && xhr.response.byteLength > 0) {
+                        logger.info('[PDF] XHR ok, bytes:', xhr.response.byteLength);
+                        pdfLib.getDocument({ data: new Uint8Array(xhr.response) })
+                            .promise.then(onPdfLoaded).catch(function (e) { showError('parse: ' + (e && e.message || e)); });
+                    } else {
+                        showError('XHR empty response');
+                    }
+                };
+                xhr.onerror = function () { showError('XHR error'); };
+                xhr.ontimeout = function () { showError('XHR timeout'); };
+                xhr.send();
+            } catch (e) {
+                showError('XHR exception: ' + (e && e.message || e));
+            }
+        };
+        var tzFs = window.tizen && window.tizen.filesystem;
+        if (tzFs && fileName) {
+            var tzfsPath = 'wgt-private/content/' + fileName;
+            logger.info('[PDF] reading via tizen.filesystem:', tzfsPath);
+            try {
+                var fileHandle = tzFs.openFile(tzfsPath, 'r');
+                fileHandle.readDataNonBlocking(
+                    function (data) {
+                        try { fileHandle.close(); } catch (_) {}
+                        logger.info('[PDF] tizen.filesystem read ok, bytes:', data.byteLength);
+                        pdfLib.getDocument({ data: data })
+                            .promise.then(onPdfLoaded).catch(function (e) { showError('parse: ' + (e && e.message || e)); });
+                    },
+                    function (err) {
+                        try { fileHandle.close(); } catch (_) {}
+                        logger.warn('[PDF] tizen.filesystem read error:', err && err.message, '— XHR fallback');
+                        loadViaXhr(localUrl);
+                    }
+                );
+            } catch (e) {
+                logger.warn('[PDF] tizen.filesystem open error:', e && e.message, '— XHR fallback');
+                loadViaXhr(localUrl);
+            }
+        } else {
+            loadViaXhr(localUrl);
+        }
     },
     // Close the currently open document (safe no-op if none open)
     closeDocument() {
@@ -3660,27 +3684,8 @@ const Player = {
         this.documentActive = false;
         this.documentItemKey = null;
         if (this.documentPageInterval) {
-            clearTimeout(this.documentPageInterval);
+            clearInterval(this.documentPageInterval);
             this.documentPageInterval = null;
-        }
-        // Tell the firmware to close the native doc viewer
-        var docApi = null;
-        if (typeof b2bapis !== 'undefined' && b2bapis.b2bdoc &&
-                typeof b2bapis.b2bdoc.closeDoc === 'function') {
-            docApi = b2bapis.b2bdoc;
-        } else if (typeof webapis !== 'undefined' && webapis.document &&
-                typeof webapis.document.close === 'function') {
-            docApi = { closeDoc: function (s, e) { webapis.document.close(s, e); } };
-        }
-        if (docApi) {
-            try {
-                docApi.closeDoc(
-                    function () { logger.debug('[B2BDoc] document closed'); },
-                    function (e) { logger.debug('[B2BDoc] closeDoc:', e && e.message); }
-                );
-            } catch (e) {
-                logger.debug('[B2BDoc] closeDoc exception:', e && e.message);
-            }
         }
     },
     // Render playlist (simplified - real implementation would handle transitions)

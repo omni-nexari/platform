@@ -703,7 +703,9 @@ window.ContentManager = {
 
         const xhr = new XMLHttpRequest();
         xhr.open('GET', content.url, true);
-        xhr.responseType = 'blob';
+        // Use arraybuffer directly — avoids the blob → FileReader double-buffer step
+        // which can exhaust memory on Tizen 4 for large files and produces {} errors.
+        xhr.responseType = 'arraybuffer';
         xhr.timeout = 120000; // 2-minute hard limit — prevents silent hangs on large files
 
         xhr.ontimeout = () => {
@@ -722,8 +724,8 @@ window.ContentManager = {
 
         xhr.onload = () => {
           if (xhr.status === 200) {
-            const blob = xhr.response;
-            if (this.pathExists(localPath) && this.getPathFileSize(localPath) === blob.size) {
+            const bytes = new Uint8Array(xhr.response);
+            if (this.pathExists(localPath) && this.getPathFileSize(localPath) === bytes.length) {
               logger.info(`Content unchanged (size match), skipping overwrite: ${fileName}`);
               resolve(this.toUri(localPath));
               return;
@@ -733,33 +735,22 @@ window.ContentManager = {
               logger.info(`Overwriting existing file: ${fileName}`);
             }
 
-            const reader = new FileReader();
-            reader.onload = () => {
-              const arrayBuffer = reader.result;
-              const bytes = new Uint8Array(arrayBuffer);
-
-              ContentManager.writePathBytes(localPath, bytes).then(function() {
-                logger.info('Content downloaded successfully: ' + fileName);
-                if (window.Player && typeof window.Player.handleDownloadProgress === 'function') {
-                  window.Player.handleDownloadProgress(100);
-                }
-                var uri = ContentManager.toUri(localPath);
-                if (content && content.id) {
-                  ContentManager.cachedUrlMap.set(String(content.id), uri);
-                }
-                resolve(uri);
-              }).catch(function(writeError) {
-                logger.error('Failed to write file bytes:', writeError);
-                reject(writeError);
-              });
-            };
-            reader.onerror = (error) => {
-              logger.error('Failed to read blob:', error);
-              reject(error);
-            };
-            reader.readAsArrayBuffer(blob);
+            ContentManager.writePathBytes(localPath, bytes).then(function() {
+              logger.info('Content downloaded successfully: ' + fileName);
+              if (window.Player && typeof window.Player.handleDownloadProgress === 'function') {
+                window.Player.handleDownloadProgress(100);
+              }
+              var uri = ContentManager.toUri(localPath);
+              if (content && content.id) {
+                ContentManager.cachedUrlMap.set(String(content.id), uri);
+              }
+              resolve(uri);
+            }).catch(function(writeError) {
+              logger.error('Failed to write file bytes:', (writeError && writeError.message) || String(writeError));
+              reject(new Error((writeError && writeError.message) || 'Write failed'));
+            });
           } else {
-            reject(new Error(`HTTP ${xhr.status}: ${xhr.statusText}`));
+            reject(new Error('HTTP ' + xhr.status + ': ' + xhr.statusText));
           }
         };
 

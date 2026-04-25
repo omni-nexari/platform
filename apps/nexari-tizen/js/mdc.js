@@ -17,6 +17,8 @@
 
 var http = require('http');
 var net  = require('net');
+var fs   = require('fs');
+var path = require('path');
 
 module.exports = function startMdcBridge() {
 
@@ -1755,6 +1757,39 @@ var server = http.createServer(function(req, res) {
   res.writeHead(404);
   res.end('Not found');
 });
+
+  // ── Static file server for PDF/content files ─────────────────────────
+  // B2BDoc on SSSP6 requires HTTP URLs, not file:// paths.
+  // The web app calls: http://127.0.0.1:9615/content/<filename>
+  // which serves from: /opt/usr/home/owner/apps_rw/fmDBbBnvJM/data/content/
+  // This route is added after all MDC routes so it doesn't interfere.
+  var CONTENT_DIR = '/opt/usr/home/owner/apps_rw/fmDBbBnvJM/data/content';
+  var MIME_TYPES = { '.pdf': 'application/pdf', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.mp4': 'video/mp4' };
+
+  var origHandler = server.listeners('request')[0];
+  server.removeAllListeners('request');
+  server.on('request', function(req, res) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (req.method === 'GET' && req.url && req.url.indexOf('/content/') === 0) {
+      var fileName = req.url.slice('/content/'.length).split('?')[0];
+      // Prevent path traversal
+      fileName = path.basename(fileName);
+      var filePath = path.join(CONTENT_DIR, fileName);
+      fs.stat(filePath, function(err, stat) {
+        if (err || !stat.isFile()) {
+          res.writeHead(404);
+          res.end('Not found');
+          return;
+        }
+        var ext = path.extname(fileName).toLowerCase();
+        var mime = MIME_TYPES[ext] || 'application/octet-stream';
+        res.writeHead(200, { 'Content-Type': mime, 'Content-Length': stat.size });
+        fs.createReadStream(filePath).pipe(res);
+      });
+      return;
+    }
+    origHandler(req, res);
+  });
 
   server.listen(HTTP_PORT, '127.0.0.1', function() {
     console.log('[mdc-bridge] Listening on 127.0.0.1:' + HTTP_PORT);

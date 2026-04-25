@@ -73,6 +73,20 @@ body.avplay-active .telemetry-overlay {
   display: none !important;
 }
 
+/* When playing PDF via B2BDoc native layer, make body transparent to show it */
+body.b2bdoc-active {
+  background: transparent;
+}
+
+body.b2bdoc-active::before {
+  display: none;
+}
+
+body.b2bdoc-active .status-bar,
+body.b2bdoc-active .telemetry-overlay {
+  display: none !important;
+}
+
 /* Nexari ambient background blobs */
 body::before {
   content: '';

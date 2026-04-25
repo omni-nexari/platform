@@ -7,4 +7,4 @@
  * Started by app.js via:
  *   b2bapis.b2bcontrol.startNodeServer('../server.js', 'mdc-bridge', ...)
  */
-require('../js/mdc.js')();
+require('./js/mdc.js')();
