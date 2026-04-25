@@ -53,25 +53,46 @@ window.RemoteControl = {
 
   registerTizenKeys() {
     try {
-      if (typeof tizen !== 'undefined' && tizen.tvinputdevice) {
+      // On SSSP (older platform) tvinputdevice lives under b2bapis; on newer Tizen it's tizen.tvinputdevice
+      const inputDevice =
+        (typeof tizen !== 'undefined' && tizen.tvinputdevice)
+          ? tizen.tvinputdevice
+          : (typeof b2bapis !== 'undefined' && b2bapis.tvinputdevice)
+            ? b2bapis.tvinputdevice
+            : null;
+
+      if (inputDevice) {
         // Navigation keys (arrows, enter, return) work by default without registration
         // Only try to register special keys that require explicit permission
-        
+
         // Get list of supported keys
-        const supportedKeys = tizen.tvinputdevice.getSupportedKeys();
-        logger.debug(`Supported input keys: ${supportedKeys.length} keys available`);
-        
-        // Register only the essential keys needed for signage operation
+        const supportedKeys = inputDevice.getSupportedKeys();
+        const supportedKeyNames = supportedKeys.map(function(k) { return k.name; });
+        logger.info('Supported input keys (' + supportedKeys.length + '): ' + supportedKeyNames.join(', '));
+
         const keysToRegister = [
-          'Info',      // Opens log viewer
-          'Menu',      // TV menu access
-          'Exit',      // Exit app
+          'Info',
+          // 'Menu' intentionally NOT registered — registerKey() steals Menu from
+          // the TV firmware (OSD), preventing both physical remote and MDC VRC
+          // (0xB0 0x1A) from opening the TV menu. Let the firmware handle it natively.
+          'Tools',
+          'Exit',
+          'VolumeUp',
+          'VolumeDown',
+          'VolumeMute',
+          'ChannelUp',
+          'ChannelDown',
+          'ColorF0Red',
+          'ColorF1Green',
+          'ColorF2Yellow',
+          'ColorF3Blue',
+          'MediaPlayPause',
+          '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
         ];
-        // Navigation keys (arrows, enter, return) work by default without registration
 
         keysToRegister.forEach(key => {
           try {
-            tizen.tvinputdevice.registerKey(key);
+            inputDevice.registerKey(key);
             logger.debug(`Registered key: ${key}`);
           } catch (e) {
             logger.debug(`Could not register key ${key}:`, e.message);

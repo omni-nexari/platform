@@ -11,3 +11,4 @@ package-lock.json
 .gitignore
 .jshintrc
 *.md
+*.wgt

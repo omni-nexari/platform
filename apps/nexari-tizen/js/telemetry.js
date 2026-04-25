@@ -675,7 +675,7 @@ window.Telemetry = {
   },
 
   updateIptvStats(patch) {
-    this.runtime.iptv = { ...this.runtime.iptv, ...patch };
+    this.runtime.iptv = Object.assign({}, this.runtime.iptv, patch);
   },
   setCastReady(value) {
     this.runtime.castReady = value;

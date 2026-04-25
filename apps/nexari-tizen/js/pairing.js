@@ -152,8 +152,8 @@ window.Pairing = {
           id: response.deviceId,
           deviceToken: response.deviceToken,
           name: workspaceName || localStorage.getItem('deviceName') || 'Nexari Player',
-          workspaceId,
-          deviceType,
+          workspaceId: workspaceId,
+          deviceType: deviceType,
         });
         return;
       }
@@ -206,8 +206,8 @@ window.Pairing = {
             id: result.deviceId,
             deviceToken: token,
             name: workspaceName || 'Nexari Player',
-            workspaceId,
-            deviceType,
+            workspaceId: workspaceId,
+            deviceType: deviceType,
           });
         }
       } catch (error) {

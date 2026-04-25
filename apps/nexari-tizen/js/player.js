@@ -1413,7 +1413,7 @@ const Player = {
             self.sendLocalMdcXhr(action, payload)
                 .then((r) => { logger.info('[mdc-startup] phase2', action, 'ok:', r.ok); })
                 .catch(() => { })
-                .finally(() => {
+                .then(() => {
                 self._mdcPhase2InFlight = Math.max(0, self._mdcPhase2InFlight - 1);
                 runNext(idx + 1);
             });
@@ -1449,7 +1449,7 @@ const Player = {
             }));
         })
             .catch(() => { })
-            .finally(() => { this._mdcHeartbeatInFlight = false; });
+            .then(() => { this._mdcHeartbeatInFlight = false; });
     },
     // Phase 4 (every 5min): run all MDC GETs → send mdc_poll WS message
     runMdcPoll() {
@@ -1575,7 +1575,7 @@ const Player = {
             self.sendLocalMdcXhr(action, payload || {})
                 .then((r) => { results[key] = r; })
                 .catch(() => { results[key] = { ok: false }; })
-                .finally(() => { runNext(idx + 1); });
+                .then(() => { runNext(idx + 1); });
         }
         runNext(0);
     },
@@ -3591,201 +3591,67 @@ const Player = {
         const cmsUrl = (CONFIG.API_BASE || '').replace(/\/api\/v1\/?$/, '');
         DataSyncRenderer.render(String(content.id), cmsUrl, this.deviceId);
     },
-    // Render PDF or Office document using Samsung webapis.document
+    // Render PDF or Office document using Samsung B2BDoc API (Tizen 4 / SSSP6)
+    // or webapis.document (Tizen 5+). The TV firmware renders natively — no canvas needed.
     renderDocument(container, content) {
-        var _a;
         this.closeDocument();
         container.innerHTML = '';
-        // Mark active immediately — prevents the playlist loop (which runs every 10s)
-        // from spawning a second concurrent renderDocument while the PDF is still loading.
-        // On error, this is reset to false so the next tick can retry.
         this.documentActive = true;
         this.documentItemKey = this.getPlaylistItemKey(content);
         const localUrl = content.url || ''; // file:///opt/usr/home/owner/apps_rw/.../uuid.pdf
-        const fileName = localUrl.split('/').pop() || '';
-        const pdfLib = window.pdfjsLib;
-        if (!pdfLib) {
-            logger.error('pdfjsLib not loaded — cannot render PDF:', content.name);
-            container.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#333;flex-direction:column;">
-          <div style="font-size:24px;">PDF Viewer Not Available</div>
-          <div style="font-size:14px;margin-top:10px;opacity:0.7;">${content.name}</div>
-        </div>`;
-            return;
-        }
-        pdfLib.GlobalWorkerOptions.workerSrc = 'js/modules/pdf.worker.min.js';
-        // Black background while loading
-        container.style.position = 'relative';
-        container.style.background = '#000';
-        let pdfDoc = null;
-        let currentPage = 1;
-        let activeCanvas = null;
-        let nextCanvas = null; // pre-rendered next page
-        let currentRenderTask = null;
-        let advanceInProgress = false;
-        // Render page num into an off-DOM canvas and return it (does NOT touch the DOM).
-        const renderToOffscreen = (num) => __awaiter(this, void 0, void 0, function* () {
-            if (currentRenderTask) {
-                try {
-                    currentRenderTask.cancel();
-                }
-                catch (_) { }
-                currentRenderTask = null;
-            }
-            try {
-                const page = yield pdfDoc.getPage(num);
-                const cw = Math.max(container.offsetWidth || window.innerWidth || 1920, 1);
-                const ch = Math.max(container.offsetHeight || window.innerHeight || 1080, 1);
-                const nativeVp = page.getViewport({ scale: 1 });
-                const scale = Math.min(cw / nativeVp.width, ch / nativeVp.height);
-                const viewport = page.getViewport({ scale });
-                const offscreen = document.createElement('canvas');
-                offscreen.width = Math.max(Math.floor(viewport.width), 1);
-                offscreen.height = Math.max(Math.floor(viewport.height), 1);
-                const ctx = offscreen.getContext('2d');
-                if (!ctx) {
-                    logger.error('PDF canvas 2d context unavailable for page', num);
-                    return null;
-                }
-                const left = Math.floor((cw - viewport.width) / 2);
-                const top = Math.floor((ch - viewport.height) / 2);
-                offscreen.style.cssText = `position:absolute;left:${left}px;top:${top}px;background:#000;`;
-                currentRenderTask = page.render({ canvasContext: ctx, viewport });
-                yield currentRenderTask.promise;
-                currentRenderTask = null;
-                logger.debug('PDF page', num, '/', pdfDoc.numPages, 'pre-rendered');
-                return offscreen;
-            }
-            catch (e) {
-                if ((e === null || e === void 0 ? void 0 : e.name) === 'RenderingCancelledException')
-                    return null;
-                logger.error('PDF page render error p' + num + ':', (e === null || e === void 0 ? void 0 : e.message) || e);
-                return null;
-            }
-        });
-        // Swap nextCanvas (already rendered) into the DOM, then start rendering the page after.
-        const showPrerenderedAndAdvance = () => __awaiter(this, void 0, void 0, function* () {
-            if (!container.isConnected || advanceInProgress)
-                return;
-            advanceInProgress = true;
-            try {
-                // Swap in the pre-rendered canvas immediately — no waiting, no black flash
-                if (nextCanvas) {
-                    if (activeCanvas && activeCanvas.parentNode === container) {
-                        container.replaceChild(nextCanvas, activeCanvas);
-                    }
-                    else {
-                        container.appendChild(nextCanvas);
-                    }
-                    activeCanvas = nextCanvas;
-                    nextCanvas = null;
-                    currentPage = (currentPage % pdfDoc.numPages) + 1;
-                }
-                // Pre-render the page after the one currently showing.
-                const nextPage = (currentPage % pdfDoc.numPages) + 1;
-                nextCanvas = yield renderToOffscreen(nextPage);
-            }
-            finally {
-                advanceInProgress = false;
-            }
-        });
-        const onPdfLoaded = (pdf) => __awaiter(this, void 0, void 0, function* () {
-            pdfDoc = pdf;
-            // documentActive already set true at renderDocument start
-            logger.info('PDF loaded:', content.name, pdf.numPages, 'pages');
-            // Render and show page 1
-            const first = yield renderToOffscreen(1);
-            if (first) {
-                container.appendChild(first);
-                activeCanvas = first;
-            }
-            if (pdf.numPages > 1) {
-                // Pre-render page 2 while page 1 is displayed
-                nextCanvas = yield renderToOffscreen(2);
-                currentPage = 1;
-                this.documentPageInterval = setInterval(() => {
-                    if (!container.isConnected) {
-                        clearInterval(this.documentPageInterval);
-                        return;
-                    }
-                    showPrerenderedAndAdvance();
-                }, 10000);
-            }
-        });
-        const showError = (reason) => {
-            logger.error('PDF load failed:', content.name, reason);
-            // Reset so the playlist loop can retry on the next tick
+        // Native API needs a real filesystem path — strip the file:// scheme prefix.
+        const filePath = localUrl.replace(/^file:\/\//, '');
+        if (!filePath) {
+            logger.warn('[B2BDoc] No local path for document, skipping:', content.name);
             this.documentActive = false;
             this.documentItemKey = null;
-            container.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#222;flex-direction:column;">
-          <div style="font-size:48px;margin-bottom:20px;">&#9888;</div>
-          <div style="font-size:24px;">PDF Load Error</div>
-          <div style="font-size:14px;margin-top:10px;opacity:0.6;">${content.name}</div>
-          <div style="font-size:12px;margin-top:8px;opacity:0.4;">${reason}</div>
-        </div>`;
-        };
-        // Fallback: load via XHR with raw file:// URL.
-        // xhr.open() with invalid schemes throws synchronously, so wrap in try-catch.
-        const loadViaXhr = (url) => {
-            logger.info('PDF XHR load:', url);
-            try {
-                const xhr = new XMLHttpRequest();
-                xhr.open('GET', url);
-                xhr.responseType = 'arraybuffer';
-                xhr.timeout = 20000;
-                xhr.onload = () => {
-                    if (xhr.response && xhr.response.byteLength > 0) {
-                        logger.info('PDF XHR ok, bytes:', xhr.response.byteLength);
-                        pdfLib.getDocument({ data: new Uint8Array(xhr.response) })
-                            .promise.then(onPdfLoaded).catch((e) => showError('parse: ' + ((e === null || e === void 0 ? void 0 : e.message) || e)));
-                    }
-                    else {
-                        showError('XHR empty response');
-                    }
-                };
-                xhr.onerror = () => showError('XHR error');
-                xhr.ontimeout = () => showError('XHR timeout');
-                xhr.send();
-            }
-            catch (e) {
-                showError('XHR exception: ' + ((e === null || e === void 0 ? void 0 : e.message) || e));
-            }
-        };
-        // Primary: tizen.filesystem API — reads from wgt-private/content/<uuid>.pdf as Uint8Array.
-        // This is the correct Tizen-native way; virtual root paths like "wgt-private/content/file"
-        // are NOT valid URL schemes and cannot be used with XHR.
-        const tzFs = (_a = window.tizen) === null || _a === void 0 ? void 0 : _a.filesystem;
-        if (tzFs && fileName) {
-            const tzfsPath = `wgt-private/content/${fileName}`;
-            logger.info('PDF reading via tizen.filesystem:', tzfsPath);
-            try {
-                const fileHandle = tzFs.openFile(tzfsPath, 'r');
-                fileHandle.readDataNonBlocking((data) => {
-                    try {
-                        fileHandle.close();
-                    }
-                    catch (_) { }
-                    logger.info('PDF read ok, bytes:', data.byteLength);
-                    pdfLib.getDocument({ data })
-                        .promise.then(onPdfLoaded).catch((e) => showError('parse: ' + ((e === null || e === void 0 ? void 0 : e.message) || e)));
-                }, (err) => {
-                    try {
-                        fileHandle.close();
-                    }
-                    catch (_) { }
-                    logger.warn('tizen.filesystem read error:', (err === null || err === void 0 ? void 0 : err.message) || err, '— trying XHR fallback');
-                    loadViaXhr(localUrl);
-                });
-            }
-            catch (e) {
-                logger.warn('tizen.filesystem open error:', (e === null || e === void 0 ? void 0 : e.message) || e, '— trying XHR fallback');
-                loadViaXhr(localUrl);
-            }
+            return;
         }
-        else {
-            loadViaXhr(localUrl);
+        // Resolve the native document API:
+        //   Tizen 4 (SSSP6, Platform.isLegacy=true) → b2bapis.b2bdoc
+        //   Tizen 5+                                 → webapis.document (different method names)
+        var docApi = null;
+        if (typeof b2bapis !== 'undefined' && b2bapis.b2bdoc &&
+                typeof b2bapis.b2bdoc.openDoc === 'function') {
+            docApi = b2bapis.b2bdoc;
+        } else if (typeof webapis !== 'undefined' && webapis.document &&
+                typeof webapis.document.open === 'function') {
+            docApi = {
+                openDoc:     function (p, s, e) { webapis.document.open(p, s, e); },
+                closeDoc:    function (s, e)    { webapis.document.close(s, e); },
+                nextPageDoc: function (s, e)    { webapis.document.nextPage(s, e); },
+            };
         }
+        if (!docApi) {
+            logger.warn('[B2BDoc] No native document API available, skipping PDF:', content.name);
+            this.documentActive = false;
+            this.documentItemKey = null;
+            return;
+        }
+        var self = this;
+        var perPageMs = 10000; // advance to next page every 10 s
+        var scheduleNextPage = function () {
+            if (!self.documentActive) return;
+            docApi.nextPageDoc(
+                function () { logger.debug('[B2BDoc] next page'); },
+                function (e) { logger.debug('[B2BDoc] nextPage end/error:', e && e.message); }
+            );
+            self.documentPageInterval = setTimeout(scheduleNextPage, perPageMs);
+        };
+        logger.info('[B2BDoc] Opening document:', content.name, filePath);
+        docApi.openDoc(
+            filePath,
+            function () {
+                logger.info('[B2BDoc] Document opened:', content.name);
+                // Start page cycling after the first page has been visible for perPageMs
+                self.documentPageInterval = setTimeout(scheduleNextPage, perPageMs);
+            },
+            function (err) {
+                logger.error('[B2BDoc] openDoc failed:', content.name, err && err.message);
+                self.documentActive = false;
+                self.documentItemKey = null;
+            }
+        );
     },
     // Close the currently open document (safe no-op if none open)
     closeDocument() {
@@ -3794,8 +3660,27 @@ const Player = {
         this.documentActive = false;
         this.documentItemKey = null;
         if (this.documentPageInterval) {
-            clearInterval(this.documentPageInterval);
+            clearTimeout(this.documentPageInterval);
             this.documentPageInterval = null;
+        }
+        // Tell the firmware to close the native doc viewer
+        var docApi = null;
+        if (typeof b2bapis !== 'undefined' && b2bapis.b2bdoc &&
+                typeof b2bapis.b2bdoc.closeDoc === 'function') {
+            docApi = b2bapis.b2bdoc;
+        } else if (typeof webapis !== 'undefined' && webapis.document &&
+                typeof webapis.document.close === 'function') {
+            docApi = { closeDoc: function (s, e) { webapis.document.close(s, e); } };
+        }
+        if (docApi) {
+            try {
+                docApi.closeDoc(
+                    function () { logger.debug('[B2BDoc] document closed'); },
+                    function (e) { logger.debug('[B2BDoc] closeDoc:', e && e.message); }
+                );
+            } catch (e) {
+                logger.debug('[B2BDoc] closeDoc exception:', e && e.message);
+            }
         }
     },
     // Render playlist (simplified - real implementation would handle transitions)

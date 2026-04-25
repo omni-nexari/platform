@@ -7,11 +7,6 @@
   logger.info('API Base:', CONFIG.API_BASE);
   logger.info('WebSocket URL:', CONFIG.WS_URL);
 
-  // Initialize content manager
-  ContentManager.init().catch(error => {
-    logger.error('Failed to initialize content manager:', error);
-  });
-
   // Initialize hardware control layer
   if (typeof TVControl !== 'undefined' && typeof TVControl.init === 'function') {
     try {
@@ -22,7 +17,11 @@
   }
 
   // Initialize remote control handler
-  RemoteControl.init();
+  try {
+    RemoteControl.init();
+  } catch (error) {
+    logger.warn('RemoteControl initialization failed:', error);
+  }
 
   // Telemetry overlay toggle (press INFO button on remote)
   let telemetryVisible = false;
@@ -159,26 +158,31 @@
     logger.warn('[mdc-bridge] b2bcontrol.startNodeServer not available on this platform');
   }
 
-  if (isPaired && deviceId && deviceToken) {
-    logger.info('Device already paired:', deviceName);
-    
-    // Start player directly
-    Player.init({
-      id: deviceId,
-      name: deviceName,
-      deviceToken: deviceToken,
-      workspaceId: workspaceId,
-    });
-    
-  } else {
-    if (isPaired && deviceId && !deviceToken) {
-      logger.warn('Found paired device state without token, falling back to pairing flow');
+  // Initialize content manager, then start player or pairing once storage is ready
+  ContentManager.init().catch(function(error) {
+    logger.error('Failed to initialize content manager:', error);
+  }).then(function() {
+    if (isPaired && deviceId && deviceToken) {
+      logger.info('Device already paired:', deviceName);
+
+      // Start player directly
+      Player.init({
+        id: deviceId,
+        name: deviceName,
+        deviceToken: deviceToken,
+        workspaceId: workspaceId,
+      });
+
+    } else {
+      if (isPaired && deviceId && !deviceToken) {
+        logger.warn('Found paired device state without token, falling back to pairing flow');
+      }
+      logger.info('Device not paired, starting pairing process');
+
+      // Start pairing process
+      Pairing.init();
     }
-    logger.info('Device not paired, starting pairing process');
-    
-    // Start pairing process
-    Pairing.init();
-  }
+  });
 
   // Handle Tizen app lifecycle
   window.addEventListener('tizenhwkey', function(e) {

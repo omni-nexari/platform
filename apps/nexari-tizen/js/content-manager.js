@@ -704,7 +704,7 @@ window.ContentManager = {
         const xhr = new XMLHttpRequest();
         xhr.open('GET', content.url, true);
         xhr.responseType = 'blob';
-        xhr.timeout = 120_000; // 2-minute hard limit — prevents silent hangs on large files
+        xhr.timeout = 120000; // 2-minute hard limit — prevents silent hangs on large files
 
         xhr.ontimeout = () => {
           logger.error(`XHR timeout downloading: ${content.name} (${content.url})`);
@@ -828,18 +828,17 @@ window.ContentManager = {
     });
     if (allInMemCache) {
       logger.info('All playlist items already in session cache, skipping download');
-      return {
-        ...playlist,
+      return Object.assign({}, playlist, {
         items: playlist.items.map(item => {
           const c = item && item.content;
           const cid = c && c.id ? String(c.id) : null;
           const cachedUrl = cid ? this.cachedUrlMap.get(cid) : null;
           if (cachedUrl) {
-            return { ...item, content: { ...c, url: cachedUrl, originalUrl: c.url } };
+            return Object.assign({}, item, { content: Object.assign({}, c, { url: cachedUrl, originalUrl: c.url }) });
           }
           return item;
         }),
-      };
+      });
     }
 
     logger.info(`Downloading playlist: ${playlist.playlistName} (${playlist.items.length} items)`);
@@ -862,15 +861,13 @@ window.ContentManager = {
           try {
             const localHtml = await this.prepareHtmlPackage(content);
             if (localHtml && localHtml.url) {
-              downloadedItems.push({
-                ...item,
-                content: {
-                  ...content,
+              downloadedItems.push(Object.assign({}, item, {
+                content: Object.assign({}, content, {
                   url: localHtml.url,
                   originalUrl: content.url,
                   metadata: localHtml.metadata || content.metadata,
-                }
-              });
+                })
+              }));
               continue;
             }
           } catch (htmlError) {
@@ -917,14 +914,12 @@ window.ContentManager = {
         }
         
         if (localUrl) {
-          downloadedItems.push({
-            ...item,
-            content: {
-              ...content,
-              url: localUrl, // Use local file URL
-              originalUrl: content.url // Keep original for reference
-            }
-          });
+          downloadedItems.push(Object.assign({}, item, {
+            content: Object.assign({}, content, {
+              url: localUrl,
+              originalUrl: content.url
+            })
+          }));
         } else {
           logger.error(`Failed to download after retries: ${content.name}, using remote URL`);
           // Keep original item with remote URL as fallback
@@ -937,10 +932,9 @@ window.ContentManager = {
       }
     }
 
-    return {
-      ...playlist,
+    return Object.assign({}, playlist, {
       items: downloadedItems
-    };
+    });
   },
 
   // Generate local filename from content
@@ -1218,7 +1212,7 @@ window.ContentManager = {
     if (!base || typeof base !== 'object') {
       base = {};
     }
-    return { ...base, ...patch };
+    return Object.assign({}, base, patch);
   },
 
   getBackendBaseUrl() {

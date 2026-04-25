@@ -2,11 +2,11 @@
 /**
  * sync-tizen-shared.mjs
  *
- * Copies shared Tizen JS files from apps/tizen/js (canonical source) into
- * apps/nexari-tizen/js and apps/tizen-sbb/js.
+ * Copies shared Tizen JS files from apps/nexari-tizen/js (canonical merged source)
+ * into apps/tizen-sbb/js.
  *
- * Files that are intentionally app-specific (pairing.js, player.js, config.xml)
- * are excluded from sync.
+ * nexari-tizen is the unified app (merger of apps/tizen + apps/tizen-sbb).
+ * Files that are intentionally app-specific are excluded from sync.
  *
  * Usage:
  *   node tools/sync-tizen-shared.mjs
@@ -20,20 +20,19 @@ import { fileURLToPath } from 'node:url';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const root = resolve(__dirname, '..');
 
-const SOURCE = join(root, 'apps', 'tizen', 'js');
+const SOURCE = join(root, 'apps', 'nexari-tizen', 'js');
 const TARGETS = [
-  join(root, 'apps', 'nexari-tizen', 'js'),
   join(root, 'apps', 'tizen-sbb', 'js'),
 ];
 
 // Files that differ intentionally per-app — never overwrite
 const EXCLUDED = new Set([
-  'pairing.js',   // kiosk/SBB-specific branches
-  'player.js',    // b2bapis differences in tizen-sbb
-  'mdc.js',       // nexari-tizen specific
-  'platform.js',  // nexari-tizen specific
-  'app.js',       // per-app entry point
-  'log-viewer.js',// may have per-app tweaks
+  'pairing.js',    // kiosk/SBB-specific branches
+  'player.js',     // nexari-tizen only (TypeScript-compiled)
+  'mdc.js',        // nexari-tizen specific
+  'platform.js',   // nexari-tizen specific (version detection)
+  'app.js',        // per-app entry point
+  'log-viewer.js', // may have per-app tweaks
   '.jshintrc',
 ]);
 

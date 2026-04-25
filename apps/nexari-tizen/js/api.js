@@ -231,7 +231,7 @@ window.API = {
       id: item.id,
       contentId: item.contentId,
       duration: item.durationSeconds || 10,
-      position: item.sortOrder ?? idx,
+      position: item.sortOrder != null ? item.sortOrder : idx,
       content: item.content ? API._normalizeContent(item.content, deviceToken) : null,
     }));
     return {

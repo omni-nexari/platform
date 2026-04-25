@@ -64,7 +64,7 @@ interface ContentList {
 // ── Constants ─────────────────────────────────────────────────────────────────
 type FilterType = 'all' | ContentItem['type'];
 type ViewMode = 'grid-lg' | 'grid-sm' | 'list';
-type KnownContentType = 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout' | 'menu_board';
+type KnownContentType = 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout';
 
 const TYPE_FILTERS: { id: FilterType; label: string }[] = [
   { id: 'all', label: 'All' },

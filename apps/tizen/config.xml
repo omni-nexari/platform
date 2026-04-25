@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://chiho.app/tizen/SignagePlayer" version="1.0.0" viewmodes="fullscreen">
+<widget xmlns:tizen="http://tizen.org/ns/widgets" xmlns="http://www.w3.org/ns/widgets" id="http://chiho.app/tizen/SignagePlayer" version="1.0.0" viewmodes="fullscreen">
     <access origin="*" subdomains="true"></access>
     <tizen:allow-navigation>*</tizen:allow-navigation>
-    <tizen:application id="NexariSignage.SignagePlayer" package="NexariSignage" required_version="5.0"/>
+    <tizen:application id="r9mAJrhQg2.SignagePlayer" package="r9mAJrhQg2" required_version="5.0"/>
     <content src="index.html"/>
     <tizen:content-security-policy>default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; img-src * data: blob:; frame-src *; style-src * 'unsafe-inline';</tizen:content-security-policy>
     <tizen:content-security-policy-report-only></tizen:content-security-policy-report-only>
