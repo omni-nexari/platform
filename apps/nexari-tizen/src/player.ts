@@ -5321,7 +5321,7 @@ const Player = {
     }
   },
 
-  // ── HTML5 <video> path — no sync, works on all displays ────────────────────
+  // ── HTML5 <video> path — sync-aware, works on all displays ────────────────
   _playZoneVideoHTML5(zone: any, container: HTMLElement, content: any, items: any[], itemIndex: number, durationMs: number, token: string, zoneIndex: number, videoUrl: string, isLocalFile: boolean, httpUrl: string): void {
     let advanced = false;
     const advanceOnce = () => {
@@ -5333,18 +5333,51 @@ const Player = {
     };
 
     const isSingleVideoLoop = items.length === 1;
+    const useSyncLoop = isSingleVideoLoop && !!zone.syncGroup && this._zoneSyncExpectedCount > 1;
     const objectFit = zone.fitMode === 'fill' ? 'fill' : 'contain';
-    logger.info(`[Zone ${zoneIndex}] Playing video (HTML5): ${videoUrl} [${isLocalFile ? 'local' : 'http'}] fit=${objectFit}`);
+    logger.info(`[Zone ${zoneIndex}] Playing video (HTML5): ${videoUrl} [${isLocalFile ? 'local' : 'http'}] fit=${objectFit} syncLoop=${useSyncLoop}`);
 
     const video = document.createElement('video');
     video.style.cssText = `width:100%;height:100%;object-fit:${objectFit};display:block;background:#000;`;
     video.setAttribute('playsinline', '');
     if (zoneIndex > 0) video.muted = true;
-    if (isSingleVideoLoop) video.loop = true;
+    // Only use native loop when there is no sync partner — otherwise we manage
+    // re-looping manually so all zones restart in the same JS tick.
+    if (isSingleVideoLoop && !useSyncLoop) video.loop = true;
 
     video.addEventListener('ended', () => {
       this._zoneErrorCounts[zone.id] = 0;
-      if (!isSingleVideoLoop) advanceOnce();
+      if (isSingleVideoLoop) {
+        if (useSyncLoop) {
+          // Synchronized re-loop — same queue/flush pattern as AVPlay path
+          const fn = () => {
+            video.currentTime = 0;
+            video.play().catch(() => { advanceOnce(); });
+          };
+          this._zoneSyncLoopQueue.push({ fn, zoneIndex });
+          const flushLoopQueue = () => {
+            if (this._zoneSyncLoopFlushTimer !== null) {
+              clearTimeout(this._zoneSyncLoopFlushTimer);
+              this._zoneSyncLoopFlushTimer = null;
+            }
+            if (this._zoneSyncLoopQueue.length === 0) return;
+            const batch = this._zoneSyncLoopQueue.splice(0);
+            logger.info(`[Zone sync] Re-looping ${batch.length} zone(s) simultaneously`);
+            for (const entry of batch) {
+              try { entry.fn(); } catch (_) { logger.warn(`[Zone ${entry.zoneIndex}] re-loop failed`); }
+            }
+          };
+          if (this._zoneSyncLoopQueue.length >= this._zoneSyncExpectedCount) {
+            flushLoopQueue();
+          } else {
+            if (this._zoneSyncLoopFlushTimer !== null) clearTimeout(this._zoneSyncLoopFlushTimer);
+            this._zoneSyncLoopFlushTimer = setTimeout(flushLoopQueue, 500) as unknown as number;
+          }
+        }
+        // else: native loop=true handles it
+      } else {
+        advanceOnce();
+      }
     });
 
     video.addEventListener('error', () => {
@@ -5363,11 +5396,33 @@ const Player = {
 
     container.appendChild(video);
     video.src = videoUrl;
-    video.play().catch((e: unknown) => {
-      const msg = (e instanceof Error) ? e.message : String(e);
-      if (msg.includes('interrupted') || msg.includes('pause') || msg.includes('load')) return;
-      logger.warn(`[Zone ${zoneIndex}] video.play() rejected: ${msg}`);
-    });
+
+    // For synced zones: wait for canplay then register with zone-sync queue so
+    // ALL zones fire play() in the same JS tick (no per-zone head-start drift).
+    if (zone.syncGroup) {
+      let readyCalled = false;
+      const startVideo = () => {
+        if (readyCalled) return;
+        readyCalled = true;
+        this._enqueueZoneSync(() => {
+          if (!this._zoneMode) return;
+          video.play().catch((e: unknown) => {
+            const msg = (e instanceof Error) ? e.message : String(e);
+            if (msg.includes('interrupted') || msg.includes('pause') || msg.includes('load')) return;
+            logger.warn(`[Zone ${zoneIndex}] video.play() rejected: ${msg}`);
+          });
+          logger.info(`[Zone ${zoneIndex}] HTML5 video playing (synced start)`);
+        });
+      };
+      video.addEventListener('canplay', startVideo, { once: true });
+      if ((video as any).readyState >= 3) startVideo();
+    } else {
+      video.play().catch((e: unknown) => {
+        const msg = (e instanceof Error) ? e.message : String(e);
+        if (msg.includes('interrupted') || msg.includes('pause') || msg.includes('load')) return;
+        logger.warn(`[Zone ${zoneIndex}] video.play() rejected: ${msg}`);
+      });
+    }
 
     if (!isSingleVideoLoop && durationMs > 0 && durationMs < 3_600_000) {
       const t = setTimeout(advanceOnce, durationMs + 2000) as unknown as number;
@@ -5422,12 +5477,12 @@ const Player = {
                 // Synchronized re-loop: wait for ALL sync zones to complete,
                 // then seekTo(0)+play() all at once to prevent drift accumulation.
                 if (zone.syncGroup && this._zoneSyncExpectedCount > 1) {
-                  this._zoneSyncLoopQueue.push({ avp, zoneIndex });
+                  this._zoneSyncLoopQueue.push({ fn: () => { try { avp.seekTo(0); avp.play(); } catch (_) { advanceOnce(); } }, zoneIndex });
                   if (this._zoneSyncLoopQueue.length >= this._zoneSyncExpectedCount) {
                     const batch = this._zoneSyncLoopQueue.splice(0);
                     logger.info(`[Zone sync] Re-looping ${batch.length} zone(s) simultaneously`);
                     for (const entry of batch) {
-                      try { entry.avp.seekTo(0); entry.avp.play(); } catch (_) {
+                      try { entry.fn(); } catch (_) {
                         logger.warn(`[Zone ${entry.zoneIndex}] seekTo/play failed on re-loop`);
                       }
                     }
