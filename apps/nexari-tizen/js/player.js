@@ -89,6 +89,7 @@ const Player = {
     // Loop re-sync: when synced zones complete their stream, wait for ALL to complete
     // then seekTo(0)+play() simultaneously to prevent drift accumulation.
     _zoneSyncLoopQueue: [],
+    _zoneSyncLoopFlushTimer: null,
     // Document (PDF/Office) rendering state
     documentActive: false,
     documentItemKey: null,
@@ -1762,6 +1763,7 @@ const Player = {
                     // No content or empty playlist - stop playback and show idle screen
                     logger.info('No content available, showing idle screen');
                     this.cancelCurrentPlayback();
+                    if (this._zoneMode) this.stopZoneMode();
                     this.clearPlaylistCache();
                     this.currentContent = null;
                     this.lastContentSignature = null;
@@ -4724,6 +4726,7 @@ const Player = {
         this._zoneSyncFlushTimer = null;
         this._zoneSyncExpectedCount = 0;
         this._zoneSyncLoopQueue = [];
+        if (this._zoneSyncLoopFlushTimer !== null) { clearTimeout(this._zoneSyncLoopFlushTimer); this._zoneSyncLoopFlushTimer = null; }
         this._videoMixerQueue = Promise.resolve(); // Reset queue so stale prepare() callbacks don't fire
         for (const timer of this._zoneTimers)
             clearTimeout(timer);
@@ -4995,9 +4998,10 @@ const Player = {
             this._zoneTimers.push(t);
             return;
         }
-        // Branch: if this zone has syncGroup → AVPlay VideoMixer path
-        //         otherwise → HTML5 <video> path (more flexible, no body transparency)
-        const useSyncAvPlay = this._zoneSyncEnabled && !!zone.syncGroup;
+        // VideoMixer (avplaystore) compositing does not work on Tizen 4.0/SSSP6 —
+        // both planes render full-screen, ignoring SET_MIXEDFRAME rect.
+        // Use HTML5 <video> in CSS-positioned zone containers which works reliably.
+        const useSyncAvPlay = false;
         if (useSyncAvPlay) {
             this._playZoneVideoAVPlay(zone, container, content, items, itemIndex, durationMs, token, zoneIndex, videoUrl, isLocalFile, httpUrl);
         }
@@ -5098,6 +5102,7 @@ const Player = {
                 try {
                     const playerId = `zone_${zoneIndex}_${Date.now()}`;
                     const avp = window.webapis.avplaystore.getPlayer(playerId);
+                    // open() first, then USE_VIDEOMIXER — Samsung requires this order
                     avp.open(videoUrl);
                     avp.setStreamingProperty('USE_VIDEOMIXER', 'TRUE');
                     avp.setListener({
@@ -5109,18 +5114,25 @@ const Player = {
                                 // then seekTo(0)+play() all at once to prevent drift accumulation.
                                 if (zone.syncGroup && this._zoneSyncExpectedCount > 1) {
                                     this._zoneSyncLoopQueue.push({ avp, zoneIndex });
-                                    if (this._zoneSyncLoopQueue.length >= this._zoneSyncExpectedCount) {
+                                    const flushLoopQueue = () => {
+                                        if (this._zoneSyncLoopFlushTimer !== null) {
+                                            clearTimeout(this._zoneSyncLoopFlushTimer);
+                                            this._zoneSyncLoopFlushTimer = null;
+                                        }
+                                        if (this._zoneSyncLoopQueue.length === 0) return;
                                         const batch = this._zoneSyncLoopQueue.splice(0);
                                         logger.info(`[Zone sync] Re-looping ${batch.length} zone(s) simultaneously`);
                                         for (const entry of batch) {
-                                            try {
-                                                entry.avp.seekTo(0);
-                                                entry.avp.play();
-                                            }
-                                            catch (_) {
-                                                logger.warn(`[Zone ${entry.zoneIndex}] seekTo/play failed on re-loop`);
-                                            }
+                                            try { entry.avp.seekTo(0); entry.avp.play(); }
+                                            catch (_) { logger.warn(`[Zone ${entry.zoneIndex}] seekTo/play failed on re-loop`); }
                                         }
+                                    };
+                                    if (this._zoneSyncLoopQueue.length >= this._zoneSyncExpectedCount) {
+                                        flushLoopQueue();
+                                    } else {
+                                        // Fallback: flush after 500ms in case a zone never checks in
+                                        if (this._zoneSyncLoopFlushTimer !== null) clearTimeout(this._zoneSyncLoopFlushTimer);
+                                        this._zoneSyncLoopFlushTimer = setTimeout(flushLoopQueue, 500);
                                     }
                                 }
                                 else {
@@ -5161,7 +5173,6 @@ const Player = {
                         try {
                             avp.setStreamingProperty('SET_MIXEDFRAME', `${rect.x}|${rect.y}|${rect.width}|${rect.height}`);
                             avp.setDisplayRect(rect.x, rect.y, rect.width, rect.height);
-                            // fill = PLAYER_DISPLAY_MODE_FULL_SCREEN (stretch), contain = PLAYER_DISPLAY_MODE_LETTER_BOX
                             const displayMode = zone.fitMode === 'fill'
                                 ? 'PLAYER_DISPLAY_MODE_FULL_SCREEN'
                                 : 'PLAYER_DISPLAY_MODE_LETTER_BOX';

@@ -1821,6 +1821,7 @@ const Player = {
         // No content or empty playlist - stop playback and show idle screen
         logger.info('No content available, showing idle screen');
         this.cancelCurrentPlayback();
+        if (this._zoneMode) this.stopZoneMode();
         this.clearPlaylistCache();
         this.currentContent = null;
         this.lastContentSignature = null;
@@ -5308,9 +5309,10 @@ const Player = {
       return;
     }
 
-    // Branch: if this zone has syncGroup → AVPlay VideoMixer path
-    //         otherwise → HTML5 <video> path (more flexible, no body transparency)
-    const useSyncAvPlay = this._zoneSyncEnabled && !!zone.syncGroup;
+    // VideoMixer (avplaystore) compositing does not work on Tizen 4.0/SSSP6 —
+    // both planes render full-screen, ignoring SET_MIXEDFRAME rect.
+    // Use HTML5 <video> in CSS-positioned zone containers which works reliably.
+    const useSyncAvPlay = false;
 
     if (useSyncAvPlay) {
       this._playZoneVideoAVPlay(zone, container, content, items, itemIndex, durationMs, token, zoneIndex, videoUrl, isLocalFile, httpUrl);
@@ -5408,7 +5410,7 @@ const Player = {
         try {
           const playerId = `zone_${zoneIndex}_${Date.now()}`;
           const avp = (window as any).webapis.avplaystore.getPlayer(playerId);
-
+          // open() first, then USE_VIDEOMIXER — Samsung requires this order
           avp.open(videoUrl);
           avp.setStreamingProperty('USE_VIDEOMIXER', 'TRUE');
 
@@ -5454,7 +5456,6 @@ const Player = {
             try {
               avp.setStreamingProperty('SET_MIXEDFRAME', `${rect.x}|${rect.y}|${rect.width}|${rect.height}`);
               avp.setDisplayRect(rect.x, rect.y, rect.width, rect.height);
-              // fill = PLAYER_DISPLAY_MODE_FULL_SCREEN (stretch), contain = PLAYER_DISPLAY_MODE_LETTER_BOX
               const displayMode = zone.fitMode === 'fill'
                 ? 'PLAYER_DISPLAY_MODE_FULL_SCREEN'
                 : 'PLAYER_DISPLAY_MODE_LETTER_BOX';

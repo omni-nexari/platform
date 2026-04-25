@@ -245,12 +245,13 @@ export default function ContentPickerModal({
   });
   const contentItems = contentResponse?.items ?? [];
 
-  const { data: playlistItems = [], isLoading: playlistLoading } = useQuery<PickerPlaylist[]>({
+  const { data: playlistResponse, isLoading: playlistLoading } = useQuery<{ items: PickerPlaylist[]; total: number }>({
     queryKey: ['picker-playlists', workspaceId],
-    queryFn: () => api.get(`/playlists?workspaceId=${workspaceId}`),
+    queryFn: () => api.get(`/playlists?workspaceId=${workspaceId}&limit=500`),
     enabled: open && allowedTypes.includes('playlist'),
     staleTime: 60_000,
   });
+  const playlistItems = playlistResponse?.items ?? [];
 
   const filteredContent = useMemo(() => {
     let list = contentItems;
