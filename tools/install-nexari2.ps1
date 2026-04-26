@@ -45,6 +45,16 @@ if ($wgt.Name -ne "NexariPlayer.wgt") {
 $sizeKB = [math]::Round((Get-Item "$src\NexariPlayer.wgt").Length / 1KB)
 Write-Host "WGT size: ${sizeKB} KB"
 
+# --- 1b. SDB CONNECT ---
+Write-Host ""
+Write-Host "=== STEP 1b: SDB Connect ==="
+$connectOut = & $sdb connect $tv 2>&1 | Out-String
+Write-Host $connectOut
+if ($connectOut -notmatch "connected to") {
+    Write-Host "WARNING: sdb connect may have failed. Check TV Developer Mode is on and IP is correct." -ForegroundColor Yellow
+}
+Start-Sleep -Seconds 2
+
 # --- 2. UNINSTALL ---
 Write-Host ""
 Write-Host "=== STEP 2: Uninstall ==="

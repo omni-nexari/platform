@@ -149,7 +149,12 @@ if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
             Write-Host "  Release published: v$($publishResp.version) (id=$($publishResp.id))" -ForegroundColor Green
         }
         catch {
-            Write-Host "WARNING: Failed to publish release - $_" -ForegroundColor Yellow
+            $errBody = $_.ErrorDetails.Message
+            if ($errBody -and ($errBody | ConvertFrom-Json -ErrorAction SilentlyContinue).code -eq '23505') {
+                Write-Host "  Release v$Version already exists - skipping publish." -ForegroundColor DarkGray
+            } else {
+                Write-Host "WARNING: Failed to publish release - $_" -ForegroundColor Yellow
+            }
         }
     }
 }

@@ -202,17 +202,6 @@ window.RemoteControl = {
       return false;
     }
 
-    // When an IPTV channel group is playing, digit keys 0-9 are reserved for
-    // direct channel tuning and must NOT trigger NUM_2/NUM_4 shortcuts.
-    const channelGroupActive = (
-      typeof Player !== 'undefined' &&
-      Player.currentChannelGroup &&
-      activeScreen === 'player'
-    );
-    if (channelGroupActive && keyCode >= this.KEYS.NUM_0 && keyCode <= this.KEYS.NUM_9) {
-      return false;
-    }
-
     switch (keyCode) {
       case this.KEYS.NUM_4:
         event.preventDefault();
