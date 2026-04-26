@@ -1915,6 +1915,7 @@ const Player = {
         break;
         
       case 'HTML':
+      case 'HTML5':
         this.renderHTML(container, content);
         break;
 
@@ -1959,94 +1960,56 @@ const Player = {
 
   // Render image content
   async renderImage(container, content) {
-    // For local file:// URLs, we need to read the file and create a blob URL
-    if (content.url && content.url.startsWith('file://')) {
-      try {
-        logger.info('Converting local file to blob URL:', content.url);
-        
-        // Extract file path from file:// URL
-        const filePath = content.url.replace('file://', '');
-        
-        // Read file using Tizen filesystem
-        const pathParts = filePath.split('/');
-        const fileName = pathParts[pathParts.length - 1];
-        
-        try {
-          const fh = (window as any).tizen.filesystem.openFile(filePath, 'r');
-          try {
-            const buffer = fh.readData();
-            const mimeType = this.getMimeType(fileName, content.contentType) || 'application/octet-stream';
-            let blobUrl = null;
-            let dataUrl = null;
-
-            try {
-              const blob = new Blob([buffer], { type: mimeType });
-              blobUrl = URL.createObjectURL(blob);
-            } catch (blobError) {
-              logger.warn('Failed to create blob URL, falling back to data URL:', blobError.message);
-              dataUrl = this.bytesToDataUrl(buffer, mimeType);
-            }
-
-            const img = document.createElement('img');
-            img.style.width = '100%';
-            img.style.height = '100%';
-            img.style.objectFit = 'contain';
-            img.style.backgroundColor = '#000';
-
-            const useDataUrlFallback = () => {
-              if (!dataUrl) {
-                dataUrl = this.bytesToDataUrl(buffer, mimeType);
-              }
-              img.src = dataUrl;
-            };
-
-            img.onload = () => {
-              logger.info('Image loaded successfully from local cache');
-              if (blobUrl) {
-                URL.revokeObjectURL(blobUrl);
-              }
-            };
-
-            img.onerror = (error) => {
-              if (blobUrl) {
-                logger.warn('Blob URL failed to load, retrying with data URL');
-                URL.revokeObjectURL(blobUrl);
-                blobUrl = null;
-                useDataUrlFallback();
-                return;
-              }
-              logger.error('Image failed to load even after data URL fallback:', error);
-              this.showImageError(container, content);
-            };
-
-            if (blobUrl) {
-              img.src = blobUrl;
-            } else {
-              useDataUrlFallback();
-            }
-
-            container.appendChild(img);
-          } finally {
-            try { fh.close(); } catch (_) {}
-          }
-        } catch (error) {
-          logger.error('Failed to read local file:', error);
-          this.showImageError(container, content);
-        }
-        return;
-      } catch (error) {
-        logger.error('Error converting file to blob:', error);
-      }
-    }
-    
-    // For remote URLs, use img tag directly
     const img = document.createElement('img');
-    img.src = content.url;
     img.style.width = '100%';
     img.style.height = '100%';
     img.style.objectFit = 'contain';
     img.style.backgroundColor = '#000';
-    
+
+    // For local file:// URLs, try direct src first (works on Tizen for wgt-private files),
+    // then fall back to blob via ContentManager.readPathBytes if direct load fails.
+    if (content.url && content.url.startsWith('file://')) {
+      logger.info('Loading local image:', content.url);
+
+      const tryBlobFallback = () => {
+        try {
+          const urlParts = content.url.split('/');
+          const fileName = urlParts[urlParts.length - 1];
+          const storagePath = (window as any).ContentManager?.storagePath || 'wgt-private/content';
+          const virtualPath = storagePath + '/' + fileName;
+          logger.info('Trying blob fallback via readPathBytes:', virtualPath);
+          const buffer = (window as any).ContentManager.readPathBytes(virtualPath);
+          const mimeType = this.getMimeType(fileName, content.contentType) || 'image/jpeg';
+          try {
+            const blob = new Blob([buffer], { type: mimeType });
+            img.src = URL.createObjectURL(blob);
+            img.onload = () => { logger.info('Image loaded via blob fallback'); };
+            img.onerror = () => {
+              logger.error('Image failed to load via blob, trying data URL');
+              img.src = this.bytesToDataUrl(buffer, mimeType);
+            };
+          } catch (blobErr) {
+            img.src = this.bytesToDataUrl(buffer, mimeType);
+          }
+        } catch (err) {
+          const msg = (err as any)?.message || String(err);
+          logger.error('Blob fallback failed:', msg);
+          this.showImageError(container, content);
+        }
+      };
+
+      img.onload = () => { logger.info('Image loaded successfully from local file'); };
+      img.onerror = () => {
+        logger.warn('Direct file:// load failed, attempting blob fallback');
+        tryBlobFallback();
+      };
+      img.src = content.url;
+      container.appendChild(img);
+      return;
+    }
+
+    // Remote URLs — use img tag directly
+    img.src = content.url;
     img.onerror = (error) => {
       logger.error('Image failed to load:', content.url, error);
       this.showImageError(container, content);
@@ -4843,6 +4806,7 @@ const Player = {
           break;
           
         case 'HTML':
+        case 'HTML5':
         case 'WEBPAGE':
           this.renderHTML(container, content);
           // Schedule next item
