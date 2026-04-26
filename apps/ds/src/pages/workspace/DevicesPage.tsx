@@ -7,6 +7,8 @@ import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
 import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
+
+type PairFormInput = Omit<ClaimDeviceInput, 'workspaceId'>;
 import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from '../utils/time.js';
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
@@ -141,13 +143,13 @@ export default function DevicesPage() {
     handleSubmit,
     reset,
     formState: { errors, isSubmitting },
-  } = useForm<ClaimDeviceInput>({
-    resolver: zodResolver(ClaimDeviceSchema),
+  } = useForm<PairFormInput>({
+    resolver: zodResolver(ClaimDeviceSchema.omit({ workspaceId: true })),
   });
 
   const claimMutation = useMutation({
-    mutationFn: (data: ClaimDeviceInput) =>
-      api.post<Device>('/devices/claim', { ...data, workspaceId: wsId }),
+    mutationFn: (data: PairFormInput) =>
+      api.post<Device>('/devices/pair/claim', { ...data, workspaceId: wsId }),
     onSuccess: (device: Device) => {
       toast.success('Device claimed');
       setPairOpen(false);

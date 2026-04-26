@@ -162,6 +162,15 @@ window.RemoteControl = {
       return;
     }
 
+    // Blue button (ColorF3Blue) also toggles log console (fallback when INFO key not firing)
+    if (keyCode === this.KEYS.BLUE) {
+      if (typeof UiLog !== 'undefined') UiLog.toggle();
+      return;
+    }
+
+    // Log all unhandled key presses for diagnostics
+    logger.debug('Unhandled key: ' + keyCode);
+
     if (this.handleGlobalShortcut(keyCode, activeScreen, event)) {
       return;
     }
