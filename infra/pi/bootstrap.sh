@@ -66,6 +66,10 @@ if [[ -n "$GIT_REPO" ]]; then
     if [[ -d "$APP_DIR/.git" ]]; then
         echo "==> [bootstrap] Repo already cloned at $APP_DIR, skipping clone."
     else
+        if [[ -d "$APP_DIR" ]]; then
+            echo "==> [bootstrap] $APP_DIR exists but is not a git repo (partial previous run). Removing..."
+            sudo rm -rf "$APP_DIR"
+        fi
         echo "==> [bootstrap] Cloning $GIT_REPO ($BRANCH) into $APP_DIR..."
         git clone --branch "$BRANCH" --depth 1 "$GIT_REPO" "$APP_DIR"
         sudo chown -R "$APP_USER:$APP_USER" "$APP_DIR"
