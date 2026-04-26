@@ -23,7 +23,7 @@ echo "==> [bootstrap] Updating package index..."
 sudo apt-get update -qq
 
 echo "==> [bootstrap] Installing system dependencies..."
-sudo apt-get install -y --no-install-recommends \
+sudo apt-get install -y --no-install-recommends --allow-change-held-packages \
     curl \
     git \
     nginx \
@@ -42,7 +42,7 @@ sudo apt-get install -y --no-install-recommends \
 if ! command -v node &>/dev/null || [[ "$(node --version)" != v22* ]]; then
     echo "==> [bootstrap] Installing Node 22 via NodeSource..."
     curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-    sudo apt-get install -y nodejs
+    sudo apt-get install -y --allow-change-held-packages nodejs
 else
     echo "==> [bootstrap] Node $(node --version) already installed, skipping."
 fi
