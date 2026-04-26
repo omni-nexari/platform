@@ -3771,13 +3771,35 @@ const Player = {
     },
     // Render HTML content
     renderHTML(container, content) {
+        const url = content.url || content.webUrl || '';
+        logger.info('renderHTML: type=' + content.type + ' url=' + url);
+        if (!url) {
+            logger.warn('renderHTML: no URL available for HTML content:', content.name);
+            return;
+        }
         const iframe = document.createElement('iframe');
-        iframe.src = content.url;
-        iframe.style.width = '100%';
-        iframe.style.height = '100%';
-        iframe.style.border = 'none';
-        iframe.allowFullscreen = true;
+        // Absolute positioning ensures 100% means the full container size,
+        // not the inline layout height.  pointer-events:auto overrides the
+        // parent container's pointer-events:none so Tizen's WebKit does not
+        // skip compositing the frame.
+        iframe.style.cssText = [
+            'position:absolute',
+            'top:0',
+            'left:0',
+            'width:100%',
+            'height:100%',
+            'border:none',
+            'display:block',
+            'pointer-events:auto',
+            'background:transparent',
+        ].join(';');
+        iframe.setAttribute('allowfullscreen', 'true');
+        iframe.setAttribute('scrolling', 'no');
+        iframe.onload = () => logger.info('renderHTML: iframe loaded OK url=' + url);
+        iframe.onerror = () => logger.error('renderHTML: iframe load error url=' + url);
+        iframe.src = url;
         container.appendChild(iframe);
+        logger.info('renderHTML: iframe appended');
     },
     // Render Canvas content (prefer HTML runtime, fall back to thumbnail image)
     renderCanvas(container, content) {
