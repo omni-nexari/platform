@@ -28,8 +28,8 @@
     Superadmin password. Required when SuperadminEmail is provided.
 
 .PARAMETER ApiBase
-    DS API base URL. Defaults to http://<PiHost> (LAN — avoids DNS loopback issues).
-    Override with https://ds.chiho.app when running from outside the LAN.
+    DS API base URL. Defaults to https://ds.chiho.app (public — for both the API call and the stored WGT URL).
+    Override with http://<PiHost> only for LAN-only deployments.
 
 .PARAMETER ReleaseNotes
     Optional release notes stored with the player_releases record.
@@ -49,7 +49,7 @@ param(
 
     [string]$SuperadminEmail = "",
     [string]$SuperadminPassword = "",
-    [string]$ApiBase = "",
+    [string]$ApiBase = "https://ds.chiho.app",
     [string]$ReleaseNotes = ""
 )
 
@@ -109,29 +109,31 @@ if ($LASTEXITCODE -ne 0) { throw "Remote verification failed" }
 
 # ── Publish release to DS API (optional) ─────────────────────────────────────
 if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
-    if ($ApiBase -eq "") { $ApiBase = "http://$PiHost" }
     $ApiBase = $ApiBase.TrimEnd('/')
 
     $pkgJson = Get-Content (Join-Path $TizenDir "package.json") -Raw | ConvertFrom-Json
     $Version = $pkgJson.version
-    $DownloadUrl = "http://$PiHost/tizen/NexariPlayer.wgt"
+    # Use the public HTTPS URL — TVs on any network can reach it
+    $DownloadUrl = "https://ds.chiho.app/tizen/NexariPlayer.wgt"
 
     Write-Host "==> Publishing release v$Version to $ApiBase ..." -ForegroundColor Cyan
 
+    # Login via superadmin endpoint and capture the sa_access_token cookie in a session
+    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     try {
         $loginBody = @{ email = $SuperadminEmail; password = $SuperadminPassword } | ConvertTo-Json
-        $loginResp = Invoke-RestMethod -Method Post `
-            -Uri "$ApiBase/api/v1/auth/login" `
+        $null = Invoke-WebRequest -Method Post `
+            -Uri "$ApiBase/api/v1/superadmin/auth/login" `
             -ContentType "application/json" `
-            -Body $loginBody
-        $token = $loginResp.accessToken
-        if (-not $token) { throw "No accessToken in login response" }
+            -Body $loginBody `
+            -WebSession $session `
+            -UseBasicParsing
     } catch {
-        Write-Host "WARNING: Login failed — skipping release publish. $_" -ForegroundColor Yellow
-        $token = $null
+        Write-Host "WARNING: Superadmin login failed — skipping release publish. $_" -ForegroundColor Yellow
+        $session = $null
     }
 
-    if ($token) {
+    if ($session) {
         try {
             $releaseBody = @{ version = $Version; downloadUrl = $DownloadUrl }
             if ($ReleaseNotes -ne "") { $releaseBody.releaseNotes = $ReleaseNotes }
@@ -139,7 +141,7 @@ if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
             $publishResp = Invoke-RestMethod -Method Post `
                 -Uri "$ApiBase/api/v1/player-releases" `
                 -ContentType "application/json" `
-                -Headers @{ Authorization = "Bearer $token" } `
+                -WebSession $session `
                 -Body ($releaseBody | ConvertTo-Json)
             Write-Host "  Release published: v$($publishResp.version) (id=$($publishResp.id))" -ForegroundColor Green
         } catch {

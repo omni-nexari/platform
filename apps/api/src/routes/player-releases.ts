@@ -23,10 +23,7 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
   });
 
   /** Superadmin: list all releases */
-  app.get('/', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const user = req.user as { role: string };
-    if (user.role !== 'superadmin') return reply.status(403).send({ error: 'Forbidden' });
-
+  app.get('/', { onRequest: [app.authenticatePlatformOwner] }, async (_req, reply) => {
     const releases = await db
       .select()
       .from(playerReleases)
@@ -36,10 +33,7 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
   });
 
   /** Superadmin: publish a new release (marks it as latest) */
-  app.post('/', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const user = req.user as { role: string };
-    if (user.role !== 'superadmin') return reply.status(403).send({ error: 'Forbidden' });
-
+  app.post('/', { onRequest: [app.authenticatePlatformOwner] }, async (req, reply) => {
     const body = CreateReleaseSchema.safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
@@ -60,20 +54,14 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
   });
 
   /** Superadmin: delete a release */
-  app.delete('/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const user = req.user as { role: string };
-    if (user.role !== 'superadmin') return reply.status(403).send({ error: 'Forbidden' });
-
+  app.delete('/:id', { onRequest: [app.authenticatePlatformOwner] }, async (req, reply) => {
     const { id } = req.params as { id: string };
     await db.delete(playerReleases).where(eq(playerReleases.id, id));
     return reply.status(204).send();
   });
 
   // ── POST /player-releases/:id/deploy  (5-H) ──────────────────────────────
-  app.post('/:id/deploy', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const user = req.user as { role: string; sub: string; orgId: string };
-    if (user.role !== 'superadmin') return reply.status(403).send({ error: 'Forbidden' });
-
+  app.post('/:id/deploy', { onRequest: [app.authenticatePlatformOwner] }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = req.body as { workspaceId?: string; deviceIds?: string[] };
 

@@ -18,6 +18,7 @@ import PlatformOwnerDashboardPage from './pages/superadmin/PlatformOwnerDashboar
 import PlatformAnalyticsPage from './pages/superadmin/PlatformAnalyticsPage.js';
 import PlatformNotificationsPage from './pages/superadmin/PlatformNotificationsPage.js';
 import PlatformLogsPage from './pages/superadmin/PlatformLogsPage.js';
+import PlayerReleasesPage from './pages/superadmin/PlayerReleasesPage.js';
 import ManagementLoginPage from './pages/management/ManagementLoginPage.js';
 import ManagementLayout from './pages/management/ManagementLayout.js';
 import ManagementDashboardPage from './pages/management/ManagementDashboardPage.js';
@@ -263,6 +264,7 @@ export default function App() {
         <Route path="analytics" element={<PlatformAnalyticsPage />} />
         <Route path="notifications" element={<PlatformNotificationsPage />} />
         <Route path="logs" element={<PlatformLogsPage />} />
+        <Route path="player-releases" element={<PlayerReleasesPage />} />
       </Route>
 
       {/* Management Company portal */}
