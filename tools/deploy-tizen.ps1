@@ -1,12 +1,11 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Build the nexari-tizen app on Windows and upload the .wgt + sssp_config.xml to the Pi.
 
 .DESCRIPTION
-    1. Runs "npm run pack:sssp" in apps/nexari-tizen/ to:
-       - Patch sssp_config.xml with the current version and WGT file size
-       - (Local copy to /var/signage/tizen/ is skipped — that directory is on the Pi, not Windows)
+    1. Runs "npm run pack:sssp" in apps/nexari-tizen/ to patch sssp_config.xml with
+       the current version and WGT file size.
     2. SCPs NexariPlayer.wgt and sssp_config.xml to /var/signage/tizen/ on the Pi.
 
     Prerequisites on Windows:
@@ -28,8 +27,7 @@
     Superadmin password. Required when SuperadminEmail is provided.
 
 .PARAMETER ApiBase
-    DS API base URL. Defaults to https://ds.chiho.app (public — for both the API call and the stored WGT URL).
-    Override with http://<PiHost> only for LAN-only deployments.
+    DS API base URL. Defaults to https://ds.chiho.app
 
 .PARAMETER ReleaseNotes
     Optional release notes stored with the player_releases record.
@@ -55,21 +53,21 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot   = Split-Path -Parent $PSScriptRoot
-$TizenDir   = Join-Path $RepoRoot "apps\nexari-tizen"
-$WgtPath    = Join-Path $TizenDir "NexariPlayer.wgt"
-$SsspPath   = Join-Path $TizenDir "sssp_config.xml"
-$RemoteDir  = "/var/signage/tizen"
-$SshTarget  = "$User@$PiHost"
+$RepoRoot  = Split-Path -Parent $PSScriptRoot
+$TizenDir  = Join-Path $RepoRoot "apps\nexari-tizen"
+$WgtPath   = Join-Path $TizenDir "NexariPlayer.wgt"
+$SsspPath  = Join-Path $TizenDir "sssp_config.xml"
+$RemoteDir = "/var/signage/tizen"
+$SshTarget = "$User@$PiHost"
 
-# ── Require ssh / scp ─────────────────────────────────────────────────────────
+# -- Require ssh / scp ---------------------------------------------------------
 foreach ($cmd in @("ssh", "scp")) {
     if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
-        throw "Required command not found: $cmd — install OpenSSH client from Windows Optional Features"
+        throw "Required command not found: $cmd - install OpenSSH client from Windows Optional Features"
     }
 }
 
-# ── Require WGT ───────────────────────────────────────────────────────────────
+# -- Require WGT ---------------------------------------------------------------
 if (-not (Test-Path $WgtPath)) {
     Write-Host ""
     Write-Host "ERROR: NexariPlayer.wgt not found at:" -ForegroundColor Red
@@ -80,45 +78,46 @@ if (-not (Test-Path $WgtPath)) {
     exit 1
 }
 
-# ── patch sssp_config.xml with current version + file size ───────────────────
+# -- Patch sssp_config.xml with current version + file size -------------------
 Write-Host "==> Running npm run pack:sssp..." -ForegroundColor Cyan
 Push-Location $TizenDir
 try {
-    # pack:sssp will warn about /var/signage/tizen not existing locally — that's expected
-    npm run pack:sssp 2>&1 | Where-Object { $_ -notmatch "Deploy dir not found" } | Write-Host
-    if ($LASTEXITCODE -ne 0) { throw "npm run pack:sssp failed" }
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    npm run pack:sssp 2>&1 | Where-Object { "$_" -notmatch "Deploy dir not found" } | Write-Host
+    $ec = $LASTEXITCODE
+    $ErrorActionPreference = $prevEAP
+    if ($ec -ne 0) { throw "npm run pack:sssp failed" }
 }
 finally {
     Pop-Location
 }
 
-# ── Ensure remote directory exists ────────────────────────────────────────────
+# -- Ensure remote directory exists -------------------------------------------
 Write-Host "==> Ensuring $RemoteDir exists on $SshTarget..." -ForegroundColor Cyan
 ssh $SshTarget "sudo mkdir -p '$RemoteDir' && sudo chown '${User}:${User}' '$RemoteDir'"
 if ($LASTEXITCODE -ne 0) { throw "Failed to create remote directory" }
 
-# ── Upload ────────────────────────────────────────────────────────────────────
+# -- Upload -------------------------------------------------------------------
 Write-Host "==> Uploading NexariPlayer.wgt and sssp_config.xml..." -ForegroundColor Cyan
 scp "$WgtPath" "$SsspPath" "${SshTarget}:${RemoteDir}/"
 if ($LASTEXITCODE -ne 0) { throw "SCP upload failed" }
 
-# ── Verify ────────────────────────────────────────────────────────────────────
+# -- Verify -------------------------------------------------------------------
 Write-Host "==> Verifying files on Pi..." -ForegroundColor Cyan
 ssh $SshTarget "ls -lh '$RemoteDir/'"
 if ($LASTEXITCODE -ne 0) { throw "Remote verification failed" }
 
-# ── Publish release to DS API (optional) ─────────────────────────────────────
+# -- Publish release to DS API (optional) -------------------------------------
 if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
     $ApiBase = $ApiBase.TrimEnd('/')
 
     $pkgJson = Get-Content (Join-Path $TizenDir "package.json") -Raw | ConvertFrom-Json
     $Version = $pkgJson.version
-    # Use the public HTTPS URL — TVs on any network can reach it
     $DownloadUrl = "https://ds.chiho.app/tizen/NexariPlayer.wgt"
 
     Write-Host "==> Publishing release v$Version to $ApiBase ..." -ForegroundColor Cyan
 
-    # Login via superadmin endpoint and capture the sa_access_token cookie in a session
     $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     try {
         $loginBody = @{ email = $SuperadminEmail; password = $SuperadminPassword } | ConvertTo-Json
@@ -128,8 +127,9 @@ if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
             -Body $loginBody `
             -WebSession $session `
             -UseBasicParsing
-    } catch {
-        Write-Host "WARNING: Superadmin login failed — skipping release publish. $_" -ForegroundColor Yellow
+    }
+    catch {
+        Write-Host "WARNING: Superadmin login failed - skipping release publish. $_" -ForegroundColor Yellow
         $session = $null
     }
 
@@ -144,12 +144,14 @@ if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
                 -WebSession $session `
                 -Body ($releaseBody | ConvertTo-Json)
             Write-Host "  Release published: v$($publishResp.version) (id=$($publishResp.id))" -ForegroundColor Green
-        } catch {
-            Write-Host "WARNING: Failed to publish release — $_" -ForegroundColor Yellow
+        }
+        catch {
+            Write-Host "WARNING: Failed to publish release - $_" -ForegroundColor Yellow
         }
     }
-} else {
-    Write-Host "(Skipping release publish — add -SuperadminEmail / -SuperadminPassword to publish)" -ForegroundColor DarkGray
+}
+else {
+    Write-Host "(Skipping release publish - add -SuperadminEmail / -SuperadminPassword to publish)" -ForegroundColor DarkGray
 }
 
 Write-Host ""
@@ -158,5 +160,5 @@ Write-Host "  TV launcher URL (HTTPS): https://ds.chiho.app/tizen/sssp_config.xm
 Write-Host "  TV launcher URL (LAN):   http://${PiHost}/tizen/sssp_config.xml" -ForegroundColor Gray
 Write-Host ""
 Write-Host "On existing test TVs with a different cert installed:" -ForegroundColor Yellow
-Write-Host "  tizen uninstall -s <TV_IP>:26101 -p fmDBbBnvJM.NexariTizen" -ForegroundColor Yellow
+Write-Host "  tizen uninstall -s [TV_IP]:26101 -p fmDBbBnvJM.NexariTizen" -ForegroundColor Yellow
 Write-Host "  Then use the URL Launcher on the TV to install fresh." -ForegroundColor Yellow

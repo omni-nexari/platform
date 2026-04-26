@@ -50,7 +50,7 @@ import { writeAuditLog } from '../services/audit.js';
 const REFRESH_COOKIE = 'refresh_token';
 const ACCESS_COOKIE = 'access_token';
 const CSRF_COOKIE = 'csrf_token';
-const BROWSER_REFRESH_PATH = '/api/auth/refresh';
+const BROWSER_REFRESH_PATH = '/api/v1/auth/refresh';
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 const BRANDING_ASSET_TYPES = new Set(['logo', 'favicon', 'login-background']);
 const secureCookies = process.env['COOKIE_SECURE'] !== 'false';
@@ -127,7 +127,6 @@ function clearCsrfCookie(reply: FastifyReply) {
 
 function clearRefreshCookie(reply: FastifyReply) {
   reply.clearCookie(REFRESH_COOKIE, { path: BROWSER_REFRESH_PATH });
-  reply.clearCookie(REFRESH_COOKIE, { path: '/auth/refresh' });
 }
 
 function getSetCookieDiagnostics(reply: FastifyReply) {
