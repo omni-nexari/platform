@@ -191,6 +191,28 @@ window.RemoteControl = {
   },
 
   handleGlobalShortcut(keyCode, activeScreen, event) {
+    // When an IPTV channel group is playing, digit keys 0-9 are reserved for
+    // direct channel tuning and must NOT trigger NUM_2/NUM_4 shortcuts.
+    const channelGroupActive = (
+      typeof Player !== 'undefined' &&
+      Player.currentChannelGroup &&
+      activeScreen === 'player'
+    );
+    if (channelGroupActive && keyCode >= this.KEYS.NUM_0 && keyCode <= this.KEYS.NUM_9) {
+      return false;
+    }
+
+    // When an IPTV channel group is playing, digit keys 0-9 are reserved for
+    // direct channel tuning and must NOT trigger NUM_2/NUM_4 shortcuts.
+    const channelGroupActive = (
+      typeof Player !== 'undefined' &&
+      Player.currentChannelGroup &&
+      activeScreen === 'player'
+    );
+    if (channelGroupActive && keyCode >= this.KEYS.NUM_0 && keyCode <= this.KEYS.NUM_9) {
+      return false;
+    }
+
     switch (keyCode) {
       case this.KEYS.NUM_4:
         event.preventDefault();
@@ -230,6 +252,25 @@ window.RemoteControl = {
   },
 
   handlePairingScreenKeys(keyCode, event) {
+    // IPTV channel-group tuning: CH+/CH- and direct digit input.
+    if (typeof Player !== 'undefined' && Player.currentChannelGroup) {
+      if (keyCode === this.KEYS.CHANNEL_UP) {
+        event.preventDefault();
+        if (Player.nextChannel) Player.nextChannel();
+        return;
+      }
+      if (keyCode === this.KEYS.CHANNEL_DOWN) {
+        event.preventDefault();
+        if (Player.prevChannel) Player.prevChannel();
+        return;
+      }
+      if (keyCode >= this.KEYS.NUM_0 && keyCode <= this.KEYS.NUM_9) {
+        event.preventDefault();
+        if (Player.bufferDigit) Player.bufferDigit(keyCode - this.KEYS.NUM_0);
+        return;
+      }
+    }
+
     switch (keyCode) {
       case this.KEYS.RETURN:
       case this.KEYS.EXIT:
@@ -241,6 +282,25 @@ window.RemoteControl = {
   },
 
   handlePlayerScreenKeys(keyCode, event) {
+    // IPTV channel-group tuning: CH+/CH- and direct digit input.
+    if (typeof Player !== 'undefined' && Player.currentChannelGroup) {
+      if (keyCode === this.KEYS.CHANNEL_UP) {
+        event.preventDefault();
+        if (Player.nextChannel) Player.nextChannel();
+        return;
+      }
+      if (keyCode === this.KEYS.CHANNEL_DOWN) {
+        event.preventDefault();
+        if (Player.prevChannel) Player.prevChannel();
+        return;
+      }
+      if (keyCode >= this.KEYS.NUM_0 && keyCode <= this.KEYS.NUM_9) {
+        event.preventDefault();
+        if (Player.bufferDigit) Player.bufferDigit(keyCode - this.KEYS.NUM_0);
+        return;
+      }
+    }
+
     switch (keyCode) {
       case this.KEYS.RETURN:
         // Back button - show status bar

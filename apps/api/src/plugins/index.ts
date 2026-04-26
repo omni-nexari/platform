@@ -44,6 +44,7 @@ export async function registerPlugins(app: FastifyInstance) {
 
   await app.register(fastifyHelmet, {
     contentSecurityPolicy: false, // API-only; CSP handled by web app
+    frameguard: false,            // Allow kiosk/kitchen pages to be embedded in TV iframes
   });
 
   await app.register(fastifyCors, {
@@ -68,6 +69,22 @@ export async function registerPlugins(app: FastifyInstance) {
       if (allowedOrigins.has(normalizeOrigin(origin))) {
         callback(null, true);
         return;
+      }
+
+      // In development, allow any private-network origin (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+      // so the DS app is reachable from LAN IPs (e.g. http://192.168.1.110:5173).
+      if (process.env['NODE_ENV'] !== 'production') {
+        try {
+          const { hostname } = new URL(origin);
+          if (
+            /^192\.168\./.test(hostname) ||
+            /^10\./.test(hostname) ||
+            /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)
+          ) {
+            callback(null, true);
+            return;
+          }
+        } catch { /* invalid origin URL — fall through to deny */ }
       }
 
       callback(new Error('Origin not allowed by CORS'), false);

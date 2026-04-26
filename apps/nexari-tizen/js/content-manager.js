@@ -813,7 +813,11 @@ window.ContentManager = {
     const allInMemCache = playlist.items.every(item => {
       const c = item && item.content;
       if (!c || !c.url) return true;
-      if (!downloadableTypes.has(String(c.type || '').toUpperCase())) return true;
+      const t = String(c.type || '').toUpperCase();
+      // HTML5 packages must always be probed (cheap path-exists check) so the
+      // ZIP gets extracted on first play; never short-circuit here.
+      if (t === 'HTML' || t === 'HTML5') return false;
+      if (!downloadableTypes.has(t)) return true;
       const cid = c.id ? String(c.id) : null;
       return cid && this.cachedUrlMap.has(cid);
     });
@@ -848,7 +852,7 @@ window.ContentManager = {
         }
         
         // Handle HTML5 packages (download and unzip for offline playback)
-        if (content.type === 'HTML') {
+        if (content.type === 'HTML' || content.type === 'HTML5') {
           try {
             const localHtml = await this.prepareHtmlPackage(content);
             if (localHtml && localHtml.url) {
@@ -866,8 +870,8 @@ window.ContentManager = {
           }
         }
 
-        // Skip remote HTML/WEBPAGE content (stream directly)
-        if (content.type === 'HTML' || content.type === 'WEBPAGE') {
+        // Skip remote HTML/WEBPAGE/WEB_URL content (stream directly)
+        if (content.type === 'HTML' || content.type === 'HTML5' || content.type === 'WEBPAGE' || content.type === 'WEB_URL') {
           logger.info(`Skipping download for ${content.type}: ${content.name}`);
           downloadedItems.push(item);
           continue;
@@ -1138,7 +1142,7 @@ window.ContentManager = {
   },
 
   getHtmlPackageInfo(content) {
-    if (!content || content.type !== 'HTML') {
+    if (!content || (content.type !== 'HTML' && content.type !== 'HTML5')) {
       return null;
     }
 
@@ -1173,7 +1177,11 @@ window.ContentManager = {
       startPage,
       packageKey,
       signature: this.hashString(signatureSource),
-      zipUrl: this.buildPublicUrl(metadata.packageZipUrl || filePath),
+      zipUrl: this.buildPublicUrl(metadata.packageZipUrl || filePath)
+        || metadata.packageZipUrl
+        || content.fileUrl
+        || content.url
+        || null,
       packageUrl: metadata.packageUrl || (packagePath ? this.buildPublicUrl(`${packagePath}/${startPage}`) : null),
     };
   },

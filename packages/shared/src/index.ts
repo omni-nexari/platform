@@ -5,4 +5,5 @@ export * from './schemas/management.js';
 export * from './schemas/workspace.js';
 export * from './schemas/device.js';
 export * from './schemas/playlist.js';
+export * from './schemas/iptv.js';
 export * from './types/roles.js';

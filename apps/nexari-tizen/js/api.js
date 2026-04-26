@@ -277,17 +277,56 @@ window.API = {
   _normalizeContent(content, deviceToken) {
     const token = deviceToken || localStorage.getItem('deviceToken') || '';
     const fileUrl = `${CONFIG.API_BASE}/devices/device/content/${content.id}/file?token=${encodeURIComponent(token)}`;
-    return {
+    const normalized = {
       id: content.id,
       name: content.name,
       type: (content.type || '').toUpperCase(),
       mimeType: content.mimeType,
       url: content.url || fileUrl,
       fileUrl,
+      webUrl: content.webUrl || null,
       originalName: content.originalName,
       filePath: content.filePath,
       metadata: content.metadata || '{}',
     };
+
+    // HTML5 ZIP packages: server stores the ZIP at filePath, fetchable only via
+    // the authenticated device endpoint. Inject the auth'd fileUrl + flags into
+    // metadata so content-manager.getHtmlPackageInfo() recognises it as a package.
+    if (normalized.type === 'HTML5') {
+      try {
+        const meta = typeof content.metadata === 'string'
+          ? JSON.parse(content.metadata || '{}')
+          : (content.metadata || {});
+        if (!meta.filePath && content.filePath) meta.filePath = content.filePath;
+        if (!meta.startPage) meta.startPage = 'index.html';
+        meta.isPackage = true;
+        meta.packageZipUrl = fileUrl;
+        normalized.metadata = JSON.stringify(meta);
+      } catch (_) { /* keep original metadata */ }
+    }
+
+    // Channel groups carry an embedded list of IPTV channels in metadata —
+    // surface them as first-class fields so the player can tune without
+    // re-parsing JSON on every key press.
+    if (normalized.type === 'CHANNEL_GROUP') {
+      try {
+        const meta = typeof content.metadata === 'string'
+          ? JSON.parse(content.metadata || '{}')
+          : (content.metadata || {});
+        normalized.channels = Array.isArray(meta.channels) ? meta.channels : [];
+        normalized.defaultChannelNumber = typeof meta.defaultChannelNumber === 'number'
+          ? meta.defaultChannelNumber
+          : (normalized.channels[0] ? normalized.channels[0].number : 1);
+        // Channel groups don't have a single playable URL — clear the file URL.
+        normalized.url = '';
+      } catch (err) {
+        normalized.channels = [];
+        normalized.defaultChannelNumber = 1;
+      }
+    }
+
+    return normalized;
   },
 };
 

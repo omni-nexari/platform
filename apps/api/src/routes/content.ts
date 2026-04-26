@@ -10,6 +10,13 @@ import sharp from 'sharp';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
 import { notifyContentFailed, notifyStorageThresholdCrossing } from '../services/notifications.js';
 import { dispatchWebhookEvent } from '../services/webhooks.js';
+import {
+  CreateChannelGroupSchema,
+  UpdateChannelGroupSchema,
+  ImportM3USchema,
+  parseM3U,
+  ChannelGroupMetadataSchema,
+} from '@signage/shared';
 
 const execFileAsync = promisify(execFile);
 const FFMPEG_BIN = process.env['FFMPEG_PATH'] ?? 'ffmpeg';
@@ -753,6 +760,109 @@ export async function contentRoutes(app: FastifyInstance) {
       .returning();
 
     return reply.send(patched);
+  });
+
+  // ── POST /content/channel-group ───────────────────────────────────────────
+  // Create an IPTV channel group. Channels are stored entirely in the
+  // `metadata` JSON column — no schema migration required.
+  app.post('/channel-group', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const parsed = CreateChannelGroupSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid request', issues: parsed.error.issues });
+    }
+    const { workspaceId: wsId, name, description, folderId, channels, defaultChannelNumber } = parsed.data;
+
+    // Verify metadata invariants (unique numbers, default exists).
+    const metaCheck = ChannelGroupMetadataSchema.safeParse({ channels, defaultChannelNumber });
+    if (!metaCheck.success) {
+      return reply.status(400).send({ error: 'Invalid channel group', issues: metaCheck.error.issues });
+    }
+
+    const member = await checkWorkspaceAccess(wsId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions to upload content' });
+
+    const wsRowCg = await db.query.workspaces.findFirst({ where: eq(workspaces.id, wsId), columns: { settings: true } });
+    let wsSettingsCg: { approvalRequired?: boolean } = {};
+    try { wsSettingsCg = JSON.parse(wsRowCg?.settings ?? '{}'); } catch { /* ignore */ }
+    const initialApprovalStateCg = wsSettingsCg.approvalRequired && !APPROVE_ROLES.has(user.role) ? 'draft' : 'approved';
+
+    const [item] = await db.insert(contentItems).values({
+      workspaceId: wsId,
+      uploadedBy: user.sub,
+      type: 'channel_group',
+      name: name.trim(),
+      description: description ?? null,
+      folderId: folderId ?? null,
+      metadata: JSON.stringify({ channels, defaultChannelNumber }),
+      status: 'ready',
+      approvalState: initialApprovalStateCg,
+    }).returning();
+
+    return reply.status(201).send(item);
+  });
+
+  // ── PATCH /content/:id/channel-group ──────────────────────────────────────
+  app.patch('/:id/channel-group', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const parsed = UpdateChannelGroupSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid request', issues: parsed.error.issues });
+    }
+    const body = parsed.data;
+
+    const item = await db.query.contentItems.findFirst({
+      where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)),
+    });
+    if (!item) return reply.status(404).send({ error: 'Not found' });
+    if (item.type !== 'channel_group') return reply.status(400).send({ error: 'Not a channel group' });
+
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+    const current = (() => { try { return JSON.parse(item.metadata ?? '{}'); } catch { return {}; } })() as {
+      channels?: unknown; defaultChannelNumber?: number;
+    };
+    const nextChannels = body.channels ?? (Array.isArray(current.channels) ? current.channels : []);
+    const nextDefault = body.defaultChannelNumber ?? current.defaultChannelNumber ?? 1;
+
+    const metaCheck = ChannelGroupMetadataSchema.safeParse({
+      channels: nextChannels,
+      defaultChannelNumber: nextDefault,
+    });
+    if (!metaCheck.success) {
+      return reply.status(400).send({ error: 'Invalid channel group', issues: metaCheck.error.issues });
+    }
+
+    const [patched] = await db.update(contentItems)
+      .set({
+        ...(body.name ? { name: body.name.trim() } : {}),
+        ...(body.description !== undefined ? { description: body.description ?? null } : {}),
+        metadata: JSON.stringify(metaCheck.data),
+        updatedAt: new Date(),
+      })
+      .where(eq(contentItems.id, id))
+      .returning();
+
+    return reply.send(patched);
+  });
+
+  // ── POST /content/channel-group/import-m3u ────────────────────────────────
+  // Pure-parse endpoint: takes an M3U body and returns proposed channels for
+  // the dashboard to preview. Does NOT persist anything.
+  app.post('/channel-group/import-m3u', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const parsed = ImportM3USchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid request', issues: parsed.error.issues });
+    }
+    const channels = parseM3U(parsed.data.text);
+    if (channels.length === 0) {
+      return reply.status(400).send({ error: 'No playable channels found in M3U body' });
+    }
+    return reply.send({ channels, defaultChannelNumber: channels[0]!.number });
   });
 
   // ── GET /content/:id ──────────────────────────────────────────────────────

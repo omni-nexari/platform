@@ -106,6 +106,14 @@ const Player = {
   _liveCaptureIntervalMs: 1000 as number,          // requested cadence
   _liveCaptureBusy: false as boolean,              // captureScreen in progress — prevents overlapping calls
   _liveInterval: undefined as number | undefined,  // setTimeout handle (NOT setInterval — Samsung captureScreen cannot overlap)
+
+  // ── IPTV channel group runtime state ───────────────────────────────────
+  currentChannelGroup: null as any,
+  _channelDigitBuffer: '' as string,
+  _channelDigitTimer: null as any,
+  _channelBannerEl: null as any,
+  _channelBannerHideTimer: null as any,
+
   ntpOffset: 0, // Offset in milliseconds from server time
   ntpSyncInProgress: false,
   lastNtpSync: 0,
@@ -1868,6 +1876,12 @@ const Player = {
     
     logger.info('Rendering content:', content.type);
     
+    // Clean up any active channel group when transitioning to a different
+    // content item. (renderChannelGroup re-creates the state when needed.)
+    if (this.currentChannelGroup && content.type !== 'CHANNEL_GROUP') {
+      this._cleanupChannelGroup({ keepContainer: false });
+    }
+
     switch (content.type) {
       case 'IMAGE':
         this.renderImage(container, content);
@@ -1879,6 +1893,10 @@ const Player = {
 
       case 'IPTV':
         this.renderIptv(container, content);
+        break;
+
+      case 'CHANNEL_GROUP':
+        this.renderChannelGroup(container, content);
         break;
         
       case 'LIVE_STREAM':
@@ -2329,6 +2347,227 @@ const Player = {
 
     logger.warn('AVPlay unavailable; falling back to HTML5 video for IPTV');
     this.renderVideoHTML5(container, content);
+  },
+
+  // ── Channel group (IPTV bundle) ──────────────────────────────────────────
+  // A channel group is a content item of type CHANNEL_GROUP whose metadata
+  // carries an ordered list of `channels`. The player keeps the active
+  // channel on `Player.currentChannelGroup` and re-uses `renderIptvAVPlay`
+  // to play the selected stream. CH+/CH-/digit keys (wired in
+  // remote-control.js) call `tuneChannel`, `nextChannel`, `prevChannel`.
+  renderChannelGroup(container, content) {
+    const channels = Array.isArray(content.channels) ? content.channels.slice() : [];
+    if (!channels.length) {
+      logger.warn('CHANNEL_GROUP: no channels in metadata, showing idle');
+      this.showIdleScreen();
+      return;
+    }
+    // Sort by channel number for deterministic CH+/CH- iteration.
+    channels.sort((a, b) => (a.number || 0) - (b.number || 0));
+
+    // Resolve starting channel: persisted last-played → author default → first.
+    const lastKey = `iptv:lastChannel:${content.id}`;
+    let startNumber: number | null = null;
+    try {
+      const persisted = localStorage.getItem(lastKey);
+      if (persisted) startNumber = Number(persisted);
+    } catch (_) {}
+    if (!startNumber || !channels.find((c) => c.number === startNumber)) {
+      startNumber = content.defaultChannelNumber || channels[0].number;
+    }
+
+    this._cleanupChannelGroup({ keepContainer: true });
+    this.currentChannelGroup = {
+      contentId: content.id,
+      name: content.name,
+      channels,
+      container,
+      lastKey,
+      failureCount: 0,
+    };
+
+    this.tuneChannel(startNumber);
+  },
+
+  /** Play the channel with `number` from the active group. */
+  tuneChannel(number) {
+    const group = this.currentChannelGroup;
+    if (!group) return;
+    const channel = group.channels.find((c) => c.number === number);
+    if (!channel) {
+      logger.warn('tuneChannel: channel not found:', number);
+      return;
+    }
+
+    group.currentChannelNumber = channel.number;
+    try { localStorage.setItem(group.lastKey, String(channel.number)); } catch (_) {}
+
+    // Telemetry: surface current channel for monitoring.
+    if (typeof Telemetry !== 'undefined' && (Telemetry as any).updateIptvStats) {
+      (Telemetry as any).updateIptvStats({
+        channelGroupId: group.contentId,
+        currentChannelNumber: channel.number,
+        currentChannelName: channel.name,
+      });
+    }
+
+    // Tear down any prior AVPlay session before opening the new URL.
+    try { this.resetAvPlay(); } catch (_) {}
+
+    // Synthesize a content shape compatible with renderIptvAVPlay.
+    const synthetic: any = {
+      id: `${group.contentId}:${channel.number}`,
+      name: `${channel.number} ${channel.name}`,
+      type: 'IPTV',
+      url: channel.url,
+      protocol: channel.protocol,
+      _channelGroupContentId: group.contentId,
+      _channelNumber: channel.number,
+    };
+
+    // Clear container DOM (renderIptvAVPlay re-creates the AVPlay container).
+    try { group.container.innerHTML = ''; } catch (_) {}
+
+    this.renderIptvAVPlay(group.container, synthetic);
+    this._showChannelBanner(channel);
+  },
+
+  /** Move to the next channel (wraps around). */
+  nextChannel() {
+    const group = this.currentChannelGroup;
+    if (!group || !group.channels.length) return;
+    const idx = group.channels.findIndex((c) => c.number === group.currentChannelNumber);
+    const nextIdx = idx < 0 ? 0 : (idx + 1) % group.channels.length;
+    this.tuneChannel(group.channels[nextIdx].number);
+  },
+
+  /** Move to the previous channel (wraps around). */
+  prevChannel() {
+    const group = this.currentChannelGroup;
+    if (!group || !group.channels.length) return;
+    const idx = group.channels.findIndex((c) => c.number === group.currentChannelNumber);
+    const prevIdx = idx < 0
+      ? group.channels.length - 1
+      : (idx - 1 + group.channels.length) % group.channels.length;
+    this.tuneChannel(group.channels[prevIdx].number);
+  },
+
+  /**
+   * Append a digit to the channel-tuning buffer. Commits after a 1.5 s
+   * inactivity window, or immediately when the buffer reaches 4 digits.
+   */
+  bufferDigit(digit) {
+    const group = this.currentChannelGroup;
+    if (!group) return;
+    if (typeof digit !== 'number' || digit < 0 || digit > 9) return;
+
+    this._channelDigitBuffer = (this._channelDigitBuffer || '') + String(digit);
+    if (this._channelDigitBuffer.length > 4) {
+      this._channelDigitBuffer = this._channelDigitBuffer.slice(-4);
+    }
+    this._showChannelBuffer(this._channelDigitBuffer);
+
+    if (this._channelDigitTimer) {
+      clearTimeout(this._channelDigitTimer);
+    }
+    const commit = () => {
+      const num = Number(this._channelDigitBuffer || '0');
+      this._channelDigitBuffer = '';
+      this._channelDigitTimer = null;
+      if (num > 0) {
+        const exists = group.channels.find((c) => c.number === num);
+        if (exists) {
+          this.tuneChannel(num);
+        } else {
+          this._showChannelBanner({ number: num, name: 'No channel' } as any);
+        }
+      }
+    };
+    if (this._channelDigitBuffer.length >= 4) {
+      commit();
+    } else {
+      this._channelDigitTimer = setTimeout(commit, 1500) as any;
+    }
+  },
+
+  /** Remove banner + state when a channel group is no longer active. */
+  _cleanupChannelGroup(opts) {
+    if (this._channelDigitTimer) {
+      try { clearTimeout(this._channelDigitTimer); } catch (_) {}
+      this._channelDigitTimer = null;
+    }
+    this._channelDigitBuffer = '';
+    if (this._channelBannerEl && this._channelBannerEl.parentNode) {
+      try { this._channelBannerEl.parentNode.removeChild(this._channelBannerEl); } catch (_) {}
+    }
+    this._channelBannerEl = null;
+    if (this._channelBannerHideTimer) {
+      try { clearTimeout(this._channelBannerHideTimer); } catch (_) {}
+      this._channelBannerHideTimer = null;
+    }
+    if (!opts || !opts.keepContainer) {
+      this.currentChannelGroup = null;
+    }
+  },
+
+  _ensureChannelBannerEl() {
+    if (this._channelBannerEl) return this._channelBannerEl;
+    const el = document.createElement('div');
+    el.id = 'iptv-channel-banner';
+    el.style.cssText = [
+      'position:fixed', 'right:48px', 'bottom:48px',
+      'z-index:99999', 'pointer-events:none',
+      'padding:18px 28px', 'border-radius:14px',
+      'background:rgba(10,10,18,0.82)', 'color:#fff',
+      'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+      'box-shadow:0 12px 36px rgba(0,0,0,0.45)',
+      'transition:opacity 220ms ease',
+      'opacity:0',
+      'min-width:220px',
+    ].join(';');
+    document.body.appendChild(el);
+    this._channelBannerEl = el;
+    return el;
+  },
+
+  _showChannelBanner(channel) {
+    const el = this._ensureChannelBannerEl();
+    const num = String(channel.number || '').padStart(2, '0');
+    el.innerHTML = `
+      <div style="font-size:14px;opacity:0.7;letter-spacing:0.06em;text-transform:uppercase;">Channel</div>
+      <div style="display:flex;align-items:baseline;gap:14px;margin-top:4px;">
+        <div style="font-size:42px;font-weight:700;line-height:1;">${num}</div>
+        <div style="font-size:22px;font-weight:500;line-height:1;">${this._escapeHtml(channel.name || '')}</div>
+      </div>
+    `;
+    el.style.opacity = '1';
+    if (this._channelBannerHideTimer) {
+      try { clearTimeout(this._channelBannerHideTimer); } catch (_) {}
+    }
+    this._channelBannerHideTimer = setTimeout(() => {
+      if (this._channelBannerEl) this._channelBannerEl.style.opacity = '0';
+      this._channelBannerHideTimer = null;
+    }, 3000) as any;
+  },
+
+  _showChannelBuffer(buffer) {
+    const el = this._ensureChannelBannerEl();
+    const padded = (buffer || '').padEnd(2, '-');
+    el.innerHTML = `
+      <div style="font-size:14px;opacity:0.7;letter-spacing:0.06em;text-transform:uppercase;">Tune</div>
+      <div style="font-size:42px;font-weight:700;line-height:1;margin-top:4px;letter-spacing:0.08em;">${this._escapeHtml(padded)}</div>
+    `;
+    el.style.opacity = '1';
+    if (this._channelBannerHideTimer) {
+      try { clearTimeout(this._channelBannerHideTimer); } catch (_) {}
+      this._channelBannerHideTimer = null;
+    }
+  },
+
+  _escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    } as any)[ch]);
   },
 
   // Render live streams (HLS/DASH/RTMP)
@@ -5069,9 +5308,7 @@ const Player = {
     // them are prepared, regardless of download/prepare timing differences.
     this._zoneSyncExpectedCount = activeZones.filter((z: any) => !!z.syncGroup).length;
     if (this._zoneSyncEnabled) {
-      // AVPlay VideoMixer renders BELOW the DOM → body/html must be transparent.
-      this.setAvPlayVisualMode(true);
-      logger.info(`[Zones] Sync mode enabled — using AVPlay VideoMixer for synced zones (expecting ${this._zoneSyncExpectedCount})`);
+      logger.info(`[Zones] Sync mode enabled — HTML5 path with synchronized start/loop (expecting ${this._zoneSyncExpectedCount})`);
     } else {
       logger.info(`[Zones] No sync groups — using HTML5 <video> for all zones`);
     }
@@ -5338,12 +5575,39 @@ const Player = {
     logger.info(`[Zone ${zoneIndex}] Playing video (HTML5): ${videoUrl} [${isLocalFile ? 'local' : 'http'}] fit=${objectFit} syncLoop=${useSyncLoop}`);
 
     const video = document.createElement('video');
-    video.style.cssText = `width:100%;height:100%;object-fit:${objectFit};display:block;background:#000;`;
+    // For 'contain': object-fit: contain is universally supported.
+    // For 'fill':    Tizen's hardware video overlay sometimes ignores object-fit,
+    //               causing letterboxing even when fill is requested. We apply
+    //               a CSS transform:scale() in 'loadedmetadata' below which the
+    //               hardware overlay DOES respect.
+    const initialFit = objectFit === 'fill' ? 'contain' : objectFit;
+    video.style.cssText = `position:absolute;left:0;top:0;width:100%;height:100%;object-fit:${initialFit};display:block;background:#000;`;
     video.setAttribute('playsinline', '');
     if (zoneIndex > 0) video.muted = true;
     // Only use native loop when there is no sync partner — otherwise we manage
     // re-looping manually so all zones restart in the same JS tick.
     if (isSingleVideoLoop && !useSyncLoop) video.loop = true;
+
+    if (objectFit === 'fill') {
+      const applyStretch = () => {
+        const cw = container.clientWidth;
+        const ch = container.clientHeight;
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+        if (!cw || !ch || !vw || !vh) return;
+        // Pin video at top-left at its natural pixel size, then scale that to
+        // exactly fill the container. The hardware overlay honors transform.
+        video.style.width = vw + 'px';
+        video.style.height = vh + 'px';
+        video.style.transformOrigin = 'top left';
+        video.style.transform = `scale(${(cw / vw).toFixed(6)}, ${(ch / vh).toFixed(6)})`;
+        video.style.objectFit = 'fill';
+        logger.info(`[Zone ${zoneIndex}] Fill stretch applied: ${vw}x${vh} → ${cw}x${ch}`);
+      };
+      video.addEventListener('loadedmetadata', applyStretch);
+      // Re-apply if first attempt fired before container was laid out.
+      video.addEventListener('canplay', applyStretch, { once: true });
+    }
 
     video.addEventListener('ended', () => {
       this._zoneErrorCounts[zone.id] = 0;

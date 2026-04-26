@@ -63,6 +63,12 @@ const Player = {
     _liveCaptureIntervalMs: 1000, // requested cadence
     _liveCaptureBusy: false, // captureScreen in progress — prevents overlapping calls
     _liveInterval: undefined, // setTimeout handle (NOT setInterval — Samsung captureScreen cannot overlap)
+    // ── IPTV channel group runtime state ───────────────────────────────────
+    currentChannelGroup: null,
+    _channelDigitBuffer: '',
+    _channelDigitTimer: null,
+    _channelBannerEl: null,
+    _channelBannerHideTimer: null,
     ntpOffset: 0, // Offset in milliseconds from server time
     ntpSyncInProgress: false,
     lastNtpSync: 0,
@@ -89,7 +95,6 @@ const Player = {
     // Loop re-sync: when synced zones complete their stream, wait for ALL to complete
     // then seekTo(0)+play() simultaneously to prevent drift accumulation.
     _zoneSyncLoopQueue: [],
-    _zoneSyncLoopFlushTimer: null,
     // Document (PDF/Office) rendering state
     documentActive: false,
     documentItemKey: null,
@@ -1412,8 +1417,7 @@ const Player = {
                 return;
             const [action, payload] = phase2Commands[idx];
             self.sendLocalMdcXhr(action, payload)
-                .then((r) => { logger.info('[mdc-startup] phase2', action, 'ok:', r.ok); })
-                .catch(() => { })
+                .then((r) => { logger.info('[mdc-startup] phase2', action, 'ok:', r.ok); }, () => {})
                 .then(() => {
                 self._mdcPhase2InFlight = Math.max(0, self._mdcPhase2InFlight - 1);
                 runNext(idx + 1);
@@ -1449,8 +1453,7 @@ const Player = {
                 payload: { power: s.power, volume: s.volume, mute: s.mute, input: s.input },
             }));
         })
-            .catch(() => { })
-            .then(() => { this._mdcHeartbeatInFlight = false; });
+            .then(() => { this._mdcHeartbeatInFlight = false; }, () => { this._mdcHeartbeatInFlight = false; });
     },
     // Phase 4 (every 5min): run all MDC GETs → send mdc_poll WS message
     runMdcPoll() {
@@ -1574,8 +1577,7 @@ const Player = {
             }
             const { action, key, payload } = sequence[idx];
             self.sendLocalMdcXhr(action, payload || {})
-                .then((r) => { results[key] = r; })
-                .catch(() => { results[key] = { ok: false }; })
+                .then((r) => { results[key] = r; }, () => { results[key] = { ok: false }; })
                 .then(() => { runNext(idx + 1); });
         }
         runNext(0);
@@ -1749,7 +1751,6 @@ const Player = {
                         newSignature === this.lastContentSignature &&
                         this.currentContent &&
                         isPlaying &&
-                        !this.documentActive &&
                         true) {
                         logger.info('Content unchanged since last refresh, skipping re-render');
                         return;
@@ -1763,7 +1764,8 @@ const Player = {
                     // No content or empty playlist - stop playback and show idle screen
                     logger.info('No content available, showing idle screen');
                     this.cancelCurrentPlayback();
-                    if (this._zoneMode) this.stopZoneMode();
+                    if (this._zoneMode)
+                        this.stopZoneMode();
                     this.clearPlaylistCache();
                     this.currentContent = null;
                     this.lastContentSignature = null;
@@ -1806,6 +1808,11 @@ const Player = {
             return;
         }
         logger.info('Rendering content:', content.type);
+        // Clean up any active channel group when transitioning to a different
+        // content item. (renderChannelGroup re-creates the state when needed.)
+        if (this.currentChannelGroup && content.type !== 'CHANNEL_GROUP') {
+            this._cleanupChannelGroup({ keepContainer: false });
+        }
         switch (content.type) {
             case 'IMAGE':
                 this.renderImage(container, content);
@@ -1815,6 +1822,9 @@ const Player = {
                 break;
             case 'IPTV':
                 this.renderIptv(container, content);
+                break;
+            case 'CHANNEL_GROUP':
+                this.renderChannelGroup(container, content);
                 break;
             case 'LIVE_STREAM':
                 // HLS/DASH streams - use AVPlay for best performance
@@ -1829,6 +1839,9 @@ const Player = {
                 this.renderVideo(container, content);
                 break;
             case 'HTML':
+            case 'HTML5':
+            case 'WEBPAGE':
+            case 'WEB_URL':
                 this.renderHTML(container, content);
                 break;
             case 'MENU_BOARD':
@@ -1871,9 +1884,83 @@ const Player = {
     // Render image content
     renderImage(container, content) {
         return __awaiter(this, void 0, void 0, function* () {
-            // Tizen 4.0 Chromium can load file:// URLs directly in <img src> —
-            // no need to read via tizen.filesystem (which requires virtual paths,
-            // not the absolute /opt/usr/... paths stored in content.url).
+            // For local file:// URLs, we need to read the file and create a blob URL
+            if (content.url && content.url.startsWith('file://')) {
+                try {
+                    logger.info('Converting local file to blob URL:', content.url);
+                    // Extract file path from file:// URL
+                    const filePath = content.url.replace('file://', '');
+                    // Read file using Tizen filesystem
+                    const pathParts = filePath.split('/');
+                    const fileName = pathParts[pathParts.length - 1];
+                    try {
+                        // Tizen 4 filesystem API: use storageDir.resolve() + openStream() callback
+                        const file = ContentManager.storageDir ? ContentManager.storageDir.resolve(fileName) : null;
+                        if (file) {
+                            file.openStream('r', (fs) => {
+                                const fileSize = file.fileSize || fs.bytesAvailable;
+                                const bytes = fs.readBytes(fileSize);
+                                fs.close();
+                                const buffer = new Uint8Array(bytes);
+                                const mimeType = this.getMimeType(fileName, content.contentType) || 'application/octet-stream';
+                                let blobUrl = null;
+                                let dataUrl = null;
+                                try {
+                                    const blob = new Blob([buffer], { type: mimeType });
+                                    blobUrl = URL.createObjectURL(blob);
+                                }
+                                catch (blobError) {
+                                    logger.warn('Failed to create blob URL, falling back to data URL:', blobError.message);
+                                    dataUrl = this.bytesToDataUrl(buffer, mimeType);
+                                }
+                                const img = document.createElement('img');
+                                img.style.width = '100%';
+                                img.style.height = '100%';
+                                img.style.objectFit = 'contain';
+                                img.style.backgroundColor = '#000';
+                                const useDataUrlFallback = () => {
+                                    if (!dataUrl) {
+                                        dataUrl = this.bytesToDataUrl(buffer, mimeType);
+                                    }
+                                    img.src = dataUrl;
+                                };
+                                img.onload = () => {
+                                    logger.info('Image loaded successfully from local cache');
+                                    if (blobUrl) { URL.revokeObjectURL(blobUrl); }
+                                };
+                                img.onerror = (error) => {
+                                    if (blobUrl) {
+                                        logger.warn('Blob URL failed, retrying with data URL');
+                                        URL.revokeObjectURL(blobUrl);
+                                        blobUrl = null;
+                                        useDataUrlFallback();
+                                        return;
+                                    }
+                                    logger.error('Image failed to load even after data URL fallback:', error);
+                                    this.showImageError(container, content);
+                                };
+                                if (blobUrl) { img.src = blobUrl; } else { useDataUrlFallback(); }
+                                container.appendChild(img);
+                            }, (error) => {
+                                logger.error('Failed to open file stream:', error);
+                                this.showImageError(container, content);
+                            });
+                        } else {
+                            logger.error('File not found in storageDir:', fileName);
+                            this.showImageError(container, content);
+                        }
+                    }
+                    catch (error) {
+                        logger.error('Failed to read local file:', error);
+                        this.showImageError(container, content);
+                    }
+                    return;
+                }
+                catch (error) {
+                    logger.error('Error converting file to blob:', error);
+                }
+            }
+            // For remote URLs, use img tag directly
             const img = document.createElement('img');
             img.src = content.url;
             img.style.width = '100%';
@@ -2152,6 +2239,241 @@ const Player = {
         }
         logger.warn('AVPlay unavailable; falling back to HTML5 video for IPTV');
         this.renderVideoHTML5(container, content);
+    },
+    // ── Channel group (IPTV bundle) ──────────────────────────────────────────
+    // A channel group is a content item of type CHANNEL_GROUP whose metadata
+    // carries an ordered list of `channels`. The player keeps the active
+    // channel on `Player.currentChannelGroup` and re-uses `renderIptvAVPlay`
+    // to play the selected stream. CH+/CH-/digit keys (wired in
+    // remote-control.js) call `tuneChannel`, `nextChannel`, `prevChannel`.
+    renderChannelGroup(container, content) {
+        const channels = Array.isArray(content.channels) ? content.channels.slice() : [];
+        if (!channels.length) {
+            logger.warn('CHANNEL_GROUP: no channels in metadata, showing idle');
+            this.showIdleScreen();
+            return;
+        }
+        // Sort by channel number for deterministic CH+/CH- iteration.
+        channels.sort((a, b) => (a.number || 0) - (b.number || 0));
+        // Resolve starting channel: persisted last-played → author default → first.
+        const lastKey = `iptv:lastChannel:${content.id}`;
+        let startNumber = null;
+        try {
+            const persisted = localStorage.getItem(lastKey);
+            if (persisted)
+                startNumber = Number(persisted);
+        }
+        catch (_) { }
+        if (!startNumber || !channels.find((c) => c.number === startNumber)) {
+            startNumber = content.defaultChannelNumber || channels[0].number;
+        }
+        this._cleanupChannelGroup({ keepContainer: true });
+        this.currentChannelGroup = {
+            contentId: content.id,
+            name: content.name,
+            channels,
+            container,
+            lastKey,
+            failureCount: 0,
+        };
+        this.tuneChannel(startNumber);
+    },
+    /** Play the channel with `number` from the active group. */
+    tuneChannel(number) {
+        const group = this.currentChannelGroup;
+        if (!group)
+            return;
+        const channel = group.channels.find((c) => c.number === number);
+        if (!channel) {
+            logger.warn('tuneChannel: channel not found:', number);
+            return;
+        }
+        group.currentChannelNumber = channel.number;
+        try {
+            localStorage.setItem(group.lastKey, String(channel.number));
+        }
+        catch (_) { }
+        // Telemetry: surface current channel for monitoring.
+        if (typeof Telemetry !== 'undefined' && Telemetry.updateIptvStats) {
+            Telemetry.updateIptvStats({
+                channelGroupId: group.contentId,
+                currentChannelNumber: channel.number,
+                currentChannelName: channel.name,
+            });
+        }
+        // Tear down any prior AVPlay session before opening the new URL.
+        try {
+            this.resetAvPlay();
+        }
+        catch (_) { }
+        // Synthesize a content shape compatible with renderIptvAVPlay.
+        const synthetic = {
+            id: `${group.contentId}:${channel.number}`,
+            name: `${channel.number} ${channel.name}`,
+            type: 'IPTV',
+            url: channel.url,
+            protocol: channel.protocol,
+            _channelGroupContentId: group.contentId,
+            _channelNumber: channel.number,
+        };
+        // Clear container DOM (renderIptvAVPlay re-creates the AVPlay container).
+        try {
+            group.container.innerHTML = '';
+        }
+        catch (_) { }
+        this.renderIptvAVPlay(group.container, synthetic);
+        this._showChannelBanner(channel);
+    },
+    /** Move to the next channel (wraps around). */
+    nextChannel() {
+        const group = this.currentChannelGroup;
+        if (!group || !group.channels.length)
+            return;
+        const idx = group.channels.findIndex((c) => c.number === group.currentChannelNumber);
+        const nextIdx = idx < 0 ? 0 : (idx + 1) % group.channels.length;
+        this.tuneChannel(group.channels[nextIdx].number);
+    },
+    /** Move to the previous channel (wraps around). */
+    prevChannel() {
+        const group = this.currentChannelGroup;
+        if (!group || !group.channels.length)
+            return;
+        const idx = group.channels.findIndex((c) => c.number === group.currentChannelNumber);
+        const prevIdx = idx < 0
+            ? group.channels.length - 1
+            : (idx - 1 + group.channels.length) % group.channels.length;
+        this.tuneChannel(group.channels[prevIdx].number);
+    },
+    /**
+     * Append a digit to the channel-tuning buffer. Commits after a 1.5 s
+     * inactivity window, or immediately when the buffer reaches 4 digits.
+     */
+    bufferDigit(digit) {
+        const group = this.currentChannelGroup;
+        if (!group)
+            return;
+        if (typeof digit !== 'number' || digit < 0 || digit > 9)
+            return;
+        this._channelDigitBuffer = (this._channelDigitBuffer || '') + String(digit);
+        if (this._channelDigitBuffer.length > 4) {
+            this._channelDigitBuffer = this._channelDigitBuffer.slice(-4);
+        }
+        this._showChannelBuffer(this._channelDigitBuffer);
+        if (this._channelDigitTimer) {
+            clearTimeout(this._channelDigitTimer);
+        }
+        const commit = () => {
+            const num = Number(this._channelDigitBuffer || '0');
+            this._channelDigitBuffer = '';
+            this._channelDigitTimer = null;
+            if (num > 0) {
+                const exists = group.channels.find((c) => c.number === num);
+                if (exists) {
+                    this.tuneChannel(num);
+                }
+                else {
+                    this._showChannelBanner({ number: num, name: 'No channel' });
+                }
+            }
+        };
+        if (this._channelDigitBuffer.length >= 4) {
+            commit();
+        }
+        else {
+            this._channelDigitTimer = setTimeout(commit, 1500);
+        }
+    },
+    /** Remove banner + state when a channel group is no longer active. */
+    _cleanupChannelGroup(opts) {
+        if (this._channelDigitTimer) {
+            try {
+                clearTimeout(this._channelDigitTimer);
+            }
+            catch (_) { }
+            this._channelDigitTimer = null;
+        }
+        this._channelDigitBuffer = '';
+        if (this._channelBannerEl && this._channelBannerEl.parentNode) {
+            try {
+                this._channelBannerEl.parentNode.removeChild(this._channelBannerEl);
+            }
+            catch (_) { }
+        }
+        this._channelBannerEl = null;
+        if (this._channelBannerHideTimer) {
+            try {
+                clearTimeout(this._channelBannerHideTimer);
+            }
+            catch (_) { }
+            this._channelBannerHideTimer = null;
+        }
+        if (!opts || !opts.keepContainer) {
+            this.currentChannelGroup = null;
+        }
+    },
+    _ensureChannelBannerEl() {
+        if (this._channelBannerEl)
+            return this._channelBannerEl;
+        const el = document.createElement('div');
+        el.id = 'iptv-channel-banner';
+        el.style.cssText = [
+            'position:fixed', 'right:48px', 'bottom:48px',
+            'z-index:99999', 'pointer-events:none',
+            'padding:18px 28px', 'border-radius:14px',
+            'background:rgba(10,10,18,0.82)', 'color:#fff',
+            'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+            'box-shadow:0 12px 36px rgba(0,0,0,0.45)',
+            'transition:opacity 220ms ease',
+            'opacity:0',
+            'min-width:220px',
+        ].join(';');
+        document.body.appendChild(el);
+        this._channelBannerEl = el;
+        return el;
+    },
+    _showChannelBanner(channel) {
+        const el = this._ensureChannelBannerEl();
+        const num = String(channel.number || '').padStart(2, '0');
+        el.innerHTML = `
+      <div style="font-size:14px;opacity:0.7;letter-spacing:0.06em;text-transform:uppercase;">Channel</div>
+      <div style="display:flex;align-items:baseline;gap:14px;margin-top:4px;">
+        <div style="font-size:42px;font-weight:700;line-height:1;">${num}</div>
+        <div style="font-size:22px;font-weight:500;line-height:1;">${this._escapeHtml(channel.name || '')}</div>
+      </div>
+    `;
+        el.style.opacity = '1';
+        if (this._channelBannerHideTimer) {
+            try {
+                clearTimeout(this._channelBannerHideTimer);
+            }
+            catch (_) { }
+        }
+        this._channelBannerHideTimer = setTimeout(() => {
+            if (this._channelBannerEl)
+                this._channelBannerEl.style.opacity = '0';
+            this._channelBannerHideTimer = null;
+        }, 3000);
+    },
+    _showChannelBuffer(buffer) {
+        const el = this._ensureChannelBannerEl();
+        const padded = (buffer || '').padEnd(2, '-');
+        el.innerHTML = `
+      <div style="font-size:14px;opacity:0.7;letter-spacing:0.06em;text-transform:uppercase;">Tune</div>
+      <div style="font-size:42px;font-weight:700;line-height:1;margin-top:4px;letter-spacing:0.08em;">${this._escapeHtml(padded)}</div>
+    `;
+        el.style.opacity = '1';
+        if (this._channelBannerHideTimer) {
+            try {
+                clearTimeout(this._channelBannerHideTimer);
+            }
+            catch (_) { }
+            this._channelBannerHideTimer = null;
+        }
+    },
+    _escapeHtml(s) {
+        return String(s || '').replace(/[&<>"']/g, (ch) => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        }[ch]));
     },
     // Render live streams (HLS/DASH/RTMP)
     renderLiveStream(container, content) {
@@ -3483,12 +3805,51 @@ const Player = {
     // Render HTML content
     renderHTML(container, content) {
         const iframe = document.createElement('iframe');
-        iframe.src = content.url;
+        let src = content.webUrl || content.url;
+        // WEB_URL: proxy through API server so X-Frame-Options / CSP frame-ancestors
+        // set by the target site are stripped before reaching the Tizen browser engine.
+        // Exception: local / private-IP URLs are never framing-blocked and must load
+        // directly so that SPA asset paths resolve against the correct origin.
+        const _isLocalUrl = (u) => {
+            try {
+                const h = new URL(u).hostname;
+                return h === 'localhost' || h === '127.0.0.1' ||
+                    /^10\./.test(h) || /^192\.168\./.test(h) ||
+                    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(h);
+            } catch (_) { return false; }
+        };
+        if (content.type === 'WEB_URL' && src && !_isLocalUrl(src)) {
+            const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
+            src = `${CONFIG.API_BASE}/devices/device/web-proxy?url=${encodeURIComponent(src)}&token=${encodeURIComponent(token)}`;
+        }
+        // Explicit positioning + opaque background — the player container has
+        // pointer-events:none and a transparent bg, which on Tizen 4 caused the
+        // iframe to render behind the body::before gradient. Force the iframe
+        // to its own stacking layer with an opaque backdrop so it always shows.
+        iframe.src = src;
+        iframe.style.position = 'absolute';
+        iframe.style.top = '0';
+        iframe.style.left = '0';
         iframe.style.width = '100%';
         iframe.style.height = '100%';
         iframe.style.border = 'none';
+        iframe.style.background = '#000';
+        iframe.style.zIndex = '1';
+        iframe.style.pointerEvents = 'auto';
+        iframe.setAttribute('frameborder', '0');
+        iframe.setAttribute('scrolling', 'no');
         iframe.allowFullscreen = true;
+        iframe.onload = () => {
+            try {
+                const rect = iframe.getBoundingClientRect();
+                logger.info(`iframe loaded OK: ${src} (size=${Math.round(rect.width)}x${Math.round(rect.height)} parent=${container.id || container.tagName})`);
+            } catch (_) {
+                logger.info(`iframe loaded OK: ${src}`);
+            }
+        };
+        iframe.onerror = (e) => logger.error(`iframe failed to load: ${src}`, String(e));
         container.appendChild(iframe);
+        logger.info(`iframe inserted: src=${src} container.children=${container.children.length}`);
     },
     // Render Canvas content (prefer HTML runtime, fall back to thumbnail image)
     renderCanvas(container, content) {
@@ -3519,163 +3880,199 @@ const Player = {
         const cmsUrl = (CONFIG.API_BASE || '').replace(/\/api\/v1\/?$/, '');
         DataSyncRenderer.render(String(content.id), cmsUrl, this.deviceId);
     },
-    // Render PDF or Office document using Samsung B2BDoc API (Tizen 4 / SSSP6)
-    // or webapis.document (Tizen 5+). The TV firmware renders natively — no canvas needed.
+    // Render PDF or Office document using Samsung webapis.document
     renderDocument(container, content) {
+        var _a;
         this.closeDocument();
         container.innerHTML = '';
+        // Mark active immediately — prevents the playlist loop (which runs every 10s)
+        // from spawning a second concurrent renderDocument while the PDF is still loading.
+        // On error, this is reset to false so the next tick can retry.
         this.documentActive = true;
         this.documentItemKey = this.getPlaylistItemKey(content);
-        var self = this;
-        var localUrl = content.url || '';
-        var fileName = localUrl.split('/').pop() || '';
-        // pdf.js v1.x exposes window.PDFJS; v2+ exposes window.pdfjsLib
-        var pdfLib = window.PDFJS || window.pdfjsLib;
+        const localUrl = content.url || ''; // file:///opt/usr/home/owner/apps_rw/.../uuid.pdf
+        const fileName = localUrl.split('/').pop() || '';
+        const pdfLib = window.pdfjsLib;
         if (!pdfLib) {
-            logger.error('[PDF] pdfjsLib not loaded — cannot render:', content.name);
-            container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#333;flex-direction:column;"><div style="font-size:24px;">PDF Viewer Not Available</div></div>';
+            logger.error('pdfjsLib not loaded — cannot render PDF:', content.name);
+            container.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#333;flex-direction:column;">
+          <div style="font-size:24px;">PDF Viewer Not Available</div>
+          <div style="font-size:14px;margin-top:10px;opacity:0.7;">${content.name}</div>
+        </div>`;
             return;
         }
-        // v1.x: workerSrc is a plain property; v2+: GlobalWorkerOptions.workerSrc
-        if (pdfLib.GlobalWorkerOptions) {
-            pdfLib.GlobalWorkerOptions.workerSrc = 'js/modules/pdf.worker.min.js';
-        } else {
-            pdfLib.workerSrc = 'js/modules/pdf.worker.min.js';
-        }
+        pdfLib.GlobalWorkerOptions.workerSrc = 'js/modules/pdf.worker.min.js';
+        // Black background while loading
         container.style.position = 'relative';
         container.style.background = '#000';
-        var pdfDoc = null;
-        var currentPage = 1;
-        var activeCanvas = null;
-        var nextCanvas = null;
-        var currentRenderTask = null;
-        var advanceInProgress = false;
-        var perPageMs = 10000;
-        var renderToOffscreen = function (num) {
+        let pdfDoc = null;
+        let currentPage = 1;
+        let activeCanvas = null;
+        let nextCanvas = null; // pre-rendered next page
+        let currentRenderTask = null;
+        let advanceInProgress = false;
+        // Render page num into an off-DOM canvas and return it (does NOT touch the DOM).
+        const renderToOffscreen = (num) => __awaiter(this, void 0, void 0, function* () {
             if (currentRenderTask) {
-                try { currentRenderTask.cancel(); } catch (_) {}
+                try {
+                    currentRenderTask.cancel();
+                }
+                catch (_) { }
                 currentRenderTask = null;
             }
-            return pdfDoc.getPage(num).then(function (page) {
-                var cw = Math.max(container.offsetWidth || window.innerWidth || 1920, 1);
-                var ch = Math.max(container.offsetHeight || window.innerHeight || 1080, 1);
-                // v1.x getViewport(scale) — v2+ getViewport({scale})
-                var nativeVp = page.getViewport ? page.getViewport(1) : page.getViewport({ scale: 1 });
-                var scale = Math.min(cw / nativeVp.width, ch / nativeVp.height);
-                var viewport = page.getViewport ? page.getViewport(scale) : page.getViewport({ scale: scale });
-                var offscreen = document.createElement('canvas');
+            try {
+                const page = yield pdfDoc.getPage(num);
+                const cw = Math.max(container.offsetWidth || window.innerWidth || 1920, 1);
+                const ch = Math.max(container.offsetHeight || window.innerHeight || 1080, 1);
+                const nativeVp = page.getViewport({ scale: 1 });
+                const scale = Math.min(cw / nativeVp.width, ch / nativeVp.height);
+                const viewport = page.getViewport({ scale });
+                const offscreen = document.createElement('canvas');
                 offscreen.width = Math.max(Math.floor(viewport.width), 1);
                 offscreen.height = Math.max(Math.floor(viewport.height), 1);
-                var ctx = offscreen.getContext('2d');
-                if (!ctx) { logger.error('[PDF] no 2d ctx for page', num); return null; }
-                var left = Math.floor((cw - viewport.width) / 2);
-                var top = Math.floor((ch - viewport.height) / 2);
-                offscreen.style.cssText = 'position:absolute;left:' + left + 'px;top:' + top + 'px;';
-                currentRenderTask = page.render({ canvasContext: ctx, viewport: viewport });
-                return currentRenderTask.promise.then(function () {
-                    currentRenderTask = null;
-                    logger.debug('[PDF] page', num, '/', pdfDoc.numPages, 'rendered');
-                    return offscreen;
-                });
-            }).catch(function (e) {
-                if (e && e.name === 'RenderingCancelledException') return null;
-                logger.error('[PDF] page render error p' + num + ':', e && e.message);
+                const ctx = offscreen.getContext('2d');
+                if (!ctx) {
+                    logger.error('PDF canvas 2d context unavailable for page', num);
+                    return null;
+                }
+                const left = Math.floor((cw - viewport.width) / 2);
+                const top = Math.floor((ch - viewport.height) / 2);
+                offscreen.style.cssText = `position:absolute;left:${left}px;top:${top}px;background:#000;`;
+                currentRenderTask = page.render({ canvasContext: ctx, viewport });
+                yield currentRenderTask.promise;
+                currentRenderTask = null;
+                logger.debug('PDF page', num, '/', pdfDoc.numPages, 'pre-rendered');
+                return offscreen;
+            }
+            catch (e) {
+                if ((e === null || e === void 0 ? void 0 : e.name) === 'RenderingCancelledException')
+                    return null;
+                logger.error('PDF page render error p' + num + ':', (e === null || e === void 0 ? void 0 : e.message) || e);
                 return null;
-            });
-        };
-        var showPrerenderedAndAdvance = function () {
-            if (!container.isConnected || advanceInProgress) return;
+            }
+        });
+        // Swap nextCanvas (already rendered) into the DOM, then start rendering the page after.
+        const showPrerenderedAndAdvance = () => __awaiter(this, void 0, void 0, function* () {
+            if (!container.isConnected || advanceInProgress)
+                return;
             advanceInProgress = true;
             try {
+                // Swap in the pre-rendered canvas immediately — no waiting, no black flash
                 if (nextCanvas) {
                     if (activeCanvas && activeCanvas.parentNode === container) {
                         container.replaceChild(nextCanvas, activeCanvas);
-                    } else {
+                    }
+                    else {
                         container.appendChild(nextCanvas);
                     }
                     activeCanvas = nextCanvas;
                     nextCanvas = null;
                     currentPage = (currentPage % pdfDoc.numPages) + 1;
                 }
-                var nextPageNum = (currentPage % pdfDoc.numPages) + 1;
-                renderToOffscreen(nextPageNum).then(function (c) {
-                    nextCanvas = c;
-                    advanceInProgress = false;
-                }).catch(function () { advanceInProgress = false; });
-            } catch (e) {
+                // Pre-render the page after the one currently showing.
+                const nextPage = (currentPage % pdfDoc.numPages) + 1;
+                nextCanvas = yield renderToOffscreen(nextPage);
+            }
+            finally {
                 advanceInProgress = false;
             }
-        };
-        var onPdfLoaded = function (pdf) {
+        });
+        const onPdfLoaded = (pdf) => __awaiter(this, void 0, void 0, function* () {
             pdfDoc = pdf;
-            logger.info('[PDF] loaded:', content.name, pdf.numPages, 'pages');
-            renderToOffscreen(1).then(function (first) {
-                if (first) { container.appendChild(first); activeCanvas = first; }
-                if (pdf.numPages > 1) {
-                    renderToOffscreen(2).then(function (c) {
-                        nextCanvas = c;
-                        currentPage = 1;
-                        self.documentPageInterval = setInterval(function () {
-                            if (!container.isConnected) { clearInterval(self.documentPageInterval); return; }
-                            showPrerenderedAndAdvance();
-                        }, perPageMs);
-                    });
-                }
-            });
+            // documentActive already set true at renderDocument start
+            logger.info('PDF loaded:', content.name, pdf.numPages, 'pages');
+            // Render and show page 1
+            const first = yield renderToOffscreen(1);
+            if (first) {
+                container.appendChild(first);
+                activeCanvas = first;
+            }
+            if (pdf.numPages > 1) {
+                // Pre-render page 2 while page 1 is displayed
+                nextCanvas = yield renderToOffscreen(2);
+                currentPage = 1;
+                this.documentPageInterval = setInterval(() => {
+                    if (!container.isConnected) {
+                        clearInterval(this.documentPageInterval);
+                        return;
+                    }
+                    showPrerenderedAndAdvance();
+                }, 10000);
+            }
+        });
+        const showError = (reason) => {
+            logger.error('PDF load failed:', content.name, reason);
+            // Reset so the playlist loop can retry on the next tick
+            this.documentActive = false;
+            this.documentItemKey = null;
+            container.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#222;flex-direction:column;">
+          <div style="font-size:48px;margin-bottom:20px;">&#9888;</div>
+          <div style="font-size:24px;">PDF Load Error</div>
+          <div style="font-size:14px;margin-top:10px;opacity:0.6;">${content.name}</div>
+          <div style="font-size:12px;margin-top:8px;opacity:0.4;">${reason}</div>
+        </div>`;
         };
-        var showError = function (reason) {
-            logger.error('[PDF] load failed:', content.name, reason);
-            self.documentActive = false;
-            self.documentItemKey = null;
-            container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#222;flex-direction:column;"><div style="font-size:48px;margin-bottom:20px;">&#9888;</div><div style="font-size:24px;">PDF Load Error</div><div style="font-size:14px;margin-top:10px;opacity:0.6;">' + (content.name || '') + '</div><div style="font-size:12px;margin-top:8px;opacity:0.4;">' + reason + '</div></div>';
-        };
-        var loadViaXhr = function (url) {
-            logger.info('[PDF] XHR load:', url);
+        // Fallback: load via XHR with raw file:// URL.
+        // xhr.open() with invalid schemes throws synchronously, so wrap in try-catch.
+        const loadViaXhr = (url) => {
+            logger.info('PDF XHR load:', url);
             try {
-                var xhr = new XMLHttpRequest();
+                const xhr = new XMLHttpRequest();
                 xhr.open('GET', url);
                 xhr.responseType = 'arraybuffer';
                 xhr.timeout = 20000;
-                xhr.onload = function () {
+                xhr.onload = () => {
                     if (xhr.response && xhr.response.byteLength > 0) {
-                        logger.info('[PDF] XHR ok, bytes:', xhr.response.byteLength);
+                        logger.info('PDF XHR ok, bytes:', xhr.response.byteLength);
                         pdfLib.getDocument({ data: new Uint8Array(xhr.response) })
-                            .promise.then(onPdfLoaded).catch(function (e) { showError('parse: ' + (e && e.message || e)); });
-                    } else {
+                            .promise.then(onPdfLoaded).catch((e) => showError('parse: ' + ((e === null || e === void 0 ? void 0 : e.message) || e)));
+                    }
+                    else {
                         showError('XHR empty response');
                     }
                 };
-                xhr.onerror = function () { showError('XHR error'); };
-                xhr.ontimeout = function () { showError('XHR timeout'); };
+                xhr.onerror = () => showError('XHR error');
+                xhr.ontimeout = () => showError('XHR timeout');
                 xhr.send();
-            } catch (e) {
-                showError('XHR exception: ' + (e && e.message || e));
+            }
+            catch (e) {
+                showError('XHR exception: ' + ((e === null || e === void 0 ? void 0 : e.message) || e));
             }
         };
-        var tzFs = window.tizen && window.tizen.filesystem;
+        // Primary: tizen.filesystem API — reads from wgt-private/content/<uuid>.pdf as Uint8Array.
+        // This is the correct Tizen-native way; virtual root paths like "wgt-private/content/file"
+        // are NOT valid URL schemes and cannot be used with XHR.
+        const tzFs = (_a = window.tizen) === null || _a === void 0 ? void 0 : _a.filesystem;
         if (tzFs && fileName) {
-            var tzfsPath = 'wgt-private/content/' + fileName;
-            logger.info('[PDF] reading via tizen.filesystem:', tzfsPath);
+            const tzfsPath = `wgt-private/content/${fileName}`;
+            logger.info('PDF reading via tizen.filesystem:', tzfsPath);
             try {
-                var fileHandle = tzFs.openFile(tzfsPath, 'r');
-                fileHandle.readDataNonBlocking(
-                    function (data) {
-                        try { fileHandle.close(); } catch (_) {}
-                        logger.info('[PDF] tizen.filesystem read ok, bytes:', data.byteLength);
-                        pdfLib.getDocument({ data: data })
-                            .promise.then(onPdfLoaded).catch(function (e) { showError('parse: ' + (e && e.message || e)); });
-                    },
-                    function (err) {
-                        try { fileHandle.close(); } catch (_) {}
-                        logger.warn('[PDF] tizen.filesystem read error:', err && err.message, '— XHR fallback');
-                        loadViaXhr(localUrl);
+                const fileHandle = tzFs.openFile(tzfsPath, 'r');
+                fileHandle.readDataNonBlocking((data) => {
+                    try {
+                        fileHandle.close();
                     }
-                );
-            } catch (e) {
-                logger.warn('[PDF] tizen.filesystem open error:', e && e.message, '— XHR fallback');
+                    catch (_) { }
+                    logger.info('PDF read ok, bytes:', data.byteLength);
+                    pdfLib.getDocument({ data })
+                        .promise.then(onPdfLoaded).catch((e) => showError('parse: ' + ((e === null || e === void 0 ? void 0 : e.message) || e)));
+                }, (err) => {
+                    try {
+                        fileHandle.close();
+                    }
+                    catch (_) { }
+                    logger.warn('tizen.filesystem read error:', (err === null || err === void 0 ? void 0 : err.message) || err, '— trying XHR fallback');
+                    loadViaXhr(localUrl);
+                });
+            }
+            catch (e) {
+                logger.warn('tizen.filesystem open error:', (e === null || e === void 0 ? void 0 : e.message) || e, '— trying XHR fallback');
                 loadViaXhr(localUrl);
             }
-        } else {
+        }
+        else {
             loadViaXhr(localUrl);
         }
     },
@@ -4074,16 +4471,20 @@ const Player = {
             logger.info(`Playing item ${currentIndex + 1}/${playableItems.length}: ${content.name} (${content.type}) - URL: ${content.url}`);
             const itemKey = this.getPlaylistItemKey(content);
             const isDocumentContent = content.type === 'PDF' || content.type === 'OFFICE';
+            const isWebContent = content.type === 'HTML' || content.type === 'HTML5' || content.type === 'WEBPAGE' || content.type === 'WEB_URL';
             const canReuseImage = content.type === 'IMAGE' &&
                 this.lastRenderedItemKey === itemKey &&
                 container.children.length > 0;
             const canReuseDocument = isDocumentContent &&
                 this.documentActive &&
                 this.documentItemKey === itemKey;
+            const canReuseWebUrl = isWebContent &&
+                this.lastRenderedItemKey === itemKey &&
+                container.querySelector('iframe') !== null;
             if (!canReuseDocument && this.documentActive) {
                 this.closeDocument();
             }
-            if (!canReuseImage && !canReuseDocument) {
+            if (!canReuseImage && !canReuseDocument && !canReuseWebUrl) {
                 container.innerHTML = '';
             }
             container._menuBoardRequestId = undefined;
@@ -4288,8 +4689,15 @@ const Player = {
                     }
                     break;
                 case 'HTML':
+                case 'HTML5':
                 case 'WEBPAGE':
-                    this.renderHTML(container, content);
+                case 'WEB_URL':
+                    if (!canReuseWebUrl) {
+                        this.renderHTML(container, content);
+                        this.lastRenderedItemKey = itemKey;
+                    } else {
+                        logger.debug('Skipping web/iframe re-render, identical item already displayed');
+                    }
                     // Schedule next item
                     scheduleNext(duration * 1000);
                     break;
@@ -4707,9 +5115,7 @@ const Player = {
         // them are prepared, regardless of download/prepare timing differences.
         this._zoneSyncExpectedCount = activeZones.filter((z) => !!z.syncGroup).length;
         if (this._zoneSyncEnabled) {
-            // AVPlay VideoMixer renders BELOW the DOM → body/html must be transparent.
-            this.setAvPlayVisualMode(true);
-            logger.info(`[Zones] Sync mode enabled — using AVPlay VideoMixer for synced zones (expecting ${this._zoneSyncExpectedCount})`);
+            logger.info(`[Zones] Sync mode enabled — HTML5 path with synchronized start/loop (expecting ${this._zoneSyncExpectedCount})`);
         }
         else {
             logger.info(`[Zones] No sync groups — using HTML5 <video> for all zones`);
@@ -4726,7 +5132,6 @@ const Player = {
         this._zoneSyncFlushTimer = null;
         this._zoneSyncExpectedCount = 0;
         this._zoneSyncLoopQueue = [];
-        if (this._zoneSyncLoopFlushTimer !== null) { clearTimeout(this._zoneSyncLoopFlushTimer); this._zoneSyncLoopFlushTimer = null; }
         this._videoMixerQueue = Promise.resolve(); // Reset queue so stale prepare() callbacks don't fire
         for (const timer of this._zoneTimers)
             clearTimeout(timer);
@@ -4962,6 +5367,15 @@ const Player = {
         else if (type === 'VIDEO' || type === 'MP4' || type === 'WEBM') {
             this._playZoneVideo(zone, container, content, items, itemIndex, durationMs, token, zoneIndex);
         }
+        else if (type === 'HTML' || type === 'WEB_URL' || type === 'WEBPAGE') {
+            this.renderHTML(container, content);
+            const t = setTimeout(() => {
+                if (this._zoneMode && container.parentNode) {
+                    this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex);
+                }
+            }, durationMs);
+            this._zoneTimers.push(t);
+        }
         else if (type === 'PDF') {
             this._playZonePdf(zone, container, content, items, itemIndex, durationMs, token, zoneIndex);
         }
@@ -5009,7 +5423,7 @@ const Player = {
             this._playZoneVideoHTML5(zone, container, content, items, itemIndex, durationMs, token, zoneIndex, videoUrl, isLocalFile, httpUrl);
         }
     },
-    // ── HTML5 <video> path — sync-aware, works on all displays ──────────────────
+    // ── HTML5 <video> path — sync-aware, works on all displays ────────────────
     _playZoneVideoHTML5(zone, container, content, items, itemIndex, durationMs, token, zoneIndex, videoUrl, isLocalFile, httpUrl) {
         let advanced = false;
         const advanceOnce = () => {
@@ -5025,7 +5439,13 @@ const Player = {
         const objectFit = zone.fitMode === 'fill' ? 'fill' : 'contain';
         logger.info(`[Zone ${zoneIndex}] Playing video (HTML5): ${videoUrl} [${isLocalFile ? 'local' : 'http'}] fit=${objectFit} syncLoop=${useSyncLoop}`);
         const video = document.createElement('video');
-        video.style.cssText = `width:100%;height:100%;object-fit:${objectFit};display:block;background:#000;`;
+        // For 'contain': object-fit: contain is universally supported.
+        // For 'fill':    Tizen's hardware video overlay sometimes ignores object-fit,
+        //               causing letterboxing even when fill is requested. We apply
+        //               a CSS transform:scale() in 'loadedmetadata' below which the
+        //               hardware overlay DOES respect.
+        const initialFit = objectFit === 'fill' ? 'contain' : objectFit;
+        video.style.cssText = `position:absolute;left:0;top:0;width:100%;height:100%;object-fit:${initialFit};display:block;background:#000;`;
         video.setAttribute('playsinline', '');
         if (zoneIndex > 0)
             video.muted = true;
@@ -5033,7 +5453,27 @@ const Player = {
         // re-looping manually so all zones restart in the same JS tick.
         if (isSingleVideoLoop && !useSyncLoop)
             video.loop = true;
-        // Re-loop / advance handler
+        if (objectFit === 'fill') {
+            const applyStretch = () => {
+                const cw = container.clientWidth;
+                const ch = container.clientHeight;
+                const vw = video.videoWidth;
+                const vh = video.videoHeight;
+                if (!cw || !ch || !vw || !vh)
+                    return;
+                // Pin video at top-left at its natural pixel size, then scale that to
+                // exactly fill the container. The hardware overlay honors transform.
+                video.style.width = vw + 'px';
+                video.style.height = vh + 'px';
+                video.style.transformOrigin = 'top left';
+                video.style.transform = `scale(${(cw / vw).toFixed(6)}, ${(ch / vh).toFixed(6)})`;
+                video.style.objectFit = 'fill';
+                logger.info(`[Zone ${zoneIndex}] Fill stretch applied: ${vw}x${vh} → ${cw}x${ch}`);
+            };
+            video.addEventListener('loadedmetadata', applyStretch);
+            // Re-apply if first attempt fired before container was laid out.
+            video.addEventListener('canplay', applyStretch, { once: true });
+        }
         video.addEventListener('ended', () => {
             this._zoneErrorCounts[zone.id] = 0;
             if (isSingleVideoLoop) {
@@ -5049,23 +5489,31 @@ const Player = {
                             clearTimeout(this._zoneSyncLoopFlushTimer);
                             this._zoneSyncLoopFlushTimer = null;
                         }
-                        if (this._zoneSyncLoopQueue.length === 0) return;
+                        if (this._zoneSyncLoopQueue.length === 0)
+                            return;
                         const batch = this._zoneSyncLoopQueue.splice(0);
                         logger.info(`[Zone sync] Re-looping ${batch.length} zone(s) simultaneously`);
                         for (const entry of batch) {
-                            try { entry.fn(); }
-                            catch (_) { logger.warn(`[Zone ${entry.zoneIndex}] re-loop failed`); }
+                            try {
+                                entry.fn();
+                            }
+                            catch (_) {
+                                logger.warn(`[Zone ${entry.zoneIndex}] re-loop failed`);
+                            }
                         }
                     };
                     if (this._zoneSyncLoopQueue.length >= this._zoneSyncExpectedCount) {
                         flushLoopQueue();
-                    } else {
-                        if (this._zoneSyncLoopFlushTimer !== null) clearTimeout(this._zoneSyncLoopFlushTimer);
+                    }
+                    else {
+                        if (this._zoneSyncLoopFlushTimer !== null)
+                            clearTimeout(this._zoneSyncLoopFlushTimer);
                         this._zoneSyncLoopFlushTimer = setTimeout(flushLoopQueue, 500);
                     }
                 }
                 // else: native loop=true handles it
-            } else {
+            }
+            else {
                 advanceOnce();
             }
         });
@@ -5090,25 +5538,30 @@ const Player = {
         if (zone.syncGroup) {
             let readyCalled = false;
             const startVideo = () => {
-                if (readyCalled) return;
+                if (readyCalled)
+                    return;
                 readyCalled = true;
                 this._enqueueZoneSync(() => {
-                    if (!this._zoneMode) return;
+                    if (!this._zoneMode)
+                        return;
                     video.play().catch((e) => {
                         const msg = (e instanceof Error) ? e.message : String(e);
-                        if (msg.includes('interrupted') || msg.includes('pause') || msg.includes('load')) return;
+                        if (msg.includes('interrupted') || msg.includes('pause') || msg.includes('load'))
+                            return;
                         logger.warn(`[Zone ${zoneIndex}] video.play() rejected: ${msg}`);
                     });
                     logger.info(`[Zone ${zoneIndex}] HTML5 video playing (synced start)`);
                 });
             };
             video.addEventListener('canplay', startVideo, { once: true });
-            // If already buffered (e.g., same file as another zone, already in cache)
-            if (video.readyState >= 3) startVideo();
-        } else {
+            if (video.readyState >= 3)
+                startVideo();
+        }
+        else {
             video.play().catch((e) => {
                 const msg = (e instanceof Error) ? e.message : String(e);
-                if (msg.includes('interrupted') || msg.includes('pause') || msg.includes('load')) return;
+                if (msg.includes('interrupted') || msg.includes('pause') || msg.includes('load'))
+                    return;
                 logger.warn(`[Zone ${zoneIndex}] video.play() rejected: ${msg}`);
             });
         }
@@ -5168,26 +5621,24 @@ const Player = {
                                 // Synchronized re-loop: wait for ALL sync zones to complete,
                                 // then seekTo(0)+play() all at once to prevent drift accumulation.
                                 if (zone.syncGroup && this._zoneSyncExpectedCount > 1) {
-                                    this._zoneSyncLoopQueue.push({ fn: () => { try { avp.seekTo(0); avp.play(); } catch (_) { advanceOnce(); } }, zoneIndex });
-                                    const flushLoopQueue = () => {
-                                        if (this._zoneSyncLoopFlushTimer !== null) {
-                                            clearTimeout(this._zoneSyncLoopFlushTimer);
-                                            this._zoneSyncLoopFlushTimer = null;
+                                    this._zoneSyncLoopQueue.push({ fn: () => { try {
+                                            avp.seekTo(0);
+                                            avp.play();
                                         }
-                                        if (this._zoneSyncLoopQueue.length === 0) return;
+                                        catch (_) {
+                                            advanceOnce();
+                                        } }, zoneIndex });
+                                    if (this._zoneSyncLoopQueue.length >= this._zoneSyncExpectedCount) {
                                         const batch = this._zoneSyncLoopQueue.splice(0);
                                         logger.info(`[Zone sync] Re-looping ${batch.length} zone(s) simultaneously`);
                                         for (const entry of batch) {
-                                            try { entry.fn(); }
-                                            catch (_) { logger.warn(`[Zone ${entry.zoneIndex}] seekTo/play failed on re-loop`); }
+                                            try {
+                                                entry.fn();
+                                            }
+                                            catch (_) {
+                                                logger.warn(`[Zone ${entry.zoneIndex}] seekTo/play failed on re-loop`);
+                                            }
                                         }
-                                    };
-                                    if (this._zoneSyncLoopQueue.length >= this._zoneSyncExpectedCount) {
-                                        flushLoopQueue();
-                                    } else {
-                                        // Fallback: flush after 500ms in case a zone never checks in
-                                        if (this._zoneSyncLoopFlushTimer !== null) clearTimeout(this._zoneSyncLoopFlushTimer);
-                                        this._zoneSyncLoopFlushTimer = setTimeout(flushLoopQueue, 500);
                                     }
                                 }
                                 else {

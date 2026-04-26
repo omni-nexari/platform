@@ -1482,6 +1482,62 @@ export async function deviceRoutes(app: FastifyInstance) {
     return reply.send(item);
   });
 
+  // ── GET /devices/device/web-proxy ─ proxy a remote URL, stripping framing headers ──
+  // Used by WEB_URL content type so iframes can load sites that send X-Frame-Options.
+  app.get('/device/web-proxy', async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+
+    const { url } = req.query as Record<string, string | undefined>;
+    if (!url) return reply.status(400).send({ error: 'url query param required' });
+
+    let targetUrl: URL;
+    try {
+      targetUrl = new URL(url);
+    } catch {
+      return reply.status(400).send({ error: 'Invalid URL' });
+    }
+    if (targetUrl.protocol !== 'http:' && targetUrl.protocol !== 'https:') {
+      return reply.status(400).send({ error: 'Only http/https URLs are supported' });
+    }
+
+    let upstream: Response;
+    try {
+      upstream = await fetch(targetUrl.toString(), {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (SmartTV; Tizen 4.0) NexariSignage/1.0',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+        },
+        redirect: 'follow',
+      });
+    } catch (err: any) {
+      return reply.status(502).send({ error: 'Failed to fetch upstream URL', detail: err?.message });
+    }
+
+    // Forward status and content-type
+    reply.code(upstream.status);
+    const contentType = upstream.headers.get('content-type');
+    if (contentType) reply.header('Content-Type', contentType);
+
+    // Strip framing-prevention headers; remove frame-ancestors from CSP
+    const csp = upstream.headers.get('content-security-policy');
+    if (csp) {
+      const cleanedCsp = csp
+        .split(';')
+        .map((d) => d.trim())
+        .filter((d) => !d.toLowerCase().startsWith('frame-ancestors'))
+        .join('; ');
+      reply.header('Content-Security-Policy', cleanedCsp);
+    }
+    // Do NOT forward X-Frame-Options — omitting it removes the restriction
+    reply.header('Cache-Control', 'no-store');
+    reply.header('Access-Control-Allow-Origin', '*');
+
+    const body = await upstream.arrayBuffer();
+    return reply.send(Buffer.from(body));
+  });
+
   // ── GET /devices/device/content/:id/file ─ stream content file to device ──
   app.get('/device/content/:id/file', async (req, reply) => {
     const auth = authenticateDevice(req as never, reply as never);

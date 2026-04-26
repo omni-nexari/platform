@@ -27,7 +27,7 @@ export const contentItems = pgTable('content_items', {
   uploadedBy: uuid('uploaded_by').notNull().references(() => users.id),
 
   // Content type
-  type: text('type').notNull(), // image | video | html5 | pdf | presentation | web_url
+  type: text('type').notNull(), // image | video | html5 | pdf | presentation | web_url | menu_board | zone_layout | datasync | channel_group
 
   // Core fields
   name: text('name').notNull(),

@@ -102,7 +102,9 @@ function formatPrice(cents: number, currency = 'USD') {
 }
 
 function resolveApiBase() {
-  return '/api';
+  // Use /api/v1 directly so this works when served from the API server (port 3000)
+  // as well as from the dev/preview server (proxy forwards /api/v1 unchanged to port 3000).
+  return '/api/v1';
 }
 
 function hexWithAlpha(color: string, alphaHex: string) {

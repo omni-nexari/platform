@@ -167,14 +167,33 @@ export default function PosKioskPage() {
   });
 
   function buildDisplayUrl(type: 'kiosk-portrait' | 'kiosk-landscape' | 'kitchen', token: string) {
-    const base = window.location.origin;
+    // Kiosk/kitchen pages are served from the API server (port 3000) so the TV
+    // player can load them without needing port 5174 open in the Windows Firewall.
+    // The API server serves the DS production build via @fastify/static.
+    const base = window.location.origin
+      .replace(/:5173$/, ':3000')
+      .replace(/:5174$/, ':3000');
     if (type === 'kiosk-portrait') return `${base}/kiosk/${wsId}/portrait?dt=${token}`;
     if (type === 'kiosk-landscape') return `${base}/kiosk/${wsId}/landscape?dt=${token}`;
     return `${base}/kitchen/${wsId}?dt=${token}`;
   }
 
   async function handleCopy(type: 'kiosk-portrait' | 'kiosk-landscape' | 'kitchen', token: string) {
-    await navigator.clipboard.writeText(buildDisplayUrl(type, token));
+    const text = buildDisplayUrl(type, token);
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      // Fallback for non-secure HTTP contexts (e.g. LAN IP access)
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
     setCopiedType(type);
     setTimeout(() => setCopiedType(null), 2000);
   }

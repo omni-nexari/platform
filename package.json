@@ -9,6 +9,7 @@
   "scripts": {
     "dev:api": "pnpm --filter @signage/api dev",
     "dev:web": "pnpm --filter @signage/ds dev",
+    "dev:kiosk": "pnpm --filter @signage/ds preview",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",

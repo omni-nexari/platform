@@ -1160,12 +1160,13 @@ export default function DeviceDetailPage() {
     onError: () => toast.error('Update failed'),
   });
 
-  const { data: playlists = [] } = useQuery<{ id: string; name: string }[]>({
+  const { data: playlistsResponse } = useQuery<{ items: { id: string; name: string }[]; total: number }>({
     queryKey: ['playlists-brief', wsId],
-    queryFn: () => api.get(`/playlists?workspaceId=${wsId}`),
+    queryFn: () => api.get(`/playlists?workspaceId=${wsId}&limit=500`),
     enabled: !!wsId,
     staleTime: 60_000,
   });
+  const playlists = playlistsResponse?.items ?? [];
 
   const cmdMutation = useMutation({
     mutationFn: (cmd: DeviceCommandInput) =>
