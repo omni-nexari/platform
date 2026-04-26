@@ -3818,7 +3818,7 @@ const Player = {
                     /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(h);
             } catch (_) { return false; }
         };
-        if (content.type === 'WEB_URL' && src && !_isLocalUrl(src)) {
+        if (content.type === 'WEB_URL' && content.type !== 'HTML5' && src && !_isLocalUrl(src)) {
             const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
             src = `${CONFIG.API_BASE}/devices/device/web-proxy?url=${encodeURIComponent(src)}&token=${encodeURIComponent(token)}`;
         }

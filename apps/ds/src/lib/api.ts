@@ -5,7 +5,10 @@ let lastRefreshFailureAt = 0;
 const REFRESH_FAILURE_COOLDOWN_MS = 5_000;
 
 function resolveApiBase() {
-  return '/api';
+  // In production the DS is served from the same origin as the API (/api/v1 prefix).
+  // The Vite dev proxy rewrites /api/v1 unchanged (negative-lookahead regex), so
+  // using /api/v1 here works in both dev and production.
+  return '/api/v1';
 }
 
 const BASE = resolveApiBase();

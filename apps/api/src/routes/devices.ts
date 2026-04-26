@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { randomBytes } from 'node:crypto';
-import { createReadStream, promises as fsPromises } from 'node:fs';
+import { createReadStream, existsSync, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import AdmZip from 'adm-zip';
 import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncPlaylists, syncPlaylistItems, playerReleases, playEvents } from '@signage/db';
 import { eq, and, isNull, desc, asc, inArray, sql, ilike, gte, lte, lt } from 'drizzle-orm';
 import { z } from 'zod';
@@ -1591,6 +1593,90 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     reply.header('Content-Length', String(fileSize));
     return reply.send(createReadStream(absPath));
+  });
+
+  // ── GET /devices/device/content/:id/html5/:token/* ─ serve extracted HTML5 package ──
+  // The device token is embedded in the path (not query string) so that all
+  // relative asset requests (scripts, stylesheets, images) made by the iframe
+  // automatically carry the token and are served from the same route.
+  app.get('/device/content/:id/html5/:token/*', async (req, reply) => {
+    const { id, token } = req.params as { id: string; token: string; '*': string };
+    const filePath = ((req.params as Record<string, string>)['*'] || 'index.html').replace(/\.\./g, '');
+
+    // Validate the JWT token from the path parameter
+    let decoded: { sub: string; workspaceId: string; type: string } | null = null;
+    try {
+      decoded = req.server.jwt.verify(token) as unknown as { sub: string; workspaceId: string; type: string };
+    } catch {
+      return reply.status(401).send({ error: 'Invalid or expired token' });
+    }
+    if (!decoded || (decoded as { type?: string }).type !== 'device') {
+      return reply.status(401).send({ error: 'Invalid token type' });
+    }
+
+    const item = await db.query.contentItems.findFirst({
+      where: and(
+        eq(contentItems.id, id),
+        eq(contentItems.workspaceId, (decoded as { workspaceId: string }).workspaceId),
+        isNull(contentItems.deletedAt),
+      ),
+    });
+    if (!item || !item.filePath || item.type !== 'html5') {
+      return reply.status(404).send({ error: 'HTML5 content not found' });
+    }
+
+    const zipPath = path.resolve(STORAGE_ROOT, item.filePath);
+    if (!existsSync(zipPath)) {
+      return reply.status(404).send({ error: 'Package file not found on disk' });
+    }
+
+    // Extract ZIP to temp dir keyed by content id (cached across requests)
+    const extractDir = path.join(os.tmpdir(), 'nexari-html5', id);
+    const indexPath = path.join(extractDir, 'index.html');
+    if (!existsSync(indexPath)) {
+      await fsPromises.mkdir(extractDir, { recursive: true });
+      try {
+        const zip = new AdmZip(zipPath);
+        zip.extractAllTo(extractDir, /* overwrite */ true);
+      } catch (err: any) {
+        return reply.status(500).send({ error: 'Failed to extract HTML5 package', detail: err?.message });
+      }
+    }
+
+    const servedPath = path.join(extractDir, filePath);
+    if (!existsSync(servedPath)) {
+      return reply.status(404).send({ error: `File not found in package: ${filePath}` });
+    }
+
+    // Determine MIME type from extension
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeMap: Record<string, string> = {
+      '.html': 'text/html; charset=utf-8',
+      '.htm':  'text/html; charset=utf-8',
+      '.js':   'application/javascript',
+      '.mjs':  'application/javascript',
+      '.css':  'text/css',
+      '.json': 'application/json',
+      '.png':  'image/png',
+      '.jpg':  'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif':  'image/gif',
+      '.svg':  'image/svg+xml',
+      '.webp': 'image/webp',
+      '.ico':  'image/x-icon',
+      '.woff': 'font/woff',
+      '.woff2':'font/woff2',
+      '.ttf':  'font/ttf',
+      '.mp4':  'video/mp4',
+      '.webm': 'video/webm',
+      '.mp3':  'audio/mpeg',
+      '.txt':  'text/plain',
+    };
+    const mime = mimeMap[ext] ?? 'application/octet-stream';
+    reply.header('Content-Type', mime);
+    reply.header('Cache-Control', 'private, max-age=3600');
+    reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
+    return reply.send(createReadStream(servedPath));
   });
 
   // ── GET /devices/device/emergency ─ active emergency override ────────────

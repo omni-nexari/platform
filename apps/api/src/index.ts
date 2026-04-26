@@ -35,7 +35,7 @@ async function start() {
 
   const logger: FastifyBaseLogger = pino({ level: 'info' }, pino.multistream(streams));
 
-  const app = Fastify({ loggerInstance: logger });
+  const app = Fastify({ loggerInstance: logger, maxParamLength: 2048 });
 
   startLogCleanup();
   startJobs();
@@ -68,6 +68,17 @@ async function start() {
   }
 
   await app.register(registerRoutes, { prefix: '/api/v1' });
+
+  // Safety-net: redirect /api/* → /api/v1/* for any DS build that still calls /api.
+  // Guards against infinite-redirect loops: paths already starting with v1/ return 404.
+  app.all('/api/*', async (req, reply) => {
+    const tail = (req.params as Record<string, string>)['*'];
+    if (!tail || tail.startsWith('v1/') || tail === 'v1') {
+      return reply.status(404).send({ statusCode: 404, error: 'Not Found' });
+    }
+    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+    return reply.redirect(`/api/v1/${tail}${qs}`, 307);
+  });
 
   try {
     await app.listen({ port: PORT, host: '0.0.0.0' });

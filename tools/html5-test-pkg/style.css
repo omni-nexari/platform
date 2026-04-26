@@ -1,0 +1,9 @@
+﻿* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0f172a; display: flex; align-items: center; justify-content: center; height: 100vh; font-family: Arial, sans-serif; color: #f8fafc; }
+.card { text-align: center; background: #1e293b; border: 2px solid #3b82f6; border-radius: 24px; padding: 60px 80px; box-shadow: 0 0 60px rgba(59,130,246,0.3); }
+.badge { display: inline-block; background: #3b82f6; color: #fff; font-size: 14px; font-weight: 700; letter-spacing: .15em; padding: 6px 18px; border-radius: 999px; margin-bottom: 24px; }
+h1 { font-size: 52px; font-weight: 800; color: #22d3ee; margin-bottom: 20px; }
+#clock { font-size: 36px; font-weight: 600; margin-bottom: 32px; }
+.bar { background: #334155; border-radius: 8px; height: 12px; overflow: hidden; margin-bottom: 24px; }
+.fill { height: 100%; background: #3b82f6; border-radius: 8px; width: 0%; }
+.sub { font-size: 16px; color: #94a3b8; }

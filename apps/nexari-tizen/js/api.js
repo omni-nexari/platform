@@ -290,20 +290,15 @@ window.API = {
       metadata: content.metadata || '{}',
     };
 
-    // HTML5 ZIP packages: server stores the ZIP at filePath, fetchable only via
-    // the authenticated device endpoint. Inject the auth'd fileUrl + flags into
-    // metadata so content-manager.getHtmlPackageInfo() recognises it as a package.
+    // HTML5 ZIP packages: server-side extraction — the API extracts the ZIP
+    // and serves individual files at /devices/device/content/:id/html5/:token/*
+    // The token is embedded in the path (not query string) so relative assets
+    // (scripts, stylesheets, images) inside the HTML5 app are automatically
+    // served by the same route without additional auth wiring.
     if (normalized.type === 'HTML5') {
-      try {
-        const meta = typeof content.metadata === 'string'
-          ? JSON.parse(content.metadata || '{}')
-          : (content.metadata || {});
-        if (!meta.filePath && content.filePath) meta.filePath = content.filePath;
-        if (!meta.startPage) meta.startPage = 'index.html';
-        meta.isPackage = true;
-        meta.packageZipUrl = fileUrl;
-        normalized.metadata = JSON.stringify(meta);
-      } catch (_) { /* keep original metadata */ }
+      normalized.url = `${CONFIG.API_BASE}/devices/device/content/${content.id}/html5/${encodeURIComponent(token)}/index.html`;
+      normalized.webUrl = null;
+      // Clear metadata injection — server handles extraction, no TV-side ZIP work needed
     }
 
     // Channel groups carry an embedded list of IPTV channels in metadata —
