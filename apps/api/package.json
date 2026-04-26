@@ -11,11 +11,11 @@
     "start": "node dist/index.js",
     "pretypecheck": "pnpm --filter @signage/db build",
     "typecheck": "tsc --noEmit",
-    "seed:sa": "tsx --env-file=.env scripts/seed-superadmin.ts",
-    "seed:test": "tsx --env-file=.env scripts/seed-test-org.ts",
-    "seed:pos": "tsx --env-file=.env scripts/seed-pos-menu.ts",
-    "seed:pos-extras": "tsx --env-file=.env scripts/seed-pos-extras.ts",
-    "fix:user-org": "tsx --env-file=.env scripts/fix-user-org.ts"
+    "seed:sa": "tsx --env-file=$(test -f .env && echo .env || echo /etc/signage/api.env) scripts/seed-superadmin.ts",
+    "seed:test": "tsx --env-file=$(test -f .env && echo .env || echo /etc/signage/api.env) scripts/seed-test-org.ts",
+    "seed:pos": "tsx --env-file=$(test -f .env && echo .env || echo /etc/signage/api.env) scripts/seed-pos-menu.ts",
+    "seed:pos-extras": "tsx --env-file=$(test -f .env && echo .env || echo /etc/signage/api.env) scripts/seed-pos-extras.ts",
+    "fix:user-org": "tsx --env-file=$(test -f .env && echo .env || echo /etc/signage/api.env) scripts/fix-user-org.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

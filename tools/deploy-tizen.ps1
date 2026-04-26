@@ -20,14 +20,37 @@
 .PARAMETER User
     SSH user on the Pi. Default: chiho
 
+.PARAMETER SuperadminEmail
+    Superadmin email for publishing the release to the DS API player_releases table.
+    If omitted, the upload still happens but no release record is created.
+
+.PARAMETER SuperadminPassword
+    Superadmin password. Required when SuperadminEmail is provided.
+
+.PARAMETER ApiBase
+    DS API base URL. Defaults to http://<PiHost> (LAN — avoids DNS loopback issues).
+    Override with https://ds.chiho.app when running from outside the LAN.
+
+.PARAMETER ReleaseNotes
+    Optional release notes stored with the player_releases record.
+
 .EXAMPLE
+    # Upload only:
     .\tools\deploy-tizen.ps1 -PiHost 192.168.1.17
+
+    # Upload + publish release to DS portal:
+    .\tools\deploy-tizen.ps1 -PiHost 192.168.1.17 -SuperadminEmail chiho.lee23@gmail.com -SuperadminPassword q1w2e3r4
 #>
 param(
     [Parameter(Mandatory = $true)]
     [string]$PiHost,
 
-    [string]$User = "chiho"
+    [string]$User = "chiho",
+
+    [string]$SuperadminEmail = "",
+    [string]$SuperadminPassword = "",
+    [string]$ApiBase = "",
+    [string]$ReleaseNotes = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -83,6 +106,49 @@ if ($LASTEXITCODE -ne 0) { throw "SCP upload failed" }
 Write-Host "==> Verifying files on Pi..." -ForegroundColor Cyan
 ssh $SshTarget "ls -lh '$RemoteDir/'"
 if ($LASTEXITCODE -ne 0) { throw "Remote verification failed" }
+
+# ── Publish release to DS API (optional) ─────────────────────────────────────
+if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
+    if ($ApiBase -eq "") { $ApiBase = "http://$PiHost" }
+    $ApiBase = $ApiBase.TrimEnd('/')
+
+    $pkgJson = Get-Content (Join-Path $TizenDir "package.json") -Raw | ConvertFrom-Json
+    $Version = $pkgJson.version
+    $DownloadUrl = "http://$PiHost/tizen/NexariPlayer.wgt"
+
+    Write-Host "==> Publishing release v$Version to $ApiBase ..." -ForegroundColor Cyan
+
+    try {
+        $loginBody = @{ email = $SuperadminEmail; password = $SuperadminPassword } | ConvertTo-Json
+        $loginResp = Invoke-RestMethod -Method Post `
+            -Uri "$ApiBase/api/v1/auth/login" `
+            -ContentType "application/json" `
+            -Body $loginBody
+        $token = $loginResp.accessToken
+        if (-not $token) { throw "No accessToken in login response" }
+    } catch {
+        Write-Host "WARNING: Login failed — skipping release publish. $_" -ForegroundColor Yellow
+        $token = $null
+    }
+
+    if ($token) {
+        try {
+            $releaseBody = @{ version = $Version; downloadUrl = $DownloadUrl }
+            if ($ReleaseNotes -ne "") { $releaseBody.releaseNotes = $ReleaseNotes }
+
+            $publishResp = Invoke-RestMethod -Method Post `
+                -Uri "$ApiBase/api/v1/player-releases" `
+                -ContentType "application/json" `
+                -Headers @{ Authorization = "Bearer $token" } `
+                -Body ($releaseBody | ConvertTo-Json)
+            Write-Host "  Release published: v$($publishResp.version) (id=$($publishResp.id))" -ForegroundColor Green
+        } catch {
+            Write-Host "WARNING: Failed to publish release — $_" -ForegroundColor Yellow
+        }
+    }
+} else {
+    Write-Host "(Skipping release publish — add -SuperadminEmail / -SuperadminPassword to publish)" -ForegroundColor DarkGray
+}
 
 Write-Host ""
 Write-Host "Done." -ForegroundColor Green
