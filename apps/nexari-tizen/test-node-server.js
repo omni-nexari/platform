@@ -11,7 +11,7 @@ var https = require('https');
 var url = require('url');
 
 var PORT = 80;
-var STARTUP_BEACON_URL = 'http://192.168.1.110:3000/api/v1/devices/time?source=tizen-node-startup';
+var STARTUP_BEACON_URL = 'http://192.168.1.17/api/v1/devices/time?source=tizen-node-startup';
 
 function respondJson(res, statusCode, payload) {
   res.writeHead(statusCode, {

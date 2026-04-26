@@ -3,11 +3,17 @@
 (function () {
   var info = {
     version: "1.0.0",
-    buildId: "20260425-221611Z",
-    builtAt: "2026-04-25T22:16:11.655Z"
+    buildId: "20260426-212952Z",
+    builtAt: "2026-04-26T21:29:52.336Z"
   };
 
   // Exposed for debugging in Remote Inspector
   window.PLAYER_BUILD_INFO = info;
   window.PLAYER_DEPLOY_VERSION = info.version + ' ' + info.buildId;
+
+  // Dev config overrides (injected at build time)
+  window.__PLAYER_CONFIG__ = {
+    API_BASE: "https://ds.chiho.app/api/v1",
+    WS_URL: "wss://ds.chiho.app"
+  };
 })();

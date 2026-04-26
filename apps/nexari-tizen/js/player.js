@@ -1417,8 +1417,9 @@ const Player = {
                 return;
             const [action, payload] = phase2Commands[idx];
             self.sendLocalMdcXhr(action, payload)
-                .then((r) => { logger.info('[mdc-startup] phase2', action, 'ok:', r.ok); }, () => {})
-                .then(() => {
+                .then((r) => { logger.info('[mdc-startup] phase2', action, 'ok:', r.ok); })
+                .catch(() => { })
+                .finally(() => {
                 self._mdcPhase2InFlight = Math.max(0, self._mdcPhase2InFlight - 1);
                 runNext(idx + 1);
             });
@@ -1453,7 +1454,8 @@ const Player = {
                 payload: { power: s.power, volume: s.volume, mute: s.mute, input: s.input },
             }));
         })
-            .then(() => { this._mdcHeartbeatInFlight = false; }, () => { this._mdcHeartbeatInFlight = false; });
+            .catch(() => { })
+            .finally(() => { this._mdcHeartbeatInFlight = false; });
     },
     // Phase 4 (every 5min): run all MDC GETs → send mdc_poll WS message
     runMdcPoll() {
@@ -1577,8 +1579,9 @@ const Player = {
             }
             const { action, key, payload } = sequence[idx];
             self.sendLocalMdcXhr(action, payload || {})
-                .then((r) => { results[key] = r; }, () => { results[key] = { ok: false }; })
-                .then(() => { runNext(idx + 1); });
+                .then((r) => { results[key] = r; })
+                .catch(() => { results[key] = { ok: false }; })
+                .finally(() => { runNext(idx + 1); });
         }
         runNext(0);
     },
@@ -1839,9 +1842,6 @@ const Player = {
                 this.renderVideo(container, content);
                 break;
             case 'HTML':
-            case 'HTML5':
-            case 'WEBPAGE':
-            case 'WEB_URL':
                 this.renderHTML(container, content);
                 break;
             case 'MENU_BOARD':
@@ -1894,60 +1894,61 @@ const Player = {
                     const pathParts = filePath.split('/');
                     const fileName = pathParts[pathParts.length - 1];
                     try {
-                        // Tizen 4 filesystem API: use storageDir.resolve() + openStream() callback
-                        const file = ContentManager.storageDir ? ContentManager.storageDir.resolve(fileName) : null;
-                        if (file) {
-                            file.openStream('r', (fs) => {
-                                const fileSize = file.fileSize || fs.bytesAvailable;
-                                const bytes = fs.readBytes(fileSize);
-                                fs.close();
-                                const buffer = new Uint8Array(bytes);
-                                const mimeType = this.getMimeType(fileName, content.contentType) || 'application/octet-stream';
-                                let blobUrl = null;
-                                let dataUrl = null;
-                                try {
-                                    const blob = new Blob([buffer], { type: mimeType });
-                                    blobUrl = URL.createObjectURL(blob);
-                                }
-                                catch (blobError) {
-                                    logger.warn('Failed to create blob URL, falling back to data URL:', blobError.message);
+                        const fh = window.tizen.filesystem.openFile(filePath, 'r');
+                        try {
+                            const buffer = fh.readData();
+                            const mimeType = this.getMimeType(fileName, content.contentType) || 'application/octet-stream';
+                            let blobUrl = null;
+                            let dataUrl = null;
+                            try {
+                                const blob = new Blob([buffer], { type: mimeType });
+                                blobUrl = URL.createObjectURL(blob);
+                            }
+                            catch (blobError) {
+                                logger.warn('Failed to create blob URL, falling back to data URL:', blobError.message);
+                                dataUrl = this.bytesToDataUrl(buffer, mimeType);
+                            }
+                            const img = document.createElement('img');
+                            img.style.width = '100%';
+                            img.style.height = '100%';
+                            img.style.objectFit = 'contain';
+                            img.style.backgroundColor = '#000';
+                            const useDataUrlFallback = () => {
+                                if (!dataUrl) {
                                     dataUrl = this.bytesToDataUrl(buffer, mimeType);
                                 }
-                                const img = document.createElement('img');
-                                img.style.width = '100%';
-                                img.style.height = '100%';
-                                img.style.objectFit = 'contain';
-                                img.style.backgroundColor = '#000';
-                                const useDataUrlFallback = () => {
-                                    if (!dataUrl) {
-                                        dataUrl = this.bytesToDataUrl(buffer, mimeType);
-                                    }
-                                    img.src = dataUrl;
-                                };
-                                img.onload = () => {
-                                    logger.info('Image loaded successfully from local cache');
-                                    if (blobUrl) { URL.revokeObjectURL(blobUrl); }
-                                };
-                                img.onerror = (error) => {
-                                    if (blobUrl) {
-                                        logger.warn('Blob URL failed, retrying with data URL');
-                                        URL.revokeObjectURL(blobUrl);
-                                        blobUrl = null;
-                                        useDataUrlFallback();
-                                        return;
-                                    }
-                                    logger.error('Image failed to load even after data URL fallback:', error);
-                                    this.showImageError(container, content);
-                                };
-                                if (blobUrl) { img.src = blobUrl; } else { useDataUrlFallback(); }
-                                container.appendChild(img);
-                            }, (error) => {
-                                logger.error('Failed to open file stream:', error);
+                                img.src = dataUrl;
+                            };
+                            img.onload = () => {
+                                logger.info('Image loaded successfully from local cache');
+                                if (blobUrl) {
+                                    URL.revokeObjectURL(blobUrl);
+                                }
+                            };
+                            img.onerror = (error) => {
+                                if (blobUrl) {
+                                    logger.warn('Blob URL failed to load, retrying with data URL');
+                                    URL.revokeObjectURL(blobUrl);
+                                    blobUrl = null;
+                                    useDataUrlFallback();
+                                    return;
+                                }
+                                logger.error('Image failed to load even after data URL fallback:', error);
                                 this.showImageError(container, content);
-                            });
-                        } else {
-                            logger.error('File not found in storageDir:', fileName);
-                            this.showImageError(container, content);
+                            };
+                            if (blobUrl) {
+                                img.src = blobUrl;
+                            }
+                            else {
+                                useDataUrlFallback();
+                            }
+                            container.appendChild(img);
+                        }
+                        finally {
+                            try {
+                                fh.close();
+                            }
+                            catch (_) { }
                         }
                     }
                     catch (error) {
@@ -3805,51 +3806,12 @@ const Player = {
     // Render HTML content
     renderHTML(container, content) {
         const iframe = document.createElement('iframe');
-        let src = content.webUrl || content.url;
-        // WEB_URL: proxy through API server so X-Frame-Options / CSP frame-ancestors
-        // set by the target site are stripped before reaching the Tizen browser engine.
-        // Exception: local / private-IP URLs are never framing-blocked and must load
-        // directly so that SPA asset paths resolve against the correct origin.
-        const _isLocalUrl = (u) => {
-            try {
-                const h = new URL(u).hostname;
-                return h === 'localhost' || h === '127.0.0.1' ||
-                    /^10\./.test(h) || /^192\.168\./.test(h) ||
-                    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(h);
-            } catch (_) { return false; }
-        };
-        if (content.type === 'WEB_URL' && content.type !== 'HTML5' && src && !_isLocalUrl(src)) {
-            const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
-            src = `${CONFIG.API_BASE}/devices/device/web-proxy?url=${encodeURIComponent(src)}&token=${encodeURIComponent(token)}`;
-        }
-        // Explicit positioning + opaque background — the player container has
-        // pointer-events:none and a transparent bg, which on Tizen 4 caused the
-        // iframe to render behind the body::before gradient. Force the iframe
-        // to its own stacking layer with an opaque backdrop so it always shows.
-        iframe.src = src;
-        iframe.style.position = 'absolute';
-        iframe.style.top = '0';
-        iframe.style.left = '0';
+        iframe.src = content.url;
         iframe.style.width = '100%';
         iframe.style.height = '100%';
         iframe.style.border = 'none';
-        iframe.style.background = '#000';
-        iframe.style.zIndex = '1';
-        iframe.style.pointerEvents = 'auto';
-        iframe.setAttribute('frameborder', '0');
-        iframe.setAttribute('scrolling', 'no');
         iframe.allowFullscreen = true;
-        iframe.onload = () => {
-            try {
-                const rect = iframe.getBoundingClientRect();
-                logger.info(`iframe loaded OK: ${src} (size=${Math.round(rect.width)}x${Math.round(rect.height)} parent=${container.id || container.tagName})`);
-            } catch (_) {
-                logger.info(`iframe loaded OK: ${src}`);
-            }
-        };
-        iframe.onerror = (e) => logger.error(`iframe failed to load: ${src}`, String(e));
         container.appendChild(iframe);
-        logger.info(`iframe inserted: src=${src} container.children=${container.children.length}`);
     },
     // Render Canvas content (prefer HTML runtime, fall back to thumbnail image)
     renderCanvas(container, content) {
@@ -4471,20 +4433,16 @@ const Player = {
             logger.info(`Playing item ${currentIndex + 1}/${playableItems.length}: ${content.name} (${content.type}) - URL: ${content.url}`);
             const itemKey = this.getPlaylistItemKey(content);
             const isDocumentContent = content.type === 'PDF' || content.type === 'OFFICE';
-            const isWebContent = content.type === 'HTML' || content.type === 'HTML5' || content.type === 'WEBPAGE' || content.type === 'WEB_URL';
             const canReuseImage = content.type === 'IMAGE' &&
                 this.lastRenderedItemKey === itemKey &&
                 container.children.length > 0;
             const canReuseDocument = isDocumentContent &&
                 this.documentActive &&
                 this.documentItemKey === itemKey;
-            const canReuseWebUrl = isWebContent &&
-                this.lastRenderedItemKey === itemKey &&
-                container.querySelector('iframe') !== null;
             if (!canReuseDocument && this.documentActive) {
                 this.closeDocument();
             }
-            if (!canReuseImage && !canReuseDocument && !canReuseWebUrl) {
+            if (!canReuseImage && !canReuseDocument) {
                 container.innerHTML = '';
             }
             container._menuBoardRequestId = undefined;
@@ -4689,15 +4647,8 @@ const Player = {
                     }
                     break;
                 case 'HTML':
-                case 'HTML5':
                 case 'WEBPAGE':
-                case 'WEB_URL':
-                    if (!canReuseWebUrl) {
-                        this.renderHTML(container, content);
-                        this.lastRenderedItemKey = itemKey;
-                    } else {
-                        logger.debug('Skipping web/iframe re-render, identical item already displayed');
-                    }
+                    this.renderHTML(container, content);
                     // Schedule next item
                     scheduleNext(duration * 1000);
                     break;
@@ -5366,15 +5317,6 @@ const Player = {
         }
         else if (type === 'VIDEO' || type === 'MP4' || type === 'WEBM') {
             this._playZoneVideo(zone, container, content, items, itemIndex, durationMs, token, zoneIndex);
-        }
-        else if (type === 'HTML' || type === 'WEB_URL' || type === 'WEBPAGE') {
-            this.renderHTML(container, content);
-            const t = setTimeout(() => {
-                if (this._zoneMode && container.parentNode) {
-                    this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex);
-                }
-            }, durationMs);
-            this._zoneTimers.push(t);
         }
         else if (type === 'PDF') {
             this._playZonePdf(zone, container, content, items, itemIndex, durationMs, token, zoneIndex);
