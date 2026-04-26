@@ -53,6 +53,7 @@ const CSRF_COOKIE = 'csrf_token';
 const BROWSER_REFRESH_PATH = '/api/auth/refresh';
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 const BRANDING_ASSET_TYPES = new Set(['logo', 'favicon', 'login-background']);
+const secureCookies = process.env['COOKIE_SECURE'] !== 'false';
 
 function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString('hex');
@@ -88,7 +89,7 @@ function getBrandAssetExtension(filename: string, mime: string): string {
 function setRefreshCookie(reply: FastifyReply, token: string) {
   void reply.setCookie(REFRESH_COOKIE, token, {
     httpOnly: true,
-    secure: process.env['NODE_ENV'] === 'production',
+    secure: secureCookies,
     sameSite: 'lax',
     path: BROWSER_REFRESH_PATH,
     maxAge: 60 * 60 * 24 * 30,
@@ -98,7 +99,7 @@ function setRefreshCookie(reply: FastifyReply, token: string) {
 function setAccessCookie(reply: FastifyReply, token: string) {
   void reply.setCookie(ACCESS_COOKIE, token, {
     httpOnly: true,
-    secure: process.env['NODE_ENV'] === 'production',
+    secure: secureCookies,
     sameSite: 'lax',
     path: '/',
     maxAge: 60 * 15,
@@ -108,7 +109,7 @@ function setAccessCookie(reply: FastifyReply, token: string) {
 function setCsrfCookie(reply: FastifyReply, token = randomToken(24)) {
   void reply.setCookie(CSRF_COOKIE, token, {
     httpOnly: false,
-    secure: process.env['NODE_ENV'] === 'production',
+    secure: secureCookies,
     sameSite: 'lax',
     path: '/',
     maxAge: 60 * 60 * 24 * 30,

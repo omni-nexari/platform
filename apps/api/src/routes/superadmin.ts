@@ -175,10 +175,12 @@ function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString('hex');
 }
 
+const secureCookies = process.env['COOKIE_SECURE'] !== 'false';
+
 function setPortalAccessCookie(reply: FastifyReply, token: string) {
   void reply.setCookie(SA_ACCESS_COOKIE, token, {
     httpOnly: true,
-    secure: process.env['NODE_ENV'] === 'production',
+    secure: secureCookies,
     sameSite: 'lax',
     path: '/',
     maxAge: 60 * 60 * 8,
@@ -188,7 +190,7 @@ function setPortalAccessCookie(reply: FastifyReply, token: string) {
 function setPortalCsrfCookie(reply: FastifyReply, token = randomToken(24)) {
   void reply.setCookie(SA_CSRF_COOKIE, token, {
     httpOnly: false,
-    secure: process.env['NODE_ENV'] === 'production',
+    secure: secureCookies,
     sameSite: 'lax',
     path: '/',
     maxAge: 60 * 60 * 8,
@@ -207,7 +209,7 @@ function clearPortalCsrfCookie(reply: FastifyReply) {
 function setMainAccessCookie(reply: FastifyReply, token: string) {
   void reply.setCookie(MAIN_ACCESS_COOKIE, token, {
     httpOnly: true,
-    secure: process.env['NODE_ENV'] === 'production',
+    secure: secureCookies,
     sameSite: 'lax',
     path: '/',
     maxAge: 60 * 60 * 2,
@@ -217,7 +219,7 @@ function setMainAccessCookie(reply: FastifyReply, token: string) {
 function setMainCsrfCookie(reply: FastifyReply, token = randomToken(24)) {
   void reply.setCookie(MAIN_CSRF_COOKIE, token, {
     httpOnly: false,
-    secure: process.env['NODE_ENV'] === 'production',
+    secure: secureCookies,
     sameSite: 'lax',
     path: '/',
     maxAge: 60 * 60 * 2,
