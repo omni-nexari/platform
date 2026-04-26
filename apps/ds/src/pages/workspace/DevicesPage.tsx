@@ -149,8 +149,8 @@ export default function DevicesPage() {
 
   const claimMutation = useMutation({
     mutationFn: (data: PairFormInput) =>
-      api.post<Device>('/devices/pair/claim', { ...data, workspaceId: wsId }),
-    onSuccess: (device: Device) => {
+      api.post<{ device: Device }>('/devices/pair/claim', { ...data, workspaceId: wsId }),
+    onSuccess: ({ device }: { device: Device }) => {
       toast.success('Device claimed');
       setPairOpen(false);
       reset();

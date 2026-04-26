@@ -1039,4 +1039,90 @@ body::before {
 .ds-loading { color: #3a72b0; }
 .ds-error   { color: #cc4444; }
 
+/* ── On-screen Log Console ─────────────────────────────────────────── */
+#ui-log-panel {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 9990;
+  background: rgba(11, 13, 17, 0.96);
+  flex-direction: column;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  color: #e8eaf0;
+}
+.ui-log-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(255,255,255,0.06);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.ui-log-controls {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ui-log-btn {
+  padding: 3px 10px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 4px;
+  color: #e8eaf0;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ui-log-btn.is-active {
+  outline: 2px solid #4ff2d1;
+  outline-offset: 1px;
+}
+.ui-log-btn.is-on {
+  background: rgba(79,242,209,0.2);
+  border-color: #4ff2d1;
+  color: #4ff2d1;
+}
+.ui-log-status {
+  margin-left: auto;
+  font-size: 11px;
+  color: #7a8299;
+  white-space: nowrap;
+}
+.ui-log-hint {
+  font-size: 10px;
+  color: #7a8299;
+  white-space: nowrap;
+}
+#ui-log-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+.ul-row {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  line-height: 1.4;
+}
+.ul-time {
+  color: #7a8299;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.ul-lvl {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: bold;
+  min-width: 52px;
+}
+.ul-msg {
+  flex: 1;
+  word-break: break-all;
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+
 

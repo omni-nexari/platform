@@ -879,7 +879,7 @@ export default function DeviceDetailPage() {
   }>({
     queryKey: ['device', deviceId],
     queryFn: () => api.get(`/devices/${deviceId}`),
-    enabled: bootstrapped && !!user && !!deviceId,
+    enabled: bootstrapped && !!user && !!deviceId && deviceId !== 'undefined',
     refetchInterval: (query) => (query.state.status === 'error' ? false : 15_000),
     retry: false,
   });
@@ -933,7 +933,7 @@ export default function DeviceDetailPage() {
   const { data: logData } = useQuery<DeviceLogsResponse>({
     queryKey: ['device-logs', deviceId],
     queryFn: () => api.get(`/devices/${deviceId}/logs?limit=1000`),
-    enabled: bootstrapped && !!user && !!deviceId,
+    enabled: bootstrapped && !!user && !!deviceId && deviceId !== 'undefined',
     refetchInterval: (query) => (query.state.status === 'error' ? false : 2_000),
     retry: false,
   });

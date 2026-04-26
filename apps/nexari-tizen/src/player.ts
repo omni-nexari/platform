@@ -1468,7 +1468,7 @@ const Player = {
       self.sendLocalMdcXhr(action, payload)
         .then((r) => { logger.info('[mdc-startup] phase2', action, 'ok:', r.ok); })
         .catch(() => { /* non-blocking */ })
-        .finally(() => {
+        .then(() => {
           self._mdcPhase2InFlight = Math.max(0, self._mdcPhase2InFlight - 1);
           runNext(idx + 1);
         });
@@ -1498,7 +1498,7 @@ const Player = {
         }));
       })
       .catch(() => { /* non-blocking */ })
-      .finally(() => { this._mdcHeartbeatInFlight = false; });
+      .then(() => { this._mdcHeartbeatInFlight = false; });
   },
 
   // Phase 4 (every 5min): run all MDC GETs → send mdc_poll WS message
@@ -1613,7 +1613,7 @@ const Player = {
       self.sendLocalMdcXhr(action, payload || {})
         .then((r: Record<string, unknown>) => { results[key] = r as { ok: boolean; data?: number[] }; })
         .catch(() => { results[key] = { ok: false }; })
-        .finally(() => { runNext(idx + 1); });
+        .then(() => { runNext(idx + 1); });
     }
     runNext(0);
   },

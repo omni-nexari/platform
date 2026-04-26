@@ -112,9 +112,8 @@ window.RemoteControl = {
     const keyCode = event.keyCode;
     const activeScreen = this.getCurrentScreen();
     
-    if (this.debugMode) {
-      logger.debug(`Key pressed: ${keyCode}`);
-    }
+    // Always log key code so we can see what the remote is actually sending
+    logger.debug('Key pressed: ' + keyCode);
 
     // Prevent default behavior for navigation keys
     if ([this.KEYS.LEFT, this.KEYS.RIGHT, this.KEYS.UP, this.KEYS.DOWN].includes(keyCode)) {
@@ -128,9 +127,9 @@ window.RemoteControl = {
       return;
     }
 
-    // When log console is open, INFO closes it, UP/DOWN scroll, LEFT/RIGHT/ENTER control filter buttons
+    // When log console is open, NUM_1 closes it, UP/DOWN scroll, LEFT/RIGHT/ENTER control filter buttons
     if (typeof UiLog !== 'undefined' && UiLog._visible) {
-      if (keyCode === this.KEYS.INFO) {
+      if (keyCode === this.KEYS.NUM_1) {
         UiLog.toggle();
         return;
       }
@@ -156,14 +155,8 @@ window.RemoteControl = {
       }
     }
 
-    // INFO button opens the log console when it is closed
-    if (keyCode === this.KEYS.INFO) {
-      if (typeof UiLog !== 'undefined') UiLog.toggle();
-      return;
-    }
-
-    // Blue button (ColorF3Blue) also toggles log console (fallback when INFO key not firing)
-    if (keyCode === this.KEYS.BLUE) {
+    // NUM_1 toggles the log console
+    if (keyCode === this.KEYS.NUM_1) {
       if (typeof UiLog !== 'undefined') UiLog.toggle();
       return;
     }
@@ -212,12 +205,6 @@ window.RemoteControl = {
     }
 
     switch (keyCode) {
-      case this.KEYS.NUM_4:
-        event.preventDefault();
-        logger.info('Navigating to test-tizen.html via NUM_4');
-        window.location.href = 'test-tizen.html';
-        return true;
-
       case this.KEYS.NUM_2:
         event.preventDefault();
         if (activeScreen === 'pairing') {
