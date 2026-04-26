@@ -1,0 +1,25 @@
+[Unit]
+Description=Signage API (Fastify)
+Documentation=https://ds.chiho.app
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=chiho
+Group=chiho
+WorkingDirectory=/opt/signage
+EnvironmentFile=/etc/signage/api.env
+ExecStart=/usr/bin/node apps/api/dist/index.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=signage-api
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -2,6 +2,6 @@
 <widget>
 	<ver>1.0.0</ver>
 	<size>0</size>
-	<widgetname>NexariTizen</widgetname>
+	<widgetname>NexariPlayer</widgetname>
 	<webtype>tizen</webtype>
 </widget>
