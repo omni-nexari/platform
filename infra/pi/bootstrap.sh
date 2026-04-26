@@ -71,6 +71,7 @@ if [[ -n "$GIT_REPO" ]]; then
             sudo rm -rf "$APP_DIR"
         fi
         echo "==> [bootstrap] Cloning $GIT_REPO ($BRANCH) into $APP_DIR..."
+        cd /tmp
         git clone --branch "$BRANCH" --depth 1 "$GIT_REPO" "$APP_DIR"
         sudo chown -R "$APP_USER:$APP_USER" "$APP_DIR"
     fi
