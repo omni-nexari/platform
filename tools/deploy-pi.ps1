@@ -46,7 +46,7 @@ if ($RunBootstrap) {
     if ($LASTEXITCODE -ne 0) { throw "Archive upload failed" }
     # Strip Windows CRLF line endings from shell scripts before executing
     ssh $sshTarget "find '$RemoteDir/infra' -name '*.sh' -exec sed -i 's/\r//' {} \;"
-    ssh $sshTarget "cd '$RemoteDir' && sudo GIT_REPO='$GitRepo' BRANCH='$Branch' APP_DIR='$RemoteDir' APP_USER='$User' bash infra/pi/bootstrap.sh"
+    ssh $sshTarget "cd '$RemoteDir' && sudo GIT_REPO='$GitRepo' GIT_USERNAME='$GitUsername' GIT_TOKEN='$GitToken' BRANCH='$Branch' APP_DIR='$RemoteDir' APP_USER='$User' bash infra/pi/bootstrap.sh"
     if ($LASTEXITCODE -ne 0) { throw "Bootstrap failed" }
 }
 

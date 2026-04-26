@@ -17,6 +17,8 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-/opt/signage}"
 APP_USER="${APP_USER:-chiho}"
 GIT_REPO="${GIT_REPO:-}"
+GIT_USERNAME="${GIT_USERNAME:-}"
+GIT_TOKEN="${GIT_TOKEN:-}"
 BRANCH="${BRANCH:-main}"
 
 echo "==> [bootstrap] Updating package index..."
@@ -72,7 +74,12 @@ if [[ -n "$GIT_REPO" ]]; then
         fi
         echo "==> [bootstrap] Cloning $GIT_REPO ($BRANCH) into $APP_DIR..."
         cd /tmp
-        git clone --branch "$BRANCH" --depth 1 "$GIT_REPO" "$APP_DIR"
+        # Build authenticated URL so root can clone without .netrc
+        AUTH_REPO="$GIT_REPO"
+        if [[ -n "$GIT_USERNAME" && -n "$GIT_TOKEN" ]]; then
+            AUTH_REPO="${GIT_REPO/https:\/\//https:\/\/$GIT_USERNAME:$GIT_TOKEN@}"
+        fi
+        git clone --branch "$BRANCH" --depth 1 "$AUTH_REPO" "$APP_DIR"
         sudo chown -R "$APP_USER:$APP_USER" "$APP_DIR"
     fi
 else
