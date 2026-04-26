@@ -56,11 +56,17 @@ pnpm db:migrate
 # ── nginx config ──────────────────────────────────────────────────────────────
 echo "==> [deploy] Installing nginx config..."
 NGINX_CONF="$APP_DIR/infra/nginx/signage.conf"
-sudo cp "$NGINX_CONF" /etc/nginx/sites-available/signage.conf
+# Always write to the canonical 'signage' file (bootstrap may have created it
+# without the .conf extension; writing to it keeps the existing symlink valid).
+sudo cp "$NGINX_CONF" /etc/nginx/sites-available/signage
 
-if [[ ! -L /etc/nginx/sites-enabled/signage.conf ]]; then
-    sudo ln -s /etc/nginx/sites-available/signage.conf /etc/nginx/sites-enabled/signage.conf
+# Ensure the symlink exists (idempotent — bootstrap may have already created it)
+if [[ ! -L /etc/nginx/sites-enabled/signage ]]; then
+    sudo ln -s /etc/nginx/sites-available/signage /etc/nginx/sites-enabled/signage
 fi
+
+# Remove stale .conf-suffixed link if a previous deploy created it
+[[ -L /etc/nginx/sites-enabled/signage.conf ]] && sudo rm -f /etc/nginx/sites-enabled/signage.conf
 
 # Remove default site if still present
 [[ -L /etc/nginx/sites-enabled/default ]] && sudo rm -f /etc/nginx/sites-enabled/default

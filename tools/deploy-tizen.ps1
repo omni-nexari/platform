@@ -47,11 +47,14 @@ param(
 
     [string]$SuperadminEmail = "",
     [string]$SuperadminPassword = "",
-    [string]$ApiBase = "https://ds.chiho.app",
+    [string]$ApiBase = "",
     [string]$ReleaseNotes = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+# Default API base to local Pi IP so LAN calls work without hairpin NAT
+if ($ApiBase -eq "") { $ApiBase = "http://$PiHost" }
 
 $RepoRoot  = Split-Path -Parent $PSScriptRoot
 $TizenDir  = Join-Path $RepoRoot "apps\nexari-tizen"
