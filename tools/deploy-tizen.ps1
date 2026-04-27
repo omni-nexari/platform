@@ -58,6 +58,9 @@ param(
     # Uses npm run build (production HTTPS API URL).
     [switch]$Build,
 
+    # Use build:dev (http://192.168.1.17 API) instead of the production HTTPS URL.
+    [switch]$Dev,
+
     # Tizen Studio CLI path (tizen.bat)
     [string]$TizenCli = "C:\tizen-studio\tools\ide\bin\tizen.bat",
 
@@ -123,11 +126,13 @@ if ($Build) {
     }
 
     # npm run build uses production HTTPS API URL (ds.chiho.app)
+    # npm run build:dev uses LAN IP (192.168.1.17)
+    $buildScript = if ($Dev) { "build:dev" } else { "build" }
     Push-Location $TizenDir
     try {
-        Write-Host "  Running npm run build..."
-        npm run build 2>&1 | Write-Host
-        if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
+        Write-Host "  Running npm run $buildScript..."
+        npm run $buildScript 2>&1 | Write-Host
+        if ($LASTEXITCODE -ne 0) { throw "npm run $buildScript failed" }
     } finally {
         Pop-Location
     }
