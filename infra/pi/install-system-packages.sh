@@ -48,14 +48,19 @@ if [[ "${SIGNAGE_SKIP_PLAYWRIGHT:-0}" != "1" ]]; then
       libcairo2 libasound2 || true
 
   if [[ -d /opt/signage ]]; then
+    # Run pnpm as the app user (SUDO_USER), not root, to avoid pnpm store mismatch.
+    APP_USER="${SUDO_USER:-chiho}"
     pushd /opt/signage >/dev/null
-    if pnpm --filter @signage/api list playwright 2>/dev/null | grep -q playwright; then
+    if su -c "pnpm --filter @signage/api list playwright 2>/dev/null" "$APP_USER" | grep -q playwright; then
       echo "    playwright npm package already installed."
     else
       echo "    Installing playwright npm package..."
-      pnpm --filter @signage/api add playwright || echo "!!! Playwright install failed — HTML5 thumbnails will be skipped."
+      su -c "pnpm --filter @signage/api add playwright" "$APP_USER" || echo "!!! Playwright install failed — HTML5 thumbnails will be skipped."
     fi
-    npx --yes playwright install chromium 2>/dev/null || echo "!!! Could not install Chromium browser bundle."
+    # Install browser binaries as app user so they land in their home cache, not /root.
+    su -c "npx --yes playwright install chromium" "$APP_USER" 2>/dev/null || \
+      npx --yes playwright install chromium 2>/dev/null || \
+      echo "!!! Could not install Chromium browser bundle."
     popd >/dev/null
   fi
 fi

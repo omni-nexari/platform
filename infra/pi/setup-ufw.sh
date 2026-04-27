@@ -3,7 +3,7 @@
 # Configure UFW firewall for the Pi.
 #
 # - Default deny inbound, allow outbound
-# - Allow SSH from RFC1918 LANs only (192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12)
+# - Allow SSH from 192.168.1.0/24 (local LAN) only
 # - Allow HTTP (80) and HTTPS (443) from anywhere — nginx terminates and proxies
 # - Postgres (5432) and Redis (6379) are NOT opened — they bind to localhost
 #
@@ -19,14 +19,15 @@ fi
 echo "==> Installing ufw..."
 apt-get install -y ufw
 
+echo "==> Resetting UFW to remove any pre-existing rules..."
+ufw --force reset
+
 echo "==> Setting default policies..."
 ufw --force default deny incoming
 ufw --force default allow outgoing
 
-echo "==> Allowing SSH from RFC1918 LANs only..."
-ufw allow from 192.168.0.0/16 to any port 22 proto tcp comment 'SSH LAN-A'
-ufw allow from 10.0.0.0/8     to any port 22 proto tcp comment 'SSH LAN-B'
-ufw allow from 172.16.0.0/12  to any port 22 proto tcp comment 'SSH LAN-C'
+echo "==> Allowing SSH from 192.168.1.0/24 only..."
+ufw allow from 192.168.1.0/24 to any port 22 proto tcp comment 'SSH local LAN'
 
 echo "==> Allowing HTTP/HTTPS from anywhere..."
 ufw allow 80/tcp  comment 'nginx HTTP'
