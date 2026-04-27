@@ -149,8 +149,12 @@ window.API = {
       const sg = publishedTargets.publishedSyncGroup;
       const sp = sg.syncPlaylist;
       if (sp && (sp.items || []).length > 0) {
-        logger.info('Using published sync group override:', sg.id, 'groupId:', sg.groupId);
-        return API._normalizeSyncPlaylist(sp, sg.groupId, deviceToken);
+        const normalized = API._normalizeSyncPlaylist(sp, sg.groupId, deviceToken);
+        if (normalized) {
+          logger.info('Using published sync group override:', sg.id, 'groupId:', sg.groupId);
+          return normalized;
+        }
+        // Fall through to lower-priority targets when sync payload is invalid.
       }
     }
 
@@ -227,6 +231,15 @@ window.API = {
 
   // ── Normalize a sync playlist into the player's expected shape ───────────
   _normalizeSyncPlaylist(syncPlaylist, groupId, deviceToken) {
+    // Samsung SyncPlay requires a 16-bit unsigned integer groupID (0..65535).
+    // Reject out-of-range/non-numeric values up front so the firmware call site
+    // gets a clean failure instead of a confusing TypeMismatchError.
+    const numericGroupId = Number(groupId);
+    if (!Number.isFinite(numericGroupId) || !Number.isInteger(numericGroupId) ||
+        numericGroupId < 0 || numericGroupId > 65535) {
+      logger.warn('Syncplay: invalid groupID from API, ignoring sync playlist', groupId);
+      return null;
+    }
     const items = (syncPlaylist.items || []).map((item, idx) => ({
       id: item.id,
       contentId: item.contentId,
@@ -234,12 +247,16 @@ window.API = {
       position: item.sortOrder != null ? item.sortOrder : idx,
       content: item.content ? API._normalizeContent(item.content, deviceToken) : null,
     }));
+    if (items.length === 0) {
+      logger.warn('Syncplay: empty sync playlist, ignoring');
+      return null;
+    }
     return {
       id: syncPlaylist.id,
       playlistId: syncPlaylist.id,
       playlistName: syncPlaylist.name || 'Sync Playlist',
       items,
-      syncPlay: { enabled: true, groupID: groupId },
+      syncPlay: { enabled: true, groupID: numericGroupId },
     };
   },
 
