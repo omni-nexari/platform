@@ -55,6 +55,44 @@ async function generateVideoThumb(srcAbs: string, thumbAbs: string): Promise<voi
   }
 }
 
+/** Render the first page of a PDF to a 400×225 JPEG thumbnail via Ghostscript. */
+async function generatePdfThumb(srcAbs: string, thumbAbs: string): Promise<void> {
+  const GS_BIN = process.env['GHOSTSCRIPT_PATH'] ?? 'gs';
+  // Render at 150 DPI to a temp file, then sharp-resize to the standard thumbnail size
+  const tmpPath = `${thumbAbs}.tmp.jpg`;
+  try {
+    await execFileAsync(GS_BIN, [
+      '-dNOPAUSE', '-dBATCH', '-dSAFER',
+      '-sDEVICE=jpeg', '-dJPEGQ=90', '-r150',
+      '-dFirstPage=1', '-dLastPage=1',
+      `-sOutputFile=${tmpPath}`,
+      srcAbs,
+    ]);
+    await generateImageThumb(tmpPath, thumbAbs);
+  } finally {
+    await fs.unlink(tmpPath).catch(() => undefined);
+  }
+}
+
+/**
+ * Convert the first slide of a PPTX/PPT to a 400×225 JPEG thumbnail via LibreOffice.
+ * LibreOffice outputs a PNG alongside srcAbs; we resize it with sharp and clean up.
+ */
+async function generatePresentationThumb(srcAbs: string, thumbAbs: string): Promise<void> {
+  const SOFFICE_BIN = process.env['LIBREOFFICE_PATH'] ?? 'soffice';
+  const tmpDir = path.dirname(thumbAbs);
+  await execFileAsync(SOFFICE_BIN, [
+    '--headless', '--convert-to', 'png', '--outdir', tmpDir, srcAbs,
+  ]);
+  const baseName = path.basename(srcAbs, path.extname(srcAbs));
+  const pngPath = path.join(tmpDir, `${baseName}.png`);
+  try {
+    await generateImageThumb(pngPath, thumbAbs);
+  } finally {
+    await fs.unlink(pngPath).catch(() => undefined);
+  }
+}
+
 // ── Media probing ──────────────────────────────────────────────────────────────
 interface VideoMeta {
   width: number | null; height: number | null; duration: number | null;
@@ -489,14 +527,18 @@ export async function contentRoutes(app: FastifyInstance) {
 
     // Generate thumbnail (best-effort — failures are non-fatal)
     let thumbnailRelPath: string | undefined;
-    if (type === 'image' || type === 'video') {
+    if (type === 'image' || type === 'video' || type === 'pdf' || type === 'presentation') {
       const thumbRel = path.join(relDir, `${fileId}_thumb.jpg`);
       const thumbAbs = path.resolve(STORAGE_ROOT, thumbRel);
       try {
         if (type === 'image') {
           await generateImageThumb(absPath, thumbAbs);
-        } else {
+        } else if (type === 'video') {
           await generateVideoThumb(absPath, thumbAbs);
+        } else if (type === 'pdf') {
+          await generatePdfThumb(absPath, thumbAbs);
+        } else if (type === 'presentation') {
+          await generatePresentationThumb(absPath, thumbAbs);
         }
         thumbnailRelPath = thumbRel.replace(/\\/g, '/');
       } catch {
@@ -1142,27 +1184,9 @@ export async function contentRoutes(app: FastifyInstance) {
       } else if (item.type === 'video') {
         await generateVideoThumb(absPath, thumbAbs);
       } else if (item.type === 'pdf') {
-        // Use Ghostscript to render first page to JPEG
-        const GS_BIN = process.env['GHOSTSCRIPT_PATH'] ?? 'gs';
-        await execFileAsync(GS_BIN, [
-          '-dNOPAUSE', '-dBATCH', '-dSAFER',
-          '-sDEVICE=jpeg', '-r72',
-          '-dFirstPage=1', '-dLastPage=1',
-          `-sOutputFile=${thumbAbs}`,
-          absPath,
-        ]);
+        await generatePdfThumb(absPath, thumbAbs);
       } else if (item.type === 'presentation') {
-        // Use LibreOffice to convert first slide to image, then resize
-        const SOFFICE_BIN = process.env['LIBREOFFICE_PATH'] ?? 'soffice';
-        const tmpDir = path.dirname(thumbAbs);
-        await execFileAsync(SOFFICE_BIN, [
-          '--headless', '--convert-to', 'png', '--outdir', tmpDir, absPath,
-        ]);
-        // LibreOffice outputs file with same basename + .png
-        const baseName = path.basename(absPath, path.extname(absPath));
-        const pngPath = path.join(tmpDir, `${baseName}.png`);
-        await generateImageThumb(pngPath, thumbAbs);
-        await fs.unlink(pngPath).catch(() => undefined);
+        await generatePresentationThumb(absPath, thumbAbs);
       }
     } catch (e) {
       await db.update(contentItems)
