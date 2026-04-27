@@ -34,7 +34,13 @@ sudo apt-get install -y --no-install-recommends --allow-change-held-packages \
     python3-certbot-nginx \
     ffmpeg \
     ghostscript \
-    libreoffice-common \
+    libreoffice-impress \
+    libreoffice-writer \
+    fonts-liberation \
+    fonts-noto-core \
+    poppler-utils \
+    zip \
+    unzip \
     postgresql-client \
     ca-certificates \
     gnupg \
