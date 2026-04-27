@@ -87,10 +87,11 @@ export async function generatePresentationThumb(srcAbs: string, thumbAbs: string
 
 /**
  * Render the first frame of an HTML5 ZIP package to a thumbnail via Playwright.
- * Returns false if Playwright is not installed; caller should treat as no-op.
+ * Returns false if Playwright is not installed; throws on any other failure so
+ * the worker/caller can log the real error.
  */
 export async function generateHtml5Thumb(zipAbs: string, thumbAbs: string): Promise<boolean> {
-  // Playwright is an optional Pi-side dependency \u2014 not installed in dev.
+  // Playwright is an optional Pi-side dependency — not installed in dev.
   // Use a structural type so the build doesn't require @types/playwright.
   type PwLike = {
     chromium: {
@@ -113,85 +114,83 @@ export async function generateHtml5Thumb(zipAbs: string, thumbAbs: string): Prom
     // @ts-ignore -- optional runtime dependency
     pw = (await import('playwright')) as unknown as PwLike;
   } catch {
-    return false;
+    return false; // Not installed — skip silently
   }
 
   const os = await import('node:os');
+  const http = await import('node:http');
   const AdmZip = (await import('adm-zip')).default;
   const extractDir = await fs.mkdtemp(path.join(os.tmpdir(), 'html5-thumb-'));
 
-  // Overall 60s guard — Playwright can hang on ARM if chromium takes too long
-  const timeoutMs = 60_000;
-  const timeoutPromise = new Promise<false>((_res, rej) =>
-    setTimeout(() => rej(new Error('html5-thumb timeout')), timeoutMs),
-  );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let srv: any = null;
 
-  const workPromise = (async (): Promise<boolean> => {
-    try {
-      new AdmZip(zipAbs).extractAllTo(extractDir, true);
-      const indexPath = path.join(extractDir, 'index.html');
-      try { await fs.access(indexPath); } catch { return false; }
+  try {
+    new AdmZip(zipAbs).extractAllTo(extractDir, true);
+    const indexPath = path.join(extractDir, 'index.html');
+    try { await fs.access(indexPath); } catch { return false; }
 
-      // Spin up a minimal static HTTP server so relative assets (css/js/img)
-      // load correctly — file:// protocol blocks cross-file sub-resources.
-      const http = await import('node:http');
-      const httpPort = await new Promise<number>((resolve, reject) => {
-        const srv = http.createServer((req, res) => {
-          const urlPath = (req.url ?? '/').split('?')[0]!;
-          const filePath = path.join(extractDir, urlPath === '/' ? 'index.html' : urlPath);
-          fs.readFile(filePath)
-            .then((data) => {
-              const ext = path.extname(filePath).toLowerCase();
-              const MIME: Record<string, string> = {
-                '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript',
-                '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml',
-                '.json': 'application/json', '.woff': 'font/woff', '.woff2': 'font/woff2',
-              };
-              res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream' });
-              res.end(data);
-            })
-            .catch(() => { res.writeHead(404); res.end(); });
-        });
-        srv.listen(0, '127.0.0.1', () => {
-          const addr = srv.address() as { port: number };
-          resolve(addr.port);
-        });
-        srv.on('error', reject);
-        // Attach server to browser close for cleanup
-        (srv as unknown as { _pw_server: true });
-        // Store ref for later close
-        Object.assign(srv, { _thumbSrv: true });
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (global as any).__html5ThumbSrv = srv;
+    // Spin up a minimal static HTTP server so relative assets (css/js/img)
+    // load correctly — file:// protocol blocks cross-file sub-resources.
+    const MIME: Record<string, string> = {
+      '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript',
+      '.mjs': 'application/javascript', '.json': 'application/json',
+      '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+      '.svg': 'image/svg+xml', '.gif': 'image/gif', '.webp': 'image/webp',
+      '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
+    };
+    const httpPort = await new Promise<number>((resolve, reject) => {
+      srv = http.createServer((req, res) => {
+        const urlPath = (req.url ?? '/').split('?')[0]!;
+        const filePath = path.join(extractDir, urlPath === '/' ? 'index.html' : urlPath);
+        // Prevent path traversal outside extractDir
+        if (!filePath.startsWith(extractDir)) { res.writeHead(403); res.end(); return; }
+        fs.readFile(filePath)
+          .then((data) => {
+            const ext = path.extname(filePath).toLowerCase();
+            res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream' });
+            res.end(data);
+          })
+          .catch(() => { res.writeHead(404); res.end(); });
       });
-
-      const browser = await pw.chromium.launch({
-        headless: true,
-        timeout: 20_000,
-        // Required for running under systemd/Docker/ARM without user namespaces
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      srv!.listen(0, '127.0.0.1', () => {
+        const addr = srv!.address() as { port: number };
+        resolve(addr.port);
       });
-      try {
-        const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
-        const page = await context.newPage();
-        await page.goto(`http://127.0.0.1:${httpPort}/`, { waitUntil: 'networkidle', timeout: 15_000 });
-        await page.waitForTimeout(2000);
-        const buf = await page.screenshot({ type: 'png' });
-        await sharp(buf).resize(400, 225, { fit: 'inside' }).jpeg({ quality: 80 }).toFile(thumbAbs);
-      } finally {
-        await browser.close();
-        // Close the temp HTTP server
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const srv = (global as any).__html5ThumbSrv as import('node:http').Server | undefined;
-        if (srv) { srv.close(); delete (global as any).__html5ThumbSrv; }
-      }
-      return true;
-    } finally {
-      await fs.rm(extractDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-  })();
+      srv!.on('error', reject);
+    });
 
-  return Promise.race([workPromise, timeoutPromise]).catch(() => false);
+    // Overall 60s guard — Playwright can hang on ARM if chromium crashes
+    const result = await Promise.race([
+      (async () => {
+        const browser = await pw!.chromium.launch({
+          headless: true,
+          timeout: 20_000,
+          // Required for running under systemd/Docker/ARM without user namespaces
+          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        });
+        try {
+          const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+          const page = await context.newPage();
+          await page.goto(`http://127.0.0.1:${httpPort}/`, { waitUntil: 'networkidle', timeout: 15_000 });
+          await page.waitForTimeout(1500);
+          const buf = await page.screenshot({ type: 'png' });
+          await sharp(buf).resize(400, 225, { fit: 'inside' }).jpeg({ quality: 80 }).toFile(thumbAbs);
+          return true as const;
+        } finally {
+          await browser.close();
+        }
+      })(),
+      new Promise<never>((_, rej) =>
+        setTimeout(() => rej(new Error('html5-thumb: 60s timeout exceeded')), 60_000),
+      ),
+    ]);
+
+    return result;
+  } finally {
+    srv?.close();
+    await fs.rm(extractDir, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 // ── Probing helpers ───────────────────────────────────────────────────────────
@@ -308,8 +307,12 @@ export async function processContentMedia(contentId: string): Promise<void> {
       await generatePresentationThumb(absPath, thumbAbs);
       thumbnailRelPath = thumbRel.replace(/\\/g, '/');
     } else if (type === 'html5') {
-      const ok = await generateHtml5Thumb(absPath, thumbAbs);
-      if (ok) thumbnailRelPath = thumbRel.replace(/\\/g, '/');
+      try {
+        const ok = await generateHtml5Thumb(absPath, thumbAbs);
+        if (ok) thumbnailRelPath = thumbRel.replace(/\\/g, '/');
+      } catch (err) {
+        console.error(`[media] html5 thumb failed for ${contentId}:`, err);
+      }
     }
   } catch {
     // Thumbnail failure is non-fatal — proceed without
