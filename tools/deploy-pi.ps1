@@ -50,21 +50,11 @@ if ($RunBootstrap) {
     if ($LASTEXITCODE -ne 0) { throw "Bootstrap failed" }
 }
 
-# ── Run deploy.sh on remote ────────────────────────────────────────────────────
-Write-Host "Running deployment on $sshTarget ..." -ForegroundColor Green
-$envArgs = @(
-    "GIT_REPO='$GitRepo'",
-    "BRANCH='$Branch'",
-    "APP_DIR='$RemoteDir'"
-)
-if ($CertbotEmail) { $envArgs += "CERTBOT_EMAIL='$CertbotEmail'" }
-$envStr = $envArgs -join ' '
-# PowerShell does not support < stdin redirection; pipe via Get-Content instead
-$deployScript = (Resolve-Path "$PSScriptRoot/../infra/pi/deploy.sh").Path
-# Strip CRLF so bash on Linux handles the script correctly
-$deployContent = (Get-Content -Raw $deployScript) -replace "`r`n", "`n"
-$deployContent | ssh $sshTarget "$envStr bash -s"
-if ($LASTEXITCODE -ne 0) { throw "Deploy failed" }
+# ── Run update.sh on remote ───────────────────────────────────────────────────
+Write-Host "Running update on $sshTarget ..." -ForegroundColor Green
+$envStr = "APP_DIR='$RemoteDir' BRANCH='$Branch'"
+ssh $sshTarget "$envStr bash $RemoteDir/infra/pi/update.sh"
+if ($LASTEXITCODE -ne 0) { throw "Update failed" }
 
 Write-Host ""
 Write-Host "Done. Check health:" -ForegroundColor Green

@@ -3,12 +3,13 @@
 # Usage:  bash /opt/signage/infra/pi/update.sh
 set -euo pipefail
 
-APP_DIR="/opt/signage"
+APP_DIR="${APP_DIR:-/opt/signage}"
+BRANCH="${BRANCH:-main}"
 ENV_FILE="/etc/signage/api.env"
 
 echo "==> [update] Pulling latest code..."
 cd "$APP_DIR"
-git pull origin main
+git pull origin "$BRANCH"
 
 echo "==> [update] Installing dependencies..."
 pnpm install --frozen-lockfile
