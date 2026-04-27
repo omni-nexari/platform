@@ -620,7 +620,7 @@ export default function LogViewer({
 
       {/* Device 24h error timeline */}
       {deviceId && deviceTimeline && deviceTimeline.last24h.length > 0 && (
-        <SectionCard className="overflow-visible">
+        <SectionCard style={{ overflow: 'visible' }}>
           <SectionCardHeader>
             <span className="text-xs font-medium text-[var(--text-muted)]">
               {deviceLabel || deviceId.slice(0, 8)} — activity last 24 h

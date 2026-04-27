@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, CSSProperties, HTMLAttributes, ReactNode } from 'react';
 import { X } from 'lucide-react';
 
 function joinClasses(...parts: Array<string | false | null | undefined>) {
@@ -300,8 +300,8 @@ export function InlineActionButton({
   );
 }
 
-export function SectionCard({ className, children }: { className?: string; children: ReactNode }) {
-  return <section className={joinClasses('ui-section-card', className)}>{children}</section>;
+export function SectionCard({ className, children, style }: { className?: string; children: ReactNode; style?: CSSProperties }) {
+  return <section className={joinClasses('ui-section-card', className)} style={style}>{children}</section>;
 }
 
 export function SectionCardHeader({ className, children }: { className?: string; children: ReactNode }) {
