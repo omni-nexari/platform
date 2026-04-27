@@ -94,11 +94,14 @@ export async function generateHtml5Thumb(zipAbs: string, thumbAbs: string): Prom
   // Use a structural type so the build doesn't require @types/playwright.
   type PwLike = {
     chromium: {
-      launch(opts: { headless: boolean }): Promise<{
-        newPage(opts: { viewport: { width: number; height: number } }): Promise<{
-          goto(url: string, opts: { waitUntil: 'load'; timeout: number }): Promise<unknown>;
-          waitForTimeout(ms: number): Promise<void>;
-          screenshot(opts: { type: 'png' }): Promise<Buffer>;
+      launch(opts: { headless: boolean; args?: string[]; timeout?: number }): Promise<{
+        newContext(opts: { viewport: { width: number; height: number } }): Promise<{
+          newPage(): Promise<{
+            goto(url: string, opts: { waitUntil: 'load'; timeout: number }): Promise<unknown>;
+            waitForTimeout(ms: number): Promise<void>;
+            screenshot(opts: { type: 'png' }): Promise<Buffer>;
+          }>;
+          close(): Promise<void>;
         }>;
         close(): Promise<void>;
       }>;
@@ -116,25 +119,42 @@ export async function generateHtml5Thumb(zipAbs: string, thumbAbs: string): Prom
   const os = await import('node:os');
   const AdmZip = (await import('adm-zip')).default;
   const extractDir = await fs.mkdtemp(path.join(os.tmpdir(), 'html5-thumb-'));
-  try {
-    new AdmZip(zipAbs).extractAllTo(extractDir, true);
-    const indexPath = path.join(extractDir, 'index.html');
-    try { await fs.access(indexPath); } catch { return false; }
 
-    const browser = await pw.chromium.launch({ headless: true });
+  // Overall 60s guard — Playwright can hang on ARM if chromium takes too long
+  const timeoutMs = 60_000;
+  const timeoutPromise = new Promise<false>((_res, rej) =>
+    setTimeout(() => rej(new Error('html5-thumb timeout')), timeoutMs),
+  );
+
+  const workPromise = (async (): Promise<boolean> => {
     try {
-      const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-      await page.goto('file://' + indexPath, { waitUntil: 'load', timeout: 15_000 });
-      await page.waitForTimeout(2000);
-      const buf = await page.screenshot({ type: 'png' });
-      await sharp(buf).resize(400, 225, { fit: 'inside' }).jpeg({ quality: 80 }).toFile(thumbAbs);
+      new AdmZip(zipAbs).extractAllTo(extractDir, true);
+      const indexPath = path.join(extractDir, 'index.html');
+      try { await fs.access(indexPath); } catch { return false; }
+
+      const browser = await pw.chromium.launch({
+        headless: true,
+        timeout: 20_000,
+        // Required for running under systemd/Docker/ARM without user namespaces
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      });
+      try {
+        const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+        const page = await context.newPage();
+        await page.goto('file://' + indexPath, { waitUntil: 'load', timeout: 15_000 });
+        await page.waitForTimeout(2000);
+        const buf = await page.screenshot({ type: 'png' });
+        await sharp(buf).resize(400, 225, { fit: 'inside' }).jpeg({ quality: 80 }).toFile(thumbAbs);
+      } finally {
+        await browser.close();
+      }
+      return true;
     } finally {
-      await browser.close();
+      await fs.rm(extractDir, { recursive: true, force: true }).catch(() => undefined);
     }
-    return true;
-  } finally {
-    await fs.rm(extractDir, { recursive: true, force: true }).catch(() => undefined);
-  }
+  })();
+
+  return Promise.race([workPromise, timeoutPromise]);
 }
 
 // ── Probing helpers ───────────────────────────────────────────────────────────
