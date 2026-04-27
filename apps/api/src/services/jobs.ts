@@ -14,6 +14,7 @@ import {
   listWorkspaceAdminUserIds,
 } from './notifications.js';
 import { runWebhookDeliveryJob } from './webhooks.js';
+import { getRedis } from './redis.js';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 const TRASH_RETENTION_DAYS = Number(process.env['TRASH_RETENTION_DAYS'] ?? '7');
@@ -66,17 +67,26 @@ export function startJobs(): void {
   setTimeout(wrapJob('heartbeat-cleanup',     runHeartbeatCleanup),      30_000);
   setTimeout(wrapJob('webhook-delivery',      runWebhookDeliveryJob),    35_000);
 
-  setInterval(wrapJob('file-cleanup',              runFileCleanup),              60 * 60 * 1000);
-  setInterval(wrapJob('content-expiry',            runContentExpiryNotifier),    5 * 60 * 1000);
-  setInterval(wrapJob('heartbeat-cleanup',         runHeartbeatCleanup),         24 * 60 * 60 * 1000);
-  setInterval(wrapJob('play-events-partition',     runPlayEventsPartition),      24 * 60 * 60 * 1000);
+  // When Redis is available the BullMQ recurring worker (workers/recurring.ts)
+  // owns the scheduling — skip setIntervals to avoid double-execution. We keep
+  // the webhook-delivery setInterval as a safety net for rows enqueued while
+  // BullMQ was unavailable.
+  const usingBullmq = !!getRedis();
+  if (!usingBullmq) {
+    setInterval(wrapJob('file-cleanup',              runFileCleanup),              60 * 60 * 1000);
+    setInterval(wrapJob('content-expiry',            runContentExpiryNotifier),    5 * 60 * 1000);
+    setInterval(wrapJob('heartbeat-cleanup',         runHeartbeatCleanup),         24 * 60 * 60 * 1000);
+    setInterval(wrapJob('play-events-partition',     runPlayEventsPartition),      24 * 60 * 60 * 1000);
+    setInterval(wrapJob('sensor-reading-cleanup',    runSensorReadingCleanup),     24 * 60 * 60 * 1000);
+    setInterval(wrapJob('webhook-delivery-cleanup',  runWebhookDeliveryCleanup),   24 * 60 * 60 * 1000);
+  }
+  // Always keep the webhook delivery sweeper — cheap, and catches any
+  // delivery row that BullMQ missed (e.g. inserted during a Redis outage).
   setInterval(wrapJob('webhook-delivery',          runWebhookDeliveryJob),       30 * 1000);
-  setInterval(wrapJob('sensor-reading-cleanup',    runSensorReadingCleanup),     24 * 60 * 60 * 1000);
-  setInterval(wrapJob('webhook-delivery-cleanup',  runWebhookDeliveryCleanup),   24 * 60 * 60 * 1000);
 }
 
 // Hard-delete content DB rows (and files from disk) after the trash retention window
-async function runFileCleanup(): Promise<void> {
+export async function runFileCleanup(): Promise<void> {
   try {
     const cutoff = new Date(Date.now() - TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000);
     const expired = await db.query.contentItems.findMany({
@@ -107,7 +117,7 @@ async function runFileCleanup(): Promise<void> {
 // Notify workspace admins when content passes its validUntil date.
 // Uses a 6-minute sliding window (wider than the 5-min interval) to catch
 // items that crossed the threshold since the last run.
-async function runContentExpiryNotifier(): Promise<void> {
+export async function runContentExpiryNotifier(): Promise<void> {
   try {
     const now = new Date();
     const windowStart = new Date(now.getTime() - 6 * 60 * 1000);
@@ -153,7 +163,7 @@ async function runContentExpiryNotifier(): Promise<void> {
 }
 
 // Prune device heartbeat rows older than 48 hours
-async function runHeartbeatCleanup(): Promise<void> {
+export async function runHeartbeatCleanup(): Promise<void> {
   try {
     const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
     const result = await db
@@ -170,7 +180,7 @@ async function runHeartbeatCleanup(): Promise<void> {
 }
 
 // Ensure the next 2 months of play_events partitions exist (idempotent)
-async function runPlayEventsPartition(): Promise<void> {
+export async function runPlayEventsPartition(): Promise<void> {
   try {
     const today = new Date();
     for (let offset = 1; offset <= 2; offset++) {
@@ -196,7 +206,7 @@ async function runPlayEventsPartition(): Promise<void> {
 }
 
 // Prune sensor readings older than 30 days (raw retention policy)
-async function runSensorReadingCleanup(): Promise<void> {
+export async function runSensorReadingCleanup(): Promise<void> {
   try {
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const result = await db
@@ -212,7 +222,7 @@ async function runSensorReadingCleanup(): Promise<void> {
 }
 
 // Prune old webhook deliveries (keep 30 days of history)
-async function runWebhookDeliveryCleanup(): Promise<void> {
+export async function runWebhookDeliveryCleanup(): Promise<void> {
   try {
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const result = await db

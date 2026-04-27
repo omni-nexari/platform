@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import {
   X, Monitor, Eye, Download, MoreVertical, Plus, Check,
-  XCircle, Clock, AlertTriangle, Copy, Trash2,
+  XCircle, Clock, AlertTriangle, Copy, Trash2, RotateCcw,
   Image as ImageIcon, Video, Code2, FileText, Presentation,
   Globe, Film, Tag as TagIcon, Calendar, LayoutGrid, Pencil, Tv2,
 } from 'lucide-react';
@@ -15,6 +15,7 @@ import AssignedTagPills, { type AssignedTag } from './AssignedTagPills.js';
 import DevicePickerModal from './DevicePickerModal.js';
 import WorkspaceTagPicker from './WorkspaceTagPicker.js';
 import EditMenuBoardModal from './EditMenuBoardModal.js';
+import Html5EditorModal from './Html5EditorModal.js';
 
 const APPROVE_ROLES = new Set(['prime_owner', 'owner', 'admin', 'a-manager']);
 import ConfirmDialog from './ConfirmDialog.js';
@@ -943,6 +944,8 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [confirmDuplicateOpen, setConfirmDuplicateOpen] = useState(false);
   const [confirmPublishOpen, setConfirmPublishOpen] = useState(false);
+  const [thumbRev, setThumbRev] = useState(0);
+  const [thumbFailed, setThumbFailed] = useState(false);
 
   // Fetch item details
   const { data: item, isLoading } = useQuery<ContentDetail>({
@@ -969,6 +972,12 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
     qc.invalidateQueries({ queryKey: ['content-item', itemId] });
     qc.invalidateQueries({ queryKey: ['picker-content', workspaceId] });
   };
+
+  const regenThumbMut = useMutation({
+    mutationFn: () => api.post(`/content/${itemId}/regenerate-thumbnail`),
+    onSuccess: () => { toast.success('Thumbnail regenerated'); setThumbFailed(false); setThumbRev((r) => r + 1); invalidate(); },
+    onError: () => toast.error('Thumbnail generation failed — check server logs'),
+  });
 
   const patchMut = useMutation({
     mutationFn: (data: Record<string, unknown>) => api.patch(`/content/${itemId}`, data),
@@ -1065,10 +1074,11 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
 
   if (!itemId) return null;
 
-  const hasThumbnail = item && (item.type === 'image' || item.type === 'video');
+  const hasThumbnail = item && (item.type === 'image' || item.type === 'video' || item.type === 'pdf' || item.type === 'presentation');
   const isZoneLayout = item?.type === 'zone_layout';
   const isMenuBoard  = item?.type === 'menu_board';
   const [menuBoardEditOpen, setMenuBoardEditOpen] = useState(false);
+  const [html5EditorOpen, setHtml5EditorOpen] = useState(false);
 
   return (
     <>
@@ -1115,6 +1125,14 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
               itemId={item.id}
               alt={item.name}
               className="w-full h-full object-contain"
+              revision={thumbRev}
+              onError={(status) => {
+                if (status === 404 && !regenThumbMut.isPending) {
+                  regenThumbMut.mutate();
+                } else {
+                  setThumbFailed(true);
+                }
+              }}
             />
           ) : item ? (
             <TypePlaceholder type={item.type} />
@@ -1148,6 +1166,17 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
             <ActionButton
               title="Edit Menu Board"
               onClick={() => setMenuBoardEditOpen(true)}
+              className="px-2.5"
+            >
+              <Pencil size={14} />
+            </ActionButton>
+          )}
+
+          {/* Edit — HTML5 package (Roadmap Step 7) */}
+          {item?.type === 'html5' && (
+            <ActionButton
+              title="Edit HTML5 Package"
+              onClick={() => setHtml5EditorOpen(true)}
               className="px-2.5"
             >
               <Pencil size={14} />
@@ -1197,6 +1226,15 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
                 >
                   <Copy size={12} /> Duplicate
                 </button>
+                {(item?.type === 'pdf' || item?.type === 'presentation' || item?.type === 'image' || item?.type === 'video') && (
+                  <button
+                    onClick={() => { setMenuOpen(false); regenThumbMut.mutate(); }}
+                    disabled={regenThumbMut.isPending}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-raised)] disabled:opacity-50"
+                  >
+                    <RotateCcw size={12} /> {regenThumbMut.isPending ? 'Regenerating…' : 'Regenerate thumbnail'}
+                  </button>
+                )}
                 <div className="my-1 border-t border-[var(--border)]" />
                 <button
                   onClick={() => {
@@ -1261,6 +1299,15 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
             />
           );
         })()}
+
+        {/* HTML5 editor modal (Roadmap Step 7 + 12) */}
+        {html5EditorOpen && item && (
+          <Html5EditorModal
+            contentId={item.id}
+            contentName={item.name}
+            onClose={() => setHtml5EditorOpen(false)}
+          />
+        )}
 
         {/* ── Tabs ── */}
         <div className="flex border-b border-[var(--border)] shrink-0">

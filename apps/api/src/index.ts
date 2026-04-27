@@ -9,6 +9,8 @@ import { registerRoutes } from './routes/index.js';
 import { startLogCleanup } from './services/log-cleanup.js';
 import { startLogAlerts } from './services/log-alert.js';
 import { startJobs } from './services/jobs.js';
+import { startWorkers, stopWorkers } from './workers/index.js';
+import { closeQueues } from './queues/index.js';
 import { createPinoDbStream } from './services/pino-db-stream.js';
 
 // DS production build — served at port 3000 so the TV doesn't need port 5174 open in firewall
@@ -41,6 +43,7 @@ async function start() {
   startLogCleanup();
   startLogAlerts();
   startJobs();
+  startWorkers(app.log);
 
   await registerPlugins(app);
 
@@ -81,6 +84,21 @@ async function start() {
     const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
     return reply.redirect(`/api/v1/${tail}${qs}`, 307);
   });
+
+  // Graceful shutdown — close BullMQ workers and queues so jobs aren't
+  // silently lost on SIGTERM (systemd restart). Idempotent.
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    app.log.info(`[shutdown] ${signal} received — closing workers/queues`);
+    try { await stopWorkers(); } catch (err) { app.log.error(err, '[shutdown] stopWorkers failed'); }
+    try { await closeQueues(); } catch (err) { app.log.error(err, '[shutdown] closeQueues failed'); }
+    try { await app.close(); } catch (err) { app.log.error(err, '[shutdown] app.close failed'); }
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+  process.on('SIGINT', () => { void shutdown('SIGINT'); });
 
   try {
     await app.listen({ port: PORT, host: '0.0.0.0' });

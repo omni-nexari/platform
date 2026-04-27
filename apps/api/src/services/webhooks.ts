@@ -7,6 +7,7 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { db, outboundWebhooks, webhookDeliveries } from '@signage/db';
 import { and, eq, inArray, sql, lte } from 'drizzle-orm';
+import { getQueue, QUEUE_NAMES } from '../queues/index.js';
 
 /** All event types the platform can emit to outbound webhooks */
 export type WebhookEventType =
@@ -57,7 +58,7 @@ export async function dispatchWebhookEvent(
 
     const envelope = { event: eventType, timestamp: new Date().toISOString(), ...payload };
 
-    await db.insert(webhookDeliveries).values(
+    const inserted = await db.insert(webhookDeliveries).values(
       hooks.map((hook) => ({
         webhookId:     hook.id,
         eventType,
@@ -66,7 +67,20 @@ export async function dispatchWebhookEvent(
         attemptCount:  0,
         nextAttemptAt: new Date(),
       })),
-    );
+    ).returning({ id: webhookDeliveries.id });
+
+    // Enqueue BullMQ jobs for native retry/backoff (Step 10). Falls back to
+    // the setInterval-driven `runWebhookDeliveryJob` if Redis is unavailable.
+    const queue = getQueue<{ deliveryId: string }>(QUEUE_NAMES.webhookDelivery);
+    if (queue) {
+      for (const row of inserted) {
+        await queue.add('deliver', { deliveryId: row.id }, {
+          jobId: `delivery-${row.id}`,
+          attempts: MAX_ATTEMPTS,
+          backoff: { type: 'exponential', delay: 30_000 }, // 30s, 60s, 2m, 4m, 8m
+        });
+      }
+    }
   } catch (err) {
     console.error('[webhooks/dispatch] Failed to queue deliveries:', err);
   }
@@ -79,8 +93,101 @@ const MAX_ATTEMPTS = 5;
 const BACKOFF_SECONDS = [30, 120, 600, 1800, 7200];
 
 /**
+ * Attempt a single webhook delivery by id. Updates the delivery row to
+ * `success` / `failed` (with backoff) / `abandoned` based on the outcome.
+ *
+ * Returns `true` if delivered successfully. Throws on transient failure when
+ * `throwOnFail` is set so BullMQ can retry with its own backoff.
+ */
+export async function attemptWebhookDelivery(
+  deliveryId: string,
+  opts: { throwOnFail?: boolean } = {},
+): Promise<boolean> {
+  const delivery = await db.query.webhookDeliveries.findFirst({
+    where: eq(webhookDeliveries.id, deliveryId),
+    with: { webhook: true },
+  });
+  if (!delivery) return false;
+
+  const webhook = delivery.webhook;
+  if (!webhook || !webhook.isActive) {
+    await db.update(webhookDeliveries)
+      .set({ status: 'abandoned' })
+      .where(eq(webhookDeliveries.id, delivery.id));
+    return false;
+  }
+
+  const body = JSON.stringify(delivery.payload);
+  const signature = signWebhookPayload(webhook.secret, body);
+  const attempt = Number(delivery.attemptCount ?? 0) + 1;
+
+  let responseStatus: number | null = null;
+  let responseBody: string | null = null;
+  let succeeded = false;
+  let networkErr: Error | null = null;
+
+  try {
+    const res = await fetch(webhook.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type':        'application/json',
+        'X-Signage-Signature': signature,
+        'X-Signage-Event':     delivery.eventType,
+        'X-Signage-Attempt':   String(attempt),
+      },
+      body,
+      signal: AbortSignal.timeout(10_000),
+    });
+    responseStatus = res.status;
+    responseBody   = await res.text().catch(() => null);
+    succeeded      = res.ok;
+  } catch (err) {
+    networkErr = err as Error;
+  }
+
+  if (succeeded) {
+    await db.update(webhookDeliveries).set({
+      status:       'success',
+      responseStatus,
+      responseBody,
+      attemptCount: attempt,
+      deliveredAt:  new Date(),
+    }).where(eq(webhookDeliveries.id, delivery.id));
+    return true;
+  }
+
+  if (attempt >= MAX_ATTEMPTS) {
+    await db.update(webhookDeliveries).set({
+      status:       'abandoned',
+      responseStatus,
+      responseBody,
+      attemptCount: attempt,
+    }).where(eq(webhookDeliveries.id, delivery.id));
+    return false;
+  }
+
+  const backoff = (BACKOFF_SECONDS[attempt - 1] ?? 7200) * 1000;
+  await db.update(webhookDeliveries).set({
+    status:        'failed',
+    responseStatus,
+    responseBody,
+    attemptCount:  attempt,
+    nextAttemptAt: new Date(Date.now() + backoff),
+  }).where(eq(webhookDeliveries.id, delivery.id));
+
+  if (opts.throwOnFail) {
+    throw networkErr ?? new Error(`Webhook delivery failed (status=${responseStatus ?? 'n/a'})`);
+  }
+  return false;
+}
+
+/**
  * Background job: attempt all pending deliveries and retry failed ones.
  * Called from jobs.ts on a short interval (e.g. every 30 s).
+ *
+ * When BullMQ is active, deliveries are enqueued at dispatch time and this
+ * job becomes a safety-net for rows that pre-date the queue (e.g. created
+ * during a Redis outage).
  */
 export async function runWebhookDeliveryJob(): Promise<void> {
   try {
@@ -89,77 +196,12 @@ export async function runWebhookDeliveryJob(): Promise<void> {
         inArray(webhookDeliveries.status, ['pending', 'failed']),
         lte(webhookDeliveries.nextAttemptAt, new Date()),
       ),
-      with: { webhook: true },
       limit: 50,
     });
 
     if (due.length === 0) return;
 
-    await Promise.allSettled(
-      due.map(async (delivery) => {
-        const webhook = delivery.webhook;
-        if (!webhook || !webhook.isActive) {
-          await db.update(webhookDeliveries)
-            .set({ status: 'abandoned' })
-            .where(eq(webhookDeliveries.id, delivery.id));
-          return;
-        }
-
-        const body = JSON.stringify(delivery.payload);
-        const signature = signWebhookPayload(webhook.secret, body);
-        const attempt = Number(delivery.attemptCount ?? 0) + 1;
-
-        let responseStatus: number | null = null;
-        let responseBody: string | null = null;
-        let succeeded = false;
-
-        try {
-          const res = await fetch(webhook.url, {
-            method: 'POST',
-            headers: {
-              'Content-Type':        'application/json',
-              'X-Signage-Signature': signature,
-              'X-Signage-Event':     delivery.eventType,
-              'X-Signage-Attempt':   String(attempt),
-            },
-            body,
-            signal: AbortSignal.timeout(10_000),
-          });
-
-          responseStatus = res.status;
-          responseBody   = await res.text().catch(() => null);
-          succeeded      = res.ok;
-        } catch {
-          // Network error — will retry
-        }
-
-        if (succeeded) {
-          await db.update(webhookDeliveries).set({
-            status:         'success',
-            responseStatus,
-            responseBody,
-            attemptCount:   attempt,
-            deliveredAt:    new Date(),
-          }).where(eq(webhookDeliveries.id, delivery.id));
-        } else if (attempt >= MAX_ATTEMPTS) {
-          await db.update(webhookDeliveries).set({
-            status:         'abandoned',
-            responseStatus,
-            responseBody,
-            attemptCount:   attempt,
-          }).where(eq(webhookDeliveries.id, delivery.id));
-        } else {
-          const backoff = (BACKOFF_SECONDS[attempt - 1] ?? 7200) * 1000;
-          await db.update(webhookDeliveries).set({
-            status:         'failed',
-            responseStatus,
-            responseBody,
-            attemptCount:   attempt,
-            nextAttemptAt:  new Date(Date.now() + backoff),
-          }).where(eq(webhookDeliveries.id, delivery.id));
-        }
-      }),
-    );
+    await Promise.allSettled(due.map((d) => attemptWebhookDelivery(d.id)));
   } catch (err) {
     console.error('[webhooks/delivery-job] Error:', err);
   }

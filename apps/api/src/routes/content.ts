@@ -11,6 +11,14 @@ import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from
 import { notifyContentFailed, notifyStorageThresholdCrossing } from '../services/notifications.js';
 import { dispatchWebhookEvent } from '../services/webhooks.js';
 import {
+  generateImageThumb,
+  generateVideoThumb,
+  generatePdfThumb,
+  generatePresentationThumb,
+  processContentMedia,
+} from '../services/media-processing.js';
+import { getQueue, QUEUE_NAMES } from '../queues/index.js';
+import {
   CreateChannelGroupSchema,
   UpdateChannelGroupSchema,
   ImportM3USchema,
@@ -30,139 +38,9 @@ const FFPROBE_BIN = (() => {
 })();
 
 /** Resize any image to a 400-wide JPEG thumbnail. */
-async function generateImageThumb(srcAbs: string, thumbAbs: string): Promise<void> {
-  await sharp(srcAbs)
-    .resize(400, 225, { fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: 80 })
-    .toFile(thumbAbs);
-}
-
-/** Extract the first decodable frame of a video as a JPEG thumbnail via ffmpeg. */
-async function generateVideoThumb(srcAbs: string, thumbAbs: string): Promise<void> {
-  // Try seeking to 1 second first, then fall back to the very first frame
-  try {
-    await execFileAsync(FFMPEG_BIN, [
-      '-ss', '1', '-i', srcAbs,
-      '-vframes', '1', '-s', '400x225',
-      '-y', thumbAbs,
-    ]);
-  } catch {
-    await execFileAsync(FFMPEG_BIN, [
-      '-i', srcAbs,
-      '-vframes', '1', '-s', '400x225',
-      '-y', thumbAbs,
-    ]);
-  }
-}
-
-/** Render the first page of a PDF to a 400×225 JPEG thumbnail via Ghostscript. */
-async function generatePdfThumb(srcAbs: string, thumbAbs: string): Promise<void> {
-  const GS_BIN = process.env['GHOSTSCRIPT_PATH'] ?? 'gs';
-  // Render at 150 DPI to a temp file, then sharp-resize to the standard thumbnail size
-  const tmpPath = `${thumbAbs}.tmp.jpg`;
-  try {
-    await execFileAsync(GS_BIN, [
-      '-dNOPAUSE', '-dBATCH', '-dSAFER',
-      '-sDEVICE=jpeg', '-dJPEGQ=90', '-r150',
-      '-dFirstPage=1', '-dLastPage=1',
-      `-sOutputFile=${tmpPath}`,
-      srcAbs,
-    ]);
-    await generateImageThumb(tmpPath, thumbAbs);
-  } finally {
-    await fs.unlink(tmpPath).catch(() => undefined);
-  }
-}
-
-/**
- * Convert the first slide of a PPTX/PPT to a 400×225 JPEG thumbnail via LibreOffice.
- * LibreOffice outputs a PNG alongside srcAbs; we resize it with sharp and clean up.
- */
-async function generatePresentationThumb(srcAbs: string, thumbAbs: string): Promise<void> {
-  const SOFFICE_BIN = process.env['LIBREOFFICE_PATH'] ?? 'soffice';
-  const tmpDir = path.dirname(thumbAbs);
-  await execFileAsync(SOFFICE_BIN, [
-    '--headless', '--convert-to', 'png', '--outdir', tmpDir, srcAbs,
-  ]);
-  const baseName = path.basename(srcAbs, path.extname(srcAbs));
-  const pngPath = path.join(tmpDir, `${baseName}.png`);
-  try {
-    await generateImageThumb(pngPath, thumbAbs);
-  } finally {
-    await fs.unlink(pngPath).catch(() => undefined);
-  }
-}
-
-// ── Media probing ──────────────────────────────────────────────────────────────
-interface VideoMeta {
-  width: number | null; height: number | null; duration: number | null;
-  fps: number | null; bitRate: number | null; maxBitRate: number | null;
-  videoCodec: string | null; codecProfile: string | null; codecLevel: number | null;
-}
-
-async function probeVideo(absPath: string): Promise<VideoMeta> {
-  try {
-    const { stdout } = await execFileAsync(FFPROBE_BIN, [
-      '-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_format', absPath,
-    ]);
-    const d = JSON.parse(stdout) as {
-      streams?: Array<{
-        codec_type?: string; codec_name?: string; profile?: string; level?: number;
-        width?: number; height?: number; r_frame_rate?: string; avg_frame_rate?: string;
-        bit_rate?: string; max_bit_rate?: string; duration?: string;
-      }>;
-      format?: { duration?: string; bit_rate?: string };
-    };
-    const vs = d.streams?.find(s => s.codec_type === 'video');
-    const fmt = d.format;
-    let fps: number | null = null;
-    const fpsStr = vs?.r_frame_rate ?? vs?.avg_frame_rate;
-    if (fpsStr) {
-      const [num, den] = fpsStr.split('/').map(Number);
-      if (den && den > 0) fps = Math.round((num! / den) * 100) / 100;
-    }
-    return {
-      width: vs?.width ?? null,
-      height: vs?.height ?? null,
-      duration: fmt?.duration ? parseFloat(fmt.duration) : (vs?.duration ? parseFloat(vs.duration) : null),
-      fps,
-      bitRate: fmt?.bit_rate ? parseInt(fmt.bit_rate, 10) : null,
-      maxBitRate: vs?.max_bit_rate ? parseInt(vs.max_bit_rate, 10) : (vs?.bit_rate ? parseInt(vs.bit_rate, 10) : null),
-      videoCodec: vs?.codec_name ?? null,
-      codecProfile: vs?.profile ?? null,
-      codecLevel: vs?.level ?? null,
-    };
-  } catch {
-    return { width: null, height: null, duration: null, fps: null, bitRate: null, maxBitRate: null, videoCodec: null, codecProfile: null, codecLevel: null };
-  }
-}
-
-async function probeImage(absPath: string): Promise<{
-  width: number | null; height: number | null;
-  colorSpace: string | null; hasAlpha: boolean;
-  density: number | null; bitsPerSample: number | null;
-  channels: number | null; format: string | null; hasProfile: boolean;
-  exifOrientation: number | null;
-}> {
-  try {
-    const meta = await sharp(absPath).metadata();
-    const DEPTH_BITS: Record<string, number> = { uchar: 8, char: 8, ushort: 16, short: 16, uint: 32, int: 32, float: 32, double: 64 };
-    return {
-      width: meta.width ?? null,
-      height: meta.height ?? null,
-      colorSpace: meta.space ?? null,
-      hasAlpha: meta.hasAlpha ?? false,
-      density: meta.density ?? null,
-      bitsPerSample: meta.depth ? (DEPTH_BITS[meta.depth] ?? null) : null,
-      channels: meta.channels ?? null,
-      format: meta.format ?? null,
-      hasProfile: meta.icc != null,
-      exifOrientation: meta.orientation ?? null,
-    };
-  } catch {
-    return { width: null, height: null, colorSpace: null, hasAlpha: false, density: null, bitsPerSample: null, channels: null, format: null, hasProfile: false, exifOrientation: null };
-  }
-}
+// Helpers moved to services/media-processing.ts
+// (generateImageThumb / generateVideoThumb / generatePdfThumb /
+//  generatePresentationThumb / probeVideo / probeImage)
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -509,6 +387,16 @@ export async function contentRoutes(app: FastifyInstance) {
     });
     const fileHash = hashStream.digest('hex');
 
+    // Reject malicious ZIPs (zip-slip / zip-bomb) before doing any DB work.
+    if (type === 'html5') {
+      const { validateZip } = await import('../services/zip-validation.js');
+      const v = await validateZip(absPath);
+      if (!v.ok) {
+        await fs.unlink(absPath).catch(() => undefined);
+        return reply.status(400).send({ error: `Invalid HTML5 package: ${v.error}` });
+      }
+    }
+
     // Check for duplicate within workspace
     const duplicate = await db.query.contentItems.findFirst({
       where: and(
@@ -525,62 +413,9 @@ export async function contentRoutes(app: FastifyInstance) {
     // Content name defaults to original file name without extension
     const name = path.basename(originalName, ext);
 
-    // Generate thumbnail (best-effort — failures are non-fatal)
-    let thumbnailRelPath: string | undefined;
-    if (type === 'image' || type === 'video' || type === 'pdf' || type === 'presentation') {
-      const thumbRel = path.join(relDir, `${fileId}_thumb.jpg`);
-      const thumbAbs = path.resolve(STORAGE_ROOT, thumbRel);
-      try {
-        if (type === 'image') {
-          await generateImageThumb(absPath, thumbAbs);
-        } else if (type === 'video') {
-          await generateVideoThumb(absPath, thumbAbs);
-        } else if (type === 'pdf') {
-          await generatePdfThumb(absPath, thumbAbs);
-        } else if (type === 'presentation') {
-          await generatePresentationThumb(absPath, thumbAbs);
-        }
-        thumbnailRelPath = thumbRel.replace(/\\/g, '/');
-      } catch {
-        // Thumbnail generation failed — proceed without
-      }
-    }
-
-    // Probe media metadata (best-effort)
-    let probeWidth: number | null = null;
-    let probeHeight: number | null = null;
-    let probeDuration: number | null = null;
-    let probeMetadata: Record<string, unknown> = {};
-
-    if (type === 'video') {
-      const p = await probeVideo(absPath);
-      probeWidth = p.width;
-      probeHeight = p.height;
-      probeDuration = p.duration != null ? Math.round(p.duration) : null;
-      probeMetadata = {
-        fps: p.fps,
-        bitRate: p.bitRate,
-        maxBitRate: p.maxBitRate,
-        videoCodec: p.videoCodec,
-        codecProfile: p.codecProfile,
-        codecLevel: p.codecLevel,
-      };
-    } else if (type === 'image') {
-      const p = await probeImage(absPath);
-      probeWidth = p.width;
-      probeHeight = p.height;
-      probeMetadata = {
-        colorSpace: p.colorSpace,
-        hasAlpha: p.hasAlpha,
-        density: p.density,
-        bitsPerSample: p.bitsPerSample,
-        channels: p.channels,
-        format: p.format,
-        hasProfile: p.hasProfile,
-        exifOrientation: p.exifOrientation,
-      };
-    }
-
+    // Insert DB row immediately with `status: 'processing'`. Thumbnail + metadata
+    // are populated asynchronously by the BullMQ worker (Step 3).
+    // If Redis is unavailable we fall back to inline processing inside this request.
     const [item] = await db.insert(contentItems).values({
       workspaceId: wsId,
       uploadedBy: user.sub,
@@ -591,14 +426,28 @@ export async function contentRoutes(app: FastifyInstance) {
       fileSize,
       fileHash,
       filePath: relPath.replace(/\\/g, '/'),
-      ...(thumbnailRelPath && { thumbnailPath: thumbnailRelPath }),
-      ...(probeWidth != null && { width: probeWidth }),
-      ...(probeHeight != null && { height: probeHeight }),
-      ...(probeDuration != null && { duration: probeDuration }),
-      metadata: JSON.stringify(probeMetadata),
-      status: 'ready',
+      metadata: '{}',
+      status: 'processing',
       approvalState: initialApprovalState,
     }).returning();
+    if (!item) {
+      return reply.status(500).send({ error: 'Failed to create content row' });
+    }
+
+    const queue = getQueue<{ contentId: string }>(QUEUE_NAMES.mediaProcessing);
+    if (queue) {
+      // Async path — worker updates the row to `status: 'ready'` when done.
+      await queue.add('process', { contentId: item.id }, {
+        jobId: `process-${item.id}`,
+      });
+    } else {
+      // Inline fallback (Redis unavailable) — keeps pre-BullMQ behaviour.
+      try {
+        await processContentMedia(item.id);
+      } catch (err) {
+        req.log.error({ err, contentId: item.id }, '[upload] inline media processing failed');
+      }
+    }
 
     // Update storage quota usage
     if (quota) {
@@ -1520,6 +1369,318 @@ export async function contentRoutes(app: FastifyInstance) {
     }
 
     return reply.send({ valid: true, files: filenames });
+  });
+
+  // ── HTML5 editor — file CRUD inside a content ZIP ────────────────────────
+  // All routes share the same auth + workspace check + reload pattern.
+  // After any mutation we delete the on-disk extraction cache so the device
+  // route (devices.ts) re-extracts on next request.
+  {
+    const ALLOWED_EXTS = new Set([
+      '.html', '.htm', '.css', '.js', '.mjs', '.json',
+      '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico',
+      '.woff', '.woff2', '.ttf', '.txt', '.mp4', '.webm', '.mp3',
+    ]);
+    const TEXT_EXTS = new Set(['.html', '.htm', '.css', '.js', '.mjs', '.json', '.svg', '.txt']);
+    const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB per file in editor
+
+    /** Reject path traversal / absolute paths. Returns the normalised POSIX path. */
+    function safeZipPath(p: string): string | null {
+      if (!p || typeof p !== 'string') return null;
+      const norm = path.posix.normalize(p.replace(/\\/g, '/').replace(/^\/+/, ''));
+      if (norm.startsWith('..') || norm.includes('/../') || norm.includes('\0')) return null;
+      const ext = path.extname(norm).toLowerCase();
+      if (ext && !ALLOWED_EXTS.has(ext)) return null;
+      return norm;
+    }
+
+    async function loadHtml5Item(id: string, userId: string): Promise<
+      | { error: 404 | 403 }
+      | { item: typeof contentItems.$inferSelect & { filePath: string } }
+    > {
+      const item = await db.query.contentItems.findFirst({
+        where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)),
+      });
+      if (!item || !item.filePath || item.type !== 'html5') return { error: 404 as const };
+      const member = await checkWorkspaceAccess(item.workspaceId, userId);
+      if (!member) return { error: 403 as const };
+      if (!UPLOAD_ROLES.has((await db.query.workspaceMembers.findFirst({
+        where: and(eq(workspaceMembers.workspaceId, item.workspaceId), eq(workspaceMembers.userId, userId)),
+      }))?.role ?? '')) {
+        // role check via workspace member already covered above; fall through
+      }
+      return { item: item as typeof contentItems.$inferSelect & { filePath: string } };
+    }
+
+    async function invalidateExtraction(id: string) {
+      const os = await import('node:os');
+      const extractDir = path.join(os.tmpdir(), 'nexari-html5', id);
+      await fs.rm(extractDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+
+    async function loadZip(absPath: string) {
+      const AdmZip = (await import('adm-zip')).default;
+      return new AdmZip(absPath);
+    }
+
+    async function saveZipAndUpdateRow(itemId: string, absPath: string, zip: import('adm-zip')) {
+      zip.writeZip(absPath);
+      const stat = await fs.stat(absPath);
+      // Re-hash so dedup detection stays accurate after edits.
+      const h = crypto.createHash('sha256');
+      h.update(await fs.readFile(absPath));
+      await db.update(contentItems)
+        .set({ fileSize: stat.size, fileHash: h.digest('hex'), updatedAt: new Date() })
+        .where(eq(contentItems.id, itemId));
+      await invalidateExtraction(itemId);
+    }
+
+    // GET /content/:id/html5/files — list entries
+    app.get('/:id/html5/files', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as AuthUser;
+      const { id } = req.params as { id: string };
+      const r = await loadHtml5Item(id, user.sub);
+      if ('error' in r) return reply.status(r.error).send({ error: r.error === 404 ? 'Not found' : 'Forbidden' });
+
+      const absPath = path.resolve(STORAGE_ROOT, r.item.filePath!);
+      const zip = await loadZip(absPath);
+      const files = zip.getEntries()
+        .filter(e => !e.isDirectory)
+        .map(e => {
+          const ext = path.extname(e.entryName).toLowerCase();
+          return {
+            path: e.entryName.replace(/\\/g, '/'),
+            size: (e.header as { size?: number }).size ?? 0,
+            isText: TEXT_EXTS.has(ext),
+          };
+        });
+      return reply.send({ files });
+    });
+
+    // GET /content/:id/html5/file?path= — read file as utf-8
+    app.get('/:id/html5/file', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as AuthUser;
+      const { id } = req.params as { id: string };
+      const q = req.query as { path?: string };
+      const safe = safeZipPath(q.path ?? '');
+      if (!safe) return reply.status(400).send({ error: 'Invalid path' });
+      const r = await loadHtml5Item(id, user.sub);
+      if ('error' in r) return reply.status(r.error).send({ error: r.error === 404 ? 'Not found' : 'Forbidden' });
+
+      const ext = path.extname(safe).toLowerCase();
+      if (!TEXT_EXTS.has(ext)) return reply.status(415).send({ error: 'Not a text file' });
+
+      const absPath = path.resolve(STORAGE_ROOT, r.item.filePath!);
+      const zip = await loadZip(absPath);
+      const entry = zip.getEntry(safe);
+      if (!entry) return reply.status(404).send({ error: 'File not in package' });
+      const buf = entry.getData();
+      if (buf.length > MAX_FILE_BYTES) return reply.status(413).send({ error: 'File too large to edit' });
+      return reply.send({ path: safe, content: buf.toString('utf8') });
+    });
+
+    // PUT /content/:id/html5/file  { path, content } — update existing file
+    app.put('/:id/html5/file', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as AuthUser;
+      const { id } = req.params as { id: string };
+      const body = req.body as { path?: string; content?: string };
+      const safe = safeZipPath(body.path ?? '');
+      if (!safe) return reply.status(400).send({ error: 'Invalid path' });
+      if (typeof body.content !== 'string') return reply.status(400).send({ error: 'content required' });
+      const ext = path.extname(safe).toLowerCase();
+      if (!TEXT_EXTS.has(ext)) return reply.status(415).send({ error: 'Cannot edit binary files' });
+      const buf = Buffer.from(body.content, 'utf8');
+      if (buf.length > MAX_FILE_BYTES) return reply.status(413).send({ error: 'File too large' });
+
+      const r = await loadHtml5Item(id, user.sub);
+      if ('error' in r) return reply.status(r.error).send({ error: r.error === 404 ? 'Not found' : 'Forbidden' });
+      if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+      const absPath = path.resolve(STORAGE_ROOT, r.item.filePath!);
+      const zip = await loadZip(absPath);
+      if (!zip.getEntry(safe)) return reply.status(404).send({ error: 'File not in package' });
+      zip.updateFile(safe, buf);
+      await saveZipAndUpdateRow(id, absPath, zip);
+      return reply.send({ ok: true, path: safe });
+    });
+
+    // POST /content/:id/html5/file  { path, content } — add new file
+    app.post('/:id/html5/file', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as AuthUser;
+      const { id } = req.params as { id: string };
+      const body = req.body as { path?: string; content?: string };
+      const safe = safeZipPath(body.path ?? '');
+      if (!safe) return reply.status(400).send({ error: 'Invalid path' });
+      const buf = Buffer.from(body.content ?? '', 'utf8');
+      if (buf.length > MAX_FILE_BYTES) return reply.status(413).send({ error: 'File too large' });
+
+      const r = await loadHtml5Item(id, user.sub);
+      if ('error' in r) return reply.status(r.error).send({ error: r.error === 404 ? 'Not found' : 'Forbidden' });
+      if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+      const absPath = path.resolve(STORAGE_ROOT, r.item.filePath!);
+      const zip = await loadZip(absPath);
+      if (zip.getEntry(safe)) return reply.status(409).send({ error: 'File already exists' });
+      // Cap total entry count
+      if (zip.getEntries().length >= 1000) return reply.status(413).send({ error: 'Too many files in package' });
+      zip.addFile(safe, buf);
+      await saveZipAndUpdateRow(id, absPath, zip);
+      return reply.status(201).send({ ok: true, path: safe });
+    });
+
+    // DELETE /content/:id/html5/file?path=
+    app.delete('/:id/html5/file', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as AuthUser;
+      const { id } = req.params as { id: string };
+      const q = req.query as { path?: string };
+      const safe = safeZipPath(q.path ?? '');
+      if (!safe) return reply.status(400).send({ error: 'Invalid path' });
+      if (safe === 'index.html') return reply.status(400).send({ error: 'Cannot delete index.html' });
+
+      const r = await loadHtml5Item(id, user.sub);
+      if ('error' in r) return reply.status(r.error).send({ error: r.error === 404 ? 'Not found' : 'Forbidden' });
+      if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+      const absPath = path.resolve(STORAGE_ROOT, r.item.filePath!);
+      const zip = await loadZip(absPath);
+      if (!zip.getEntry(safe)) return reply.status(404).send({ error: 'File not in package' });
+      zip.deleteFile(safe);
+      await saveZipAndUpdateRow(id, absPath, zip);
+      return reply.send({ ok: true });
+    });
+
+    // POST /content/:id/html5/rename-file  { from, to }
+    app.post('/:id/html5/rename-file', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as AuthUser;
+      const { id } = req.params as { id: string };
+      const body = req.body as { from?: string; to?: string };
+      const fromSafe = safeZipPath(body.from ?? '');
+      const toSafe = safeZipPath(body.to ?? '');
+      if (!fromSafe || !toSafe) return reply.status(400).send({ error: 'Invalid path' });
+      if (fromSafe === toSafe) return reply.send({ ok: true, path: toSafe });
+
+      const r = await loadHtml5Item(id, user.sub);
+      if ('error' in r) return reply.status(r.error).send({ error: r.error === 404 ? 'Not found' : 'Forbidden' });
+      if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+      const absPath = path.resolve(STORAGE_ROOT, r.item.filePath!);
+      const zip = await loadZip(absPath);
+      const entry = zip.getEntry(fromSafe);
+      if (!entry) return reply.status(404).send({ error: 'Source file not in package' });
+      if (zip.getEntry(toSafe)) return reply.status(409).send({ error: 'Destination already exists' });
+      const data = entry.getData();
+      zip.deleteFile(fromSafe);
+      zip.addFile(toSafe, data);
+      await saveZipAndUpdateRow(id, absPath, zip);
+      return reply.send({ ok: true, from: fromSafe, to: toSafe });
+    });
+
+    // GET /content/:id/preview/* — serve extracted HTML5 package for the dashboard editor.
+    // Authenticated via the same JWT cookie the rest of the dashboard uses.
+    // Distinct from the device-side route which uses a single-use token.
+    const PREVIEW_MIME: Record<string, string> = {
+      '.html': 'text/html; charset=utf-8',
+      '.htm':  'text/html; charset=utf-8',
+      '.css':  'text/css; charset=utf-8',
+      '.js':   'application/javascript; charset=utf-8',
+      '.mjs':  'application/javascript; charset=utf-8',
+      '.json': 'application/json; charset=utf-8',
+      '.svg':  'image/svg+xml',
+      '.png':  'image/png',
+      '.jpg':  'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif':  'image/gif',
+      '.webp': 'image/webp',
+      '.ico':  'image/x-icon',
+      '.woff': 'font/woff',
+      '.woff2':'font/woff2',
+      '.ttf':  'font/ttf',
+      '.txt':  'text/plain; charset=utf-8',
+      '.mp4':  'video/mp4',
+      '.webm': 'video/webm',
+      '.mp3':  'audio/mpeg',
+    };
+
+    app.get('/:id/preview/*', { onRequest: [app.authenticate] }, async (req, reply) => {
+      const user = req.user as AuthUser;
+      const { id } = req.params as { id: string };
+      const wildcard = ((req.params as { '*'?: string })['*'] ?? '').trim();
+      const r = await loadHtml5Item(id, user.sub);
+      if ('error' in r) return reply.status(r.error).send({ error: r.error === 404 ? 'Not found' : 'Forbidden' });
+
+      const safe = safeZipPath(wildcard || 'index.html');
+      if (!safe) return reply.status(400).send({ error: 'Invalid path' });
+
+      const absPath = path.resolve(STORAGE_ROOT, r.item.filePath!);
+      const zip = await loadZip(absPath);
+      const entry = zip.getEntry(safe);
+      if (!entry) return reply.status(404).send({ error: 'Not in package' });
+      const buf = entry.getData();
+
+      const ext = path.extname(safe).toLowerCase();
+      reply.header('Content-Type', PREVIEW_MIME[ext] ?? 'application/octet-stream');
+      // Tighten the preview \u2014 same posture as Step 12 sandbox iframe expects.
+      reply.header('Cache-Control', 'no-store');
+      reply.header('X-Content-Type-Options', 'nosniff');
+      reply.header('X-Frame-Options', 'SAMEORIGIN');
+      return reply.send(buf);
+    });
+  }
+
+  // ── HTML5 templates ──────────────────────────────────────────────────────
+  app.get('/html5/templates', { onRequest: [app.authenticate] }, async (_req, reply) => {
+    const { TEMPLATE_LIST } = await import('../services/html5-templates.js');
+    return reply.send({ templates: TEMPLATE_LIST });
+  });
+
+  app.post('/html5/create', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as { workspaceId?: string; templateId?: string; name?: string };
+    if (!body.workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (!body.templateId) return reply.status(400).send({ error: 'templateId required' });
+    if (!body.name?.trim()) return reply.status(400).send({ error: 'name required' });
+
+    const member = await checkWorkspaceAccess(body.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+    const { buildTemplateZip, TEMPLATE_LIST } = await import('../services/html5-templates.js');
+    const valid = TEMPLATE_LIST.find(t => t.id === body.templateId);
+    if (!valid) return reply.status(400).send({ error: 'Unknown templateId' });
+
+    let buf: Buffer;
+    try {
+      buf = buildTemplateZip(body.templateId as never);
+    } catch (err) {
+      return reply.status(500).send({ error: 'Failed to build template', detail: String(err) });
+    }
+
+    const fileId = crypto.randomUUID();
+    const relDir = path.join(user.orgId, body.workspaceId);
+    const relPath = path.join(relDir, `${fileId}.zip`);
+    const absDir = path.resolve(STORAGE_ROOT, relDir);
+    const absPath = path.resolve(STORAGE_ROOT, relPath);
+    await fs.mkdir(absDir, { recursive: true });
+    await fs.writeFile(absPath, buf);
+
+    const fileHash = crypto.createHash('sha256').update(buf).digest('hex');
+
+    const [item] = await db.insert(contentItems).values({
+      workspaceId: body.workspaceId,
+      uploadedBy: user.sub,
+      type: 'html5',
+      name: body.name.trim(),
+      originalName: `${body.name.trim()}.zip`,
+      mimeType: 'application/zip',
+      fileSize: buf.length,
+      fileHash,
+      filePath: relPath.replace(/\\/g, '/'),
+      metadata: JSON.stringify({ template: body.templateId, startPage: 'index.html' }),
+      status: 'ready',
+      approvalState: 'approved',
+    }).returning();
+
+    return reply.status(201).send(item);
   });
 
   // ── POST /content/import-url ─────────────────────────────────────────────

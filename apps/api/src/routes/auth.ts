@@ -47,6 +47,12 @@ import {
 import { sendPasswordResetEmail, sendResellerOnboardingConfirmationEmail } from '../services/email.js';
 import { writeAuditLog } from '../services/audit.js';
 import { recordLogout } from '../services/redis.js';
+import {
+  isLoginLocked,
+  recordLoginFailure,
+  clearLoginFailures,
+  LOGIN_LOCKOUT_THRESHOLD,
+} from '../services/login-lockout.js';
 
 const REFRESH_COOKIE = 'refresh_token';
 const ACCESS_COOKIE = 'access_token';
@@ -165,8 +171,27 @@ export async function authRoutes(app: FastifyInstance) {
     const body = LoginSchema.safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
+    // Per-account lockout (Step 15) — distinct from IP-based fail2ban.
+    // Returns the same generic 401 as a wrong password so the lockout state
+    // isn't a side-channel revealing whether the account exists.
+    if (await isLoginLocked(body.data.email)) {
+      return reply.status(401).send({ error: 'Invalid credentials' });
+    }
+
     const result = await verifyLogin(body.data.email, body.data.password);
-    if ('error' in result) return reply.status(401).send({ error: result.error });
+    if ('error' in result) {
+      const attempts = await recordLoginFailure(body.data.email);
+      if (attempts === LOGIN_LOCKOUT_THRESHOLD) {
+        await writeAuditLog({
+          action: 'LOGIN_LOCKOUT',
+          entityType: 'user',
+          actorType: 'system',
+          ipAddress: req.ip,
+          meta: { reason: 'login-failure-threshold', threshold: LOGIN_LOCKOUT_THRESHOLD },
+        });
+      }
+      return reply.status(401).send({ error: result.error });
+    }
 
     const { user } = result;
     if (!(await hasActiveOrganisation(user.orgId))) {
@@ -190,6 +215,9 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     await db.update(users).set({ lastLogin: new Date() }).where(eq(users.id, user.id));
+
+    // Successful login — wipe failure counter for this email.
+    await clearLoginFailures(body.data.email);
 
     await writeAuditLog({
       orgId: user.orgId,
