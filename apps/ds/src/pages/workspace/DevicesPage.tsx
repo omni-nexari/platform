@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, useSearchParams } from 'react-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
@@ -9,10 +9,10 @@ import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
 
 type PairFormInput = Omit<ClaimDeviceInput, 'workspaceId'>;
-import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2 } from 'lucide-react';
+import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon } from 'lucide-react';
 
 // Shows the latest stored screenshot using a credentialed fetch → blob URL.
-// Live SSE is intentionally not used here — too many open streams with a large fleet.
+// Keyed on screenshotId externally so it remounts cleanly when the screenshot changes.
 function DeviceScreenshot({ deviceId, screenshotId }: {
   deviceId: string;
   screenshotId: string | null | undefined;
@@ -20,6 +20,7 @@ function DeviceScreenshot({ deviceId, screenshotId }: {
   const [src, setSrc] = useState<string | null>(null);
 
   useEffect(() => {
+    setSrc(null);
     if (!screenshotId) return;
     let blobUrl: string | null = null;
     let cancelled = false;
@@ -43,6 +44,65 @@ function DeviceScreenshot({ deviceId, screenshotId }: {
         ? <img src={src} alt="Latest screenshot" className="w-full h-full object-cover" />
         : <Monitor className="w-6 h-6 text-[var(--text-muted)] opacity-30" />
       }
+    </div>
+  );
+}
+
+// ── LiveViewModal — simple SSE frame viewer ────────────────────────────────────
+function LiveViewModal({ deviceId, deviceName, onClose }: { deviceId: string; deviceName: string; onClose: () => void }) {
+  const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [status, setStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
+  const esRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    const es = new EventSource(`/api/devices/${deviceId}/screenshot/stream?intervalMs=1000`);
+    esRef.current = es;
+    es.onmessage = (e) => {
+      setStatus('live');
+      setImgSrc(`data:image/jpeg;base64,${e.data as string}`);
+    };
+    es.onerror = () => setStatus('error');
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      es.close();
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [deviceId, onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={onClose}>
+      <div
+        className="relative bg-[var(--card)] rounded-2xl overflow-hidden shadow-2xl border border-[var(--border)] flex flex-col"
+        style={{ width: 'min(90vw, 960px)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
+          <div className="flex items-center gap-2">
+            <Eye className="w-4 h-4 text-[var(--accent)]" />
+            <span className="text-sm font-semibold text-[var(--text)]">{deviceName}</span>
+            <span className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full ${
+              status === 'live' ? 'bg-emerald-500/15 text-emerald-400' :
+              status === 'error' ? 'bg-red-500/15 text-red-400' :
+              'bg-[var(--surface)] text-[var(--text-muted)]'
+            }`}>{status === 'live' ? 'Live' : status === 'error' ? 'No signal' : 'Connecting…'}</span>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
+            <XIcon size={16} />
+          </button>
+        </div>
+        {/* Frame */}
+        <div className="relative bg-black aspect-video flex items-center justify-center">
+          {imgSrc
+            ? <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
+            : <div className="flex flex-col items-center gap-2 text-[var(--text-muted)]">
+                <Monitor className="w-10 h-10 opacity-30" />
+                <span className="text-xs">{status === 'error' ? 'Device not responding' : 'Waiting for first frame…'}</span>
+              </div>
+          }
+        </div>
+      </div>
     </div>
   );
 }
@@ -111,9 +171,6 @@ function TypeBadge({ type }: { type: Device['type'] }) {
   return <Badge tone={t.tone}>{t.label}</Badge>;
 }
 
-const TYPE_FILTERS = ['all', 'signage', 'kiosk', 'kitchen'] as const;
-type TypeFilter = (typeof TYPE_FILTERS)[number];
-
 const STATUS_FILTERS = ['all', 'online', 'offline', 'unclaimed', 'error'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 
@@ -130,9 +187,6 @@ export default function DevicesPage() {
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>(
     (searchParams.get('status') as StatusFilter | null) ?? 'all',
   );
-  const [selectedType, setSelectedType] = useState<TypeFilter>(
-    (searchParams.get('type') as TypeFilter | null) ?? 'all',
-  );
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
@@ -142,12 +196,14 @@ export default function DevicesPage() {
   const { data: devices = [], isLoading } = useQuery<Device[]>({
     queryKey: ['devices', wsId, selectedTagIds],
     queryFn: () => api.get(`/devices?workspaceId=${wsId}${tagIdsParam}`),
-    refetchInterval: 30_000,
+    refetchInterval: 15_000,
   });
+
+  const [liveViewDeviceId, setLiveViewDeviceId] = useState<string | null>(null);
+  const liveViewDevice = liveViewDeviceId ? devices.find((d) => d.id === liveViewDeviceId) : null;
 
   const filteredDevices = devices.filter((d) => {
     if (selectedStatus !== 'all' && d.status !== selectedStatus) return false;
-    if (selectedType !== 'all' && d.type !== selectedType) return false;
     return true;
   });
 
@@ -155,10 +211,8 @@ export default function DevicesPage() {
   useEffect(() => {
     const urlTagIds = (searchParams.get('tagIds') ?? '').split(',').map((v) => v.trim()).filter(Boolean);
     const urlStatus = (searchParams.get('status') as StatusFilter | null) ?? 'all';
-    const urlType = (searchParams.get('type') as TypeFilter | null) ?? 'all';
     if (urlTagIds.join(',') !== selectedTagIds.join(',')) setSelectedTagIds(urlTagIds);
     if (urlStatus !== selectedStatus) setSelectedStatus(urlStatus);
-    if (urlType !== selectedType) setSelectedType(urlType);
   }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -167,12 +221,10 @@ export default function DevicesPage() {
     else nextParams.delete('tagIds');
     if (selectedStatus !== 'all') nextParams.set('status', selectedStatus);
     else nextParams.delete('status');
-    if (selectedType !== 'all') nextParams.set('type', selectedType);
-    else nextParams.delete('type');
     if (nextParams.toString() !== searchParams.toString()) {
       setSearchParams(nextParams, { replace: true });
     }
-  }, [selectedTagIds, selectedStatus, selectedType]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedTagIds, selectedStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const {
     register,
@@ -244,34 +296,16 @@ export default function DevicesPage() {
       <SmartViewsBar
         workspaceId={wsId!}
         entityType="device"
-        currentFilters={{ tagIds: selectedTagIds, status: selectedStatus, type: selectedType }}
+        currentFilters={{ tagIds: selectedTagIds, status: selectedStatus }}
         onApplyFilters={(filters) => {
-          const next = filters as { tagIds?: string[]; status?: StatusFilter; type?: TypeFilter };
+          const next = filters as { tagIds?: string[]; status?: StatusFilter };
           setSelectedTagIds(Array.isArray(next.tagIds) ? next.tagIds : []);
           setSelectedStatus(next.status ?? 'all');
-          setSelectedType(next.type ?? 'all');
         }}
       />
 
       {/* Filters row */}
       <div className="flex flex-wrap items-center gap-3">
-        {/* Type filter */}
-        <div className="flex items-center gap-1 rounded-lg border border-[var(--card-border)] overflow-hidden text-xs">
-          {TYPE_FILTERS.map((t) => (
-            <button
-              key={t}
-              onClick={() => setSelectedType(t)}
-              className={`px-3 py-1.5 capitalize transition-colors ${
-                selectedType === t
-                  ? 'bg-[var(--blue)] text-white'
-                  : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-              }`}
-            >
-              {t === 'all' ? 'All Types' : t}
-            </button>
-          ))}
-        </div>
-
         {/* Status filter */}
         <div className="flex items-center gap-1 rounded-lg border border-[var(--card-border)] overflow-hidden text-xs">
           {STATUS_FILTERS.map((s) => (
@@ -323,7 +357,6 @@ export default function DevicesPage() {
               { key: 'kiosk',   label: 'Kiosk Ops',       icon: <ShoppingBag className="w-4 h-4" /> },
             ] as const
           ).map(({ key, label, icon }) => {
-            if (selectedType !== 'all' && selectedType !== key) return null;
             const sectionDevices = filteredDevices.filter((d) => (d.type ?? 'signage') === key);
             if (sectionDevices.length === 0) return null;
             return (
@@ -353,11 +386,24 @@ export default function DevicesPage() {
                         className="absolute top-3 right-3 w-4 h-4 accent-[var(--blue)]"
                       />
 
-                      {/* Screenshot thumbnail — stored snapshot, no live stream */}
-                      <DeviceScreenshot
-                        deviceId={device.id}
-                        screenshotId={device.latestScreenshotId}
-                      />
+                      {/* Screenshot thumbnail — remounts when screenshotId changes */}
+                      <div className="relative">
+                        <DeviceScreenshot
+                          key={device.latestScreenshotId ?? 'no-shot'}
+                          deviceId={device.id}
+                          screenshotId={device.latestScreenshotId}
+                        />
+                        {/* View Live button — shown when card is selected and device is online */}
+                        {selectedItems.has(device.id) && device.status === 'online' && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setLiveViewDeviceId(device.id); }}
+                            className="absolute bottom-2 right-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-black/70 hover:bg-black/90 text-white text-xs font-semibold backdrop-blur-sm transition-colors"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            Live
+                          </button>
+                        )}
+                      </div>
 
                       {/* Header */}
                       <div className="flex items-start justify-between gap-2 pr-6">
@@ -434,6 +480,15 @@ export default function DevicesPage() {
             );
           })}
         </div>
+      )}
+
+      {/* Live View Modal */}
+      {liveViewDeviceId && liveViewDevice && (
+        <LiveViewModal
+          deviceId={liveViewDeviceId}
+          deviceName={liveViewDevice.name}
+          onClose={() => setLiveViewDeviceId(null)}
+        />
       )}
 
       {/* Pair Device Modal */}
