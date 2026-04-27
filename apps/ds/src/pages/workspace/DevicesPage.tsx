@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
-import { api } from '../../lib/api.js';
+import { api, buildApiUrl } from '../../lib/api.js';
 import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
 
@@ -314,6 +314,18 @@ export default function DevicesPage() {
                         onClick={(e) => e.stopPropagation()}
                         className="absolute top-3 right-3 w-4 h-4 accent-[var(--blue)]"
                       />
+
+                      {/* Screenshot thumbnail */}
+                      {device.latestScreenshotId && (
+                        <div className="w-full aspect-video rounded-lg overflow-hidden bg-[var(--surface)] border border-[var(--card-border)]">
+                          <img
+                            src={buildApiUrl(`/devices/${device.id}/screenshots/${device.latestScreenshotId}`)}
+                            alt="Latest screenshot"
+                            className="w-full h-full object-cover"
+                            onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = 'none'; }}
+                          />
+                        </div>
+                      )}
 
                       {/* Header */}
                       <div className="flex items-start justify-between gap-2 pr-6">
