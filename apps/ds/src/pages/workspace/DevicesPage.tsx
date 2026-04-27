@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, useSearchParams } from 'react-router';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
@@ -11,27 +11,53 @@ import type { ClaimDeviceInput } from '@signage/shared';
 type PairFormInput = Omit<ClaimDeviceInput, 'workspaceId'>;
 import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2 } from 'lucide-react';
 
-// Fetches screenshot with session cookie and renders as blob URL
-function DeviceScreenshot({ deviceId, screenshotId }: { deviceId: string; screenshotId: string | null | undefined }) {
+// Shows stored screenshot first, then upgrades to live SSE frames when device is online.
+// Samsung b2bapis.captureScreen frames arrive as raw base64 JPEG via the SSE relay.
+function DeviceScreenshot({ deviceId, screenshotId, isOnline }: {
+  deviceId: string;
+  screenshotId: string | null | undefined;
+  isOnline: boolean;
+}) {
   const [src, setSrc] = useState<string | null>(null);
-  const load = useCallback(() => {
+
+  // 1. Load stored screenshot via credentialed fetch → blob URL
+  useEffect(() => {
     if (!screenshotId) return;
     let blobUrl: string | null = null;
+    let cancelled = false;
     fetch(buildApiUrl(`/devices/${deviceId}/screenshots/${screenshotId}`), { credentials: 'include' })
       .then(async (res) => {
-        if (!res.ok) return;
+        if (!res.ok || cancelled) return;
         const blob = await res.blob();
         blobUrl = URL.createObjectURL(blob);
-        setSrc(blobUrl);
+        if (!cancelled) setSrc(blobUrl);
       })
       .catch(() => {});
-    return () => { if (blobUrl) URL.revokeObjectURL(blobUrl); };
+    return () => {
+      cancelled = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
   }, [deviceId, screenshotId]);
-  useEffect(() => load(), [load]);
+
+  // 2. If online, open SSE live stream (Samsung captureScreen frames)
+  useEffect(() => {
+    if (!isOnline) return;
+    const es = new EventSource(
+      buildApiUrl(`/devices/${deviceId}/screenshot/stream`),
+      { withCredentials: true }
+    );
+    es.onmessage = (e) => {
+      if (!e.data) return;
+      setSrc(`data:image/jpeg;base64,${e.data}`);
+    };
+    es.onerror = () => es.close();
+    return () => es.close();
+  }, [deviceId, isOnline]);
+
   return (
     <div className={`w-full aspect-video rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${src ? '' : 'bg-[var(--surface)]'}`}>
       {src
-        ? <img src={src} alt="Latest screenshot" className="w-full h-full object-cover" />
+        ? <img src={src} alt="Live view" className="w-full h-full object-cover" />
         : <Monitor className="w-6 h-6 text-[var(--text-muted)] opacity-30" />
       }
     </div>
@@ -344,10 +370,11 @@ export default function DevicesPage() {
                         className="absolute top-3 right-3 w-4 h-4 accent-[var(--blue)]"
                       />
 
-                      {/* Screenshot thumbnail */}
+                      {/* Screenshot thumbnail — live via SSE for online devices */}
                       <DeviceScreenshot
                         deviceId={device.id}
                         screenshotId={device.latestScreenshotId}
+                        isOnline={device.status === 'online'}
                       />
 
                       {/* Header */}
