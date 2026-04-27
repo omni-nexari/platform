@@ -10,9 +10,17 @@ import {
 } from '../lib/background-uploads.js';
 import {
   detectIptvProtocol,
+  isMulticastIPv4,
   type IptvChannel,
   type IptvProtocol,
 } from '@signage/shared';
+
+// Pull the host octet portion out of a udp:// or rtp:// URL for the multicast warning chip.
+// Returns null when the URL doesn't carry a parseable IPv4 host.
+function extractIptvHost(url: string): string | null {
+  const m = /^(?:udp|rtp):\/\/(?:[^@\/]*@)?([^:\/?#]+)/i.exec(url || '');
+  return m && m[1] ? m[1] : null;
+}
 
 interface Props {
   workspaceId: string;
@@ -693,6 +701,20 @@ export default function UploadModal({ workspaceId, onClose }: Props) {
                             placeholder="udp://239.0.0.1:1234"
                             className="w-full px-1.5 py-1 rounded bg-[var(--surface)] border border-[var(--border)] text-xs font-mono text-[var(--text)] focus:outline-none focus:border-[var(--accent)]"
                           />
+                          {(() => {
+                            if (row.protocol !== 'udp' && row.protocol !== 'rtp') return null;
+                            const host = extractIptvHost(row.url);
+                            if (!host) return null;
+                            if (isMulticastIPv4(host)) return null;
+                            return (
+                              <span
+                                title="UDP/RTP IPTV typically uses a multicast address in 224.0.0.0/4. This URL points outside that range and may not play."
+                                className="inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-300 border border-amber-500/40"
+                              >
+                                Not a multicast address
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="px-2 py-1 text-center">
                           <button
@@ -730,6 +752,11 @@ export default function UploadModal({ workspaceId, onClose }: Props) {
               <p className="text-[11px] text-[var(--text-muted)]">
                 The default channel (★) plays first when this group starts on a screen.
                 Viewers can switch with the remote’s CH+/CH− keys or by typing channel numbers.
+              </p>
+              <p className="text-[11px] text-[var(--text-muted)]">
+                <span className="font-semibold text-[var(--text)]">Codec recommendation:</span>{' '}
+                H.264 up to 15&nbsp;Mbps for FHD streams (best Tizen 4 / SSSP4 compatibility); HEVC only on Tizen&nbsp;6.5+ panels.
+                MPEG-TS containers play most reliably for UDP/RTP multicast.
               </p>
 
               <button

@@ -38,7 +38,7 @@ async function start() {
 
   const logger: FastifyBaseLogger = pino({ level: 'info' }, pino.multistream(streams));
 
-  const app = Fastify({ loggerInstance: logger, maxParamLength: 2048 });
+  const app = Fastify({ loggerInstance: logger, maxParamLength: 2048, trustProxy: true });
 
   startLogCleanup();
   startLogAlerts();

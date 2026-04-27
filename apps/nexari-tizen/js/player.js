@@ -71,6 +71,18 @@ const Player = {
     _channelDigitTimer: null,
     _channelBannerEl: null,
     _channelBannerHideTimer: null,
+    // Reconnect / stall recovery for IPTV
+    _iptvReconnectCount: 0,
+    _iptvReconnectTimer: null,
+    _iptvOverlayEl: null,
+    _iptvWatchdogTimer: null,
+    _iptvLastTime: -1,
+    _iptvStallCount: 0,
+    // Tune debounce — coalesces rapid CH+/CH- mashing
+    _tuneSeq: 0,
+    _pendingTuneTimer: null,
+    IPTV_MAX_RECONNECTS: 5,
+    IPTV_RECONNECT_BASE_MS: 1500,
     ntpOffset: 0, // Offset in milliseconds from server time
     ntpSyncInProgress: false,
     lastNtpSync: 0,
@@ -101,6 +113,11 @@ const Player = {
     documentActive: false,
     documentItemKey: null,
     documentPageInterval: null,
+    // Multi-backend document support: B2BDoc (Tizen 4), webapis.document (Tizen 6.5+), PDF.js (Tizen 5–6.4)
+    documentBackend: null,
+    b2bDocInstance: null,
+    nativeDocOpen: false,
+    b2bDocAutoFlipIntervalMs: 10000,
     // Initialize player
     init(device) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -1009,96 +1026,103 @@ const Player = {
                         sendTizenCommandResult(r.ok, r.ok ? r.value : undefined, !r.ok ? r.error : undefined);
                         break;
                     }
-                    // ── Document API (LFD-only, partner privilege) ────────────────────
-                    {
-                        const docApi = webapis2 === null || webapis2 === void 0 ? void 0 : webapis2['document'];
-                        // Helper: wraps a callback-based Document API call into sendTizenCommandResult
-                        const docCall = (fn) => {
-                            if (!docApi) {
-                                sendTizenCommandResult(false, undefined, 'webapis.document not available (LFD-only, requires partner certificate)');
-                                return true;
-                            }
-                            try {
-                                fn((val) => sendTizenCommandResult(true, val !== null && val !== void 0 ? val : 'OK'), (e) => {
-                                    const err2 = e;
-                                    const msg = (err2 === null || err2 === void 0 ? void 0 : err2.name) && (err2 === null || err2 === void 0 ? void 0 : err2.message) ? `${err2.name}: ${err2.message}` : String(e);
-                                    const hint = (err2 === null || err2 === void 0 ? void 0 : err2.name) === 'SecurityError' ? ' (partner certificate required or LFD-only method)' : '';
-                                    sendTizenCommandResult(false, undefined, msg + hint);
-                                });
-                            }
-                            catch (e) {
-                                const err2 = e;
-                                const base = (err2 === null || err2 === void 0 ? void 0 : err2.name) && (err2 === null || err2 === void 0 ? void 0 : err2.message) ? `${err2.name}: ${err2.message}` : String(e);
-                                const hint = (err2 === null || err2 === void 0 ? void 0 : err2.name) === 'SecurityError' ? ' (partner certificate required or LFD-only method)' : '';
-                                sendTizenCommandResult(false, undefined, base + hint);
-                            }
-                            return true;
+                    // ── Document API — routes through unified adapter (B2BDoc on Tizen 4, webapis.document on 6.5+) ──
+                    if (tcAction && tcAction.indexOf('document.') === 0) {
+                        const adapter = this._getDocControlAdapter();
+                        const op = tcAction.slice('document.'.length);
+                        const ok = (val) => sendTizenCommandResult(true, val !== null && val !== void 0 ? val : 'OK');
+                        const err = (e) => {
+                            const e2 = e;
+                            const msg = (e2 === null || e2 === void 0 ? void 0 : e2.name) && (e2 === null || e2 === void 0 ? void 0 : e2.message) ? `${e2.name}: ${e2.message}` : String(e);
+                            const hint = (e2 === null || e2 === void 0 ? void 0 : e2.name) === 'SecurityError' ? ' (partner certificate required or LFD-only method)' : '';
+                            sendTizenCommandResult(false, undefined, msg + hint);
                         };
-                        if (tcAction === 'document.getVersion') {
-                            const r = tcSafe(() => { var _a; return (_a = docApi === null || docApi === void 0 ? void 0 : docApi['getVersion']) === null || _a === void 0 ? void 0 : _a.call(docApi); });
-                            sendTizenCommandResult(r.ok, r.ok ? r.value : undefined, !r.ok ? r.error : undefined);
-                            break;
+                        try {
+                            switch (op) {
+                                case 'getVersion': {
+                                    const v = adapter.getVersion();
+                                    if (v == null)
+                                        sendTizenCommandResult(false, undefined, 'getVersion not supported on current backend');
+                                    else
+                                        sendTizenCommandResult(true, v);
+                                    break;
+                                }
+                                case 'open': {
+                                    const p = tcParams;
+                                    const docinfo = {
+                                        docpath: (_o = p === null || p === void 0 ? void 0 : p.docpath) !== null && _o !== void 0 ? _o : '',
+                                        rectX: (_p = p === null || p === void 0 ? void 0 : p.rectX) !== null && _p !== void 0 ? _p : 0,
+                                        rectY: (_q = p === null || p === void 0 ? void 0 : p.rectY) !== null && _q !== void 0 ? _q : 0,
+                                        rectWidth: (_r = p === null || p === void 0 ? void 0 : p.rectWidth) !== null && _r !== void 0 ? _r : (window.innerWidth || 1920),
+                                        rectHeight: (_s = p === null || p === void 0 ? void 0 : p.rectHeight) !== null && _s !== void 0 ? _s : (window.innerHeight || 1080),
+                                    };
+                                    adapter.open(docinfo, ok, err);
+                                    break;
+                                }
+                                case 'close':
+                                    adapter.close(ok, err);
+                                    break;
+                                case 'play': {
+                                    const slideTime = typeof tcParams === 'number' ? tcParams : 10;
+                                    adapter.play(slideTime, ok, err);
+                                    break;
+                                }
+                                case 'stop':
+                                    adapter.stop(ok, err);
+                                    break;
+                                case 'pause':
+                                    adapter.pause(ok, err);
+                                    break;
+                                case 'resume':
+                                    adapter.resume(ok, err);
+                                    break;
+                                case 'nextPage':
+                                    adapter.nextPage(ok, err);
+                                    break;
+                                case 'prevPage':
+                                    adapter.prevPage(ok, err);
+                                    break;
+                                case 'gotoPage': {
+                                    const page = typeof tcParams === 'number' ? tcParams : 1;
+                                    adapter.gotoPage(page, ok, err);
+                                    break;
+                                }
+                                case 'setDocumentOrientation':
+                                    adapter.setDocumentOrientation(ok, err);
+                                    break;
+                                // B2BDoc-only (Tizen 4)
+                                case 'zoomIn':
+                                    adapter.zoomIn(ok, err);
+                                    break;
+                                case 'zoomOut':
+                                    adapter.zoomOut(ok, err);
+                                    break;
+                                case 'setZoom': {
+                                    const level = typeof tcParams === 'number' ? tcParams : 1.0;
+                                    adapter.setZoom(level, ok, err);
+                                    break;
+                                }
+                                case 'fitToWidth':
+                                    adapter.fitToWidth(ok, err);
+                                    break;
+                                case 'fitToHeight':
+                                    adapter.fitToHeight(ok, err);
+                                    break;
+                                case 'resetView':
+                                    adapter.resetView(ok, err);
+                                    break;
+                                case 'getPageCount':
+                                    adapter.getPageCount(ok, err);
+                                    break;
+                                default:
+                                    sendTizenCommandResult(false, undefined, `Unknown document action: ${op}`);
+                            }
                         }
-                        if (tcAction === 'document.open') {
-                            const p = tcParams;
-                            const docinfo = {
-                                docpath: (_o = p === null || p === void 0 ? void 0 : p.docpath) !== null && _o !== void 0 ? _o : '',
-                                rectX: (_p = p === null || p === void 0 ? void 0 : p.rectX) !== null && _p !== void 0 ? _p : 0,
-                                rectY: (_q = p === null || p === void 0 ? void 0 : p.rectY) !== null && _q !== void 0 ? _q : 0,
-                                rectWidth: (_r = p === null || p === void 0 ? void 0 : p.rectWidth) !== null && _r !== void 0 ? _r : (window.innerWidth || 1920),
-                                rectHeight: (_s = p === null || p === void 0 ? void 0 : p.rectHeight) !== null && _s !== void 0 ? _s : (window.innerHeight || 1080),
-                            };
-                            if (docCall((ok, err) => docApi['open'](docinfo, ok, err)))
-                                break;
-                            break;
+                        catch (e) {
+                            const e2 = e;
+                            sendTizenCommandResult(false, undefined, ((e2 === null || e2 === void 0 ? void 0 : e2.name) ? e2.name + ': ' : '') + ((e2 === null || e2 === void 0 ? void 0 : e2.message) || String(e)));
                         }
-                        if (tcAction === 'document.close') {
-                            if (docCall((ok, err) => docApi['close'](ok, err)))
-                                break;
-                            break;
-                        }
-                        if (tcAction === 'document.play') {
-                            const slideTime = typeof tcParams === 'number' ? tcParams : 10;
-                            if (docCall((ok, err) => docApi['play'](slideTime, ok, err)))
-                                break;
-                            break;
-                        }
-                        if (tcAction === 'document.stop') {
-                            if (docCall((ok, err) => docApi['stop'](ok, err)))
-                                break;
-                            break;
-                        }
-                        if (tcAction === 'document.pause') {
-                            if (docCall((ok, err) => docApi['pause'](ok, err)))
-                                break;
-                            break;
-                        }
-                        if (tcAction === 'document.resume') {
-                            if (docCall((ok, err) => docApi['resume'](ok, err)))
-                                break;
-                            break;
-                        }
-                        if (tcAction === 'document.nextPage') {
-                            if (docCall((ok, err) => docApi['nextPage'](ok, err)))
-                                break;
-                            break;
-                        }
-                        if (tcAction === 'document.prevPage') {
-                            if (docCall((ok, err) => docApi['prevPage'](ok, err)))
-                                break;
-                            break;
-                        }
-                        if (tcAction === 'document.gotoPage') {
-                            const page = typeof tcParams === 'number' ? tcParams : 1;
-                            if (docCall((ok, err) => docApi['gotoPage'](page, ok, err)))
-                                break;
-                            break;
-                        }
-                        if (tcAction === 'document.setDocumentOrientation') {
-                            if (docCall((ok, err) => docApi['setDocumentOrientation'](ok, err)))
-                                break;
-                            break;
-                        }
+                        break;
                     }
                     sendTizenCommandResult(false, undefined, `Unknown action: ${tcAction}`);
                     break;
@@ -1645,11 +1669,23 @@ const Player = {
                 // Only queue if signature still matches the one we started with
                 this.pendingPlaylist = downloadedPlaylist;
                 this.pendingSignature = newSignature;
-                logger.info('Pending playlist ready, swapping immediately');
                 // Show notification when download completes
                 this.showDownloadNotification(content.playlistName || 'Content');
-                // Force swap as soon as download completes
-                this.trySwapToPendingContent(true);
+                // If something is currently playing, defer the swap to the next natural
+                // item-boundary so playback is never interrupted mid-item (which would
+                // cause a black screen). The playlist controllers already call
+                // trySwapToPendingContent at every item transition.
+                // If nothing is playing (e.g. first boot / idle screen), swap immediately.
+                const currentlyPlaying = (this.currentPlaylistController && !this.currentPlaylistController.cancelled) ||
+                    this._zoneMode ||
+                    (this.syncPlayMode === 'native' && this.isSyncPlaying);
+                if (currentlyPlaying) {
+                    logger.info('Pending playlist ready; will swap at next item boundary to avoid black screen');
+                }
+                else {
+                    logger.info('Nothing currently playing; swapping to new content immediately');
+                    this.trySwapToPendingContent(true);
+                }
             }
             catch (error) {
                 logger.error('Background download failed:', error);
@@ -2270,28 +2306,49 @@ const Player = {
                 currentChannelName: channel.name,
             });
         }
-        // Tear down any prior AVPlay session before opening the new URL.
-        try {
-            this.resetAvPlay();
-        }
-        catch (_) { }
-        // Synthesize a content shape compatible with renderIptvAVPlay.
-        const synthetic = {
-            id: `${group.contentId}:${channel.number}`,
-            name: `${channel.number} ${channel.name}`,
-            type: 'IPTV',
-            url: channel.url,
-            protocol: channel.protocol,
-            _channelGroupContentId: group.contentId,
-            _channelNumber: channel.number,
-        };
-        // Clear container DOM (renderIptvAVPlay re-creates the AVPlay container).
-        try {
-            group.container.innerHTML = '';
-        }
-        catch (_) { }
-        this.renderIptvAVPlay(group.container, synthetic);
+        // Show banner immediately for snappy feedback while we debounce.
         this._showChannelBanner(channel);
+        // Cancel any prior pending tune AND any in-flight reconnect cycle.
+        if (this._pendingTuneTimer) {
+            try {
+                clearTimeout(this._pendingTuneTimer);
+            }
+            catch (_) { }
+            this._pendingTuneTimer = null;
+        }
+        this._clearIptvReconnect();
+        this._stopIptvWatchdog();
+        // Debounce 250ms — coalesces rapid CH+/CH- presses into one AVPlay open.
+        const seq = ++this._tuneSeq;
+        this._pendingTuneTimer = setTimeout(() => {
+            this._pendingTuneTimer = null;
+            if (seq !== this._tuneSeq)
+                return; // a newer tune superseded us
+            const g = this.currentChannelGroup;
+            if (!g)
+                return;
+            // Tear down any prior AVPlay session before opening the new URL.
+            try {
+                this.resetAvPlay();
+            }
+            catch (_) { }
+            // Synthesize a content shape compatible with renderIptvAVPlay.
+            const synthetic = {
+                id: `${g.contentId}:${channel.number}`,
+                name: `${channel.number} ${channel.name}`,
+                type: 'IPTV',
+                url: channel.url,
+                protocol: channel.protocol,
+                _channelGroupContentId: g.contentId,
+                _channelNumber: channel.number,
+            };
+            // Clear container DOM (renderIptvAVPlay re-creates the AVPlay container).
+            try {
+                g.container.innerHTML = '';
+            }
+            catch (_) { }
+            this.renderIptvAVPlay(g.container, synthetic);
+        }, 250);
     },
     /** Move to the next channel (wraps around). */
     nextChannel() {
@@ -2376,6 +2433,17 @@ const Player = {
             catch (_) { }
             this._channelBannerHideTimer = null;
         }
+        if (this._pendingTuneTimer) {
+            try {
+                clearTimeout(this._pendingTuneTimer);
+            }
+            catch (_) { }
+            this._pendingTuneTimer = null;
+        }
+        this._tuneSeq = (this._tuneSeq || 0) + 1; // invalidate any in-flight tune
+        this._clearIptvReconnect();
+        this._stopIptvWatchdog();
+        this._hideIptvOverlay();
         if (!opts || !opts.keepContainer) {
             this.currentChannelGroup = null;
         }
@@ -2443,6 +2511,149 @@ const Player = {
         return String(s || '').replace(/[&<>"']/g, (ch) => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
         }[ch]));
+    },
+    // ── IPTV resilience helpers ─────────────────────────────────────────────
+    // Show / hide a non-blocking overlay used for "Reconnecting…" / "No signal".
+    _showIptvOverlay(message) {
+        let el = this._iptvOverlayEl;
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'iptv-status-overlay';
+            el.style.cssText = [
+                'position:fixed', 'left:50%', 'top:50%', 'transform:translate(-50%,-50%)',
+                'z-index:99998', 'pointer-events:none',
+                'padding:18px 28px', 'border-radius:14px',
+                'background:rgba(10,10,18,0.82)', 'color:#fff',
+                'font:600 22px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+                'box-shadow:0 12px 36px rgba(0,0,0,0.5)',
+            ].join(';');
+            document.body.appendChild(el);
+            this._iptvOverlayEl = el;
+        }
+        el.textContent = String(message || '');
+        el.style.opacity = '1';
+    },
+    _hideIptvOverlay() {
+        const el = this._iptvOverlayEl;
+        if (!el)
+            return;
+        try {
+            if (el.parentNode)
+                el.parentNode.removeChild(el);
+        }
+        catch (_) { }
+        this._iptvOverlayEl = null;
+    },
+    _clearIptvReconnect() {
+        if (this._iptvReconnectTimer) {
+            try {
+                clearTimeout(this._iptvReconnectTimer);
+            }
+            catch (_) { }
+            this._iptvReconnectTimer = null;
+        }
+        this._iptvReconnectCount = 0;
+    },
+    /** Schedule an IPTV reconnect with linear backoff; auto-skip channel after max retries. */
+    _scheduleIptvReconnect(reason) {
+        var _a, _b;
+        const group = this.currentChannelGroup;
+        if (!group)
+            return;
+        if (this._iptvReconnectTimer)
+            return; // already pending
+        this._iptvReconnectCount += 1;
+        const attempt = this._iptvReconnectCount;
+        // Telemetry
+        if (typeof Telemetry !== 'undefined' && Telemetry.updateIptvStats) {
+            const total = (((_b = (_a = Telemetry.runtime) === null || _a === void 0 ? void 0 : _a.iptv) === null || _b === void 0 ? void 0 : _b.reconnectCount) || 0) + 1;
+            Telemetry.updateIptvStats({
+                reconnectCount: total,
+                lastReconnectReason: String(reason || 'unknown'),
+                lastReconnectAt: Date.now(),
+            });
+        }
+        if (attempt > this.IPTV_MAX_RECONNECTS) {
+            logger.warn('IPTV: max reconnects reached; skipping to next channel');
+            this._showIptvOverlay('No signal — skipping channel');
+            this._iptvReconnectCount = 0;
+            this._iptvReconnectTimer = setTimeout(() => {
+                this._iptvReconnectTimer = null;
+                this._hideIptvOverlay();
+                try {
+                    this.nextChannel();
+                }
+                catch (_) { }
+            }, 1500);
+            return;
+        }
+        const delay = this.IPTV_RECONNECT_BASE_MS * attempt;
+        this._showIptvOverlay(`Reconnecting… (${attempt}/${this.IPTV_MAX_RECONNECTS})`);
+        logger.warn(`IPTV: scheduling reconnect attempt ${attempt} in ${delay}ms (reason: ${reason})`);
+        this._iptvReconnectTimer = setTimeout(() => {
+            this._iptvReconnectTimer = null;
+            const g = this.currentChannelGroup;
+            if (!g)
+                return;
+            try {
+                this.tuneChannel(g.currentChannelNumber);
+            }
+            catch (err) {
+                logger.error('IPTV reconnect tuneChannel failed', err);
+            }
+        }, delay);
+    },
+    /** Periodic stall watchdog. 2 consecutive ticks with no playhead progress → reconnect. */
+    _startIptvWatchdog(isUdp) {
+        this._stopIptvWatchdog();
+        this._iptvLastTime = -1;
+        this._iptvStallCount = 0;
+        const interval = isUdp ? 3000 : 5000;
+        this._iptvWatchdogTimer = setInterval(() => {
+            var _a, _b, _c, _d, _f, _g;
+            try {
+                const state = (_b = (_a = webapis.avplay) === null || _a === void 0 ? void 0 : _a.getState) === null || _b === void 0 ? void 0 : _b.call(_a);
+                const time = (_d = (_c = webapis.avplay) === null || _c === void 0 ? void 0 : _c.getCurrentTime) === null || _d === void 0 ? void 0 : _d.call(_c);
+                // Bitrate telemetry — best-effort, ignore failures.
+                try {
+                    const bw = (_g = (_f = webapis.avplay) === null || _f === void 0 ? void 0 : _f.getStreamingProperty) === null || _g === void 0 ? void 0 : _g.call(_f, 'CURRENT_BANDWIDTH');
+                    if (bw && typeof Telemetry !== 'undefined' && Telemetry.updateIptvStats) {
+                        Telemetry.updateIptvStats({ currentBitrate: Number(bw) || 0 });
+                    }
+                }
+                catch (_) { }
+                if (state !== 'PLAYING')
+                    return;
+                if (typeof time !== 'number')
+                    return;
+                if (time === this._iptvLastTime) {
+                    this._iptvStallCount += 1;
+                    logger.debug('IPTV watchdog: stall tick', this._iptvStallCount, 'time:', time);
+                    if (this._iptvStallCount >= 2) {
+                        this._stopIptvWatchdog();
+                        this._scheduleIptvReconnect('stall');
+                    }
+                }
+                else {
+                    this._iptvStallCount = 0;
+                    this._iptvLastTime = time;
+                }
+            }
+            catch (err) {
+                logger.debug('IPTV watchdog error', err);
+            }
+        }, interval);
+    },
+    _stopIptvWatchdog() {
+        if (this._iptvWatchdogTimer) {
+            try {
+                clearInterval(this._iptvWatchdogTimer);
+            }
+            catch (_) { }
+            this._iptvWatchdogTimer = null;
+        }
+        this._iptvLastTime = -1;
+        this._iptvStallCount = 0;
     },
     // Render live streams (HLS/DASH/RTMP)
     renderLiveStream(container, content) {
@@ -2597,14 +2808,36 @@ const Player = {
             return 'RTMP';
         return 'UNKNOWN';
     },
+    // Detect IPTV protocol family from URL (and optional schema-supplied hint).
+    // Returns one of: 'udp' | 'rtp' | 'rtsp' | 'hls' | 'dash' | 'http'.
+    detectIptvProtocol(url, hint) {
+        if (hint && typeof hint === 'string')
+            return hint.toLowerCase();
+        const s = String(url || '').toLowerCase();
+        if (s.startsWith('udp://'))
+            return 'udp';
+        if (s.startsWith('rtp://'))
+            return 'rtp';
+        if (s.startsWith('rtsp://'))
+            return 'rtsp';
+        if (s.includes('.m3u8') || s.includes('hls'))
+            return 'hls';
+        if (s.includes('.mpd') || s.includes('dash'))
+            return 'dash';
+        return 'http';
+    },
     renderIptvAVPlay(container, content) {
         const url = content.url;
-        const isUdp = typeof url === 'string' && (url.startsWith('udp://') || url.startsWith('rtp://'));
+        const proto = this.detectIptvProtocol(url, content.protocol);
+        const isUdp = proto === 'udp' || proto === 'rtp';
+        const isRtsp = proto === 'rtsp';
+        const isHls = proto === 'hls';
+        const isDash = proto === 'dash';
         if (typeof Telemetry !== 'undefined' && Telemetry.updateIptvStats) {
             Telemetry.updateIptvStats({
                 url,
-                protocol: isUdp ? 'UDP' : 'HTTP',
-                streamType: isUdp ? 'UDP' : 'HLS/DASH',
+                protocol: proto.toUpperCase(),
+                streamType: proto.toUpperCase(),
                 bufferingEvents: 0,
                 lastError: null,
             });
@@ -2644,20 +2877,36 @@ const Player = {
                 onbufferingcomplete: () => logger.debug('IPTV buffering complete'),
                 onerror: (e) => {
                     logger.error('IPTV AVPlay error:', e);
-                    document.body.classList.remove('avplay-active');
                     if (typeof Telemetry !== 'undefined' && Telemetry.updateIptvStats) {
                         Telemetry.updateIptvStats({ lastError: String(e || 'unknown') });
                     }
-                    this.showIdleScreen();
+                    this._stopIptvWatchdog();
+                    // If we're inside a channel group, attempt reconnect; else fall back to idle.
+                    if (this.currentChannelGroup) {
+                        this._scheduleIptvReconnect('avplay-error');
+                    }
+                    else {
+                        document.body.classList.remove('avplay-active');
+                        this.showIdleScreen();
+                    }
                 },
                 onstreamcompleted: () => {
                     logger.info('IPTV stream completed');
-                    document.body.classList.remove('avplay-active');
+                    this._stopIptvWatchdog();
+                    if (this.currentChannelGroup) {
+                        // Multicast streams shouldn't "complete"; treat as drop and reconnect.
+                        this._scheduleIptvReconnect('stream-completed');
+                    }
+                    else {
+                        document.body.classList.remove('avplay-active');
+                    }
                 },
             });
-            // 4. Configure for live/UDP where applicable
+            // 4. Configure per protocol. UDP/RTP need a tighter buffer timeout for
+            //    low-latency multicast; HLS/DASH need their streamtype hint plus the
+            //    adaptive resolution clamp; RTSP relies on AVPlay defaults.
             try {
-                webapis.avplay.setTimeoutForBuffering(10);
+                webapis.avplay.setTimeoutForBuffering(isUdp ? 4 : 10);
             }
             catch (err) {
                 logger.debug('setTimeoutForBuffering not supported');
@@ -2674,8 +2923,28 @@ const Player = {
                     webapis.avplay.setStreamingProperty('SET_STREAMTYPE', 'UDP');
                 }
                 catch (err) {
-                    logger.debug('setStreamingProperty SET_STREAMTYPE failed');
+                    logger.debug('setStreamingProperty UDP failed');
                 }
+            }
+            else if (isHls) {
+                try {
+                    webapis.avplay.setStreamingProperty('SET_STREAMTYPE', 'HLS');
+                    webapis.avplay.setStreamingProperty('ADAPTIVE_INFO', 'FIXED_MAX_RESOLUTION=FULL_HD');
+                }
+                catch (err) {
+                    logger.debug('setStreamingProperty HLS failed');
+                }
+            }
+            else if (isDash) {
+                try {
+                    webapis.avplay.setStreamingProperty('ADAPTIVE_INFO', 'FIXED_MAX_RESOLUTION=FULL_HD');
+                }
+                catch (err) {
+                    logger.debug('setStreamingProperty DASH failed');
+                }
+            }
+            else if (isRtsp) {
+                logger.debug('IPTV: RTSP stream — using AVPlay defaults');
             }
             webapis.avplay.prepareAsync(() => {
                 try {
@@ -2698,44 +2967,33 @@ const Player = {
                     }
                     webapis.avplay.play();
                     logger.info('IPTV playback started');
-                    // Watchdog: check if playback actually starts
-                    const watchdogDelay = isUdp ? 5000 : 7000;
-                    setTimeout(() => {
-                        var _a, _b, _c, _d;
-                        try {
-                            const state = (_b = (_a = webapis.avplay).getState) === null || _b === void 0 ? void 0 : _b.call(_a);
-                            const time = (_d = (_c = webapis.avplay).getCurrentTime) === null || _d === void 0 ? void 0 : _d.call(_c);
-                            if (state === 'PLAYING' && time === 0) {
-                                logger.warn('IPTV AVPlay appears stalled (state:', state, 'time:', time, '). Showing idle screen');
-                                document.body.classList.remove('avplay-active');
-                                try {
-                                    webapis.avplay.stop();
-                                }
-                                catch (_) { }
-                                try {
-                                    webapis.avplay.close();
-                                }
-                                catch (_) { }
-                                this.showIdleScreen();
-                            }
-                            else {
-                                logger.debug('IPTV watchdog OK - state:', state, 'time:', time);
-                            }
-                        }
-                        catch (watchErr) {
-                            logger.debug('IPTV watchdog check failed', watchErr);
-                        }
-                    }, watchdogDelay);
+                    // Successful start — clear any prior reconnect cycle and start the
+                    // periodic stall watchdog (UDP=3s tick, others=5s tick).
+                    this._clearIptvReconnect();
+                    this._hideIptvOverlay();
+                    this._startIptvWatchdog(isUdp);
                 }
                 catch (playErr) {
                     logger.error('IPTV play failed:', playErr);
-                    document.body.classList.remove('avplay-active');
-                    this.showIdleScreen();
+                    this._stopIptvWatchdog();
+                    if (this.currentChannelGroup) {
+                        this._scheduleIptvReconnect('play-failed');
+                    }
+                    else {
+                        document.body.classList.remove('avplay-active');
+                        this.showIdleScreen();
+                    }
                 }
             }, (prepErr) => {
                 logger.error('IPTV prepare failed:', prepErr);
-                document.body.classList.remove('avplay-active');
-                this.showIdleScreen();
+                this._stopIptvWatchdog();
+                if (this.currentChannelGroup) {
+                    this._scheduleIptvReconnect('prepare-failed');
+                }
+                else {
+                    document.body.classList.remove('avplay-active');
+                    this.showIdleScreen();
+                }
             });
         }
         catch (error) {
@@ -2745,6 +3003,7 @@ const Player = {
     },
     resetAvPlay() {
         try {
+            this._stopIptvWatchdog();
             if (typeof webapis !== 'undefined' && webapis.avplay) {
                 try {
                     webapis.avplay.stop();
@@ -3823,20 +4082,175 @@ const Player = {
         const cmsUrl = (CONFIG.API_BASE || '').replace(/\/api\/v1\/?$/, '');
         DataSyncRenderer.render(String(content.id), cmsUrl, this.deviceId);
     },
-    // Render PDF or Office document using Samsung webapis.document
+    // Render PDF or Office document.
+    // Dispatches to one of three backends based on Tizen version:
+    //   • Tizen 4 (legacy)  → B2BDoc API (native HW layer, Samsung B2B SSSP)
+    //   • Tizen 6.5+        → webapis.document (native HW layer, Document API)
+    //   • Tizen 5–6.4       → PDF.js (canvas rendering, existing behaviour)
     renderDocument(container, content) {
         var _a;
         this.closeDocument();
         container.innerHTML = '';
         // Mark active immediately — prevents the playlist loop (which runs every 10s)
-        // from spawning a second concurrent renderDocument while the PDF is still loading.
+        // from spawning a second concurrent renderDocument while the doc is still loading.
         // On error, this is reset to false so the next tick can retry.
         this.documentActive = true;
         this.documentItemKey = this.getPlaylistItemKey(content);
+        // Slide interval: read from metadata.pageInterval (seconds), default 10
+        let slideIntervalSec = 10;
+        try {
+            const md = (content === null || content === void 0 ? void 0 : content.metadata) ? JSON.parse(content.metadata) : null;
+            const pi = parseInt(md === null || md === void 0 ? void 0 : md.pageInterval, 10);
+            if (!isNaN(pi) && pi > 0)
+                slideIntervalSec = pi;
+        }
+        catch (_) { }
+        this.b2bDocAutoFlipIntervalMs = slideIntervalSec * 1000;
+        const platform = window.Platform;
+        const hasB2BDoc = typeof window.B2BDoc === 'function';
+        const hasNativeDocApi = !!((_a = window.webapis) === null || _a === void 0 ? void 0 : _a.document);
+        const supportsNative = (platform === null || platform === void 0 ? void 0 : platform.supportsDocumentApi) && hasNativeDocApi;
+        logger.info('renderDocument backend selection:', 'tizen=' + ((platform === null || platform === void 0 ? void 0 : platform.tizenVersion) || '?'), 'isLegacy=' + !!(platform === null || platform === void 0 ? void 0 : platform.isLegacy), 'supportsDocumentApi=' + !!(platform === null || platform === void 0 ? void 0 : platform.supportsDocumentApi), 'B2BDoc=' + hasB2BDoc, 'webapis.document=' + hasNativeDocApi);
+        if ((platform === null || platform === void 0 ? void 0 : platform.isLegacy) && hasB2BDoc) {
+            this._renderDocumentB2BDoc(container, content, this.b2bDocAutoFlipIntervalMs);
+            return;
+        }
+        if (supportsNative) {
+            this._renderDocumentNative(container, content, slideIntervalSec);
+            return;
+        }
+        // Default: PDF.js (Tizen 5–6.4, or any legacy device without B2BDoc as a last resort)
+        this._renderDocumentPdfJs(container, content);
+    },
+    // Tizen 4: render via Samsung B2BDoc API (native HW layer)
+    _renderDocumentB2BDoc(container, content, slideIntervalMs) {
+        var _a, _b, _c, _d, _f;
+        this.documentBackend = 'b2bdoc';
+        document.body.classList.add('b2bdoc-active');
+        container.innerHTML = '';
+        const showError = (reason) => {
+            logger.error('B2BDoc load failed:', content.name, reason);
+            this.documentActive = false;
+            this.documentItemKey = null;
+            this.documentBackend = null;
+            this.b2bDocInstance = null;
+            document.body.classList.remove('b2bdoc-active');
+            container.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#222;flex-direction:column;">
+          <div style="font-size:48px;margin-bottom:20px;">&#9888;</div>
+          <div style="font-size:24px;">Document Load Error (B2BDoc)</div>
+          <div style="font-size:14px;margin-top:10px;opacity:0.6;">${content.name}</div>
+          <div style="font-size:12px;margin-top:8px;opacity:0.4;">${reason}</div>
+        </div>`;
+        };
+        try {
+            const B2BDocCtor = window.B2BDoc;
+            const doc = new B2BDocCtor();
+            this.b2bDocInstance = doc;
+            // Register full event surface
+            try {
+                (_a = doc.on) === null || _a === void 0 ? void 0 : _a.call(doc, 'loaded', () => {
+                    var _a;
+                    logger.info('B2BDoc loaded:', content.name);
+                    try {
+                        (_a = doc.startAutoFlip) === null || _a === void 0 ? void 0 : _a.call(doc, slideIntervalMs);
+                    }
+                    catch (e) {
+                        logger.warn('B2BDoc startAutoFlip failed:', (e === null || e === void 0 ? void 0 : e.message) || e);
+                    }
+                });
+            }
+            catch (_) { }
+            try {
+                (_b = doc.on) === null || _b === void 0 ? void 0 : _b.call(doc, 'pageChanged', (p) => logger.debug('B2BDoc page changed:', p));
+            }
+            catch (_) { }
+            try {
+                (_c = doc.on) === null || _c === void 0 ? void 0 : _c.call(doc, 'error', (e) => showError('event: ' + ((e === null || e === void 0 ? void 0 : e.message) || JSON.stringify(e))));
+            }
+            catch (_) { }
+            try {
+                (_d = doc.on) === null || _d === void 0 ? void 0 : _d.call(doc, 'autoFlipStart', () => logger.debug('B2BDoc autoFlip started'));
+            }
+            catch (_) { }
+            try {
+                (_f = doc.on) === null || _f === void 0 ? void 0 : _f.call(doc, 'autoFlipStop', () => logger.debug('B2BDoc autoFlip stopped'));
+            }
+            catch (_) { }
+            logger.info('B2BDoc opening:', content.url);
+            doc.open(content.url, { cache: true });
+        }
+        catch (e) {
+            showError('open exception: ' + ((e === null || e === void 0 ? void 0 : e.message) || e));
+        }
+    },
+    // Tizen 6.5+: render via webapis.document (native Document API)
+    _renderDocumentNative(container, content, slideIntervalSec) {
+        this.documentBackend = 'native';
+        this.nativeDocOpen = false;
+        document.body.classList.add('b2bdoc-active');
+        container.innerHTML = '';
+        const docApi = window.webapis.document;
+        const rect = this.getDisplayRect();
+        const docinfo = {
+            docpath: content.url,
+            rectX: rect.left,
+            rectY: rect.top,
+            rectWidth: rect.width,
+            rectHeight: rect.height,
+        };
+        const showError = (reason) => {
+            logger.error('webapis.document load failed:', content.name, reason);
+            this.documentActive = false;
+            this.documentItemKey = null;
+            this.documentBackend = null;
+            this.nativeDocOpen = false;
+            document.body.classList.remove('b2bdoc-active');
+            container.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#222;flex-direction:column;">
+          <div style="font-size:48px;margin-bottom:20px;">&#9888;</div>
+          <div style="font-size:24px;">Document Load Error (Document API)</div>
+          <div style="font-size:14px;margin-top:10px;opacity:0.6;">${content.name}</div>
+          <div style="font-size:12px;margin-top:8px;opacity:0.4;">${reason}</div>
+        </div>`;
+        };
+        logger.info('webapis.document.open:', docinfo);
+        try {
+            docApi.open(docinfo, () => {
+                this.nativeDocOpen = true;
+                logger.info('webapis.document opened, starting play with slideTime:', slideIntervalSec);
+                try {
+                    docApi.play(slideIntervalSec, () => logger.debug('webapis.document play started'), (err) => logger.warn('webapis.document play error:', err === null || err === void 0 ? void 0 : err.name, err === null || err === void 0 ? void 0 : err.message));
+                }
+                catch (e) {
+                    logger.warn('webapis.document play exception:', (e === null || e === void 0 ? void 0 : e.message) || e);
+                }
+            }, (err) => {
+                const name = (err === null || err === void 0 ? void 0 : err.name) || '';
+                const msg = (err === null || err === void 0 ? void 0 : err.message) || JSON.stringify(err);
+                const hint = name === 'SecurityError' ? ' (partner certificate / documentplay privilege required)' : '';
+                showError(`${name}: ${msg}${hint}`);
+            });
+        }
+        catch (e) {
+            showError('open exception: ' + ((e === null || e === void 0 ? void 0 : e.message) || e));
+        }
+    },
+    // Tizen 5–6.4 (and fallback): render via PDF.js to canvas.
+    // Handles both:
+    //   pdfjs v1.x (global: window.PDFJS, Tizen 4 — pdf-legacy.min.js)
+    //   pdfjs v2.x (global: window.pdfjsLib, Tizen 5+ — pdf.min.js)
+    _renderDocumentPdfJs(container, content) {
+        var _a;
+        this.documentBackend = 'pdfjs';
         const localUrl = content.url || ''; // file:///opt/usr/home/owner/apps_rw/.../uuid.pdf
         const fileName = localUrl.split('/').pop() || '';
-        const pdfLib = window.pdfjsLib;
-        if (!pdfLib) {
+        // v2.x exposes pdfjsLib; v1.x exposes PDFJS
+        const pdfLib = window.pdfjsLib; // v2.x
+        const pdfLibV1 = window.PDFJS; // v1.x
+        const lib = pdfLib || pdfLibV1;
+        const isV1 = !pdfLib && !!pdfLibV1;
+        if (!lib) {
             logger.error('pdfjsLib not loaded — cannot render PDF:', content.name);
             container.innerHTML = `
         <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#333;flex-direction:column;">
@@ -3845,7 +4259,18 @@ const Player = {
         </div>`;
             return;
         }
-        pdfLib.GlobalWorkerOptions.workerSrc = 'js/modules/pdf.worker.min.js';
+        logger.info('PDF.js version:', isV1 ? 'v1 (PDFJS global)' : 'v2 (pdfjsLib global)');
+        // Worker path and global config differ between v1 and v2
+        if (isV1) {
+            // v1.x: workerSrc is a top-level property on PDFJS
+            lib.workerSrc = 'js/modules/pdf-legacy.worker.min.js';
+        }
+        else {
+            // v2.x: workerSrc is nested under GlobalWorkerOptions
+            lib.GlobalWorkerOptions.workerSrc = 'js/modules/pdf.worker.min.js';
+        }
+        // getViewport API differs between v1 and v2
+        const getViewport = (page, scale) => isV1 ? page.getViewport(scale) : page.getViewport({ scale });
         // Black background while loading
         container.style.position = 'relative';
         container.style.background = '#000';
@@ -3868,9 +4293,9 @@ const Player = {
                 const page = yield pdfDoc.getPage(num);
                 const cw = Math.max(container.offsetWidth || window.innerWidth || 1920, 1);
                 const ch = Math.max(container.offsetHeight || window.innerHeight || 1080, 1);
-                const nativeVp = page.getViewport({ scale: 1 });
+                const nativeVp = getViewport(page, 1);
                 const scale = Math.min(cw / nativeVp.width, ch / nativeVp.height);
-                const viewport = page.getViewport({ scale });
+                const viewport = getViewport(page, scale);
                 const offscreen = document.createElement('canvas');
                 offscreen.width = Math.max(Math.floor(viewport.width), 1);
                 offscreen.height = Math.max(Math.floor(viewport.height), 1);
@@ -3921,6 +4346,8 @@ const Player = {
                 advanceInProgress = false;
             }
         });
+        // getDocument returns a task; .promise works on both pdfjs v1.10+ and v2.x
+        const getDocPromise = (data) => lib.getDocument({ data }).promise;
         const onPdfLoaded = (pdf) => __awaiter(this, void 0, void 0, function* () {
             pdfDoc = pdf;
             // documentActive already set true at renderDocument start
@@ -3941,7 +4368,7 @@ const Player = {
                         return;
                     }
                     showPrerenderedAndAdvance();
-                }, 10000);
+                }, this.b2bDocAutoFlipIntervalMs);
             }
         });
         const showError = (reason) => {
@@ -3949,6 +4376,7 @@ const Player = {
             // Reset so the playlist loop can retry on the next tick
             this.documentActive = false;
             this.documentItemKey = null;
+            this.documentBackend = null;
             container.innerHTML = `
         <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#222;flex-direction:column;">
           <div style="font-size:48px;margin-bottom:20px;">&#9888;</div>
@@ -3969,8 +4397,8 @@ const Player = {
                 xhr.onload = () => {
                     if (xhr.response && xhr.response.byteLength > 0) {
                         logger.info('PDF XHR ok, bytes:', xhr.response.byteLength);
-                        pdfLib.getDocument({ data: new Uint8Array(xhr.response) })
-                            .promise.then(onPdfLoaded).catch((e) => showError('parse: ' + ((e === null || e === void 0 ? void 0 : e.message) || e)));
+                        getDocPromise(new Uint8Array(xhr.response))
+                            .then(onPdfLoaded).catch((e) => showError('parse: ' + ((e === null || e === void 0 ? void 0 : e.message) || e)));
                     }
                     else {
                         showError('XHR empty response');
@@ -3987,10 +4415,62 @@ const Player = {
         // Primary: tizen.filesystem API — reads from wgt-private/content/<uuid>.pdf as Uint8Array.
         // This is the correct Tizen-native way; virtual root paths like "wgt-private/content/file"
         // are NOT valid URL schemes and cannot be used with XHR.
+        // Tizen 4 (legacy) has NO openFile() — must use resolve() + openStream() + readBytes().
+        const platform = window.Platform;
         const tzFs = (_a = window.tizen) === null || _a === void 0 ? void 0 : _a.filesystem;
-        if (tzFs && fileName) {
-            const tzfsPath = `wgt-private/content/${fileName}`;
-            logger.info('PDF reading via tizen.filesystem:', tzfsPath);
+        const tzfsPath = fileName ? `wgt-private/content/${fileName}` : '';
+        // Legacy (Tizen 4) byte-read via resolve+openStream
+        const loadLegacy = () => {
+            logger.info('PDF reading via legacy filesystem.resolve+openStream:', tzfsPath);
+            try {
+                tzFs.resolve(tzfsPath, (file) => {
+                    try {
+                        file.openStream('r', (stream) => {
+                            try {
+                                const fileSize = file.fileSize;
+                                const raw = stream.readBytes(fileSize);
+                                try {
+                                    stream.close();
+                                }
+                                catch (_) { }
+                                // readBytes returns a numeric array; PDF.js wants Uint8Array
+                                const data = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+                                logger.info('PDF read ok (legacy), bytes:', data.byteLength);
+                                getDocPromise(data)
+                                    .then(onPdfLoaded).catch((e) => showError('parse: ' + ((e === null || e === void 0 ? void 0 : e.message) || e)));
+                            }
+                            catch (e) {
+                                try {
+                                    stream.close();
+                                }
+                                catch (_) { }
+                                logger.warn('legacy readBytes failed:', (e === null || e === void 0 ? void 0 : e.message) || e, '— trying XHR fallback');
+                                loadViaXhr(localUrl);
+                            }
+                        }, (err) => {
+                            logger.warn('legacy openStream error:', (err === null || err === void 0 ? void 0 : err.message) || err, '— trying XHR fallback');
+                            loadViaXhr(localUrl);
+                        }, 'ISO-8859-1');
+                    }
+                    catch (e) {
+                        logger.warn('legacy openStream exception:', (e === null || e === void 0 ? void 0 : e.message) || e, '— trying XHR fallback');
+                        loadViaXhr(localUrl);
+                    }
+                }, (err) => {
+                    logger.warn('legacy filesystem.resolve error:', (err === null || err === void 0 ? void 0 : err.message) || err, '— trying XHR fallback');
+                    loadViaXhr(localUrl);
+                }, 'r');
+            }
+            catch (e) {
+                logger.warn('legacy filesystem.resolve exception:', (e === null || e === void 0 ? void 0 : e.message) || e, '— trying XHR fallback');
+                loadViaXhr(localUrl);
+            }
+        };
+        if ((platform === null || platform === void 0 ? void 0 : platform.isLegacy) && tzFs && typeof tzFs.resolve === 'function' && tzfsPath) {
+            loadLegacy();
+        }
+        else if (tzFs && typeof tzFs.openFile === 'function' && tzfsPath) {
+            logger.info('PDF reading via tizen.filesystem.openFile:', tzfsPath);
             try {
                 const fileHandle = tzFs.openFile(tzfsPath, 'r');
                 fileHandle.readDataNonBlocking((data) => {
@@ -3999,8 +4479,8 @@ const Player = {
                     }
                     catch (_) { }
                     logger.info('PDF read ok, bytes:', data.byteLength);
-                    pdfLib.getDocument({ data })
-                        .promise.then(onPdfLoaded).catch((e) => showError('parse: ' + ((e === null || e === void 0 ? void 0 : e.message) || e)));
+                    getDocPromise(data)
+                        .then(onPdfLoaded).catch((e) => showError('parse: ' + ((e === null || e === void 0 ? void 0 : e.message) || e)));
                 }, (err) => {
                     try {
                         fileHandle.close();
@@ -4019,16 +4499,204 @@ const Player = {
             loadViaXhr(localUrl);
         }
     },
-    // Close the currently open document (safe no-op if none open)
+    // Unified document control adapter — routes commands to the active backend.
+    // Used by both internal logic and the tizen_command WebSocket passthrough.
+    // Each method takes (ok, err) callbacks; "not supported" backends call err synchronously.
+    _getDocControlAdapter() {
+        var _a;
+        const backend = this.documentBackend;
+        const b2b = this.b2bDocInstance;
+        const docApi = (_a = window.webapis) === null || _a === void 0 ? void 0 : _a.document;
+        const notSupported = (op) => (_ok, err) => {
+            const msg = `${op} not supported on ${backend || 'inactive'} backend`;
+            try {
+                err === null || err === void 0 ? void 0 : err({ name: 'NotSupportedError', message: msg });
+            }
+            catch (_) { }
+        };
+        const inactive = (op) => (_ok, err) => {
+            try {
+                err === null || err === void 0 ? void 0 : err({ name: 'InvalidStateError', message: `${op}: no document active` });
+            }
+            catch (_) { }
+        };
+        // Wrap a sync B2BDoc call into an (ok, err) interface
+        const wrapB2B = (fn) => (ok, err) => {
+            try {
+                const v = fn();
+                ok === null || ok === void 0 ? void 0 : ok(v !== null && v !== void 0 ? v : 'OK');
+            }
+            catch (e) {
+                err === null || err === void 0 ? void 0 : err({ name: (e === null || e === void 0 ? void 0 : e.name) || 'UnknownError', message: (e === null || e === void 0 ? void 0 : e.message) || String(e) });
+            }
+        };
+        const adapter = {
+            getVersion: backend === 'native'
+                ? () => { try {
+                    return docApi.getVersion();
+                }
+                catch (e) {
+                    return null;
+                } }
+                : () => null,
+            open: backend === 'native'
+                ? (docinfo, ok, err) => { try {
+                    docApi.open(docinfo, ok, err);
+                }
+                catch (e) {
+                    err === null || err === void 0 ? void 0 : err(e);
+                } }
+                : notSupported('open'),
+            close: backend === 'b2bdoc' ? wrapB2B(() => { var _a; return (_a = b2b === null || b2b === void 0 ? void 0 : b2b.close) === null || _a === void 0 ? void 0 : _a.call(b2b); })
+                : backend === 'native' ? (ok, err) => { try {
+                    docApi.close(ok, err);
+                }
+                catch (e) {
+                    err === null || err === void 0 ? void 0 : err(e);
+                } }
+                    : inactive('close'),
+            play: backend === 'b2bdoc' ? (slideTime, ok, err) => {
+                this.b2bDocAutoFlipIntervalMs = (slideTime || 10) * 1000;
+                wrapB2B(() => { var _a; return (_a = b2b === null || b2b === void 0 ? void 0 : b2b.startAutoFlip) === null || _a === void 0 ? void 0 : _a.call(b2b, this.b2bDocAutoFlipIntervalMs); })(ok, err);
+            }
+                : backend === 'native' ? (slideTime, ok, err) => {
+                    try {
+                        docApi.play(slideTime, ok, err);
+                    }
+                    catch (e) {
+                        err === null || err === void 0 ? void 0 : err(e);
+                    }
+                }
+                    : inactive('play'),
+            stop: backend === 'b2bdoc' ? wrapB2B(() => { var _a; return (_a = b2b === null || b2b === void 0 ? void 0 : b2b.stopAutoFlip) === null || _a === void 0 ? void 0 : _a.call(b2b); })
+                : backend === 'native' ? (ok, err) => { try {
+                    docApi.stop(ok, err);
+                }
+                catch (e) {
+                    err === null || err === void 0 ? void 0 : err(e);
+                } }
+                    : inactive('stop'),
+            pause: backend === 'b2bdoc' ? wrapB2B(() => { var _a; return (_a = b2b === null || b2b === void 0 ? void 0 : b2b.stopAutoFlip) === null || _a === void 0 ? void 0 : _a.call(b2b); }) // B2BDoc has no real pause
+                : backend === 'native' ? (ok, err) => { try {
+                    docApi.pause(ok, err);
+                }
+                catch (e) {
+                    err === null || err === void 0 ? void 0 : err(e);
+                } }
+                    : inactive('pause'),
+            resume: backend === 'b2bdoc' ? wrapB2B(() => { var _a; return (_a = b2b === null || b2b === void 0 ? void 0 : b2b.startAutoFlip) === null || _a === void 0 ? void 0 : _a.call(b2b, this.b2bDocAutoFlipIntervalMs); })
+                : backend === 'native' ? (ok, err) => { try {
+                    docApi.resume(ok, err);
+                }
+                catch (e) {
+                    err === null || err === void 0 ? void 0 : err(e);
+                } }
+                    : inactive('resume'),
+            nextPage: backend === 'b2bdoc' ? wrapB2B(() => { var _a; return (_a = b2b === null || b2b === void 0 ? void 0 : b2b.nextPage) === null || _a === void 0 ? void 0 : _a.call(b2b); })
+                : backend === 'native' ? (ok, err) => { try {
+                    docApi.nextPage(ok, err);
+                }
+                catch (e) {
+                    err === null || err === void 0 ? void 0 : err(e);
+                } }
+                    : inactive('nextPage'),
+            prevPage: backend === 'b2bdoc' ? wrapB2B(() => { var _a; return (_a = b2b === null || b2b === void 0 ? void 0 : b2b.prevPage) === null || _a === void 0 ? void 0 : _a.call(b2b); })
+                : backend === 'native' ? (ok, err) => { try {
+                    docApi.prevPage(ok, err);
+                }
+                catch (e) {
+                    err === null || err === void 0 ? void 0 : err(e);
+                } }
+                    : inactive('prevPage'),
+            gotoPage: backend === 'b2bdoc' ? (page, ok, err) => wrapB2B(() => { var _a; return (_a = b2b === null || b2b === void 0 ? void 0 : b2b.goToPage) === null || _a === void 0 ? void 0 : _a.call(b2b, page); })(ok, err)
+                : backend === 'native' ? (page, ok, err) => {
+                    try {
+                        docApi.gotoPage(page, ok, err);
+                    }
+                    catch (e) {
+                        err === null || err === void 0 ? void 0 : err(e);
+                    }
+                }
+                    : inactive('gotoPage'),
+            setDocumentOrientation: backend === 'native'
+                ? (ok, err) => { try {
+                    docApi.setDocumentOrientation(ok, err);
+                }
+                catch (e) {
+                    err === null || err === void 0 ? void 0 : err(e);
+                } }
+                : notSupported('setDocumentOrientation'),
+            // B2BDoc-only zoom/view methods
+            zoomIn: backend === 'b2bdoc' ? wrapB2B(() => { var _a; return (_a = b2b === null || b2b === void 0 ? void 0 : b2b.zoomIn) === null || _a === void 0 ? void 0 : _a.call(b2b); }) : notSupported('zoomIn'),
+            zoomOut: backend === 'b2bdoc' ? wrapB2B(() => { var _a; return (_a = b2b === null || b2b === void 0 ? void 0 : b2b.zoomOut) === null || _a === void 0 ? void 0 : _a.call(b2b); }) : notSupported('zoomOut'),
+            setZoom: backend === 'b2bdoc' ? (level, ok, err) => wrapB2B(() => { var _a; return (_a = b2b === null || b2b === void 0 ? void 0 : b2b.setZoom) === null || _a === void 0 ? void 0 : _a.call(b2b, level); })(ok, err)
+                : notSupported('setZoom'),
+            fitToWidth: backend === 'b2bdoc' ? wrapB2B(() => { var _a; return (_a = b2b === null || b2b === void 0 ? void 0 : b2b.fitToWidth) === null || _a === void 0 ? void 0 : _a.call(b2b); }) : notSupported('fitToWidth'),
+            fitToHeight: backend === 'b2bdoc' ? wrapB2B(() => { var _a; return (_a = b2b === null || b2b === void 0 ? void 0 : b2b.fitToHeight) === null || _a === void 0 ? void 0 : _a.call(b2b); }) : notSupported('fitToHeight'),
+            resetView: backend === 'b2bdoc' ? wrapB2B(() => { var _a; return (_a = b2b === null || b2b === void 0 ? void 0 : b2b.resetView) === null || _a === void 0 ? void 0 : _a.call(b2b); }) : notSupported('resetView'),
+            getPageCount: backend === 'b2bdoc' ? (ok, err) => {
+                var _a;
+                try {
+                    (_a = b2b === null || b2b === void 0 ? void 0 : b2b.getPageCount) === null || _a === void 0 ? void 0 : _a.call(b2b, (n) => ok === null || ok === void 0 ? void 0 : ok(n));
+                }
+                catch (e) {
+                    err === null || err === void 0 ? void 0 : err({ name: (e === null || e === void 0 ? void 0 : e.name) || 'UnknownError', message: (e === null || e === void 0 ? void 0 : e.message) || String(e) });
+                }
+            }
+                : notSupported('getPageCount'),
+        };
+        return adapter;
+    },
+    // Close the currently open document (safe no-op if none open).
+    // Branches on documentBackend to call the right teardown sequence.
     closeDocument() {
-        if (!this.documentActive)
+        var _a, _b, _c, _d, _f;
+        if (!this.documentActive && !this.documentBackend)
             return;
+        const backend = this.documentBackend;
+        if (backend === 'b2bdoc') {
+            try {
+                (_b = (_a = this.b2bDocInstance) === null || _a === void 0 ? void 0 : _a.stopAutoFlip) === null || _b === void 0 ? void 0 : _b.call(_a);
+            }
+            catch (_) { }
+            try {
+                (_d = (_c = this.b2bDocInstance) === null || _c === void 0 ? void 0 : _c.close) === null || _d === void 0 ? void 0 : _d.call(_c);
+            }
+            catch (_) { }
+            this.b2bDocInstance = null;
+            try {
+                document.body.classList.remove('b2bdoc-active');
+            }
+            catch (_) { }
+        }
+        else if (backend === 'native') {
+            const docApi = (_f = window.webapis) === null || _f === void 0 ? void 0 : _f.document;
+            if (docApi) {
+                try {
+                    docApi.stop(() => { }, () => { });
+                }
+                catch (_) { }
+                try {
+                    docApi.close(() => { }, () => { });
+                }
+                catch (_) { }
+            }
+            this.nativeDocOpen = false;
+            try {
+                document.body.classList.remove('b2bdoc-active');
+            }
+            catch (_) { }
+        }
+        else {
+            // pdfjs or null
+            if (this.documentPageInterval) {
+                clearInterval(this.documentPageInterval);
+                this.documentPageInterval = null;
+            }
+        }
         this.documentActive = false;
         this.documentItemKey = null;
-        if (this.documentPageInterval) {
-            clearInterval(this.documentPageInterval);
-            this.documentPageInterval = null;
-        }
+        this.documentBackend = null;
     },
     // Render playlist (simplified - real implementation would handle transitions)
     renderPlaylist(playlist) {
@@ -5682,14 +6350,14 @@ const Player = {
             this._zoneTimers.push(t);
             return;
         }
-        const pdfLib = window.pdfjsLib;
+        const pdfLib = window.pdfjsLib || window.PDFJS;
         if (!pdfLib) {
-            logger.warn(`[Zone ${zoneIndex}] pdfjsLib unavailable — cannot render PDF in zone`);
+            logger.warn(`[Zone ${zoneIndex}] pdfjs unavailable — cannot render PDF in zone`);
             const t = setTimeout(() => this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex), durationMs);
             this._zoneTimers.push(t);
             return;
         }
-        pdfLib.GlobalWorkerOptions.workerSrc = 'js/modules/pdf.worker.min.js';
+        // worker src and API compat (v1 / v2) handled inside loadAndPlay
         let pageInterval = null;
         let advanced = false;
         let fallbackTimer = null;
@@ -5715,13 +6383,24 @@ const Player = {
         const loadAndPlay = () => __awaiter(this, void 0, void 0, function* () {
             var _a, _b;
             try {
-                const loadingTask = pdfLib.getDocument(url);
+                // Support both pdfjs v1 (window.PDFJS) and v2 (window.pdfjsLib)
+                const pdfLibV2 = window.pdfjsLib;
+                const pdfLibV1 = window.PDFJS;
+                const lib = pdfLibV2 || pdfLibV1;
+                const isV1 = !pdfLibV2 && !!pdfLibV1;
+                if (!lib) {
+                    logger.warn(`[Zone ${zoneIndex}] pdfjsLib not loaded — cannot render PDF`);
+                    advanceOnce();
+                    return;
+                }
+                const loadingTask = lib.getDocument(url);
                 const pdf = yield loadingTask.promise;
                 if (!this._zoneMode || !container.parentNode)
                     return;
                 logger.info(`[Zone ${zoneIndex}] PDF loaded: ${(_a = content.name) !== null && _a !== void 0 ? _a : url} (${pdf.numPages} pages)`);
                 const numPages = pdf.numPages;
                 const pageDurationMs = numPages > 1 ? Math.max(3000, Math.floor(durationMs / numPages)) : durationMs;
+                const getVp = (page, scale) => isV1 ? page.getViewport(scale) : page.getViewport({ scale });
                 const renderPage = (pageNum) => __awaiter(this, void 0, void 0, function* () {
                     if (!this._zoneMode || !container.parentNode)
                         return;
@@ -5729,9 +6408,9 @@ const Player = {
                         const page = yield pdf.getPage(pageNum);
                         const cw = container.offsetWidth || zone.rect.width;
                         const ch = container.offsetHeight || zone.rect.height;
-                        const nativeVp = page.getViewport({ scale: 1 });
+                        const nativeVp = getVp(page, 1);
                         const scale = Math.min(cw / nativeVp.width, ch / nativeVp.height);
-                        const viewport = page.getViewport({ scale });
+                        const viewport = getVp(page, scale);
                         const canvas = document.createElement('canvas');
                         canvas.width = Math.max(Math.floor(viewport.width), 1);
                         canvas.height = Math.max(Math.floor(viewport.height), 1);

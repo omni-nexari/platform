@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
-import { api } from '../../lib/api.js';
+import { api, buildApiUrl } from '../../lib/api.js';
 import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
 import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw } from 'lucide-react';
@@ -251,7 +251,7 @@ export default function WorkspaceDashboardPage() {
                 {/* Thumbnail */}
                 {device.latestScreenshotId ? (
                   <img
-                    src={`/api/devices/${device.id}/screenshots/${device.latestScreenshotId}`}
+                    src={buildApiUrl(`/devices/${device.id}/screenshots/${device.latestScreenshotId}`)}
                     alt="Last screenshot"
                     className="absolute inset-0 w-full h-full object-cover"
                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}

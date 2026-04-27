@@ -247,7 +247,17 @@
     <script src="js/remote-control.js"></script>
     <script src="js/modules/datasync-renderer.js"></script>
     <script src="js/modules/app-updater.js"></script>
-    <script src="js/modules/pdf.min.js"></script>
+    <!-- Load the correct PDF.js build based on Tizen version.
+         Tizen 4 (legacy, Chromium <60): use v1.10 which is fully ES5.
+         Tizen 5+ (modern): use v2.16 legacy build (ES5-transpiled with modern API). -->
+    <script>
+    (function() {
+      var src = (window.Platform && window.Platform.isLegacy)
+        ? 'js/modules/pdf-legacy.min.js'
+        : 'js/modules/pdf.min.js';
+      document.write('<scr' + 'ipt src="' + src + '"><\/scr' + 'ipt>');
+    })();
+    </script>
     <script src="js/player.js"></script>
     <script src="js/kiosk-health.js"></script>
     <script src="js/pairing.js"></script>

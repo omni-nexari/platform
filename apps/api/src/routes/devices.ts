@@ -238,6 +238,32 @@ async function loadPlaylistById(playlistId: string) {
   return playlistMap.get(playlistId) ?? null;
 }
 
+// ── SBB compatibility filter ────────────────────────────────────────────────
+// Tizen 4 / SSSP4 SBB players don't support channel_group (IPTV) content yet.
+// Strip those items from device-bound payloads so the player never has to
+// render an unsupported type.
+const SBB_UNSUPPORTED_CONTENT_TYPES = new Set(['channel_group']);
+
+function isContentSupportedByDevice(
+  device: { platform?: string | null } | null | undefined,
+  contentType: string | null | undefined,
+): boolean {
+  if (!contentType) return true;
+  if (device?.platform === 'tizen-sbb' && SBB_UNSUPPORTED_CONTENT_TYPES.has(contentType)) return false;
+  return true;
+}
+
+function filterPlaylistItemsForDevice<P extends { items: Array<{ content: { type?: string | null } | null }> }>(
+  device: { platform?: string | null } | null | undefined,
+  playlist: P | null | undefined,
+): P | null {
+  if (!playlist) return playlist ?? null;
+  return {
+    ...playlist,
+    items: playlist.items.filter((item) => !item.content || isContentSupportedByDevice(device, item.content.type)),
+  };
+}
+
 function buildSingleContentPlaylist(content: NonNullable<Awaited<ReturnType<typeof db.query.contentItems.findFirst>>>) {
   return {
     id: `published-content-${content.id}`,
@@ -1338,7 +1364,7 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     if (!device) return reply.status(404).send({ error: 'Device not found' });
 
-    const [publishedContent, publishedPlaylist, publishedSchedule] = await Promise.all([
+    const [publishedContentRaw, publishedPlaylistRaw, publishedSchedule] = await Promise.all([
       device.publishedContentId
         ? db.query.contentItems.findFirst({
           where: and(eq(contentItems.id, device.publishedContentId), isNull(contentItems.deletedAt)),
@@ -1352,16 +1378,38 @@ export async function deviceRoutes(app: FastifyInstance) {
         : Promise.resolve(null),
     ]);
 
+    // SBB compatibility: drop unsupported content types
+    const publishedContent = publishedContentRaw && isContentSupportedByDevice(device, publishedContentRaw.type)
+      ? publishedContentRaw
+      : null;
+    const publishedPlaylist = filterPlaylistItemsForDevice(device, publishedPlaylistRaw);
+    if (publishedSchedule) {
+      publishedSchedule.slots = publishedSchedule.slots
+        .filter((slot) => !slot.content || isContentSupportedByDevice(device, slot.content.type))
+        .map((slot) => slot.playlist
+          ? { ...slot, playlist: filterPlaylistItemsForDevice(device, slot.playlist) }
+          : slot);
+    }
+
     const legacyPublishedSchedule = buildLegacyPublishedSchedule({
       content: publishedContent ?? null,
       playlist: publishedPlaylist,
       schedule: publishedSchedule,
     });
 
+    const filteredWorkspaceSchedules = workspaceSchedules.map((sch) => ({
+      ...sch,
+      slots: sch.slots
+        .filter((slot) => !slot.content || isContentSupportedByDevice(device, slot.content.type))
+        .map((slot) => slot.playlist
+          ? { ...slot, playlist: filterPlaylistItemsForDevice(device, slot.playlist) }
+          : slot),
+    }));
+
     return reply.send({
       schedules: legacyPublishedSchedule
-        ? [legacyPublishedSchedule, ...workspaceSchedules]
-        : workspaceSchedules,
+        ? [legacyPublishedSchedule, ...filteredWorkspaceSchedules]
+        : filteredWorkspaceSchedules,
     });
   });
 
@@ -1386,8 +1434,9 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (effectiveDefaultPlaylistId) {
       defaultPlaylist = await loadPlaylistById(effectiveDefaultPlaylistId);
     }
+    defaultPlaylist = filterPlaylistItemsForDevice(device, defaultPlaylist);
 
-    const [publishedContent, publishedPlaylist, publishedSchedule] = await Promise.all([
+    const [publishedContentRaw, publishedPlaylistRaw, publishedSchedule] = await Promise.all([
       device.publishedContentId
         ? db.query.contentItems.findFirst({
           where: and(eq(contentItems.id, device.publishedContentId), isNull(contentItems.deletedAt)),
@@ -1400,6 +1449,19 @@ export async function deviceRoutes(app: FastifyInstance) {
         ? loadScheduleById(device.publishedScheduleId)
         : Promise.resolve(null),
     ]);
+
+    // SBB compatibility: drop unsupported content types
+    const publishedContent = publishedContentRaw && isContentSupportedByDevice(device, publishedContentRaw.type)
+      ? publishedContentRaw
+      : null;
+    const publishedPlaylist = filterPlaylistItemsForDevice(device, publishedPlaylistRaw);
+    if (publishedSchedule) {
+      publishedSchedule.slots = publishedSchedule.slots
+        .filter((slot) => !slot.content || isContentSupportedByDevice(device, slot.content.type))
+        .map((slot) => slot.playlist
+          ? { ...slot, playlist: filterPlaylistItemsForDevice(device, slot.playlist) }
+          : slot);
+    }
 
     // Resolve sync group + its sync playlist when publishedSyncGroupId is set
     let publishedSyncGroup: {
@@ -1434,13 +1496,15 @@ export async function deviceRoutes(app: FastifyInstance) {
             syncPlaylist: {
               id: sp.id,
               name: sp.name,
-              items: spItems.map((item) => ({
-                id: item.id,
-                contentId: item.contentId,
-                durationSeconds: item.durationSeconds,
-                sortOrder: item.sortOrder,
-                content: item.contentId ? (spContentMap[item.contentId] ?? null) : null,
-              })),
+              items: spItems
+                .map((item) => ({
+                  id: item.id,
+                  contentId: item.contentId,
+                  durationSeconds: item.durationSeconds,
+                  sortOrder: item.sortOrder,
+                  content: item.contentId ? (spContentMap[item.contentId] ?? null) : null,
+                }))
+                .filter((item) => !item.content || isContentSupportedByDevice(device, item.content.type)),
             },
           };
         }
@@ -1468,11 +1532,16 @@ export async function deviceRoutes(app: FastifyInstance) {
     const auth = authenticateDevice(req as never, reply as never);
     if (!auth) return;
     const { id } = req.params as { id: string };
-    const playlist = await loadPlaylistById(id);
+    const [device, playlist] = await Promise.all([
+      db.query.devices.findFirst({
+        where: and(eq(devices.id, auth.deviceId), isNull(devices.deletedAt)),
+      }),
+      loadPlaylistById(id),
+    ]);
     if (!playlist || (playlist as any).workspaceId !== auth.workspaceId) {
       return reply.status(404).send({ error: 'Not found' });
     }
-    return reply.send(playlist);
+    return reply.send(filterPlaylistItemsForDevice(device, playlist));
   });
 
   // ── GET /devices/device/content/:id ─ fetch content metadata (device-auth) ─
@@ -1480,14 +1549,22 @@ export async function deviceRoutes(app: FastifyInstance) {
     const auth = authenticateDevice(req as never, reply as never);
     if (!auth) return;
     const { id } = req.params as { id: string };
-    const item = await db.query.contentItems.findFirst({
-      where: and(
-        eq(contentItems.id, id),
-        eq(contentItems.workspaceId, auth.workspaceId),
-        isNull(contentItems.deletedAt),
-      ),
-    });
+    const [device, item] = await Promise.all([
+      db.query.devices.findFirst({
+        where: and(eq(devices.id, auth.deviceId), isNull(devices.deletedAt)),
+      }),
+      db.query.contentItems.findFirst({
+        where: and(
+          eq(contentItems.id, id),
+          eq(contentItems.workspaceId, auth.workspaceId),
+          isNull(contentItems.deletedAt),
+        ),
+      }),
+    ]);
     if (!item) return reply.status(404).send({ error: 'Not found' });
+    if (!isContentSupportedByDevice(device, item.type)) {
+      return reply.status(404).send({ error: 'Content type not supported on this device' });
+    }
     return reply.send(item);
   });
 

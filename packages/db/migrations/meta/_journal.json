@@ -351,6 +351,13 @@
       "when": 1774116000000,
       "tag": "0049_sensors",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1774117800000,
+      "tag": "0050_device_group_sync_link",
+      "breakpoints": true
     }
   ]
 }
