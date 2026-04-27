@@ -5154,6 +5154,24 @@ const Player = {
         this.takeScreenshot();
         break;
 
+      case 'SET_SCREENSHOT_INTERVAL': {
+        // API sends { minutes: N } — set up a periodic takeScreenshot loop on the device.
+        // Clears any existing timer first.
+        if ((this as any)._screenshotIntervalHandle) {
+          clearInterval((this as any)._screenshotIntervalHandle);
+          (this as any)._screenshotIntervalHandle = undefined;
+        }
+        const minutes = Math.max(1, Number(payload?.minutes) || 5);
+        logger.info('[Screenshot] interval set to', minutes, 'min');
+        // Take one immediately, then repeat
+        setTimeout(() => this.takeScreenshot(), 3_000);
+        (this as any)._screenshotIntervalHandle = setInterval(
+          () => this.takeScreenshot(),
+          minutes * 60_000,
+        );
+        break;
+      }
+
       case 'SET_VOLUME':
         this.invokeTVControl('setVolume', payload?.level ?? command.level ?? null);
         break;

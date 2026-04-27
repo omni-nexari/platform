@@ -1246,6 +1246,13 @@ export async function deviceRoutes(app: FastifyInstance) {
       socket.send(JSON.stringify({ type: 'server_ack', payload: { timestamp: new Date().toISOString(), reason: 'connected' } }));
     } catch {}
 
+    // Kick off periodic screenshots on the device.
+    // The interval command also triggers an immediate capture after 3 s.
+    const intervalMin = device.screenshotIntervalMin ?? 5;
+    setTimeout(() => {
+      sendCommand(deviceId, { type: 'set_screenshot_interval', payload: { minutes: intervalMin } });
+    }, 5_000);
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     socket.on('message', async (rawData: any) => {
       const rawText = rawData.toString() as string;
