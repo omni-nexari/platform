@@ -57,10 +57,17 @@ if [[ "${SIGNAGE_SKIP_PLAYWRIGHT:-0}" != "1" ]]; then
       echo "    Installing playwright npm package..."
       su -c "pnpm --filter @signage/api add playwright" "$APP_USER" || echo "!!! Playwright install failed — HTML5 thumbnails will be skipped."
     fi
-    # Install browser binaries as app user so they land in their home cache, not /root.
-    su -c "npx --yes playwright install chromium" "$APP_USER" 2>/dev/null || \
-      npx --yes playwright install chromium 2>/dev/null || \
-      echo "!!! Could not install Chromium browser bundle."
+    # Install browser binaries to a shared path so the systemd service can read them.
+    PLAYWRIGHT_BIN="/opt/signage/node_modules/.bin/playwright"
+    BROWSERS_DIR="/opt/playwright-browsers"
+    mkdir -p "$BROWSERS_DIR"
+    chown "$APP_USER" "$BROWSERS_DIR"
+    if [[ -f "$PLAYWRIGHT_BIN" ]]; then
+      PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR" su -c "$PLAYWRIGHT_BIN install chromium" "$APP_USER" || \
+        echo "!!! Could not install Chromium browser bundle."
+    else
+      echo "!!! playwright binary not found at $PLAYWRIGHT_BIN — skipping browser install."
+    fi
     popd >/dev/null
   fi
 fi
