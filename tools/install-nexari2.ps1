@@ -3,6 +3,7 @@ $tizen = "C:\tizen-studio\tools\ide\bin\tizen.bat"
 $sdb   = "C:\tizen-studio\tools\sdb.exe"
 $tv    = "192.168.1.39:26101"
 $appId = "fmDBbBnvJM.NexariTizen"
+$pi    = "chiho@192.168.1.17"
 $tmp   = "$env:TEMP\nexari-tizen-build"
 
 # --- 1. BUILD ---
@@ -57,6 +58,24 @@ if ($wgt.Name -ne "NexariPlayer.wgt") {
 }
 $sizeKB = [math]::Round((Get-Item "$src\NexariPlayer.wgt").Length / 1KB)
 Write-Host "WGT size: ${sizeKB} KB"
+
+# Update sssp_config.xml with the exact byte-size so Tizen SSSP devices can
+# verify the download before installing.
+$wgtBytes   = (Get-Item "$src\NexariPlayer.wgt").Length
+$ssspConfig = "$src\sssp_config.xml"
+(Get-Content $ssspConfig -Raw) -replace '<size>\d+</size>', "<size>$wgtBytes</size>" |
+    Set-Content $ssspConfig -NoNewline
+Write-Host "Updated sssp_config.xml <size> to $wgtBytes bytes"
+
+# --- 1c. DEPLOY TO PI SERVER ---
+Write-Host ""
+Write-Host "=== STEP 1c: Deploy WGT to Pi server ($pi) ==="
+$piTizenDir = "/var/signage/tizen"
+scp "$src\NexariPlayer.wgt" "${pi}:${piTizenDir}/NexariPlayer.wgt"
+if ($LASTEXITCODE -ne 0) { Write-Warning "WGT SCP failed - check SSH access to $pi" }
+scp "$src\sssp_config.xml" "${pi}:${piTizenDir}/sssp_config.xml"
+if ($LASTEXITCODE -ne 0) { Write-Warning "sssp_config.xml SCP failed" }
+Write-Host "Pi server updated: http://192.168.1.17/tizen/NexariPlayer.wgt"
 
 # --- 1b. SDB CONNECT ---
 Write-Host ""

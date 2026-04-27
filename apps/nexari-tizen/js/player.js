@@ -50,6 +50,8 @@ const Player = {
     syncPlayMode: 'none',
     syncPlayListener: null,
     syncplayBackend: null,
+    /** Watchdog timer that recovers state if SYNC_PLAY_START_DONE never fires. */
+    syncStartWatchdog: null,
     deviceToken: null,
     _scannedMdcId: null, // MDC device ID found by scan; persisted to DB once WS is open
     _mdcStartupDone: false, // Set to true once Phase 1 ID scan completes; gates sendMdcHeartbeat
@@ -6142,13 +6144,20 @@ const Player = {
         const asNum = Number(str);
         if (Number.isFinite(asNum))
             return clampToUint16(asNum);
-        // Stable FNV-1a 32-bit hash for strings (UUIDs, folder IDs, etc.)
-        let hash = 0x811c9dc5;
+        // String fallback: CRC-16/CCITT (poly 0x1021, init 0xFFFF) — must match the
+        // backend allocator in apps/api/src/routes/sync-groups.ts so a player that
+        // ever receives a UUID-only payload arrives at the same groupId the backend
+        // would have produced. The backend should always send a numeric groupId, so
+        // this path is defensive only.
+        logger.warn('Syncplay: deriveSyncplayGroupId received non-numeric input, using CRC-16 fallback', { input });
+        let crc = 0xFFFF;
         for (let i = 0; i < str.length; i++) {
-            hash ^= str.charCodeAt(i);
-            hash = Math.imul(hash, 0x01000193);
+            crc ^= str.charCodeAt(i) << 8;
+            for (let j = 0; j < 8; j++) {
+                crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
+            }
         }
-        return clampToUint16(hash >>> 0);
+        return clampToUint16(crc & 0xFFFF);
     },
     getSyncplayFullscreenRect() {
         const width = Math.max((screen === null || screen === void 0 ? void 0 : screen.width) || 0, window.innerWidth || 0, 1920);
@@ -6396,22 +6405,34 @@ const Player = {
                         ? msg.data
                         : String(msg);
                 logger.info('Syncplay status:', event);
+                const clearWatchdog = () => {
+                    if (this.syncStartWatchdog) {
+                        try {
+                            clearTimeout(this.syncStartWatchdog);
+                        }
+                        catch (_) { }
+                        this.syncStartWatchdog = null;
+                    }
+                };
                 // Handle sync play events
                 if (event === 'SYNC_PLAY_START_DONE') {
                     logger.info('Syncplay started successfully on this device');
                     this.isSyncPlaying = true;
                     this.isSyncStarting = false;
+                    clearWatchdog();
                 }
                 else if (event === 'SYNC_PLAY_STOP_DONE') {
                     logger.info('Syncplay stopped on this device');
                     this.isSyncPlaying = false;
                     this.isSyncStarting = false;
+                    clearWatchdog();
                     // Remove fullscreen class when playback stops
                     document.body.classList.remove('avplay-active');
                 }
                 else if (event === 'SYNC_PLAY_FINISH_DONE') {
                     logger.info('Syncplay finished on this device');
                     this.isSyncStarting = false;
+                    clearWatchdog();
                     // Playback completed, remove fullscreen class
                     document.body.classList.remove('avplay-active');
                 }
@@ -6494,6 +6515,25 @@ const Player = {
                 enforceSyncplayFullscreen();
                 logger.debug('Ensured avplay-active class for SyncPlay fullscreen rendering');
                 logger.info('Syncplay: started (native)', Object.assign(Object.assign({}, syncinfoToUse), { folderIdSource }));
+                // Watchdog: if SYNC_PLAY_START_DONE never fires within 30s, recover state so the
+                // player can fall back to non-sync content rather than wedging on isSyncStarting.
+                if (this.syncStartWatchdog) {
+                    try {
+                        clearTimeout(this.syncStartWatchdog);
+                    }
+                    catch (_) { }
+                }
+                this.syncStartWatchdog = setTimeout(() => {
+                    if (this.isSyncStarting && !this.isSyncPlaying) {
+                        logger.error('Syncplay: start watchdog fired — SYNC_PLAY_START_DONE never received, tearing down');
+                        try {
+                            this.stopSyncPlayNative();
+                        }
+                        catch (_) { }
+                        this.isSyncStarting = false;
+                    }
+                    this.syncStartWatchdog = null;
+                }, 30000);
                 return true;
             }
             catch (err) {
@@ -6514,8 +6554,16 @@ const Player = {
                     }
                 }
                 catch (_) { }
+                this.syncPlayListener = null;
                 this.isSyncStarting = false;
                 this.isSyncPlaying = false;
+                if (this.syncStartWatchdog) {
+                    try {
+                        clearTimeout(this.syncStartWatchdog);
+                    }
+                    catch (_) { }
+                    this.syncStartWatchdog = null;
+                }
                 return false;
             }
         });
@@ -6523,39 +6571,26 @@ const Player = {
     stopSyncPlayNative() {
         if (!this.isSyncplayAvailable())
             return false;
+        // Stop active SyncPlay session and unregister the listener.
         try {
             const listener = this.syncPlayListener || ((msg) => logger.info('Syncplay stop status:', msg));
             if (this.syncplayBackend === 'b2bapis') {
                 window.b2bapis.b2bsyncplay.stopSyncPlay(listener);
             }
             else {
-                if (this.syncplayBackend === 'b2bapis') {
-                    window.b2bapis.b2bsyncplay.stopSyncPlay(listener);
-                }
-                else {
-                    if (this.syncplayBackend === 'b2bapis') {
-                        window.b2bapis.b2bsyncplay.stopSyncPlay(listener);
-                    }
-                    else {
-                        webapis.syncplay.stop(listener);
-                    }
-                }
+                webapis.syncplay.stop(listener);
             }
         }
         catch (err) {
             logger.warn('Syncplay: stop failed', err);
         }
+        // Reset the firmware playlist so the next session can build a fresh one.
         try {
             if (this.syncplayBackend === 'b2bapis') {
                 window.b2bapis.b2bsyncplay.clearSyncPlayList((res) => logger.debug('Syncplay: clearSyncPlayList ok', res === null || res === void 0 ? void 0 : res.result), (err) => logger.debug('Syncplay: clearSyncPlayList error (ignored)', err === null || err === void 0 ? void 0 : err.message));
             }
             else {
-                if (this.syncplayBackend === 'b2bapis') {
-                    window.b2bapis.b2bsyncplay.clearSyncPlayList((res) => logger.debug('Syncplay: clearSyncPlayList ok', res === null || res === void 0 ? void 0 : res.result), (err) => logger.debug('Syncplay: clearSyncPlayList error (ignored)', err === null || err === void 0 ? void 0 : err.message));
-                }
-                else {
-                    webapis.syncplay.removePlaylist((res) => logger.debug('Syncplay: removePlaylist ok', res === null || res === void 0 ? void 0 : res.result), (err) => logger.debug('Syncplay: removePlaylist error (ignored)', err === null || err === void 0 ? void 0 : err.message));
-                }
+                webapis.syncplay.removePlaylist((res) => logger.debug('Syncplay: removePlaylist ok', res === null || res === void 0 ? void 0 : res.result), (err) => logger.debug('Syncplay: removePlaylist error (ignored)', err === null || err === void 0 ? void 0 : err.message));
             }
         }
         catch (err) {
@@ -6567,6 +6602,13 @@ const Player = {
         this.syncPlayListener = null;
         this.isSyncStarting = false;
         this.isSyncPlaying = false;
+        if (this.syncStartWatchdog) {
+            try {
+                clearTimeout(this.syncStartWatchdog);
+            }
+            catch (_) { }
+            this.syncStartWatchdog = null;
+        }
         return true;
     },
     // Get cached content URL

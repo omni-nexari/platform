@@ -27,6 +27,21 @@ pnpm db:migrate
 echo "==> [update] Restarting service..."
 sudo systemctl restart signage-api
 
+# ── Tizen assets directory ────────────────────────────────────────────────────
+# /var/signage/tizen/ is created by bootstrap.sh, but guard here in case this
+# script is run on a fresh clone without a full bootstrap.
+# The WGT and sssp_config.xml are deployed here from Windows via install-nexari2.ps1.
+echo "==> [update] Checking Tizen assets directory..."
+sudo mkdir -p /var/signage/tizen
+sudo chown -R "${USER}:${USER}" /var/signage/tizen
+if compgen -G "/var/signage/tizen/*.wgt" > /dev/null 2>&1; then
+    wgt_file=$(ls -1t /var/signage/tizen/*.wgt | head -1)
+    wgt_size=$(du -sh "$wgt_file" | cut -f1)
+    echo "    WGT present: $(basename $wgt_file) (${wgt_size})"
+else
+    echo "    WARNING: No .wgt file in /var/signage/tizen/ — run install-nexari2.ps1 from Windows to deploy"
+fi
+
 echo ""
 echo "Done! Health check:"
 curl -s http://127.0.0.1:3000/api/v1/health
