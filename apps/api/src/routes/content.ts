@@ -1691,6 +1691,16 @@ export async function contentRoutes(app: FastifyInstance) {
       approvalState: 'approved',
     }).returning();
 
+    // Queue thumbnail generation (same as regular upload)
+    const createQueue = getQueue<{ contentId: string }>(QUEUE_NAMES.mediaProcessing);
+    if (createQueue) {
+      await createQueue.add('process', { contentId: item.id }, { jobId: `process-${item.id}` });
+    } else {
+      processContentMedia(item.id).catch(err =>
+        app.log.error({ err, contentId: item.id }, '[html5/create] inline media processing failed'),
+      );
+    }
+
     return reply.status(201).send(item);
   });
 
