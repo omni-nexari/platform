@@ -7,6 +7,7 @@ import fastifyStatic from '@fastify/static';
 import { registerPlugins } from './plugins/index.js';
 import { registerRoutes } from './routes/index.js';
 import { startLogCleanup } from './services/log-cleanup.js';
+import { startLogAlerts } from './services/log-alert.js';
 import { startJobs } from './services/jobs.js';
 import { createPinoDbStream } from './services/pino-db-stream.js';
 
@@ -38,6 +39,7 @@ async function start() {
   const app = Fastify({ loggerInstance: logger, maxParamLength: 2048 });
 
   startLogCleanup();
+  startLogAlerts();
   startJobs();
 
   await registerPlugins(app);

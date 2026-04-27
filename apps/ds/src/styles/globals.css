@@ -118,6 +118,15 @@ body::before {
   }
 }
 
+@keyframes logFlash {
+  0%   { background-color: color-mix(in srgb, #22c55e 18%, transparent); }
+  100% { background-color: transparent; }
+}
+
+.log-row-flash {
+  animation: logFlash 2s ease-out forwards;
+}
+
 /* ── Shared component styles ─────────────────────────────────────────────────── */
 .workspace-page-header {
   display: flex;

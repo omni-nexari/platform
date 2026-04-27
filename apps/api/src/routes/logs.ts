@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db, logEntries, organisations } from '@signage/db';
-import { eq, and, lt, lte, desc, sql, inArray } from 'drizzle-orm';
+import { eq, and, lt, lte, desc, count, sql, inArray } from 'drizzle-orm';
 import { logBus } from '../services/log-bus.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────
@@ -321,5 +321,78 @@ export async function logsRoutes(app: FastifyInstance) {
       .returning({ id: logEntries.id });
 
     return reply.send({ deleted: deleted.length });
+  });
+
+  /**
+   * GET /logs/stats
+   *
+   * Aggregate counts: total, byLevel, bySource, oldestAt, newestAt.
+   * Scoped like GET /logs: platform owners see all; management admins see their orgs.
+   */
+  app.get('/stats', { onRequest: [app.authenticatePlatformOwner] }, async (req, reply) => {
+    const caller = req.user as { type: string; managementCompanyId?: string };
+
+    let allowedOrgIds: string[] | null = null;
+    if (caller.type === 'management_company_admin' && caller.managementCompanyId) {
+      const orgs = await db
+        .select({ id: organisations.id })
+        .from(organisations)
+        .where(and(
+          eq(organisations.managementCompanyId, caller.managementCompanyId),
+          sql`${organisations.deletedAt} IS NULL`,
+        ));
+      allowedOrgIds = orgs.map((o) => o.id);
+      if (allowedOrgIds.length === 0) {
+        return reply.send({ total: 0, byLevel: {}, bySource: {}, oldestAt: null, newestAt: null });
+      }
+    }
+
+    const cond = allowedOrgIds ? inArray(logEntries.orgId, allowedOrgIds) : undefined;
+
+    const [totals] = await db
+      .select({
+        total:    count(),
+        oldestAt: sql<string | null>`MIN(${logEntries.createdAt})::text`,
+        newestAt: sql<string | null>`MAX(${logEntries.createdAt})::text`,
+      })
+      .from(logEntries)
+      .where(cond);
+
+    const byLevelRows  = await db.select({ level:  logEntries.level,  cnt: count() }).from(logEntries).where(cond).groupBy(logEntries.level);
+    const bySourceRows = await db.select({ source: logEntries.source, cnt: count() }).from(logEntries).where(cond).groupBy(logEntries.source);
+
+    return reply.send({
+      total:    Number(totals?.total ?? 0),
+      byLevel:  Object.fromEntries(byLevelRows.map( (r) => [r.level,  Number(r.cnt)])),
+      bySource: Object.fromEntries(bySourceRows.map((r) => [r.source, Number(r.cnt)])),
+      oldestAt: totals?.oldestAt ?? null,
+      newestAt: totals?.newestAt ?? null,
+    });
+  });
+
+  /**
+   * GET /logs/device-timeline?device_id=UUID
+   *
+   * Returns hourly error/warn/info bucket counts for the last 24 h for one device.
+   * Used by the LogViewer sparkline when a device filter is active.
+   */
+  app.get('/device-timeline', { onRequest: [app.authenticatePlatformOwner] }, async (req, reply) => {
+    const { device_id: deviceId } = req.query as { device_id?: string };
+    if (!deviceId) return reply.status(400).send({ error: 'device_id is required' });
+
+    const rows = await db.execute(sql`
+      SELECT
+        DATE_TRUNC('hour', created_at)::text AS hour,
+        COUNT(*) FILTER (WHERE level = 'error')::int AS errors,
+        COUNT(*) FILTER (WHERE level = 'warn')::int  AS warns,
+        COUNT(*) FILTER (WHERE level = 'info')::int  AS infos
+      FROM log_entries
+      WHERE device_id = ${deviceId}
+        AND created_at >= NOW() - INTERVAL '24 hours'
+      GROUP BY 1
+      ORDER BY 1
+    `) as unknown as Array<{ hour: string; errors: number; warns: number; infos: number }>;
+
+    return reply.send({ deviceId, last24h: rows });
   });
 }

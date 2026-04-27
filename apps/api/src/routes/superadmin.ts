@@ -3130,4 +3130,28 @@ export async function superAdminRoutes(app: FastifyInstance) {
       });
     },
   );
+
+  // ── GET /superadmin/orgs/:id/devices ────────────────────────────────────────
+  app.get(
+    '/orgs/:id/devices',
+    { onRequest: [app.authenticatePlatformAdmin] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const caller  = req.user as PlatformAdminCaller;
+
+      const org = await db.query.organisations.findFirst({ where: eq(organisations.id, id) });
+      if (!org || org.deletedAt) return reply.status(404).send({ error: 'Not found' });
+      if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
+      const list = await db
+        .select({ id: devices.id, name: devices.name, status: devices.status })
+        .from(devices)
+        .where(and(eq(devices.orgId, id), isNull(devices.deletedAt)))
+        .orderBy(asc(devices.name));
+
+      return reply.send(list);
+    },
+  );
 }
