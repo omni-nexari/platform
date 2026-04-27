@@ -19,6 +19,7 @@ interface DevicePickerItem {
   connectionType: 'wifi' | 'ethernet' | null;
   wifiSsid: string | null;
   assignedTags?: AssignedTag[];
+  latestScreenshotId: string | null;
 }
 
 export interface PickedDevice {
@@ -93,7 +94,15 @@ function DeviceCard({
       </div>
 
       <div className="relative shrink-0 w-[90px] h-[54px] rounded-lg overflow-hidden bg-[var(--surface-raised)] border border-[var(--border)]">
-        <div className="w-full h-full flex flex-col items-center justify-center gap-1 text-[var(--text-muted)]">
+        {item.latestScreenshotId ? (
+          <img
+            src={`/api/v1/devices/${item.id}/screenshots/${item.latestScreenshotId}`}
+            alt=""
+            className="w-full h-full object-cover"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; (e.currentTarget.nextElementSibling as HTMLElement | null)?.style.setProperty('display', 'flex'); }}
+          />
+        ) : null}
+        <div className={`w-full h-full flex flex-col items-center justify-center gap-1 text-[var(--text-muted)] ${item.latestScreenshotId ? 'hidden' : ''}`}>
           <Monitor size={18} />
           <span className="text-[10px] font-semibold uppercase tracking-wide">{item.resolution ?? 'Screen'}</span>
         </div>
