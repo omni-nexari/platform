@@ -516,7 +516,7 @@ export default function LogViewer({
             {/* Org combobox (superadmin only) */}
             {showOrgFilter && (
               <Combobox
-                label="Organisation"
+                label="Organization"
                 placeholder="Search by name…"
                 options={filteredOrgs.map((o) => ({ id: o.id, label: o.name, sub: o.id.slice(0, 8) + '…' }))}
                 value={orgId}
@@ -620,7 +620,7 @@ export default function LogViewer({
 
       {/* Device 24h error timeline */}
       {deviceId && deviceTimeline && deviceTimeline.last24h.length > 0 && (
-        <SectionCard>
+        <SectionCard className="overflow-visible">
           <SectionCardHeader>
             <span className="text-xs font-medium text-[var(--text-muted)]">
               {deviceLabel || deviceId.slice(0, 8)} — activity last 24 h
