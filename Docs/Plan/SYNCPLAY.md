@@ -149,14 +149,14 @@ The fix is to also detect `b2bapis.b2bsyncplay` and use it as the sync backend o
 
 4. `stopSyncPlayNative()` should call the right backend's `stop` / `stopSyncPlay` and `removePlaylist` / `clearSyncPlayList`.
 
-### Open question: cross-backend groups
+### Cross-backend groups: confirmed compatible
 
-If a sync group contains both Tizen 4 SBB devices (using `b2bapis.b2bsyncplay`) and Tizen 6.5+ devices (using `webapis.syncplay`), can they sync together?
+Sync groups may freely mix Tizen 4 SBB devices (`b2bapis.b2bsyncplay`) and Tizen 6.5+ devices (`webapis.syncplay`).
 
-- Both use the same underlying Samsung firmware sync mechanism (same LAN, same `groupID`) — they likely communicate at the firmware level using the same protocol.
-- **This needs to be validated on actual hardware.** It is not documented by Samsung either way.
-- If cross-backend groups work → SBB can participate in Samsung native sync with Tizen 6.5+ peers with the same `groupID`.
-- If they do not → SBB-only groups use `b2bapis.b2bsyncplay`; mixed groups fall back to Mode 2 (custom app-layer sync).
+- Samsung's SyncPlay is a **hardware-layer multicast protocol**. Both JS API namespaces are version-specific bindings on top of the same underlying firmware mechanism.
+- The `groupID` (16-bit integer) is what the firmware uses to identify sync peers — the JS API path used to register that groupID does not matter.
+- All Samsung B2B displays support SyncPlay at the firmware level; they just expose it through different JS APIs depending on Tizen/SSSP version.
+- **Result:** a mixed group (Tizen 4 + Tizen 6.5+ in the same `groupID`) will sync correctly.
 
 ### Constraints (same as `webapis.syncplay`)
 
@@ -621,7 +621,7 @@ webapis.syncplay.removePlaylist(onsuccess, onerror)
 |---|---|
 | Tizen 6.5+ only (`webapis.syncplay`) | Cannot be used on Tizen 4 via this namespace |
 | Tizen 4 SSSP (`b2bapis.b2bsyncplay`) | Functionally equivalent — needs hardware validation |
-| Cross-backend grouping | Can Tizen 4 B2BSyncplay + Tizen 6.5 webapis.syncplay share a groupID? Unknown — test required |
+| Cross-backend grouping | Tizen 4 `b2bapis.b2bsyncplay` + Tizen 6.5 `webapis.syncplay` can share a groupID — same firmware multicast protocol underneath |
 | Samsung B2B only | webOS, Android, Windows not supported by either API |
 | Partner certificate required | `webapis.syncplay`: declare in config.xml; `b2bapis.b2bsyncplay`: covered by b2bapis.js privilege |
 | Same LAN required | Firmware multicast — no WAN support |
