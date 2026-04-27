@@ -1619,10 +1619,14 @@ export async function contentRoutes(app: FastifyInstance) {
 
       const ext = path.extname(safe).toLowerCase();
       reply.header('Content-Type', PREVIEW_MIME[ext] ?? 'application/octet-stream');
-      // Tighten the preview \u2014 same posture as Step 12 sandbox iframe expects.
       reply.header('Cache-Control', 'no-store');
       reply.header('X-Content-Type-Options', 'nosniff');
       reply.header('X-Frame-Options', 'SAMEORIGIN');
+      // Remove helmet headers that produce browser warnings over plain HTTP.
+      // COOP requires HTTPS to work; Origin-Agent-Cluster causes consistency
+      // warnings when mixed across same-origin pages.
+      reply.removeHeader('Cross-Origin-Opener-Policy');
+      reply.removeHeader('Origin-Agent-Cluster');
       return reply.send(buf);
     });
   }
