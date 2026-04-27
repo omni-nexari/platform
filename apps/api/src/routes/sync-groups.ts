@@ -11,6 +11,7 @@ import {
 import { eq, and, isNull, desc, ne } from 'drizzle-orm';
 import { writeAuditLog } from '../services/audit.js';
 import { sendCommand, isDeviceOnline } from '../services/ws.js';
+import { allocateSyncPlayGroupId } from '../services/syncplay-allocator.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -21,39 +22,6 @@ async function checkWorkspaceAccess(workspaceId: string, userId: string) {
       eq(workspaceMembers.userId, userId),
     ),
   });
-}
-
-/**
- * Derive a Samsung SyncPlay groupId (0–65535) from a UUID string using CRC-16/CCITT.
- * The result is used as the numeric group identifier passed to b2bapis/webapis.
- */
-function crc16(str: string): number {
-  let crc = 0xFFFF;
-  for (let i = 0; i < str.length; i++) {
-    crc ^= str.charCodeAt(i) << 8;
-    for (let j = 0; j < 8; j++) {
-      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
-    }
-  }
-  return crc & 0xFFFF;
-}
-
-/**
- * Find a groupId that is not already in use within this org.
- * Tries CRC-16 of the UUID first; if that collides, increments until free.
- */
-async function allocateGroupId(orgId: string, syncGroupUuid: string): Promise<number> {
-  const existing = await db.query.syncGroups.findMany({
-    where: and(eq(syncGroups.orgId, orgId), isNull(syncGroups.deletedAt)),
-    columns: { groupId: true },
-  });
-  const usedIds = new Set(existing.map(g => g.groupId));
-  let candidate = crc16(syncGroupUuid);
-  for (let attempt = 0; attempt < 65536; attempt++) {
-    const probe = (candidate + attempt) % 65536;
-    if (!usedIds.has(probe)) return probe;
-  }
-  throw new Error('No available groupId in range 0–65535');
 }
 
 /**
@@ -161,7 +129,7 @@ export async function syncGroupRoutes(app: FastifyInstance) {
     // Reserve a temporary UUID to derive the groupId, then insert with actual id
     const { randomUUID } = await import('node:crypto');
     const newId = randomUUID();
-    const groupId = await allocateGroupId(user.orgId, newId);
+    const groupId = await allocateSyncPlayGroupId(user.orgId, newId);
 
     const [group] = await db.insert(syncGroups).values({
       id: newId,

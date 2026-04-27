@@ -2,11 +2,13 @@ import type { FastifyInstance } from 'fastify';
 import {
   db, devices, deviceGroups, deviceGroupMembers,
   workspaces, workspaceMembers, schedules, playlists, contentItems,
+  syncGroups, syncGroupMembers,
 } from '@signage/db';
 import { eq, and, isNull, inArray, asc } from 'drizzle-orm';
 import { DeviceCommandSchema } from '@signage/shared';
 import { sendCommand, isDeviceOnline } from '../services/ws.js';
 import { writeAuditLog } from '../services/audit.js';
+import { allocateSyncPlayGroupId } from '../services/syncplay-allocator.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -17,6 +19,23 @@ async function checkWorkspaceAccess(workspaceId: string, userId: string) {
       eq(workspaceMembers.userId, userId),
     ),
   });
+}
+
+/** Hydrate the linked sync group (when type='sync') onto a device-group row. */
+async function hydrateSyncGroup(group: typeof deviceGroups.$inferSelect) {
+  if (!group.syncGroupId) return null;
+  const sg = await db.query.syncGroups.findFirst({
+    where: eq(syncGroups.id, group.syncGroupId),
+    with: { syncPlaylist: { columns: { id: true, name: true } } },
+  });
+  if (!sg) return null;
+  return {
+    id: sg.id,
+    groupId: sg.groupId,
+    mode: sg.mode,
+    syncPlaylistId: sg.syncPlaylistId,
+    syncPlaylistName: sg.syncPlaylist?.name ?? null,
+  };
 }
 
 export async function deviceGroupsRoutes(app: FastifyInstance) {
@@ -37,7 +56,16 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
       orderBy: [asc(deviceGroups.name)],
     });
 
-    return reply.send(rows);
+    // Hydrate syncGroup info for sync-type rows so the list page can show
+    // the linked playlist + numeric SyncPlay groupId without an extra round-trip.
+    const hydrated = await Promise.all(
+      rows.map(async (g) => ({
+        ...g,
+        syncGroup: g.type === 'sync' ? await hydrateSyncGroup(g) : null,
+      })),
+    );
+
+    return reply.send(hydrated);
   });
 
   // ── GET /device-groups/:id ───────────────────────────────────────────────
@@ -68,9 +96,37 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
       : [];
     const deviceMap = Object.fromEntries(memberDevices.map((d) => [d.id, d]));
 
+    // For sync-type groups, also fetch sync_group_members so the SyncPlay panel
+    // can render which devices are part of the SyncPlay session. Member management
+    // for sync-type groups happens through /sync-groups/:syncGroupId/members.
+    let syncGroupHydrated: Awaited<ReturnType<typeof hydrateSyncGroup>> = null;
+    let syncMembers: Array<{ deviceId: string; leaderPriority: number; tileCol: number; tileRow: number; device: typeof memberDevices[number] | null }> = [];
+    if (group.type === 'sync' && group.syncGroupId) {
+      syncGroupHydrated = await hydrateSyncGroup(group);
+      const rawSyncMembers = await db.query.syncGroupMembers.findMany({
+        where: eq(syncGroupMembers.syncGroupId, group.syncGroupId),
+      });
+      const syncDeviceIds = rawSyncMembers.map((m) => m.deviceId);
+      const syncDevices = syncDeviceIds.length > 0
+        ? await db.query.devices.findMany({
+            where: and(inArray(devices.id, syncDeviceIds), isNull(devices.deletedAt)),
+          })
+        : [];
+      const syncDeviceMap = Object.fromEntries(syncDevices.map((d) => [d.id, d]));
+      syncMembers = rawSyncMembers.map((m) => ({
+        deviceId: m.deviceId,
+        leaderPriority: m.leaderPriority,
+        tileCol: m.tileCol,
+        tileRow: m.tileRow,
+        device: syncDeviceMap[m.deviceId] ?? null,
+      }));
+    }
+
     return reply.send({
       ...group,
       members: members.map((m) => ({ ...m, device: deviceMap[m.deviceId] ?? null })),
+      syncGroup: syncGroupHydrated,
+      syncMembers,
     });
   });
 
@@ -113,18 +169,43 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
       videoWallCols: body.videoWallCols ?? null,
       videoWallRows: body.videoWallRows ?? null,
     }).returning();
+    if (!group) return reply.status(500).send({ error: 'Failed to create device group' });
+
+    // For type='sync', auto-create a backing sync_groups row so the device group
+    // owns a Samsung SyncPlay session. The CRC-16 numeric groupId is allocated
+    // here and stored on sync_groups.group_id; device_groups.sync_group_id links them.
+    if (group.type === 'sync' && body.workspaceId) {
+      const { randomUUID } = await import('node:crypto');
+      const syncGroupUuid = randomUUID();
+      const numericGroupId = await allocateSyncPlayGroupId(user.orgId, syncGroupUuid);
+      const [sg] = await db.insert(syncGroups).values({
+        id: syncGroupUuid,
+        orgId: user.orgId,
+        workspaceId: body.workspaceId,
+        name: group.name,
+        groupId: numericGroupId,
+        mode: 'native-samsung',
+      }).returning();
+      if (sg) {
+        await db.update(deviceGroups)
+          .set({ syncGroupId: sg.id, updatedAt: new Date() })
+          .where(eq(deviceGroups.id, group.id));
+        group.syncGroupId = sg.id;
+      }
+    }
 
     await writeAuditLog({
       orgId: user.orgId,
       actorId: user.sub,
       action: 'DEVICE_GROUP_CREATED',
       entityType: 'device_group',
-      entityId: group!.id,
+      entityId: group.id,
       ipAddress: req.ip,
-      meta: { name: group!.name, type: group!.type },
+      meta: { name: group.name, type: group.type },
     });
 
-    return reply.status(201).send(group);
+    const syncGroup = group.type === 'sync' ? await hydrateSyncGroup(group) : null;
+    return reply.status(201).send({ ...group, syncGroup });
   });
 
   // ── PATCH /device-groups/:id ─────────────────────────────────────────────
@@ -154,6 +235,14 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
     if (body.videoWallRows !== undefined) patch['videoWallRows'] = body.videoWallRows;
 
     const [updated] = await db.update(deviceGroups).set(patch).where(eq(deviceGroups.id, id)).returning();
+
+    // Keep the linked sync_groups.name in step with the device group name.
+    if (body.name !== undefined && group.syncGroupId) {
+      await db.update(syncGroups)
+        .set({ name: body.name.trim(), updatedAt: new Date() })
+        .where(eq(syncGroups.id, group.syncGroupId));
+    }
+
     return reply.send(updated);
   });
 
@@ -173,6 +262,27 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
     await db.update(deviceGroups)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(eq(deviceGroups.id, id));
+
+    // Cascade: when a sync-type device group is deleted, soft-delete the linked
+    // sync_groups row and clear publishedSyncGroupId on member devices so they
+    // stop the SyncPlay session on next heartbeat. Online devices receive a
+    // STOP command via the sync_group_members fan-out.
+    if (group.syncGroupId) {
+      await db.update(devices)
+        .set({ publishedSyncGroupId: null, updatedAt: new Date() })
+        .where(eq(devices.publishedSyncGroupId, group.syncGroupId));
+      const syncMembers = await db.query.syncGroupMembers.findMany({
+        where: eq(syncGroupMembers.syncGroupId, group.syncGroupId),
+      });
+      for (const m of syncMembers) {
+        if (isDeviceOnline(m.deviceId)) {
+          sendCommand(m.deviceId, { type: 'SYNC_PLAY', action: 'STOP' });
+        }
+      }
+      await db.update(syncGroups)
+        .set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(eq(syncGroups.id, group.syncGroupId));
+    }
 
     await writeAuditLog({
       orgId: user.orgId,

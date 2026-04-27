@@ -7,7 +7,7 @@ import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTag
 import BulkTagModal from '../../components/BulkTagModal.js';
 import DevicePickerModal from '../../components/DevicePickerModal.js';
 import {
-  Plus, Layers, Clock, MoreVertical,
+  Plus, Layers, Layers2, Clock, MoreVertical,
   Copy, Trash2, Play, Check, Monitor,
 } from 'lucide-react';
 import AuthImg from '../../components/AuthImg.js';
@@ -40,6 +40,19 @@ interface Playlist {
   createdAt: string;
   updatedAt: string;
 }
+
+interface SyncPlaylist {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+type UnifiedPlaylist =
+  | (Playlist & { _type: 'general' })
+  | (SyncPlaylist & { _type: 'sync' });
+
+type TypeFilter = 'all' | 'general' | 'sync';
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -183,6 +196,82 @@ function PlaylistCard({
   );
 }
 
+// ── Sync playlist card ─────────────────────────────────────────────────────
+
+function SyncPlaylistCard({ sp, onEdit, onDelete }: {
+  sp: SyncPlaylist;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onEdit}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => { setHovered(false); setMenuOpen(false); }}
+      onKeyDown={(e) => e.key === 'Enter' && onEdit()}
+      className="ui-entity-card relative flex flex-col cursor-pointer group"
+    >
+      <div className="ui-media-frame aspect-video flex items-center justify-center">
+        <Layers2 size={28} className="text-[var(--text-muted)]" />
+        <span
+          className="ui-media-badge absolute top-2 left-2 z-20"
+          style={{ background: 'rgba(168,85,247,0.85)', color: 'white' }}
+        >
+          Sync
+        </span>
+        {hovered && (
+          <div className="ui-media-hover-overlay">
+            <div className="ui-media-hover-play">
+              <Play size={16} className="text-white translate-x-0.5" />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="ui-entity-card-body px-3 py-3">
+        <p className="ui-entity-card-title text-sm truncate" title={sp.name}>
+          {sp.name}
+        </p>
+        <div className="ui-entity-card-meta mt-1">
+          <span className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+            <Clock size={10} /> Updated {new Date(sp.updatedAt).toLocaleDateString()}
+          </span>
+        </div>
+      </div>
+
+      <button
+        onClick={(e) => { e.stopPropagation(); setMenuOpen((o) => !o); }}
+        className={`ui-media-icon-btn absolute top-2 right-2 z-20 transition-opacity ${hovered ? 'opacity-100' : 'opacity-0'}`}
+      >
+        <MoreVertical size={12} />
+      </button>
+
+      {menuOpen && (
+        <div
+          className="absolute top-11 right-2 z-20 rounded-xl shadow-lg border py-1 min-w-[130px]"
+          style={{ background: 'var(--modal-bg)', borderColor: 'var(--border)' }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button onClick={() => { setMenuOpen(false); onEdit(); }}
+            className="w-full text-left px-4 py-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-raised)]">
+            Edit
+          </button>
+          <div className="my-1 border-t" style={{ borderColor: 'var(--border)' }} />
+          <button onClick={() => { setMenuOpen(false); onDelete(); }}
+            className="w-full text-left px-4 py-1.5 text-xs text-red-400 hover:bg-red-500/10 flex items-center gap-2">
+            <Trash2 size={10} /> Delete
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function PlaylistPage() {
@@ -196,6 +285,10 @@ export default function PlaylistPage() {
   const [confirmDuplicateName, setConfirmDuplicateName] = useState('');
   const [newName, setNewName] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [createKind, setCreateKind] = useState<'general' | 'sync' | null>(null);
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
+  const [confirmSyncDeleteId, setConfirmSyncDeleteId] = useState<string | null>(null);
+  const [confirmSyncDeleteName, setConfirmSyncDeleteName] = useState('');
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
@@ -211,19 +304,66 @@ export default function PlaylistPage() {
     queryFn: () => api.get(`/playlists?workspaceId=${wsId!}${tagIdsParam}`),
     enabled: !!wsId,
   });
-  const items = playlistData?.items ?? [];
+  const generalItems = playlistData?.items ?? [];
+
+  const { data: syncPlaylistData, isLoading: isLoadingSync } = useQuery<SyncPlaylist[]>({
+    queryKey: ['sync-playlists', wsId],
+    queryFn: () => api.get<SyncPlaylist[]>(`/sync-playlists?workspaceId=${wsId!}`),
+    enabled: !!wsId,
+  });
+  const syncItems = syncPlaylistData ?? [];
+
+  // Merge into a single, type-aware list — sorted by updatedAt desc so the most
+  // recently touched playlist (general or sync) always lands at the top.
+  const items: UnifiedPlaylist[] = (() => {
+    const merged: UnifiedPlaylist[] = [
+      ...generalItems.map((p) => ({ ...p, _type: 'general' as const })),
+      ...syncItems.map((p) => ({ ...p, _type: 'sync' as const })),
+    ];
+    if (typeFilter !== 'all') {
+      return merged.filter((it) => it._type === typeFilter);
+    }
+    merged.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+    return merged;
+  })();
 
   const createMut = useMutation({
     mutationFn: (name: string) => api.post<Playlist>('/playlists', { workspaceId: wsId, name }),
     onSuccess: (pl) => {
       toast.success('Playlist created');
       setCreateOpen(false);
+      setCreateKind(null);
       setNewName('');
       void queryClient.invalidateQueries({ queryKey: ['playlists', wsId] });
       void queryClient.invalidateQueries({ queryKey: ['picker-playlists', wsId] });
       navigate(`/workspaces/${wsId!}/playlist/${pl.id}`);
     },
     onError: () => toast.error('Failed to create playlist'),
+  });
+
+  const createSyncMut = useMutation({
+    mutationFn: (name: string) =>
+      api.post<SyncPlaylist>('/sync-playlists', { workspaceId: wsId, name }),
+    onSuccess: (sp) => {
+      toast.success('Sync playlist created');
+      setCreateOpen(false);
+      setCreateKind(null);
+      setNewName('');
+      void queryClient.invalidateQueries({ queryKey: ['sync-playlists', wsId] });
+      navigate(`/workspaces/${wsId!}/playlist/sync/${sp.id}`);
+    },
+    onError: () => toast.error('Failed to create sync playlist'),
+  });
+
+  const deleteSyncMut = useMutation({
+    mutationFn: (id: string) => api.delete(`/sync-playlists/${id}`),
+    onSuccess: () => {
+      toast.success('Sync playlist deleted');
+      setConfirmSyncDeleteId(null);
+      setConfirmSyncDeleteName('');
+      void queryClient.invalidateQueries({ queryKey: ['sync-playlists', wsId] });
+    },
+    onError: () => toast.error('Failed to delete sync playlist'),
   });
 
   const cloneMut = useMutation({
@@ -262,7 +402,7 @@ export default function PlaylistPage() {
     onError: () => toast.error('Failed to delete some playlists'),
   });
 
-  const publishSelection = items.filter((item) => selectedItems.has(item.id));
+  const publishSelection = items.filter((item) => item._type === 'general' && selectedItems.has(item.id)) as Array<Playlist & { _type: 'general' }>;
   const publishCandidate = publishSelection.length === 1 ? publishSelection[0] : null;
 
   const publishMut = useMutation({
@@ -321,7 +461,33 @@ export default function PlaylistPage() {
           </div>
         )}
 
-        {isLoading ? (
+        {/* Type filter — All / General / Sync */}
+        <div className="mb-5 flex items-center gap-2">
+          {(['all', 'general', 'sync'] as TypeFilter[]).map((t) => {
+            const label = t === 'all' ? 'All' : t === 'general' ? 'General' : 'Sync';
+            const count = t === 'all'
+              ? generalItems.length + syncItems.length
+              : t === 'general' ? generalItems.length : syncItems.length;
+            const active = typeFilter === t;
+            return (
+              <button
+                key={t}
+                onClick={() => setTypeFilter(t)}
+                className="px-3 py-1.5 rounded-full text-xs font-medium transition-colors"
+                style={{
+                  background: active ? 'var(--accent)' : 'var(--surface-raised)',
+                  color: active ? 'white' : 'var(--text-muted)',
+                  border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border)'),
+                }}
+              >
+                {label}
+                <span className="ml-1.5 opacity-70">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {(isLoading || isLoadingSync) ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
             {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-36 rounded-2xl" />)}
           </div>
@@ -334,21 +500,31 @@ export default function PlaylistPage() {
           />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-            {items.map(pl => (
+            {items.map((it) => it._type === 'sync' ? (
+              <SyncPlaylistCard
+                key={`sync-${it.id}`}
+                sp={it}
+                onEdit={() => navigate(`/workspaces/${wsId!}/playlist/sync/${it.id}`)}
+                onDelete={() => {
+                  setConfirmSyncDeleteId(it.id);
+                  setConfirmSyncDeleteName(it.name);
+                }}
+              />
+            ) : (
               <PlaylistCard
-                key={pl.id}
-                pl={pl}
-                onEdit={() => navigate(`/workspaces/${wsId!}/playlist/${pl.id}`)}
+                key={`general-${it.id}`}
+                pl={it}
+                onEdit={() => navigate(`/workspaces/${wsId!}/playlist/${it.id}`)}
                 onClone={() => {
-                  setConfirmDuplicateId(pl.id);
-                  setConfirmDuplicateName(pl.name);
+                  setConfirmDuplicateId(it.id);
+                  setConfirmDuplicateName(it.name);
                 }}
                 onDelete={() => {
-                  setConfirmName(pl.name);
-                  setConfirmId(pl.id);
+                  setConfirmName(it.name);
+                  setConfirmId(it.id);
                 }}
-                checked={selectedItems.has(pl.id)}
-                onCheck={() => setSelectedItems((prev) => { const next = new Set(prev); next.has(pl.id) ? next.delete(pl.id) : next.add(pl.id); return next; })}
+                checked={selectedItems.has(it.id)}
+                onCheck={() => setSelectedItems((prev) => { const next = new Set(prev); next.has(it.id) ? next.delete(it.id) : next.add(it.id); return next; })}
               />
             ))}
           </div>
@@ -415,31 +591,80 @@ export default function PlaylistPage() {
         />
       )}
 
-      {/* Create dialog */}
-      {createOpen && (
-        <Modal onClose={() => setCreateOpen(false)} size="sm">
+      {/* Create dialog — step 1: pick type, step 2: enter name */}
+      {createOpen && createKind === null && (
+        <Modal onClose={() => setCreateOpen(false)} size="md">
           <ModalHeader title="New Playlist" onClose={() => setCreateOpen(false)} />
           <ModalBody>
-              <input
-              autoFocus
-              type="text"
-              placeholder="Playlist name…"
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && newName.trim()) createMut.mutate(newName.trim()); }}
-              className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-muted)]"
-              />
+            <p className="text-sm text-[var(--text-muted)] mb-4">Choose the playlist type.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                onClick={() => setCreateKind('general')}
+                className="text-left rounded-xl border p-4 transition-colors hover:border-[var(--accent)]"
+                style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+              >
+                <Layers size={22} className="text-[var(--accent)] mb-2" />
+                <div className="text-sm font-semibold text-[var(--text)]">General Playlist</div>
+                <div className="mt-1 text-xs text-[var(--text-muted)]">
+                  Standard rotation with images, video, and webpages.
+                </div>
+              </button>
+              <button
+                onClick={() => setCreateKind('sync')}
+                className="text-left rounded-xl border p-4 transition-colors hover:border-[var(--accent)]"
+                style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+              >
+                <Layers2 size={22} className="mb-2" style={{ color: 'rgb(168,85,247)' }} />
+                <div className="text-sm font-semibold text-[var(--text)]">Sync Playlist</div>
+                <div className="mt-1 text-xs text-[var(--text-muted)]">
+                  Frame-aligned playback across multiple screens.
+                </div>
+              </button>
+            </div>
           </ModalBody>
           <ModalFooter className="modal-footer-plain">
-              <ModalSecondaryButton onClick={() => setCreateOpen(false)}>
-                Cancel
-              </ModalSecondaryButton>
-              <ModalPrimaryButton
-                onClick={() => createMut.mutate(newName.trim())}
-                disabled={!newName.trim() || createMut.isPending}
-              >
-                Create
-              </ModalPrimaryButton>
+            <ModalSecondaryButton onClick={() => setCreateOpen(false)}>
+              Cancel
+            </ModalSecondaryButton>
+          </ModalFooter>
+        </Modal>
+      )}
+
+      {createOpen && createKind !== null && (
+        <Modal onClose={() => { setCreateOpen(false); setCreateKind(null); }} size="sm">
+          <ModalHeader
+            title={createKind === 'sync' ? 'New Sync Playlist' : 'New Playlist'}
+            onClose={() => { setCreateOpen(false); setCreateKind(null); }}
+          />
+          <ModalBody>
+            <input
+              autoFocus
+              type="text"
+              placeholder={createKind === 'sync' ? 'Sync playlist name…' : 'Playlist name…'}
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && newName.trim()) {
+                  if (createKind === 'sync') createSyncMut.mutate(newName.trim());
+                  else createMut.mutate(newName.trim());
+                }
+              }}
+              className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-muted)]"
+            />
+          </ModalBody>
+          <ModalFooter className="modal-footer-plain">
+            <ModalSecondaryButton onClick={() => setCreateKind(null)}>
+              Back
+            </ModalSecondaryButton>
+            <ModalPrimaryButton
+              onClick={() => {
+                if (createKind === 'sync') createSyncMut.mutate(newName.trim());
+                else createMut.mutate(newName.trim());
+              }}
+              disabled={!newName.trim() || createMut.isPending || createSyncMut.isPending}
+            >
+              Create
+            </ModalPrimaryButton>
           </ModalFooter>
         </Modal>
       )}
@@ -489,6 +714,23 @@ export default function PlaylistPage() {
         onClose={() => {
           setConfirmDuplicateId(null);
           setConfirmDuplicateName('');
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmSyncDeleteId !== null}
+        title="Delete Sync Playlist"
+        message={`Delete "${confirmSyncDeleteName}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        confirmPendingLabel="Deleting…"
+        isConfirming={deleteSyncMut.isPending}
+        closeOnConfirm={false}
+        onConfirm={() => {
+          if (confirmSyncDeleteId) deleteSyncMut.mutate(confirmSyncDeleteId);
+        }}
+        onClose={() => {
+          setConfirmSyncDeleteId(null);
+          setConfirmSyncDeleteName('');
         }}
       />
     </div>

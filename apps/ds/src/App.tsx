@@ -35,6 +35,7 @@ import WorkspaceDashboardPage from './pages/workspace/WorkspaceDashboardPage.js'
 import DevicesPage from './pages/workspace/DevicesPage.js';
 import DeviceDetailPage from './pages/workspace/DeviceDetailPage.js';
 import DeviceGroupsPage from './pages/workspace/DeviceGroupsPage.js';
+import DeviceGroupDetailPage from './pages/workspace/DeviceGroupDetailPage.js';
 import TizenTestPage from './pages/workspace/TizenTestPage.js';
 import PosMenuPage from './pages/workspace/PosMenuPage.js';
 import PosOrderPage from './pages/workspace/PosOrderPage.js';
@@ -57,9 +58,7 @@ import ScheduleEditorPage from './pages/workspace/ScheduleEditorPage.js';
 import TagsPage from './pages/workspace/TagsPage.js';
 import CanvasEditorPage from './pages/workspace/CanvasEditorPage.js';
 import AnalyticsPage from './pages/workspace/AnalyticsPage.js';
-import SyncPlaylistsPage from './pages/workspace/SyncPlaylistsPage.js';
 import SyncPlaylistEditorPage from './pages/workspace/SyncPlaylistEditorPage.js';
-import SyncGroupsPage from './pages/workspace/SyncGroupsPage.js';
 import ZoneLayoutEditorPage from './pages/workspace/ZoneLayoutEditorPage.js';
 import { buildApiUrl } from './lib/api.js';
 import KioskDisplayPage from './pages/kiosk/KioskDisplayPage.js';
@@ -308,6 +307,7 @@ export default function App() {
         <Route path="/workspaces/:wsId" element={<WorkspaceDashboardPage />} />
         <Route path="/workspaces/:wsId/devices" element={<DevicesPage />} />
         <Route path="/workspaces/:wsId/devices/groups" element={<DeviceGroupsPage />} />
+        <Route path="/workspaces/:wsId/devices/groups/:groupId" element={<DeviceGroupDetailPage />} />
         <Route path="/workspaces/:wsId/devices/:deviceId" element={<DeviceDetailPage />} />
         <Route path="/workspaces/:wsId/pos/menu" element={<PosMenuPage />} />
         <Route path="/workspaces/:wsId/pos" element={<PosOrderPage />} />
@@ -324,15 +324,17 @@ export default function App() {
         <Route path="/workspaces/:wsId/pos/menu-boards" element={<PosMenuBoardsPage />} />
         <Route path="/workspaces/:wsId/content" element={<ContentPage />} />
         <Route path="/workspaces/:wsId/playlist" element={<PlaylistPage />} />
+        <Route path="/workspaces/:wsId/playlist/sync/:id" element={<SyncPlaylistEditorPage />} />
         <Route path="/workspaces/:wsId/playlist/:id" element={<PlaylistEditorPage />} />
         <Route path="/workspaces/:wsId/schedule" element={<SchedulePage />} />
         <Route path="/workspaces/:wsId/schedule/:id" element={<ScheduleEditorPage />} />
         <Route path="/workspaces/:wsId/tags" element={<TagsPage />} />
         <Route path="/workspaces/:wsId/canvas/:id" element={<CanvasEditorPage />} />
         <Route path="/workspaces/:wsId/analytics" element={<AnalyticsPage />} />
-        <Route path="/workspaces/:wsId/sync-playlists" element={<SyncPlaylistsPage />} />
+        {/* Legacy redirects: sync playlists/groups merged into Playlists & Device Groups */}
+        <Route path="/workspaces/:wsId/sync-playlists" element={<Navigate to="../playlist" replace />} />
         <Route path="/workspaces/:wsId/sync-playlists/:id" element={<SyncPlaylistEditorPage />} />
-        <Route path="/workspaces/:wsId/sync-groups" element={<SyncGroupsPage />} />
+        <Route path="/workspaces/:wsId/sync-groups" element={<Navigate to="../devices/groups" replace />} />
         <Route path="/workspaces/:wsId/zone-layout/:id" element={<ZoneLayoutEditorPage />} />
       </Route>
 
