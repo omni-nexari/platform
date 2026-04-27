@@ -1601,7 +1601,16 @@ export async function contentRoutes(app: FastifyInstance) {
       '.mp3':  'audio/mpeg',
     };
 
-    app.get('/:id/preview/*', { onRequest: [app.authenticate] }, async (req, reply) => {
+    app.get('/:id/preview/*', {
+      onRequest: [app.authenticate],
+      // helmet adds COOP + Origin-Agent-Cluster globally via onSend.  Strip them
+      // here (also via onSend) so they win over helmet — last writer wins in
+      // Fastify's header map before the response is flushed.
+      onSend: async (_req, reply) => {
+        reply.removeHeader('Cross-Origin-Opener-Policy');
+        reply.removeHeader('Origin-Agent-Cluster');
+      },
+    }, async (req, reply) => {
       const user = req.user as AuthUser;
       const { id } = req.params as { id: string };
       const wildcard = ((req.params as { '*'?: string })['*'] ?? '').trim();
@@ -1622,11 +1631,6 @@ export async function contentRoutes(app: FastifyInstance) {
       reply.header('Cache-Control', 'no-store');
       reply.header('X-Content-Type-Options', 'nosniff');
       reply.header('X-Frame-Options', 'SAMEORIGIN');
-      // Remove helmet headers that produce browser warnings over plain HTTP.
-      // COOP requires HTTPS to work; Origin-Agent-Cluster causes consistency
-      // warnings when mixed across same-origin pages.
-      reply.removeHeader('Cross-Origin-Opener-Policy');
-      reply.removeHeader('Origin-Agent-Cluster');
       return reply.send(buf);
     });
   }
