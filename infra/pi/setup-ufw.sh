@@ -5,7 +5,8 @@
 # - Default deny inbound, allow outbound
 # - Allow SSH from 192.168.1.0/24 (local LAN) only
 # - Allow HTTP (80) and HTTPS (443) from anywhere — nginx terminates and proxies
-# - Postgres (5432) and Redis (6379) are NOT opened — they bind to localhost
+# - Allow Postgres (5432) from 192.168.1.0/24 (local LAN) only
+# - Redis (6379) is NOT opened — it binds to localhost
 #
 # Idempotent and safe to re-run. Verifies SSH is allowed BEFORE enabling UFW.
 # ──────────────────────────────────────────────────────────────────────────────
@@ -33,6 +34,9 @@ echo "==> Allowing HTTP/HTTPS from anywhere..."
 ufw allow 80/tcp  comment 'nginx HTTP'
 ufw allow 443/tcp comment 'nginx HTTPS'
 
+echo "==> Allowing Postgres from 192.168.1.0/24 only..."
+ufw allow from 192.168.1.0/24 to any port 5432 proto tcp comment 'Postgres local LAN'
+
 # Sanity check: refuse to enable if no SSH allow rule resolves
 if ! ufw show added | grep -qE 'allow .* 22'; then
   echo "!!! No SSH allow rule found — refusing to enable UFW (would lock you out)." >&2
@@ -44,6 +48,7 @@ ufw --force enable
 ufw status verbose
 
 echo ""
-echo "Done. Verify Postgres/Redis are NOT externally reachable from another host:"
-echo "  nc -zv <pi-ip> 5432   # should TIME OUT"
-echo "  nc -zv <pi-ip> 6379   # should TIME OUT"
+echo "Done. Verify:"
+echo "  nc -zv <pi-ip> 5432   # should CONNECT from 192.168.1.x, TIME OUT from outside"
+echo "  nc -zv <pi-ip> 6379   # should TIME OUT from everywhere (localhost only)"
+echo "  nc -zv <pi-ip> 22    # should CONNECT from 192.168.1.x, TIME OUT from outside"
