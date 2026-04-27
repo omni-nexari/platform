@@ -55,11 +55,8 @@ param(
     [string]$BumpVersion = "patch",
 
     # Run Tizen Studio CLI build + sign before uploading.
-    # Uses npm run build (production HTTPS API URL).
+    # Uses npm run build (production HTTPS API URL: ds.chiho.app).
     [switch]$Build,
-
-    # Use build:dev (http://192.168.1.17 API) instead of the production HTTPS URL.
-    [switch]$Dev,
 
     # Tizen Studio CLI path (tizen.bat)
     [string]$TizenCli = "C:\tizen-studio\tools\ide\bin\tizen.bat",
@@ -125,14 +122,11 @@ if ($Build) {
         throw "Tizen CLI not found at: $TizenCli - install Tizen Studio or pass -TizenCli"
     }
 
-    # npm run build uses production HTTPS API URL (ds.chiho.app)
-    # npm run build:dev uses LAN IP (192.168.1.17)
-    $buildScript = if ($Dev) { "build:dev" } else { "build" }
     Push-Location $TizenDir
     try {
-        Write-Host "  Running npm run $buildScript..."
-        npm run $buildScript 2>&1 | Write-Host
-        if ($LASTEXITCODE -ne 0) { throw "npm run $buildScript failed" }
+        Write-Host "  Running npm run build..."
+        npm run build 2>&1 | Write-Host
+        if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
     } finally {
         Pop-Location
     }

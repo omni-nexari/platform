@@ -7,6 +7,7 @@ import fastifyJwt from '@fastify/jwt';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyMultipart from '@fastify/multipart';
+import { getRedis, isAccessTokenRevoked } from '../services/redis.js';
 
 const CSRF_COOKIE = 'csrf_token';
 const SA_ACCESS_COOKIE = 'sa_access_token';
@@ -103,6 +104,7 @@ export async function registerPlugins(app: FastifyInstance) {
   await app.register(fastifyRateLimit, {
     max: 600,
     timeWindow: '1 minute',
+    redis: getRedis() ?? undefined,
   });
 
   await app.register(fastifyWebsocket);
@@ -179,6 +181,11 @@ export async function registerPlugins(app: FastifyInstance) {
   app.decorate('authenticate', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       await req.jwtVerify();
+      const payload = req.user as { sub?: string; iat?: number };
+      if (payload?.sub && typeof payload.iat === 'number') {
+        const revoked = await isAccessTokenRevoked(payload.sub, payload.iat);
+        if (revoked) return reply.status(401).send({ error: 'Unauthorized' });
+      }
       const csrfResult = await verifyCsrf(req, reply);
       if (csrfResult) return csrfResult;
     } catch (error) {

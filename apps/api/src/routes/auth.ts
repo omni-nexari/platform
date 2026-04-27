@@ -46,6 +46,7 @@ import {
 } from '../services/auth.js';
 import { sendPasswordResetEmail, sendResellerOnboardingConfirmationEmail } from '../services/email.js';
 import { writeAuditLog } from '../services/audit.js';
+import { recordLogout } from '../services/redis.js';
 
 const REFRESH_COOKIE = 'refresh_token';
 const ACCESS_COOKIE = 'access_token';
@@ -319,6 +320,16 @@ export async function authRoutes(app: FastifyInstance) {
 
     const raw = req.cookies[REFRESH_COOKIE];
     if (raw) await revokeRefreshToken(raw);
+
+    // Revoke the access token so it cannot be reused for its remaining 15-min window
+    const accessRaw = req.cookies[ACCESS_COOKIE];
+    if (accessRaw) {
+      try {
+        const payload = app.jwt.verify<{ sub?: string }>(accessRaw);
+        if (payload?.sub) await recordLogout(payload.sub);
+      } catch { /* token already expired — nothing to revoke */ }
+    }
+
     clearAccessCookie(reply);
     clearCsrfCookie(reply);
     clearRefreshCookie(reply);
