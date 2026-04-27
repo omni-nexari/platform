@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, useSearchParams } from 'react-router';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
@@ -48,61 +48,42 @@ function DeviceScreenshot({ deviceId, screenshotId }: {
   );
 }
 
-// ── LiveViewModal — simple SSE frame viewer ────────────────────────────────────
-function LiveViewModal({ deviceId, deviceName, onClose }: { deviceId: string; deviceName: string; onClose: () => void }) {
+// ── LiveViewInCard — replaces the thumbnail with a live SSE stream ─────────────
+function LiveViewInCard({ deviceId, onStop }: { deviceId: string; onStop: () => void }) {
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [status, setStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
-  const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     const es = new EventSource(`/api/devices/${deviceId}/screenshot/stream?intervalMs=1000`);
-    esRef.current = es;
     es.onmessage = (e) => {
       setStatus('live');
       setImgSrc(`data:image/jpeg;base64,${e.data as string}`);
     };
     es.onerror = () => setStatus('error');
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => {
-      es.close();
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [deviceId, onClose]);
+    return () => es.close();
+  }, [deviceId]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={onClose}>
-      <div
-        className="relative bg-[var(--card)] rounded-2xl overflow-hidden shadow-2xl border border-[var(--border)] flex flex-col"
-        style={{ width: 'min(90vw, 960px)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
-          <div className="flex items-center gap-2">
-            <Eye className="w-4 h-4 text-[var(--accent)]" />
-            <span className="text-sm font-semibold text-[var(--text)]">{deviceName}</span>
-            <span className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full ${
-              status === 'live' ? 'bg-emerald-500/15 text-emerald-400' :
-              status === 'error' ? 'bg-red-500/15 text-red-400' :
-              'bg-[var(--surface)] text-[var(--text-muted)]'
-            }`}>{status === 'live' ? 'Live' : status === 'error' ? 'No signal' : 'Connecting…'}</span>
+    <div className="relative w-full aspect-video rounded-lg border border-[var(--blue)]/60 overflow-hidden bg-black flex items-center justify-center">
+      {imgSrc
+        ? <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
+        : <div className="flex flex-col items-center gap-2 text-white/40">
+            <Monitor className="w-6 h-6" />
+            <span className="text-[10px]">{status === 'error' ? 'No signal' : 'Connecting…'}</span>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
-            <XIcon size={16} />
-          </button>
-        </div>
-        {/* Frame */}
-        <div className="relative bg-black aspect-video flex items-center justify-center">
-          {imgSrc
-            ? <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
-            : <div className="flex flex-col items-center gap-2 text-[var(--text-muted)]">
-                <Monitor className="w-10 h-10 opacity-30" />
-                <span className="text-xs">{status === 'error' ? 'Device not responding' : 'Waiting for first frame…'}</span>
-              </div>
-          }
-        </div>
-      </div>
+      }
+      {/* Status pip */}
+      <span className={`absolute top-2 left-2 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
+        status === 'live' ? 'bg-emerald-500/80 text-white' : 'bg-black/60 text-white/60'
+      }`}>{status === 'live' ? 'Live' : status === 'error' ? 'No signal' : 'Connecting'}</span>
+      {/* Stop button */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onStop(); }}
+        className="absolute top-2 right-2 p-1 rounded bg-black/60 hover:bg-black/90 text-white/80 hover:text-white transition-colors"
+        title="Stop live view"
+      >
+        <XIcon size={12} />
+      </button>
     </div>
   );
 }
@@ -200,7 +181,6 @@ export default function DevicesPage() {
   });
 
   const [liveViewDeviceId, setLiveViewDeviceId] = useState<string | null>(null);
-  const liveViewDevice = liveViewDeviceId ? devices.find((d) => d.id === liveViewDeviceId) : null;
 
   const filteredDevices = devices.filter((d) => {
     if (selectedStatus !== 'all' && d.status !== selectedStatus) return false;
@@ -370,44 +350,34 @@ export default function DevicesPage() {
                   {sectionDevices.map((device) => (
                     <div
                       key={device.id}
-                      className={`rounded-xl border p-4 flex flex-col gap-3 cursor-pointer transition-colors relative bg-[var(--card)] ${
+                      className={`group rounded-xl border p-4 flex flex-col gap-3 cursor-pointer transition-colors relative bg-[var(--card)] ${
                         selectedItems.has(device.id)
                           ? 'border-[var(--blue)]'
                           : 'border-[var(--card-border)] hover:border-[var(--blue)]/60'
                       }`}
                       onClick={() => navigate(`/workspaces/${wsId}/devices/${device.id}`)}
                     >
-                      {/* Selection checkbox */}
-                      <input
-                        type="checkbox"
-                        checked={selectedItems.has(device.id)}
-                        onChange={(e) => { e.stopPropagation(); toggleItem(device.id); }}
-                        onClick={(e) => e.stopPropagation()}
-                        className="absolute top-3 right-3 w-4 h-4 accent-[var(--blue)]"
-                      />
+                      {/* Screenshot thumbnail or live view */}
+                      {liveViewDeviceId === device.id
+                        ? <LiveViewInCard deviceId={device.id} onStop={() => setLiveViewDeviceId(null)} />
+                        : <DeviceScreenshot
+                            key={device.latestScreenshotId ?? 'no-shot'}
+                            deviceId={device.id}
+                            screenshotId={device.latestScreenshotId}
+                          />
+                      }
 
-                      {/* Screenshot thumbnail — remounts when screenshotId changes */}
-                      <div className="relative">
-                        <DeviceScreenshot
-                          key={device.latestScreenshotId ?? 'no-shot'}
-                          deviceId={device.id}
-                          screenshotId={device.latestScreenshotId}
+                      {/* Header: checkbox + name */}
+                      <div className="flex items-start gap-2">
+                        {/* Checkbox — outside thumbnail, always clickable */}
+                        <input
+                          type="checkbox"
+                          checked={selectedItems.has(device.id)}
+                          onChange={(e) => { e.stopPropagation(); toggleItem(device.id); }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="mt-0.5 shrink-0 w-4 h-4 accent-[var(--blue)]"
                         />
-                        {/* View Live button — shown when card is selected and device is online */}
-                        {selectedItems.has(device.id) && device.status === 'online' && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setLiveViewDeviceId(device.id); }}
-                            className="absolute bottom-2 right-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-black/70 hover:bg-black/90 text-white text-xs font-semibold backdrop-blur-sm transition-colors"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            Live
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Header */}
-                      <div className="flex items-start justify-between gap-2 pr-6">
-                        <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
                           <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
                             device.status === 'online'
                               ? 'bg-[var(--success)]/15 text-[var(--success)]'
@@ -467,10 +437,21 @@ export default function DevicesPage() {
                         )}
                       </div>
 
-                      {/* Tags */}
-                      {(device.assignedTags?.length ?? 0) > 0 && (
-                        <AssignedTagPills tags={device.assignedTags!} />
-                      )}
+                      {/* Tags + Live button row */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {(device.assignedTags?.length ?? 0) > 0 && (
+                          <AssignedTagPills tags={device.assignedTags!} />
+                        )}
+                        {device.status === 'online' && liveViewDeviceId !== device.id && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setLiveViewDeviceId(device.id); }}
+                            className="opacity-0 group-hover:opacity-100 flex items-center gap-1 px-2 py-0.5 rounded-full border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--accent)]/10 hover:border-[var(--accent)]/40 text-[var(--text-muted)] hover:text-[var(--accent)] text-[10px] font-semibold transition-all"
+                          >
+                            <Eye className="w-3 h-3" />
+                            Live
+                          </button>
+                        )}
+                      </div>
 
                       <ChevronRight className="w-4 h-4 text-[var(--text-muted)] self-end" />
                     </div>
@@ -480,15 +461,6 @@ export default function DevicesPage() {
             );
           })}
         </div>
-      )}
-
-      {/* Live View Modal */}
-      {liveViewDeviceId && liveViewDevice && (
-        <LiveViewModal
-          deviceId={liveViewDeviceId}
-          deviceName={liveViewDevice.name}
-          onClose={() => setLiveViewDeviceId(null)}
-        />
       )}
 
       {/* Pair Device Modal */}
