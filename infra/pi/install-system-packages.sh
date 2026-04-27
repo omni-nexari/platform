@@ -58,7 +58,7 @@ if [[ "${SIGNAGE_SKIP_PLAYWRIGHT:-0}" != "1" ]]; then
       su -c "pnpm --filter @signage/api add playwright" "$APP_USER" || echo "!!! Playwright install failed — HTML5 thumbnails will be skipped."
     fi
     # Install browser binaries to a shared path so the systemd service can read them.
-    PLAYWRIGHT_BIN="/opt/signage/node_modules/.bin/playwright"
+    PLAYWRIGHT_BIN="/opt/signage/apps/api/node_modules/.bin/playwright"
     BROWSERS_DIR="/opt/playwright-browsers"
     mkdir -p "$BROWSERS_DIR"
     chown "$APP_USER" "$BROWSERS_DIR"
