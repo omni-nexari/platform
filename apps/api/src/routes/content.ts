@@ -15,6 +15,7 @@ import {
   generateVideoThumb,
   generatePdfThumb,
   generatePresentationThumb,
+  generateHtml5Thumb,
   processContentMedia,
 } from '../services/media-processing.js';
 import { getQueue, QUEUE_NAMES } from '../queues/index.js';
@@ -1013,8 +1014,8 @@ export async function contentRoutes(app: FastifyInstance) {
 
     const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
     if (!member) return reply.status(403).send({ error: 'Forbidden' });
-    if (item.type !== 'image' && item.type !== 'video' && item.type !== 'pdf' && item.type !== 'presentation') {
-      return reply.status(400).send({ error: 'Thumbnails only supported for image/video/pdf/presentation' });
+    if (item.type !== 'image' && item.type !== 'video' && item.type !== 'pdf' && item.type !== 'presentation' && item.type !== 'html5') {
+      return reply.status(400).send({ error: 'Thumbnails only supported for image/video/pdf/presentation/html5' });
     }
 
     const absPath = path.resolve(STORAGE_ROOT, item.filePath);
@@ -1036,6 +1037,8 @@ export async function contentRoutes(app: FastifyInstance) {
         await generatePdfThumb(absPath, thumbAbs);
       } else if (item.type === 'presentation') {
         await generatePresentationThumb(absPath, thumbAbs);
+      } else if (item.type === 'html5') {
+        await generateHtml5Thumb(absPath, thumbAbs);
       }
     } catch (e) {
       await db.update(contentItems)
