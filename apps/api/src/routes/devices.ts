@@ -675,7 +675,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
     if (!shot) return reply.status(404).send({ error: 'Screenshot not found' });
 
-    const filePath = path.join(process.cwd(), STORAGE_ROOT, shot.storageKey);
+    const filePath = path.resolve(STORAGE_ROOT, shot.storageKey);
     try {
       await fsPromises.access(filePath);
     } catch {
@@ -703,7 +703,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!shot) return reply.status(404).send({ error: 'Screenshot not found' });
 
     await db.delete(deviceScreenshots).where(eq(deviceScreenshots.id, screenshotId));
-    const filePath = path.join(process.cwd(), STORAGE_ROOT, shot.storageKey);
+    const filePath = path.resolve(STORAGE_ROOT, shot.storageKey);
     await fsPromises.unlink(filePath).catch(() => { /* best-effort */ });
 
     return reply.send({ ok: true });
