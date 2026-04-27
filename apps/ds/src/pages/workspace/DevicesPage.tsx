@@ -231,8 +231,14 @@ export default function DevicesPage() {
   const toggleItem = (id: string) => {
     setSelectedItems((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+        setLiveViewDeviceId((cur) => (cur === id ? null : cur));
+      } else {
+        next.add(id);
+        const device = devices.find((d) => d.id === id);
+        if (device?.status === 'online') setLiveViewDeviceId(id);
+      }
       return next;
     });
   };
