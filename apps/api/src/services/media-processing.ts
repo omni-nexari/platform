@@ -97,7 +97,7 @@ export async function generateHtml5Thumb(zipAbs: string, thumbAbs: string): Prom
       launch(opts: { headless: boolean; args?: string[]; timeout?: number }): Promise<{
         newContext(opts: { viewport: { width: number; height: number } }): Promise<{
           newPage(): Promise<{
-            goto(url: string, opts: { waitUntil: 'load'; timeout: number }): Promise<unknown>;
+            goto(url: string, opts: { waitUntil: 'networkidle' | 'load'; timeout: number }): Promise<unknown>;
             waitForTimeout(ms: number): Promise<void>;
             screenshot(opts: { type: 'png' }): Promise<Buffer>;
           }>;
@@ -132,6 +132,39 @@ export async function generateHtml5Thumb(zipAbs: string, thumbAbs: string): Prom
       const indexPath = path.join(extractDir, 'index.html');
       try { await fs.access(indexPath); } catch { return false; }
 
+      // Spin up a minimal static HTTP server so relative assets (css/js/img)
+      // load correctly — file:// protocol blocks cross-file sub-resources.
+      const http = await import('node:http');
+      const httpPort = await new Promise<number>((resolve, reject) => {
+        const srv = http.createServer((req, res) => {
+          const urlPath = (req.url ?? '/').split('?')[0]!;
+          const filePath = path.join(extractDir, urlPath === '/' ? 'index.html' : urlPath);
+          fs.readFile(filePath)
+            .then((data) => {
+              const ext = path.extname(filePath).toLowerCase();
+              const MIME: Record<string, string> = {
+                '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript',
+                '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml',
+                '.json': 'application/json', '.woff': 'font/woff', '.woff2': 'font/woff2',
+              };
+              res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream' });
+              res.end(data);
+            })
+            .catch(() => { res.writeHead(404); res.end(); });
+        });
+        srv.listen(0, '127.0.0.1', () => {
+          const addr = srv.address() as { port: number };
+          resolve(addr.port);
+        });
+        srv.on('error', reject);
+        // Attach server to browser close for cleanup
+        (srv as unknown as { _pw_server: true });
+        // Store ref for later close
+        Object.assign(srv, { _thumbSrv: true });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (global as any).__html5ThumbSrv = srv;
+      });
+
       const browser = await pw.chromium.launch({
         headless: true,
         timeout: 20_000,
@@ -141,12 +174,16 @@ export async function generateHtml5Thumb(zipAbs: string, thumbAbs: string): Prom
       try {
         const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
         const page = await context.newPage();
-        await page.goto('file://' + indexPath, { waitUntil: 'load', timeout: 15_000 });
+        await page.goto(`http://127.0.0.1:${httpPort}/`, { waitUntil: 'networkidle', timeout: 15_000 });
         await page.waitForTimeout(2000);
         const buf = await page.screenshot({ type: 'png' });
         await sharp(buf).resize(400, 225, { fit: 'inside' }).jpeg({ quality: 80 }).toFile(thumbAbs);
       } finally {
         await browser.close();
+        // Close the temp HTTP server
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const srv = (global as any).__html5ThumbSrv as import('node:http').Server | undefined;
+        if (srv) { srv.close(); delete (global as any).__html5ThumbSrv; }
       }
       return true;
     } finally {
@@ -154,7 +191,7 @@ export async function generateHtml5Thumb(zipAbs: string, thumbAbs: string): Prom
     }
   })();
 
-  return Promise.race([workPromise, timeoutPromise]);
+  return Promise.race([workPromise, timeoutPromise]).catch(() => false);
 }
 
 // ── Probing helpers ───────────────────────────────────────────────────────────

@@ -334,7 +334,7 @@ export default function Html5EditorModal({ contentId, contentName, onClose }: Pr
                   key={previewKey}
                   src={previewSrc}
                   className="w-full h-full border-0"
-                  sandbox="allow-scripts"
+                  sandbox="allow-scripts allow-same-origin"
                   referrerPolicy="no-referrer"
                   title="HTML5 preview"
                 />
