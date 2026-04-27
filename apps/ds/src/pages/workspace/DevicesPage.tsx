@@ -464,17 +464,7 @@ export default function DevicesPage() {
                 <p className="text-xs text-red-400 mt-1">{errors.name.message}</p>
               )}
             </div>
-            <div>
-              <label className="ui-label">Display Mode</label>
-              <select {...register('type')} className="ui-input w-full">
-                <option value="signage">Signage Display</option>
-                <option value="kitchen">Kitchen Monitor</option>
-                <option value="kiosk">Kiosk</option>
-              </select>
-              <p className="text-xs text-[var(--text-muted)] mt-1">
-                Kiosk and Kitchen devices auto-redirect to their purpose-built UI after pairing.
-              </p>
-            </div>
+            <input type="hidden" {...register('type')} value="signage" />
           </form>
         </ModalBody>
         <ModalFooter>
