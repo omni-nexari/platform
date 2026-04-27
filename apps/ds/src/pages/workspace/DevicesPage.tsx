@@ -358,14 +358,34 @@ export default function DevicesPage() {
                       onClick={() => navigate(`/workspaces/${wsId}/devices/${device.id}`)}
                     >
                       {/* Screenshot thumbnail or live view */}
-                      {liveViewDeviceId === device.id
-                        ? <LiveViewInCard deviceId={device.id} onStop={() => setLiveViewDeviceId(null)} />
-                        : <DeviceScreenshot
-                            key={device.latestScreenshotId ?? 'no-shot'}
-                            deviceId={device.id}
-                            screenshotId={device.latestScreenshotId}
-                          />
-                      }
+                      <div className="relative">
+                        {liveViewDeviceId === device.id
+                          ? <LiveViewInCard deviceId={device.id} onStop={() => setLiveViewDeviceId(null)} />
+                          : <DeviceScreenshot
+                              key={device.latestScreenshotId ?? 'no-shot'}
+                              deviceId={device.id}
+                              screenshotId={device.latestScreenshotId}
+                            />
+                        }
+                        {/* Selected overlay ring on thumbnail */}
+                        {selectedItems.has(device.id) && (
+                          <div className="absolute inset-0 rounded-lg border-2 border-[var(--blue)] pointer-events-none" />
+                        )}
+                        {/* Live button overlay on thumbnail */}
+                        {device.status === 'online' && liveViewDeviceId !== device.id && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setLiveViewDeviceId(device.id); }}
+                            className={`absolute bottom-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold transition-all ${
+                              selectedItems.has(device.id)
+                                ? 'border-[var(--blue)] bg-[var(--blue)]/20 text-[var(--blue)] opacity-100'
+                                : 'border-white/30 bg-black/50 text-white opacity-0 group-hover:opacity-100 hover:bg-black/70'
+                            }`}
+                          >
+                            <Eye className="w-3 h-3" />
+                            Live
+                          </button>
+                        )}
+                      </div>
 
                       {/* Header: checkbox + name */}
                       <div className="flex items-start gap-2">
@@ -437,21 +457,12 @@ export default function DevicesPage() {
                         )}
                       </div>
 
-                      {/* Tags + Live button row */}
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {(device.assignedTags?.length ?? 0) > 0 && (
+                      {/* Tags row */}
+                      {(device.assignedTags?.length ?? 0) > 0 && (
+                        <div className="flex items-center gap-2 flex-wrap">
                           <AssignedTagPills tags={device.assignedTags!} />
-                        )}
-                        {device.status === 'online' && liveViewDeviceId !== device.id && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setLiveViewDeviceId(device.id); }}
-                            className="opacity-0 group-hover:opacity-100 flex items-center gap-1 px-2 py-0.5 rounded-full border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--accent)]/10 hover:border-[var(--accent)]/40 text-[var(--text-muted)] hover:text-[var(--accent)] text-[10px] font-semibold transition-all"
-                          >
-                            <Eye className="w-3 h-3" />
-                            Live
-                          </button>
-                        )}
-                      </div>
+                        </div>
+                      )}
 
                       <ChevronRight className="w-4 h-4 text-[var(--text-muted)] self-end" />
                     </div>
