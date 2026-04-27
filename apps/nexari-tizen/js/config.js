@@ -34,7 +34,7 @@ const defaultConfig = {
 
   // Remote logging
   REMOTE_LOG_ENABLED: true,
-  REMOTE_LOG_LEVEL: 'warn', // debug|info|warn|error
+  REMOTE_LOG_LEVEL: 'info', // debug|info|warn|error
 };
 
 // Simple in-memory ring buffer for logs (used for remote bursts)
