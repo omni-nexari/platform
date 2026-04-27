@@ -1074,7 +1074,7 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
 
   if (!itemId) return null;
 
-  const hasThumbnail = item && (item.type === 'image' || item.type === 'video' || item.type === 'pdf' || item.type === 'presentation');
+  const hasThumbnail = item && (item.type === 'image' || item.type === 'video' || item.type === 'pdf' || item.type === 'presentation' || item.type === 'html5');
   const isZoneLayout = item?.type === 'zone_layout';
   const isMenuBoard  = item?.type === 'menu_board';
   const [menuBoardEditOpen, setMenuBoardEditOpen] = useState(false);

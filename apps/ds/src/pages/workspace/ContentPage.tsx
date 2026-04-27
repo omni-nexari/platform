@@ -250,7 +250,7 @@ function Thumb({ item, large = false }: { item: ContentItem; large?: boolean }) 
   };
 
   const hasThumbnail =
-    (item.type === 'image' || item.type === 'video' || item.type === 'pdf' || item.type === 'presentation') &&
+    (item.type === 'image' || item.type === 'video' || item.type === 'pdf' || item.type === 'presentation' || item.type === 'html5') &&
     !imgFailed &&
     !missingThumbnailSourceIds.has(item.id);
 
