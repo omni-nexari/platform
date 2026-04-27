@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, useSearchParams } from 'react-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
@@ -10,6 +10,33 @@ import type { ClaimDeviceInput } from '@signage/shared';
 
 type PairFormInput = Omit<ClaimDeviceInput, 'workspaceId'>;
 import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2 } from 'lucide-react';
+
+// Fetches screenshot with session cookie and renders as blob URL
+function DeviceScreenshot({ deviceId, screenshotId }: { deviceId: string; screenshotId: string | null | undefined }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const load = useCallback(() => {
+    if (!screenshotId) return;
+    let blobUrl: string | null = null;
+    fetch(buildApiUrl(`/devices/${deviceId}/screenshots/${screenshotId}`), { credentials: 'include' })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const blob = await res.blob();
+        blobUrl = URL.createObjectURL(blob);
+        setSrc(blobUrl);
+      })
+      .catch(() => {});
+    return () => { if (blobUrl) URL.revokeObjectURL(blobUrl); };
+  }, [deviceId, screenshotId]);
+  useEffect(() => load(), [load]);
+  return (
+    <div className={`w-full aspect-video rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${src ? '' : 'bg-[var(--surface)]'}`}>
+      {src
+        ? <img src={src} alt="Latest screenshot" className="w-full h-full object-cover" />
+        : <Monitor className="w-6 h-6 text-[var(--text-muted)] opacity-30" />
+      }
+    </div>
+  );
+}
 import { formatDistanceToNow } from '../utils/time.js';
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import BulkTagModal from '../../components/BulkTagModal.js';
@@ -301,8 +328,10 @@ export default function DevicesPage() {
                   {sectionDevices.map((device) => (
                     <div
                       key={device.id}
-                      className={`ui-card p-4 flex flex-col gap-3 cursor-pointer hover:border-[var(--blue)] transition-colors relative ${
-                        selectedItems.has(device.id) ? 'border-[var(--blue)]' : ''
+                      className={`rounded-xl border p-4 flex flex-col gap-3 cursor-pointer transition-colors relative bg-[var(--card)] ${
+                        selectedItems.has(device.id)
+                          ? 'border-[var(--blue)]'
+                          : 'border-[var(--card-border)] hover:border-[var(--blue)]/60'
                       }`}
                       onClick={() => navigate(`/workspaces/${wsId}/devices/${device.id}`)}
                     >
@@ -316,16 +345,10 @@ export default function DevicesPage() {
                       />
 
                       {/* Screenshot thumbnail */}
-                      {device.latestScreenshotId && (
-                        <div className="w-full aspect-video rounded-lg overflow-hidden bg-[var(--surface)] border border-[var(--card-border)]">
-                          <img
-                            src={buildApiUrl(`/devices/${device.id}/screenshots/${device.latestScreenshotId}`)}
-                            alt="Latest screenshot"
-                            className="w-full h-full object-cover"
-                            onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = 'none'; }}
-                          />
-                        </div>
-                      )}
+                      <DeviceScreenshot
+                        deviceId={device.id}
+                        screenshotId={device.latestScreenshotId}
+                      />
 
                       {/* Header */}
                       <div className="flex items-start justify-between gap-2 pr-6">
