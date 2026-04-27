@@ -1676,7 +1676,7 @@ export async function contentRoutes(app: FastifyInstance) {
 
     const fileHash = crypto.createHash('sha256').update(buf).digest('hex');
 
-    const [item] = await db.insert(contentItems).values({
+    const rows = await db.insert(contentItems).values({
       workspaceId: body.workspaceId,
       uploadedBy: user.sub,
       type: 'html5',
@@ -1690,6 +1690,9 @@ export async function contentRoutes(app: FastifyInstance) {
       status: 'ready',
       approvalState: 'approved',
     }).returning();
+
+    const item = rows[0];
+    if (!item) return reply.status(500).send({ error: 'Failed to create content row' });
 
     // Queue thumbnail generation (same as regular upload)
     const createQueue = getQueue<{ contentId: string }>(QUEUE_NAMES.mediaProcessing);
