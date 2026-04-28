@@ -40,7 +40,7 @@ async function detectMode(syncGroupId: string): Promise<'native-samsung' | 'cust
 async function pushSessionConfig(syncGroupId: string) {
   const group = await db.query.syncGroups.findFirst({
     where: eq(syncGroups.id, syncGroupId),
-    with: { members: true, syncPlaylist: { with: { items: { with: { content: true } } } } },
+    with: { members: true },
   });
   if (!group) return;
 
