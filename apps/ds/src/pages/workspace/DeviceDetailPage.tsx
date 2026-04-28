@@ -344,6 +344,44 @@ function TimezoneCombobox({ value, onChange }: { value: string; onChange: (v: st
   );
 }
 
+// Fetches the latest in-memory screenshot frame for a device card / detail view.
+// Silently shows a placeholder if no frame is available yet (404).
+function LatestScreenshotFrame({ deviceId, className }: { deviceId: string; className?: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setSrc(null);
+    setLoading(true);
+    let blobUrl: string | null = null;
+    let cancelled = false;
+    fetch(`/api/v1/devices/${deviceId}/screenshot/latest`, { credentials: 'include' })
+      .then(async (res) => {
+        if (!res.ok || cancelled) { setLoading(false); return; }
+        const blob = await res.blob();
+        blobUrl = URL.createObjectURL(blob);
+        if (!cancelled) { setSrc(blobUrl); setLoading(false); }
+      })
+      .catch(() => { if (!cancelled) setLoading(false); });
+    return () => {
+      cancelled = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [deviceId]);
+
+  return (
+    <div className={`w-full aspect-video rounded-xl border border-[var(--border)] bg-[var(--surface)] flex items-center justify-center overflow-hidden ${className ?? ''}`}>
+      {src
+        ? <img src={src} alt="Latest screenshot" className="w-full h-full object-contain" />
+        : <div className="flex flex-col items-center gap-2 text-[var(--text-muted)]">
+            <Monitor className="w-8 h-8 opacity-30" />
+            <span className="text-xs">{loading ? 'Loading…' : 'No screenshot yet'}</span>
+          </div>
+      }
+    </div>
+  );
+}
+
 function buildLogText(logs: DeviceLogEntry[]) {
   return logs
     .map((entry) => `[${new Date(entry.createdAt).toLocaleTimeString()}] [${entry.level.toUpperCase()}] ${entry.line}`)
@@ -2903,8 +2941,37 @@ export default function DeviceDetailPage() {
             </SectionCardBody>
           </SectionCard>
 
+          {/* ── Screen Capture ─────────────────────────────────────────── */}
+          <SectionCard>
+            <SectionCardHeader>
+              <h2 className="text-sm font-semibold text-[var(--text)] flex items-center gap-2">
+                <Camera className="w-4 h-4" /> Screen Capture
+              </h2>
+              <span className="text-xs text-[var(--text-muted)]">
+                Interval can be configured in the{' '}
+                <button
+                  onClick={() => setActiveTab('settings')}
+                  className="text-[var(--blue)] hover:underline"
+                >
+                  Settings tab
+                </button>
+              </span>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <ActionButton
+                  disabled={cmdDisabled}
+                  onClick={() => sendCmd({ command: 'screenshot' })}
+                >
+                  <Camera className="w-4 h-4" /> Take Screenshot
+                </ActionButton>
+              </div>
+              {/* Latest in-memory frame */}
+              <LatestScreenshotFrame deviceId={deviceId} />
+            </SectionCardBody>
+          </SectionCard>
+
           {screenshots.length > 0 && (
-            <SectionCard>
               <SectionCardHeader>
                 <h2 className="text-sm font-semibold text-[var(--text)]">
                   Screenshots <span className="text-[var(--text-muted)] font-normal">({screenshots.length})</span>

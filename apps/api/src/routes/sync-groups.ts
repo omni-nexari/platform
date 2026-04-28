@@ -8,7 +8,7 @@ import {
   workspaces,
   workspaceMembers,
 } from '@signage/db';
-import { eq, and, isNull, desc, ne } from 'drizzle-orm';
+import { eq, and, isNull, desc, ne, inArray } from 'drizzle-orm';
 import { writeAuditLog } from '../services/audit.js';
 import { sendCommand, isDeviceOnline } from '../services/ws.js';
 import { allocateSyncPlayGroupId } from '../services/syncplay-allocator.js';
@@ -267,6 +267,12 @@ export async function syncGroupRoutes(app: FastifyInstance) {
 
     if (newMembers.length > 0) {
       await db.insert(syncGroupMembers).values(newMembers).onConflictDoNothing();
+      // Point each newly added device at this sync group so the schedule endpoint
+      // returns publishedSyncGroup and the player routes to SyncPlay mode.
+      const newDeviceIds = newMembers.map(m => m.deviceId);
+      await db.update(devices)
+        .set({ publishedSyncGroupId: id, updatedAt: new Date() })
+        .where(inArray(devices.id, newDeviceIds));
     }
 
     const mode = await detectMode(id);

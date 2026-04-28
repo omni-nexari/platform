@@ -325,6 +325,10 @@ const Player = {
                     logger.info('screenshot command received');
                     this.executeCommand({ type: 'SCREENSHOT' });
                     break;
+                case 'screenshot_auto':
+                    logger.info('screenshot_auto command received');
+                    this.executeCommand({ type: 'SCREENSHOT_AUTO' });
+                    break;
                 case 'start_live_capture': {
                     const intervalMs = Math.max(1000, Number((_a = message.payload) === null || _a === void 0 ? void 0 : _a.intervalMs) || 1000);
                     logger.info('start_live_capture received, intervalMs:', intervalMs);
@@ -5829,6 +5833,10 @@ const Player = {
             }
             case 'SCREENSHOT':
                 this.takeScreenshot();
+                break;
+            case 'SCREENSHOT_AUTO':
+                // Server-initiated on-connect shot — stored in-memory only, no disk write
+                this.takeScreenshotWithTrigger('content_change');
                 break;
             case 'SET_SCREENSHOT_INTERVAL': {
                 // API sends { minutes: N } — set up a periodic takeScreenshot loop on the device.
