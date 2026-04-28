@@ -114,7 +114,11 @@ export async function registerPlugins(app: FastifyInstance) {
   });
 
   function getSessionCookieNames(req: FastifyRequest) {
-    if (req.url.startsWith('/superadmin')) {
+    // req.url contains the full path as received (e.g. /api/v1/superadmin/... on the Pi
+    // via nginx, or /superadmin/... if the prefix was stripped). Check for the segment
+    // rather than using startsWith so it works regardless of any leading prefix.
+    const urlPath = req.url.split('?')[0];
+    if (urlPath.includes('/superadmin')) {
       return {
         accessCookie: SA_ACCESS_COOKIE,
         refreshCookie: null,
