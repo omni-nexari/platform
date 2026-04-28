@@ -1302,6 +1302,13 @@ export async function deviceRoutes(app: FastifyInstance) {
       }, 5_000);
     }
 
+    // Request one screenshot ~10 s after connect to populate the in-memory frame store.
+    // This ensures device cards show a thumbnail immediately after server restarts,
+    // even before the next content-change screenshot arrives.
+    setTimeout(() => {
+      sendCommand(deviceId, { type: 'screenshot_auto' });
+    }, 10_000);
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     socket.on('message', async (rawData: any) => {
       const rawText = rawData.toString() as string;

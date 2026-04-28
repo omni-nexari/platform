@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexari SBB Player</title>
+    <script>
+    (function() {
+      function showErr(msg) {
+        var show = function() {
+          var b = document.getElementById('_jserr');
+          if (!b) {
+            b = document.createElement('div');
+            b.id = '_jserr';
+            b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#b00040;color:#fff;padding:10px 16px;font:13px monospace;word-break:break-all;white-space:pre-line;max-height:35vh;overflow-y:auto;';
+            (document.body || document.documentElement).appendChild(b);
+          }
+          b.textContent += msg + '\n';
+        };
+        if (document.body) show(); else document.addEventListener('DOMContentLoaded', show);
+      }
+      window.onerror = function(msg, src, line) {
+        showErr('[JS ERROR] ' + msg + '\n  ' + src + ':' + line);
+        return false;
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        var r = e.reason;
+        showErr('[REJECTION] ' + (r && r.message ? r.message : String(r)));
+      });
+    })();
+    </script>
+    <!-- Samsung Product API — must load before app.js -->
+    <script type="text/javascript" src="$WEBAPIS/webapis/webapis.js"></script>
+    <!-- Samsung B2B API — required for getSerialNumber() etc. -->
+    <script type="text/javascript" src="$B2BAPIS/b2bapis/b2bapis.js"></script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="pairing-screen" class="screen">
+        <div class="pairing-container">
+            <div class="logo">
+                <img src="icon.png" alt="Nexari" />
+            </div>
+            <h1>Nexari SBB Player</h1>
+            <div class="pairing-code-container">
+                <p class="pairing-label">Initializing…</p>
+                <div id="app-status" class="pairing-status">Starting up…</div>
+            </div>
+            <div class="device-info">
+                <div id="device-model"     class="info-item">Model: Detecting…</div>
+                <div id="device-ip"        class="info-item">IP: Connecting…</div>
+                <div id="device-serial"    class="info-item">Serial: Detecting…</div>
+                <div id="device-duid"      class="info-item">UUID (DUID): Detecting…</div>
+                <div id="device-fw"        class="info-item">Firmware: Detecting…</div>
+                <div id="device-realmodel" class="info-item">Full Model: Detecting…</div>
+                <div id="device-locale"    class="info-item">Locale: Detecting…</div>
+            </div>
+            <div class="app-version">Nexari SBB Player v1.0.0</div>
+        </div>
+    </div>
+
+    <!-- Console Log Overlay — toggle with INFO remote key -->
+    <div id="log-overlay" class="log-overlay hidden">
+        <div class="log-header">
+            <span class="log-title">&#9654; Console Log</span>
+            <span class="log-hint">1 = show/hide &nbsp;|&nbsp; BACK = close</span>
+            <span id="log-count" class="log-count">0 lines</span>
+        </div>
+        <div id="log-body" class="log-body"></div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

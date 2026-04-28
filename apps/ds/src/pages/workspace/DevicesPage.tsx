@@ -261,11 +261,11 @@ export default function DevicesPage() {
               Pair Device
             </button>
             <button
-              className="ui-btn-secondary p-2"
+              className="ui-btn-secondary flex items-center gap-1.5"
               onClick={() => navigate(`/workspaces/${wsId}/devices/groups`)}
-              title="Device Groups"
             >
               <Layers className="w-4 h-4" />
+              Groups
             </button>
           </div>
         }

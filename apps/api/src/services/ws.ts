@@ -49,6 +49,7 @@ export interface MdcStatusResponse {
 export type WsCommand =
   | { type: 'reboot' }
   | { type: 'screenshot' }
+  | { type: 'screenshot_auto' }
   | { type: 'refresh_schedule' }
   | { type: 'emergency_start'; payload: { text?: string; contentItemId?: string } }
   | { type: 'emergency_clear' }
