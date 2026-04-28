@@ -1997,6 +1997,7 @@ const Player = {
                                 contentId: item.contentId,
                                 duration: item.duration,
                                 position: item.position,
+                                content: item.content || null,
                             }));
                             // Prepare native SyncPlay playlist locally.
                             const groupID = desiredGroupID;
@@ -7093,7 +7094,7 @@ const Player = {
                     let content = item.content;
                     if (!content) {
                         try {
-                            content = yield API.getContent(item.contentId);
+                            content = yield API.getContentById(item.contentId);
                         }
                         catch (_) {
                             content = null;
