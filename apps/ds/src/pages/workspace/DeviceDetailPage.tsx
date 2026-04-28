@@ -2967,7 +2967,7 @@ export default function DeviceDetailPage() {
                 </ActionButton>
               </div>
               {/* Latest in-memory frame */}
-              <LatestScreenshotFrame deviceId={deviceId} />
+              {deviceId && <LatestScreenshotFrame deviceId={deviceId} />}
             </SectionCardBody>
           </SectionCard>
 
