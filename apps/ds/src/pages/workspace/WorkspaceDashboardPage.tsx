@@ -249,17 +249,12 @@ export default function WorkspaceDashboardPage() {
                   {selectedItems.has(device.id) && <Check className="w-3 h-3 text-white" />}
                 </div>
                 {/* Thumbnail */}
-                {device.latestScreenshotId ? (
-                  <img
-                    src={buildApiUrl(`/devices/${device.id}/screenshots/${device.latestScreenshotId}`)}
-                    alt="Last screenshot"
-                    className="absolute inset-0 w-full h-full object-cover"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                  />
-                ) : (
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(58,123,255,0.24),_transparent_58%),linear-gradient(180deg,rgba(20,24,33,0.45),rgba(10,12,18,0.92))]"
-                  />
-                )}
+                <img
+                  src={buildApiUrl(`/devices/${device.id}/screenshot/latest`)}
+                  alt="Last screenshot"
+                  className="absolute inset-0 w-full h-full object-cover"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
                 {/* Scrim over thumbnail */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-black/30" />
                 <span className={`ui-media-badge absolute top-2 right-2 z-20 ${currentStatusMeta.mediaTone}`}>
@@ -277,7 +272,7 @@ export default function WorkspaceDashboardPage() {
                     <span className="text-white/40 text-[11px]">No content assigned</span>
                   </div>
                 )}
-                {device.status !== 'online' && !device.latestScreenshotId && (
+                {device.status !== 'online' && (
                   <div className="absolute inset-0 flex items-center justify-center z-10">
                     <div className="w-16 h-16 rounded-2xl bg-white/8 border border-white/10 flex items-center justify-center backdrop-blur-sm">
                       <WifiOff className="w-8 h-8 text-[var(--text-muted)]" />

@@ -28,6 +28,7 @@ import {
   clearDeviceLogs,
   registerLiveViewer,
   unregisterLiveViewer,
+  getLatestFrame,
 } from '../services/ws.js';
 import { notifyDeviceStatusChange } from '../services/notifications.js';
 
@@ -735,6 +736,26 @@ export async function deviceRoutes(app: FastifyInstance) {
     return reply.send({ ok: true });
   });
 
+  // ── GET /devices/:id/screenshot/latest ── serve in-memory latest frame ─────
+  // Returns the most-recent auto screenshot (content_change / interval) as JPEG.
+  // No disk I/O — served from RAM. 404 if no frame received yet.
+  app.get('/:id/screenshot/latest', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    const frame = getLatestFrame(id);
+    if (!frame) return reply.status(404).send({ error: 'No screenshot available yet' });
+
+    reply.header('Content-Type', 'image/jpeg');
+    reply.header('Cache-Control', 'no-store');
+    return reply.send(frame.buf);
+  });
+
   // ── GET /devices/:id/screenshot/stream ── SSE live-view relay ─────────────
   // Exempt from rate limiting — one long-lived connection replaces many polls.
   app.get('/:id/screenshot/stream', { config: { rateLimit: false }, onRequest: [app.authenticate] }, async (req, reply) => {
@@ -1272,12 +1293,14 @@ export async function deviceRoutes(app: FastifyInstance) {
       socket.send(JSON.stringify({ type: 'server_ack', payload: { timestamp: new Date().toISOString(), reason: 'connected' } }));
     } catch {}
 
-    // Kick off periodic screenshots on the device.
-    // The interval command also triggers an immediate capture after 3 s.
-    const intervalMin = device.screenshotIntervalMin ?? 5;
-    setTimeout(() => {
-      sendCommand(deviceId, { type: 'set_screenshot_interval', payload: { minutes: intervalMin } });
-    }, 5_000);
+    // Start periodic screenshots only when the user has configured an interval.
+    // A value of null / 0 means "no periodic screenshots" — just take one on content change.
+    const intervalMin = device.screenshotIntervalMin;
+    if (intervalMin && intervalMin > 0) {
+      setTimeout(() => {
+        sendCommand(deviceId, { type: 'set_screenshot_interval', payload: { minutes: intervalMin } });
+      }, 5_000);
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     socket.on('message', async (rawData: any) => {

@@ -130,6 +130,13 @@ const pendingTizenCommand = new Map<string, {
   timer: ReturnType<typeof setTimeout>;
 }>();
 
+// ── Latest-frame in-memory store (device card thumbnail, no disk write) ────
+const latestFrameStore = new Map<string, { buf: Buffer; updatedAt: Date }>();
+
+export function getLatestFrame(deviceId: string): { buf: Buffer; updatedAt: Date } | undefined {
+  return latestFrameStore.get(deviceId);
+}
+
 // ── Live-view SSE relay ────────────────────────────────────────────────────
 type LiveFrame = (dataBase64: string) => void;
 const liveViewers = new Map<string, Set<LiveFrame>>();
@@ -540,11 +547,16 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     }
 
     const buf = Buffer.from(dataBase64, 'base64');
+
+    // Always update the in-memory latest frame (serves device-card thumbnail instantly)
+    latestFrameStore.set(deviceId, { buf, updatedAt: new Date() });
+
+    // Only write to disk + DB for manual screenshots (trigger === 'manual')
+    // Auto shots (content_change, interval) stay in-memory only — no disk/DB storage
+    if (trigger !== 'manual') return;
+
     const fileName = `${randomUUID()}.jpg`;
     const storageKey = `${deviceId}/${fileName}`;
-    await writeFile(join(STORAGE_ROOT, deviceId, fileName), buf).catch(() => {
-      // best-effort — directory may not exist yet
-    });
     // ensure directory
     const { mkdir } = await import('node:fs/promises');
     await mkdir(join(STORAGE_ROOT, deviceId), { recursive: true });

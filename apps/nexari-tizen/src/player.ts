@@ -246,9 +246,6 @@ const Player = {
         void Telemetry.send(this.deviceId).catch((error: unknown) => {
           logger.warn('Initial WebSocket telemetry failed:', error);
         });
-        // Take a screenshot ~10s after connect so the device card thumbnail populates.
-        // Deferred so AVPlay has time to start rendering before we capture.
-        setTimeout(() => { this.takeScreenshot(); }, 10_000);
         // Refresh MDC poll after startup MDC setup completes (Phase 1 scan can take up to 8s)
         setTimeout(() => { this.runMdcPoll(); }, 20000);
       };
@@ -1654,6 +1651,9 @@ const Player = {
     this.currentContent = playlistToPlay;
     this.lastContentSignature = signatureToSet;
     this.cachePlaylist(playlistToPlay, signatureToSet);
+    // Take a screenshot a few seconds after the new content starts rendering
+    // so the device card thumbnail reflects the current content.
+    setTimeout(() => { this.takeScreenshotWithTrigger('content_change'); }, 8_000);
   },
 
   // Download content in background without interrupting playback
@@ -5709,9 +5709,9 @@ const Player = {
         const minutes = Math.max(1, Number(payload?.minutes) || 5);
         logger.info('[Screenshot] interval set to', minutes, 'min');
         // Take one immediately, then repeat
-        setTimeout(() => this.takeScreenshot(), 3_000);
+        setTimeout(() => this.takeScreenshotWithTrigger('interval'), 3_000);
         (this as any)._screenshotIntervalHandle = setInterval(
-          () => this.takeScreenshot(),
+          () => this.takeScreenshotWithTrigger('interval'),
           minutes * 60_000,
         );
         break;
@@ -6595,7 +6595,15 @@ const Player = {
     logger.info(kind + ' updated', { enabled: value });
   },
 
+  takeScreenshotWithTrigger(trigger: 'content_change' | 'interval'): void {
+    this._captureScreenshot(trigger);
+  },
+
   takeScreenshot(): void {
+    this._captureScreenshot('manual');
+  },
+
+  _captureScreenshot(trigger: 'manual' | 'content_change' | 'interval'): void {
     const ws = this.wsConnection;
     if (!ws || ws.readyState !== 1) {
       logger.warn('[Screenshot] WebSocket not connected, cannot send screenshot');
@@ -6604,7 +6612,7 @@ const Player = {
     const send = (dataBase64: string) => {
       ws.send(JSON.stringify({
         type: 'screenshot_data',
-        payload: { dataBase64, trigger: 'manual', contentId: null },
+        payload: { dataBase64, trigger, contentId: null },
       }));
       logger.info('[Screenshot] screenshot_data sent, bytes:', dataBase64.length);
     };

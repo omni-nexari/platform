@@ -11,20 +11,18 @@ import type { ClaimDeviceInput } from '@signage/shared';
 type PairFormInput = Omit<ClaimDeviceInput, 'workspaceId'>;
 import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon } from 'lucide-react';
 
-// Shows the latest stored screenshot using a credentialed fetch → blob URL.
-// Keyed on screenshotId externally so it remounts cleanly when the screenshot changes.
-function DeviceScreenshot({ deviceId, screenshotId }: {
+// Shows the latest in-memory screenshot via the /screenshot/latest endpoint.
+// Fetches fresh each time the component mounts (no screenshotId needed).
+function DeviceScreenshot({ deviceId }: {
   deviceId: string;
-  screenshotId: string | null | undefined;
 }) {
   const [src, setSrc] = useState<string | null>(null);
 
   useEffect(() => {
     setSrc(null);
-    if (!screenshotId) return;
     let blobUrl: string | null = null;
     let cancelled = false;
-    fetch(buildApiUrl(`/devices/${deviceId}/screenshots/${screenshotId}`), { credentials: 'include' })
+    fetch(buildApiUrl(`/devices/${deviceId}/screenshot/latest`), { credentials: 'include' })
       .then(async (res) => {
         if (!res.ok || cancelled) return;
         const blob = await res.blob();
@@ -36,7 +34,7 @@ function DeviceScreenshot({ deviceId, screenshotId }: {
       cancelled = true;
       if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
-  }, [deviceId, screenshotId]);
+  }, [deviceId]);
 
   return (
     <div className={`w-full aspect-video rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${src ? '' : 'bg-[var(--surface)]'}`}>
@@ -361,9 +359,7 @@ export default function DevicesPage() {
                       {liveViewDeviceId === device.id
                         ? <LiveViewInCard deviceId={device.id} onStop={() => setLiveViewDeviceId(null)} />
                         : <DeviceScreenshot
-                            key={device.latestScreenshotId ?? 'no-shot'}
                             deviceId={device.id}
-                            screenshotId={device.latestScreenshotId}
                           />
                       }
 

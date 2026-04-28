@@ -2166,6 +2166,18 @@ export default function DeviceDetailPage() {
                 className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]" />
             </div>
 
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Screenshot Interval</label>
+              <select {...register('screenshotIntervalMin', { valueAsNumber: true })}
+                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]">
+                <option value={0}>Off (on content change only)</option>
+                <option value={5}>Every 5 minutes</option>
+                <option value={15}>Every 15 minutes</option>
+                <option value={30}>Every 30 minutes</option>
+                <option value={60}>Every hour</option>
+              </select>
+            </div>
+
             {/* ── Display Settings (MDC) ───────────────────────────────── */}
             <div className="sm:col-span-2 space-y-5">
 
