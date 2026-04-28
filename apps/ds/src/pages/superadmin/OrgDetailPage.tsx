@@ -49,6 +49,7 @@ interface Member {
 interface Invite {
   id: string;
   email: string;
+  role: string;
   expiresAt: string;
   acceptedAt: string | null;
   createdAt: string;
@@ -435,8 +436,8 @@ export default function OrgDetailPage() {
               >
                 <p className="break-all font-medium">{inv.email}</p>
                 <div className="mt-3">
-                  <Badge tone={getRoleTone(inv.orgRole)} className="capitalize">
-                    {inv.orgRole}
+                  <Badge tone={getRoleTone(inv.role)} className="capitalize">
+                    {inv.role}
                   </Badge>
                 </div>
                 <p className="mt-3 text-xs text-[var(--text-muted)]">
@@ -463,8 +464,8 @@ export default function OrgDetailPage() {
                     <tr key={inv.id}>
                       <td>{inv.email}</td>
                       <td>
-                        <Badge tone={getRoleTone(inv.orgRole)} className="capitalize">
-                        {inv.orgRole}
+                        <Badge tone={getRoleTone(inv.role)} className="capitalize">
+                        {inv.role}
                         </Badge>
                     </td>
                     <td className="text-[var(--text-muted)] text-xs">

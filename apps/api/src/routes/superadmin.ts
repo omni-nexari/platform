@@ -2258,8 +2258,9 @@ export async function superAdminRoutes(app: FastifyInstance) {
       ),
       columns: { id: true, email: true, expiresAt: true, createdAt: true },
     });
+    const pendingInvitesWithRole = pendingInvites.map((inv) => ({ ...inv, role: 'owner' }));
 
-    return reply.send({ org, members, pendingInvites });
+    return reply.send({ org, members, pendingInvites: pendingInvitesWithRole });
   });
 
   // ── POST /superadmin/orgs ───────────────────────────────────────────────────
