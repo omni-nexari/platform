@@ -7124,6 +7124,8 @@ const Player = {
                         continue;
                     }
                     // Download with sync-specific naming
+                    logger.info(`Syncplay: downloading item ${i + 1}/${playlistItems.length}: ${content.name || content.id}`);
+                    this.showIdleScreen && this.showIdleScreen(0);
                     let syncPath = yield ContentManager.downloadSyncContent(content, syncFileName);
                     if (!syncPath) {
                         const id = content.id || item.contentId;
@@ -7158,7 +7160,24 @@ const Player = {
                 return base.slice(dot + 1).toLowerCase();
             };
             const url = (content === null || content === void 0 ? void 0 : content.url) || (item === null || item === void 0 ? void 0 : item.contentUrl) || (item === null || item === void 0 ? void 0 : item.url);
-            const ext = getExt(url);
+            // Try URL first, then originalName (preserves real extension like .mp4/.jpg)
+            const ext = getExt(url) || getExt(content === null || content === void 0 ? void 0 : content.originalName) || getExt(item === null || item === void 0 ? void 0 : item.originalName) || (() => {
+                // Last resort: derive from mimeType
+                const mime = ((content === null || content === void 0 ? void 0 : content.mimeType) || '').toLowerCase();
+                if (mime.includes('mp4') || mime.includes('mpeg'))
+                    return 'mp4';
+                if (mime.includes('webm'))
+                    return 'webm';
+                if (mime.includes('jpeg') || mime.includes('jpg'))
+                    return 'jpg';
+                if (mime.includes('png'))
+                    return 'png';
+                if (mime.includes('gif'))
+                    return 'gif';
+                if (mime.includes('pdf'))
+                    return 'pdf';
+                return null;
+            })();
             // SyncPlay requires IDENTICAL file paths across devices.
             // Use contentId (stable across devices) rather than playlist index.
             const rawId = String((content === null || content === void 0 ? void 0 : content.id) || (item === null || item === void 0 ? void 0 : item.contentId) || index);
