@@ -411,10 +411,13 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
     const { duid, modelName, modelCode, serialNumber, firmwareVersion } = body.data;
 
-    // If this DUID already has a live device token, re-issue pairing code for migration
-    const existing = duid
-      ? await db.query.devices.findFirst({ where: eq(devices.duid, duid) })
+    // If this DUID (or serial as fallback) already has a live device token, auto-resume without re-pairing
+    const existingByDuid = duid
+      ? await db.query.devices.findFirst({ where: and(eq(devices.duid, duid), isNull(devices.deletedAt)) })
       : null;
+    const existing = existingByDuid ?? (serialNumber
+      ? await db.query.devices.findFirst({ where: and(eq(devices.serialNumber, serialNumber), isNull(devices.deletedAt)) })
+      : null);
 
     if (existing?.orgId && existing.deviceToken && !existing.deletedAt) {
       // Device reinstalled — reset mdcNetworkStandby so auto-enable fires on next WS connect
