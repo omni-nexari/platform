@@ -198,10 +198,11 @@ function PlaylistCard({
 
 // ── Sync playlist card ─────────────────────────────────────────────────────
 
-function SyncPlaylistCard({ sp, onEdit, onDelete }: {
+function SyncPlaylistCard({ sp, onEdit, onDelete, onPublish }: {
   sp: SyncPlaylist;
   onEdit: () => void;
   onDelete: () => void;
+  onPublish: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -261,6 +262,10 @@ function SyncPlaylistCard({ sp, onEdit, onDelete }: {
             className="w-full text-left px-4 py-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-raised)]">
             Edit
           </button>
+          <button onClick={() => { setMenuOpen(false); onPublish(); }}
+            className="w-full text-left px-4 py-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-raised)] flex items-center gap-2">
+            <Monitor size={10} /> Publish
+          </button>
           <div className="my-1 border-t" style={{ borderColor: 'var(--border)' }} />
           <button onClick={() => { setMenuOpen(false); onDelete(); }}
             className="w-full text-left px-4 py-1.5 text-xs text-red-400 hover:bg-red-500/10 flex items-center gap-2">
@@ -294,6 +299,7 @@ export default function PlaylistPage() {
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [publishPickerOpen, setPublishPickerOpen] = useState(false);
+  const [syncPublishTarget, setSyncPublishTarget] = useState<SyncPlaylist | null>(null);
 
   const currentFilters = { selectedTagIds };
 
@@ -422,6 +428,27 @@ export default function PlaylistPage() {
     onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to publish playlist'),
   });
 
+  interface SyncGroup { id: string; name: string; syncPlaylist?: { id: string; name: string } | null; }
+  const { data: syncGroups = [] } = useQuery<SyncGroup[]>({
+    queryKey: ['sync-groups', wsId],
+    queryFn: () => api.get<SyncGroup[]>(`/sync-groups?workspaceId=${wsId!}`),
+    enabled: !!wsId && !!syncPublishTarget,
+  });
+
+  const [selectedSyncGroupId, setSelectedSyncGroupId] = useState<string | null>(null);
+
+  const publishSyncMut = useMutation({
+    mutationFn: ({ groupId, syncPlaylistId }: { groupId: string; syncPlaylistId: string }) =>
+      api.patch(`/sync-groups/${groupId}`, { syncPlaylistId }),
+    onSuccess: () => {
+      toast.success('Sync playlist published to group');
+      setSyncPublishTarget(null);
+      setSelectedSyncGroupId(null);
+      void queryClient.invalidateQueries({ queryKey: ['sync-groups', wsId] });
+    },
+    onError: () => toast.error('Failed to publish sync playlist'),
+  });
+
   return (
     <div className="h-full overflow-y-auto bg-[var(--surface)]">
       <div className="max-w-6xl mx-auto p-4 sm:p-6 lg:p-8">
@@ -509,6 +536,10 @@ export default function PlaylistPage() {
                   setConfirmSyncDeleteId(it.id);
                   setConfirmSyncDeleteName(it.name);
                 }}
+                onPublish={() => {
+                  setSelectedSyncGroupId(null);
+                  setSyncPublishTarget(it);
+                }}
               />
             ) : (
               <PlaylistCard
@@ -589,6 +620,56 @@ export default function PlaylistPage() {
           title={`Publish ${publishCandidate.name}`}
           confirmLabel={publishMut.isPending ? 'Publishing…' : 'Publish'}
         />
+      )}
+
+      {/* Sync playlist → publish to sync group picker */}
+      {syncPublishTarget && (
+        <Modal onClose={() => { setSyncPublishTarget(null); setSelectedSyncGroupId(null); }} size="sm">
+          <ModalHeader
+            title={`Publish "${syncPublishTarget.name}"`}
+            onClose={() => { setSyncPublishTarget(null); setSelectedSyncGroupId(null); }}
+          />
+          <ModalBody>
+            <p className="text-sm text-[var(--text-muted)] mb-3">
+              Select the sync group to publish this playlist to. All screens in the group will play it in lockstep.
+            </p>
+            {syncGroups.length === 0 ? (
+              <p className="text-sm text-[var(--text-muted)] italic">No sync groups found. Create one from the Device Groups page.</p>
+            ) : (
+              <div className="flex flex-col gap-2 max-h-64 overflow-y-auto">
+                {syncGroups.map((g) => (
+                  <button
+                    key={g.id}
+                    onClick={() => setSelectedSyncGroupId(g.id)}
+                    className={`text-left rounded-lg border px-3 py-2.5 transition-colors ${selectedSyncGroupId === g.id ? 'border-[var(--accent)] bg-[var(--accent)]/10' : 'border-[var(--border)] hover:border-[var(--accent)]/50'}`}
+                  >
+                    <p className="text-sm font-medium text-[var(--text)]">{g.name}</p>
+                    {g.syncPlaylist && (
+                      <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                        Current: {g.syncPlaylist.name}
+                      </p>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <ModalSecondaryButton onClick={() => { setSyncPublishTarget(null); setSelectedSyncGroupId(null); }}>
+              Cancel
+            </ModalSecondaryButton>
+            <ModalPrimaryButton
+              onClick={() => {
+                if (syncPublishTarget && selectedSyncGroupId) {
+                  publishSyncMut.mutate({ groupId: selectedSyncGroupId, syncPlaylistId: syncPublishTarget.id });
+                }
+              }}
+              disabled={!selectedSyncGroupId || publishSyncMut.isPending}
+            >
+              {publishSyncMut.isPending ? 'Publishing…' : 'Publish'}
+            </ModalPrimaryButton>
+          </ModalFooter>
+        </Modal>
       )}
 
       {/* Create dialog — step 1: pick type, step 2: enter name */}

@@ -181,6 +181,28 @@ export async function syncGroupRoutes(app: FastifyInstance) {
 
     const [updated] = await db.update(syncGroups).set(patch).where(eq(syncGroups.id, id)).returning();
 
+    // When a playlist is assigned, ensure all member devices have publishedSyncGroupId set
+    if ('syncPlaylistId' in body) {
+      const members = await db.query.syncGroupMembers.findMany({
+        where: eq(syncGroupMembers.syncGroupId, id),
+        columns: { deviceId: true },
+      });
+      if (members.length > 0) {
+        const newPlaylistId = body.syncPlaylistId ?? null;
+        if (newPlaylistId) {
+          // Assigning a playlist: mark all members as belonging to this sync group
+          await db.update(devices)
+            .set({ publishedSyncGroupId: id, updatedAt: new Date() })
+            .where(inArray(devices.id, members.map((m) => m.deviceId)));
+        } else {
+          // Clearing the playlist: clear publishedSyncGroupId on member devices
+          await db.update(devices)
+            .set({ publishedSyncGroupId: null, updatedAt: new Date() })
+            .where(inArray(devices.id, members.map((m) => m.deviceId)));
+        }
+      }
+    }
+
     await pushSessionConfig(id);
 
     return reply.send(updated);

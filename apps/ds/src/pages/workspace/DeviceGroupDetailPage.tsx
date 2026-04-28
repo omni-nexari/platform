@@ -9,12 +9,6 @@ import {
 } from 'lucide-react';
 import {
   Badge,
-  Modal,
-  ModalBody,
-  ModalFooter,
-  ModalHeader,
-  ModalPrimaryButton,
-  ModalSecondaryButton,
   Skeleton,
 } from '../../components/UiPrimitives.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
@@ -70,11 +64,6 @@ interface DeviceGroupDetail {
   syncMembers: SyncMember[];
 }
 
-interface SyncPlaylistBrief {
-  id: string;
-  name: string;
-}
-
 const TYPE_META: Record<GroupType, { label: string; icon: React.ReactNode; tone: 'neutral' | 'info' | 'warning' | 'success' }> = {
   sync: { label: 'Sync', icon: <Monitor className="w-4 h-4" />, tone: 'info' },
   videowall: { label: 'Video Wall', icon: <LayoutGrid className="w-4 h-4" />, tone: 'success' },
@@ -99,8 +88,6 @@ export default function DeviceGroupDetailPage() {
   const [nameDraft, setNameDraft] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [addPickerOpen, setAddPickerOpen] = useState(false);
-  const [assignPlaylistOpen, setAssignPlaylistOpen] = useState(false);
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState('');
 
   const { data: group, isLoading } = useQuery<DeviceGroupDetail>({
     queryKey: ['device-group', groupId],
@@ -110,12 +97,6 @@ export default function DeviceGroupDetailPage() {
 
   const isSync = group?.type === 'sync';
   const syncGroupId = group?.syncGroup?.id ?? null;
-
-  const { data: syncPlaylists = [] } = useQuery<SyncPlaylistBrief[]>({
-    queryKey: ['sync-playlists', wsId],
-    queryFn: () => api.get(`/sync-playlists?workspaceId=${wsId}`),
-    enabled: !!wsId && assignPlaylistOpen,
-  });
 
   const renameMut = useMutation({
     mutationFn: (name: string) => api.patch(`/device-groups/${groupId}`, { name }),
@@ -171,17 +152,6 @@ export default function DeviceGroupDetailPage() {
       void qc.invalidateQueries({ queryKey: ['device-group', groupId] });
     },
     onError: () => toast.error('Failed to remove'),
-  });
-
-  const assignPlaylistMut = useMutation({
-    mutationFn: (syncPlaylistId: string | null) =>
-      api.patch(`/sync-groups/${syncGroupId}`, { syncPlaylistId }),
-    onSuccess: () => {
-      toast.success('Playlist assigned');
-      setAssignPlaylistOpen(false);
-      void qc.invalidateQueries({ queryKey: ['device-group', groupId] });
-    },
-    onError: () => toast.error('Failed to assign playlist'),
   });
 
   if (isLoading || !group) {
@@ -286,22 +256,13 @@ export default function DeviceGroupDetailPage() {
           <div className="flex items-center gap-3">
             <Link2 className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
             <div className="text-sm flex-1 min-w-0">
-              <span className="text-[var(--text-muted)]">Playlist: </span>
+              <span className="text-[var(--text-muted)]">Published playlist: </span>
               {group.syncGroup.syncPlaylistName ? (
                 <span className="text-[var(--text)] font-medium">{group.syncGroup.syncPlaylistName}</span>
               ) : (
-                <span className="text-[var(--text-faint)] italic">None assigned</span>
+                <span className="text-[var(--text-faint)] italic">None — publish from the Playlists page</span>
               )}
             </div>
-            <button
-              onClick={() => {
-                setSelectedPlaylistId(group.syncGroup?.syncPlaylistId ?? '');
-                setAssignPlaylistOpen(true);
-              }}
-              className="text-xs px-2.5 py-1.5 rounded-lg bg-[var(--blue)]/15 border border-[var(--blue)]/30 text-[var(--blue)] hover:bg-[var(--blue)]/25 transition-colors"
-            >
-              {group.syncGroup.syncPlaylistName ? 'Change' : 'Assign'}
-            </button>
           </div>
 
           <div className="text-xs text-[var(--text-muted)]">
@@ -382,34 +343,6 @@ export default function DeviceGroupDetailPage() {
             }
           }}
         />
-      )}
-
-      {assignPlaylistOpen && (
-        <Modal onClose={() => setAssignPlaylistOpen(false)} size="sm">
-          <ModalHeader title="Assign Sync Playlist" onClose={() => setAssignPlaylistOpen(false)} />
-          <ModalBody>
-            <label className="block text-sm font-medium text-[var(--text)] mb-1.5">Sync playlist</label>
-            <select
-              className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-lg text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
-              value={selectedPlaylistId}
-              onChange={(e) => setSelectedPlaylistId(e.target.value)}
-            >
-              <option value="">— None —</option>
-              {syncPlaylists.map((sp) => (
-                <option key={sp.id} value={sp.id}>{sp.name}</option>
-              ))}
-            </select>
-          </ModalBody>
-          <ModalFooter>
-            <ModalSecondaryButton onClick={() => setAssignPlaylistOpen(false)}>Cancel</ModalSecondaryButton>
-            <ModalPrimaryButton
-              onClick={() => assignPlaylistMut.mutate(selectedPlaylistId || null)}
-              disabled={assignPlaylistMut.isPending}
-            >
-              Save
-            </ModalPrimaryButton>
-          </ModalFooter>
-        </Modal>
       )}
 
       <ConfirmDialog
