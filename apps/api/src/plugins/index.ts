@@ -117,7 +117,7 @@ export async function registerPlugins(app: FastifyInstance) {
     // req.url contains the full path as received (e.g. /api/v1/superadmin/... on the Pi
     // via nginx, or /superadmin/... if the prefix was stripped). Check for the segment
     // rather than using startsWith so it works regardless of any leading prefix.
-    const urlPath = req.url.split('?')[0];
+    const urlPath = req.url.split('?')[0] ?? req.url;
     if (urlPath.includes('/superadmin')) {
       return {
         accessCookie: SA_ACCESS_COOKIE,
