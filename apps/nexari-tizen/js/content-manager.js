@@ -843,7 +843,14 @@ window.ContentManager = {
     for (const item of playlist.items) {
       try {
         const content = item.content;
-        
+
+        // Skip items with no content object (e.g. orphaned playlist items)
+        if (!content) {
+          logger.warn(`Playlist item ${item.id || item.contentId} has no content object, skipping`);
+          downloadedItems.push(item);
+          continue;
+        }
+
         // Skip if no URL
         if (!content.url) {
           logger.warn(`Content ${content.name} has no URL, skipping download`);
@@ -921,7 +928,7 @@ window.ContentManager = {
           downloadedItems.push(item);
         }
       } catch (error) {
-        logger.error(`Failed to process content: ${item.content.name}`, error);
+        logger.error(`Failed to process content: ${item.content && item.content.name}`, error);
         // Keep original item with remote URL as fallback
         downloadedItems.push(item);
       }

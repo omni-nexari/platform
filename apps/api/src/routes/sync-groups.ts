@@ -191,8 +191,15 @@ export async function syncGroupRoutes(app: FastifyInstance) {
         const newPlaylistId = body.syncPlaylistId ?? null;
         if (newPlaylistId) {
           // Assigning a playlist: mark all members as belonging to this sync group
+          // Clear other published targets to satisfy the single-publish-target constraint.
           await db.update(devices)
-            .set({ publishedSyncGroupId: id, updatedAt: new Date() })
+            .set({
+              publishedSyncGroupId: id,
+              publishedContentId: null,
+              publishedPlaylistId: null,
+              publishedScheduleId: null,
+              updatedAt: new Date(),
+            })
             .where(inArray(devices.id, members.map((m) => m.deviceId)));
         } else {
           // Clearing the playlist: clear publishedSyncGroupId on member devices
@@ -291,9 +298,16 @@ export async function syncGroupRoutes(app: FastifyInstance) {
       await db.insert(syncGroupMembers).values(newMembers).onConflictDoNothing();
       // Point each newly added device at this sync group so the schedule endpoint
       // returns publishedSyncGroup and the player routes to SyncPlay mode.
+      // Clear all other published targets to satisfy the single-publish-target constraint.
       const newDeviceIds = newMembers.map(m => m.deviceId);
       await db.update(devices)
-        .set({ publishedSyncGroupId: id, updatedAt: new Date() })
+        .set({
+          publishedSyncGroupId: id,
+          publishedContentId: null,
+          publishedPlaylistId: null,
+          publishedScheduleId: null,
+          updatedAt: new Date(),
+        })
         .where(inArray(devices.id, newDeviceIds));
     }
 
