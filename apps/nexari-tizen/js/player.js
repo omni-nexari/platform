@@ -184,6 +184,9 @@ const Player = {
                 void Telemetry.send(this.deviceId).catch((error) => {
                     logger.warn('Initial WebSocket telemetry failed:', error);
                 });
+                // Take a screenshot ~10s after connect so the device card thumbnail populates.
+                // Deferred so AVPlay has time to start rendering before we capture.
+                setTimeout(() => { this.takeScreenshot(); }, 10000);
                 // Refresh MDC poll after startup MDC setup completes (Phase 1 scan can take up to 8s)
                 setTimeout(() => { this.runMdcPoll(); }, 20000);
             };
