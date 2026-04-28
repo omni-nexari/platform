@@ -37,6 +37,7 @@ import DeviceDetailPage from './pages/workspace/DeviceDetailPage.js';
 import DeviceGroupsPage from './pages/workspace/DeviceGroupsPage.js';
 import DeviceGroupDetailPage from './pages/workspace/DeviceGroupDetailPage.js';
 import TizenTestPage from './pages/workspace/TizenTestPage.js';
+import B2BTestPage from './pages/workspace/B2BTestPage.js';
 import PosMenuPage from './pages/workspace/PosMenuPage.js';
 import PosOrderPage from './pages/workspace/PosOrderPage.js';
 import PosPaymentPage from './pages/workspace/PosPaymentPage.js';
@@ -308,6 +309,7 @@ export default function App() {
         <Route path="/workspaces/:wsId/devices" element={<DevicesPage />} />
         <Route path="/workspaces/:wsId/devices/groups" element={<DeviceGroupsPage />} />
         <Route path="/workspaces/:wsId/devices/groups/:groupId" element={<DeviceGroupDetailPage />} />
+        <Route path="/workspaces/:wsId/devices/b2b-test" element={<B2BTestPage />} />
         <Route path="/workspaces/:wsId/devices/:deviceId" element={<DeviceDetailPage />} />
         <Route path="/workspaces/:wsId/pos/menu" element={<PosMenuPage />} />
         <Route path="/workspaces/:wsId/pos" element={<PosOrderPage />} />

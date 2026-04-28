@@ -212,7 +212,7 @@ const Player = {
     },
     // Handle WebSocket messages
     handleWebSocketMessage(data) {
-        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
+        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u;
         try {
             const message = JSON.parse(data);
             const messageType = message.type || message.event;
@@ -1121,6 +1121,227 @@ const Player = {
                         catch (e) {
                             const e2 = e;
                             sendTizenCommandResult(false, undefined, ((e2 === null || e2 === void 0 ? void 0 : e2.name) ? e2.name + ': ' : '') + ((e2 === null || e2 === void 0 ? void 0 : e2.message) || String(e)));
+                        }
+                        break;
+                    }
+                    // ── B2BControl API ─────────────────────────────────────────────────────
+                    if (tcAction && tcAction.indexOf('b2b.') === 0) {
+                        const rw3 = window;
+                        const b2bc = (_u = (_t = rw3['b2bapis']) === null || _t === void 0 ? void 0 : _t.b2bcontrol) !== null && _u !== void 0 ? _u : null;
+                        if (!b2bc) {
+                            sendTizenCommandResult(false, undefined, 'b2bapis.b2bcontrol not available on this device');
+                            break;
+                        }
+                        const b2bOk = (val) => sendTizenCommandResult(true, val !== undefined ? val : 'OK');
+                        const b2bErr = (e) => {
+                            var _a;
+                            const e2 = e;
+                            const base = (e2 === null || e2 === void 0 ? void 0 : e2.name) && (e2 === null || e2 === void 0 ? void 0 : e2.message) ? `${e2.name}: ${e2.message}` : ((_a = e2 === null || e2 === void 0 ? void 0 : e2.message) !== null && _a !== void 0 ? _a : String(e));
+                            const hint = (e2 === null || e2 === void 0 ? void 0 : e2.name) === 'SecurityError' ? ' (partner certificate required or LFD-only)' : '';
+                            sendTizenCommandResult(false, undefined, base + hint);
+                        };
+                        try {
+                            switch (tcAction) {
+                                // ── Power ────────────────────────────────────────────────────────
+                                case 'b2b.setPower': {
+                                    const on = tcParams === 'on' || tcParams === true || tcParams === 'ON';
+                                    const methods = on
+                                        ? [['panelOn', []], ['setPower', [true]], ['setDisplayOnOff', [true]], ['setPowerState', ['ON']]]
+                                        : [['panelOff', []], ['setPower', [false]], ['setDisplayOnOff', [false]], ['setPowerState', ['OFF']], ['setPowerOff', []]];
+                                    let dispatched = false;
+                                    for (const [m, args] of methods) {
+                                        if (typeof b2bc[m] === 'function') {
+                                            b2bc[m](...args, () => b2bOk(`Power ${on ? 'on' : 'off'} via ${m}`), b2bErr);
+                                            dispatched = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!dispatched)
+                                        sendTizenCommandResult(false, undefined, 'No suitable setPower method found on this device');
+                                    break;
+                                }
+                                case 'b2b.getPower': {
+                                    const methods = ['getPower', 'getPowerState', 'getPanelMuteStatus'];
+                                    let dispatched = false;
+                                    for (const m of methods) {
+                                        if (typeof b2bc[m] === 'function') {
+                                            b2bc[m]((val) => b2bOk(val), b2bErr);
+                                            dispatched = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!dispatched)
+                                        sendTizenCommandResult(false, undefined, 'No getPower method found on this device');
+                                    break;
+                                }
+                                // ── Input Source ─────────────────────────────────────────────────
+                                case 'b2b.setInputSource': {
+                                    if (typeof b2bc.setInputSource === 'function') {
+                                        b2bc.setInputSource(tcParams, () => b2bOk(`Input set to ${tcParams}`), b2bErr);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'b2bcontrol.setInputSource not available');
+                                    }
+                                    break;
+                                }
+                                case 'b2b.getInputSource': {
+                                    if (typeof b2bc.getInputSource === 'function') {
+                                        b2bc.getInputSource((val) => b2bOk(val), b2bErr);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'b2bcontrol.getInputSource not available');
+                                    }
+                                    break;
+                                }
+                                // ── Volume ───────────────────────────────────────────────────────
+                                case 'b2b.setVolume': {
+                                    const vol = typeof tcParams === 'number' ? Math.max(0, Math.min(100, tcParams)) : 30;
+                                    if (typeof b2bc.setVolume === 'function') {
+                                        b2bc.setVolume(vol, () => b2bOk(`Volume set to ${vol}`), b2bErr);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'b2bcontrol.setVolume not available');
+                                    }
+                                    break;
+                                }
+                                case 'b2b.getVolume': {
+                                    if (typeof b2bc.getVolume === 'function') {
+                                        b2bc.getVolume((val) => b2bOk(val), b2bErr);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'b2bcontrol.getVolume not available');
+                                    }
+                                    break;
+                                }
+                                case 'b2b.setMute': {
+                                    const mute = tcParams === true || tcParams === 'true';
+                                    const muteMethod = ['setMute', 'setPanelMute', 'setPanelMuteStatus'].find(n => typeof b2bc[n] === 'function');
+                                    if (muteMethod) {
+                                        b2bc[muteMethod](mute, () => b2bOk(`Mute set to ${mute}`), b2bErr);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'No setMute method found on this device');
+                                    }
+                                    break;
+                                }
+                                // ── Brightness ───────────────────────────────────────────────────
+                                case 'b2b.setBrightness': {
+                                    const lum = typeof tcParams === 'number' ? Math.max(0, Math.min(100, tcParams)) : 70;
+                                    const lumMethod = ['setDisplayBrightness', 'setBrightness'].find(n => typeof b2bc[n] === 'function');
+                                    if (lumMethod) {
+                                        b2bc[lumMethod](lum, () => b2bOk(`Brightness set to ${lum}`), b2bErr);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'No setBrightness method found on this device');
+                                    }
+                                    break;
+                                }
+                                case 'b2b.getBrightness': {
+                                    const lumGetMethod = ['getDisplayBrightness', 'getBrightness'].find(n => typeof b2bc[n] === 'function');
+                                    if (lumGetMethod) {
+                                        b2bc[lumGetMethod]((val) => b2bOk(val), b2bErr);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'No getBrightness method found on this device');
+                                    }
+                                    break;
+                                }
+                                // ── Device Info ──────────────────────────────────────────────────
+                                case 'b2b.getDeviceInfo': {
+                                    if (typeof b2bc.getDeviceInfo === 'function') {
+                                        b2bc.getDeviceInfo((val) => b2bOk(val), b2bErr);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'b2bcontrol.getDeviceInfo not available');
+                                    }
+                                    break;
+                                }
+                                // ── Reboot ───────────────────────────────────────────────────────
+                                case 'b2b.reboot': {
+                                    const rebootMethod = ['reboot', 'rebootDevice', 'setSystemReboot'].find(n => typeof b2bc[n] === 'function');
+                                    if (rebootMethod) {
+                                        // Send response first — reboot will cut the WebSocket connection
+                                        sendTizenCommandResult(true, `Reboot initiated via b2bcontrol.${rebootMethod}`);
+                                        setTimeout(() => { try {
+                                            b2bc[rebootMethod]();
+                                        }
+                                        catch (_e) { /* best effort */ } }, 200);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'No reboot method found on this device');
+                                    }
+                                    break;
+                                }
+                                // ── App Control ──────────────────────────────────────────────────
+                                case 'b2b.launchApp': {
+                                    if (typeof b2bc.launchApp === 'function') {
+                                        b2bc.launchApp(tcParams, () => b2bOk(`App launched: ${tcParams}`), b2bErr);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'b2bcontrol.launchApp not available');
+                                    }
+                                    break;
+                                }
+                                case 'b2b.stopApp': {
+                                    if (typeof b2bc.stopApp === 'function') {
+                                        b2bc.stopApp(() => b2bOk('App stopped'), b2bErr);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'b2bcontrol.stopApp not available');
+                                    }
+                                    break;
+                                }
+                                case 'b2b.getRunningApp': {
+                                    if (typeof b2bc.getRunningApp === 'function') {
+                                        b2bc.getRunningApp((val) => b2bOk(val), b2bErr);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'b2bcontrol.getRunningApp not available');
+                                    }
+                                    break;
+                                }
+                                // ── OSD & Kiosk Controls ─────────────────────────────────────────
+                                case 'b2b.setOsdDisplay.show':
+                                case 'b2b.setOsdDisplay.hide': {
+                                    const show = tcAction === 'b2b.setOsdDisplay.show';
+                                    if (typeof b2bc.setOsdDisplay === 'function') {
+                                        b2bc.setOsdDisplay(show, () => b2bOk(`OSD ${show ? 'shown' : 'hidden'}`), b2bErr);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'b2bcontrol.setOsdDisplay not available');
+                                    }
+                                    break;
+                                }
+                                case 'b2b.setKeyLock.on':
+                                case 'b2b.setKeyLock.off': {
+                                    const lock = tcAction === 'b2b.setKeyLock.on';
+                                    if (typeof b2bc.setKeyLock === 'function') {
+                                        b2bc.setKeyLock(lock, () => b2bOk(`Key lock ${lock ? 'on' : 'off'}`), b2bErr);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'b2bcontrol.setKeyLock not available');
+                                    }
+                                    break;
+                                }
+                                case 'b2b.setButtonLock.on':
+                                case 'b2b.setButtonLock.off': {
+                                    const lock = tcAction === 'b2b.setButtonLock.on';
+                                    if (typeof b2bc.setButtonLock === 'function') {
+                                        b2bc.setButtonLock(lock, () => b2bOk(`Button lock ${lock ? 'on' : 'off'}`), b2bErr);
+                                    }
+                                    else {
+                                        sendTizenCommandResult(false, undefined, 'b2bcontrol.setButtonLock not available');
+                                    }
+                                    break;
+                                }
+                                default:
+                                    sendTizenCommandResult(false, undefined, `Unknown b2b action: ${tcAction}`);
+                            }
+                        }
+                        catch (e) {
+                            const e2 = e;
+                            const hint = (e2 === null || e2 === void 0 ? void 0 : e2.name) === 'SecurityError' ? ' (partner certificate required)' : '';
+                            sendTizenCommandResult(false, undefined, ((e2 === null || e2 === void 0 ? void 0 : e2.name) && (e2 === null || e2 === void 0 ? void 0 : e2.message) ? `${e2.name}: ${e2.message}` : String(e)) + hint);
                         }
                         break;
                     }
