@@ -9,7 +9,26 @@ ENV_FILE="/etc/signage/api.env"
 
 echo "==> [update] Pulling latest code..."
 cd "$APP_DIR"
+# Stash any local modifications to tracked files so the pull can proceed cleanly.
+# Migration journal and other generated files can drift on the server; we always
+# want the remote version, so pop the stash after pulling (remote wins on conflict).
+if ! git diff --quiet HEAD; then
+  echo "    Local changes detected — stashing before pull..."
+  git stash push --include-untracked -m "update.sh auto-stash $(date -Iseconds)"
+  STASHED=1
+else
+  STASHED=0
+fi
+
 git pull origin "$BRANCH"
+
+if [ "$STASHED" = "1" ]; then
+  echo "    Restoring stash (remote version wins on conflict)..."
+  git stash pop || {
+    echo "    WARNING: stash pop had conflicts — keeping remote version for conflicted files"
+    git checkout -- .
+  }
+fi
 
 echo "==> [update] Installing dependencies..."
 pnpm install --frozen-lockfile
