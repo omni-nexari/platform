@@ -2013,6 +2013,7 @@ const Player = {
               contentId: item.contentId,
               duration: item.duration,
               position: item.position,
+              content: item.content || null,
             }));
 
             // Prepare native SyncPlay playlist locally.
@@ -7097,7 +7098,7 @@ const Player = {
         let content = item.content;
         if (!content) {
           try {
-            content = await API.getContent(item.contentId);
+            content = await API.getContentById(item.contentId);
           } catch (_) {
             content = null;
           }
