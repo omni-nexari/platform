@@ -4,7 +4,7 @@ import { createReadStream, existsSync, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import AdmZip from 'adm-zip';
-import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncPlaylists, syncPlaylistItems, playerReleases, playEvents } from '@signage/db';
+import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents } from '@signage/db';
 import { eq, and, isNull, desc, asc, inArray, sql, ilike, gte, lte, lt } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -1499,6 +1499,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     // Resolve sync group + its sync playlist when publishedSyncGroupId is set
     let publishedSyncGroup: {
       id: string; groupId: number; mode: string;
+      peers: Array<{ deviceId: string; ipAddress: string | null; leaderPriority: number }>;
       syncPlaylist: { id: string; name: string; items: Array<{ id: string; contentId: string | null; durationSeconds: number | null; sortOrder: number; content: typeof contentItems.$inferSelect | null }> } | null;
     } | null = null;
 
@@ -1522,10 +1523,19 @@ export async function deviceRoutes(app: FastifyInstance) {
               })
             : [];
           const spContentMap = Object.fromEntries(spContentRows.map((c) => [c.id, c]));
+          // Fetch all members of this sync group with their device IPs for peer coordination
+          const memberRows = await db
+            .select({ deviceId: syncGroupMembers.deviceId, leaderPriority: syncGroupMembers.leaderPriority, ipAddress: devices.ipAddress })
+            .from(syncGroupMembers)
+            .leftJoin(devices, eq(devices.id, syncGroupMembers.deviceId))
+            .where(eq(syncGroupMembers.syncGroupId, sg.id));
+          const peers = memberRows.map((m) => ({ deviceId: m.deviceId, ipAddress: m.ipAddress ?? null, leaderPriority: m.leaderPriority }));
+
           publishedSyncGroup = {
             id: sg.id,
             groupId: sg.groupId,
             mode: sg.mode,
+            peers,
             syncPlaylist: {
               id: sp.id,
               name: sp.name,

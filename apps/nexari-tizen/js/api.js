@@ -149,7 +149,7 @@ window.API = {
       const sg = publishedTargets.publishedSyncGroup;
       const sp = sg.syncPlaylist;
       if (sp && (sp.items || []).length > 0) {
-        const normalized = API._normalizeSyncPlaylist(sp, sg.groupId, deviceToken);
+        const normalized = API._normalizeSyncPlaylist(sp, sg.groupId, deviceToken, sg);
         if (normalized) {
           logger.info('Using published sync group override:', sg.id, 'groupId:', sg.groupId);
           return normalized;
@@ -230,7 +230,7 @@ window.API = {
   },
 
   // ── Normalize a sync playlist into the player's expected shape ───────────
-  _normalizeSyncPlaylist(syncPlaylist, groupId, deviceToken) {
+  _normalizeSyncPlaylist(syncPlaylist, groupId, deviceToken, syncGroup) {
     // Samsung SyncPlay requires a 16-bit unsigned integer groupID (0..65535).
     // Reject out-of-range/non-numeric values up front so the firmware call site
     // gets a clean failure instead of a confusing TypeMismatchError.
@@ -256,7 +256,7 @@ window.API = {
       playlistId: syncPlaylist.id,
       playlistName: syncPlaylist.name || 'Sync Playlist',
       items,
-      syncPlay: { enabled: true, groupID: numericGroupId },
+      syncPlay: { enabled: true, groupID: numericGroupId, syncGroupId: syncGroup?.id || null, peers: syncGroup?.peers || [] },
     };
   },
 

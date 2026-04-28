@@ -27,6 +27,12 @@ var MDC_TCP_PORT     = 1515;
 var HTTP_PORT        = 9615;
 var CONNECT_TIMEOUT  = 3000;
 
+// ── Sync-peer coordination state ─────────────────────────────────────────
+// Keyed by syncGroupId string.
+// ready: this device's sync content is downloaded and prepared.
+// startAt: timestamp (ms) at which to start SyncPlay, pushed by leader.
+var syncPeerState = {}; // { [syncGroupId]: { ready: boolean, startAt: number|null } }
+
 var CMD_KEY          = 0xB0; // Virtual Remote Control
 var CMD_STATUS        = 0x00; // Status Control (Get)
 var CMD_VIDEO_CONTROL  = 0x04; // Video Control Get
@@ -441,6 +447,62 @@ var server = http.createServer(function(req, res) {
   if (req.method === 'GET' && req.url === '/ping') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // ── Sync-peer coordination routes ────────────────────────────────────
+  // POST /sync-peer/ready   { syncGroupId }  — mark this device ready
+  if (req.method === 'POST' && req.url === '/sync-peer/ready') {
+    var body = '';
+    req.on('data', function(chunk) { body += chunk.toString(); });
+    req.on('end', function() {
+      try { var p = JSON.parse(body); var gid = String(p.syncGroupId || ''); } catch(e) { gid = ''; }
+      if (!gid) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'missing syncGroupId'})); return; }
+      if (!syncPeerState[gid]) syncPeerState[gid] = { ready: false, startAt: null };
+      syncPeerState[gid].ready = true;
+      console.log('[mdc-bridge] sync-peer/ready: group=' + gid);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    return;
+  }
+
+  // GET /sync-peer/status?syncGroupId=X  — returns {ready:bool}
+  if (req.method === 'GET' && req.url && req.url.indexOf('/sync-peer/status') === 0) {
+    var qs = req.url.split('?')[1] || '';
+    var syncGroupIdParam = '';
+    qs.split('&').forEach(function(p) { var kv = p.split('='); if (kv[0] === 'syncGroupId') syncGroupIdParam = decodeURIComponent(kv[1] || ''); });
+    var state = syncPeerState[syncGroupIdParam] || {};
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ready: !!state.ready }));
+    return;
+  }
+
+  // POST /sync-peer/start  { syncGroupId, startAt }  — pushed by leader to follower
+  if (req.method === 'POST' && req.url === '/sync-peer/start') {
+    var startBody = '';
+    req.on('data', function(chunk) { startBody += chunk.toString(); });
+    req.on('end', function() {
+      var sgid, sat;
+      try { var sp = JSON.parse(startBody); sgid = String(sp.syncGroupId || ''); sat = Number(sp.startAt || 0); } catch(e) { sgid = ''; sat = 0; }
+      if (!sgid || !sat) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'missing syncGroupId/startAt'})); return; }
+      if (!syncPeerState[sgid]) syncPeerState[sgid] = { ready: false, startAt: null };
+      syncPeerState[sgid].startAt = sat;
+      console.log('[mdc-bridge] sync-peer/start: group=' + sgid + ' startAt=' + sat);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    return;
+  }
+
+  // GET /sync-peer/start-trigger?syncGroupId=X  — follower polls for startAt
+  if (req.method === 'GET' && req.url && req.url.indexOf('/sync-peer/start-trigger') === 0) {
+    var stqs = req.url.split('?')[1] || '';
+    var stSyncGroupId = '';
+    stqs.split('&').forEach(function(p) { var kv = p.split('='); if (kv[0] === 'syncGroupId') stSyncGroupId = decodeURIComponent(kv[1] || ''); });
+    var stState = syncPeerState[stSyncGroupId] || {};
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ startAt: stState.startAt || null }));
     return;
   }
 
@@ -1791,7 +1853,7 @@ var server = http.createServer(function(req, res) {
     origHandler(req, res);
   });
 
-  server.listen(HTTP_PORT, '127.0.0.1', function() {
-    console.log('[mdc-bridge] Listening on 127.0.0.1:' + HTTP_PORT);
+  server.listen(HTTP_PORT, '0.0.0.0', function() {
+    console.log('[mdc-bridge] Listening on 0.0.0.0:' + HTTP_PORT);
   });
 };

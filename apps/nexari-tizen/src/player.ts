@@ -90,6 +90,7 @@ const Player = {
   currentAvPlayProfileKey: null as string | null,
   isSyncPlaying: false,
   isSyncStarting: false,
+  syncCoordinationInProgress: false,
   syncPlayMode: 'none' as 'none' | 'native',
   syncPlayListener: null as ((data: any) => void) | null,
   syncplayBackend: null as 'b2bapis' | 'webapis' | null,
@@ -1976,9 +1977,6 @@ const Player = {
           } else {
             logger.info(`Samsung SyncPlay enabled for playlist: ${content.playlistName}`);
 
-            // If the playlist/group hasn't changed and native SyncPlay is already running (or starting),
-            // do NOT re-create/re-start it on every periodic refresh. That stop/start churn can produce
-            // immediate SYNC_PLAY_STOP_DONE right after a start.
             const desiredGroupID = Number.isFinite(Number(content.syncPlay.groupID)) ? Number(content.syncPlay.groupID) : 5;
             const previousWantsSamsungSyncPlay = !!(this.currentContent?.syncPlay && this.currentContent.syncPlay.enabled);
             const previousGroupID = Number.isFinite(Number(this.currentContent?.syncPlay?.groupID))
@@ -1991,6 +1989,7 @@ const Player = {
               (this.isSyncPlaying || this.isSyncStarting) &&
               !!this.syncPlaylistState?.prepared;
 
+            // Already running SyncPlay with same content — keep it
             if (
               previousWantsSamsungSyncPlay &&
               isNativeSyncActive &&
@@ -2005,7 +2004,21 @@ const Player = {
               return;
             }
 
-            // Keep showing current playback while we prepare in background.
+            // Coordination already kicked off for this same content — don't restart
+            if (
+              previousWantsSamsungSyncPlay &&
+              this.syncCoordinationInProgress &&
+              newSignature &&
+              this.lastContentSignature &&
+              newSignature === this.lastContentSignature &&
+              desiredGroupID === previousGroupID
+            ) {
+              logger.info('SyncPlay coordination already in progress for this content, skipping');
+              this.lastContentSignature = newSignature;
+              this.currentContent = content;
+              return;
+            }
+
             this.pendingPlaylist = null;
             this.pendingSignature = null;
 
@@ -2016,23 +2029,20 @@ const Player = {
               content: item.content || null,
             }));
 
-            // Prepare native SyncPlay playlist locally.
             const groupID = desiredGroupID;
-            const usedNative = await this.prepareSyncPlaylistNative({
-              playlistItems,
-              groupId: groupID,
-              folderId: groupID,
+
+            // Start regular playback immediately so the screen shows content while peers download
+            this.downloadContentInBackground(content, newSignature);
+
+            // Coordinate SyncPlay in background: download sync files, wait for all peers, then start together
+            this.syncCoordinationInProgress = true;
+            this.lastContentSignature = newSignature;
+            this.currentContent = content;
+            this.coordinateSyncPlay(content, groupID, playlistItems).catch((err) => {
+              logger.error('SyncPlay coordination failed:', err);
+              this.syncCoordinationInProgress = false;
             });
-
-            if (usedNative) {
-              // Start native SyncPlay now; scheduling alignment is handled by the schedule start time.
-              await this.startSyncPlayNative({ groupId: groupID, folderId: groupID });
-              this.lastContentSignature = newSignature;
-              this.currentContent = content;
-              return;
-            }
-
-            logger.error('Samsung SyncPlay enabled but native prepare failed; falling back to regular playback');
+            return;
           }
         }
 
@@ -7085,10 +7095,11 @@ const Player = {
 
   async buildSyncplayContents(
     playlistItems: any[] = [],
-    opts: { requireLocal?: boolean } = {}
+    opts: { requireLocal?: boolean; suppressIdleScreen?: boolean } = {}
   ): Promise<Array<{ path: string; duration: number }>> {
     const contents = [];
     const requireLocal = opts.requireLocal !== false;
+    const suppressIdleScreen = !!opts.suppressIdleScreen;
 
     for (let i = 0; i < playlistItems.length; i++) {
       const item = playlistItems[i];
@@ -7130,7 +7141,7 @@ const Player = {
 
         // Download with sync-specific naming
         logger.info(`Syncplay: downloading item ${i + 1}/${playlistItems.length}: ${content.name || content.id}`);
-        this.showIdleScreen && this.showIdleScreen(0);
+        if (!suppressIdleScreen) this.showIdleScreen && this.showIdleScreen(0);
         let syncPath = await ContentManager.downloadSyncContent(content, syncFileName);
         if (!syncPath) {
           const id = content.id || item.contentId;
@@ -7150,6 +7161,132 @@ const Player = {
     }
 
     return contents;
+  },
+
+  async coordinateSyncPlay(content: any, groupID: number, playlistItems: any[]): Promise<void> {
+    const NODE_PORT = 9615;
+    const syncGroupId = String(content.syncPlay?.syncGroupId || content.id || groupID);
+    const peers: Array<{ deviceId: string; ipAddress: string | null; leaderPriority: number }> = content.syncPlay?.peers || [];
+    const myDeviceId = this.deviceId || '';
+
+    // Leader = peer with the lowest leaderPriority (or first alphabetically if tied)
+    const myPeer = peers.find((p) => p.deviceId === myDeviceId);
+    const sortedByPriority = [...peers].sort((a, b) => a.leaderPriority - b.leaderPriority || a.deviceId.localeCompare(b.deviceId));
+    const isLeader = !sortedByPriority.length || (sortedByPriority[0].deviceId === myDeviceId);
+    logger.info(`SyncPlay coordination: role=${isLeader ? 'LEADER' : 'FOLLOWER'} syncGroupId=${syncGroupId} peers=${peers.length}`);
+
+    try {
+      // Download sync content in background (suppress idle screen since regular playback is running)
+      const prepared = await this.prepareSyncPlaylistNative({
+        playlistItems,
+        groupId: groupID,
+        folderId: groupID,
+        suppressIdleScreen: true,
+      });
+      if (!prepared) {
+        logger.error('SyncPlay coordination: prepareSyncPlaylistNative failed, staying on regular playback');
+        this.syncCoordinationInProgress = false;
+        return;
+      }
+
+      // Mark this device as ready
+      try {
+        await fetch(`http://127.0.0.1:${NODE_PORT}/sync-peer/ready`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ syncGroupId }),
+        });
+      } catch (e) {
+        logger.warn('SyncPlay: failed to post ready to local bridge', e);
+      }
+
+      const TIMEOUT_MS = 120_000; // 2 minutes max
+      const POLL_MS = 2_000;
+
+      let startAt: number;
+
+      if (isLeader) {
+        // Wait for all followers to report ready
+        const followers = peers.filter((p) => p.deviceId !== myDeviceId && p.ipAddress);
+        logger.info(`SyncPlay leader: waiting for ${followers.length} follower(s) to be ready`);
+
+        const deadline = Date.now() + TIMEOUT_MS;
+        while (Date.now() < deadline) {
+          const statuses = await Promise.all(
+            followers.map(async (peer) => {
+              try {
+                const resp = await fetch(
+                  `http://${peer.ipAddress}:${NODE_PORT}/sync-peer/status?syncGroupId=${encodeURIComponent(syncGroupId)}`
+                );
+                if (!resp.ok) return false;
+                const json = await resp.json() as any;
+                return json.ready === true;
+              } catch {
+                return false;
+              }
+            })
+          );
+          if (statuses.every(Boolean)) {
+            logger.info('SyncPlay leader: all followers ready');
+            break;
+          }
+          logger.info(`SyncPlay leader: waiting... (${statuses.filter(Boolean).length}/${followers.length} ready)`);
+          await new Promise((r) => setTimeout(r, POLL_MS));
+        }
+
+        // Push start trigger to all followers
+        startAt = Date.now() + 3000;
+        await Promise.all(
+          followers.map((peer) =>
+            fetch(`http://${peer.ipAddress}:${NODE_PORT}/sync-peer/start`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ syncGroupId, startAt }),
+            }).catch((e) => logger.warn('SyncPlay leader: failed to push start to', peer.ipAddress, e))
+          )
+        );
+        logger.info(`SyncPlay leader: start triggers sent, startAt=${startAt}`);
+      } else {
+        // Follower: poll local bridge for start trigger from leader
+        logger.info('SyncPlay follower: polling for start trigger...');
+        startAt = 0;
+        const deadline = Date.now() + TIMEOUT_MS;
+        while (Date.now() < deadline) {
+          try {
+            const resp = await fetch(
+              `http://127.0.0.1:${NODE_PORT}/sync-peer/start-trigger?syncGroupId=${encodeURIComponent(syncGroupId)}`
+            );
+            if (resp.ok) {
+              const json = await resp.json() as any;
+              if (json.startAt) {
+                startAt = json.startAt;
+                logger.info(`SyncPlay follower: received startAt=${startAt}`);
+                break;
+              }
+            }
+          } catch (e) {
+            logger.warn('SyncPlay follower: poll start-trigger error', e);
+          }
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        if (!startAt) {
+          logger.warn('SyncPlay follower: timed out waiting for start trigger; starting now');
+          startAt = Date.now() + 500;
+        }
+      }
+
+      // Wait until the coordinated start time
+      const wait = Math.max(0, startAt - Date.now());
+      if (wait > 0) {
+        logger.info(`SyncPlay: waiting ${wait}ms for coordinated start`);
+        await new Promise((r) => setTimeout(r, wait));
+      }
+
+      // All devices start SyncPlay simultaneously
+      await this.startSyncPlayNative({ groupId: groupID, folderId: groupID });
+    } finally {
+      this.syncCoordinationInProgress = false;
+    }
   },
 
   async getSyncPlayFileName(content: any, item: any, index: number): Promise<string | null> {
@@ -7193,9 +7330,9 @@ const Player = {
     if (!this.isSyncplayAvailable()) return false;
 
     try {
-      const { playlistItems = [], groupId } = data || {};
+      const { playlistItems = [], groupId, suppressIdleScreen } = data || {};
 
-      const contentsArr = await this.buildSyncplayContents(playlistItems, { requireLocal: true });
+      const contentsArr = await this.buildSyncplayContents(playlistItems, { requireLocal: true, suppressIdleScreen: !!suppressIdleScreen });
       if (!contentsArr.length) {
         logger.error('Syncplay: no playable items for native playlist');
         return false;
