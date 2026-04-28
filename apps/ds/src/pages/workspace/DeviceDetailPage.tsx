@@ -2972,6 +2972,7 @@ export default function DeviceDetailPage() {
           </SectionCard>
 
           {screenshots.length > 0 && (
+            <SectionCard>
               <SectionCardHeader>
                 <h2 className="text-sm font-semibold text-[var(--text)]">
                   Screenshots <span className="text-[var(--text-muted)] font-normal">({screenshots.length})</span>
