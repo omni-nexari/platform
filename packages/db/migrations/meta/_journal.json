@@ -358,6 +358,13 @@
       "when": 1774117800000,
       "tag": "0050_device_group_sync_link",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1774119600000,
+      "tag": "0051_client_org_invite_owner_link",
+      "breakpoints": true
     }
   ]
 }

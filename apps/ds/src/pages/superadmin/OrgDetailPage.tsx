@@ -49,7 +49,6 @@ interface Member {
 interface Invite {
   id: string;
   email: string;
-  orgRole: string;
   expiresAt: string;
   acceptedAt: string | null;
   createdAt: string;
@@ -122,7 +121,6 @@ export default function OrgDetailPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<'owner' | 'admin' | 'member'>('owner');
   const [showDelete, setShowDelete] = useState(false);
   const [quotaInput, setQuotaInput] = useState('');
   const [selectedPlan, setSelectedPlan] = useState<OrgPlan | null>(null);
@@ -178,7 +176,7 @@ export default function OrgDetailPage() {
 
   const inviteMut = useMutation({
     mutationFn: () =>
-      saApi.post(`/superadmin/orgs/${id}/invite`, { email: inviteEmail, orgRole: inviteRole }),
+      saApi.post(`/superadmin/orgs/${id}/invite`, { email: inviteEmail }),
     onSuccess: () => {
       toast.success(`Invitation sent to ${inviteEmail}`);
       setInviteEmail('');
@@ -408,16 +406,6 @@ export default function OrgDetailPage() {
             placeholder="email@example.com"
             className="input flex-1"
           />
-          <select
-            value={inviteRole}
-            onChange={(e) => setInviteRole(e.target.value as 'owner' | 'admin' | 'member')}
-            className="input"
-            style={{ minWidth: '120px' }}
-          >
-            <option value="owner">Owner</option>
-            <option value="admin">Admin</option>
-            <option value="member">Member</option>
-          </select>
           <button
             onClick={() => inviteMut.mutate()}
             disabled={!inviteEmail || inviteMut.isPending}

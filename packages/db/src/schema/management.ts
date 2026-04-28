@@ -84,9 +84,9 @@ export const clientOrgOwnerInvitations = pgTable('client_org_owner_invitations',
   managementCompanyId: uuid('management_company_id')
     .notNull()
     .references(() => managementCompanies.id),
-  invitedByAdminId: uuid('invited_by_admin_id')
-    .notNull()
-    .references(() => managementCompanyAdmins.id),
+  // one of these will be set depending on who sent the invite
+  invitedByOwnerId: uuid('invited_by_owner_id'), // FK to platform_owners — bare UUID
+  invitedByAdminId: uuid('invited_by_admin_id').references(() => managementCompanyAdmins.id),
   email: text('email').notNull(),
   token: text('token').notNull().unique(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),

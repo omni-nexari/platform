@@ -2312,7 +2312,8 @@ export async function superAdminRoutes(app: FastifyInstance) {
     await db.insert(clientOrgOwnerInvitations).values({
       organizationId: org.id,
       managementCompanyId: resolvedCompanyId,
-      invitedByAdminId: caller.sub,
+      invitedByOwnerId: isOwnerCaller(caller) ? caller.sub : null,
+      invitedByAdminId: isOwnerCaller(caller) ? null : caller.sub,
       email: body.data.ownerEmail.toLowerCase(),
       token,
       expiresAt: inviteExpiry(7),
@@ -2465,7 +2466,8 @@ export async function superAdminRoutes(app: FastifyInstance) {
     await db.insert(clientOrgOwnerInvitations).values({
       organizationId: id,
       managementCompanyId: companyId,
-      invitedByAdminId: caller.sub,
+      invitedByOwnerId: isOwnerCaller(caller) ? caller.sub : null,
+      invitedByAdminId: isOwnerCaller(caller) ? null : caller.sub,
       email: body.data.email.toLowerCase(),
       token,
       expiresAt: inviteExpiry(7),
