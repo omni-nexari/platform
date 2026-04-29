@@ -91,11 +91,14 @@ const Player = {
   isSyncPlaying: false,
   isSyncStarting: false,
   syncCoordinationInProgress: false,
+  syncCoordinationSignature: null as string | null,
   syncPlayMode: 'none' as 'none' | 'native',
   syncPlayListener: null as ((data: any) => void) | null,
   syncplayBackend: null as 'b2bapis' | 'webapis' | null,
   /** Watchdog timer that recovers state if SYNC_PLAY_START_DONE never fires. */
   syncStartWatchdog: null as ReturnType<typeof setTimeout> | null,
+  /** Timestamp of last createPlaylist failure; used to rate-limit retries (skip for 2 min after failure). */
+  syncplayCreateListFailedAt: 0,
   deviceToken: null as string | null,
   _scannedMdcId: null as number | null, // MDC device ID found by scan; persisted to DB once WS is open
   _mdcStartupDone: false, // Set to true once Phase 1 ID scan completes; gates sendMdcHeartbeat
@@ -2009,12 +2012,11 @@ const Player = {
               previousWantsSamsungSyncPlay &&
               this.syncCoordinationInProgress &&
               newSignature &&
-              this.lastContentSignature &&
-              newSignature === this.lastContentSignature &&
+              this.syncCoordinationSignature &&
+              newSignature === this.syncCoordinationSignature &&
               desiredGroupID === previousGroupID
             ) {
               logger.info('SyncPlay coordination already in progress for this content, skipping');
-              this.lastContentSignature = newSignature;
               this.currentContent = content;
               return;
             }
@@ -2031,16 +2033,19 @@ const Player = {
 
             const groupID = desiredGroupID;
 
-            // Start regular playback immediately so the screen shows content while peers download
+            // Start regular playback immediately so the screen shows content while peers download.
+            // IMPORTANT: do NOT set lastContentSignature here — that would cause trySwapToPendingContent
+            // to think content is already playing and skip rendering.
             this.downloadContentInBackground(content, newSignature);
 
             // Coordinate SyncPlay in background: download sync files, wait for all peers, then start together
             this.syncCoordinationInProgress = true;
-            this.lastContentSignature = newSignature;
+            this.syncCoordinationSignature = newSignature; // used for dedup only; not lastContentSignature
             this.currentContent = content;
             this.coordinateSyncPlay(content, groupID, playlistItems).catch((err) => {
               logger.error('SyncPlay coordination failed:', err);
               this.syncCoordinationInProgress = false;
+              this.syncCoordinationSignature = null;
             });
             return;
           }
@@ -7155,12 +7160,51 @@ const Player = {
 
         const duration = Math.max(1, Math.round(item.duration || content.duration || 10));
         contents.push({ path: syncPath, duration });
+        logger.info(`Syncplay: built item ${i + 1}/${playlistItems.length}, path=${syncPath}, duration=${duration}s`);
       } catch (err) {
         logger.warn('Syncplay: failed to build item', item.contentId, err);
       }
     }
 
+    logger.info(`Syncplay: buildSyncplayContents returning ${contents.length} item(s)`);
     return contents;
+  },
+
+  // XHR-based HTTP helper with explicit timeout (Tizen 4 fetch to localhost is unreliable).
+  syncPeerXhr(method: string, url: string, body: any, timeoutMs: number): Promise<{ ok: boolean; status: number; json: any }> {
+    return new Promise((resolve) => {
+      try {
+        const xhr = new XMLHttpRequest();
+        let settled = false;
+        const finish = (result: { ok: boolean; status: number; json: any }) => {
+          if (settled) return;
+          settled = true;
+          resolve(result);
+        };
+        const to = setTimeout(() => {
+          try { xhr.abort(); } catch (_) {}
+          finish({ ok: false, status: 0, json: null });
+        }, timeoutMs);
+        xhr.onreadystatechange = () => {
+          if (xhr.readyState !== 4) return;
+          clearTimeout(to);
+          let json: any = null;
+          try { json = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch (_) {}
+          finish({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, json });
+        };
+        xhr.onerror = () => { clearTimeout(to); finish({ ok: false, status: 0, json: null }); };
+        xhr.ontimeout = () => { clearTimeout(to); finish({ ok: false, status: 0, json: null }); };
+        xhr.open(method, url, true);
+        if (body !== null && body !== undefined) {
+          xhr.setRequestHeader('Content-Type', 'application/json');
+          xhr.send(typeof body === 'string' ? body : JSON.stringify(body));
+        } else {
+          xhr.send();
+        }
+      } catch (e) {
+        resolve({ ok: false, status: 0, json: null });
+      }
+    });
   },
 
   async coordinateSyncPlay(content: any, groupID: number, playlistItems: any[]): Promise<void> {
@@ -7176,7 +7220,17 @@ const Player = {
     logger.info(`SyncPlay coordination: role=${isLeader ? 'LEADER' : 'FOLLOWER'} syncGroupId=${syncGroupId} peers=${peers.length}`);
 
     try {
-      // Download sync content in background (suppress idle screen since regular playback is running)
+      // Rate-limit SyncPlay retries: if createPlaylist failed recently, skip and stay on regular playback.
+      const msSinceFailure = Date.now() - (this.syncplayCreateListFailedAt || 0);
+      const SYNCPLAY_RETRY_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes
+      if (msSinceFailure < SYNCPLAY_RETRY_COOLDOWN_MS) {
+        logger.info(`SyncPlay coordination: skipping (createPlaylist failed ${Math.round(msSinceFailure / 1000)}s ago, cooldown ${SYNCPLAY_RETRY_COOLDOWN_MS / 1000}s)`);
+        this.syncCoordinationInProgress = false;
+        return;
+      }
+
+      // Prepare SyncPlay playlist (download sync files, create hardware playlist).
+      // suppress idle screen since regular playback is already running.
       const prepared = await this.prepareSyncPlaylistNative({
         playlistItems,
         groupId: groupID,
@@ -7185,23 +7239,35 @@ const Player = {
       });
       if (!prepared) {
         logger.error('SyncPlay coordination: prepareSyncPlaylistNative failed, staying on regular playback');
+        // Ensure regular content is rendering — in case something interrupted playback during prep.
+        const isPlaying =
+          (this.currentPlaylistController && !this.currentPlaylistController.cancelled) ||
+          this._zoneMode ||
+          (this.syncPlayMode === 'native' && this.isSyncPlaying);
+        if (!isPlaying) {
+          logger.info('SyncPlay coordination: nothing playing after failure — attempting render from pending/cache');
+          if (this.pendingPlaylist) {
+            this.trySwapToPendingContent(true);
+          } else if (!this.tryRenderCachedPlaylist('syncplay-fallback')) {
+            this.showIdleScreen();
+          }
+        }
         this.syncCoordinationInProgress = false;
         return;
       }
 
-      // Mark this device as ready
-      try {
-        await fetch(`http://127.0.0.1:${NODE_PORT}/sync-peer/ready`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ syncGroupId }),
-        });
-      } catch (e) {
-        logger.warn('SyncPlay: failed to post ready to local bridge', e);
+      // Mark this device as ready (POST to local Node bridge via XHR + timeout)
+      logger.info(`SyncPlay: posting ready to local bridge http://127.0.0.1:${NODE_PORT}/sync-peer/ready`);
+      const readyResp = await this.syncPeerXhr('POST', `http://127.0.0.1:${NODE_PORT}/sync-peer/ready`, { syncGroupId }, 5000);
+      if (readyResp.ok) {
+        logger.info('SyncPlay: ready posted to local bridge OK');
+      } else {
+        logger.warn(`SyncPlay: failed to post ready (status=${readyResp.status})`);
       }
 
       const TIMEOUT_MS = 120_000; // 2 minutes max
       const POLL_MS = 2_000;
+      const HTTP_TIMEOUT_MS = 4000;
 
       let startAt: number;
 
@@ -7209,24 +7275,22 @@ const Player = {
         // Wait for all followers to report ready
         const followers = peers.filter((p) => p.deviceId !== myDeviceId && p.ipAddress);
         logger.info(`SyncPlay leader: waiting for ${followers.length} follower(s) to be ready`);
+        followers.forEach((p) => logger.info(`SyncPlay leader: follower ip=${p.ipAddress} deviceId=${p.deviceId}`));
 
         const deadline = Date.now() + TIMEOUT_MS;
         while (Date.now() < deadline) {
           const statuses = await Promise.all(
             followers.map(async (peer) => {
-              try {
-                const resp = await fetch(
-                  `http://${peer.ipAddress}:${NODE_PORT}/sync-peer/status?syncGroupId=${encodeURIComponent(syncGroupId)}`
-                );
-                if (!resp.ok) return false;
-                const json = await resp.json() as any;
-                return json.ready === true;
-              } catch {
-                return false;
-              }
+              const r = await this.syncPeerXhr(
+                'GET',
+                `http://${peer.ipAddress}:${NODE_PORT}/sync-peer/status?syncGroupId=${encodeURIComponent(syncGroupId)}`,
+                null,
+                HTTP_TIMEOUT_MS
+              );
+              return !!(r.ok && r.json && r.json.ready === true);
             })
           );
-          if (statuses.every(Boolean)) {
+          if (followers.length === 0 || statuses.every(Boolean)) {
             logger.info('SyncPlay leader: all followers ready');
             break;
           }
@@ -7234,38 +7298,45 @@ const Player = {
           await new Promise((r) => setTimeout(r, POLL_MS));
         }
 
-        // Push start trigger to all followers
+        // Push start trigger to all followers (3s grace gives all peers time to receive)
         startAt = Date.now() + 3000;
         await Promise.all(
-          followers.map((peer) =>
-            fetch(`http://${peer.ipAddress}:${NODE_PORT}/sync-peer/start`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ syncGroupId, startAt }),
-            }).catch((e) => logger.warn('SyncPlay leader: failed to push start to', peer.ipAddress, e))
-          )
+          followers.map(async (peer) => {
+            const r = await this.syncPeerXhr(
+              'POST',
+              `http://${peer.ipAddress}:${NODE_PORT}/sync-peer/start`,
+              { syncGroupId, startAt },
+              HTTP_TIMEOUT_MS
+            );
+            if (r.ok) {
+              logger.info(`SyncPlay leader: start pushed to ${peer.ipAddress} OK`);
+            } else {
+              logger.warn(`SyncPlay leader: start push to ${peer.ipAddress} failed (status=${r.status})`);
+            }
+          })
         );
         logger.info(`SyncPlay leader: start triggers sent, startAt=${startAt}`);
       } else {
         // Follower: poll local bridge for start trigger from leader
-        logger.info('SyncPlay follower: polling for start trigger...');
+        logger.info('SyncPlay follower: polling local bridge for start trigger...');
         startAt = 0;
         const deadline = Date.now() + TIMEOUT_MS;
+        let pollCount = 0;
         while (Date.now() < deadline) {
-          try {
-            const resp = await fetch(
-              `http://127.0.0.1:${NODE_PORT}/sync-peer/start-trigger?syncGroupId=${encodeURIComponent(syncGroupId)}`
-            );
-            if (resp.ok) {
-              const json = await resp.json() as any;
-              if (json.startAt) {
-                startAt = json.startAt;
-                logger.info(`SyncPlay follower: received startAt=${startAt}`);
-                break;
-              }
-            }
-          } catch (e) {
-            logger.warn('SyncPlay follower: poll start-trigger error', e);
+          pollCount++;
+          const r = await this.syncPeerXhr(
+            'GET',
+            `http://127.0.0.1:${NODE_PORT}/sync-peer/start-trigger?syncGroupId=${encodeURIComponent(syncGroupId)}`,
+            null,
+            HTTP_TIMEOUT_MS
+          );
+          if (r.ok && r.json && r.json.startAt) {
+            startAt = Number(r.json.startAt);
+            logger.info(`SyncPlay follower: received startAt=${startAt} after ${pollCount} poll(s)`);
+            break;
+          }
+          if (pollCount % 10 === 0) {
+            logger.info(`SyncPlay follower: still waiting for start trigger (poll #${pollCount})`);
           }
           await new Promise((r) => setTimeout(r, 1000));
         }
@@ -7282,10 +7353,15 @@ const Player = {
         await new Promise((r) => setTimeout(r, wait));
       }
 
-      // All devices start SyncPlay simultaneously
+      // All devices start SyncPlay simultaneously via official Samsung API
+      logger.info('SyncPlay: invoking startSyncPlayNative now (coordinated start)');
       await this.startSyncPlayNative({ groupId: groupID, folderId: groupID });
+    } catch (err) {
+      logger.error('SyncPlay coordination error:', err);
     } finally {
       this.syncCoordinationInProgress = false;
+      this.syncCoordinationSignature = null;
+      logger.info('SyncPlay coordination: finished, in-progress flag cleared');
     }
   },
 
@@ -7327,18 +7403,25 @@ const Player = {
   },
 
   async prepareSyncPlaylistNative(data: any): Promise<boolean> {
-    if (!this.isSyncplayAvailable()) return false;
+    if (!this.isSyncplayAvailable()) {
+      logger.warn('Syncplay: prepareSyncPlaylistNative called but no SyncPlay backend available');
+      return false;
+    }
+    logger.info(`Syncplay: prepareSyncPlaylistNative starting, backend=${this.syncplayBackend}`);
 
     try {
       const { playlistItems = [], groupId, suppressIdleScreen } = data || {};
+      logger.info(`Syncplay: building contents for ${playlistItems.length} item(s)`);
 
       const contentsArr = await this.buildSyncplayContents(playlistItems, { requireLocal: true, suppressIdleScreen: !!suppressIdleScreen });
+      logger.info(`Syncplay: built ${contentsArr.length} content(s) for native playlist`);
       if (!contentsArr.length) {
         logger.error('Syncplay: no playable items for native playlist');
         return false;
       }
 
       // Pre-clean: remove any existing playlist
+      logger.info('Syncplay: pre-cleaning previous playlist (if any)');
       if (this.syncplayBackend === 'b2bapis') {
         try {
           (window as any).b2bapis.b2bsyncplay.clearSyncPlayList(
@@ -7359,21 +7442,33 @@ const Player = {
         }
       }
 
-      await new Promise((resolve, reject) => {
-        const onSuccess = (res: any) => {
-          logger.info('Syncplay: playlist created', res?.result, res?.data);
-          resolve(true);
-        };
-        const onError = (err: any) => {
-          logger.error('Syncplay: createPlaylist failed', err?.name, err?.message, '(code:', err?.code, ')');
-          reject(err);
-        };
-        if (this.syncplayBackend === 'b2bapis') {
-          (window as any).b2bapis.b2bsyncplay.makeSyncPlayList(contentsArr, onSuccess, onError);
-        } else {
-          (webapis as any).syncplay.createPlaylist(contentsArr, onSuccess, onError);
-        }
-      });
+      logger.info(`Syncplay: calling ${this.syncplayBackend === 'b2bapis' ? 'b2bsyncplay.makeSyncPlayList' : 'syncplay.createPlaylist'} with ${contentsArr.length} item(s)`);
+      await Promise.race([
+        new Promise<void>((resolve, reject) => {
+          const onSuccess = (res: any) => {
+            logger.info('Syncplay: playlist created', res?.result, res?.data);
+            resolve();
+          };
+          const onError = (err: any) => {
+            logger.error('Syncplay: createPlaylist failed', err?.name, err?.message, '(code:', err?.code, ')');
+            reject(err);
+          };
+          try {
+            if (this.syncplayBackend === 'b2bapis') {
+              (window as any).b2bapis.b2bsyncplay.makeSyncPlayList(contentsArr, onSuccess, onError);
+            } else {
+              (webapis as any).syncplay.createPlaylist(contentsArr, onSuccess, onError);
+            }
+          } catch (e) {
+            logger.error('Syncplay: createPlaylist threw synchronously', e);
+            reject(e);
+          }
+        }),
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error('Syncplay: createPlaylist timed out after 30s')), 30000)
+        ),
+      ]);
+      logger.info('Syncplay: createPlaylist promise resolved');
 
       // New playlist prepared => treat as not-started yet.
       this.isSyncStarting = false;
@@ -7393,6 +7488,7 @@ const Player = {
       return true;
     } catch (err) {
       logger.error('Syncplay: prepare playlist native failed', err);
+      this.syncplayCreateListFailedAt = Date.now();
       return false;
     }
   },
