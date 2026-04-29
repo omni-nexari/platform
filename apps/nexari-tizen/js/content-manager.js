@@ -146,11 +146,21 @@ window.ContentManager = {
           resolve(path);
         } else {
           logger.info('Creating content directory...');
+          // Guard against silent callback-never-fires on fresh WGT install
+          var createTimer = setTimeout(function() {
+            logger.warn('createDirectory timed out — resolving path anyway:', path);
+            self.storagePath = path;
+            resolve(path);
+          }, 5000);
           tizen.filesystem.createDirectory(path, true, function() {
+            clearTimeout(createTimer);
             self.storagePath = path;
             logger.info('Content directory created:', path);
             resolve(path);
-          }, function(error) { reject(error); });
+          }, function(error) {
+            clearTimeout(createTimer);
+            reject(error);
+          });
         }
       } catch (error) {
         reject(error);

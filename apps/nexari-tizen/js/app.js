@@ -158,31 +158,35 @@
     logger.warn('[mdc-bridge] b2bcontrol.startNodeServer not available on this platform');
   }
 
-  // Initialize content manager, then start player or pairing once storage is ready
+  // ContentManager.init() creates wgt-private/content — on fresh WGT installs after
+  // uninstall, the Tizen createDirectory callback can silently never fire, hanging init
+  // indefinitely. Pairing and player startup don't need ContentManager to be ready
+  // (downloads call ensureStoragePath() lazily), so kick it off in the background and
+  // start pairing/player immediately without waiting.
   ContentManager.init().catch(function(error) {
     logger.error('Failed to initialize content manager:', error);
-  }).then(function() {
-    if (isPaired && deviceId && deviceToken) {
-      logger.info('Device already paired:', deviceName);
-
-      // Start player directly
-      Player.init({
-        id: deviceId,
-        name: deviceName,
-        deviceToken: deviceToken,
-        workspaceId: workspaceId,
-      });
-
-    } else {
-      if (isPaired && deviceId && !deviceToken) {
-        logger.warn('Found paired device state without token, falling back to pairing flow');
-      }
-      logger.info('Device not paired, starting pairing process');
-
-      // Start pairing process
-      Pairing.init();
-    }
   });
+
+  if (isPaired && deviceId && deviceToken) {
+    logger.info('Device already paired:', deviceName);
+
+    // Start player directly
+    Player.init({
+      id: deviceId,
+      name: deviceName,
+      deviceToken: deviceToken,
+      workspaceId: workspaceId,
+    });
+
+  } else {
+    if (isPaired && deviceId && !deviceToken) {
+      logger.warn('Found paired device state without token, falling back to pairing flow');
+    }
+    logger.info('Device not paired, starting pairing process');
+
+    // Start pairing process
+    Pairing.init();
+  }
 
   // Handle Tizen app lifecycle
   window.addEventListener('tizenhwkey', function(e) {
