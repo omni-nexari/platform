@@ -7679,20 +7679,22 @@ const Player = {
       logger.info(`[SYNC TIMING] calling syncplay start now at ${Date.now()}`);
 
       // CRITICAL: Unconditionally clear any previously-registered firmware callback slot.
-      // The b2bapis firmware keeps a SINGLE global slot; a failed startSyncPlay() (e.g.
-      // "Invalid Rect") leaves it occupied and all subsequent calls get "Can't register
-      // callback". stopSyncPlay's parameter is the COMPLETION callback, not the one being
-      // removed — so passing a no-op always clears the slot regardless of what was registered.
+      // b2bapis (Tizen 4 SBB) keeps a SINGLE global slot. A failed startSyncPlay() leaves
+      // it occupied with the listener that was passed. stopSyncPlay() MUST receive the SAME
+      // listener reference to release the slot — a new `() => {}` is never recognised.
+      // We use `listener` (the function defined just above) which is reused across all
+      // candidates and across calls, so it matches whatever was left in the slot.
       try {
         logger.debug('Pre-clearing SyncPlay callback slot (unconditional)');
         if (this.syncplayBackend === 'b2bapis') {
-          (window as any).b2bapis.b2bsyncplay.stopSyncPlay(() => {});
+          (window as any).b2bapis.b2bsyncplay.stopSyncPlay(listener);
         } else {
-          (webapis as any).syncplay.stop(() => {});
+          (webapis as any).syncplay.stop(listener);
         }
       } catch (_) {}
       // Give firmware time to fully de-register the old slot before calling startSyncPlay.
-      await new Promise<void>(r => setTimeout(r, 200));
+      // b2bapis (Tizen 4) is slower — needs 500 ms; webapis is fine with 200 ms.
+      await new Promise<void>(r => setTimeout(r, this.syncplayBackend === 'b2bapis' ? 500 : 200));
 
       // b2bapis: startSyncPlay(x, y, w, h, groupID, rotate, onChange)  — positional args (Tizen 4 SBB)
       // webapis:  start(syncinfo, listener)                             — object arg   (Tizen 6.5+)
@@ -7734,33 +7736,47 @@ const Player = {
       const stopListenerSafe = async () => {
         try {
           if (this.syncplayBackend === 'b2bapis') {
-            // Pass a no-op — the parameter is the completion callback, not the registered
-            // listener. This clears the slot regardless of what was registered.
-            try { (window as any).b2bapis.b2bsyncplay.stopSyncPlay(() => {}); } catch (_) {}
+            // MUST pass the same `listener` reference that was given to startSyncPlay.
+            // b2bapis firmware tracks the registered callback by reference — passing a
+            // different function (e.g. `() => {}`) is ignored and the slot stays occupied,
+            // causing all subsequent startSyncPlay calls to throw "Can't register callback".
+            try { (window as any).b2bapis.b2bsyncplay.stopSyncPlay(listener); } catch (_) {}
           } else {
             try { (webapis as any).syncplay.stop(listener); } catch (_) {}
           }
         } catch (_) {}
         // Wait for firmware to fully release the slot before the next startSyncPlay() call.
-        await new Promise<void>(r => setTimeout(r, 200));
+        // b2bapis (Tizen 4) is slower — needs 500 ms; webapis is fine with 200 ms.
+        await new Promise<void>(r => setTimeout(r, this.syncplayBackend === 'b2bapis' ? 500 : 200));
       };
 
       let syncinfoToUse: any = baseSyncinfo;
       let lastErr: any = null;
 
-      // Both backends: probe UHD first — Samsung B2B firmware (b2bapis) on some models
-      // uses a 3840×2160 virtual coordinate space even on FHD panels, so 1920×1080 renders
-      // as a quarter-screen. STOP_DONE events from stopListenerSafe() between candidates are
-      // safe because the listener ignores them while isSyncStarting is true.
+      // Build candidate rect list.
+      //
+      // b2bapis (SBB, Tizen 4): ALWAYS use 1920×1080. The 3840×2160 probe was removed
+      // because b2bapis.startSyncPlay() consistently rejects 3840×2160 with "Invalid Rect"
+      // on every known SBB model, but — crucially — the failed call STILL occupies the
+      // singleton callback slot. stopSyncPlay() between candidates only releases the slot on
+      // an ACTIVE session; after a failed start there is no session, so the slot stays taken
+      // and the second candidate always fails with "Can't register callback". Skipping the
+      // doomed UHD probe means only one startSyncPlay() call is needed per session.
+      //
+      // webapis (QBC, Tizen 6.5): also use 1920×1080 directly. The tvWindow hardware plane
+      // that SyncPlay renders through is controlled by the rect in syncplay.start() — calling
+      // tvWindow.show() afterward overrides that placement and causes quarter-screen rendering.
+      // showWindow is therefore skipped for webapis as well.
       const candidates: any[] = [];
-      if (Number(baseSyncinfo.rectWidth) >= 3840) {
-        // Already at UHD — try as-is, then FHD fallback.
+      if (this.syncplayBackend === 'b2bapis') {
+        // SBB: always FHD. UHD is rejected and wastes the singleton callback slot.
+        candidates.push({ ...baseSyncinfo, rectWidth: 1920, rectHeight: 1080 });
+      } else if (Number(baseSyncinfo.rectWidth) >= 3840) {
+        // webapis UHD panel reported: try UHD, then FHD fallback.
         candidates.push(baseSyncinfo);
         candidates.push({ ...baseSyncinfo, rectWidth: 1920, rectHeight: 1080 });
       } else {
-        // Detected FHD — probe UHD first (firmware may use 4K virtual space),
-        // then fall back to the detected size.
-        candidates.push({ ...baseSyncinfo, rectWidth: 3840, rectHeight: 2160 });
+        // webapis FHD panel: use detected size directly.
         candidates.push(baseSyncinfo);
       }
 
@@ -7772,15 +7788,11 @@ const Player = {
           invokeStart(candidate);
           syncinfoToUse = candidate;
           started = true;
-          // showWindow AFTER successful start using the actual rect dimensions.
-          // Cap to FHD — SBB (b2bapis) rejects values > 1920.
-          const showW = Math.min(candidate.rectWidth, 1920);
-          const showH = Math.min(candidate.rectHeight, 1080);
-          try {
-            this.invokeTVControl?.('showWindow', [0, 0, showW, showH], 'MAIN');
-          } catch (showErr) {
-            logger.warn(`showWindow ${showW}x${showH} failed (continuing): ${(showErr as any)?.message || showErr}`);
-          }
+          // NOTE: showWindow is intentionally NOT called here for webapis (QBC).
+          // webapis.syncplay.start(syncinfo) positions the content via the syncinfo rect;
+          // a subsequent tvWindow.show() call overrides that placement and causes
+          // quarter-screen rendering. For b2bapis (SBB), showWindow was also removed
+          // since the single 1920×1080 attempt handles positioning correctly.
           break;
         } catch (err) {
           lastErr = err;
@@ -7826,11 +7838,14 @@ const Player = {
       try { ownProps = err ? Object.getOwnPropertyNames(err) : []; } catch (_) {}
       logger.error(`Syncplay: start failed typeof=${typeof err} ownProps=${JSON.stringify(ownProps)} fields=${JSON.stringify(fields)} stringified=${String(err)}`);
       // Best-effort cleanup: some firmwares keep the callback registered even after an exception.
+      // Use the local `listener` reference (same one passed to startSyncPlay) so b2bapis
+      // firmware can match and release the slot — `this.syncPlayListener` may be null here
+      // because the successful-start assignment was never reached.
       try {
         if (this.syncplayBackend === 'b2bapis') {
-          try { (window as any).b2bapis.b2bsyncplay.stopSyncPlay(this.syncPlayListener || (() => {})); } catch (_) {}
+          try { (window as any).b2bapis.b2bsyncplay.stopSyncPlay(listener); } catch (_) {}
         } else {
-          try { (webapis as any).syncplay.stop(this.syncPlayListener || (() => {})); } catch (_) {}
+          try { (webapis as any).syncplay.stop(listener); } catch (_) {}
         }
       } catch (_) {}
       this.syncPlayListener = null;

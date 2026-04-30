@@ -1,7 +1,7 @@
 import { db, devices, deviceHeartbeats, deviceScreenshots, playEvents } from '@signage/db';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { DeviceMessageSchema } from '@signage/shared';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -552,9 +552,32 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     // Always update the in-memory latest frame (serves device-card thumbnail instantly)
     latestFrameStore.set(deviceId, { buf, updatedAt: new Date() });
 
-    // Only write to disk + DB for manual screenshots (trigger === 'manual')
-    // Auto shots (content_change, interval) stay in-memory only — no disk/DB storage
-    if (trigger !== 'manual') return;
+    if (trigger !== 'manual') {
+      // Auto shots (content_change, interval, auto): persist as a single overwriting
+      // thumbnail.jpg per device so the /screenshot/latest DB fallback works after
+      // server restarts (when the in-memory store is empty).
+      (async () => {
+        try {
+          const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
+          const dir = join(STORAGE_ROOT, deviceId);
+          await mkdir(dir, { recursive: true });
+          const storageKey = `${deviceId}/thumbnail.jpg`;
+          await writeFile(join(STORAGE_ROOT, storageKey), buf);
+          // Upsert: update existing thumbnail row or insert a new one (1 row per device).
+          const existing = await db.query.deviceScreenshots.findFirst({
+            where: and(eq(deviceScreenshots.deviceId, deviceId), eq(deviceScreenshots.trigger, 'thumbnail')),
+          });
+          if (existing) {
+            await db.update(deviceScreenshots)
+              .set({ storageKey, takenAt: new Date() })
+              .where(eq(deviceScreenshots.id, existing.id));
+          } else {
+            await db.insert(deviceScreenshots).values({ deviceId, storageKey, trigger: 'thumbnail' });
+          }
+        } catch (_) { /* best-effort */ }
+      })();
+      return;
+    }
 
     const fileName = `${randomUUID()}.jpg`;
     const storageKey = `${deviceId}/${fileName}`;

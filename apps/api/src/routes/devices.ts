@@ -740,9 +740,9 @@ export async function deviceRoutes(app: FastifyInstance) {
   });
 
   // ── GET /devices/:id/screenshot/latest ── serve latest frame ─────────────
-  // Prefers the in-memory frame (auto screenshots, no disk I/O).
-  // Falls back to the most-recent persisted screenshot when the in-memory
-  // store is empty (e.g. after a server restart before the device re-connects).
+  // Serves only from the in-memory latestFrameStore (populated by screenshot_data WS messages).
+  // If the store is empty (e.g. just after server restart) and the device is connected,
+  // immediately push screenshot_auto so the next portal poll (a few seconds later) succeeds.
   app.get('/:id/screenshot/latest', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
     const { id } = req.params as { id: string };
@@ -759,19 +759,13 @@ export async function deviceRoutes(app: FastifyInstance) {
       return reply.send(frame.buf);
     }
 
-    // Fallback: serve the latest persisted (manual) screenshot from disk
-    const latest = await db.query.deviceScreenshots.findFirst({
-      where: eq(deviceScreenshots.deviceId, id),
-      orderBy: [desc(deviceScreenshots.takenAt)],
-    });
-    if (!latest) return reply.status(404).send({ error: 'No screenshot available yet' });
+    // Memory empty — kick an immediate screenshot if the device is online so the next
+    // portal poll lands a real image instead of another 404.
+    if (isDeviceOnline(id)) {
+      sendCommand(id, { type: 'screenshot_auto' });
+    }
 
-    const filePath = path.resolve(STORAGE_ROOT, latest.storageKey);
-    if (!existsSync(filePath)) return reply.status(404).send({ error: 'Screenshot file not found' });
-
-    reply.header('Content-Type', 'image/jpeg');
-    reply.header('Cache-Control', 'private, max-age=60');
-    return reply.send(createReadStream(filePath));
+    return reply.status(404).send({ error: 'No screenshot available yet' });
   });
 
   // ── GET /devices/:id/screenshot/stream ── SSE live-view relay ─────────────
@@ -1317,8 +1311,16 @@ export async function deviceRoutes(app: FastifyInstance) {
     const intervalMin = (device.screenshotIntervalMin && device.screenshotIntervalMin > 0)
       ? device.screenshotIntervalMin
       : DEFAULT_SCREENSHOT_INTERVAL_MIN;
-    setTimeout(() => {
+    setTimeout(async () => {
       sendCommand(deviceId, { type: 'set_screenshot_interval', payload: { minutes: intervalMin } });
+      // If we applied the default (DB was null/0), persist it so the portal card shows the real value.
+      if (!(device.screenshotIntervalMin && device.screenshotIntervalMin > 0)) {
+        try {
+          await db.update(devices)
+            .set({ screenshotIntervalMin: DEFAULT_SCREENSHOT_INTERVAL_MIN })
+            .where(eq(devices.id, deviceId));
+        } catch (_) {}
+      }
     }, 5_000);
 
     // Request one screenshot ~10 s after connect to populate the in-memory frame store.
