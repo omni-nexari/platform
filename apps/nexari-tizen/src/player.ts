@@ -4776,11 +4776,53 @@ const Player = {
     // SyncPlay mode: if the playlist belongs to a sync group, force HTML5
     // path (AVPlay's per-frame currentTime control is not exposed) and let
     // the SyncEngine gate item boundaries.
-    const syncGroupId: string | null = playlist.syncGroupId || null;
+    // The schedule API delivers sync info under `playlist.syncPlay`
+    // (see API._normalizeSyncPlaylist); accept either shape so the player
+    // works with both legacy and Phase-4 servers.
+    const syncPlayInfo: any = (playlist as any).syncPlay || null;
+    const syncGroupId: string | null =
+      (playlist as any).syncGroupId || (syncPlayInfo && syncPlayInfo.syncGroupId) || null;
     this._syncMode = !!syncGroupId;
     this._syncGroupId = syncGroupId;
     if (this._syncMode) {
       logger.info('[Sync] Playlist belongs to sync group ' + syncGroupId + ' — forcing HTML5 path');
+      // Seed the SyncEngine with a manifest derived from the schedule
+      // payload so leader election, peer NTP, and heartbeats can run even
+      // before the server pushes a SYNC_GROUP_INIT.
+      try {
+        if (typeof SyncEngine !== 'undefined' && SyncEngine.setManifest) {
+          const peers = Array.isArray(syncPlayInfo && syncPlayInfo.peers) ? syncPlayInfo.peers : [];
+          const sortedPeers = [...peers].sort((a: any, b: any) =>
+            (a.leaderPriority ?? 0) - (b.leaderPriority ?? 0));
+          const manifest = {
+            // SyncEngine.Manifest.groupId is the sync-group UUID (not the
+            // 16-bit Samsung native-syncplay number). The numeric Samsung ID
+            // is only relevant on the legacy AVPlay-native path.
+            groupId: syncGroupId,
+            version: 0,
+            leaderPriority: sortedPeers.map((p: any) => p.deviceId),
+            peers: sortedPeers.map((p: any) => ({
+              deviceId: p.deviceId,
+              lastKnownIp: p.ipAddress || p.lastKnownIp || null,
+              port: 9615,
+            })),
+            playlist: {
+              id: playlist.id || playlist.playlistId,
+              items: (playableItems || []).map((it: any, idx: number) => ({
+                id: it.id,
+                contentId: it.contentId,
+                duration: it.duration || 10,
+                position: idx,
+              })),
+            },
+          };
+          SyncEngine.setManifest(manifest);
+          logger.info('[Sync] Manifest seeded from schedule payload (peers=' +
+                      manifest.peers.length + ', items=' + manifest.playlist.items.length + ')');
+        }
+      } catch (e: any) {
+        logger.warn('[Sync] setManifest from schedule failed:', e?.message || e);
+      }
       this.renderPlaylistStandard(playableItems, container);
       return;
     }
