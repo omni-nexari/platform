@@ -51,6 +51,11 @@ type PublishedTargetSummary = {
 
 const DEVICE_RECENT_ACTIVITY_MS = 90_000;
 
+// Per-device throttle for auto-issued `screenshot_auto` commands triggered by the
+// /devices list endpoint when a device has no thumbnail yet. Prevents the 15 s
+// portal poll from flooding the player with capture commands.
+const autoScreenshotRequestAt = new Map<string, number>();
+
 function hasRecentDeviceActivity(lastSeen: Date | string | null | undefined): boolean {
   if (!lastSeen) return false;
   const seenAt = lastSeen instanceof Date ? lastSeen.getTime() : new Date(lastSeen).getTime();
@@ -617,6 +622,17 @@ export async function deviceRoutes(app: FastifyInstance) {
     const latestScreenshotMap: Record<string, string> = {};
     for (const row of screenshotRows) {
       if (!latestScreenshotMap[row.deviceId]) latestScreenshotMap[row.deviceId] = row.id;
+    }
+
+    // Auto-request a fresh capture for any online device that has no thumbnail yet.
+    // Throttled per device (30 s) so the 15 s portal poll doesn't spam the player.
+    for (const d of list) {
+      if (latestScreenshotMap[d.id]) continue;
+      if (!isDeviceOnline(d.id)) continue;
+      const last = autoScreenshotRequestAt.get(d.id) ?? 0;
+      if (Date.now() - last < 30_000) continue;
+      autoScreenshotRequestAt.set(d.id, Date.now());
+      sendCommand(d.id, { type: 'screenshot_auto' });
     }
 
     // Overlay live WS status
