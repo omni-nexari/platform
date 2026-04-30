@@ -59,6 +59,12 @@ export const syncGroups = pgTable('sync_groups', {
   mode: text('mode').notNull().default('native-samsung'),
   /** Optional layout metadata for video-wall tiling (Phase 5) */
   layout: jsonb('layout'),
+  /** Manifest version pushed by API; bumped on any change. Devices compare to detect updates. */
+  manifestVersion: integer('manifest_version').notNull().default(0),
+  /** Aggregate group state derived from member heartbeats: idle | preparing | playing | error */
+  state: text('state').notNull().default('idle'),
+  /** Item index currently active across the group (best-effort, leader-reported) */
+  currentItemIndex: integer('current_item_index').notNull().default(0),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -71,6 +77,16 @@ export const syncGroupMembers = pgTable('sync_group_members', {
   tileRow: smallint('tile_row').notNull().default(0),
   /** Lower number = higher priority for leader election */
   leaderPriority: integer('leader_priority').notNull().default(0),
+  /** Last LAN-IP reported via heartbeat; primary peer-table source for the bridge. */
+  lastSeenIp: text('last_seen_ip'),
+  /** Latest reported drift versus leader, in milliseconds. */
+  driftMs: integer('drift_ms'),
+  /** Latest reported HTML5 playbackRate (1.0 = nominal). */
+  playbackRate: integer('playback_rate_x1000'),
+  /** preparing | ready | playing | offline | error */
+  readyState: text('ready_state').notNull().default('offline'),
+  /** Timestamp of the last heartbeat from this device about this group. */
+  lastReportAt: timestamp('last_report_at', { withTimezone: true }),
 }, (t) => ({
   pk: primaryKey({ columns: [t.syncGroupId, t.deviceId] }),
 }));

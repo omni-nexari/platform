@@ -161,11 +161,19 @@ const Player = {
   documentActive: false,
   documentItemKey: null as string | null,
   documentPageInterval: null as any,
-  // Multi-backend document support: B2BDoc (Tizen 4), webapis.document (Tizen 6.5+), PDF.js (Tizen 5â€“6.4)
-  documentBackend: null as 'pdfjs' | 'b2bdoc' | 'native' | null,
-  b2bDocInstance: null as any,
-  nativeDocOpen: false as boolean,
+  // Single-backend document support: PDF.js (works on Tizen 4/5/6.5+).
+  documentBackend: null as 'pdfjs' | null,
   b2bDocAutoFlipIntervalMs: 10000 as number,
+
+  // SyncPlay state (set when the active playlist belongs to a sync group).
+  _syncMode: false as boolean,
+  _syncGroupId: null as string | null,
+  _activeSyncVideo: null as HTMLVideoElement | null,
+  _syncStateTickStarted: false as boolean,
+  _syncCurrentItemIndex: -1 as number,
+  _syncRateRestoreTimer: null as any,
+  _pendingSyncNextItemAt: null as number | null,
+  _pendingSyncNextItemIndex: -1 as number,
 
 
   // Initialize player
@@ -192,28 +200,17 @@ const Player = {
     
     logger.info('Initializing player for device:', this.deviceName);
     
-    // Detect physical panel resolution for AVPlay setDisplayRect.
+    // Samsung AVPlay setDisplayRect() always uses a fixed 1920×1080 coordinate space,
+    // per the official Samsung API docs: "The 4 parameters specify the left side, top,
+    // window width, and window height based on a 1920 x 1080 resolution screen,
+    // regardless of the actual application resolution."
+    // Previously this was set to 3840×2160 (native panel pixels) which caused video to
+    // render only in the top-left quadrant (1/4 of the screen) because the rect was 4×
+    // larger than the 1920×1080 coordinate space. Do NOT use native panel pixels here.
     // On commercial signage panels window.innerWidth reports 1920 even on UHD,
-    // and systeminfo DISPLAY also returns 1920. Empirically these LFD panels
-    // need the rect set to native panel pixels â€” and we know the deployed
-    // hardware is 4K, so default to UHD and let getPhysicalDisplaySize() upgrade
-    // to 8K if the model exposes that flag. If a downstream FHD panel is added
-    // later, this can be revisited; passing 3840Ã—2160 to setDisplayRect on a
-    // genuine FHD panel is normally accepted (firmware clamps).
-    this._panelWidth = 3840;
-    this._panelHeight = 2160;
-    try {
-      const panel = await this.getPhysicalDisplaySize();
-      logger.info(`Panel resolution detect returned: ${panel?.width}x${panel?.height}`);
-      if (panel && panel.width >= 3840 && panel.height >= 2160) {
-        this._panelWidth = panel.width;
-        this._panelHeight = panel.height;
-      }
-    } catch (err) {
-      logger.warn('Panel resolution detection failed', err);
-    }
-    logger.info(`Panel resolution cached for AVPlay: ${this._panelWidth}x${this._panelHeight}`);
-
+    this._panelWidth = 1920;
+    this._panelHeight = 1080;
+    logger.info('AVPlay display rect coordinate space: 1920x1080 (fixed per Samsung API spec)');
     // Synchronize time with server for precise video wall sync
     await this.syncTimeWithServer();
     
@@ -232,7 +229,27 @@ const Player = {
     this.startTelemetry();
     this.startCommandPolling();
     this.startNtpSync(); // Periodic NTP sync to keep clocks aligned
-    
+
+    // Initialize SyncPlay engine (peer mesh; manifest may arrive later via WS).
+    try {
+      if (typeof SyncEngine !== 'undefined') {
+        SyncEngine.init({
+          deviceId: this.deviceId!,
+          getSyncedTime: () => this.getSyncedTime(),
+          getNtpOffset: () => this.ntpOffset,
+          setNtpOffset: (v: number) => { this.ntpOffset = v; this.lastNtpSync = Date.now(); },
+          logger: logger as any,
+        });
+        SyncEngine.onSyncCommand((cmd) => {
+          try { this.handleSyncCommand(cmd); }
+          catch (e: any) { logger.warn('handleSyncCommand threw:', e?.message || e); }
+        });
+        this.startSyncStateTick();
+      }
+    } catch (e: any) {
+      logger.warn('SyncEngine init failed:', e?.message || e);
+    }
+
     // Load initial content
     await this.loadContent();
     
@@ -346,7 +363,16 @@ const Player = {
           
         case 'SYNC_PLAY':
           logger.info('Sync play command received:', message.payload);
-          logger.info('SYNC_PLAY command received (SyncPlay removed from player; ignored)');
+          if (typeof SyncEngine !== 'undefined') {
+            SyncEngine.handleServerSyncPlay(message.payload);
+          }
+          break;
+
+        case 'SYNC_GROUP_INIT':
+          logger.info('Sync group init received:', message.payload);
+          if (typeof SyncEngine !== 'undefined') {
+            SyncEngine.setManifest(message.payload);
+          }
           break;
 
         case 'SESSION_CONFIG':
@@ -1877,6 +1903,9 @@ const Player = {
     this.pendingSignature = null;
 
     this.cancelCurrentPlayback();
+    // If we were running zone-mode (multi-runner), tear it down so the new
+    // playlist gets a clean container.
+    if (this._zoneMode) this.stopZoneMode();
     this.renderPlaylist(playlistToPlay);
     this.currentContent = playlistToPlay;
     this.lastContentSignature = signatureToSet;
@@ -1933,21 +1962,10 @@ const Player = {
       
       // Show notification when download completes
       this.showDownloadNotification(content.playlistName || 'Content');
-      
-      // If something is currently playing, defer the swap to the next natural
-      // item-boundary so playback is never interrupted mid-item (which would
-      // cause a black screen). The playlist controllers already call
-      // trySwapToPendingContent at every item transition.
-      // If nothing is playing (e.g. first boot / idle screen), swap immediately.
-      const currentlyPlaying =
-        (this.currentPlaylistController && !this.currentPlaylistController.cancelled) ||
-        this._zoneMode;
-      if (currentlyPlaying) {
-        logger.info('Pending playlist ready; will swap at next item boundary to avoid black screen');
-      } else {
-        logger.info('Nothing currently playing; swapping to new content immediately');
-        this.trySwapToPendingContent(true);
-      }
+
+      // Swap immediately regardless of what is currently playing.
+      logger.info('Download complete; swapping to new content immediately');
+      this.trySwapToPendingContent(true);
     } catch (error) {
       logger.error('Background download failed:', error);
       // On error, try to use cached content or show idle
@@ -2318,6 +2336,12 @@ const Player = {
 
   // Render video content using Samsung AVPlay API for better performance
   renderVideo(container, content) {
+    // SyncPlay forces HTML5 path (per-frame currentTime control + playbackRate
+    // are not portably exposed by webapis.avplay).
+    if (this._syncMode) {
+      this.renderVideoHTML5(container, content);
+      return;
+    }
     // AVPlay supports both HTTP and file:// URLs from wgt-private storage
     if (typeof webapis !== 'undefined' && webapis.avplay) {
       this.renderVideoAVPlay(container, content);
@@ -3660,7 +3684,13 @@ const Player = {
     video.autoplay = true;
     video.loop = content.loop || false;
     video.muted = content.muted || false;
-    
+
+    // Track this <video> as the active sync target so SyncEngine drift
+    // corrections can address it. Only meaningful in sync mode.
+    if (this._syncMode) {
+      this._activeSyncVideo = video;
+    }
+
     // Explicitly play the video
     video.onloadedmetadata = () => {
       logger.info('Video loaded, starting playback:', content.url);
@@ -4396,18 +4426,14 @@ const Player = {
     DataSyncRenderer.render(String(content.id), cmsUrl, this.deviceId);
   },
 
-  // Render PDF or Office document.
-  // Dispatches to one of three backends based on Tizen version:
-  //   â€¢ Tizen 4 (legacy)  â†’ B2BDoc API (native HW layer, Samsung B2B SSSP)
-  //   â€¢ Tizen 6.5+        â†’ webapis.document (native HW layer, Document API)
-  //   â€¢ Tizen 5â€“6.4       â†’ PDF.js (canvas rendering, existing behaviour)
+  // Render PDF or Office document via PDF.js (single backend, works on Tizen 4/5/6.5+).
+  // Office docs are expected to be pre-converted to PDF on the server side.
   renderDocument(container: HTMLElement, content: any) {
     this.closeDocument();
     container.innerHTML = '';
 
-    // Mark active immediately â€” prevents the playlist loop (which runs every 10s)
-    // from spawning a second concurrent renderDocument while the doc is still loading.
-    // On error, this is reset to false so the next tick can retry.
+    // Mark active immediately so the playlist loop does not spawn a second
+    // concurrent renderDocument while the doc is still loading. Reset on error.
     this.documentActive = true;
     this.documentItemKey = this.getPlaylistItemKey(content);
 
@@ -4420,153 +4446,11 @@ const Player = {
     } catch (_) {}
     this.b2bDocAutoFlipIntervalMs = slideIntervalSec * 1000;
 
-    const platform = (window as any).Platform;
-    const hasB2BDoc = typeof (window as any).B2BDoc === 'function';
-    const hasNativeDocApi = !!(window as any).webapis?.document && !(window as any)._nativeDocUnavailable;
-    const supportsNative = platform?.supportsDocumentApi && hasNativeDocApi;
-
-    logger.info(
-      'renderDocument backend selection:',
-      'tizen=' + (platform?.tizenVersion || '?'),
-      'isLegacy=' + !!platform?.isLegacy,
-      'supportsDocumentApi=' + !!platform?.supportsDocumentApi,
-      'B2BDoc=' + hasB2BDoc,
-      'webapis.document=' + hasNativeDocApi,
-    );
-
-    if (platform?.isLegacy && hasB2BDoc) {
-      this._renderDocumentB2BDoc(container, content, this.b2bDocAutoFlipIntervalMs);
-      return;
-    }
-    if (false && supportsNative) {
-      // native removed
-    }
-    // Always: PDF.jsâ€“6.4, or any legacy device without B2BDoc as a last resort)
     this._renderDocumentPdfJs(container, content);
   },
 
-  // Tizen 4: render via Samsung B2BDoc API (native HW layer)
-  _renderDocumentB2BDoc(container: HTMLElement, content: any, slideIntervalMs: number) {
-    this.documentBackend = 'b2bdoc';
-    document.body.classList.add('b2bdoc-active');
-    container.innerHTML = '';
-
-    const showError = (reason: string) => {
-      logger.error('B2BDoc load failed:', content.name, reason);
-      this.documentActive = false;
-      this.documentItemKey = null;
-      this.documentBackend = null;
-      this.b2bDocInstance = null;
-      document.body.classList.remove('b2bdoc-active');
-      container.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#222;flex-direction:column;">
-          <div style="font-size:48px;margin-bottom:20px;">&#9888;</div>
-          <div style="font-size:24px;">Document Load Error (B2BDoc)</div>
-          <div style="font-size:14px;margin-top:10px;opacity:0.6;">${content.name}</div>
-          <div style="font-size:12px;margin-top:8px;opacity:0.4;">${reason}</div>
-        </div>`;
-    };
-
-    try {
-      const B2BDocCtor = (window as any).B2BDoc;
-      const doc = new B2BDocCtor();
-      this.b2bDocInstance = doc;
-
-      // Register full event surface
-      try { doc.on?.('loaded', () => {
-        logger.info('B2BDoc loaded:', content.name);
-        try { doc.startAutoFlip?.(slideIntervalMs); } catch (e: any) {
-          logger.warn('B2BDoc startAutoFlip failed:', e?.message || e);
-        }
-      }); } catch (_) {}
-      try { doc.on?.('pageChanged', (p: any) => logger.debug('B2BDoc page changed:', p)); } catch (_) {}
-      try { doc.on?.('error', (e: any) => showError('event: ' + (e?.message || JSON.stringify(e)))); } catch (_) {}
-      try { doc.on?.('autoFlipStart', () => logger.debug('B2BDoc autoFlip started')); } catch (_) {}
-      try { doc.on?.('autoFlipStop',  () => logger.debug('B2BDoc autoFlip stopped')); } catch (_) {}
-
-      logger.info('B2BDoc opening:', content.url);
-      doc.open(content.url, { cache: true });
-    } catch (e: any) {
-      showError('open exception: ' + (e?.message || e));
-    }
-  },
-
-  // Tizen 6.5+: render via webapis.document (native Document API)
-  _renderDocumentNative(container: HTMLElement, content: any, slideIntervalSec: number) {
-    this.documentBackend = 'native';
-    this.nativeDocOpen = false;
-    document.body.classList.add('b2bdoc-active');
-    container.innerHTML = '';
-
-    const docApi = (window as any).webapis.document;
-    const rect = this.getDisplayRect();
-    const docinfo = {
-      docpath:    content.url,
-      rectX:      rect.left,
-      rectY:      rect.top,
-      rectWidth:  rect.width,
-      rectHeight: rect.height,
-    };
-
-    const showError = (reason: string) => {
-      logger.error('webapis.document load failed:', content.name, reason);
-      this.documentActive = false;
-      this.documentItemKey = null;
-      this.documentBackend = null;
-      this.nativeDocOpen = false;
-      document.body.classList.remove('b2bdoc-active');
-      container.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#222;flex-direction:column;">
-          <div style="font-size:48px;margin-bottom:20px;">&#9888;</div>
-          <div style="font-size:24px;">Document Load Error (Document API)</div>
-          <div style="font-size:14px;margin-top:10px;opacity:0.6;">${content.name}</div>
-          <div style="font-size:12px;margin-top:8px;opacity:0.4;">${reason}</div>
-        </div>`;
-    };
-
-    logger.info('webapis.document.open:', docinfo);
-    try {
-      docApi.open(
-        docinfo,
-        () => {
-          this.nativeDocOpen = true;
-          logger.info('webapis.document opened, starting play with slideTime:', slideIntervalSec);
-          try {
-            docApi.play(
-              slideIntervalSec,
-              () => logger.debug('webapis.document play started'),
-              (err: any) => logger.warn('webapis.document play error:', err?.name, err?.message),
-            );
-          } catch (e: any) {
-            logger.warn('webapis.document play exception:', e?.message || e);
-          }
-        },
-        (err: any) => {
-          const name = err?.name || '';
-          const msg = err?.message || JSON.stringify(err);
-          if (name === 'SecurityError') {
-            // Partner certificate required — fall back to PDF.js silently
-            logger.warn('webapis.document SecurityError (partner cert required) — falling back to PDF.js');
-            this.documentActive = false;
-            this.documentItemKey = null;
-            this.documentBackend = null;
-            this.nativeDocOpen = false;
-            document.body.classList.remove('b2bdoc-active');
-            // Disable native doc API for the rest of this session so we don't retry
-            try { (window as any)._nativeDocUnavailable = true; } catch (_) {}
-            this._renderDocumentPdfJs(container, content);
-            return;
-          }
-          const hint = ' (document load failed)';
-          showError(`${name}: ${msg}${hint}`);
-        },
-      );
-    } catch (e: any) {
-      showError('open exception: ' + (e?.message || e));
-    }
-  },
-
-  // Tizen 5â€“6.4 (and fallback): render via PDF.js to canvas.
+  // PDF.js renderer (single backend across Tizen 4/5/6.5+).
+  // Office documents are expected to be pre-converted to PDF on the server.
   // Handles both:
   //   pdfjs v1.x (global: window.PDFJS, Tizen 4 â€” pdf-legacy.min.js)
   //   pdfjs v2.x (global: window.pdfjsLib, Tizen 5+ â€” pdf.min.js)
@@ -4826,124 +4710,43 @@ const Player = {
     }
   },
 
-  // Unified document control adapter â€” routes commands to the active backend.
-  // Used by both internal logic and the tizen_command WebSocket passthrough.
-  // Each method takes (ok, err) callbacks; "not supported" backends call err synchronously.
+  // Document control adapter — PDF.js is the only backend now.
+  // Most navigation operations are not exposed because PDF.js is rendered via
+  // a self-managed setInterval auto-flip; tizen_command document.* calls return
+  // NotSupportedError so the portal can show a friendly message.
   _getDocControlAdapter() {
-    const backend = this.documentBackend;
-    const b2b = this.b2bDocInstance;
-    const docApi = (window as any).webapis?.document;
-
     const notSupported = (op: string) => (_ok: any, err: any) => {
-      const msg = `${op} not supported on ${backend || 'inactive'} backend`;
-      try { err?.({ name: 'NotSupportedError', message: msg }); } catch (_) {}
+      try { err?.({ name: 'NotSupportedError', message: `${op} not supported on PDF.js backend` }); } catch (_) {}
     };
-    const inactive = (op: string) => (_ok: any, err: any) => {
-      try { err?.({ name: 'InvalidStateError', message: `${op}: no document active` }); } catch (_) {}
+    return {
+      getVersion: () => null,
+      open:                   notSupported('open'),
+      close:                  notSupported('close'),
+      play:                   notSupported('play'),
+      stop:                   notSupported('stop'),
+      pause:                  notSupported('pause'),
+      resume:                 notSupported('resume'),
+      nextPage:               notSupported('nextPage'),
+      prevPage:               notSupported('prevPage'),
+      gotoPage:               notSupported('gotoPage'),
+      setDocumentOrientation: notSupported('setDocumentOrientation'),
+      zoomIn:                 notSupported('zoomIn'),
+      zoomOut:                notSupported('zoomOut'),
+      setZoom:                notSupported('setZoom'),
+      fitToWidth:             notSupported('fitToWidth'),
+      fitToHeight:            notSupported('fitToHeight'),
+      resetView:              notSupported('resetView'),
+      getPageCount:           notSupported('getPageCount'),
     };
-
-    // Wrap a sync B2BDoc call into an (ok, err) interface
-    const wrapB2B = (fn: () => unknown) => (ok: any, err: any) => {
-      try { const v = fn(); ok?.(v ?? 'OK'); }
-      catch (e: any) { err?.({ name: e?.name || 'UnknownError', message: e?.message || String(e) }); }
-    };
-
-    const adapter = {
-      getVersion: backend === 'native'
-        ? () => { try { return docApi.getVersion(); } catch (e) { return null; } }
-        : () => null,
-
-      open: backend === 'native'
-        ? (docinfo: any, ok: any, err: any) => { try { docApi.open(docinfo, ok, err); } catch (e: any) { err?.(e); } }
-        : notSupported('open'),
-
-      close: backend === 'b2bdoc' ? wrapB2B(() => b2b?.close?.())
-        : backend === 'native' ? (ok: any, err: any) => { try { docApi.close(ok, err); } catch (e: any) { err?.(e); } }
-        : inactive('close'),
-
-      play: backend === 'b2bdoc' ? (slideTime: number, ok: any, err: any) => {
-            this.b2bDocAutoFlipIntervalMs = (slideTime || 10) * 1000;
-            wrapB2B(() => b2b?.startAutoFlip?.(this.b2bDocAutoFlipIntervalMs))(ok, err);
-          }
-        : backend === 'native' ? (slideTime: number, ok: any, err: any) => {
-            try { docApi.play(slideTime, ok, err); } catch (e: any) { err?.(e); }
-          }
-        : inactive('play'),
-
-      stop: backend === 'b2bdoc' ? wrapB2B(() => b2b?.stopAutoFlip?.())
-        : backend === 'native' ? (ok: any, err: any) => { try { docApi.stop(ok, err); } catch (e: any) { err?.(e); } }
-        : inactive('stop'),
-
-      pause: backend === 'b2bdoc' ? wrapB2B(() => b2b?.stopAutoFlip?.())  // B2BDoc has no real pause
-        : backend === 'native' ? (ok: any, err: any) => { try { docApi.pause(ok, err); } catch (e: any) { err?.(e); } }
-        : inactive('pause'),
-
-      resume: backend === 'b2bdoc' ? wrapB2B(() => b2b?.startAutoFlip?.(this.b2bDocAutoFlipIntervalMs))
-        : backend === 'native' ? (ok: any, err: any) => { try { docApi.resume(ok, err); } catch (e: any) { err?.(e); } }
-        : inactive('resume'),
-
-      nextPage: backend === 'b2bdoc' ? wrapB2B(() => b2b?.nextPage?.())
-        : backend === 'native' ? (ok: any, err: any) => { try { docApi.nextPage(ok, err); } catch (e: any) { err?.(e); } }
-        : inactive('nextPage'),
-
-      prevPage: backend === 'b2bdoc' ? wrapB2B(() => b2b?.prevPage?.())
-        : backend === 'native' ? (ok: any, err: any) => { try { docApi.prevPage(ok, err); } catch (e: any) { err?.(e); } }
-        : inactive('prevPage'),
-
-      gotoPage: backend === 'b2bdoc' ? (page: number, ok: any, err: any) => wrapB2B(() => b2b?.goToPage?.(page))(ok, err)
-        : backend === 'native' ? (page: number, ok: any, err: any) => {
-            try { docApi.gotoPage(page, ok, err); } catch (e: any) { err?.(e); }
-          }
-        : inactive('gotoPage'),
-
-      setDocumentOrientation: backend === 'native'
-        ? (ok: any, err: any) => { try { docApi.setDocumentOrientation(ok, err); } catch (e: any) { err?.(e); } }
-        : notSupported('setDocumentOrientation'),
-
-      // B2BDoc-only zoom/view methods
-      zoomIn:      backend === 'b2bdoc' ? wrapB2B(() => b2b?.zoomIn?.())      : notSupported('zoomIn'),
-      zoomOut:     backend === 'b2bdoc' ? wrapB2B(() => b2b?.zoomOut?.())     : notSupported('zoomOut'),
-      setZoom:     backend === 'b2bdoc' ? (level: number, ok: any, err: any) => wrapB2B(() => b2b?.setZoom?.(level))(ok, err)
-                                       : notSupported('setZoom'),
-      fitToWidth:  backend === 'b2bdoc' ? wrapB2B(() => b2b?.fitToWidth?.())  : notSupported('fitToWidth'),
-      fitToHeight: backend === 'b2bdoc' ? wrapB2B(() => b2b?.fitToHeight?.()) : notSupported('fitToHeight'),
-      resetView:   backend === 'b2bdoc' ? wrapB2B(() => b2b?.resetView?.())   : notSupported('resetView'),
-      getPageCount: backend === 'b2bdoc' ? (ok: any, err: any) => {
-            try { b2b?.getPageCount?.((n: number) => ok?.(n)); }
-            catch (e: any) { err?.({ name: e?.name || 'UnknownError', message: e?.message || String(e) }); }
-          }
-        : notSupported('getPageCount'),
-    };
-    return adapter;
   },
 
   // Close the currently open document (safe no-op if none open).
-  // Branches on documentBackend to call the right teardown sequence.
   closeDocument() {
     if (!this.documentActive && !this.documentBackend) return;
-
-    const backend = this.documentBackend;
-    if (backend === 'b2bdoc') {
-      try { this.b2bDocInstance?.stopAutoFlip?.(); } catch (_) {}
-      try { this.b2bDocInstance?.close?.(); } catch (_) {}
-      this.b2bDocInstance = null;
-      try { document.body.classList.remove('b2bdoc-active'); } catch (_) {}
-    } else if (backend === 'native') {
-      const docApi = (window as any).webapis?.document;
-      if (docApi) {
-        try { docApi.stop(() => {}, () => {}); } catch (_) {}
-        try { docApi.close(() => {}, () => {}); } catch (_) {}
-      }
-      this.nativeDocOpen = false;
-      try { document.body.classList.remove('b2bdoc-active'); } catch (_) {}
-    } else {
-      // pdfjs or null
-      if (this.documentPageInterval) {
-        clearInterval(this.documentPageInterval);
-        this.documentPageInterval = null;
-      }
+    if (this.documentPageInterval) {
+      clearInterval(this.documentPageInterval);
+      this.documentPageInterval = null;
     }
-
     this.documentActive = false;
     this.documentItemKey = null;
     this.documentBackend = null;
@@ -4969,7 +4772,19 @@ const Player = {
     this.cancelCurrentPlayback();
 
     const container = document.getElementById('content-container');
-    
+
+    // SyncPlay mode: if the playlist belongs to a sync group, force HTML5
+    // path (AVPlay's per-frame currentTime control is not exposed) and let
+    // the SyncEngine gate item boundaries.
+    const syncGroupId: string | null = playlist.syncGroupId || null;
+    this._syncMode = !!syncGroupId;
+    this._syncGroupId = syncGroupId;
+    if (this._syncMode) {
+      logger.info('[Sync] Playlist belongs to sync group ' + syncGroupId + ' — forcing HTML5 path');
+      this.renderPlaylistStandard(playableItems, container);
+      return;
+    }
+
     // Check if this is an all-video(-like) playlist for seamless playback
     // (Some CMS flows may label video assets as PRESENTATION/OVERLAY but still render via AVPlay.)
     const videoLikeTypes = new Set(['VIDEO', 'PRESENTATION', 'OVERLAY']);
@@ -5313,6 +5128,14 @@ const Player = {
 
       logger.info(`Playing item ${currentIndex + 1}/${playableItems.length}: ${content.name} (${content.type}) - URL: ${content.url}`);
 
+      // SyncPlay: clear any previous video reference before rendering the new
+      // item, and remember the active item index so heartbeats & ADJUSTs can
+      // be matched up.
+      if (this._syncMode) {
+        this._activeSyncVideo = null;
+        this._syncCurrentItemIndex = currentIndex;
+      }
+
       // Refresh device-card thumbnail on each item transition (throttled).
       this._thumbnailOnItemStart();
 
@@ -5606,6 +5429,14 @@ const Player = {
     if (this.currentPlaylistController) {
       this.currentPlaylistController.cancelled = true;
       this.currentPlaylistController = null;
+    }
+
+    // Drop any sync-mode references; the next renderPlaylist re-establishes them.
+    this._activeSyncVideo = null;
+    this._syncCurrentItemIndex = -1;
+    if (this._syncRateRestoreTimer) {
+      clearTimeout(this._syncRateRestoreTimer);
+      this._syncRateRestoreTimer = null;
     }
 
     // Stop seamless AVPlay if active
@@ -6254,10 +6085,9 @@ const Player = {
       this._zoneTimers.push(t);
     } else if (type === 'VIDEO' || type === 'MP4' || type === 'WEBM') {
       this._playZoneVideo(zone, container, content, items, itemIndex, durationMs, token, zoneIndex);
-    } else if (type === 'PDF') {
+    } else if (type === 'PDF' || type === 'OFFICE') {
+      // OFFICE files are pre-converted to PDF on the server, so route through PDF.js.
       this._playZonePdf(zone, container, content, items, itemIndex, durationMs, token, zoneIndex);
-    } else if (type === 'OFFICE') {
-      this._playZoneOffice(zone, container, content, items, itemIndex, durationMs, token, zoneIndex);
     } else if (type === 'MENU_BOARD') {
       this.renderMenuBoard(container, content);
       const t = setTimeout(() => {
@@ -6354,6 +6184,14 @@ const Player = {
 
     video.addEventListener('ended', () => {
       this._zoneErrorCounts[zone.id] = 0;
+      // If a new playlist is queued, swap before re-looping (otherwise zone
+      // sync mode will loop the current video forever and never honor a
+      // pending publish).
+      if (this.pendingPlaylist) {
+        logger.info('[Zone sync] Pending playlist ready; swapping at zone item end');
+        this.trySwapToPendingContent(true);
+        return;
+      }
       if (isSingleVideoLoop) {
         if (useSyncLoop) {
           // Synchronized re-loop â€” same queue/flush pattern as AVPlay path
@@ -6480,6 +6318,13 @@ const Player = {
             onstreamcompleted: () => {
               logger.info(`[Zone ${zoneIndex}] AVPlay stream completed`);
               this._zoneErrorCounts[zone.id] = 0;
+              // Swap pending playlist before re-looping so a fresh publish
+              // actually takes over the screen.
+              if (this.pendingPlaylist) {
+                logger.info('[Zone sync] Pending playlist ready; swapping at zone item end (AVPlay)');
+                this.trySwapToPendingContent(true);
+                return;
+              }
               if (isSingleVideoLoop) {
                 // Synchronized re-loop: wait for ALL sync zones to complete,
                 // then seekTo(0)+play() all at once to prevent drift accumulation.
@@ -6689,88 +6534,119 @@ const Player = {
     void loadAndPlay();
   },
 
-  // Render Office/PPT/DOC document in a zone using webapis.document with zone rect coordinates.
-  // Hardware layer â€” positioned like AVPlay VideoMixer.
-  _playZoneOffice(zone: any, container: HTMLElement, content: any, items: any[], itemIndex: number, durationMs: number, token: string, zoneIndex: number): void {
-    const url = content.url || content.fileUrl || '';
-    if (!url) {
-      const t = setTimeout(() => this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex), durationMs) as unknown as number;
-      this._zoneTimers.push(t);
-      return;
-    }
-
-    const docApi = (window as any).webapis?.document;
-    if (!docApi) {
-      logger.warn(`[Zone ${zoneIndex}] webapis.document unavailable â€” skipping OFFICE item`);
-      const t = setTimeout(() => this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex), durationMs) as unknown as number;
-      this._zoneTimers.push(t);
-      return;
-    }
-
-    // Only one webapis.document instance system-wide
-    if (this._zoneDocumentActive) {
-      logger.warn(`[Zone ${zoneIndex}] webapis.document already in use by another zone, skipping`);
-      const t = setTimeout(() => this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex), durationMs) as unknown as number;
-      this._zoneTimers.push(t);
-      return;
-    }
-
-    let advanced = false;
-    const advanceOnce = () => {
-      if (advanced) return;
-      advanced = true;
-      if (this._zoneDocumentActive) {
-        this._zoneDocumentActive = false;
-        try { docApi.stop(() => {}, () => {}); } catch (_) {}
-        try { docApi.close(() => {}, () => {}); } catch (_) {}
-      }
-      if (this._zoneMode && container.parentNode) {
-        this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex);
-      }
-    };
-
-    const pageIntervalSecs = Math.max(5, Math.floor(durationMs / 1000 / 10)); // ~10 pages max
-
-    const docinfo = {
-      docpath:    url,
-      rectX:      zone.rect.x,
-      rectY:      zone.rect.y,
-      rectWidth:  zone.rect.width,
-      rectHeight: zone.rect.height,
-    };
-
-    logger.info(`[Zone ${zoneIndex}] Opening OFFICE document: ${url}`);
-    this._zoneDocumentActive = true;
-
-    try {
-      docApi.open(docinfo, () => {
-        logger.info(`[Zone ${zoneIndex}] Document opened, playing at ${pageIntervalSecs}s/page`);
-        try {
-          docApi.play(pageIntervalSecs, () => {
-            logger.info(`[Zone ${zoneIndex}] Document playing`);
-          }, (err: any) => {
-            logger.warn(`[Zone ${zoneIndex}] Document play error:`, err);
-          });
-        } catch (e) {
-          logger.warn(`[Zone ${zoneIndex}] docApi.play threw:`, e);
+  // Inbound from SyncEngine (mesh-relayed or self-loop).
+  handleSyncCommand(cmd: any): void {
+    const type = cmd && cmd.type;
+    const payload = (cmd && cmd.payload) || {};
+    switch (type) {
+      case 'SYNC_PLAY': {
+        const startAt = Number(payload.syncedStartMs);
+        if (!isFinite(startAt) || startAt <= 0) {
+          logger.info('[Sync] SYNC_PLAY without syncedStartMs — noop');
+          return;
         }
-      }, (err: any) => {
-        logger.warn(`[Zone ${zoneIndex}] Document open error:`, err);
-        this._zoneDocumentActive = false;
-        const errCount = (this._zoneErrorCounts[zone.id] ?? 0) + 1;
-        this._zoneErrorCounts[zone.id] = errCount;
-        const t = setTimeout(() => this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex), 3000) as unknown as number;
-        this._zoneTimers.push(t);
-      });
-    } catch (e) {
-      logger.warn(`[Zone ${zoneIndex}] docApi.open threw:`, e);
-      this._zoneDocumentActive = false;
+        const remaining = startAt - this.getSyncedTime();
+        logger.info('[Sync] SYNC_PLAY scheduled itemIndex=' + payload.itemIndex +
+                    ' in ' + Math.round(remaining) + 'ms (from=' + cmd.fromDeviceId + ')');
+        this.waitForPreciseSyncedTime(startAt, () => {
+          logger.info('[Sync] SYNC_PLAY fire-time reached (itemIndex=' + payload.itemIndex + ')');
+          // Followers begin/resume playback at the same wall instant.
+          const v = this._activeSyncVideo;
+          if (v) {
+            try { v.play().catch(() => {}); } catch (_) {}
+          }
+        });
+        break;
+      }
+      case 'SYNC_NEXT_ITEM': {
+        const target = Number(payload.syncedTargetMs);
+        if (!isFinite(target)) return;
+        logger.info('[Sync] SYNC_NEXT_ITEM itemIndex=' + payload.itemIndex +
+                    ' target=' + target + ' from=' + cmd.fromDeviceId);
+        // Follower side: schedule the controller's playNext at the leader's
+        // target instant. Until per-controller wiring lands, this is
+        // surfaced via a hook the controller can listen on.
+        this._pendingSyncNextItemAt = target;
+        this._pendingSyncNextItemIndex = payload.itemIndex;
+        this.waitForPreciseSyncedTime(target, () => {
+          this._pendingSyncNextItemAt = null;
+          if (typeof this.currentVideoEndedCallback === 'function') {
+            // Re-use existing item-advance pathway (used by AVPlay onstreamcompleted).
+            try { this.currentVideoEndedCallback(); } catch (_) {}
+          }
+        });
+        break;
+      }
+      case 'SYNC_ADJUST': {
+        // Leader-issued correction: { driftMs, action, playbackRate, targetMs }
+        const v = this._activeSyncVideo;
+        if (!v) {
+          logger.debug && logger.debug('[Sync] SYNC_ADJUST received but no active video');
+          return;
+        }
+        const action = String(payload.action || '');
+        if (action === 'snap') {
+          const targetMs = Number(payload.targetMs);
+          if (isFinite(targetMs) && targetMs >= 0) {
+            try {
+              v.currentTime = targetMs / 1000;
+              v.playbackRate = 1.0;
+              logger.info('[Sync] ADJUST snap → currentTime=' + (targetMs / 1000).toFixed(3) +
+                          's (drift=' + payload.driftMs + 'ms)');
+            } catch (e: any) {
+              logger.warn('[Sync] currentTime snap failed:', e?.message || e);
+            }
+          }
+        } else if (action === 'nudge_up' || action === 'nudge_down') {
+          const rate = Number(payload.playbackRate);
+          if (isFinite(rate) && rate > 0.5 && rate < 2.0) {
+            try {
+              v.playbackRate = rate;
+              logger.debug && logger.debug('[Sync] ADJUST nudge → playbackRate=' + rate +
+                                           ' (drift=' + payload.driftMs + 'ms)');
+            } catch (e: any) {
+              logger.warn('[Sync] playbackRate nudge failed:', e?.message || e);
+            }
+            // Schedule rate restore once close to the leader.
+            if (this._syncRateRestoreTimer) clearTimeout(this._syncRateRestoreTimer);
+            this._syncRateRestoreTimer = setTimeout(() => {
+              try { if (this._activeSyncVideo) this._activeSyncVideo.playbackRate = 1.0; } catch (_) {}
+            }, 5000) as any;
+          }
+        }
+        // 'noop' is normally not sent (engine filters), but tolerate.
+        break;
+      }
+      case 'SYNC_HEARTBEAT':
+      case 'SYNC_RESET':
+      case 'SYNC_STOP':
+        logger.debug && logger.debug('[Sync] ' + type + ' received', payload);
+        break;
+      default:
+        logger.debug && logger.debug('[Sync] unknown command type:', type);
     }
-
-    // Advance after total display duration
-    const t = setTimeout(advanceOnce, durationMs) as unknown as number;
-    this._zoneTimers.push(t);
   },
+
+  // Periodic tick to feed SyncEngine the active <video>'s currentTime so the
+  // leader/followers can compute drift. Ticks at 1 Hz; engine debounces
+  // internally and only acts in sync mode.
+  startSyncStateTick(): void {
+    if (this._syncStateTickStarted) return;
+    this._syncStateTickStarted = true;
+    setInterval(() => {
+      if (!this._syncMode || typeof SyncEngine === 'undefined') return;
+      const v = this._activeSyncVideo;
+      if (!v) return;
+      try {
+        SyncEngine.setPlaybackState({
+          itemIndex: this._syncCurrentItemIndex,
+          currentTimeMs: Math.max(0, Math.round((v.currentTime || 0) * 1000)),
+          syncGroupId: this._syncGroupId,
+        });
+      } catch (_) {}
+    }, 1000);
+  },
+
 
   applyNtpSettings(payload: any) {
     try {

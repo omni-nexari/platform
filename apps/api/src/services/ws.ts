@@ -1,4 +1,4 @@
-import { db, devices, deviceHeartbeats, deviceScreenshots, playEvents } from '@signage/db';
+import { db, devices, deviceHeartbeats, deviceScreenshots, playEvents, syncGroupMembers, syncGroups } from '@signage/db';
 import { eq, and } from 'drizzle-orm';
 import { DeviceMessageSchema } from '@signage/shared';
 import { writeFile, mkdir } from 'node:fs/promises';
@@ -75,6 +75,22 @@ export type WsCommand =
   | { type: 'mdc_control'; payload: { action: string; requestId?: string; level?: number; mute?: boolean; source?: string; [key: string]: unknown } }
   | { type: 'SESSION_CONFIG'; groupId: number; mode: string; syncPlaylistId: string | null }
   | { type: 'SYNC_PLAY'; action: 'STOP' | 'CANCEL' | 'START_SYNCPLAY' }
+  | {
+      // SyncPlay Phase 4: full manifest push (LAN-cacheable).
+      type: 'SYNC_GROUP_INIT';
+      syncGroupId: string;
+      version: number;
+      groupId: number;
+      leaderPriority: string[];
+      peers: Array<{ deviceId: string; lastKnownIp: string | null; port: number }>;
+      playlist: { id: string; items: Array<Record<string, unknown>> } | null;
+    }
+  | {
+      // Force devices to drop sync state and re-init from server (emergency).
+      type: 'SYNC_RESET';
+      syncGroupId: string;
+      reason?: string;
+    }
   | { type: 'tizen_probe'; payload: { requestId: string } }
   | { type: 'tizen_command'; payload: { requestId: string; action: string; params?: unknown } }
   | { type: 'ntp_resync' }
@@ -714,6 +730,35 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
         ...(msg.payload.value !== undefined ? { value: msg.payload.value } : {}),
         ...(msg.payload.error !== undefined ? { error: msg.payload.error } : {}),
       });
+    }
+    return;
+  }
+
+  // ── sync_heartbeat (SyncPlay observability — never required for playback) ──
+  if (msg.type === 'sync_heartbeat') {
+    const p = msg.payload;
+    try {
+      const patch: Record<string, unknown> = {
+        readyState: p.readyState ?? 'playing',
+        lastReportAt: new Date(),
+      };
+      if (typeof p.driftMs === 'number') patch.driftMs = p.driftMs;
+      if (typeof p.playbackRate === 'number') patch.playbackRate = Math.round(p.playbackRate * 1000);
+      if (p.lanIp) patch.lastSeenIp = p.lanIp;
+      await db.update(syncGroupMembers)
+        .set(patch)
+        .where(and(
+          eq(syncGroupMembers.syncGroupId, p.syncGroupId),
+          eq(syncGroupMembers.deviceId, deviceId),
+        ));
+      // Leader is authoritative on currentItemIndex.
+      if (p.role === 'leader') {
+        await db.update(syncGroups)
+          .set({ currentItemIndex: p.itemIndex, state: 'playing', updatedAt: new Date() })
+          .where(eq(syncGroups.id, p.syncGroupId));
+      }
+    } catch (err) {
+      console.warn('[ws] sync_heartbeat persist failed', { deviceId, err: (err as Error)?.message });
     }
     return;
   }

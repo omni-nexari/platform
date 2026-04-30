@@ -6,6 +6,7 @@ import { api } from '../../lib/api.js';
 import DevicePickerModal, { type PickedDevice } from '../../components/DevicePickerModal.js';
 import {
   Plus, Tv2, Users, Trash2, MoreVertical, UserPlus, UserMinus, Link2,
+  Send, RefreshCw, ArrowUp, ArrowDown, Crown,
 } from 'lucide-react';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
 import {
@@ -50,6 +51,28 @@ interface SyncPlaylistBrief {
   name: string;
 }
 
+// Live observability snapshot returned by GET /sync-groups/:id/state.
+interface SyncGroupStateMember {
+  deviceId: string;
+  name: string | null;
+  leaderPriority: number;
+  readyState: 'preparing' | 'ready' | 'playing' | 'offline' | 'error';
+  driftMs: number | null;
+  playbackRate: number | null;
+  lastSeenIp: string | null;
+  lastReportAt: string | null;
+  live: boolean;
+}
+
+interface SyncGroupState {
+  id: string;
+  state: 'idle' | 'preparing' | 'playing' | 'error';
+  currentItemIndex: number;
+  manifestVersion: number;
+  leader: string | null;
+  members: SyncGroupStateMember[];
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function modeBadge(mode: string) {
@@ -73,6 +96,31 @@ function deviceStatusDot(status: string) {
   return 'bg-white/20';
 }
 
+function readyStatePill(state: string) {
+  const map: Record<string, string> = {
+    playing: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+    ready: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
+    preparing: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+    error: 'bg-red-500/15 text-red-300 border-red-500/30',
+    offline: 'bg-white/5 text-[var(--text-faint)] border-white/10',
+  };
+  const cls = map[state] ?? map.offline!;
+  return (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${cls} uppercase tracking-wide`}>
+      {state}
+    </span>
+  );
+}
+
+function formatDrift(driftMs: number | null) {
+  if (driftMs == null) return '—';
+  const abs = Math.abs(driftMs);
+  const cls = abs <= 50
+    ? 'text-emerald-300'
+    : abs <= 200 ? 'text-amber-300' : 'text-red-300';
+  return <span className={`font-mono text-[11px] ${cls}`}>{driftMs > 0 ? '+' : ''}{driftMs}ms</span>;
+}
+
 // ── Group card ────────────────────────────────────────────────────────────────
 
 function SyncGroupCard({
@@ -81,15 +129,44 @@ function SyncGroupCard({
   onAddDevices,
   onRemoveDevice,
   onAssignPlaylist,
+  onPushManifest,
+  onForceResync,
+  onReorder,
 }: {
   group: SyncGroup;
   onDelete: () => void;
   onAddDevices: () => void;
   onRemoveDevice: (deviceId: string) => void;
   onAssignPlaylist: () => void;
+  onPushManifest: () => void;
+  onForceResync: () => void;
+  onReorder: (deviceIds: string[]) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // Poll observability state every 2 s while the card is expanded.
+  const { data: live } = useQuery<SyncGroupState>({
+    queryKey: ['sync-group-state', group.id],
+    queryFn: () => api.get(`/sync-groups/${group.id}/state`),
+    enabled: expanded,
+    refetchInterval: expanded ? 2000 : false,
+  });
+
+  const liveByDeviceId = new Map(live?.members.map((m) => [m.deviceId, m]) ?? []);
+  const sortedMembers = [...group.members].sort(
+    (a, b) => a.leaderPriority - b.leaderPriority,
+  );
+
+  const moveMember = (idx: number, dir: -1 | 1) => {
+    const next = idx + dir;
+    if (next < 0 || next >= sortedMembers.length) return;
+    const reordered = [...sortedMembers];
+    const tmp = reordered[idx]!;
+    reordered[idx] = reordered[next]!;
+    reordered[next] = tmp;
+    onReorder(reordered.map((m) => m.deviceId));
+  };
 
   return (
     <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden">
@@ -134,12 +211,26 @@ function SyncGroupCard({
               <MoreVertical className="w-4 h-4" />
             </button>
             {menuOpen && (
-              <div className="absolute right-0 top-full mt-1 bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-lg z-10 min-w-[140px]">
+              <div className="absolute right-0 top-full mt-1 bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-lg z-10 min-w-[170px]">
                 <button
                   className="w-full text-left px-3 py-2 text-sm hover:bg-[var(--bg)] transition-colors flex items-center gap-2"
                   onClick={() => { setMenuOpen(false); onAssignPlaylist(); }}
                 >
                   <Link2 className="w-4 h-4" /> Assign Playlist
+                </button>
+                <button
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-[var(--bg)] transition-colors flex items-center gap-2"
+                  onClick={() => { setMenuOpen(false); onPushManifest(); }}
+                  disabled={group.members.length === 0}
+                >
+                  <Send className="w-4 h-4" /> Push Manifest
+                </button>
+                <button
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-[var(--bg)] transition-colors flex items-center gap-2"
+                  onClick={() => { setMenuOpen(false); onForceResync(); }}
+                  disabled={group.members.length === 0}
+                >
+                  <RefreshCw className="w-4 h-4" /> Force Resync
                 </button>
                 <button
                   className="w-full text-left px-3 py-2 text-sm hover:bg-[var(--bg)] transition-colors flex items-center gap-2 text-red-400"
@@ -162,24 +253,60 @@ function SyncGroupCard({
           >
             <Users className="w-3 h-3" />
             {expanded ? 'Hide screens' : `Show ${group.members.length} screen${group.members.length !== 1 ? 's' : ''}`}
+            {expanded && live && (
+              <span className="ml-auto text-[10px] uppercase tracking-wide text-[var(--text-faint)]">
+                Group: {live.state} · v{live.manifestVersion} · item #{live.currentItemIndex}
+              </span>
+            )}
           </button>
           {expanded && (
             <div className="border-t border-[var(--border)] divide-y divide-[var(--border)]">
-              {group.members.map(m => (
-                <div key={m.deviceId} className="px-4 py-2.5 flex items-center justify-between gap-2 text-sm">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className={`w-2 h-2 rounded-full shrink-0 ${deviceStatusDot(m.device.status)}`} />
-                    <span className="truncate">{m.device.name}</span>
+              {sortedMembers.map((m, idx) => {
+                const obs = liveByDeviceId.get(m.deviceId);
+                const isLeader = live?.leader === m.deviceId;
+                const ready = obs?.readyState ?? (m.device.status === 'online' ? 'ready' : 'offline');
+                return (
+                  <div key={m.deviceId} className="px-4 py-2.5 flex items-center justify-between gap-2 text-sm">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <div className={`w-2 h-2 rounded-full shrink-0 ${deviceStatusDot(m.device.status)}`} />
+                      <span className="font-mono text-[10px] text-[var(--text-faint)] w-4 text-right">
+                        {m.leaderPriority}
+                      </span>
+                      {isLeader && (
+                        <Crown className="w-3 h-3 text-amber-300 shrink-0" />
+                      )}
+                      <span className="truncate">{m.device.name}</span>
+                      {readyStatePill(ready)}
+                      {formatDrift(obs?.driftMs ?? null)}
+                    </div>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <button
+                        onClick={() => moveMember(idx, -1)}
+                        disabled={idx === 0}
+                        className="p-1 rounded hover:bg-[var(--bg)] text-[var(--text-faint)] hover:text-[var(--text)] transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
+                        title="Higher priority"
+                      >
+                        <ArrowUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => moveMember(idx, 1)}
+                        disabled={idx === sortedMembers.length - 1}
+                        className="p-1 rounded hover:bg-[var(--bg)] text-[var(--text-faint)] hover:text-[var(--text)] transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
+                        title="Lower priority"
+                      >
+                        <ArrowDown className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => onRemoveDevice(m.deviceId)}
+                        className="p-1 rounded hover:bg-red-500/10 text-[var(--text-faint)] hover:text-red-400 transition-colors"
+                        title="Remove from group"
+                      >
+                        <UserMinus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    onClick={() => onRemoveDevice(m.deviceId)}
-                    className="p-1 rounded hover:bg-red-500/10 text-[var(--text-faint)] hover:text-red-400 transition-colors shrink-0"
-                    title="Remove from group"
-                  >
-                    <UserMinus className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </>
@@ -266,6 +393,34 @@ export default function SyncGroupsPage() {
     onError: () => toast.error('Failed to assign playlist'),
   });
 
+  const pushManifestMutation = useMutation({
+    mutationFn: (groupId: string) =>
+      api.post(`/sync-groups/${groupId}/manifest`, {}) as Promise<{ version: number; pushed: number; members: number }>,
+    onSuccess: (data: { version: number; pushed: number; members: number }) => {
+      void qc.invalidateQueries({ queryKey: ['sync-groups', wsId] });
+      toast.success(`Manifest v${data.version} pushed to ${data.pushed}/${data.members} screens`);
+    },
+    onError: () => toast.error('Failed to push manifest'),
+  });
+
+  const forceResyncMutation = useMutation({
+    mutationFn: (groupId: string) =>
+      api.post(`/sync-groups/${groupId}/force-resync`, {}) as Promise<{ pushed: number; members: number }>,
+    onSuccess: (data: { pushed: number; members: number }) => {
+      toast.success(`Resync sent to ${data.pushed}/${data.members} screens`);
+    },
+    onError: () => toast.error('Failed to force resync'),
+  });
+
+  const reorderMutation = useMutation({
+    mutationFn: ({ groupId, deviceIds }: { groupId: string; deviceIds: string[] }) =>
+      api.post(`/sync-groups/${groupId}/priorities`, { deviceIds }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['sync-groups', wsId] });
+    },
+    onError: () => toast.error('Failed to reorder priorities'),
+  });
+
   return (
     <div className="flex-1 min-w-0 overflow-y-auto p-6">
       <PageHeader
@@ -316,6 +471,9 @@ export default function SyncGroupsPage() {
                 setSelectedPlaylistId(group.syncPlaylistId ?? '');
                 setAssignPlaylistTarget(group);
               }}
+              onPushManifest={() => pushManifestMutation.mutate(group.id)}
+              onForceResync={() => forceResyncMutation.mutate(group.id)}
+              onReorder={(deviceIds) => reorderMutation.mutate({ groupId: group.id, deviceIds })}
             />
           ))}
         </div>

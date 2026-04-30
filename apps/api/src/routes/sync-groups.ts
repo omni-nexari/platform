@@ -359,4 +359,219 @@ export async function syncGroupRoutes(app: FastifyInstance) {
 
     return reply.status(204).send();
   });
+
+  // ── POST /sync-groups/:id/manifest ─ generate + push SYNC_GROUP_INIT ────
+  // Builds the LAN-cacheable manifest (peers + priorities + playlist) and pushes
+  // it over the device WS to every online member. Bumps manifest_version.
+  app.post('/:id/manifest', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const group = await db.query.syncGroups.findFirst({
+      where: and(eq(syncGroups.id, id), isNull(syncGroups.deletedAt)),
+      with: {
+        members: { with: { device: true } },
+        syncPlaylist: { with: { items: { with: { content: true } } } },
+      },
+    });
+    if (!group) return reply.status(404).send({ error: 'Not found' });
+
+    const wsAccess = await checkWorkspaceAccess(group.workspaceId, user.sub);
+    if (!wsAccess) return reply.status(403).send({ error: 'Forbidden' });
+
+    // Sort members by leaderPriority ascending — the priority list is the
+    // device's leader-election input.
+    const sortedMembers = [...group.members].sort((a, b) => a.leaderPriority - b.leaderPriority);
+    const leaderPriority = sortedMembers.map((m) => m.deviceId);
+    const peers = sortedMembers.map((m) => ({
+      deviceId: m.deviceId,
+      lastKnownIp: m.lastSeenIp ?? (m.device as any)?.lastKnownIp ?? null,
+      port: 9615,
+    }));
+
+    let playlistPayload: { id: string; items: Array<Record<string, unknown>> } | null = null;
+    if (group.syncPlaylist) {
+      const items = [...(group.syncPlaylist as any).items]
+        .sort((a: any, b: any) => a.sortOrder - b.sortOrder)
+        .filter((i: any) => i.content)
+        .map((i: any) => ({
+          id: i.id,
+          contentId: i.contentId,
+          name: i.content.name,
+          type: i.content.type,
+          filePath: i.content.filePath,
+          fileHash: i.content.fileHash,
+          mimeType: i.content.mimeType,
+          duration: i.durationSeconds ?? i.content.duration ?? 10,
+        }));
+      playlistPayload = { id: group.syncPlaylist.id, items };
+    }
+
+    const newVersion = (group.manifestVersion ?? 0) + 1;
+    await db.update(syncGroups)
+      .set({ manifestVersion: newVersion, state: 'preparing', updatedAt: new Date() })
+      .where(eq(syncGroups.id, id));
+
+    const manifest = {
+      type: 'SYNC_GROUP_INIT' as const,
+      syncGroupId: group.id,
+      version: newVersion,
+      groupId: group.groupId,
+      leaderPriority,
+      peers,
+      playlist: playlistPayload,
+    };
+
+    let pushed = 0;
+    for (const m of sortedMembers) {
+      if (isDeviceOnline(m.deviceId) && sendCommand(m.deviceId, manifest)) pushed += 1;
+    }
+
+    await writeAuditLog({
+      orgId: user.orgId,
+      actorId: user.sub,
+      action: 'SYNC_GROUP_MANIFEST_PUSHED',
+      entityType: 'sync_group',
+      entityId: id,
+      meta: { version: newVersion, members: sortedMembers.length, pushed },
+      ipAddress: req.ip,
+    });
+
+    return reply.send({ version: newVersion, members: sortedMembers.length, pushed });
+  });
+
+  // ── POST /sync-groups/:id/priorities ─ reorder leader priority ──────────
+  app.post('/:id/priorities', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const body = req.body as { deviceIds: string[] };
+
+    if (!Array.isArray(body.deviceIds) || body.deviceIds.length === 0) {
+      return reply.status(400).send({ error: 'deviceIds array required' });
+    }
+
+    const group = await db.query.syncGroups.findFirst({
+      where: and(eq(syncGroups.id, id), isNull(syncGroups.deletedAt)),
+      with: { members: true },
+    });
+    if (!group) return reply.status(404).send({ error: 'Not found' });
+
+    const wsAccess = await checkWorkspaceAccess(group.workspaceId, user.sub);
+    if (!wsAccess) return reply.status(403).send({ error: 'Forbidden' });
+
+    const memberIds = new Set(group.members.map((m) => m.deviceId));
+    const unknown = body.deviceIds.find((d) => !memberIds.has(d));
+    if (unknown) return reply.status(400).send({ error: `Device not in group: ${unknown}` });
+
+    for (let i = 0; i < body.deviceIds.length; i += 1) {
+      await db.update(syncGroupMembers)
+        .set({ leaderPriority: i })
+        .where(and(
+          eq(syncGroupMembers.syncGroupId, id),
+          eq(syncGroupMembers.deviceId, body.deviceIds[i]!),
+        ));
+    }
+
+    await writeAuditLog({
+      orgId: user.orgId,
+      actorId: user.sub,
+      action: 'SYNC_GROUP_PRIORITIES_UPDATED',
+      entityType: 'sync_group',
+      entityId: id,
+      meta: { order: body.deviceIds },
+      ipAddress: req.ip,
+    });
+
+    return reply.send({ ok: true });
+  });
+
+  // ── GET /sync-groups/:id/state ─ live observability ─────────────────────
+  app.get('/:id/state', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const group = await db.query.syncGroups.findFirst({
+      where: and(eq(syncGroups.id, id), isNull(syncGroups.deletedAt)),
+      with: {
+        members: {
+          with: { device: { columns: { id: true, name: true, status: true, lastSeen: true } } },
+        },
+      },
+    });
+    if (!group) return reply.status(404).send({ error: 'Not found' });
+
+    const wsAccess = await checkWorkspaceAccess(group.workspaceId, user.sub);
+    if (!wsAccess) return reply.status(403).send({ error: 'Forbidden' });
+
+    const sortedMembers = [...group.members].sort((a, b) => a.leaderPriority - b.leaderPriority);
+    const FRESH_MS = 5_000;
+    const now = Date.now();
+    const liveDeviceIds = sortedMembers
+      .filter((m) => m.lastReportAt && now - new Date(m.lastReportAt).getTime() <= FRESH_MS)
+      .map((m) => m.deviceId);
+    const leader = liveDeviceIds[0] ?? null;
+
+    return reply.send({
+      id: group.id,
+      state: group.state,
+      currentItemIndex: group.currentItemIndex,
+      manifestVersion: group.manifestVersion,
+      leader,
+      members: sortedMembers.map((m) => ({
+        deviceId: m.deviceId,
+        name: (m.device as any)?.name ?? null,
+        leaderPriority: m.leaderPriority,
+        readyState: m.readyState,
+        driftMs: m.driftMs,
+        playbackRate: m.playbackRate != null ? m.playbackRate / 1000 : null,
+        lastSeenIp: m.lastSeenIp,
+        lastReportAt: m.lastReportAt,
+        live: liveDeviceIds.includes(m.deviceId),
+      })),
+    });
+  });
+
+  // ── POST /sync-groups/:id/force-resync ─ emergency broadcast ───────────
+  app.post('/:id/force-resync', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { reason?: string };
+
+    const group = await db.query.syncGroups.findFirst({
+      where: and(eq(syncGroups.id, id), isNull(syncGroups.deletedAt)),
+      with: { members: true },
+    });
+    if (!group) return reply.status(404).send({ error: 'Not found' });
+
+    const wsAccess = await checkWorkspaceAccess(group.workspaceId, user.sub);
+    if (!wsAccess) return reply.status(403).send({ error: 'Forbidden' });
+
+    let pushed = 0;
+    for (const m of group.members) {
+      if (isDeviceOnline(m.deviceId)) {
+        const ok = sendCommand(m.deviceId, {
+          type: 'SYNC_RESET',
+          syncGroupId: id,
+          ...(body.reason ? { reason: body.reason } : {}),
+        });
+        if (ok) pushed += 1;
+      }
+    }
+
+    await db.update(syncGroups)
+      .set({ state: 'preparing', updatedAt: new Date() })
+      .where(eq(syncGroups.id, id));
+
+    await writeAuditLog({
+      orgId: user.orgId,
+      actorId: user.sub,
+      action: 'SYNC_GROUP_FORCE_RESYNC',
+      entityType: 'sync_group',
+      entityId: id,
+      meta: { pushed, members: group.members.length, ...(body.reason ? { reason: body.reason } : {}) },
+      ipAddress: req.ip,
+    });
+
+    return reply.send({ pushed, members: group.members.length });
+  });
 }

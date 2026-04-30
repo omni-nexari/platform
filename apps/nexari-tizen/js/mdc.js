@@ -19,19 +19,45 @@ var http = require('http');
 var net  = require('net');
 var fs   = require('fs');
 var path = require('path');
+var dgram = require('dgram');
 
 module.exports = function startMdcBridge() {
 
 // ── MDC protocol constants ────────────────────────────────────────────────
 var MDC_TCP_PORT     = 1515;
 var HTTP_PORT        = 9615;
+var SYNC_UDP_PORT    = 9618;
 var CONNECT_TIMEOUT  = 3000;
+
+// ── Static content directory (also parent of sync-manifest.json) ─────────
+var CONTENT_DIR     = '/opt/usr/home/owner/apps_rw/fmDBbBnvJM/data/content';
+var SYNC_DATA_DIR   = path.dirname(CONTENT_DIR);  // .../data
+var MANIFEST_PATH   = path.join(SYNC_DATA_DIR, 'sync-manifest.json');
 
 // ── Sync-peer coordination state ─────────────────────────────────────────
 // Keyed by syncGroupId string.
 // ready: this device's sync content is downloaded and prepared.
 // startAt: timestamp (ms) at which to start SyncPlay, pushed by leader.
 var syncPeerState = {}; // { [syncGroupId]: { ready: boolean, startAt: number|null } }
+
+// ── SyncPlay LAN mesh state (Phase 1) ────────────────────────────────────
+// Identity of this device in the sync mesh (set by player via POST /sync/identity).
+var syncIdentity = { deviceId: null, groupId: null, priority: 99 };
+
+// Live peer table built from UDP beacons.
+// peerTable[deviceId] = { ip, port, priority, groupId, lastSeenAt }
+var peerTable = {};
+var PEER_TIMEOUT_MS = 6000;
+var BEACON_INTERVAL_MS = 2000;
+
+// Cached manifest (also persisted on disk at MANIFEST_PATH).
+var manifestCache = null;
+
+// Inbound peer-to-peer sync messages, polled by player.
+// Bounded FIFO so a paused player can never OOM the bridge.
+var inboundSyncMessages = [];
+var INBOUND_SYNC_MAX = 200;
+var inboundSyncSeq = 0;
 
 var CMD_KEY          = 0xB0; // Virtual Remote Control
 var CMD_STATUS        = 0x00; // Status Control (Get)
@@ -503,6 +529,198 @@ var server = http.createServer(function(req, res) {
     var stState = syncPeerState[stSyncGroupId] || {};
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ startAt: stState.startAt || null }));
+    return;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // SyncPlay LAN mesh routes (Phase 1)
+  // ──────────────────────────────────────────────────────────────────────
+
+  // GET /time  → server-clock NTP source for peer-to-peer clock sync.
+  // Mirrors apps/api/src/routes/devices.ts GET /devices/time.
+  if (req.method === 'GET' && req.url === '/time') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ timestamp: Date.now() }));
+    return;
+  }
+
+  // POST /sync/identity  { deviceId, groupId, priority }
+  // Player calls this once on startup; controls UDP beacon contents.
+  if (req.method === 'POST' && req.url === '/sync/identity') {
+    var idBody = '';
+    req.on('data', function(c) { idBody += c.toString(); });
+    req.on('end', function() {
+      try {
+        var p = JSON.parse(idBody || '{}');
+        syncIdentity.deviceId = p.deviceId ? String(p.deviceId) : null;
+        syncIdentity.groupId  = p.groupId  ? String(p.groupId)  : null;
+        syncIdentity.priority = (typeof p.priority === 'number') ? p.priority : 99;
+        console.log('[sync] identity set: deviceId=' + syncIdentity.deviceId +
+                    ' groupId=' + syncIdentity.groupId + ' priority=' + syncIdentity.priority);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, identity: syncIdentity }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'bad json: ' + e.message }));
+      }
+    });
+    return;
+  }
+
+  // GET /sync/identity  → current identity (debug/diagnostics)
+  if (req.method === 'GET' && req.url === '/sync/identity') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(syncIdentity));
+    return;
+  }
+
+  // POST /sync/manifest  { ...manifest }  → persist manifest to disk + cache.
+  // Survives reboot, used as the offline-first source of truth.
+  if (req.method === 'POST' && req.url === '/sync/manifest') {
+    var mBody = '';
+    req.on('data', function(c) { mBody += c.toString(); });
+    req.on('end', function() {
+      try {
+        var manifest = JSON.parse(mBody || '{}');
+        if (!manifest.groupId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'manifest missing groupId' }));
+          return;
+        }
+        manifestCache = manifest;
+        // Seed peerTable with last-known IPs from manifest so direct WS works
+        // before any UDP beacon is received (and as fallback if UDP is filtered).
+        if (Array.isArray(manifest.peers)) {
+          manifest.peers.forEach(function(p) {
+            if (!p || !p.deviceId) return;
+            var existing = peerTable[p.deviceId] || {};
+            peerTable[p.deviceId] = {
+              ip: existing.ip || p.lastKnownIp || null,
+              port: p.port || HTTP_PORT,
+              priority: typeof p.priority === 'number' ? p.priority : 99,
+              groupId: manifest.groupId,
+              lastSeenAt: existing.lastSeenAt || 0,  // 0 = manifest-supplied, not yet seen on UDP
+            };
+          });
+        }
+        fs.writeFile(MANIFEST_PATH, JSON.stringify(manifest), function(err) {
+          if (err) {
+            console.warn('[sync] manifest write failed:', err.message);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'write failed: ' + err.message }));
+            return;
+          }
+          console.log('[sync] manifest persisted (groupId=' + manifest.groupId +
+                      ' version=' + manifest.version + ' peers=' +
+                      (Array.isArray(manifest.peers) ? manifest.peers.length : 0) + ')');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, version: manifest.version || 0 }));
+        });
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'bad json: ' + e.message }));
+      }
+    });
+    return;
+  }
+
+  // GET /sync/manifest  → return cached manifest (or read from disk on cold-start).
+  if (req.method === 'GET' && req.url === '/sync/manifest') {
+    if (manifestCache) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(manifestCache));
+      return;
+    }
+    fs.readFile(MANIFEST_PATH, 'utf8', function(err, data) {
+      if (err) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'no cached manifest' }));
+        return;
+      }
+      try { manifestCache = JSON.parse(data); } catch (_) { manifestCache = null; }
+      res.writeHead(manifestCache ? 200 : 500, { 'Content-Type': 'application/json' });
+      res.end(manifestCache ? JSON.stringify(manifestCache) : JSON.stringify({ error: 'manifest corrupted' }));
+    });
+    return;
+  }
+
+  // GET /sync/peers  → live peer table (UDP-discovered + manifest-seeded).
+  // Stale entries (lastSeenAt > PEER_TIMEOUT_MS old) are filtered out, but
+  // manifest-seeded peers (lastSeenAt = 0) are always returned with seen:false
+  // so the player can attempt direct WS / HTTP fallback.
+  if (req.method === 'GET' && req.url === '/sync/peers') {
+    var nowMs = Date.now();
+    var liveList = [];
+    Object.keys(peerTable).forEach(function(devId) {
+      var p = peerTable[devId];
+      if (!p) return;
+      var seen = !!p.lastSeenAt && (nowMs - p.lastSeenAt) <= PEER_TIMEOUT_MS;
+      var manifestSeeded = !p.lastSeenAt;
+      if (!seen && !manifestSeeded) return; // expired UDP entry
+      liveList.push({
+        deviceId: devId,
+        ip: p.ip,
+        port: p.port,
+        priority: p.priority,
+        groupId: p.groupId,
+        lastSeenAt: p.lastSeenAt,
+        seen: seen,
+      });
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ peers: liveList, self: syncIdentity }));
+    return;
+  }
+
+  // POST /sync/message  { type, payload, [target] }
+  // Inbound from a peer bridge (or this device's player). Buffered for player polling.
+  // Player polls GET /sync/messages?since=<seq> at 1 Hz.
+  if (req.method === 'POST' && req.url === '/sync/message') {
+    var msgBody = '';
+    req.on('data', function(c) { msgBody += c.toString(); });
+    req.on('end', function() {
+      try {
+        var msg = JSON.parse(msgBody || '{}');
+        if (!msg || !msg.type) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'missing type' }));
+          return;
+        }
+        inboundSyncSeq++;
+        var record = {
+          seq: inboundSyncSeq,
+          receivedAt: Date.now(),
+          type: msg.type,
+          fromDeviceId: msg.fromDeviceId || null,
+          payload: msg.payload || null,
+        };
+        inboundSyncMessages.push(record);
+        // Bound the buffer: drop oldest.
+        if (inboundSyncMessages.length > INBOUND_SYNC_MAX) {
+          inboundSyncMessages.splice(0, inboundSyncMessages.length - INBOUND_SYNC_MAX);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, seq: inboundSyncSeq }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'bad json: ' + e.message }));
+      }
+    });
+    return;
+  }
+
+  // GET /sync/messages?since=<seq>  → drain buffer
+  if (req.method === 'GET' && req.url && req.url.indexOf('/sync/messages') === 0) {
+    var smqs = req.url.split('?')[1] || '';
+    var sinceSeq = 0;
+    smqs.split('&').forEach(function(p) {
+      var kv = p.split('=');
+      if (kv[0] === 'since') sinceSeq = parseInt(decodeURIComponent(kv[1] || '0'), 10) || 0;
+    });
+    var pending = inboundSyncMessages.filter(function(m) { return m.seq > sinceSeq; });
+    var maxSeq = inboundSyncSeq;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ messages: pending, lastSeq: maxSeq }));
     return;
   }
 
@@ -1825,7 +2043,7 @@ var server = http.createServer(function(req, res) {
   // The web app calls: http://127.0.0.1:9615/content/<filename>
   // which serves from: /opt/usr/home/owner/apps_rw/fmDBbBnvJM/data/content/
   // This route is added after all MDC routes so it doesn't interfere.
-  var CONTENT_DIR = '/opt/usr/home/owner/apps_rw/fmDBbBnvJM/data/content';
+  // (CONTENT_DIR is declared at module top so SYNC_DATA_DIR/MANIFEST_PATH can derive from it.)
   var MIME_TYPES = { '.pdf': 'application/pdf', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.mp4': 'video/mp4' };
 
   var origHandler = server.listeners('request')[0];
@@ -1856,4 +2074,112 @@ var server = http.createServer(function(req, res) {
   server.listen(HTTP_PORT, '0.0.0.0', function() {
     console.log('[mdc-bridge] Listening on 0.0.0.0:' + HTTP_PORT);
   });
+
+  // ── SyncPlay LAN mesh: cold-start manifest load ─────────────────────────
+  fs.readFile(MANIFEST_PATH, 'utf8', function(err, data) {
+    if (err) {
+      console.log('[sync] no cached manifest at ' + MANIFEST_PATH + ' (' + err.code + ')');
+      return;
+    }
+    try {
+      manifestCache = JSON.parse(data);
+      // Pre-seed peerTable from manifest peer list (lastKnownIp).
+      if (manifestCache && Array.isArray(manifestCache.peers)) {
+        manifestCache.peers.forEach(function(p) {
+          if (!p || !p.deviceId) return;
+          peerTable[p.deviceId] = {
+            ip: p.lastKnownIp || null,
+            port: p.port || HTTP_PORT,
+            priority: typeof p.priority === 'number' ? p.priority : 99,
+            groupId: manifestCache.groupId,
+            lastSeenAt: 0,
+          };
+        });
+      }
+      console.log('[sync] manifest loaded from disk (groupId=' +
+                  (manifestCache && manifestCache.groupId) + ' version=' +
+                  (manifestCache && manifestCache.version) + ')');
+    } catch (e) {
+      console.warn('[sync] manifest parse failed: ' + e.message);
+      manifestCache = null;
+    }
+  });
+
+  // ── SyncPlay LAN mesh: UDP 9618 beacon ──────────────────────────────────
+  // Broadcast presence every BEACON_INTERVAL_MS; receive peers' beacons,
+  // populate peerTable. Resilient to filtered UDP networks (manifest peer
+  // list provides backup).
+  try {
+    var udp = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+
+    udp.on('error', function(err) {
+      console.warn('[sync] UDP error:', err && err.message);
+      try { udp.close(); } catch (_) {}
+    });
+
+    udp.on('message', function(buf, rinfo) {
+      var beacon;
+      try { beacon = JSON.parse(buf.toString('utf8')); }
+      catch (e) { return; /* malformed beacon, ignore */ }
+      if (!beacon || !beacon.deviceId) return;
+      // Ignore our own beacon (UDP loopback on broadcast).
+      if (syncIdentity.deviceId && beacon.deviceId === syncIdentity.deviceId) return;
+      // Ignore other groups (a single LAN can host multiple sync groups).
+      if (syncIdentity.groupId && beacon.groupId && beacon.groupId !== syncIdentity.groupId) return;
+      peerTable[beacon.deviceId] = {
+        ip: rinfo.address,
+        port: beacon.port || HTTP_PORT,
+        priority: typeof beacon.priority === 'number' ? beacon.priority : 99,
+        groupId: beacon.groupId || null,
+        lastSeenAt: Date.now(),
+      };
+    });
+
+    udp.on('listening', function() {
+      try { udp.setBroadcast(true); } catch (e) {
+        console.warn('[sync] setBroadcast failed:', e && e.message);
+      }
+      var addr = udp.address();
+      console.log('[sync] UDP beacon listening on ' + addr.address + ':' + addr.port);
+    });
+
+    udp.bind(SYNC_UDP_PORT, '0.0.0.0');
+
+    // Periodic outbound beacon.
+    setInterval(function() {
+      if (!syncIdentity.deviceId || !syncIdentity.groupId) return; // not yet provisioned
+      var beacon = JSON.stringify({
+        deviceId: syncIdentity.deviceId,
+        groupId:  syncIdentity.groupId,
+        priority: syncIdentity.priority,
+        port:     HTTP_PORT,
+        ts:       Date.now(),
+      });
+      var msg = Buffer.from(beacon, 'utf8');
+      try {
+        udp.send(msg, 0, msg.length, SYNC_UDP_PORT, '255.255.255.255', function(err) {
+          if (err) console.warn('[sync] beacon send failed:', err.message);
+        });
+      } catch (e) {
+        // socket may not yet be ready or have been torn down; non-fatal
+      }
+    }, BEACON_INTERVAL_MS);
+
+    // Periodic peer pruning (separate from beacon so it still runs if we
+    // haven't been provisioned yet).
+    setInterval(function() {
+      var nowMs = Date.now();
+      Object.keys(peerTable).forEach(function(devId) {
+        var p = peerTable[devId];
+        // Don't expire manifest-seeded entries (lastSeenAt=0); they stay
+        // until either UDP-confirmed or the manifest is replaced.
+        if (!p || !p.lastSeenAt) return;
+        if (nowMs - p.lastSeenAt > PEER_TIMEOUT_MS) {
+          delete peerTable[devId];
+        }
+      });
+    }, 1000);
+  } catch (e) {
+    console.warn('[sync] UDP beacon init failed:', e && e.message);
+  }
 };

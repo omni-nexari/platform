@@ -343,6 +343,21 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
       error: z.string().optional(),
     }),
   }),
+  // SyncPlay Phase 4: device→server drift/state heartbeat for portal observability.
+  // Sent by the leader (and optionally followers) ~1 Hz when WS is reachable; never required for playback.
+  z.object({
+    type: z.literal('sync_heartbeat'),
+    payload: z.object({
+      syncGroupId: z.string().uuid(),
+      role: z.enum(['leader', 'follower']),
+      itemIndex: z.number().int().nonnegative(),
+      currentTimeMs: z.number().int().nonnegative(),
+      driftMs: z.number().int().optional(),
+      playbackRate: z.number().optional(),
+      readyState: z.enum(['preparing', 'ready', 'playing', 'error']).optional(),
+      lanIp: z.string().optional(),
+    }),
+  }),
 ]);
 export type DeviceMessage = z.infer<typeof DeviceMessageSchema>;
 
