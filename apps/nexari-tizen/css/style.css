@@ -465,56 +465,122 @@ body::before {
   justify-content: center;
   overflow: hidden;
   background:
-    radial-gradient(ellipse 70% 50% at 20% -10%, rgba(58, 123, 255, 0.14) 0%, transparent 60%),
-    radial-gradient(ellipse 50% 45% at 80% 110%, rgba(79, 242, 209, 0.11) 0%, transparent 55%),
-    var(--bg2);
+    radial-gradient(ellipse 70% 55% at 20% -10%, rgba(58, 123, 255, 0.18) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 85% 110%, rgba(79, 242, 209, 0.14) 0%, transparent 55%),
+    linear-gradient(180deg, #0a0d14 0%, #050709 100%);
+}
+
+.idle-bg-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 50%, #000 30%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 50%, #000 30%, transparent 75%);
+  pointer-events: none;
 }
 
 .idle-card {
   position: relative;
   z-index: 1;
-  padding: 48px 64px;
-  border-radius: 20px;
-  background: var(--card);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--card-border);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  padding: 56px 72px;
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(20, 26, 38, 0.82) 0%, rgba(12, 16, 24, 0.82) 100%);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
   text-align: center;
-  max-width: 720px;
-  width: 90%;
+  max-width: 640px;
+  width: 86%;
 }
 
-.idle-icon {
-  font-size: 72px;
+.idle-brand {
+  display: -webkit-flex; display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  margin-bottom: 22px;
+}
+
+.idle-logo {
+  width: 56px;
+  height: 56px;
+  filter: drop-shadow(0 4px 18px rgba(58, 123, 255, 0.45));
+}
+
+.idle-wordmark {
+  font-size: 38px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  color: #f5f7fa;
+  background: linear-gradient(90deg, #ffffff 0%, #b9c4d4 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.idle-device {
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
   margin-bottom: 24px;
 }
 
-.idle-title {
-  font-size: 42px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  margin-bottom: 12px;
-  color: var(--text);
+.idle-divider {
+  height: 1px;
+  width: 100%;
+  margin: 4px 0 22px;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.18) 50%, transparent 100%);
 }
 
-.idle-subtitle {
-  font-size: 20px;
-  color: var(--text-muted);
-  margin-bottom: 28px;
+.idle-status-row {
+  display: -webkit-flex; display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 15px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.idle-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4ff2d1;
+  box-shadow: 0 0 0 0 rgba(79, 242, 209, 0.6);
+  animation: idleDotPulse 1.8s ease-out infinite;
+}
+
+@keyframes idleDotPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(79, 242, 209, 0.55); }
+  70%  { box-shadow: 0 0 0 12px rgba(79, 242, 209, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(79, 242, 209, 0); }
 }
 
 .idle-status {
-  font-size: 18px;
-  color: var(--text-muted);
-  letter-spacing: 0.5px;
-  margin-bottom: 24px;
+  color: rgba(255, 255, 255, 0.75);
 }
 
-.idle-spinner {
-  margin: 0 auto;
-  width: 56px;
-  height: 56px;
+.idle-footer {
+  position: absolute;
+  bottom: 32px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.28);
+  z-index: 1;
 }
 
 

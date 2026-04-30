@@ -5203,6 +5203,9 @@ const Player = {
           try { this.switchSeamlessPlayer(); } catch (_) {}
           logger.info(`[Seamless] Now playing ${currentIndex + 1}/${playableItems.length}`);
 
+          // Refresh device-card thumbnail on each seamless transition (throttled).
+          this._thumbnailOnItemStart();
+
           const playersAfter = this.getSeamlessPlayers();
           const idle = playersAfter.next;
           const upcoming = playableItems[upcomingIndex]?.content;
@@ -5309,6 +5312,9 @@ const Player = {
       }
 
       logger.info(`Playing item ${currentIndex + 1}/${playableItems.length}: ${content.name} (${content.type}) - URL: ${content.url}`);
+
+      // Refresh device-card thumbnail on each item transition (throttled).
+      this._thumbnailOnItemStart();
 
       const itemKey = this.getPlaylistItemKey(content);
       const isDocumentContent = content.type === 'PDF' || content.type === 'OFFICE';
@@ -5685,16 +5691,33 @@ const Player = {
     }
     (container as HTMLElement & { _menuBoardRequestId?: string })._menuBoardRequestId = undefined;
     
+    const deviceLabel = (this.deviceName || '').trim();
     container.innerHTML = `
       <div class="idle-screen">
+        <div class="idle-bg-grid"></div>
         <div class="idle-card">
-          <div class="idle-icon">Ã°Å¸â€œÂ¡</div>
-          <div class="idle-title">Nexari</div>
-          <div class="idle-subtitle">${this.deviceName || 'Device'}</div>
-          <div class="idle-status">${statusText}</div>
+          <div class="idle-brand">
+            <svg class="idle-logo" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <defs>
+                <linearGradient id="nexariGrad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#3a7bff"/>
+                  <stop offset="100%" stop-color="#4ff2d1"/>
+                </linearGradient>
+              </defs>
+              <rect x="4" y="4" width="56" height="56" rx="14" stroke="url(#nexariGrad)" stroke-width="2.5"/>
+              <path d="M20 44 V20 L44 44 V20" stroke="url(#nexariGrad)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <div class="idle-wordmark">NEXARI</div>
+          </div>
+          ${deviceLabel ? `<div class="idle-device">${deviceLabel}</div>` : ''}
+          <div class="idle-divider"></div>
+          <div class="idle-status-row">
+            <span class="idle-status-dot"></span>
+            <span class="idle-status">${statusText}</span>
+          </div>
           ${progressBar}
-          <div class="idle-spinner spinner"></div>
         </div>
+        <div class="idle-footer">Signage Player &middot; Standby</div>
       </div>
     `;
   },
@@ -6778,6 +6801,21 @@ const Player = {
 
   takeScreenshot(): void {
     this._captureScreenshot('manual');
+  },
+
+  // Schedule a throttled content_change capture ~3s after a per-item transition
+  // so the device-card thumbnail reflects whatever is currently on screen.
+  // Rate-limited to at most one capture per 10s (matches PROJECT_PLAN §3.1).
+  _thumbnailOnItemStart(): void {
+    const now = Date.now();
+    const lastAt = (this as any)._lastThumbAt || 0;
+    if (now - lastAt < 10_000) return;
+    if ((this as any)._thumbTimer) return; // already pending
+    (this as any)._thumbTimer = setTimeout(() => {
+      (this as any)._thumbTimer = undefined;
+      (this as any)._lastThumbAt = Date.now();
+      try { this.takeScreenshotWithTrigger('content_change'); } catch (e) { logger.warn('[Screenshot] item-start capture failed:', e); }
+    }, 3_000);
   },
 
   _captureScreenshot(trigger: 'manual' | 'content_change' | 'interval'): void {
