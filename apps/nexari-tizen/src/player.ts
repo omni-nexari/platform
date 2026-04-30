@@ -1404,11 +1404,12 @@ const Player = {
   },
 
   getDisplayRect() {
+    // AVPlay coordinate space is fixed at 1920x1080 per Samsung API docs.
     return {
       left: 0,
       top: 0,
-      width: Math.max(window.innerWidth || 0, 1920),
-      height: Math.max(window.innerHeight || 0, 1080),
+      width: 1920,
+      height: 1080,
     };
   },
 
@@ -2426,12 +2427,11 @@ const Player = {
       this.applyAvPlayProfile(content);
 
       // 2. Set display rect SECOND (Samsung samples do this before setListener)
-      // AVPlay setDisplayRect always uses 1920x1080 CSS coordinate space per Samsung API docs:
-      // "based on a 1920x1080 resolution screen, regardless of the actual application resolution"
-      // Do NOT use screen.width/height â€” on some Tizen firmwares it returns physical pixels (3840)
-      // which causes InvalidValuesError or renders in a small window.
-      const viewportWidth = Math.max(window.innerWidth || 0, 1920);
-      const viewportHeight = Math.max(window.innerHeight || 0, 1080);
+      // AVPlay setDisplayRect always uses a fixed 1920x1080 coordinate space per Samsung API docs,
+      // regardless of actual panel resolution. Passing window.innerWidth (which may be 3840 on UHD)
+      // makes the video render in only the top-left quadrant of the panel.
+      const viewportWidth = 1920;
+      const viewportHeight = 1080;
       webapis.avplay.setDisplayRect(0, 0, viewportWidth, viewportHeight);
       logger.debug('AVPlay: Display rect set', viewportWidth, viewportHeight);
 
@@ -2975,9 +2975,9 @@ const Player = {
       this.applyAvPlayProfile(content);
 
       // 2. Set display rect SECOND (Samsung samples do this before setListener)
-      // AVPlay coordinate space is always 1920x1080 â€” never use screen.width (physical pixels on some Tizen)
-      const viewportWidth = Math.max(window.innerWidth || 0, 1920);
-      const viewportHeight = Math.max(window.innerHeight || 0, 1080);
+      // AVPlay coordinate space is always a fixed 1920x1080 per Samsung API docs.
+      const viewportWidth = 1920;
+      const viewportHeight = 1080;
       webapis.avplay.setDisplayRect(0, 0, viewportWidth, viewportHeight);
       logger.debug('AVPlay: Display rect set for stream', viewportWidth, viewportHeight);
 
@@ -3380,8 +3380,8 @@ const Player = {
     }
 
     // AVPlay setDisplayRect coordinate space is always 1920x1080 per Samsung API docs
-    const viewportWidth = Math.max(window.innerWidth || 0, 1920);
-    const viewportHeight = Math.max(window.innerHeight || 0, 1080);
+    const viewportWidth = 1920;
+    const viewportHeight = 1080;
 
     try {
       logger.info('[Seamless Simple] Playing video:', content.url);
@@ -3471,8 +3471,8 @@ const Player = {
     }
 
     // AVPlay setDisplayRect coordinate space is always 1920x1080 per Samsung API docs
-    const viewportWidth = Math.max(window.innerWidth || 0, 1920);
-    const viewportHeight = Math.max(window.innerHeight || 0, 1080);
+    const viewportWidth = 1920;
+    const viewportHeight = 1080;
     
     // Track if seamless transition will happen
     let seamlessTransitioned = false;
@@ -3687,8 +3687,8 @@ const Player = {
     }
 
     // AVPlay setDisplayRect coordinate space is always 1920x1080 per Samsung API docs
-    const viewportWidth = Math.max(window.innerWidth || 0, 1920);
-    const viewportHeight = Math.max(window.innerHeight || 0, 1080);
+    const viewportWidth = 1920;
+    const viewportHeight = 1080;
 
     try {
       logger.info('[Seamless] Preparing next video:', nextContent.url);
@@ -5059,8 +5059,8 @@ const Player = {
     container.innerHTML = ''; // Clear container - AVPlay renders to hardware layer
 
     // AVPlay setDisplayRect coordinate space is always 1920x1080 per Samsung API docs
-    const viewportWidth = Math.max(window.innerWidth || 0, 1920);
-    const viewportHeight = Math.max(window.innerHeight || 0, 1080);
+    const viewportWidth = 1920;
+    const viewportHeight = 1080;
 
     const wrapIndex = (index: number) => {
       const n = playableItems.length;
@@ -5736,6 +5736,10 @@ const Player = {
   // Show idle screen when no content
   showIdleScreen(downloadProgress = null) {
     this.cancelCurrentPlayback();
+    // Ensure AVPlay/SyncPlay visual state is fully reset so the content-container
+    // is visible (cancelCurrentPlayback removes avplay-active class via stopSyncPlayNative,
+    // but the inline visibility:hidden set by setAvPlayVisualMode(true) must also be cleared).
+    this.setAvPlayVisualMode(false);
     const container = document.getElementById('content-container');
     
     let statusText = 'Waiting for content...';
@@ -7031,20 +7035,12 @@ const Player = {
   },
 
   // --- Tizen Syncplay (native) helpers ---
-  // SBB (Tizen 4 / SSSP4) uses b2bapis.b2bsyncplay; Tizen 6.5+ uses webapis.syncplay.
+  // Tizen 6.5+ (QBC and newer signage) uses webapis.syncplay; Tizen 4 SBB uses b2bapis.b2bsyncplay.
   // Detect which backend is available and store it in syncplayBackend for use across sync methods.
   isSyncplayAvailable() {
-    const b2b = typeof (window as any).b2bapis !== 'undefined' ? (window as any).b2bapis : null;
-    // Try b2bapis.b2bsyncplay first (Tizen 4 SBB / SSSP4)
-    if (b2b &&
-        !!b2b.b2bsyncplay &&
-        typeof b2b.b2bsyncplay.startSyncPlay === 'function' &&
-        typeof b2b.b2bsyncplay.makeSyncPlayList === 'function' &&
-        typeof b2b.b2bsyncplay.stopSyncPlay === 'function') {
-      this.syncplayBackend = 'b2bapis';
-      return true;
-    }
-    // Fallback: webapis.syncplay (Tizen 6.5+ / SSSP6+)
+    // Prefer webapis.syncplay (Tizen 6.5+ / SSSP6+) -- matches official Samsung sample for QBC.
+    // Some Tizen 6.5 firmwares also expose b2bapis.b2bsyncplay as a legacy shim, but the modern
+    // webapis.syncplay is the documented API for these devices and renders correctly fullscreen.
     if (typeof webapis !== 'undefined' &&
         !!(webapis as any).syncplay &&
         typeof (webapis as any).syncplay.start === 'function' &&
@@ -7055,6 +7051,16 @@ const Player = {
         const version = (webapis as any).syncplay.getVersion?.();
         if (version) logger.debug('Syncplay API version:', version);
       } catch (_) {}
+      return true;
+    }
+    // Fallback: b2bapis.b2bsyncplay (Tizen 4 SBB / SSSP4)
+    const b2b = typeof (window as any).b2bapis !== 'undefined' ? (window as any).b2bapis : null;
+    if (b2b &&
+        !!b2b.b2bsyncplay &&
+        typeof b2b.b2bsyncplay.startSyncPlay === 'function' &&
+        typeof b2b.b2bsyncplay.makeSyncPlayList === 'function' &&
+        typeof b2b.b2bsyncplay.stopSyncPlay === 'function') {
+      this.syncplayBackend = 'b2bapis';
       return true;
     }
     this.syncplayBackend = null;
@@ -7159,8 +7165,30 @@ const Player = {
         }
 
         const duration = Math.max(1, Math.round(item.duration || content.duration || 10));
-        contents.push({ path: syncPath, duration });
-        logger.info(`Syncplay: built item ${i + 1}/${playlistItems.length}, path=${syncPath}, duration=${duration}s`);
+        // Per official Samsung Tizen 4 SBB sample (samsungdforum.txt page 630), b2bsyncplay
+        // makeSyncPlayList expects a RAW filesystem path (e.g. "/opt/usr/apps/.../res/wgt/...").
+        // The newer webapis.syncplay sample uses getAppSharedURI() which returns file:// URIs;
+        // strip the scheme on b2bapis backend to match the official Tizen 4 example.
+        let nativePath = String(syncPath || '');
+        if (this.syncplayBackend === 'b2bapis' && nativePath.indexOf('file://') === 0) {
+          nativePath = nativePath.replace(/^file:\/\//, '');
+        }
+        // Verify the file actually exists & has nonzero size — Samsung's native SyncPlay
+        // returns an empty error object `{}` if the file is missing/unreadable, which is
+        // the most common cause of silent createPlaylist failures.
+        let fileOk = false;
+        let fileSizeBytes = -1;
+        try {
+          const probePath = nativePath.replace(/^file:\/\//, '');
+          if ((tizen as any)?.filesystem?.pathExists) {
+            fileOk = !!(tizen as any).filesystem.pathExists(probePath);
+          }
+          if (fileOk && (tizen as any)?.filesystem?.getFileSize) {
+            try { fileSizeBytes = (tizen as any).filesystem.getFileSize(probePath); } catch (_) {}
+          }
+        } catch (_) { /* probe failure is non-fatal */ }
+        contents.push({ path: nativePath, duration });
+        logger.info(`Syncplay: built item ${i + 1}/${playlistItems.length}, path=${nativePath}, duration=${duration}s, exists=${fileOk}, size=${fileSizeBytes}`);
       } catch (err) {
         logger.warn('Syncplay: failed to build item', item.contentId, err);
       }
@@ -7217,6 +7245,14 @@ const Player = {
     const myPeer = peers.find((p) => p.deviceId === myDeviceId);
     const sortedByPriority = [...peers].sort((a, b) => a.leaderPriority - b.leaderPriority || a.deviceId.localeCompare(b.deviceId));
     const isLeader = !sortedByPriority.length || (sortedByPriority[0].deviceId === myDeviceId);
+    // Verbose role-election diagnostics: dump my deviceId, the peer list, and the winner so we can
+    // tell whether a TV self-elected as LEADER because of a missing peers array vs. an ID mismatch.
+    try {
+      const peersDump = peers.map((p) => `${p.deviceId.slice(0, 8)}…@${p.ipAddress || '?'}/p${p.leaderPriority}`).join(' | ');
+      const winner = sortedByPriority[0];
+      logger.info(`SyncPlay election: myDeviceId=${myDeviceId.slice(0, 8)}… myPeerFound=${!!myPeer} myPriority=${myPeer?.leaderPriority ?? 'n/a'} winnerDeviceId=${winner?.deviceId?.slice(0, 8) ?? 'none'}… winnerPriority=${winner?.leaderPriority ?? 'n/a'} peerCount=${peers.length}`);
+      logger.info(`SyncPlay election peers=[${peersDump || '(empty)'}]`);
+    } catch (_) { /* logging-only */ }
     logger.info(`SyncPlay coordination: role=${isLeader ? 'LEADER' : 'FOLLOWER'} syncGroupId=${syncGroupId} peers=${peers.length}`);
 
     try {
@@ -7450,8 +7486,19 @@ const Player = {
             resolve();
           };
           const onError = (err: any) => {
-            logger.error('Syncplay: createPlaylist failed', err?.name, err?.message, '(code:', err?.code, ')');
-            reject(err);
+            // Samsung's native error object may not have enumerable properties — extract by name.
+            const fields: any = {};
+            try {
+              ['name', 'message', 'code', 'type', 'data', 'result', 'reason'].forEach((k) => {
+                try { if (err && (err as any)[k] !== undefined) fields[k] = (err as any)[k]; } catch (_) {}
+              });
+            } catch (_) {}
+            let typeofErr = 'unknown';
+            try { typeofErr = typeof err; } catch (_) {}
+            let ownProps: string[] = [];
+            try { ownProps = err ? Object.getOwnPropertyNames(err) : []; } catch (_) {}
+            logger.error(`Syncplay: createPlaylist onError fired typeof=${typeofErr} ownProps=${JSON.stringify(ownProps)} fields=${JSON.stringify(fields)}`);
+            reject(err || new Error('Syncplay: createPlaylist onError with empty error'));
           };
           try {
             if (this.syncplayBackend === 'b2bapis') {
@@ -7486,8 +7533,9 @@ const Player = {
       logger.info('Syncplay: playlist prepared (native)');
 
       return true;
-    } catch (err) {
-      logger.error('Syncplay: prepare playlist native failed', err);
+    } catch (err: any) {
+      const errMsg = (err && (err.message || err.name)) || String(err);
+      logger.error(`Syncplay: prepare playlist native failed: ${errMsg}`);
       this.syncplayCreateListFailedAt = Date.now();
       return false;
     }
@@ -7552,7 +7600,11 @@ const Player = {
     let rect = { x: 0, y: 0, width: display.width, height: display.height };
     const rotate: SyncplayRotate = 'OFF';
 
-    logger.info(`SyncPlay display rect: ${rect.width}x${rect.height}`);
+    // NOTE: Samsung B2B firmware (Tizen 4 SBB) may use a 3840×2160 virtual coordinate
+    // space even on FHD panels — productinfo:uhd-flag reports UHD and 1920×1080 renders
+    // as quarter-screen. We probe both sizes in the candidates loop below.
+
+    logger.info(`SyncPlay display rect: ${rect.width}x${rect.height} (backend=${this.syncplayBackend})`);
     
     // SyncPlay groupID must be a small integer (16-bit on many firmwares).
     // Derive it deterministically from folderId/UUID.
@@ -7596,7 +7648,18 @@ const Player = {
         this.isSyncPlaying = true;
         this.isSyncStarting = false;
         clearWatchdog();
+        // Re-add avplay-active here: old-session phantom STOP_DONEs (from accumulated
+        // firmware listener registrations across app restarts) may have removed it.
+        // START_DONE is the authoritative signal that video IS playing — always show it.
+        try { document.body.classList.add('avplay-active'); } catch (_) {}
       } else if (event === 'SYNC_PLAY_STOP_DONE') {
+        // Ignore phantom STOP events that arrive while still in probe/startup phase.
+        // stopListenerSafe() between rect candidates triggers these asynchronously;
+        // they must not tear down rendering state set up by the successful start().
+        if (this.isSyncStarting) {
+          logger.debug('Syncplay: ignoring STOP_DONE during startup phase (probe cleanup)');
+          return;
+        }
         logger.info('Syncplay stopped on this device');
         this.isSyncPlaying = false;
         this.isSyncStarting = false;
@@ -7615,20 +7678,21 @@ const Player = {
     try {
       logger.info(`[SYNC TIMING] calling syncplay start now at ${Date.now()}`);
 
-      // CRITICAL: Stop any previous SyncPlay session to unregister old listener.
-      // Calling start() when a listener is already registered causes "Can't register callback".
-      if (this.syncPlayListener) {
-        try {
-          logger.debug('Stopping previous SyncPlay session before starting new one');
-          if (this.syncplayBackend === 'b2bapis') {
-            (window as any).b2bapis.b2bsyncplay.stopSyncPlay(this.syncPlayListener);
-          } else {
-            (webapis as any).syncplay.stop(this.syncPlayListener);
-          }
-        } catch (stopErr) {
-          logger.debug('Previous SyncPlay stop failed (ignored):', stopErr);
+      // CRITICAL: Unconditionally clear any previously-registered firmware callback slot.
+      // The b2bapis firmware keeps a SINGLE global slot; a failed startSyncPlay() (e.g.
+      // "Invalid Rect") leaves it occupied and all subsequent calls get "Can't register
+      // callback". stopSyncPlay's parameter is the COMPLETION callback, not the one being
+      // removed — so passing a no-op always clears the slot regardless of what was registered.
+      try {
+        logger.debug('Pre-clearing SyncPlay callback slot (unconditional)');
+        if (this.syncplayBackend === 'b2bapis') {
+          (window as any).b2bapis.b2bsyncplay.stopSyncPlay(() => {});
+        } else {
+          (webapis as any).syncplay.stop(() => {});
         }
-      }
+      } catch (_) {}
+      // Give firmware time to fully de-register the old slot before calling startSyncPlay.
+      await new Promise<void>(r => setTimeout(r, 200));
 
       // b2bapis: startSyncPlay(x, y, w, h, groupID, rotate, onChange)  — positional args (Tizen 4 SBB)
       // webapis:  start(syncinfo, listener)                             — object arg   (Tizen 6.5+)
@@ -7643,42 +7707,89 @@ const Player = {
         }
       };
 
-      // Best-effort: some firmwares tie the video plane to tvwindow state.
-      // Force fullscreen TV window before starting SyncPlay.
-      try {
-        this.invokeTVControl?.('showWindow', [0, 0, baseSyncinfo.rectWidth, baseSyncinfo.rectHeight], 'MAIN');
-      } catch (_) {}
+      // showWindow is called AFTER a successful start (using the actual winning rect),
+      // so that we never pass an unsupported size (e.g. 3840 on an FHD-only SBB panel).
 
-      // UHD probe: if we only see 1920x1080, attempt 3840x2160 first to avoid quarter-screen SyncPlay.
-      // If firmware rejects it (throws), immediately fall back to the base rect.
-      let syncinfoToUse: any = baseSyncinfo;
-      const canProbeUhd =
-        Number(baseSyncinfo.rectWidth) === 1920 &&
-        Number(baseSyncinfo.rectHeight) === 1080;
-
-      if (canProbeUhd) {
-        const uhdSyncinfo = { ...baseSyncinfo, rectWidth: 3840, rectHeight: 2160 };
+      // Detailed error description helper (Samsung WebAPIException is opaque to JSON.stringify).
+      const describeError = (e: any): string => {
+        if (!e) return 'null';
         try {
-          logger.warn('SyncPlay rect probe: trying UHD 3840x2160 (fallback to 1920x1080 if rejected)');
-          invokeStart(uhdSyncinfo);
-          syncinfoToUse = uhdSyncinfo;
-        } catch (probeErr) {
-          logger.warn('SyncPlay UHD rect probe rejected; falling back to 1920x1080', probeErr);
-          // IMPORTANT: some firmwares partially register callbacks even when start() throws.
-          // Stop the just-attempted listener before retrying, otherwise fallback start can fail
-          // with "Can't register callback".
-          try {
-            if (this.syncplayBackend === 'b2bapis') {
-              try { (window as any).b2bapis.b2bsyncplay.stopSyncPlay(listener); } catch (_) {}
-            } else {
-              try { (webapis as any).syncplay.stop(listener); } catch (_) {}
-            }
-          } catch (_) {}
-          invokeStart(baseSyncinfo);
-          syncinfoToUse = baseSyncinfo;
+          const fields: any = {};
+          ['name', 'message', 'code', 'type', 'data', 'result', 'reason'].forEach((k) => {
+            try { if (e[k] !== undefined) fields[k] = e[k]; } catch (_) {}
+          });
+          let ownProps: string[] = [];
+          try { ownProps = Object.getOwnPropertyNames(e); } catch (_) {}
+          return `typeof=${typeof e} ownProps=${JSON.stringify(ownProps)} fields=${JSON.stringify(fields)} stringified=${String(e)}`;
+        } catch (_) {
+          return String(e);
         }
+      };
+
+      // Try a series of rect candidates for webapis (Tizen 6.5 QBC). Some Samsung firmwares
+      // mis-report panel size via systeminfo:DISPLAY (returning FHD on UHD panels), so we
+      // probe UHD first. Between attempts we MUST fully stop() the listener — partial
+      // registration from a thrown start() leaves the listener slot occupied and the next
+      // start() will throw "Can't register callback" / similar opaque errors.
+      const stopListenerSafe = async () => {
+        try {
+          if (this.syncplayBackend === 'b2bapis') {
+            // Pass a no-op — the parameter is the completion callback, not the registered
+            // listener. This clears the slot regardless of what was registered.
+            try { (window as any).b2bapis.b2bsyncplay.stopSyncPlay(() => {}); } catch (_) {}
+          } else {
+            try { (webapis as any).syncplay.stop(listener); } catch (_) {}
+          }
+        } catch (_) {}
+        // Wait for firmware to fully release the slot before the next startSyncPlay() call.
+        await new Promise<void>(r => setTimeout(r, 200));
+      };
+
+      let syncinfoToUse: any = baseSyncinfo;
+      let lastErr: any = null;
+
+      // Both backends: probe UHD first — Samsung B2B firmware (b2bapis) on some models
+      // uses a 3840×2160 virtual coordinate space even on FHD panels, so 1920×1080 renders
+      // as a quarter-screen. STOP_DONE events from stopListenerSafe() between candidates are
+      // safe because the listener ignores them while isSyncStarting is true.
+      const candidates: any[] = [];
+      if (Number(baseSyncinfo.rectWidth) >= 3840) {
+        // Already at UHD — try as-is, then FHD fallback.
+        candidates.push(baseSyncinfo);
+        candidates.push({ ...baseSyncinfo, rectWidth: 1920, rectHeight: 1080 });
       } else {
-        invokeStart(baseSyncinfo);
+        // Detected FHD — probe UHD first (firmware may use 4K virtual space),
+        // then fall back to the detected size.
+        candidates.push({ ...baseSyncinfo, rectWidth: 3840, rectHeight: 2160 });
+        candidates.push(baseSyncinfo);
+      }
+
+      let started = false;
+      for (let i = 0; i < candidates.length; i++) {
+        const candidate = candidates[i];
+        try {
+          logger.info(`SyncPlay rect attempt ${i + 1}/${candidates.length}: ${candidate.rectWidth}x${candidate.rectHeight}`);
+          invokeStart(candidate);
+          syncinfoToUse = candidate;
+          started = true;
+          // showWindow AFTER successful start using the actual rect dimensions.
+          // Cap to FHD — SBB (b2bapis) rejects values > 1920.
+          const showW = Math.min(candidate.rectWidth, 1920);
+          const showH = Math.min(candidate.rectHeight, 1080);
+          try {
+            this.invokeTVControl?.('showWindow', [0, 0, showW, showH], 'MAIN');
+          } catch (showErr) {
+            logger.warn(`showWindow ${showW}x${showH} failed (continuing): ${(showErr as any)?.message || showErr}`);
+          }
+          break;
+        } catch (err) {
+          lastErr = err;
+          logger.warn(`SyncPlay rect ${candidate.rectWidth}x${candidate.rectHeight} rejected: ${describeError(err)}`);
+          await stopListenerSafe();
+        }
+      }
+      if (!started) {
+        throw lastErr || new Error('SyncPlay start: all rect candidates rejected');
       }
 
       this.syncPlayListener = listener;
@@ -7704,8 +7815,16 @@ const Player = {
       }, 30000);
 
       return true;
-    } catch (err) {
-      logger.error('Syncplay: start failed', err);
+    } catch (err: any) {
+      const fields: any = {};
+      try {
+        ['name', 'message', 'code', 'type', 'data', 'result', 'reason'].forEach((k) => {
+          try { if (err && (err as any)[k] !== undefined) fields[k] = (err as any)[k]; } catch (_) {}
+        });
+      } catch (_) {}
+      let ownProps: string[] = [];
+      try { ownProps = err ? Object.getOwnPropertyNames(err) : []; } catch (_) {}
+      logger.error(`Syncplay: start failed typeof=${typeof err} ownProps=${JSON.stringify(ownProps)} fields=${JSON.stringify(fields)} stringified=${String(err)}`);
       // Best-effort cleanup: some firmwares keep the callback registered even after an exception.
       try {
         if (this.syncplayBackend === 'b2bapis') {

@@ -36,6 +36,7 @@
     <tizen:privilege name="http://developer.samsung.com/privilege/tvinfo"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/b2bcontrol"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/syncplay"/>
+    <tizen:privilege name="http://developer.samsung.com/privilege/b2bsyncplay"/>
     <tizen:privilege name="http://tizen.org/privilege/websetting"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/network.softAP"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/widgetdata"/>

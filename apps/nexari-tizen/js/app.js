@@ -119,18 +119,10 @@
   // on the TV OS that listens on 127.0.0.1:9615 and forwards MDC commands to
   // the panel firmware on 127.0.0.1:1515.
   function pickNodeServerFile() {
-    // In development, use unsigned server.js (works on dev-mode TVs).
-    // server.js is a thin stub that calls require('./js/mdc.js')().
-    // All MDC logic is in js/mdc.js — update that freely without re-signing.
-    if (typeof BUILD_PRODUCTION === 'undefined' || !BUILD_PRODUCTION) {
-      return '../server.js';
-    }
-    // Production: each lib/server*.signed is an identical thin stub that calls
-    // require('../js/mdc.js')() — signed separately per SSSP generation.
-    // Submit lib/server.stub.js to Samsung SSSP portal to obtain each signed copy.
+    // Always use the Samsung-signed stub for the running SSSP generation.
+    // The stub calls require('../js/mdc.js')() — update mdc.js freely without re-signing.
+    // Only the stub files in lib/ need re-signing if their own content changes.
     var v = Platform.tizenMajor;
-    if (v <= 2) return '../lib/server2016.js.signed'; // SSSP4 / Tizen 2.4
-    if (v === 3) return '../lib/server2017.js.signed'; // SSSP5 / Tizen 3.0
     if (v === 4) return '../lib/server2018.js.signed'; // SSSP6 / Tizen 4.0
     if (v === 5) return '../lib/server2019.js.signed'; // SSSP7 / Tizen 5.0
     return '../lib/server2022.js.signed';              // SSSP8+ / Tizen 6.0+

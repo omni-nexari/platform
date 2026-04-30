@@ -1,0 +1,12 @@
+/**
+ * Nexari Player � MDC Bridge stub (unsigned, development mode only).
+ *
+ * All MDC/HTTP logic lives in ../js/mdc.js � update that file freely
+ * without re-signing. Only the equivalent stubs in lib/ need Samsung signing.
+ *
+ * Started by app.js via:
+ *   b2bapis.b2bcontrol.startNodeServer('../server.js', 'mdc-bridge', ...)
+ */
+require('./js/mdc.js')();
+
+//UEP630x1109a73d215fed5a06238b9bd1eaf919827fa4a722914abe16c379461acfe91540436a25dbb9098ad2c8f6ec9d6f7f51e2308496380dbe7040a23ec58b09c27523ef224a3d60747a40bf3933a0f1922f2f978f6421b8bb0956874a07770eb01a8f8a7f96b92f92bbd5609da0095a52a9fadd4399ae6bb194cfce82d1bcb11a884fa3b4d476bda59a8a13acd6f41d0b31946c3b9c71347d105835f133020629174b69dfa19bd5fcdb9ca056d319ae0acc3e3fa1de502c539eb044c6652edf645136d206978e0bc1932ffa06166cd1e398a4d51aa0e8cba8196cef7a9ea3a765011bba4e56c064232c5ce27f4ec3c526864d2e59a038664094b1933182ee41f548AAACAg==:UEP

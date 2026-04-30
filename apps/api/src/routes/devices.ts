@@ -739,9 +739,10 @@ export async function deviceRoutes(app: FastifyInstance) {
     return reply.send({ ok: true });
   });
 
-  // ── GET /devices/:id/screenshot/latest ── serve in-memory latest frame ─────
-  // Returns the most-recent auto screenshot (content_change / interval) as JPEG.
-  // No disk I/O — served from RAM. 404 if no frame received yet.
+  // ── GET /devices/:id/screenshot/latest ── serve latest frame ─────────────
+  // Prefers the in-memory frame (auto screenshots, no disk I/O).
+  // Falls back to the most-recent persisted screenshot when the in-memory
+  // store is empty (e.g. after a server restart before the device re-connects).
   app.get('/:id/screenshot/latest', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
     const { id } = req.params as { id: string };
@@ -752,11 +753,25 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!device) return reply.status(404).send({ error: 'Not found' });
 
     const frame = getLatestFrame(id);
-    if (!frame) return reply.status(404).send({ error: 'No screenshot available yet' });
+    if (frame) {
+      reply.header('Content-Type', 'image/jpeg');
+      reply.header('Cache-Control', 'no-store');
+      return reply.send(frame.buf);
+    }
+
+    // Fallback: serve the latest persisted (manual) screenshot from disk
+    const latest = await db.query.deviceScreenshots.findFirst({
+      where: eq(deviceScreenshots.deviceId, id),
+      orderBy: [desc(deviceScreenshots.takenAt)],
+    });
+    if (!latest) return reply.status(404).send({ error: 'No screenshot available yet' });
+
+    const filePath = path.resolve(STORAGE_ROOT, latest.storageKey);
+    if (!existsSync(filePath)) return reply.status(404).send({ error: 'Screenshot file not found' });
 
     reply.header('Content-Type', 'image/jpeg');
-    reply.header('Cache-Control', 'no-store');
-    return reply.send(frame.buf);
+    reply.header('Cache-Control', 'private, max-age=60');
+    return reply.send(createReadStream(filePath));
   });
 
   // ── GET /devices/:id/screenshot/stream ── SSE live-view relay ─────────────
@@ -1296,14 +1311,15 @@ export async function deviceRoutes(app: FastifyInstance) {
       socket.send(JSON.stringify({ type: 'server_ack', payload: { timestamp: new Date().toISOString(), reason: 'connected' } }));
     } catch {}
 
-    // Start periodic screenshots only when the user has configured an interval.
-    // A value of null / 0 means "no periodic screenshots" — just take one on content change.
-    const intervalMin = device.screenshotIntervalMin;
-    if (intervalMin && intervalMin > 0) {
-      setTimeout(() => {
-        sendCommand(deviceId, { type: 'set_screenshot_interval', payload: { minutes: intervalMin } });
-      }, 5_000);
-    }
+    // Always run periodic screenshots. Use the user-configured interval, or fall back to
+    // 10 minutes so device-card thumbnails stay fresh even when the user sets "never".
+    const DEFAULT_SCREENSHOT_INTERVAL_MIN = 10;
+    const intervalMin = (device.screenshotIntervalMin && device.screenshotIntervalMin > 0)
+      ? device.screenshotIntervalMin
+      : DEFAULT_SCREENSHOT_INTERVAL_MIN;
+    setTimeout(() => {
+      sendCommand(deviceId, { type: 'set_screenshot_interval', payload: { minutes: intervalMin } });
+    }, 5_000);
 
     // Request one screenshot ~10 s after connect to populate the in-memory frame store.
     // This ensures device cards show a thumbnail immediately after server restarts,
