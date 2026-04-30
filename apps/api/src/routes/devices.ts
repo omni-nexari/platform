@@ -713,7 +713,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     }
 
     reply.header('Content-Type', 'image/jpeg');
-    reply.header('Cache-Control', 'private, max-age=3600');
+    reply.header('Cache-Control', 'no-store');
     return reply.send(createReadStream(filePath));
   });
 

@@ -61,8 +61,8 @@ param(
     # Tizen Studio CLI path (tizen.bat)
     [string]$TizenCli = "C:\tizen-studio\tools\ide\bin\tizen.bat",
 
-    # Tizen signing profile name
-    [string]$SignProfile = "testforsbb"
+    # Tizen signing profile name (default: prod cert — testforqbc author + NADO.p12 distributor)
+    [string]$SignProfile = "nado-prod"
 )
 
 $ErrorActionPreference = "Stop"
@@ -152,6 +152,47 @@ if ($Build) {
     Copy-Item "$TizenDir\js" "$tmp\js" -Recurse -Force
 
     Remove-Item "$TizenDir\*.wgt" -ErrorAction SilentlyContinue
+
+    # -- Ensure nado-prod signing profile is registered in profiles.xml --------
+    if ($SignProfile -eq "nado-prod") {
+        $profilesXml = "C:\tizen-studio-data\profile\profiles.xml"
+        $authorP12   = "C:\Users\chiho\SamsungCertificate\testforqbc\author.p12"
+        $authorPwd   = "C:\Users\chiho\SamsungCertificate\testforqbc\author.pwd"
+        $distP12     = Join-Path $RepoRoot "Docs\cert\NADO.p12"
+        $distPwd     = Join-Path $RepoRoot "Docs\cert\NADO.pwd"
+
+        foreach ($p in @($profilesXml, $authorP12, $authorPwd, $distP12, $distPwd)) {
+            if (-not (Test-Path $p)) { throw "Missing required cert file: $p" }
+        }
+
+        Write-Host "  Ensuring Tizen signing profile 'nado-prod' in $profilesXml..."
+        [xml]$pXml = Get-Content $profilesXml
+        $pRoot = $pXml.profiles
+        $existingProf = $pRoot.profile | Where-Object { $_.name -eq 'nado-prod' }
+        if ($existingProf) { [void]$pRoot.RemoveChild($existingProf) }
+
+        $prof = $pXml.CreateElement('profile'); $prof.SetAttribute('name', 'nado-prod')
+
+        $a = $pXml.CreateElement('profileitem')
+        $a.SetAttribute('ca',''); $a.SetAttribute('distributor','0')
+        $a.SetAttribute('key',$authorP12); $a.SetAttribute('password',$authorPwd); $a.SetAttribute('rootca','')
+        [void]$prof.AppendChild($a)
+
+        $d = $pXml.CreateElement('profileitem')
+        $d.SetAttribute('ca',''); $d.SetAttribute('distributor','1')
+        $d.SetAttribute('key',$distP12); $d.SetAttribute('password',$distPwd); $d.SetAttribute('rootca','')
+        [void]$prof.AppendChild($d)
+
+        $d2 = $pXml.CreateElement('profileitem')
+        $d2.SetAttribute('ca',''); $d2.SetAttribute('distributor','2')
+        $d2.SetAttribute('key',''); $d2.SetAttribute('password',''); $d2.SetAttribute('rootca','')
+        [void]$prof.AppendChild($d2)
+
+        [void]$pRoot.AppendChild($prof)
+        $pRoot.SetAttribute('active', 'nado-prod')
+        $pXml.Save($profilesXml)
+        Write-Host "  Profile 'nado-prod' written." -ForegroundColor Green
+    }
 
     Write-Host "  Packaging + signing with profile '$SignProfile'..."
     & $TizenCli package --type wgt --sign $SignProfile -o $TizenDir -- $tmp 2>&1 | Write-Host

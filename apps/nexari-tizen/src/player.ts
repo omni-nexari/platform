@@ -1,4 +1,4 @@
-// Content Player Module - TypeScript Edition
+﻿// Content Player Module - TypeScript Edition
 /// <reference types="tizen-tv-webapis" />
 
 // Type definitions
@@ -88,17 +88,7 @@ const Player = {
   lastReadinessAt: 0,
   _loadInFlight: false,
   currentAvPlayProfileKey: null as string | null,
-  isSyncPlaying: false,
-  isSyncStarting: false,
-  syncCoordinationInProgress: false,
-  syncCoordinationSignature: null as string | null,
-  syncPlayMode: 'none' as 'none' | 'native',
-  syncPlayListener: null as ((data: any) => void) | null,
-  syncplayBackend: null as 'b2bapis' | 'webapis' | null,
-  /** Watchdog timer that recovers state if SYNC_PLAY_START_DONE never fires. */
-  syncStartWatchdog: null as ReturnType<typeof setTimeout> | null,
-  /** Timestamp of last createPlaylist failure; used to rate-limit retries (skip for 2 min after failure). */
-  syncplayCreateListFailedAt: 0,
+
   deviceToken: null as string | null,
   _scannedMdcId: null as number | null, // MDC device ID found by scan; persisted to DB once WS is open
   _mdcStartupDone: false, // Set to true once Phase 1 ID scan completes; gates sendMdcHeartbeat
@@ -110,10 +100,10 @@ const Player = {
   _clockSupported: true as boolean,   // Set to false after first NAK; skips get_clock / set_clock
   _liveCaptureActive: false as boolean,           // live-view capture running
   _liveCaptureIntervalMs: 1000 as number,          // requested cadence
-  _liveCaptureBusy: false as boolean,              // captureScreen in progress — prevents overlapping calls
-  _liveInterval: undefined as number | undefined,  // setTimeout handle (NOT setInterval — Samsung captureScreen cannot overlap)
+  _liveCaptureBusy: false as boolean,              // captureScreen in progress â€” prevents overlapping calls
+  _liveInterval: undefined as number | undefined,  // setTimeout handle (NOT setInterval â€” Samsung captureScreen cannot overlap)
 
-  // ── IPTV channel group runtime state ───────────────────────────────────
+  // â”€â”€ IPTV channel group runtime state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   currentChannelGroup: null as any,
   _channelDigitBuffer: '' as string,
   _channelDigitTimer: null as any,
@@ -126,7 +116,7 @@ const Player = {
   _iptvWatchdogTimer: null as any,
   _iptvLastTime: -1 as number,
   _iptvStallCount: 0 as number,
-  // Tune debounce — coalesces rapid CH+/CH- mashing
+  // Tune debounce â€” coalesces rapid CH+/CH- mashing
   _tuneSeq: 0 as number,
   _pendingTuneTimer: null as any,
   IPTV_MAX_RECONNECTS: 5 as number,
@@ -153,10 +143,10 @@ const Player = {
   _zoneContainers: [] as HTMLElement[],
   _zoneTimers: [] as number[],
   _zoneAVPlayers: [] as any[],
-  _zoneAVPlayerMap: {} as Record<string, any>, // zone.id → avplaystore player
+  _zoneAVPlayerMap: {} as Record<string, any>, // zone.id â†’ avplaystore player
   _zoneSyncEnabled: false as boolean, // true when any zone has syncGroup set
   _zoneDocumentActive: false as boolean, // webapis.document is single-instance
-  // Serialise VideoMixer prepare() calls across zones — Samsung TV rejects
+  // Serialise VideoMixer prepare() calls across zones â€” Samsung TV rejects
   // concurrent prepare() with PLAYER_ERROR_NOT_SUPPORTED_FILE.
   _videoMixerQueue: Promise.resolve() as Promise<void>,
   // Intra-device zone sync: gather all zones' play() calls and fire together
@@ -171,7 +161,7 @@ const Player = {
   documentActive: false,
   documentItemKey: null as string | null,
   documentPageInterval: null as any,
-  // Multi-backend document support: B2BDoc (Tizen 4), webapis.document (Tizen 6.5+), PDF.js (Tizen 5–6.4)
+  // Multi-backend document support: B2BDoc (Tizen 4), webapis.document (Tizen 6.5+), PDF.js (Tizen 5â€“6.4)
   documentBackend: null as 'pdfjs' | 'b2bdoc' | 'native' | null,
   b2bDocInstance: null as any,
   nativeDocOpen: false as boolean,
@@ -204,17 +194,25 @@ const Player = {
     
     // Detect physical panel resolution for AVPlay setDisplayRect.
     // On commercial signage panels window.innerWidth reports 1920 even on UHD,
-    // so we have to query systeminfo/productinfo to know the real pixel size.
+    // and systeminfo DISPLAY also returns 1920. Empirically these LFD panels
+    // need the rect set to native panel pixels â€” and we know the deployed
+    // hardware is 4K, so default to UHD and let getPhysicalDisplaySize() upgrade
+    // to 8K if the model exposes that flag. If a downstream FHD panel is added
+    // later, this can be revisited; passing 3840Ã—2160 to setDisplayRect on a
+    // genuine FHD panel is normally accepted (firmware clamps).
+    this._panelWidth = 3840;
+    this._panelHeight = 2160;
     try {
       const panel = await this.getPhysicalDisplaySize();
-      if (panel && panel.width > 0 && panel.height > 0) {
+      logger.info(`Panel resolution detect returned: ${panel?.width}x${panel?.height}`);
+      if (panel && panel.width >= 3840 && panel.height >= 2160) {
         this._panelWidth = panel.width;
         this._panelHeight = panel.height;
-        logger.info(`Panel resolution cached for AVPlay: ${this._panelWidth}x${this._panelHeight}`);
       }
     } catch (err) {
-      logger.warn('Panel resolution detection failed, using FHD fallback', err);
+      logger.warn('Panel resolution detection failed', err);
     }
+    logger.info(`Panel resolution cached for AVPlay: ${this._panelWidth}x${this._panelHeight}`);
 
     // Synchronize time with server for precise video wall sync
     await this.syncTimeWithServer();
@@ -241,7 +239,7 @@ const Player = {
     // Setup refresh interval
     this.startContentRefresh();
     this.startLogStream();
-    // Phase 2 MDC setup — apply initial display settings, persist MDC ID to DB
+    // Phase 2 MDC setup â€” apply initial display settings, persist MDC ID to DB
     setTimeout(() => { this.runPostPairingMdcSetup(); }, 5000);
 
     logger.info('Player initialized successfully');
@@ -348,7 +346,7 @@ const Player = {
           
         case 'SYNC_PLAY':
           logger.info('Sync play command received:', message.payload);
-          this.handleSyncPlayCommand(message.payload);
+          logger.info('SYNC_PLAY command received (SyncPlay removed from player; ignored)');
           break;
 
         case 'SESSION_CONFIG':
@@ -396,7 +394,7 @@ const Player = {
           }
           break;
           
-        // ── Our API WS commands (snake_case from server → ws.ts) ──────────────
+        // â”€â”€ Our API WS commands (snake_case from server â†’ ws.ts) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         case 'refresh_schedule':
           logger.info('refresh_schedule received - reloading content');
           this.loadContent();
@@ -441,7 +439,7 @@ const Player = {
           this._liveCaptureActive = true;
           this._liveCaptureIntervalMs = intervalMs;
           this._liveCaptureBusy = false;
-          // Use setTimeout chaining (NOT setInterval) — Samsung captureScreen cannot handle
+          // Use setTimeout chaining (NOT setInterval) â€” Samsung captureScreen cannot handle
           // concurrent calls; each capture must complete before the next is scheduled.
           const self = this;
           const scheduleNext = (delayMs: number) => {
@@ -516,16 +514,16 @@ const Player = {
                       }
                     } catch (e) {
                       logger.warn('[LiveCapture] filesystem failed:', e);
-                      canvasFallback(); // b2b captured but read failed — send canvas frame
+                      canvasFallback(); // b2b captured but read failed â€” send canvas frame
                     }
                   }, (e: unknown) => {
                     logger.warn('[LiveCapture] captureScreen error:', e);
-                    canvasFallback(); // b2b error callback — send canvas frame instead of nothing
+                    canvasFallback(); // b2b error callback â€” send canvas frame instead of nothing
                   });
                   return;
                 }
               } catch (e) { logger.warn('[LiveCapture] b2b threw:', e); }
-              // b2b API unavailable — canvas fallback (captures DOM/2D content, not HW-decoded video)
+              // b2b API unavailable â€” canvas fallback (captures DOM/2D content, not HW-decoded video)
               canvasFallback();
             }, delayMs) as unknown as number;
           };
@@ -575,10 +573,10 @@ const Player = {
           // Rate-limit: ignore if a sync completed within the last 30s
           const msSinceSync = this.lastNtpSync ? Date.now() - this.lastNtpSync : Infinity;
           if (msSinceSync < 30_000) {
-            logger.debug(`ntp_resync ignored — last sync was ${Math.round(msSinceSync / 1000)}s ago`);
+            logger.debug(`ntp_resync ignored â€” last sync was ${Math.round(msSinceSync / 1000)}s ago`);
             break;
           }
-          logger.info('ntp_resync received from server — syncing now');
+          logger.info('ntp_resync received from server â€” syncing now');
           void this.syncTimeWithServer();
           break;
         }
@@ -627,7 +625,7 @@ const Player = {
             const xhr = new XMLHttpRequest();
             xhr.open('POST', 'http://127.0.0.1:9615/mdc-control', true);
             xhr.setRequestHeader('Content-Type', 'application/json');
-            // mdc_id_scan and mdc_conn_type_fix scan up to 10 IDs × 500ms each = ~5s;
+            // mdc_id_scan and mdc_conn_type_fix scan up to 10 IDs Ã— 500ms each = ~5s;
             // give a generous budget so the XHR never races the scan to timeout.
             xhr.timeout = (action === 'mdc_id_scan' || action === 'mdc_conn_type_fix') ? 15000 : 10000;
             xhr.onload = function() {
@@ -668,7 +666,7 @@ const Player = {
           }
           const rsXhr = new XMLHttpRequest();
           rsXhr.open('GET', 'http://127.0.0.1:9615/status-full', true);
-          rsXhr.timeout = 20000; // sequential MDC calls can take ~3s each × 6
+          rsXhr.timeout = 20000; // sequential MDC calls can take ~3s each Ã— 6
           rsXhr.onload = function() {
             try {
               const res = JSON.parse(rsXhr.responseText) as {
@@ -723,7 +721,7 @@ const Player = {
             catch (e: unknown) {
               const err = e as Error & { name?: string; message?: string };
               const base = err?.name && err?.message ? `${err.name}: ${err.message}` : String(e);
-              const hint = err?.name === 'SecurityError' ? ' (partner certificate required or device not in developer mode — may also be LFD-only method)' : '';
+              const hint = err?.name === 'SecurityError' ? ' (partner certificate required or device not in developer mode â€” may also be LFD-only method)' : '';
               return { error: base + hint };
             }
           }
@@ -834,7 +832,7 @@ const Player = {
               if (r !== null) scEntries.push({ label, ...r });
             }
             if (scEntries.length === 1) {
-              scEntries.push({ label: 'Partner APIs', error: 'All SystemControl partner methods returned SecurityError — partner certificate required' });
+              scEntries.push({ label: 'Partner APIs', error: 'All SystemControl partner methods returned SecurityError â€” partner certificate required' });
             }
             const srcTypes = ['HDMI1', 'HDMI2', 'HDMI3', 'DP', 'MAGICINFO', 'INTERNAL_USB', 'URL_LAUNCHER'];
             const srcOrient: Record<string, unknown> = {};
@@ -846,10 +844,10 @@ const Player = {
           }
           sections['systemControl'] = scEntries;
 
-          // Timer — tizen.time (standard, no partner privilege) + webapis.timer (partner-only, best-effort)
+          // Timer â€” tizen.time (standard, no partner privilege) + webapis.timer (partner-only, best-effort)
           const tmEntries: Array<{ label: string; value?: unknown; error?: string }> = [];
 
-          // tizen.time: standard Tizen Time API — always available without partner privilege
+          // tizen.time: standard Tizen Time API â€” always available without partner privilege
           const tztime = (typeof tizen !== 'undefined' && (tizen as any).time) as Record<string, (...args: unknown[]) => unknown> | undefined;
           if (!tztime) {
             tmEntries.push({ label: 'tizen.time', error: 'tizen.time not available on this runtime' });
@@ -861,10 +859,10 @@ const Player = {
             tmEntries.push({ label: 'Available timezones (count)', ...tpSafe(() => { const z = tztime['getAvailableTimezones']() as unknown[]; return `${z.length} zones`; }) });
           }
 
-          // webapis.timer: Samsung partner-only API — requires Samsung partner privilege (SecurityError if not whitelisted)
+          // webapis.timer: Samsung partner-only API â€” requires Samsung partner privilege (SecurityError if not whitelisted)
           const tm = webapis?.['timer'] as Record<string, (...args: unknown[]) => unknown> | undefined;
           if (!tm) {
-            tmEntries.push({ label: 'webapis.timer', error: 'Not available — Samsung partner privilege required' });
+            tmEntries.push({ label: 'webapis.timer', error: 'Not available â€” Samsung partner privilege required' });
           } else {
             tmEntries.push({ label: 'Plugin version', ...tpSafe(() => tm['getVersion']()) });
             tmEntries.push({ label: 'NTP settings (getNTP)', ...tpSafe(() => tpJson(tm['getNTP']())) });
@@ -877,10 +875,10 @@ const Player = {
           const rpEntries: Array<{ label: string; value?: unknown; error?: string }> = [];
           const rp = webapis?.['remotepower'] as Record<string, (...args: unknown[]) => unknown> | undefined;
           if (!rp) {
-            rpEntries.push({ label: 'webapis.remotepower', error: 'Not available — Samsung partner privilege required' });
+            rpEntries.push({ label: 'webapis.remotepower', error: 'Not available â€” Samsung partner privilege required' });
           } else {
             rpEntries.push({ label: 'Plugin version', ...tpSafe(() => rp['getVersion']()) });
-            // getRemoteConfiguration — LFD only. Controls whether remote power is enabled.
+            // getRemoteConfiguration â€” LFD only. Controls whether remote power is enabled.
             rpEntries.push({ label: 'Remote Configuration ON/OFF (getRemoteConfiguration) [LFD]', ...tpSafe(() => rp['getRemoteConfiguration']()) });
             // getPowerState / getVirtualStandbyMode
             rpEntries.push({ label: 'Power state (getPowerState)', ...tpSafe(() => rp['getPowerState']()) });
@@ -888,10 +886,10 @@ const Player = {
           }
           sections['remotePower'] = rpEntries;
 
-          // Custom App Info (webapis.systemcontrol — already available from sc above)
+          // Custom App Info (webapis.systemcontrol â€” already available from sc above)
           const caEntries: Array<{ label: string; value?: unknown; error?: string }> = [];
           if (!sc) {
-            caEntries.push({ label: 'webapis.systemcontrol', error: 'Not available — Samsung partner privilege required' });
+            caEntries.push({ label: 'webapis.systemcontrol', error: 'Not available â€” Samsung partner privilege required' });
           } else {
             caEntries.push({ label: 'Custom app info (getCustomAppInfo)', ...tpSafe(() => tpJson(sc['getCustomAppInfo']())) });
             if (typeof sc['getURLLauncherAddress'] === 'function') {
@@ -989,7 +987,7 @@ const Player = {
             catch (e: unknown) {
               const err = e as Error & { name?: string };
               const base = err?.name && err?.message ? `${err.name}: ${err.message}` : String(e);
-              const hint = err?.name === 'SecurityError' ? ' (partner certificate required or device not in developer mode — may also be LFD-only method)' : '';
+              const hint = err?.name === 'SecurityError' ? ' (partner certificate required or device not in developer mode â€” may also be LFD-only method)' : '';
               return { ok: false, error: base + hint };
             }
           }
@@ -1002,7 +1000,7 @@ const Player = {
             break;
           }
 
-          // ── Remote Power ──────────────────────────────────────────────────
+          // â”€â”€ Remote Power â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (tcAction === 'remotepower.setRemoteConfiguration') {
             // LFD-only: enables (ON) or disables (OFF) remote power control
             const rp2 = webapis2?.['remotepower'] as Record<string, (...args: unknown[]) => unknown> | undefined;
@@ -1016,7 +1014,7 @@ const Player = {
           if (tcAction === 'remotepower.powerOn') {
             const rp2 = webapis2?.['remotepower'] as Record<string, (...args: unknown[]) => unknown> | undefined;
             if (!rp2) { sendTizenCommandResult(false, undefined, 'webapis.remotepower not available'); break; }
-            // Send result first — powerOn may cut the connection before a response could be sent
+            // Send result first â€” powerOn may cut the connection before a response could be sent
             sendTizenCommandResult(true, 'Power on command sent');
             setTimeout(() => { try { rp2['powerOn'](); } catch (_e) { /* best effort */ } }, 100);
             break;
@@ -1026,13 +1024,13 @@ const Player = {
             // LFD + HTV. Requires Remote Configuration = ON. Turns off completely (or to standby if VirtualStandby active).
             const rp2 = webapis2?.['remotepower'] as Record<string, (...args: unknown[]) => unknown> | undefined;
             if (!rp2) { sendTizenCommandResult(false, undefined, 'webapis.remotepower not available'); break; }
-            // Send result first — powerOff kills the WebSocket connection immediately
+            // Send result first â€” powerOff kills the WebSocket connection immediately
             sendTizenCommandResult(true, 'Power off command sent');
             setTimeout(() => { try { rp2['powerOff'](); } catch (_e) { /* best effort */ } }, 100);
             break;
           }
 
-          // ── Timer ─────────────────────────────────────────────────────────
+          // â”€â”€ Timer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (tcAction === 'timer.setNTP') {
             const tm2 = webapis2?.['timer'] as Record<string, (...args: unknown[]) => unknown> | undefined;
             if (!tm2) { sendTizenCommandResult(false, undefined, 'webapis.timer not available'); break; }
@@ -1059,7 +1057,7 @@ const Player = {
             break;
           }
 
-          // ── System Control (Custom App Info) ──────────────────────────────
+          // â”€â”€ System Control (Custom App Info) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (tcAction === 'systemcontrol.setCustomAppInfo') {
             const sc2 = webapis2?.['systemcontrol'] as Record<string, (...args: unknown[]) => unknown> | undefined;
             if (!sc2) { sendTizenCommandResult(false, undefined, 'webapis.systemcontrol not available'); break; }
@@ -1084,7 +1082,7 @@ const Player = {
             break;
           }
 
-          // ── Document API — routes through unified adapter (B2BDoc on Tizen 4, webapis.document on 6.5+) ──
+          // â”€â”€ Document API â€” routes through unified adapter (B2BDoc on Tizen 4, webapis.document on 6.5+) â”€â”€
           if (tcAction && tcAction.indexOf('document.') === 0) {
             const adapter = this._getDocControlAdapter();
             const op = tcAction.slice('document.'.length);
@@ -1158,7 +1156,7 @@ const Player = {
             break;
           }
 
-          // ── B2BControl API ─────────────────────────────────────────────────────
+          // â”€â”€ B2BControl API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (tcAction && tcAction.indexOf('b2b.') === 0) {
             const rw3 = window as any;
             const b2bc = rw3['b2bapis']?.b2bcontrol ?? null;
@@ -1175,7 +1173,7 @@ const Player = {
             };
             try {
               switch (tcAction) {
-                // ── Power ────────────────────────────────────────────────────────
+                // â”€â”€ Power â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 case 'b2b.setPower': {
                   const on = tcParams === 'on' || tcParams === true || tcParams === 'ON';
                   const methods: [string, unknown[]][] = on
@@ -1206,7 +1204,7 @@ const Player = {
                   break;
                 }
 
-                // ── Input Source ─────────────────────────────────────────────────
+                // â”€â”€ Input Source â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 case 'b2b.setInputSource': {
                   if (typeof b2bc.setInputSource === 'function') {
                     b2bc.setInputSource(tcParams, () => b2bOk(`Input set to ${tcParams}`), b2bErr);
@@ -1224,7 +1222,7 @@ const Player = {
                   break;
                 }
 
-                // ── Volume ───────────────────────────────────────────────────────
+                // â”€â”€ Volume â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 case 'b2b.setVolume': {
                   const vol = typeof tcParams === 'number' ? Math.max(0, Math.min(100, tcParams)) : 30;
                   if (typeof b2bc.setVolume === 'function') {
@@ -1253,7 +1251,7 @@ const Player = {
                   break;
                 }
 
-                // ── Brightness ───────────────────────────────────────────────────
+                // â”€â”€ Brightness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 case 'b2b.setBrightness': {
                   const lum = typeof tcParams === 'number' ? Math.max(0, Math.min(100, tcParams)) : 70;
                   const lumMethod = ['setDisplayBrightness', 'setBrightness'].find(n => typeof b2bc[n] === 'function');
@@ -1274,7 +1272,7 @@ const Player = {
                   break;
                 }
 
-                // ── Device Info ──────────────────────────────────────────────────
+                // â”€â”€ Device Info â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 case 'b2b.getDeviceInfo': {
                   if (typeof b2bc.getDeviceInfo === 'function') {
                     b2bc.getDeviceInfo((val: unknown) => b2bOk(val), b2bErr);
@@ -1284,11 +1282,11 @@ const Player = {
                   break;
                 }
 
-                // ── Reboot ───────────────────────────────────────────────────────
+                // â”€â”€ Reboot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 case 'b2b.reboot': {
                   const rebootMethod = ['reboot', 'rebootDevice', 'setSystemReboot'].find(n => typeof b2bc[n] === 'function');
                   if (rebootMethod) {
-                    // Send response first — reboot will cut the WebSocket connection
+                    // Send response first â€” reboot will cut the WebSocket connection
                     sendTizenCommandResult(true, `Reboot initiated via b2bcontrol.${rebootMethod}`);
                     setTimeout(() => { try { b2bc[rebootMethod](); } catch (_e) { /* best effort */ } }, 200);
                   } else {
@@ -1297,7 +1295,7 @@ const Player = {
                   break;
                 }
 
-                // ── App Control ──────────────────────────────────────────────────
+                // â”€â”€ App Control â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 case 'b2b.launchApp': {
                   if (typeof b2bc.launchApp === 'function') {
                     b2bc.launchApp(tcParams, () => b2bOk(`App launched: ${tcParams}`), b2bErr);
@@ -1323,7 +1321,7 @@ const Player = {
                   break;
                 }
 
-                // ── OSD & Kiosk Controls ─────────────────────────────────────────
+                // â”€â”€ OSD & Kiosk Controls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 case 'b2b.setOsdDisplay.show':
                 case 'b2b.setOsdDisplay.hide': {
                   const show = tcAction === 'b2b.setOsdDisplay.show';
@@ -1389,7 +1387,7 @@ const Player = {
 
   // Start heartbeat
   startHeartbeat(): void {
-    // Heartbeat is sent via WebSocket only — no HTTP call
+    // Heartbeat is sent via WebSocket only â€” no HTTP call
     this.heartbeatInterval = setInterval(() => {
       this.sendWebSocketHeartbeat();
     }, CONFIG.HEARTBEAT_INTERVAL);
@@ -1401,12 +1399,7 @@ const Player = {
     const downloadPct = Math.max(0, Math.min(100, this.lastDownloadProgress ?? 0));
 
     // Legacy sync-orchestration removed. Keep a lightweight readiness model.
-    const avState =
-      this.syncPlayMode === 'native' && this.isSyncplayAvailable?.() && this.isSyncPlaying
-        ? 'SYNCPLAY'
-        : this.currentItem
-          ? 'PLAYING'
-          : 'IDLE';
+    const avState = this.currentItem ? 'PLAYING' : 'IDLE';
 
     const buffered = downloadPct >= 100 && !this.isDownloadingContent;
     const ready = buffered;
@@ -1482,7 +1475,7 @@ const Player = {
     try {
       resources = await Telemetry.getResourcesQuick();
     } catch (e) {
-      // Non-fatal — heartbeat still sends without resource data
+      // Non-fatal â€” heartbeat still sends without resource data
     }
 
     const payload = {
@@ -1567,7 +1560,7 @@ const Player = {
 
   // Start command polling
   startCommandPolling() {
-    // Commands arrive via WebSocket — HTTP polling is disabled
+    // Commands arrive via WebSocket â€” HTTP polling is disabled
     logger.debug('Command polling disabled; commands arrive via WebSocket');
   },
 
@@ -1587,7 +1580,7 @@ const Player = {
       const batch: Array<{ level?: string; message?: unknown; timestamp?: string }> =
         ((window as any).LogBuffer && (window as any).LogBuffer.drain(100)) || [];
       if (!batch.length) return;
-      // Group by real level; line text is "timestamp message" only—
+      // Group by real level; line text is "timestamp message" onlyâ€”
       // buildLogText on the dashboard already prepends [LEVEL].
       const byLevel: Record<string, string[]> = { debug: [], info: [], warn: [], error: [] };
       for (const e of batch) {
@@ -1632,7 +1625,7 @@ const Player = {
     }, CONFIG.HEARTBEAT_INTERVAL || 30000);
   },
 
-  // ── MDC helpers ───────────────────────────────────────────────────────────
+  // â”€â”€ MDC helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   // XHR to local server.js MDC bridge, returns a Promise
   sendLocalMdcXhr(action: string, payload: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -1640,7 +1633,7 @@ const Player = {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', 'http://127.0.0.1:9615/mdc-control', true);
       xhr.setRequestHeader('Content-Type', 'application/json');
-      // Scan actions probe up to 10 IDs × 500ms each ≈ 5s; give a generous budget.
+      // Scan actions probe up to 10 IDs Ã— 500ms each â‰ˆ 5s; give a generous budget.
       xhr.timeout = (action === 'mdc_id_scan' || action === 'mdc_conn_type_fix') ? 15000 : 8000;
       xhr.onload = function() {
         try { resolve(JSON.parse(xhr.responseText) as Record<string, unknown>); } catch { reject(new Error('parse error')); }
@@ -1651,7 +1644,7 @@ const Player = {
     });
   },
 
-  // Phase 1: run at startup (app.js), before pairing — no WS/deviceId needed
+  // Phase 1: run at startup (app.js), before pairing â€” no WS/deviceId needed
   runStartupMdcSetup(): void {
     logger.info('[mdc-startup] Phase 1: conn type, ID scan, network standby...');
     const self = this;
@@ -1674,7 +1667,7 @@ const Player = {
       .catch(() => { /* non-blocking */ });
   },
 
-  // Phase 2: run after pairing + WS connected — persists MDC ID, sets display state
+  // Phase 2: run after pairing + WS connected â€” persists MDC ID, sets display state
   // Commands are run sequentially (not concurrently) so Samsung MDC firmware never
   // sees more than one TCP connection at a time on port 1515.
   runPostPairingMdcSetup(): void {
@@ -1689,7 +1682,7 @@ const Player = {
       ws.send(JSON.stringify({ type: 'mdc_id_persist', payload: { mdcId: self._scannedMdcId } }));
       logger.info('[mdc-startup] mdc_id_persist sent, mdcId=', self._scannedMdcId);
     }
-    // Build sequential command list — one MDC TCP connection at a time
+    // Build sequential command list â€” one MDC TCP connection at a time
     const phase2Commands: Array<[string, Record<string, unknown>]> = [
       ['network_standby_set', { value: 1 }],
       ['standby_set', { value: 0 }],
@@ -1713,10 +1706,10 @@ const Player = {
     runNext(0);
   },
 
-  // Phase 3 (every 30s): get MDC status → send mdc_heartbeat WS message
+  // Phase 3 (every 30s): get MDC status â†’ send mdc_heartbeat WS message
   sendMdcHeartbeat(): void {
     if (!this._mdcStartupDone) return; // Wait until Phase 1 ID scan completes
-    if (this._mdcHeartbeatInFlight) return; // Never overlap — Samsung firmware allows only one MDC TCP conn
+    if (this._mdcHeartbeatInFlight) return; // Never overlap â€” Samsung firmware allows only one MDC TCP conn
     if (this._mdcPhase2InFlight > 0) return; // Wait for Phase 2 sequential commands to complete
     const now = Date.now();
     if (now - this._lastMdcHeartbeatAt < (CONFIG.HEARTBEAT_INTERVAL || 30000)) return; // rate-limit
@@ -1738,12 +1731,12 @@ const Player = {
       .then(() => { this._mdcHeartbeatInFlight = false; });
   },
 
-  // Phase 4 (every 5min): run all MDC GETs → send mdc_poll WS message
+  // Phase 4 (every 5min): run all MDC GETs â†’ send mdc_poll WS message
   runMdcPoll(): void {
     const ws = this.wsConnection;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-    // Sync panel HW RTC to device (web) time every poll — fire-and-forget
+    // Sync panel HW RTC to device (web) time every poll â€” fire-and-forget
     if (this._clockSupported) {
       this.sendLocalMdcXhr('set_clock', {})
         .then((r) => {
@@ -1771,7 +1764,7 @@ const Player = {
     const self = this;
 
     // Build flat sequence: 9 GET actions + 7 on_timer_get slots
-    // Run SEQUENTIALLY — Samsung MDC firmware allows only one TCP connection
+    // Run SEQUENTIALLY â€” Samsung MDC firmware allows only one TCP connection
     // at a time on port 1515; the server-side queue serialises them, but
     // concurrent XHRs can time-out while waiting in that queue.
     const sequence: Array<{ action: string; key: string; payload?: Record<string, unknown> }> = [
@@ -1781,7 +1774,7 @@ const Player = {
 
     function runNext(idx: number): void {
       if (idx >= sequence.length) {
-        // All done — build and send mdc_poll
+        // All done â€” build and send mdc_poll
         if (ws.readyState !== WebSocket.OPEN) return;
         const p: Record<string, unknown> = {};
         if (results.standby_get?.ok && results.standby_get.data) p.standby = results.standby_get.data[0];
@@ -1824,7 +1817,7 @@ const Player = {
             logger.info('[mdc-poll] get_clock not supported on this model');
           }
         }
-        // Check if any on_timer_get NAKed — disable all slots permanently
+        // Check if any on_timer_get NAKed â€” disable all slots permanently
         if (self._onTimerSupported) {
           const anyTimerNak = TIMER_SLOTS.some(s => results[`timer_${s}`]?.supported === false);
           if (anyTimerNak) {
@@ -1917,8 +1910,15 @@ const Player = {
     try {
       logger.info('Downloading content in background...');
       
-      // Show idle screen with download progress if nothing is playing
-      if (!this.currentContent) {
+      // Show idle screen with download progress only on true first-boot (no content
+      // has ever been set). If documentActive, a playlist controller is running, or
+      // zones are active we leave the screen alone to avoid a black flash mid-download.
+      const nothingOnScreen =
+        !this.currentContent &&
+        !this.documentActive &&
+        !(this.currentPlaylistController && !this.currentPlaylistController.cancelled) &&
+        !this._zoneMode;
+      if (nothingOnScreen) {
         this.showIdleScreen(0);
       }
       
@@ -1941,8 +1941,7 @@ const Player = {
       // If nothing is playing (e.g. first boot / idle screen), swap immediately.
       const currentlyPlaying =
         (this.currentPlaylistController && !this.currentPlaylistController.cancelled) ||
-        this._zoneMode ||
-        (this.syncPlayMode === 'native' && this.isSyncPlaying);
+        this._zoneMode;
       if (currentlyPlaying) {
         logger.info('Pending playlist ready; will swap at next item boundary to avoid black screen');
       } else {
@@ -1976,101 +1975,10 @@ const Player = {
 
       if (content && content.items && content.items.length > 0) {
         const newSignature = this.getContentSignature(content);
-        const isLegacyPlaying = this.currentPlaylistController && !this.currentPlaylistController.cancelled;
-        const isNativeSyncPlaying = this.syncPlayMode === 'native' && this.isSyncplayAvailable?.() && this.isSyncPlaying;
-        const isPlaying = !!(isLegacyPlaying || isNativeSyncPlaying || this._zoneMode);
+        const isPlaying = !!(this.currentPlaylistController && !this.currentPlaylistController.cancelled) || this._zoneMode;
         
         logger.info(`Content signature: ${newSignature}, Last: ${this.lastContentSignature}`);
         logger.info(`Currently playing: ${isPlaying}`);
-
-        // Samsung SyncPlay (per playlist) - entire playlist.
-        // When enabled, do NOT use legacy sync-group orchestration.
-        const wantsSamsungSyncPlay = !!(content.syncPlay && content.syncPlay.enabled);
-        if (wantsSamsungSyncPlay) {
-          const hasNested = (content.items || []).some((it) => !!it.nestedPlaylistId);
-          const allVideoOrImage = (content.items || []).every((it) => {
-            const t = String(it?.content?.type || '').toUpperCase();
-            return t === 'VIDEO' || t === 'IMAGE';
-          });
-
-          if (hasNested || !allVideoOrImage) {
-            logger.warn('Samsung SyncPlay enabled but playlist is incompatible; falling back to regular playback', {
-              hasNested,
-              allVideoOrImage,
-            });
-          } else {
-            logger.info(`Samsung SyncPlay enabled for playlist: ${content.playlistName}`);
-
-            const desiredGroupID = Number.isFinite(Number(content.syncPlay.groupID)) ? Number(content.syncPlay.groupID) : 5;
-            const previousWantsSamsungSyncPlay = !!(this.currentContent?.syncPlay && this.currentContent.syncPlay.enabled);
-            const previousGroupID = Number.isFinite(Number(this.currentContent?.syncPlay?.groupID))
-              ? Number(this.currentContent?.syncPlay?.groupID)
-              : 5;
-
-            const isNativeSyncActive =
-              this.syncPlayMode === 'native' &&
-              this.isSyncplayAvailable?.() &&
-              (this.isSyncPlaying || this.isSyncStarting) &&
-              !!this.syncPlaylistState?.prepared;
-
-            // Already running SyncPlay with same content — keep it
-            if (
-              previousWantsSamsungSyncPlay &&
-              isNativeSyncActive &&
-              newSignature &&
-              this.lastContentSignature &&
-              newSignature === this.lastContentSignature &&
-              desiredGroupID === previousGroupID
-            ) {
-              logger.info('SyncPlay content unchanged; keeping existing native SyncPlay session');
-              this.lastContentSignature = newSignature;
-              this.currentContent = content;
-              return;
-            }
-
-            // Coordination already kicked off for this same content — don't restart
-            if (
-              previousWantsSamsungSyncPlay &&
-              this.syncCoordinationInProgress &&
-              newSignature &&
-              this.syncCoordinationSignature &&
-              newSignature === this.syncCoordinationSignature &&
-              desiredGroupID === previousGroupID
-            ) {
-              logger.info('SyncPlay coordination already in progress for this content, skipping');
-              this.currentContent = content;
-              return;
-            }
-
-            this.pendingPlaylist = null;
-            this.pendingSignature = null;
-
-            const playlistItems = content.items.map((item) => ({
-              contentId: item.contentId,
-              duration: item.duration,
-              position: item.position,
-              content: item.content || null,
-            }));
-
-            const groupID = desiredGroupID;
-
-            // Start regular playback immediately so the screen shows content while peers download.
-            // IMPORTANT: do NOT set lastContentSignature here — that would cause trySwapToPendingContent
-            // to think content is already playing and skip rendering.
-            this.downloadContentInBackground(content, newSignature);
-
-            // Coordinate SyncPlay in background: download sync files, wait for all peers, then start together
-            this.syncCoordinationInProgress = true;
-            this.syncCoordinationSignature = newSignature; // used for dedup only; not lastContentSignature
-            this.currentContent = content;
-            this.coordinateSyncPlay(content, groupID, playlistItems).catch((err) => {
-              logger.error('SyncPlay coordination failed:', err);
-              this.syncCoordinationInProgress = false;
-              this.syncCoordinationSignature = null;
-            });
-            return;
-          }
-        }
 
         if (
           newSignature &&
@@ -2272,7 +2180,7 @@ const Player = {
       return;
     }
 
-    // Remote URLs — use img tag directly
+    // Remote URLs â€” use img tag directly
     img.src = content.url;
     img.onerror = (error) => {
       logger.error('Image failed to load:', content.url, error);
@@ -2290,7 +2198,7 @@ const Player = {
   showImageError(container, content) {
     container.innerHTML = `
       <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: white; background: #333; flex-direction: column;">
-        <div style="font-size: 48px; margin-bottom: 20px;">âš ï¸</div>
+        <div style="font-size: 48px; margin-bottom: 20px;">Ã¢Å¡Â Ã¯Â¸Â</div>
         <div style="font-size: 24px;">Image Load Error</div>
         <div style="font-size: 14px; margin-top: 10px; opacity: 0.7;">${content.name}</div>
       </div>
@@ -2448,7 +2356,7 @@ const Player = {
 
       // 2. Set display rect SECOND (Samsung samples do this before setListener)
       // Samsung docs claim setDisplayRect uses a fixed 1920x1080 coordinate space, but on
-      // commercial signage panels the rect maps to native panel pixels — passing 1920x1080
+      // commercial signage panels the rect maps to native panel pixels â€” passing 1920x1080
       // on a 4K panel renders in the top-left quadrant. Use the cached panel resolution
       // detected at init via tizen.systeminfo / productinfo.
       const viewportWidth = this._panelWidth;
@@ -2576,7 +2484,7 @@ const Player = {
     this.renderVideoHTML5(container, content);
   },
 
-  // ── Channel group (IPTV bundle) ──────────────────────────────────────────
+  // â”€â”€ Channel group (IPTV bundle) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // A channel group is a content item of type CHANNEL_GROUP whose metadata
   // carries an ordered list of `channels`. The player keeps the active
   // channel on `Player.currentChannelGroup` and re-uses `renderIptvAVPlay`
@@ -2592,7 +2500,7 @@ const Player = {
     // Sort by channel number for deterministic CH+/CH- iteration.
     channels.sort((a, b) => (a.number || 0) - (b.number || 0));
 
-    // Resolve starting channel: persisted last-played → author default → first.
+    // Resolve starting channel: persisted last-played â†’ author default â†’ first.
     const lastKey = `iptv:lastChannel:${content.id}`;
     let startNumber: number | null = null;
     try {
@@ -2649,7 +2557,7 @@ const Player = {
     this._clearIptvReconnect();
     this._stopIptvWatchdog();
 
-    // Debounce 250ms — coalesces rapid CH+/CH- presses into one AVPlay open.
+    // Debounce 250ms â€” coalesces rapid CH+/CH- presses into one AVPlay open.
     const seq = ++this._tuneSeq;
     this._pendingTuneTimer = setTimeout(() => {
       this._pendingTuneTimer = null;
@@ -2824,8 +2732,8 @@ const Player = {
     } as any)[ch]);
   },
 
-  // ── IPTV resilience helpers ─────────────────────────────────────────────
-  // Show / hide a non-blocking overlay used for "Reconnecting…" / "No signal".
+  // â”€â”€ IPTV resilience helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Show / hide a non-blocking overlay used for "Reconnectingâ€¦" / "No signal".
   _showIptvOverlay(message) {
     let el = this._iptvOverlayEl;
     if (!el) {
@@ -2882,7 +2790,7 @@ const Player = {
 
     if (attempt > this.IPTV_MAX_RECONNECTS) {
       logger.warn('IPTV: max reconnects reached; skipping to next channel');
-      this._showIptvOverlay('No signal — skipping channel');
+      this._showIptvOverlay('No signal â€” skipping channel');
       this._iptvReconnectCount = 0;
       this._iptvReconnectTimer = setTimeout(() => {
         this._iptvReconnectTimer = null;
@@ -2893,7 +2801,7 @@ const Player = {
     }
 
     const delay = this.IPTV_RECONNECT_BASE_MS * attempt;
-    this._showIptvOverlay(`Reconnecting… (${attempt}/${this.IPTV_MAX_RECONNECTS})`);
+    this._showIptvOverlay(`Reconnectingâ€¦ (${attempt}/${this.IPTV_MAX_RECONNECTS})`);
     logger.warn(`IPTV: scheduling reconnect attempt ${attempt} in ${delay}ms (reason: ${reason})`);
 
     this._iptvReconnectTimer = setTimeout(() => {
@@ -2906,7 +2814,7 @@ const Player = {
     }, delay) as any;
   },
 
-  /** Periodic stall watchdog. 2 consecutive ticks with no playhead progress → reconnect. */
+  /** Periodic stall watchdog. 2 consecutive ticks with no playhead progress â†’ reconnect. */
   _startIptvWatchdog(isUdp) {
     this._stopIptvWatchdog();
     this._iptvLastTime = -1;
@@ -2916,7 +2824,7 @@ const Player = {
       try {
         const state = (webapis as any).avplay?.getState?.();
         const time = (webapis as any).avplay?.getCurrentTime?.();
-        // Bitrate telemetry — best-effort, ignore failures.
+        // Bitrate telemetry â€” best-effort, ignore failures.
         try {
           const bw = (webapis as any).avplay?.getStreamingProperty?.('CURRENT_BANDWIDTH');
           if (bw && typeof Telemetry !== 'undefined' && (Telemetry as any).updateIptvStats) {
@@ -2996,7 +2904,7 @@ const Player = {
       this.applyAvPlayProfile(content);
 
       // 2. Set display rect SECOND (Samsung samples do this before setListener)
-      // Use cached panel resolution — see comment in renderVideoAVPlay above.
+      // Use cached panel resolution â€” see comment in renderVideoAVPlay above.
       const viewportWidth = this._panelWidth;
       const viewportHeight = this._panelHeight;
       webapis.avplay.setDisplayRect(0, 0, viewportWidth, viewportHeight);
@@ -3243,7 +3151,7 @@ const Player = {
           logger.debug('setStreamingProperty DASH failed');
         }
       } else if (isRtsp) {
-        logger.debug('IPTV: RTSP stream — using AVPlay defaults');
+        logger.debug('IPTV: RTSP stream â€” using AVPlay defaults');
       }
       webapis.avplay.prepareAsync(() => {
         try {
@@ -3268,7 +3176,7 @@ const Player = {
           webapis.avplay.play();
           logger.info('IPTV playback started');
 
-          // Successful start — clear any prior reconnect cycle and start the
+          // Successful start â€” clear any prior reconnect cycle and start the
           // periodic stall watchdog (UDP=3s tick, others=5s tick).
           this._clearIptvReconnect();
           this._hideIptvOverlay();
@@ -3400,7 +3308,7 @@ const Player = {
       return;
     }
 
-    // Use cached panel resolution for AVPlay setDisplayRect — see renderVideoAVPlay comment.
+    // Use cached panel resolution for AVPlay setDisplayRect â€” see renderVideoAVPlay comment.
     const viewportWidth = this._panelWidth;
     const viewportHeight = this._panelHeight;
 
@@ -3419,7 +3327,7 @@ const Player = {
         logger.debug('[Seamless] Player cleanup (expected):', err.message);
       }
 
-      // Samsung sequence: open â†’ setDisplayRect â†’ setListener â†’ prepare â†’ play
+      // Samsung sequence: open Ã¢â€ â€™ setDisplayRect Ã¢â€ â€™ setListener Ã¢â€ â€™ prepare Ã¢â€ â€™ play
       current.open(content.url);
       current.setDisplayRect(0, 0, viewportWidth, viewportHeight);
       
@@ -3491,7 +3399,7 @@ const Player = {
       return;
     }
 
-    // Use cached panel resolution for AVPlay setDisplayRect — see renderVideoAVPlay comment.
+    // Use cached panel resolution for AVPlay setDisplayRect â€” see renderVideoAVPlay comment.
     const viewportWidth = this._panelWidth;
     const viewportHeight = this._panelHeight;
     
@@ -3707,7 +3615,7 @@ const Player = {
       return;
     }
 
-    // Use cached panel resolution for AVPlay setDisplayRect — see renderVideoAVPlay comment.
+    // Use cached panel resolution for AVPlay setDisplayRect â€” see renderVideoAVPlay comment.
     const viewportWidth = this._panelWidth;
     const viewportHeight = this._panelHeight;
 
@@ -3875,7 +3783,7 @@ const Player = {
       const isFirst = !Number.isFinite(prev) || !this.lastNtpSync;
       const delta = isFirst ? 0 : Math.abs(best.offset - prev);
 
-      // Snap immediately when drift exceeds ±50ms — don't smooth it away
+      // Snap immediately when drift exceeds Â±50ms â€” don't smooth it away
       // For tiny adjustments (< 50ms) use gentle smoothing to avoid jitter
       const NTP_SNAP_THRESHOLD_MS = 50;
       const nextOffset = (isFirst || delta > NTP_SNAP_THRESHOLD_MS)
@@ -3900,7 +3808,7 @@ const Player = {
   startNtpSync() {
     // Only fire immediately if init() hasn't just completed a sync.
     // init() awaits syncTimeWithServer() before calling startNtpSync(), so
-    // lastNtpSync will already be set â€” avoid hammering the server twice on startup.
+    // lastNtpSync will already be set Ã¢â‚¬â€ avoid hammering the server twice on startup.
     const msSinceLastSync = this.lastNtpSync ? Date.now() - this.lastNtpSync : Infinity;
     if (msSinceLastSync > 10000) {
       this.syncTimeWithServer();
@@ -4480,7 +4388,7 @@ const Player = {
   // Render DataSync live transport schedule
   renderDataSync(container, content) {
     if (typeof DataSyncRenderer === 'undefined') {
-      logger.warn('DataSyncRenderer not loaded â€“ ensure js/modules/datasync-renderer.js is included');
+      logger.warn('DataSyncRenderer not loaded Ã¢â‚¬â€œ ensure js/modules/datasync-renderer.js is included');
       this.showIdleScreen();
       return;
     }
@@ -4490,14 +4398,14 @@ const Player = {
 
   // Render PDF or Office document.
   // Dispatches to one of three backends based on Tizen version:
-  //   • Tizen 4 (legacy)  → B2BDoc API (native HW layer, Samsung B2B SSSP)
-  //   • Tizen 6.5+        → webapis.document (native HW layer, Document API)
-  //   • Tizen 5–6.4       → PDF.js (canvas rendering, existing behaviour)
+  //   â€¢ Tizen 4 (legacy)  â†’ B2BDoc API (native HW layer, Samsung B2B SSSP)
+  //   â€¢ Tizen 6.5+        â†’ webapis.document (native HW layer, Document API)
+  //   â€¢ Tizen 5â€“6.4       â†’ PDF.js (canvas rendering, existing behaviour)
   renderDocument(container: HTMLElement, content: any) {
     this.closeDocument();
     container.innerHTML = '';
 
-    // Mark active immediately — prevents the playlist loop (which runs every 10s)
+    // Mark active immediately â€” prevents the playlist loop (which runs every 10s)
     // from spawning a second concurrent renderDocument while the doc is still loading.
     // On error, this is reset to false so the next tick can retry.
     this.documentActive = true;
@@ -4514,7 +4422,7 @@ const Player = {
 
     const platform = (window as any).Platform;
     const hasB2BDoc = typeof (window as any).B2BDoc === 'function';
-    const hasNativeDocApi = !!(window as any).webapis?.document;
+    const hasNativeDocApi = !!(window as any).webapis?.document && !(window as any)._nativeDocUnavailable;
     const supportsNative = platform?.supportsDocumentApi && hasNativeDocApi;
 
     logger.info(
@@ -4530,11 +4438,10 @@ const Player = {
       this._renderDocumentB2BDoc(container, content, this.b2bDocAutoFlipIntervalMs);
       return;
     }
-    if (supportsNative) {
-      this._renderDocumentNative(container, content, slideIntervalSec);
-      return;
+    if (false && supportsNative) {
+      // native removed
     }
-    // Default: PDF.js (Tizen 5–6.4, or any legacy device without B2BDoc as a last resort)
+    // Always: PDF.jsâ€“6.4, or any legacy device without B2BDoc as a last resort)
     this._renderDocumentPdfJs(container, content);
   },
 
@@ -4637,7 +4544,20 @@ const Player = {
         (err: any) => {
           const name = err?.name || '';
           const msg = err?.message || JSON.stringify(err);
-          const hint = name === 'SecurityError' ? ' (partner certificate / documentplay privilege required)' : '';
+          if (name === 'SecurityError') {
+            // Partner certificate required — fall back to PDF.js silently
+            logger.warn('webapis.document SecurityError (partner cert required) — falling back to PDF.js');
+            this.documentActive = false;
+            this.documentItemKey = null;
+            this.documentBackend = null;
+            this.nativeDocOpen = false;
+            document.body.classList.remove('b2bdoc-active');
+            // Disable native doc API for the rest of this session so we don't retry
+            try { (window as any)._nativeDocUnavailable = true; } catch (_) {}
+            this._renderDocumentPdfJs(container, content);
+            return;
+          }
+          const hint = ' (document load failed)';
           showError(`${name}: ${msg}${hint}`);
         },
       );
@@ -4646,10 +4566,10 @@ const Player = {
     }
   },
 
-  // Tizen 5–6.4 (and fallback): render via PDF.js to canvas.
+  // Tizen 5â€“6.4 (and fallback): render via PDF.js to canvas.
   // Handles both:
-  //   pdfjs v1.x (global: window.PDFJS, Tizen 4 — pdf-legacy.min.js)
-  //   pdfjs v2.x (global: window.pdfjsLib, Tizen 5+ — pdf.min.js)
+  //   pdfjs v1.x (global: window.PDFJS, Tizen 4 â€” pdf-legacy.min.js)
+  //   pdfjs v2.x (global: window.pdfjsLib, Tizen 5+ â€” pdf.min.js)
   _renderDocumentPdfJs(container: HTMLElement, content: any) {
     this.documentBackend = 'pdfjs';
 
@@ -4663,7 +4583,7 @@ const Player = {
     const isV1 = !pdfLib && !!pdfLibV1;
 
     if (!lib) {
-      logger.error('pdfjsLib not loaded — cannot render PDF:', content.name);
+      logger.error('pdfjsLib not loaded â€” cannot render PDF:', content.name);
       container.innerHTML = `
         <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#333;flex-direction:column;">
           <div style="font-size:24px;">PDF Viewer Not Available</div>
@@ -4743,7 +4663,7 @@ const Player = {
       advanceInProgress = true;
 
       try {
-        // Swap in the pre-rendered canvas immediately — no waiting, no black flash
+        // Swap in the pre-rendered canvas immediately â€” no waiting, no black flash
         if (nextCanvas) {
           if (activeCanvas && activeCanvas.parentNode === container) {
             container.replaceChild(nextCanvas, activeCanvas);
@@ -4831,10 +4751,10 @@ const Player = {
       }
     };
 
-    // Primary: tizen.filesystem API — reads from wgt-private/content/<uuid>.pdf as Uint8Array.
+    // Primary: tizen.filesystem API â€” reads from wgt-private/content/<uuid>.pdf as Uint8Array.
     // This is the correct Tizen-native way; virtual root paths like "wgt-private/content/file"
     // are NOT valid URL schemes and cannot be used with XHR.
-    // Tizen 4 (legacy) has NO openFile() — must use resolve() + openStream() + readBytes().
+    // Tizen 4 (legacy) has NO openFile() â€” must use resolve() + openStream() + readBytes().
     const platform = (window as any).Platform;
     const tzFs = (window as any).tizen?.filesystem;
     const tzfsPath = fileName ? `wgt-private/content/${fileName}` : '';
@@ -4857,23 +4777,23 @@ const Player = {
                   .then(onPdfLoaded).catch((e: any) => showError('parse: ' + (e?.message || e)));
               } catch (e: any) {
                 try { stream.close(); } catch (_) {}
-                logger.warn('legacy readBytes failed:', e?.message || e, '— trying XHR fallback');
+                logger.warn('legacy readBytes failed:', e?.message || e, 'â€” trying XHR fallback');
                 loadViaXhr(localUrl);
               }
             }, (err: any) => {
-              logger.warn('legacy openStream error:', err?.message || err, '— trying XHR fallback');
+              logger.warn('legacy openStream error:', err?.message || err, 'â€” trying XHR fallback');
               loadViaXhr(localUrl);
             }, 'ISO-8859-1');
           } catch (e: any) {
-            logger.warn('legacy openStream exception:', e?.message || e, '— trying XHR fallback');
+            logger.warn('legacy openStream exception:', e?.message || e, 'â€” trying XHR fallback');
             loadViaXhr(localUrl);
           }
         }, (err: any) => {
-          logger.warn('legacy filesystem.resolve error:', err?.message || err, '— trying XHR fallback');
+          logger.warn('legacy filesystem.resolve error:', err?.message || err, 'â€” trying XHR fallback');
           loadViaXhr(localUrl);
         }, 'r');
       } catch (e: any) {
-        logger.warn('legacy filesystem.resolve exception:', (e as any)?.message || e, '— trying XHR fallback');
+        logger.warn('legacy filesystem.resolve exception:', (e as any)?.message || e, 'â€” trying XHR fallback');
         loadViaXhr(localUrl);
       }
     };
@@ -4893,12 +4813,12 @@ const Player = {
           },
           (err: any) => {
             try { fileHandle.close(); } catch (_) {}
-            logger.warn('tizen.filesystem read error:', err?.message || err, '— trying XHR fallback');
+            logger.warn('tizen.filesystem read error:', err?.message || err, 'â€” trying XHR fallback');
             loadViaXhr(localUrl);
           }
         );
       } catch (e: any) {
-        logger.warn('tizen.filesystem open error:', (e as any)?.message || e, '— trying XHR fallback');
+        logger.warn('tizen.filesystem open error:', (e as any)?.message || e, 'â€” trying XHR fallback');
         loadViaXhr(localUrl);
       }
     } else {
@@ -4906,7 +4826,7 @@ const Player = {
     }
   },
 
-  // Unified document control adapter — routes commands to the active backend.
+  // Unified document control adapter â€” routes commands to the active backend.
   // Used by both internal logic and the tizen_command WebSocket passthrough.
   // Each method takes (ok, err) callbacks; "not supported" backends call err synchronously.
   _getDocControlAdapter() {
@@ -5079,7 +4999,7 @@ const Player = {
 
     container.innerHTML = ''; // Clear container - AVPlay renders to hardware layer
 
-    // Use cached panel resolution for AVPlay setDisplayRect — see renderVideoAVPlay comment.
+    // Use cached panel resolution for AVPlay setDisplayRect â€” see renderVideoAVPlay comment.
     const viewportWidth = this._panelWidth;
     const viewportHeight = this._panelHeight;
 
@@ -5295,7 +5215,7 @@ const Player = {
           logger.error('[Seamless] Failed to start next player:', reason);
           controller.cancelled = true;
           try { this.stopSeamlessAVPlay(); } catch (_) {}
-          // Fallback: continue from the next item (donâ€™t restart at item 1).
+          // Fallback: continue from the next item (donÃ¢â‚¬â„¢t restart at item 1).
           this.renderPlaylistStandard(playableItems, container, nextIndex);
         }
       );
@@ -5682,10 +5602,6 @@ const Player = {
       this.currentPlaylistController = null;
     }
 
-    if (this.syncPlayMode === 'native' && this.isSyncplayAvailable() && this.isSyncPlaying) {
-      this.stopSyncPlayNative();
-    }
-    
     // Stop seamless AVPlay if active
     if (this.seamlessPlaylistActive) {
       this.stopSeamlessAVPlay();
@@ -5698,7 +5614,7 @@ const Player = {
 
     this.currentVideoEndedCallback = null;
     this.lastRenderedItemKey = null;
-    // NOTE: do NOT call closeDocument() here — it resets documentActive and kills
+    // NOTE: do NOT call closeDocument() here â€” it resets documentActive and kills
     // the PDF page interval on every loop tick. closeDocument() is called inside
     // renderDocument() when a new document starts, and the canvas isConnected guard
     // cleans up if the container is replaced by non-PDF content.
@@ -5730,16 +5646,11 @@ const Player = {
   stop() {
     logger.info('Stopping current playback');
 
-    if (this.syncPlayMode === 'native' && this.isSyncplayAvailable() && this.isSyncPlaying) {
-      this.stopSyncPlayNative();
-    }
-
     this.cancelCurrentPlayback();
     this.closeDocument();
     this.currentItem = null;
     this.currentPlaylist = null;
     this.currentIndex = 0;
-    this.isSyncPlaying = false;
   },
 
   getPlaylistItemKey(content) {
@@ -5757,9 +5668,7 @@ const Player = {
   // Show idle screen when no content
   showIdleScreen(downloadProgress = null) {
     this.cancelCurrentPlayback();
-    // Ensure AVPlay/SyncPlay visual state is fully reset so the content-container
-    // is visible (cancelCurrentPlayback removes avplay-active class via stopSyncPlayNative,
-    // but the inline visibility:hidden set by setAvPlayVisualMode(true) must also be cleared).
+    // Ensure AVPlay visual state is fully reset so the content-container is visible.
     this.setAvPlayVisualMode(false);
     const container = document.getElementById('content-container');
     
@@ -5779,7 +5688,7 @@ const Player = {
     container.innerHTML = `
       <div class="idle-screen">
         <div class="idle-card">
-          <div class="idle-icon">ðŸ“¡</div>
+          <div class="idle-icon">Ã°Å¸â€œÂ¡</div>
           <div class="idle-title">Nexari</div>
           <div class="idle-subtitle">${this.deviceName || 'Device'}</div>
           <div class="idle-status">${statusText}</div>
@@ -5848,7 +5757,7 @@ const Player = {
       }
         
       case 'POWER_OFF':
-        // Use MDC standby_set via Node bridge (LFD 6.5 — no hospitality/virtualStandby)
+        // Use MDC standby_set via Node bridge (LFD 6.5 â€” no hospitality/virtualStandby)
         this.sendLocalMdcXhr('standby_set', { value: 1 })
           .then(() => logger.info('[cmd] MDC standby_set 1 (power off)'))
           .catch(() => {
@@ -5866,7 +5775,7 @@ const Player = {
             logger.info('Uploading log burst:', batch.length);
             const ws = this.wsConnection;
             if (ws && ws.readyState === WebSocket.OPEN) {
-              // Group by real level; line text is "timestamp message" only—
+              // Group by real level; line text is "timestamp message" onlyâ€”
               // buildLogText on the dashboard already prepends [LEVEL].
               const byLevel: Record<string, string[]> = { debug: [], info: [], warn: [], error: [] };
               for (const e of batch) {
@@ -5953,12 +5862,12 @@ const Player = {
         break;
 
       case 'SCREENSHOT_AUTO':
-        // Server-initiated on-connect shot — stored in-memory only, no disk write
+        // Server-initiated on-connect shot â€” stored in-memory only, no disk write
         this.takeScreenshotWithTrigger('content_change');
         break;
 
       case 'SET_SCREENSHOT_INTERVAL': {
-        // API sends { minutes: N } — set up a periodic takeScreenshot loop on the device.
+        // API sends { minutes: N } â€” set up a periodic takeScreenshot loop on the device.
         // Clears any existing timer first.
         if ((this as any)._screenshotIntervalHandle) {
           clearInterval((this as any)._screenshotIntervalHandle);
@@ -6069,11 +5978,11 @@ const Player = {
         break;
         
       case 'SYNC_PLAY':
-        this.handleSyncPlayCommand(payload || command);
+        logger.info('SYNC_PLAY command received (SyncPlay removed from player; ignored)');
         break;
         
       case 'SET_ZONES':
-        // Zone layout is now a content type — ignore legacy SET_ZONES push from server
+        // Zone layout is now a content type â€” ignore legacy SET_ZONES push from server
         logger.info('[zones] SET_ZONES ignored (zones are now content items)');
         break;
 
@@ -6082,7 +5991,7 @@ const Player = {
     }
   },
 
-  // ── Zone mode ──────────────────────────────────────────────────────────────
+  // â”€â”€ Zone mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   _zoneErrorCounts: {} as Record<string, number>,
 
@@ -6109,9 +6018,9 @@ const Player = {
     // them are prepared, regardless of download/prepare timing differences.
     this._zoneSyncExpectedCount = activeZones.filter((z: any) => !!z.syncGroup).length;
     if (this._zoneSyncEnabled) {
-      logger.info(`[Zones] Sync mode enabled — HTML5 path with synchronized start/loop (expecting ${this._zoneSyncExpectedCount})`);
+      logger.info(`[Zones] Sync mode enabled â€” HTML5 path with synchronized start/loop (expecting ${this._zoneSyncExpectedCount})`);
     } else {
-      logger.info(`[Zones] No sync groups — using HTML5 <video> for all zones`);
+      logger.info(`[Zones] No sync groups â€” using HTML5 <video> for all zones`);
     }
     const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
     activeZones.forEach((zone: any, index: number) => {
@@ -6161,7 +6070,7 @@ const Player = {
   _enqueueZoneSync(playFn: () => void): void {
     this._zoneSyncReadyQueue.push(playFn);
     // Count-based flush: once all expected sync zones have prepared and enqueued,
-    // start them ALL immediately. This works regardless of download/prepare timing —
+    // start them ALL immediately. This works regardless of download/prepare timing â€”
     // Zone 0 might prepare 2s before Zone 2, but we wait until Zone 2 is also ready.
     if (this._zoneSyncExpectedCount > 0 &&
         this._zoneSyncReadyQueue.length >= this._zoneSyncExpectedCount) {
@@ -6258,6 +6167,16 @@ const Player = {
     if (!this._zoneMode) return;
     if (!container.parentNode) return;
 
+    // At each zone item transition, check whether new content has been published.
+    // This is the zone-mode equivalent of the playlist controller calling
+    // trySwapToPendingContent() between items — without this, a pending playlist
+    // set while zones are running would never be applied.
+    if (this.pendingPlaylist) {
+      logger.info(`[Zone ${zoneIndex}] Pending content ready — swapping at zone item boundary`);
+      this.trySwapToPendingContent(true);
+      return;
+    }
+
     // Circuit breaker: stop zone after 5 consecutive failures
     const errKey = zone.id + ':' + (itemIndex % items.length);
     if ((this._zoneErrorCounts[zone.id] ?? 0) >= 5) {
@@ -6325,7 +6244,7 @@ const Player = {
       }, durationMs) as unknown as number;
       this._zoneTimers.push(t);
     } else {
-      // Unsupported type — advance
+      // Unsupported type â€” advance
       const t = setTimeout(() => {
         if (this._zoneMode && container.parentNode) {
           this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex);
@@ -6339,7 +6258,7 @@ const Player = {
     const url = content.url || content.fileUrl || '';
     const httpUrl = content.originalUrl || content.fileUrl || url;
     const isLocalFile = url.startsWith('file://');
-    // Prefer local file:// (already downloaded by ContentManager) — no HTTP streaming.
+    // Prefer local file:// (already downloaded by ContentManager) â€” no HTTP streaming.
     const videoUrl = isLocalFile ? url : httpUrl;
     if (!videoUrl) {
       const t = setTimeout(() => this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex), durationMs) as unknown as number;
@@ -6347,7 +6266,7 @@ const Player = {
       return;
     }
 
-    // VideoMixer (avplaystore) compositing does not work on Tizen 4.0/SSSP6 —
+    // VideoMixer (avplaystore) compositing does not work on Tizen 4.0/SSSP6 â€”
     // both planes render full-screen, ignoring SET_MIXEDFRAME rect.
     // Use HTML5 <video> in CSS-positioned zone containers which works reliably.
     const useSyncAvPlay = false;
@@ -6359,7 +6278,7 @@ const Player = {
     }
   },
 
-  // ── HTML5 <video> path — sync-aware, works on all displays ────────────────
+  // â”€â”€ HTML5 <video> path â€” sync-aware, works on all displays â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   _playZoneVideoHTML5(zone: any, container: HTMLElement, content: any, items: any[], itemIndex: number, durationMs: number, token: string, zoneIndex: number, videoUrl: string, isLocalFile: boolean, httpUrl: string): void {
     let advanced = false;
     const advanceOnce = () => {
@@ -6385,7 +6304,7 @@ const Player = {
     video.style.cssText = `position:absolute;left:0;top:0;width:100%;height:100%;object-fit:${initialFit};display:block;background:#000;`;
     video.setAttribute('playsinline', '');
     if (zoneIndex > 0) video.muted = true;
-    // Only use native loop when there is no sync partner — otherwise we manage
+    // Only use native loop when there is no sync partner â€” otherwise we manage
     // re-looping manually so all zones restart in the same JS tick.
     if (isSingleVideoLoop && !useSyncLoop) video.loop = true;
 
@@ -6403,7 +6322,7 @@ const Player = {
         video.style.transformOrigin = 'top left';
         video.style.transform = `scale(${(cw / vw).toFixed(6)}, ${(ch / vh).toFixed(6)})`;
         video.style.objectFit = 'fill';
-        logger.info(`[Zone ${zoneIndex}] Fill stretch applied: ${vw}x${vh} → ${cw}x${ch}`);
+        logger.info(`[Zone ${zoneIndex}] Fill stretch applied: ${vw}x${vh} â†’ ${cw}x${ch}`);
       };
       video.addEventListener('loadedmetadata', applyStretch);
       // Re-apply if first attempt fired before container was laid out.
@@ -6414,7 +6333,7 @@ const Player = {
       this._zoneErrorCounts[zone.id] = 0;
       if (isSingleVideoLoop) {
         if (useSyncLoop) {
-          // Synchronized re-loop — same queue/flush pattern as AVPlay path
+          // Synchronized re-loop â€” same queue/flush pattern as AVPlay path
           const fn = () => {
             video.currentTime = 0;
             video.play().catch(() => { advanceOnce(); });
@@ -6495,7 +6414,7 @@ const Player = {
     }
   },
 
-  // ── AVPlay VideoMixer path — sync enabled, hardware-decoded local files ────
+  // â”€â”€ AVPlay VideoMixer path â€” sync enabled, hardware-decoded local files â”€â”€â”€â”€
   _playZoneVideoAVPlay(zone: any, container: HTMLElement, content: any, items: any[], itemIndex: number, durationMs: number, token: string, zoneIndex: number, videoUrl: string, isLocalFile: boolean, httpUrl: string): void {
     let advanced = false;
     const advanceOnce = () => {
@@ -6522,7 +6441,7 @@ const Player = {
     const rect = zone.rect || { x: 0, y: 0, width: 1920, height: 1080 };
     logger.info(`[Zone ${zoneIndex}] AVPlay VideoMixer open: ${videoUrl} [${isLocalFile ? 'local' : 'http'}] rect=${rect.x},${rect.y} ${rect.width}x${rect.height} syncGroup=${zone.syncGroup}`);
 
-    // Serialize VideoMixer prepare() calls — Samsung rejects concurrent prepare().
+    // Serialize VideoMixer prepare() calls â€” Samsung rejects concurrent prepare().
     this._videoMixerQueue = this._videoMixerQueue.then(() => {
       if (!this._zoneMode) return;
 
@@ -6530,7 +6449,7 @@ const Player = {
         try {
           const playerId = `zone_${zoneIndex}_${Date.now()}`;
           const avp = (window as any).webapis.avplaystore.getPlayer(playerId);
-          // open() first, then USE_VIDEOMIXER — Samsung requires this order
+          // open() first, then USE_VIDEOMIXER â€” Samsung requires this order
           avp.open(videoUrl);
           avp.setStreamingProperty('USE_VIDEOMIXER', 'TRUE');
 
@@ -6623,7 +6542,7 @@ const Player = {
   },
 
   // Render PDF into zone container using PDF.js canvas rendering.
-  // DOM-based — renders on top of AVPlay VideoMixer hardware layer.
+  // DOM-based â€” renders on top of AVPlay VideoMixer hardware layer.
   _playZonePdf(zone: any, container: HTMLElement, content: any, items: any[], itemIndex: number, durationMs: number, token: string, zoneIndex: number): void {
     const url = content.url || content.fileUrl || '';
     if (!url) {
@@ -6634,7 +6553,7 @@ const Player = {
 
     const pdfLib = (window as any).pdfjsLib || (window as any).PDFJS;
     if (!pdfLib) {
-      logger.warn(`[Zone ${zoneIndex}] pdfjs unavailable — cannot render PDF in zone`);
+      logger.warn(`[Zone ${zoneIndex}] pdfjs unavailable â€” cannot render PDF in zone`);
       const t = setTimeout(() => this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex), durationMs) as unknown as number;
       this._zoneTimers.push(t);
       return;
@@ -6667,7 +6586,7 @@ const Player = {
         const lib = pdfLibV2 || pdfLibV1;
         const isV1 = !pdfLibV2 && !!pdfLibV1;
         if (!lib) {
-          logger.warn(`[Zone ${zoneIndex}] pdfjsLib not loaded — cannot render PDF`);
+          logger.warn(`[Zone ${zoneIndex}] pdfjsLib not loaded â€” cannot render PDF`);
           advanceOnce();
           return;
         }
@@ -6726,7 +6645,7 @@ const Player = {
           }, pageDurationMs);
         }
 
-        // For single-item zones: cycle pages forever via setInterval — no fallback timer.
+        // For single-item zones: cycle pages forever via setInterval â€” no fallback timer.
         // For multi-item zones: advance to the next item after total duration.
         const isSingleLoop = items.length === 1;
         if (!isSingleLoop) {
@@ -6748,7 +6667,7 @@ const Player = {
   },
 
   // Render Office/PPT/DOC document in a zone using webapis.document with zone rect coordinates.
-  // Hardware layer — positioned like AVPlay VideoMixer.
+  // Hardware layer â€” positioned like AVPlay VideoMixer.
   _playZoneOffice(zone: any, container: HTMLElement, content: any, items: any[], itemIndex: number, durationMs: number, token: string, zoneIndex: number): void {
     const url = content.url || content.fileUrl || '';
     if (!url) {
@@ -6759,7 +6678,7 @@ const Player = {
 
     const docApi = (window as any).webapis?.document;
     if (!docApi) {
-      logger.warn(`[Zone ${zoneIndex}] webapis.document unavailable — skipping OFFICE item`);
+      logger.warn(`[Zone ${zoneIndex}] webapis.document unavailable â€” skipping OFFICE item`);
       const t = setTimeout(() => this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex), durationMs) as unknown as number;
       this._zoneTimers.push(t);
       return;
@@ -6885,7 +6804,7 @@ const Player = {
               const normalizedPath = String(filePath || '').replace(/^file:\/\//, '');
               const platform = (window as any).Platform;
               if (platform && platform.isLegacy) {
-                // Tizen 4: filesystem.openFile does not exist — use resolve + openStream
+                // Tizen 4: filesystem.openFile does not exist â€” use resolve + openStream
                 (tizen as any).filesystem.resolve(normalizedPath, (file: any) => {
                   file.openStream('r', (stream: any) => {
                     try {
@@ -6928,32 +6847,6 @@ const Player = {
       const base64 = dataUrl.split(',')[1];
       send(base64);
     } catch (e) { logger.warn('[Screenshot] Canvas fallback failed:', e); }
-  },
-
-  // Handle synchronized playback command
-  handleSyncPlayCommand(data) {
-    logger.info('SYNC_PLAY command received:', data);
-    
-    if (!data || !data.action) {
-      logger.warn('SYNC_PLAY missing action');
-      return;
-    }
-
-    switch (data.action) {
-      case 'STOP':
-      case 'CANCEL':
-        // Legacy orchestration removed; allow server/operator to stop native SyncPlay.
-        this.stopSyncPlayNative();
-        break;
-      
-      case 'START_SYNCPLAY':
-        // Legacy broadcast orchestration removed. Content refresh drives SyncPlay start.
-        logger.warn('START_SYNCPLAY received but legacy orchestration is disabled; ignoring');
-        break;
-
-      default:
-        logger.warn('Ignoring legacy SYNC_PLAY action (disabled):', data.action);
-    }
   },
 
   // Select an AVPlay profile based on resolution and stream type
@@ -7053,879 +6946,6 @@ const Player = {
   // Backwards compatibility for existing calls
   applySyncAvPlaySettings(content) {
     this.applyAvPlayProfile(content);
-  },
-
-  // --- Tizen Syncplay (native) helpers ---
-  // Tizen 6.5+ (QBC and newer signage) uses webapis.syncplay; Tizen 4 SBB uses b2bapis.b2bsyncplay.
-  // Detect which backend is available and store it in syncplayBackend for use across sync methods.
-  isSyncplayAvailable() {
-    // Prefer webapis.syncplay (Tizen 6.5+ / SSSP6+) -- matches official Samsung sample for QBC.
-    // Some Tizen 6.5 firmwares also expose b2bapis.b2bsyncplay as a legacy shim, but the modern
-    // webapis.syncplay is the documented API for these devices and renders correctly fullscreen.
-    if (typeof webapis !== 'undefined' &&
-        !!(webapis as any).syncplay &&
-        typeof (webapis as any).syncplay.start === 'function' &&
-        typeof (webapis as any).syncplay.createPlaylist === 'function' &&
-        typeof (webapis as any).syncplay.stop === 'function') {
-      this.syncplayBackend = 'webapis';
-      try {
-        const version = (webapis as any).syncplay.getVersion?.();
-        if (version) logger.debug('Syncplay API version:', version);
-      } catch (_) {}
-      return true;
-    }
-    // Fallback: b2bapis.b2bsyncplay (Tizen 4 SBB / SSSP4)
-    const b2b = typeof (window as any).b2bapis !== 'undefined' ? (window as any).b2bapis : null;
-    if (b2b &&
-        !!b2b.b2bsyncplay &&
-        typeof b2b.b2bsyncplay.startSyncPlay === 'function' &&
-        typeof b2b.b2bsyncplay.makeSyncPlayList === 'function' &&
-        typeof b2b.b2bsyncplay.stopSyncPlay === 'function') {
-      this.syncplayBackend = 'b2bapis';
-      return true;
-    }
-    this.syncplayBackend = null;
-    return false;
-  },
-
-  deriveSyncplayGroupId(input: any): number {
-    const clampToUint16 = (num: number): number => {
-      if (!Number.isFinite(num)) return 1;
-      const mod = ((Math.trunc(num) % 65536) + 65536) % 65536;
-      return mod === 0 ? 1 : mod;
-    };
-
-    if (typeof input === 'number') return clampToUint16(input);
-
-    const str = String(input ?? '').trim();
-    if (!str) return 1;
-
-    const asNum = Number(str);
-    if (Number.isFinite(asNum)) return clampToUint16(asNum);
-
-    // String fallback: CRC-16/CCITT (poly 0x1021, init 0xFFFF) — must match the
-    // backend allocator in apps/api/src/routes/sync-groups.ts so a player that
-    // ever receives a UUID-only payload arrives at the same groupId the backend
-    // would have produced. The backend should always send a numeric groupId, so
-    // this path is defensive only.
-    logger.warn('Syncplay: deriveSyncplayGroupId received non-numeric input, using CRC-16 fallback', { input });
-    let crc = 0xFFFF;
-    for (let i = 0; i < str.length; i++) {
-      crc ^= str.charCodeAt(i) << 8;
-      for (let j = 0; j < 8; j++) {
-        crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
-      }
-    }
-    return clampToUint16(crc & 0xFFFF);
-  },
-
-  getSyncplayFullscreenRect() {
-    const width = Math.max(screen?.width || 0, window.innerWidth || 0, 1920);
-    const height = Math.max(screen?.height || 0, window.innerHeight || 0, 1080);
-    return { x: 0, y: 0, width, height };
-  },
-
-  async buildSyncplayContents(
-    playlistItems: any[] = [],
-    opts: { requireLocal?: boolean; suppressIdleScreen?: boolean } = {}
-  ): Promise<Array<{ path: string; duration: number }>> {
-    const contents = [];
-    const requireLocal = opts.requireLocal !== false;
-    const suppressIdleScreen = !!opts.suppressIdleScreen;
-
-    for (let i = 0; i < playlistItems.length; i++) {
-      const item = playlistItems[i];
-      try {
-        // Prefer embedded content, else fetch from API. If API is temporarily unavailable,
-        // fall back to any URL carried on the playlist item.
-        let content = item.content;
-        if (!content) {
-          try {
-            content = await API.getContentById(item.contentId);
-          } catch (_) {
-            content = null;
-          }
-        }
-        if (!content && (item.contentUrl || item.url)) {
-          content = {
-            id: item.contentId,
-            url: item.contentUrl || item.url,
-            name: item.name,
-            duration: item.duration,
-          };
-        }
-        if (!content) {
-          logger.warn('Syncplay: content missing for', item.contentId);
-          continue;
-        }
-
-        // SyncPlay requires IDENTICAL file paths on all devices.
-        // Use deterministic sync-N.ext naming so all devices use same path.
-        const syncFileName = await this.getSyncPlayFileName(content, item, i);
-        if (!syncFileName) {
-          const id = content.id || item.contentId;
-          if (requireLocal) {
-            throw new Error(`Syncplay: cannot determine filename for ${id}`);
-          }
-          logger.warn('Syncplay: missing filename; skipping item', id);
-          continue;
-        }
-
-        // Download with sync-specific naming
-        logger.info(`Syncplay: downloading item ${i + 1}/${playlistItems.length}: ${content.name || content.id}`);
-        if (!suppressIdleScreen) this.showIdleScreen && this.showIdleScreen(0);
-        let syncPath = await ContentManager.downloadSyncContent(content, syncFileName);
-        if (!syncPath) {
-          const id = content.id || item.contentId;
-          const name = content.name || '';
-          if (requireLocal) {
-            throw new Error(`Syncplay requires locally cached media. Missing cache for ${id}${name ? ` (${name})` : ''}`);
-          }
-          logger.warn('Syncplay: missing local cache; skipping item', id);
-          continue;
-        }
-
-        // webapis.syncplay (Tizen 6.5+, QBC): only video is supported per Samsung docs.
-        // Image, HTML5, PDF content causes silent start() failure (STOP_DONE fires immediately).
-        // b2bapis (Tizen 4, SBB) supports both video and images.
-        if (this.syncplayBackend !== 'b2bapis') {
-          const mimeType = (content.mimeType || '').toLowerCase();
-          const contentType = (content.type || '').toLowerCase();
-          const ext = (syncFileName || '').split('.').pop()?.toLowerCase() || '';
-          const isVideo =
-            contentType === 'video' ||
-            mimeType.startsWith('video/') ||
-            ['mp4', 'mkv', 'avi', 'webm', 'mov', 'mpeg', 'mpg', 'm4v', 'ts'].includes(ext);
-          if (!isVideo) {
-            logger.warn(`Syncplay (webapis): skipping non-video item type=${content.type} mime=${content.mimeType} ext=${ext} — webapis.syncplay only supports video`);
-            continue;
-          }
-        }
-
-        const duration = Math.max(1, Math.round(item.duration || content.duration || 10));
-
-        // Resolve the native path for the SyncPlay playlist.
-        //
-        // b2bapis (SBB, Tizen 4): needs a raw filesystem path (strip file://).
-        //
-        // webapis (QBC, Tizen 6.5+): the SyncPlay service is a separate system daemon that
-        // runs outside the app's Smack security sandbox. It CANNOT access wgt-private/ storage
-        // (app-private). Instead, use the direct /uploads/ HTTP URL served by nginx (no auth
-        // required). Both devices in a sync group use the same URL → firmware-level sync works.
-        let nativePath = String(syncPath || '');
-        if (this.syncplayBackend === 'b2bapis') {
-          if (nativePath.indexOf('file://') === 0) {
-            nativePath = nativePath.replace(/^file:\/\//, '');
-          }
-        } else {
-          // webapis: use direct HTTP /uploads/ URL if filePath is available.
-          const filePath = content.filePath || '';
-          if (filePath) {
-            try {
-              const cmsBase = (CONFIG.API_BASE || '').replace(/\/api\/v1\/?$/, '');
-              nativePath = `${cmsBase}/uploads/${filePath}`;
-              logger.info(`Syncplay (webapis): resolved HTTP path: ${nativePath}`);
-            } catch (_) {
-              logger.warn('Syncplay (webapis): failed to build HTTP URL, falling back to local path');
-            }
-          } else {
-            logger.warn(`Syncplay (webapis): content.filePath missing for ${content.id}, using local path`);
-          }
-        }
-
-        // Verify local file exists for logging purposes (b2bapis path probe).
-        let fileOk = false;
-        let fileSizeBytes = -1;
-        if (this.syncplayBackend === 'b2bapis') {
-          try {
-            if ((tizen as any)?.filesystem?.pathExists) {
-              fileOk = !!(tizen as any).filesystem.pathExists(nativePath);
-            }
-            if (fileOk && (tizen as any)?.filesystem?.getFileSize) {
-              try { fileSizeBytes = (tizen as any).filesystem.getFileSize(nativePath); } catch (_) {}
-            }
-          } catch (_) { /* probe failure is non-fatal */ }
-        }
-        contents.push({ path: nativePath, duration });
-        logger.info(`Syncplay: built item ${i + 1}/${playlistItems.length}, path=${nativePath}, duration=${duration}s, exists=${fileOk}, size=${fileSizeBytes}`);
-      } catch (err) {
-        logger.warn('Syncplay: failed to build item', item.contentId, err);
-      }
-    }
-
-    logger.info(`Syncplay: buildSyncplayContents returning ${contents.length} item(s)`);
-    return contents;
-  },
-
-  // XHR-based HTTP helper with explicit timeout (Tizen 4 fetch to localhost is unreliable).
-  syncPeerXhr(method: string, url: string, body: any, timeoutMs: number): Promise<{ ok: boolean; status: number; json: any }> {
-    return new Promise((resolve) => {
-      try {
-        const xhr = new XMLHttpRequest();
-        let settled = false;
-        const finish = (result: { ok: boolean; status: number; json: any }) => {
-          if (settled) return;
-          settled = true;
-          resolve(result);
-        };
-        const to = setTimeout(() => {
-          try { xhr.abort(); } catch (_) {}
-          finish({ ok: false, status: 0, json: null });
-        }, timeoutMs);
-        xhr.onreadystatechange = () => {
-          if (xhr.readyState !== 4) return;
-          clearTimeout(to);
-          let json: any = null;
-          try { json = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch (_) {}
-          finish({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, json });
-        };
-        xhr.onerror = () => { clearTimeout(to); finish({ ok: false, status: 0, json: null }); };
-        xhr.ontimeout = () => { clearTimeout(to); finish({ ok: false, status: 0, json: null }); };
-        xhr.open(method, url, true);
-        if (body !== null && body !== undefined) {
-          xhr.setRequestHeader('Content-Type', 'application/json');
-          xhr.send(typeof body === 'string' ? body : JSON.stringify(body));
-        } else {
-          xhr.send();
-        }
-      } catch (e) {
-        resolve({ ok: false, status: 0, json: null });
-      }
-    });
-  },
-
-  async coordinateSyncPlay(content: any, groupID: number, playlistItems: any[]): Promise<void> {
-    const NODE_PORT = 9615;
-    const syncGroupId = String(content.syncPlay?.syncGroupId || content.id || groupID);
-    const peers: Array<{ deviceId: string; ipAddress: string | null; leaderPriority: number }> = content.syncPlay?.peers || [];
-    const myDeviceId = this.deviceId || '';
-
-    // Leader = peer with the lowest leaderPriority (or first alphabetically if tied)
-    const myPeer = peers.find((p) => p.deviceId === myDeviceId);
-    const sortedByPriority = [...peers].sort((a, b) => a.leaderPriority - b.leaderPriority || a.deviceId.localeCompare(b.deviceId));
-    const isLeader = !sortedByPriority.length || (sortedByPriority[0].deviceId === myDeviceId);
-    // Verbose role-election diagnostics: dump my deviceId, the peer list, and the winner so we can
-    // tell whether a TV self-elected as LEADER because of a missing peers array vs. an ID mismatch.
-    try {
-      const peersDump = peers.map((p) => `${p.deviceId.slice(0, 8)}…@${p.ipAddress || '?'}/p${p.leaderPriority}`).join(' | ');
-      const winner = sortedByPriority[0];
-      logger.info(`SyncPlay election: myDeviceId=${myDeviceId.slice(0, 8)}… myPeerFound=${!!myPeer} myPriority=${myPeer?.leaderPriority ?? 'n/a'} winnerDeviceId=${winner?.deviceId?.slice(0, 8) ?? 'none'}… winnerPriority=${winner?.leaderPriority ?? 'n/a'} peerCount=${peers.length}`);
-      logger.info(`SyncPlay election peers=[${peersDump || '(empty)'}]`);
-    } catch (_) { /* logging-only */ }
-    logger.info(`SyncPlay coordination: role=${isLeader ? 'LEADER' : 'FOLLOWER'} syncGroupId=${syncGroupId} peers=${peers.length}`);
-
-    try {
-      // Rate-limit SyncPlay retries: if createPlaylist failed recently, skip and stay on regular playback.
-      const msSinceFailure = Date.now() - (this.syncplayCreateListFailedAt || 0);
-      const SYNCPLAY_RETRY_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes
-      if (msSinceFailure < SYNCPLAY_RETRY_COOLDOWN_MS) {
-        logger.info(`SyncPlay coordination: skipping (createPlaylist failed ${Math.round(msSinceFailure / 1000)}s ago, cooldown ${SYNCPLAY_RETRY_COOLDOWN_MS / 1000}s)`);
-        this.syncCoordinationInProgress = false;
-        return;
-      }
-
-      // Prepare SyncPlay playlist (download sync files, create hardware playlist).
-      // suppress idle screen since regular playback is already running.
-      const prepared = await this.prepareSyncPlaylistNative({
-        playlistItems,
-        groupId: groupID,
-        folderId: groupID,
-        suppressIdleScreen: true,
-      });
-      if (!prepared) {
-        logger.error('SyncPlay coordination: prepareSyncPlaylistNative failed, staying on regular playback');
-        // Ensure regular content is rendering — in case something interrupted playback during prep.
-        const isPlaying =
-          (this.currentPlaylistController && !this.currentPlaylistController.cancelled) ||
-          this._zoneMode ||
-          (this.syncPlayMode === 'native' && this.isSyncPlaying);
-        if (!isPlaying) {
-          logger.info('SyncPlay coordination: nothing playing after failure — attempting render from pending/cache');
-          if (this.pendingPlaylist) {
-            this.trySwapToPendingContent(true);
-          } else if (!this.tryRenderCachedPlaylist('syncplay-fallback')) {
-            this.showIdleScreen();
-          }
-        }
-        this.syncCoordinationInProgress = false;
-        return;
-      }
-
-      // Mark this device as ready (POST to local Node bridge via XHR + timeout)
-      logger.info(`SyncPlay: posting ready to local bridge http://127.0.0.1:${NODE_PORT}/sync-peer/ready`);
-      const readyResp = await this.syncPeerXhr('POST', `http://127.0.0.1:${NODE_PORT}/sync-peer/ready`, { syncGroupId }, 5000);
-      if (readyResp.ok) {
-        logger.info('SyncPlay: ready posted to local bridge OK');
-      } else {
-        logger.warn(`SyncPlay: failed to post ready (status=${readyResp.status})`);
-      }
-
-      const TIMEOUT_MS = 120_000; // 2 minutes max
-      const POLL_MS = 2_000;
-      const HTTP_TIMEOUT_MS = 4000;
-
-      let startAt: number;
-
-      if (isLeader) {
-        // Wait for all followers to report ready
-        const followers = peers.filter((p) => p.deviceId !== myDeviceId && p.ipAddress);
-        logger.info(`SyncPlay leader: waiting for ${followers.length} follower(s) to be ready`);
-        followers.forEach((p) => logger.info(`SyncPlay leader: follower ip=${p.ipAddress} deviceId=${p.deviceId}`));
-
-        const deadline = Date.now() + TIMEOUT_MS;
-        while (Date.now() < deadline) {
-          const statuses = await Promise.all(
-            followers.map(async (peer) => {
-              const r = await this.syncPeerXhr(
-                'GET',
-                `http://${peer.ipAddress}:${NODE_PORT}/sync-peer/status?syncGroupId=${encodeURIComponent(syncGroupId)}`,
-                null,
-                HTTP_TIMEOUT_MS
-              );
-              return !!(r.ok && r.json && r.json.ready === true);
-            })
-          );
-          if (followers.length === 0 || statuses.every(Boolean)) {
-            logger.info('SyncPlay leader: all followers ready');
-            break;
-          }
-          logger.info(`SyncPlay leader: waiting... (${statuses.filter(Boolean).length}/${followers.length} ready)`);
-          await new Promise((r) => setTimeout(r, POLL_MS));
-        }
-
-        // Push start trigger to all followers (3s grace gives all peers time to receive)
-        startAt = Date.now() + 3000;
-        await Promise.all(
-          followers.map(async (peer) => {
-            const r = await this.syncPeerXhr(
-              'POST',
-              `http://${peer.ipAddress}:${NODE_PORT}/sync-peer/start`,
-              { syncGroupId, startAt },
-              HTTP_TIMEOUT_MS
-            );
-            if (r.ok) {
-              logger.info(`SyncPlay leader: start pushed to ${peer.ipAddress} OK`);
-            } else {
-              logger.warn(`SyncPlay leader: start push to ${peer.ipAddress} failed (status=${r.status})`);
-            }
-          })
-        );
-        logger.info(`SyncPlay leader: start triggers sent, startAt=${startAt}`);
-      } else {
-        // Follower: poll local bridge for start trigger from leader
-        logger.info('SyncPlay follower: polling local bridge for start trigger...');
-        startAt = 0;
-        const deadline = Date.now() + TIMEOUT_MS;
-        let pollCount = 0;
-        while (Date.now() < deadline) {
-          pollCount++;
-          const r = await this.syncPeerXhr(
-            'GET',
-            `http://127.0.0.1:${NODE_PORT}/sync-peer/start-trigger?syncGroupId=${encodeURIComponent(syncGroupId)}`,
-            null,
-            HTTP_TIMEOUT_MS
-          );
-          if (r.ok && r.json && r.json.startAt) {
-            startAt = Number(r.json.startAt);
-            logger.info(`SyncPlay follower: received startAt=${startAt} after ${pollCount} poll(s)`);
-            break;
-          }
-          if (pollCount % 10 === 0) {
-            logger.info(`SyncPlay follower: still waiting for start trigger (poll #${pollCount})`);
-          }
-          await new Promise((r) => setTimeout(r, 1000));
-        }
-        if (!startAt) {
-          logger.warn('SyncPlay follower: timed out waiting for start trigger; starting now');
-          startAt = Date.now() + 500;
-        }
-      }
-
-      // Wait until the coordinated start time
-      const wait = Math.max(0, startAt - Date.now());
-      if (wait > 0) {
-        logger.info(`SyncPlay: waiting ${wait}ms for coordinated start`);
-        await new Promise((r) => setTimeout(r, wait));
-      }
-
-      // All devices start SyncPlay simultaneously via official Samsung API
-      logger.info('SyncPlay: invoking startSyncPlayNative now (coordinated start)');
-      await this.startSyncPlayNative({ groupId: groupID, folderId: groupID });
-    } catch (err) {
-      logger.error('SyncPlay coordination error:', err);
-    } finally {
-      this.syncCoordinationInProgress = false;
-      this.syncCoordinationSignature = null;
-      logger.info('SyncPlay coordination: finished, in-progress flag cleared');
-    }
-  },
-
-  async getSyncPlayFileName(content: any, item: any, index: number): Promise<string | null> {
-    const getExt = (url?: string): string | null => {
-      if (!url || typeof url !== 'string') return null;
-      const clean = url.split('?')[0].split('#')[0];
-      const lastSlash = clean.lastIndexOf('/');
-      const base = lastSlash >= 0 ? clean.slice(lastSlash + 1) : clean;
-      const dot = base.lastIndexOf('.');
-      if (dot <= 0 || dot === base.length - 1) return null;
-      return base.slice(dot + 1).toLowerCase();
-    };
-
-    const url = content?.url || item?.contentUrl || item?.url;
-    // Try URL first, then originalName (preserves real extension like .mp4/.jpg)
-    const ext = getExt(url) || getExt(content?.originalName) || getExt(item?.originalName) || (() => {
-      // Last resort: derive from mimeType
-      const mime = (content?.mimeType || '').toLowerCase();
-      if (mime.includes('mp4') || mime.includes('mpeg')) return 'mp4';
-      if (mime.includes('webm')) return 'webm';
-      if (mime.includes('jpeg') || mime.includes('jpg')) return 'jpg';
-      if (mime.includes('png')) return 'png';
-      if (mime.includes('gif')) return 'gif';
-      if (mime.includes('pdf')) return 'pdf';
-      return null;
-    })();
-
-    // SyncPlay requires IDENTICAL file paths across devices.
-    // Use contentId (stable across devices) rather than playlist index.
-    const rawId = String(content?.id || item?.contentId || index);
-    const safeId = rawId.replace(/[^a-zA-Z0-9-_]/g, '_');
-
-    if (!ext) {
-      // Keep deterministic even when extension can't be derived.
-      return `sync-${safeId}.bin`;
-    }
-    return `sync-${safeId}.${ext}`;
-  },
-
-  async prepareSyncPlaylistNative(data: any): Promise<boolean> {
-    if (!this.isSyncplayAvailable()) {
-      logger.warn('Syncplay: prepareSyncPlaylistNative called but no SyncPlay backend available');
-      return false;
-    }
-    logger.info(`Syncplay: prepareSyncPlaylistNative starting, backend=${this.syncplayBackend}`);
-
-    try {
-      const { playlistItems = [], groupId, suppressIdleScreen } = data || {};
-      logger.info(`Syncplay: building contents for ${playlistItems.length} item(s)`);
-
-      const contentsArr = await this.buildSyncplayContents(playlistItems, { requireLocal: true, suppressIdleScreen: !!suppressIdleScreen });
-      logger.info(`Syncplay: built ${contentsArr.length} content(s) for native playlist`);
-      if (!contentsArr.length) {
-        logger.error('Syncplay: no playable items for native playlist');
-        return false;
-      }
-
-      // Pre-clean: remove any existing playlist
-      logger.info('Syncplay: pre-cleaning previous playlist (if any)');
-      if (this.syncplayBackend === 'b2bapis') {
-        try {
-          (window as any).b2bapis.b2bsyncplay.clearSyncPlayList(
-            (res: any) => logger.debug('Syncplay: pre-clean clearSyncPlayList ok', res?.result),
-            (err: any) => logger.debug('Syncplay: pre-clean clearSyncPlayList error (ignored)', err?.message)
-          );
-        } catch (e) {
-          logger.debug('Syncplay: clearSyncPlayList pre-clean failed (ignored)', e);
-        }
-      } else {
-        try {
-          (webapis as any).syncplay.removePlaylist(
-            (res: SyncplayResult) => logger.debug('Syncplay: pre-clean removePlaylist ok', res?.result),
-            (err: SyncplayError) => logger.debug('Syncplay: pre-clean removePlaylist error (ignored)', err?.message)
-          );
-        } catch (e) {
-          logger.debug('Syncplay: removePlaylist pre-clean failed (ignored)', e);
-        }
-      }
-
-      logger.info(`Syncplay: calling ${this.syncplayBackend === 'b2bapis' ? 'b2bsyncplay.makeSyncPlayList' : 'syncplay.createPlaylist'} with ${contentsArr.length} item(s)`);
-      await Promise.race([
-        new Promise<void>((resolve, reject) => {
-          const onSuccess = (res: any) => {
-            logger.info('Syncplay: playlist created', res?.result, res?.data);
-            resolve();
-          };
-          const onError = (err: any) => {
-            // Samsung's native error object may not have enumerable properties — extract by name.
-            const fields: any = {};
-            try {
-              ['name', 'message', 'code', 'type', 'data', 'result', 'reason'].forEach((k) => {
-                try { if (err && (err as any)[k] !== undefined) fields[k] = (err as any)[k]; } catch (_) {}
-              });
-            } catch (_) {}
-            let typeofErr = 'unknown';
-            try { typeofErr = typeof err; } catch (_) {}
-            let ownProps: string[] = [];
-            try { ownProps = err ? Object.getOwnPropertyNames(err) : []; } catch (_) {}
-            logger.error(`Syncplay: createPlaylist onError fired typeof=${typeofErr} ownProps=${JSON.stringify(ownProps)} fields=${JSON.stringify(fields)}`);
-            reject(err || new Error('Syncplay: createPlaylist onError with empty error'));
-          };
-          try {
-            if (this.syncplayBackend === 'b2bapis') {
-              (window as any).b2bapis.b2bsyncplay.makeSyncPlayList(contentsArr, onSuccess, onError);
-            } else {
-              (webapis as any).syncplay.createPlaylist(contentsArr, onSuccess, onError);
-            }
-          } catch (e) {
-            logger.error('Syncplay: createPlaylist threw synchronously', e);
-            reject(e);
-          }
-        }),
-        new Promise<void>((_, reject) =>
-          setTimeout(() => reject(new Error('Syncplay: createPlaylist timed out after 30s')), 30000)
-        ),
-      ]);
-      logger.info('Syncplay: createPlaylist promise resolved');
-
-      // New playlist prepared => treat as not-started yet.
-      this.isSyncStarting = false;
-      this.isSyncPlaying = false;
-
-      this.syncPlayMode = 'native';
-      this.syncPlaylistState = {
-        ...(this.syncPlaylistState || {}),
-        items: playlistItems,
-        prepared: true,
-        folderId: data.folderId,
-      };
-      this.showSyncNotification('Sync playlist ready (native)', 'success');
-
-      logger.info('Syncplay: playlist prepared (native)');
-
-      return true;
-    } catch (err: any) {
-      const errMsg = (err && (err.message || err.name)) || String(err);
-      logger.error(`Syncplay: prepare playlist native failed: ${errMsg}`);
-      this.syncplayCreateListFailedAt = Date.now();
-      return false;
-    }
-  },
-
-  async startSyncPlayNative(data: any = {}): Promise<boolean> {
-    if (!this.isSyncplayAvailable()) return false;
-
-    const enforceSyncplayFullscreen = () => {
-      try {
-        // Make body transparent to show SyncPlay hardware layer (like AVPlay)
-        document.body.classList.add('avplay-active');
-      } catch (_) {}
-      try {
-        const container = document.getElementById('content-container');
-        if (container) container.innerHTML = '';
-      } catch (_) {}
-    };
-
-    // Prevent duplicate start calls
-    if ((this.isSyncPlaying || this.isSyncStarting) && this.syncPlayMode === 'native') {
-      logger.warn('SyncPlay already started, ignoring duplicate start call');
-      // Even if start is ignored, still force fullscreen rendering state.
-      enforceSyncplayFullscreen();
-      return true;
-    }
-
-    // In the per-playlist model we always prepare first, then start.
-    if (!this.syncPlaylistState?.prepared) {
-      logger.warn('SyncPlay start requested but playlist is not prepared; ignoring');
-      return false;
-    }
-
-    this.isSyncStarting = true;
-    this.isSyncPlaying = false;
-
-    // Stop ONLY non-sync playback. Do not call cancelCurrentPlayback() here because it can
-    // cancel the orchestration/prep flow and make devices diverge.
-    try {
-      this.stopSeamlessAVPlay?.();
-    } catch (_) {}
-    try {
-      this.resetAvPlay?.();
-    } catch (_) {}
-    try {
-      const container = document.getElementById('content-container');
-      if (container) {
-        const video = container.querySelector('video');
-        if (video) {
-          try { (video as HTMLVideoElement).pause(); } catch (_) {}
-          try { (video as HTMLVideoElement).removeAttribute('src'); } catch (_) {}
-          try { (video as HTMLVideoElement).load?.(); } catch (_) {}
-        }
-        container.innerHTML = '';
-      }
-    } catch (_) {}
-
-    // SyncPlay rect is in a fixed 1920×1080 coordinate space on both b2bapis and webapis,
-    // regardless of physical panel resolution. Samsung's official samples (Tizen 4 SBB and
-    // Tizen 6.5+ QBC) always pass 1920×1080 — firmware scales internally to fit the panel.
-    // Passing 3840×2160 is rejected by b2bapis with "Invalid Rect".
-    const rect = { x: 0, y: 0, width: 1920, height: 1080 };
-    const rotate: SyncplayRotate = 'OFF';
-
-    logger.info(`SyncPlay display rect: ${rect.width}x${rect.height} (backend=${this.syncplayBackend})`);
-    
-    // SyncPlay groupID must be a small integer (16-bit on many firmwares).
-    // Derive it deterministically from folderId/UUID.
-    const folderIdSource =
-      data?.groupId ||
-      data?.groupID ||
-      data?.folderId ||
-      this.syncPlaylistState?.folderId ||
-      this.getCurrentFolderId();
-    const groupId = this.deriveSyncplayGroupId(folderIdSource);
-
-    const baseSyncinfo = {
-      rectX: rect.x,
-      rectY: rect.y,
-      rectWidth: rect.width,
-      rectHeight: rect.height,
-      groupID: groupId,
-      rotate,
-    };
-
-    const listener = (msg) => {
-      const event =
-        typeof msg === 'string'
-          ? msg
-          : (msg && typeof msg === 'object' && (msg as any).data)
-            ? (msg as any).data
-            : String(msg);
-
-      logger.info('Syncplay status:', event);
-
-      const clearWatchdog = () => {
-        if (this.syncStartWatchdog) {
-          try { clearTimeout(this.syncStartWatchdog); } catch (_) {}
-          this.syncStartWatchdog = null;
-        }
-      };
-
-      // Handle sync play events
-      if (event === 'SYNC_PLAY_START_DONE') {
-        logger.info('Syncplay started successfully on this device');
-        this.isSyncPlaying = true;
-        this.isSyncStarting = false;
-        clearWatchdog();
-        // Re-add avplay-active here: old-session phantom STOP_DONEs (from accumulated
-        // firmware listener registrations across app restarts) may have removed it.
-        // START_DONE is the authoritative signal that video IS playing — always show it.
-        try { document.body.classList.add('avplay-active'); } catch (_) {}
-      } else if (event === 'SYNC_PLAY_STOP_DONE') {
-        // Ignore phantom STOP events that arrive while still in probe/startup phase.
-        // stopListenerSafe() between rect candidates triggers these asynchronously;
-        // they must not tear down rendering state set up by the successful start().
-        if (this.isSyncStarting) {
-          logger.debug('Syncplay: ignoring STOP_DONE during startup phase (probe cleanup)');
-          return;
-        }
-        logger.info('Syncplay stopped on this device');
-        this.isSyncPlaying = false;
-        this.isSyncStarting = false;
-        clearWatchdog();
-        // Remove fullscreen class when playback stops
-        document.body.classList.remove('avplay-active');
-      } else if (event === 'SYNC_PLAY_FINISH_DONE') {
-        logger.info('Syncplay finished on this device');
-        this.isSyncStarting = false;
-        clearWatchdog();
-        // Playback completed, remove fullscreen class
-        document.body.classList.remove('avplay-active');
-      }
-    };
-
-    try {
-      logger.info(`[SYNC TIMING] calling syncplay start now at ${Date.now()}`);
-
-      // Pre-clear: release the firmware callback slot from the PREVIOUS session.
-      //
-      // CRITICAL for b2bapis (SBB, Tizen 4): firmware tracks the registered callback by
-      // reference. stopSyncPlay() MUST receive the EXACT same function reference that was
-      // passed to startSyncPlay() — a new function reference is ignored and the slot stays
-      // occupied, causing the next startSyncPlay() to throw "Can't register callback".
-      //
-      // For webapis (QBC, Tizen 6.5+): syncplay.stop() blocks the JS thread for ~2+ seconds.
-      // Using the previous registered listener ensures the firmware fully de-registers the
-      // old session before the new start() call.
-      //
-      // Skip entirely on first start (this.syncPlayListener is null — no prior session).
-      const prevListener = this.syncPlayListener;
-      if (prevListener) {
-        try {
-          logger.debug('Pre-clearing SyncPlay callback slot (previous listener)');
-          if (this.syncplayBackend === 'b2bapis') {
-            (window as any).b2bapis.b2bsyncplay.stopSyncPlay(prevListener);
-          } else {
-            (webapis as any).syncplay.stop(prevListener);
-          }
-        } catch (_) {}
-        // webapis.stop() blocks JS for ~2.2s on QBC — wait 3s to cover that plus buffer.
-        // b2bapis (Tizen 4) resolves within 500ms.
-        await new Promise<void>(r => setTimeout(r, this.syncplayBackend === 'b2bapis' ? 500 : 3000));
-      } else {
-        logger.debug('No previous SyncPlay listener — skipping pre-clear (first start)');
-      }
-
-      // b2bapis: startSyncPlay(x, y, w, h, groupID, rotate, onChange)  — positional args (Tizen 4 SBB)
-      // webapis:  start(syncinfo, listener)                             — object arg   (Tizen 6.5+)
-      const invokeStart = (syncinfo: SyncInfo) => {
-        if (this.syncplayBackend === 'b2bapis') {
-          (window as any).b2bapis.b2bsyncplay.startSyncPlay(
-            syncinfo.rectX, syncinfo.rectY, syncinfo.rectWidth, syncinfo.rectHeight,
-            syncinfo.groupID, syncinfo.rotate, listener
-          );
-        } else {
-          (webapis as any).syncplay.start(syncinfo, listener);
-        }
-      };
-
-      // showWindow is called AFTER a successful start (using the actual winning rect),
-      // so that we never pass an unsupported size (e.g. 3840 on an FHD-only SBB panel).
-
-      // Detailed error description helper (Samsung WebAPIException is opaque to JSON.stringify).
-      const describeError = (e: any): string => {
-        if (!e) return 'null';
-        try {
-          const fields: any = {};
-          ['name', 'message', 'code', 'type', 'data', 'result', 'reason'].forEach((k) => {
-            try { if (e[k] !== undefined) fields[k] = e[k]; } catch (_) {}
-          });
-          let ownProps: string[] = [];
-          try { ownProps = Object.getOwnPropertyNames(e); } catch (_) {}
-          return `typeof=${typeof e} ownProps=${JSON.stringify(ownProps)} fields=${JSON.stringify(fields)} stringified=${String(e)}`;
-        } catch (_) {
-          return String(e);
-        }
-      };
-
-      // Try a series of rect candidates for webapis (Tizen 6.5 QBC). Some Samsung firmwares
-      // mis-report panel size via systeminfo:DISPLAY (returning FHD on UHD panels), so we
-      // probe UHD first. Between attempts we MUST fully stop() the listener — partial
-      // registration from a thrown start() leaves the listener slot occupied and the next
-      // start() will throw "Can't register callback" / similar opaque errors.
-      const stopListenerSafe = async () => {
-        try {
-          if (this.syncplayBackend === 'b2bapis') {
-            // MUST pass the same `listener` reference that was given to startSyncPlay.
-            // b2bapis firmware tracks the registered callback by reference — passing a
-            // different function (e.g. `() => {}`) is ignored and the slot stays occupied,
-            // causing all subsequent startSyncPlay calls to throw "Can't register callback".
-            try { (window as any).b2bapis.b2bsyncplay.stopSyncPlay(listener); } catch (_) {}
-          } else {
-            try { (webapis as any).syncplay.stop(listener); } catch (_) {}
-          }
-        } catch (_) {}
-        // Wait for firmware to fully release the slot before the next startSyncPlay() call.
-        // b2bapis (Tizen 4) is slower — needs 500 ms; webapis is fine with 200 ms.
-        await new Promise<void>(r => setTimeout(r, this.syncplayBackend === 'b2bapis' ? 500 : 200));
-      };
-
-      // Single fixed 1920×1080 rect — see comment at rect declaration above. No probing.
-      try {
-        logger.info(`SyncPlay rect: ${baseSyncinfo.rectWidth}x${baseSyncinfo.rectHeight}`);
-        invokeStart(baseSyncinfo);
-      } catch (err) {
-        logger.error(`SyncPlay start failed: ${describeError(err)}`);
-        await stopListenerSafe();
-        throw err;
-      }
-      const syncinfoToUse = baseSyncinfo;
-
-      this.syncPlayListener = listener;
-      this.syncPlayMode = 'native';
-
-      enforceSyncplayFullscreen();
-      logger.debug('Ensured avplay-active class for SyncPlay fullscreen rendering');
-      
-      logger.info('Syncplay: started (native)', { ...syncinfoToUse, folderIdSource });
-
-      // Watchdog: if SYNC_PLAY_START_DONE never fires within 30s, recover state so the
-      // player can fall back to non-sync content rather than wedging on isSyncStarting.
-      if (this.syncStartWatchdog) {
-        try { clearTimeout(this.syncStartWatchdog); } catch (_) {}
-      }
-      this.syncStartWatchdog = setTimeout(() => {
-        if (this.isSyncStarting && !this.isSyncPlaying) {
-          logger.error('Syncplay: start watchdog fired — SYNC_PLAY_START_DONE never received, tearing down');
-          try { this.stopSyncPlayNative(); } catch (_) {}
-          this.isSyncStarting = false;
-        }
-        this.syncStartWatchdog = null;
-      }, 30000);
-
-      return true;
-    } catch (err: any) {
-      const fields: any = {};
-      try {
-        ['name', 'message', 'code', 'type', 'data', 'result', 'reason'].forEach((k) => {
-          try { if (err && (err as any)[k] !== undefined) fields[k] = (err as any)[k]; } catch (_) {}
-        });
-      } catch (_) {}
-      let ownProps: string[] = [];
-      try { ownProps = err ? Object.getOwnPropertyNames(err) : []; } catch (_) {}
-      logger.error(`Syncplay: start failed typeof=${typeof err} ownProps=${JSON.stringify(ownProps)} fields=${JSON.stringify(fields)} stringified=${String(err)}`);
-      // Best-effort cleanup: some firmwares keep the callback registered even after an exception.
-      // Use the local `listener` reference (same one passed to startSyncPlay) so b2bapis
-      // firmware can match and release the slot — `this.syncPlayListener` may be null here
-      // because the successful-start assignment was never reached.
-      try {
-        if (this.syncplayBackend === 'b2bapis') {
-          try { (window as any).b2bapis.b2bsyncplay.stopSyncPlay(listener); } catch (_) {}
-        } else {
-          try { (webapis as any).syncplay.stop(listener); } catch (_) {}
-        }
-      } catch (_) {}
-      this.syncPlayListener = null;
-      this.isSyncStarting = false;
-      this.isSyncPlaying = false;
-      if (this.syncStartWatchdog) {
-        try { clearTimeout(this.syncStartWatchdog); } catch (_) {}
-        this.syncStartWatchdog = null;
-      }
-      return false;
-    }
-  },
-
-  stopSyncPlayNative() {
-    if (!this.isSyncplayAvailable()) return false;
-
-    // Stop active SyncPlay session and unregister the listener.
-    try {
-      const listener = this.syncPlayListener || ((msg: string) => logger.info('Syncplay stop status:', msg));
-      if (this.syncplayBackend === 'b2bapis') {
-        (window as any).b2bapis.b2bsyncplay.stopSyncPlay(listener);
-      } else {
-        (webapis as any).syncplay.stop(listener);
-      }
-    } catch (err) {
-      logger.warn('Syncplay: stop failed', err);
-    }
-
-    // Reset the firmware playlist so the next session can build a fresh one.
-    try {
-      if (this.syncplayBackend === 'b2bapis') {
-        (window as any).b2bapis.b2bsyncplay.clearSyncPlayList(
-          (res: any) => logger.debug('Syncplay: clearSyncPlayList ok', res?.result),
-          (err: any) => logger.debug('Syncplay: clearSyncPlayList error (ignored)', err?.message)
-        );
-      } else {
-        (webapis as any).syncplay.removePlaylist(
-          (res: SyncplayResult) => logger.debug('Syncplay: removePlaylist ok', res?.result),
-          (err: SyncplayError) => logger.debug('Syncplay: removePlaylist error (ignored)', err?.message)
-        );
-      }
-    } catch (err) {
-      logger.debug('Syncplay: removePlaylist/clearSyncPlayList failed (ignored)', err);
-    }
-
-    // Remove fullscreen rendering class
-    document.body.classList.remove('avplay-active');
-
-    this.syncPlayMode = 'none';
-    this.syncPlayListener = null;
-    this.isSyncStarting = false;
-    this.isSyncPlaying = false;
-    if (this.syncStartWatchdog) {
-      try { clearTimeout(this.syncStartWatchdog); } catch (_) {}
-      this.syncStartWatchdog = null;
-    }
-    return true;
   },
 
   // Get cached content URL

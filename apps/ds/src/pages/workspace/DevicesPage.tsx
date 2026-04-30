@@ -11,35 +11,21 @@ import type { ClaimDeviceInput } from '@signage/shared';
 type PairFormInput = Omit<ClaimDeviceInput, 'workspaceId'>;
 import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon } from 'lucide-react';
 
-// Shows the latest in-memory screenshot via the /screenshot/latest endpoint.
-// Fetches fresh each time the component mounts (no screenshotId needed).
-function DeviceScreenshot({ deviceId }: {
+// Shows the device thumbnail using the DB-backed screenshot record.
+// Re-renders automatically when the device list poll returns a new latestScreenshotId.
+function DeviceScreenshot({ deviceId, screenshotId }: {
   deviceId: string;
+  screenshotId: string | null;
 }) {
-  const [src, setSrc] = useState<string | null>(null);
-
-  useEffect(() => {
-    setSrc(null);
-    let blobUrl: string | null = null;
-    let cancelled = false;
-    fetch(buildApiUrl(`/devices/${deviceId}/screenshot/latest`), { credentials: 'include' })
-      .then(async (res) => {
-        if (!res.ok || cancelled) return;
-        const blob = await res.blob();
-        blobUrl = URL.createObjectURL(blob);
-        if (!cancelled) setSrc(blobUrl);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-    };
-  }, [deviceId]);
-
   return (
-    <div className={`w-full aspect-video rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${src ? '' : 'bg-[var(--surface)]'}`}>
-      {src
-        ? <img src={src} alt="Latest screenshot" className="w-full h-full object-cover" />
+    <div className={`w-full aspect-video rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${screenshotId ? '' : 'bg-[var(--surface)]'}`}>
+      {screenshotId
+        ? <img
+            src={buildApiUrl(`/devices/${deviceId}/screenshots/${screenshotId}`)}
+            alt="Latest screenshot"
+            className="w-full h-full object-cover"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+          />
         : <Monitor className="w-6 h-6 text-[var(--text-muted)] opacity-30" />
       }
     </div>
@@ -360,6 +346,7 @@ export default function DevicesPage() {
                         ? <LiveViewInCard deviceId={device.id} onStop={() => setLiveViewDeviceId(null)} />
                         : <DeviceScreenshot
                             deviceId={device.id}
+                            screenshotId={device.latestScreenshotId}
                           />
                       }
 

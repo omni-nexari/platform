@@ -563,17 +563,12 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
           await mkdir(dir, { recursive: true });
           const storageKey = `${deviceId}/thumbnail.jpg`;
           await writeFile(join(STORAGE_ROOT, storageKey), buf);
-          // Upsert: update existing thumbnail row or insert a new one (1 row per device).
-          const existing = await db.query.deviceScreenshots.findFirst({
-            where: and(eq(deviceScreenshots.deviceId, deviceId), eq(deviceScreenshots.trigger, 'thumbnail')),
-          });
-          if (existing) {
-            await db.update(deviceScreenshots)
-              .set({ storageKey, takenAt: new Date() })
-              .where(eq(deviceScreenshots.id, existing.id));
-          } else {
-            await db.insert(deviceScreenshots).values({ deviceId, storageKey, trigger: 'thumbnail' });
-          }
+          // Delete+insert (not upsert) so the row gets a new UUID each time.
+          // This causes latestScreenshotId in the /devices list API to change,
+          // which makes the portal device cards pick up the fresh image on next poll.
+          await db.delete(deviceScreenshots)
+            .where(and(eq(deviceScreenshots.deviceId, deviceId), eq(deviceScreenshots.trigger, 'thumbnail')));
+          await db.insert(deviceScreenshots).values({ deviceId, storageKey, trigger: 'thumbnail' });
         } catch (_) { /* best-effort */ }
       })();
       return;

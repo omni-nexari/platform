@@ -108,12 +108,15 @@ if ($wgt.Name -ne "NexariPlayer.wgt") {
 $sizeKB = [math]::Round((Get-Item "$src\NexariPlayer.wgt").Length / 1KB)
 Write-Host "WGT size: ${sizeKB} KB"
 
-# Update sssp_config.xml with the exact byte-size
+# Update sssp_config.xml with the exact byte-size AND current version
 $wgtBytes   = (Get-Item "$src\NexariPlayer.wgt").Length
+$appVer     = (Get-Content "$src\package.json" -Raw | ConvertFrom-Json).version
 $ssspConfig = "$src\sssp_config.xml"
-(Get-Content $ssspConfig -Raw) -replace '<size>\d+</size>', "<size>$wgtBytes</size>" |
-    Set-Content $ssspConfig -NoNewline
-Write-Host "Updated sssp_config.xml <size> to $wgtBytes bytes"
+$ssspXml    = Get-Content $ssspConfig -Raw
+$ssspXml    = $ssspXml -replace '<size>\d+</size>',      "<size>$wgtBytes</size>"
+$ssspXml    = $ssspXml -replace '<ver>[^<]*</ver>',       "<ver>$appVer</ver>"
+[System.IO.File]::WriteAllText($ssspConfig, $ssspXml, [System.Text.UTF8Encoding]::new($false))
+Write-Host "Updated sssp_config.xml: <ver>$appVer</ver>  <size>$wgtBytes</size>"
 
 # ============================================================
 # STEP 1c: DEPLOY TO PI SERVER
