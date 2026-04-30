@@ -3,6 +3,7 @@
 window.API = {
   // ── POST /devices/pair/request ────────────────────────────────────────────
   async requestPairing(deviceInfo) {
+    const url = `${CONFIG.API_BASE}/devices/pair/request`;
     try {
       const body = {
         duid: deviceInfo.duid || deviceInfo.serialNumber || null,
@@ -11,7 +12,8 @@ window.API = {
         serialNumber: deviceInfo.serialNumber || null,
         firmwareVersion: deviceInfo.firmwareVersion || null,
       };
-      const response = await fetch(`${CONFIG.API_BASE}/devices/pair/request`, {
+      logger.info('[API] requestPairing → POST ' + url);
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -19,7 +21,10 @@ window.API = {
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       return await response.json(); // { status?, deviceId, code?, expiresAt?, deviceToken? }
     } catch (error) {
-      logger.error('Failed to request pairing:', error);
+      // Tizen WebKit reports network/TLS/DNS failures as bare "Failed to fetch".
+      // Log the resolved URL + cause so on-device errors are diagnosable.
+      const cause = (error && (error.cause || error.message)) || String(error);
+      logger.error('Failed to request pairing (url=' + url + ', api_base=' + CONFIG.API_BASE + '):', cause);
       throw error;
     }
   },
