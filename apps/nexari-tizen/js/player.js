@@ -90,6 +90,11 @@ const Player = {
     ntpOffset: 0, // Offset in milliseconds from server time
     ntpSyncInProgress: false,
     lastNtpSync: 0,
+    // Cached panel resolution for AVPlay setDisplayRect. Populated at init via
+    // getPhysicalDisplaySize() (reads tizen.systeminfo DISPLAY + productinfo flags).
+    // Falls back to FHD until detection completes.
+    _panelWidth: 1920,
+    _panelHeight: 1080,
     // Seamless AVPlay playlist support
     avPlayer1: null,
     avPlayer2: null,
@@ -144,6 +149,20 @@ const Player = {
                 logger.setDevice(this.deviceId);
             }
             logger.info('Initializing player for device:', this.deviceName);
+            // Detect physical panel resolution for AVPlay setDisplayRect.
+            // On commercial signage panels window.innerWidth reports 1920 even on UHD,
+            // so we have to query systeminfo/productinfo to know the real pixel size.
+            try {
+                const panel = yield this.getPhysicalDisplaySize();
+                if (panel && panel.width > 0 && panel.height > 0) {
+                    this._panelWidth = panel.width;
+                    this._panelHeight = panel.height;
+                    logger.info(`Panel resolution cached for AVPlay: ${this._panelWidth}x${this._panelHeight}`);
+                }
+            }
+            catch (err) {
+                logger.warn('Panel resolution detection failed, using FHD fallback', err);
+            }
             // Synchronize time with server for precise video wall sync
             yield this.syncTimeWithServer();
             // Show player screen
@@ -2363,11 +2382,11 @@ const Player = {
             this.applyAvPlayProfile(content);
             // 2. Set display rect SECOND (Samsung samples do this before setListener)
             // Samsung docs claim setDisplayRect uses a fixed 1920x1080 coordinate space, but on
-            // commercial signage panels window.innerWidth/Height report the native panel pixels
-            // (3840x2160 on UHD), and passing 1920x1080 there renders in the top-left quadrant.
-            // Use the actual viewport size with FHD fallback so we always cover the full panel.
-            const viewportWidth = Math.max(window.innerWidth || 0, 1920);
-            const viewportHeight = Math.max(window.innerHeight || 0, 1080);
+            // commercial signage panels the rect maps to native panel pixels — passing 1920x1080
+            // on a 4K panel renders in the top-left quadrant. Use the cached panel resolution
+            // detected at init via tizen.systeminfo / productinfo.
+            const viewportWidth = this._panelWidth;
+            const viewportHeight = this._panelHeight;
             webapis.avplay.setDisplayRect(0, 0, viewportWidth, viewportHeight);
             logger.info('AVPlay: Display rect set', viewportWidth, viewportHeight);
             // 3. Set listener THIRD (after open and setDisplayRect, before prepare)
@@ -2932,9 +2951,9 @@ const Player = {
             // Apply profile after open (more reliable on some firmwares)
             this.applyAvPlayProfile(content);
             // 2. Set display rect SECOND (Samsung samples do this before setListener)
-            // Use native viewport pixels — see comment in renderVideoAVPlay above.
-            const viewportWidth = Math.max(window.innerWidth || 0, 1920);
-            const viewportHeight = Math.max(window.innerHeight || 0, 1080);
+            // Use cached panel resolution — see comment in renderVideoAVPlay above.
+            const viewportWidth = this._panelWidth;
+            const viewportHeight = this._panelHeight;
             webapis.avplay.setDisplayRect(0, 0, viewportWidth, viewportHeight);
             logger.info('AVPlay: Display rect set for stream', viewportWidth, viewportHeight);
             // 3. Set listener THIRD (after open and setDisplayRect, before prepare)
@@ -3354,9 +3373,9 @@ const Player = {
             logger.error('No current player available');
             return;
         }
-        // Use native viewport pixels for AVPlay setDisplayRect — see renderVideoAVPlay comment.
-        const viewportWidth = Math.max(window.innerWidth || 0, 1920);
-        const viewportHeight = Math.max(window.innerHeight || 0, 1080);
+        // Use cached panel resolution for AVPlay setDisplayRect — see renderVideoAVPlay comment.
+        const viewportWidth = this._panelWidth;
+        const viewportHeight = this._panelHeight;
         try {
             logger.info('[Seamless Simple] Playing video:', content.url);
             // Clean up previous state if player was used before
@@ -3435,9 +3454,9 @@ const Player = {
             logger.error('No current player available');
             return;
         }
-        // Use native viewport pixels for AVPlay setDisplayRect — see renderVideoAVPlay comment.
-        const viewportWidth = Math.max(window.innerWidth || 0, 1920);
-        const viewportHeight = Math.max(window.innerHeight || 0, 1080);
+        // Use cached panel resolution for AVPlay setDisplayRect — see renderVideoAVPlay comment.
+        const viewportWidth = this._panelWidth;
+        const viewportHeight = this._panelHeight;
         // Track if seamless transition will happen
         let seamlessTransitioned = false;
         try {
@@ -3626,9 +3645,9 @@ const Player = {
             logger.warn('No next player available for preparation');
             return;
         }
-        // Use native viewport pixels for AVPlay setDisplayRect — see renderVideoAVPlay comment.
-        const viewportWidth = Math.max(window.innerWidth || 0, 1920);
-        const viewportHeight = Math.max(window.innerHeight || 0, 1080);
+        // Use cached panel resolution for AVPlay setDisplayRect — see renderVideoAVPlay comment.
+        const viewportWidth = this._panelWidth;
+        const viewportHeight = this._panelHeight;
         try {
             logger.info('[Seamless] Preparing next video:', nextContent.url);
             // Follow Samsung sequence for background preparation
@@ -4981,9 +5000,9 @@ const Player = {
         const controller = { cancelled: false };
         this.currentPlaylistController = controller;
         container.innerHTML = ''; // Clear container - AVPlay renders to hardware layer
-        // Use native viewport pixels for AVPlay setDisplayRect — see renderVideoAVPlay comment.
-        const viewportWidth = Math.max(window.innerWidth || 0, 1920);
-        const viewportHeight = Math.max(window.innerHeight || 0, 1080);
+        // Use cached panel resolution for AVPlay setDisplayRect — see renderVideoAVPlay comment.
+        const viewportWidth = this._panelWidth;
+        const viewportHeight = this._panelHeight;
         const wrapIndex = (index) => {
             const n = playableItems.length;
             return ((index % n) + n) % n;
