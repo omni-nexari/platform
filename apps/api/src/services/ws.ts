@@ -582,7 +582,6 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     const fileName = `${randomUUID()}.jpg`;
     const storageKey = `${deviceId}/${fileName}`;
     // ensure directory
-    const { mkdir } = await import('node:fs/promises');
     await mkdir(join(STORAGE_ROOT, deviceId), { recursive: true });
     await writeFile(join(STORAGE_ROOT, deviceId, fileName), buf);
     await db.insert(deviceScreenshots).values({

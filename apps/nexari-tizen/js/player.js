@@ -2362,13 +2362,14 @@ const Player = {
             // Apply profile after open (more reliable on some firmwares)
             this.applyAvPlayProfile(content);
             // 2. Set display rect SECOND (Samsung samples do this before setListener)
-            // AVPlay setDisplayRect always uses a fixed 1920x1080 coordinate space per Samsung API docs,
-            // regardless of actual panel resolution. Passing window.innerWidth (which may be 3840 on UHD)
-            // makes the video render in only the top-left quadrant of the panel.
-            const viewportWidth = 1920;
-            const viewportHeight = 1080;
+            // Samsung docs claim setDisplayRect uses a fixed 1920x1080 coordinate space, but on
+            // commercial signage panels window.innerWidth/Height report the native panel pixels
+            // (3840x2160 on UHD), and passing 1920x1080 there renders in the top-left quadrant.
+            // Use the actual viewport size with FHD fallback so we always cover the full panel.
+            const viewportWidth = Math.max(window.innerWidth || 0, 1920);
+            const viewportHeight = Math.max(window.innerHeight || 0, 1080);
             webapis.avplay.setDisplayRect(0, 0, viewportWidth, viewportHeight);
-            logger.debug('AVPlay: Display rect set', viewportWidth, viewportHeight);
+            logger.info('AVPlay: Display rect set', viewportWidth, viewportHeight);
             // 3. Set listener THIRD (after open and setDisplayRect, before prepare)
             webapis.avplay.setListener({
                 onbufferingstart: () => {
@@ -2931,11 +2932,11 @@ const Player = {
             // Apply profile after open (more reliable on some firmwares)
             this.applyAvPlayProfile(content);
             // 2. Set display rect SECOND (Samsung samples do this before setListener)
-            // AVPlay coordinate space is always a fixed 1920x1080 per Samsung API docs.
-            const viewportWidth = 1920;
-            const viewportHeight = 1080;
+            // Use native viewport pixels — see comment in renderVideoAVPlay above.
+            const viewportWidth = Math.max(window.innerWidth || 0, 1920);
+            const viewportHeight = Math.max(window.innerHeight || 0, 1080);
             webapis.avplay.setDisplayRect(0, 0, viewportWidth, viewportHeight);
-            logger.debug('AVPlay: Display rect set for stream', viewportWidth, viewportHeight);
+            logger.info('AVPlay: Display rect set for stream', viewportWidth, viewportHeight);
             // 3. Set listener THIRD (after open and setDisplayRect, before prepare)
             webapis.avplay.setListener({
                 onbufferingstart: () => logger.debug('Stream buffering started'),
@@ -3353,9 +3354,9 @@ const Player = {
             logger.error('No current player available');
             return;
         }
-        // AVPlay setDisplayRect coordinate space is always 1920x1080 per Samsung API docs
-        const viewportWidth = 1920;
-        const viewportHeight = 1080;
+        // Use native viewport pixels for AVPlay setDisplayRect — see renderVideoAVPlay comment.
+        const viewportWidth = Math.max(window.innerWidth || 0, 1920);
+        const viewportHeight = Math.max(window.innerHeight || 0, 1080);
         try {
             logger.info('[Seamless Simple] Playing video:', content.url);
             // Clean up previous state if player was used before
@@ -3434,9 +3435,9 @@ const Player = {
             logger.error('No current player available');
             return;
         }
-        // AVPlay setDisplayRect coordinate space is always 1920x1080 per Samsung API docs
-        const viewportWidth = 1920;
-        const viewportHeight = 1080;
+        // Use native viewport pixels for AVPlay setDisplayRect — see renderVideoAVPlay comment.
+        const viewportWidth = Math.max(window.innerWidth || 0, 1920);
+        const viewportHeight = Math.max(window.innerHeight || 0, 1080);
         // Track if seamless transition will happen
         let seamlessTransitioned = false;
         try {
@@ -3625,9 +3626,9 @@ const Player = {
             logger.warn('No next player available for preparation');
             return;
         }
-        // AVPlay setDisplayRect coordinate space is always 1920x1080 per Samsung API docs
-        const viewportWidth = 1920;
-        const viewportHeight = 1080;
+        // Use native viewport pixels for AVPlay setDisplayRect — see renderVideoAVPlay comment.
+        const viewportWidth = Math.max(window.innerWidth || 0, 1920);
+        const viewportHeight = Math.max(window.innerHeight || 0, 1080);
         try {
             logger.info('[Seamless] Preparing next video:', nextContent.url);
             // Follow Samsung sequence for background preparation
@@ -4980,9 +4981,9 @@ const Player = {
         const controller = { cancelled: false };
         this.currentPlaylistController = controller;
         container.innerHTML = ''; // Clear container - AVPlay renders to hardware layer
-        // AVPlay setDisplayRect coordinate space is always 1920x1080 per Samsung API docs
-        const viewportWidth = 1920;
-        const viewportHeight = 1080;
+        // Use native viewport pixels for AVPlay setDisplayRect — see renderVideoAVPlay comment.
+        const viewportWidth = Math.max(window.innerWidth || 0, 1920);
+        const viewportHeight = Math.max(window.innerHeight || 0, 1080);
         const wrapIndex = (index) => {
             const n = playableItems.length;
             return ((index % n) + n) % n;

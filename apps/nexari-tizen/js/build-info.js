@@ -3,8 +3,8 @@
 (function () {
   var info = {
     version: "1.0.5",
-    buildId: "20260430-022425Z",
-    builtAt: "2026-04-30T02:24:25.729Z"
+    buildId: "20260430-023940Z",
+    builtAt: "2026-04-30T02:39:40.860Z"
   };
 
   // Exposed for debugging in Remote Inspector
