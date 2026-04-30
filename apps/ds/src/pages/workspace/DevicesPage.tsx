@@ -17,14 +17,19 @@ function DeviceScreenshot({ deviceId, screenshotId }: {
   deviceId: string;
   screenshotId: string | null;
 }) {
+  const [errored, setErrored] = useState(false);
+  // Reset error state whenever a fresh screenshot id arrives.
+  useEffect(() => { setErrored(false); }, [screenshotId]);
+  const showImg = !!screenshotId && !errored;
   return (
-    <div className={`w-full aspect-video rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${screenshotId ? '' : 'bg-[var(--surface)]'}`}>
-      {screenshotId
+    <div className={`w-full aspect-video rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${showImg ? '' : 'bg-[var(--surface)]'}`}>
+      {showImg
         ? <img
+            key={screenshotId}
             src={buildApiUrl(`/devices/${deviceId}/screenshots/${screenshotId}`)}
             alt="Latest screenshot"
             className="w-full h-full object-cover"
-            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+            onError={() => setErrored(true)}
           />
         : <Monitor className="w-6 h-6 text-[var(--text-muted)] opacity-30" />
       }
