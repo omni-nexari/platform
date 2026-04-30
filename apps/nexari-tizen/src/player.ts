@@ -7164,29 +7164,67 @@ const Player = {
           continue;
         }
 
-        const duration = Math.max(1, Math.round(item.duration || content.duration || 10));
-        // Per official Samsung Tizen 4 SBB sample (samsungdforum.txt page 630), b2bsyncplay
-        // makeSyncPlayList expects a RAW filesystem path (e.g. "/opt/usr/apps/.../res/wgt/...").
-        // The newer webapis.syncplay sample uses getAppSharedURI() which returns file:// URIs;
-        // strip the scheme on b2bapis backend to match the official Tizen 4 example.
-        let nativePath = String(syncPath || '');
-        if (this.syncplayBackend === 'b2bapis' && nativePath.indexOf('file://') === 0) {
-          nativePath = nativePath.replace(/^file:\/\//, '');
+        // webapis.syncplay (Tizen 6.5+, QBC): only video is supported per Samsung docs.
+        // Image, HTML5, PDF content causes silent start() failure (STOP_DONE fires immediately).
+        // b2bapis (Tizen 4, SBB) supports both video and images.
+        if (this.syncplayBackend !== 'b2bapis') {
+          const mimeType = (content.mimeType || '').toLowerCase();
+          const contentType = (content.type || '').toLowerCase();
+          const ext = (syncFileName || '').split('.').pop()?.toLowerCase() || '';
+          const isVideo =
+            contentType === 'video' ||
+            mimeType.startsWith('video/') ||
+            ['mp4', 'mkv', 'avi', 'webm', 'mov', 'mpeg', 'mpg', 'm4v', 'ts'].includes(ext);
+          if (!isVideo) {
+            logger.warn(`Syncplay (webapis): skipping non-video item type=${content.type} mime=${content.mimeType} ext=${ext} — webapis.syncplay only supports video`);
+            continue;
+          }
         }
-        // Verify the file actually exists & has nonzero size — Samsung's native SyncPlay
-        // returns an empty error object `{}` if the file is missing/unreadable, which is
-        // the most common cause of silent createPlaylist failures.
+
+        const duration = Math.max(1, Math.round(item.duration || content.duration || 10));
+
+        // Resolve the native path for the SyncPlay playlist.
+        //
+        // b2bapis (SBB, Tizen 4): needs a raw filesystem path (strip file://).
+        //
+        // webapis (QBC, Tizen 6.5+): the SyncPlay service is a separate system daemon that
+        // runs outside the app's Smack security sandbox. It CANNOT access wgt-private/ storage
+        // (app-private). Instead, use the direct /uploads/ HTTP URL served by nginx (no auth
+        // required). Both devices in a sync group use the same URL → firmware-level sync works.
+        let nativePath = String(syncPath || '');
+        if (this.syncplayBackend === 'b2bapis') {
+          if (nativePath.indexOf('file://') === 0) {
+            nativePath = nativePath.replace(/^file:\/\//, '');
+          }
+        } else {
+          // webapis: use direct HTTP /uploads/ URL if filePath is available.
+          const filePath = content.filePath || '';
+          if (filePath) {
+            try {
+              const cmsBase = (CONFIG.API_BASE || '').replace(/\/api\/v1\/?$/, '');
+              nativePath = `${cmsBase}/uploads/${filePath}`;
+              logger.info(`Syncplay (webapis): resolved HTTP path: ${nativePath}`);
+            } catch (_) {
+              logger.warn('Syncplay (webapis): failed to build HTTP URL, falling back to local path');
+            }
+          } else {
+            logger.warn(`Syncplay (webapis): content.filePath missing for ${content.id}, using local path`);
+          }
+        }
+
+        // Verify local file exists for logging purposes (b2bapis path probe).
         let fileOk = false;
         let fileSizeBytes = -1;
-        try {
-          const probePath = nativePath.replace(/^file:\/\//, '');
-          if ((tizen as any)?.filesystem?.pathExists) {
-            fileOk = !!(tizen as any).filesystem.pathExists(probePath);
-          }
-          if (fileOk && (tizen as any)?.filesystem?.getFileSize) {
-            try { fileSizeBytes = (tizen as any).filesystem.getFileSize(probePath); } catch (_) {}
-          }
-        } catch (_) { /* probe failure is non-fatal */ }
+        if (this.syncplayBackend === 'b2bapis') {
+          try {
+            if ((tizen as any)?.filesystem?.pathExists) {
+              fileOk = !!(tizen as any).filesystem.pathExists(nativePath);
+            }
+            if (fileOk && (tizen as any)?.filesystem?.getFileSize) {
+              try { fileSizeBytes = (tizen as any).filesystem.getFileSize(nativePath); } catch (_) {}
+            }
+          } catch (_) { /* probe failure is non-fatal */ }
+        }
         contents.push({ path: nativePath, duration });
         logger.info(`Syncplay: built item ${i + 1}/${playlistItems.length}, path=${nativePath}, duration=${duration}s, exists=${fileOk}, size=${fileSizeBytes}`);
       } catch (err) {
@@ -7593,16 +7631,12 @@ const Player = {
       }
     } catch (_) {}
 
-    // SyncPlay rect is in device pixels; CSS pixels can produce a quarter-screen on 4K panels.
-    // Some Samsung firmwares report the web runtime size (1920x1080) even on UHD panels.
-    // We will probe a UHD rect and immediately fall back if rejected.
-    const display = await this.getPhysicalDisplaySize();
-    let rect = { x: 0, y: 0, width: display.width, height: display.height };
+    // SyncPlay rect is in a fixed 1920×1080 coordinate space on both b2bapis and webapis,
+    // regardless of physical panel resolution. Samsung's official samples (Tizen 4 SBB and
+    // Tizen 6.5+ QBC) always pass 1920×1080 — firmware scales internally to fit the panel.
+    // Passing 3840×2160 is rejected by b2bapis with "Invalid Rect".
+    const rect = { x: 0, y: 0, width: 1920, height: 1080 };
     const rotate: SyncplayRotate = 'OFF';
-
-    // NOTE: Samsung B2B firmware (Tizen 4 SBB) may use a 3840×2160 virtual coordinate
-    // space even on FHD panels — productinfo:uhd-flag reports UHD and 1920×1080 renders
-    // as quarter-screen. We probe both sizes in the candidates loop below.
 
     logger.info(`SyncPlay display rect: ${rect.width}x${rect.height} (backend=${this.syncplayBackend})`);
     
@@ -7678,23 +7712,34 @@ const Player = {
     try {
       logger.info(`[SYNC TIMING] calling syncplay start now at ${Date.now()}`);
 
-      // CRITICAL: Unconditionally clear any previously-registered firmware callback slot.
-      // b2bapis (Tizen 4 SBB) keeps a SINGLE global slot. A failed startSyncPlay() leaves
-      // it occupied with the listener that was passed. stopSyncPlay() MUST receive the SAME
-      // listener reference to release the slot — a new `() => {}` is never recognised.
-      // We use `listener` (the function defined just above) which is reused across all
-      // candidates and across calls, so it matches whatever was left in the slot.
-      try {
-        logger.debug('Pre-clearing SyncPlay callback slot (unconditional)');
-        if (this.syncplayBackend === 'b2bapis') {
-          (window as any).b2bapis.b2bsyncplay.stopSyncPlay(listener);
-        } else {
-          (webapis as any).syncplay.stop(listener);
-        }
-      } catch (_) {}
-      // Give firmware time to fully de-register the old slot before calling startSyncPlay.
-      // b2bapis (Tizen 4) is slower — needs 500 ms; webapis is fine with 200 ms.
-      await new Promise<void>(r => setTimeout(r, this.syncplayBackend === 'b2bapis' ? 500 : 200));
+      // Pre-clear: release the firmware callback slot from the PREVIOUS session.
+      //
+      // CRITICAL for b2bapis (SBB, Tizen 4): firmware tracks the registered callback by
+      // reference. stopSyncPlay() MUST receive the EXACT same function reference that was
+      // passed to startSyncPlay() — a new function reference is ignored and the slot stays
+      // occupied, causing the next startSyncPlay() to throw "Can't register callback".
+      //
+      // For webapis (QBC, Tizen 6.5+): syncplay.stop() blocks the JS thread for ~2+ seconds.
+      // Using the previous registered listener ensures the firmware fully de-registers the
+      // old session before the new start() call.
+      //
+      // Skip entirely on first start (this.syncPlayListener is null — no prior session).
+      const prevListener = this.syncPlayListener;
+      if (prevListener) {
+        try {
+          logger.debug('Pre-clearing SyncPlay callback slot (previous listener)');
+          if (this.syncplayBackend === 'b2bapis') {
+            (window as any).b2bapis.b2bsyncplay.stopSyncPlay(prevListener);
+          } else {
+            (webapis as any).syncplay.stop(prevListener);
+          }
+        } catch (_) {}
+        // webapis.stop() blocks JS for ~2.2s on QBC — wait 3s to cover that plus buffer.
+        // b2bapis (Tizen 4) resolves within 500ms.
+        await new Promise<void>(r => setTimeout(r, this.syncplayBackend === 'b2bapis' ? 500 : 3000));
+      } else {
+        logger.debug('No previous SyncPlay listener — skipping pre-clear (first start)');
+      }
 
       // b2bapis: startSyncPlay(x, y, w, h, groupID, rotate, onChange)  — positional args (Tizen 4 SBB)
       // webapis:  start(syncinfo, listener)                             — object arg   (Tizen 6.5+)
@@ -7750,59 +7795,16 @@ const Player = {
         await new Promise<void>(r => setTimeout(r, this.syncplayBackend === 'b2bapis' ? 500 : 200));
       };
 
-      let syncinfoToUse: any = baseSyncinfo;
-      let lastErr: any = null;
-
-      // Build candidate rect list.
-      //
-      // b2bapis (SBB, Tizen 4): ALWAYS use 1920×1080. The 3840×2160 probe was removed
-      // because b2bapis.startSyncPlay() consistently rejects 3840×2160 with "Invalid Rect"
-      // on every known SBB model, but — crucially — the failed call STILL occupies the
-      // singleton callback slot. stopSyncPlay() between candidates only releases the slot on
-      // an ACTIVE session; after a failed start there is no session, so the slot stays taken
-      // and the second candidate always fails with "Can't register callback". Skipping the
-      // doomed UHD probe means only one startSyncPlay() call is needed per session.
-      //
-      // webapis (QBC, Tizen 6.5): also use 1920×1080 directly. The tvWindow hardware plane
-      // that SyncPlay renders through is controlled by the rect in syncplay.start() — calling
-      // tvWindow.show() afterward overrides that placement and causes quarter-screen rendering.
-      // showWindow is therefore skipped for webapis as well.
-      const candidates: any[] = [];
-      if (this.syncplayBackend === 'b2bapis') {
-        // SBB: always FHD. UHD is rejected and wastes the singleton callback slot.
-        candidates.push({ ...baseSyncinfo, rectWidth: 1920, rectHeight: 1080 });
-      } else if (Number(baseSyncinfo.rectWidth) >= 3840) {
-        // webapis UHD panel reported: try UHD, then FHD fallback.
-        candidates.push(baseSyncinfo);
-        candidates.push({ ...baseSyncinfo, rectWidth: 1920, rectHeight: 1080 });
-      } else {
-        // webapis FHD panel: use detected size directly.
-        candidates.push(baseSyncinfo);
+      // Single fixed 1920×1080 rect — see comment at rect declaration above. No probing.
+      try {
+        logger.info(`SyncPlay rect: ${baseSyncinfo.rectWidth}x${baseSyncinfo.rectHeight}`);
+        invokeStart(baseSyncinfo);
+      } catch (err) {
+        logger.error(`SyncPlay start failed: ${describeError(err)}`);
+        await stopListenerSafe();
+        throw err;
       }
-
-      let started = false;
-      for (let i = 0; i < candidates.length; i++) {
-        const candidate = candidates[i];
-        try {
-          logger.info(`SyncPlay rect attempt ${i + 1}/${candidates.length}: ${candidate.rectWidth}x${candidate.rectHeight}`);
-          invokeStart(candidate);
-          syncinfoToUse = candidate;
-          started = true;
-          // NOTE: showWindow is intentionally NOT called here for webapis (QBC).
-          // webapis.syncplay.start(syncinfo) positions the content via the syncinfo rect;
-          // a subsequent tvWindow.show() call overrides that placement and causes
-          // quarter-screen rendering. For b2bapis (SBB), showWindow was also removed
-          // since the single 1920×1080 attempt handles positioning correctly.
-          break;
-        } catch (err) {
-          lastErr = err;
-          logger.warn(`SyncPlay rect ${candidate.rectWidth}x${candidate.rectHeight} rejected: ${describeError(err)}`);
-          await stopListenerSafe();
-        }
-      }
-      if (!started) {
-        throw lastErr || new Error('SyncPlay start: all rect candidates rejected');
-      }
+      const syncinfoToUse = baseSyncinfo;
 
       this.syncPlayListener = listener;
       this.syncPlayMode = 'native';

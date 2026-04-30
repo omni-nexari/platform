@@ -759,6 +759,18 @@ export async function deviceRoutes(app: FastifyInstance) {
       return reply.send(frame.buf);
     }
 
+    // In-memory store empty (e.g. after a server restart) — fall back to the
+    // persisted thumbnail.jpg written by the auto-screenshot pipeline.
+    try {
+      const thumbPath = path.resolve(STORAGE_ROOT, id, 'thumbnail.jpg');
+      if (existsSync(thumbPath)) {
+        const buf = await fsPromises.readFile(thumbPath);
+        reply.header('Content-Type', 'image/jpeg');
+        reply.header('Cache-Control', 'no-store');
+        return reply.send(buf);
+      }
+    } catch { /* fall through to 404 */ }
+
     // Memory empty — kick an immediate screenshot if the device is online so the next
     // portal poll lands a real image instead of another 404.
     if (isDeviceOnline(id)) {
