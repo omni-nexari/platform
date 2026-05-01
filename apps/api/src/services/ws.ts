@@ -585,7 +585,9 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
           await db.delete(deviceScreenshots)
             .where(and(eq(deviceScreenshots.deviceId, deviceId), eq(deviceScreenshots.trigger, 'thumbnail')));
           await db.insert(deviceScreenshots).values({ deviceId, storageKey, trigger: 'thumbnail' });
-        } catch (_) { /* best-effort */ }
+        } catch (err) {
+          console.error('[ws] screenshot_data persist failed', { deviceId, trigger }, err);
+        }
       })();
       return;
     }

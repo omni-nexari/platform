@@ -20,6 +20,7 @@ interface DevicePickerItem {
   wifiSsid: string | null;
   assignedTags?: AssignedTag[];
   latestScreenshotId: string | null;
+  latestFrameAt?: number | null;
 }
 
 export interface PickedDevice {
@@ -98,8 +99,8 @@ function DeviceCard({
       <div className="relative shrink-0 w-[90px] h-[54px] rounded-lg overflow-hidden bg-[var(--surface-raised)] border border-[var(--border)]">
         {showThumb
           ? <img
-              key={item.latestScreenshotId}
-              src={`/api/v1/devices/${item.id}/screenshots/${item.latestScreenshotId}`}
+              key={`${item.latestScreenshotId}-${item.latestFrameAt ?? 0}`}
+              src={`/api/v1/devices/${item.id}/screenshots/${item.latestScreenshotId}${item.latestFrameAt ? `?t=${item.latestFrameAt}` : ''}`}
               alt=""
               className="w-full h-full object-cover"
               onError={() => setThumbErrored(true)}

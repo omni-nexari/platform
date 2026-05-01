@@ -2,20 +2,20 @@
 <SignedInfo>
 <CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"></CanonicalizationMethod>
 <SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha512"></SignatureMethod>
-<Reference URI="Nexari%20SBB%20Player.wgt">
+<Reference URI="Nexari-SBB-Player.wgt">
 <DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha512"></DigestMethod>
-<DigestValue>0E/SUhJ2LmfxlY7ntWkd+OBM5S0hv9u446Sv+yDCxHD5bTHdK+JwsDPtMbSdsgYR8hfZ6CQsjznR
-TGAiJuohcg==</DigestValue>
+<DigestValue>EqSuX0D/4GB0NJfneA55hE33VKvGMV6KnqheXHFV6o7Ax/khAJCZA0lYD+xKpZiMLUUsDnz4FSzk
+5E3OTLjr6A==</DigestValue>
 </Reference>
 <Reference URI="config.xml">
 <DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha512"></DigestMethod>
-<DigestValue>JbJS+hJRaghw08sEMR9d3snkR57WWDIdq+fd01EJHCV1vNC8JZi6qSLbXj8BD3IJ8fBSdOB/0XHx
-B0+MVpAVMA==</DigestValue>
+<DigestValue>FFBz0+a2pyBHMrec8rk3X7vC58ddYMlC8qPcE9mYfFLgKy48DrObVrtaqghcNH3jyCxdRGDL+fD3
+uS7/JbACiQ==</DigestValue>
 </Reference>
 <Reference URI="css%2Fstyle.css">
 <DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha512"></DigestMethod>
-<DigestValue>22BKyyjvG89kM3NZXj7n4M/7kvThgtlhjEkbkRebz34CEVYT28U4Gz7ajGPf7EtUbIEwZQNOWWrQ
-cVlHS8jsrA==</DigestValue>
+<DigestValue>LqFizKE5eGwlp3+mSWZsd4Du5kb6DoB61y8iIHnNxsomW1/zBU0GRZ8ag/kh36wE1wIANFu5+6GY
+pC3+yVYx6w==</DigestValue>
 </Reference>
 <Reference URI="icon.png">
 <DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha512"></DigestMethod>
@@ -24,13 +24,13 @@ ULCpz67TSA==</DigestValue>
 </Reference>
 <Reference URI="index.html">
 <DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha512"></DigestMethod>
-<DigestValue>IpwnW89IRX5Goy5v+Cq+TsWcnrQ9LokI0XA4pr7x3/m1s5m5oii/uX64lboTavwWJNaFmwL009Sy
-vwcZxOEA2A==</DigestValue>
+<DigestValue>gGY6xieFDeCDRB6IsPQH55b3j8FWzAav7U7Y31XlEHfHEPx7skVi1oXCrKQmm2Wdp1qc17GIJTYZ
+1J+dv/+PrQ==</DigestValue>
 </Reference>
 <Reference URI="js%2Fapp.js">
 <DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha512"></DigestMethod>
-<DigestValue>U/cdqzE0KDP7Kx9mBYG3JHIEt9M/ZQgJAeQEqhhuqZIGJKCpCrkWh4GW2Q+DpY+hhX3Gxbf7JnB0
-r9gvSx5YmA==</DigestValue>
+<DigestValue>FBoFyrF7y06yRtJDA4Qru4mtY6+jPMGcqXzJ4asplGlRzBEk7Y53bvNljx4KmCbGggRDfYTW2HBH
+d9F8r7Ap3w==</DigestValue>
 </Reference>
 <Reference URI="#prop">
 <Transforms>
@@ -42,36 +42,36 @@ QY10fG1EWQ==</DigestValue>
 </Reference>
 </SignedInfo>
 <SignatureValue>
-lNi3SQXUtfeP9WdAaHrSmzxVj+lnBnaHZH5MiLuISsdALZGYFYTwwsRGL6SvScldyp4J2HFQ/rFC
-cjeMixBwSqvPWtmV5t5RrDi351RPWcvuwAX18LjLYuXpcq6thXKl4t3MS4XPlY+RkZ93yHOwyf04
-zkdYe4R/SmMYY9syvkypXU9LlzsUejyfdrx7cqrlvra09ScVnE6J1GeNYxj2QxIzRPfgJIJXQsV7
-3VHaKjk93VC+DEy7TB5wwDZ7Vev8rJ016oos4zOdQ+w0F2Ha0K8zci3Qci27VHqwe64MsKX0uqKE
-a1+Ue93idMhL1Ewi/B2Ev1OLVxcGuFwWYuQB4g==
+Yf3fCABa86pbLMCCCzllNVbJ4kLk8G2RChM/s+CPlEhQ5/Cdp8sVX7abD4mVTt8K0JnPvuod9EZZ
+wU//WwezcSzzmg2yriodF/M4zb3uEF0C6M5RdbfZyN9mHtqvy8gyTJ0G0W/bGku+2jTJmeTgZs4v
+6Ae0ddAdg5T85YihAEJu2EkJmHbZ0S6BNYlzHG6vm5u4Fsqol/g5u+Fyl7N2jN48yktIKVfbgGrA
+aU5fzdX1W9VBmbEKJK2JCCNf/dQQSwLit0NbMDnrtOoAo5BOcCcvoW5Bt+43+pYdyYOYe2xVKszt
+CDNuOKZIO5wPN8WN6seQkyYzG4/Bufw8PhWnAA==
 </SignatureValue>
 <KeyInfo>
 <X509Data>
 <X509Certificate>
-MIIEezCCAmOgAwIBAgIIfZ1UblH2xbwwDQYJKoZIhvcNAQELBQAwgZIxCzAJBgNVBAYTAktSMRow
+MIIEezCCAmOgAwIBAgIIXclBhbHuftUwDQYJKoZIhvcNAQELBQAwgZIxCzAJBgNVBAYTAktSMRow
 GAYDVQQIDBFSZXB1YmxpYyBvZiBLb3JlYTETMBEGA1UEBwwKU3V3b24gQ2l0eTEmMCQGA1UECgwd
 U2Ftc3VuZyBFbGVjdHJvbmljcyBDby4sIEx0ZC4xCzAJBgNVBAsMAlZEMR0wGwYDVQQDDBRTYW1z
-dW5nIFZEIEF1dGhvciBDQTAeFw0yNjA0MjQwMDM3NTlaFw0yNzA0MjQwMDM3NTlaMEwxCTAHBgNV
+dW5nIFZEIEF1dGhvciBDQTAeFw0yNjA0MjgxOTQyMjdaFw0yNzA0MjgxOTQyMjdaMEwxCTAHBgNV
 BAYTADEJMAcGA1UECBMAMQkwBwYDVQQHEwAxCTAHBgNVBAoTADEJMAcGA1UECxMAMRMwEQYDVQQD
-Ewp0ZXN0Zm9yc2JiMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtscE/WY30zd4o7wc
-KHFNFpJAfmoPorcDgAd6S6t2QqjJAw/ubdgLjcP2FY08Rp9EKS4QMH/tWB+fyJtofArura2GVl5L
-E3O/RRdAB7YP+cVrktILSLHTEGGKupFvfsHfbe7v+C/BVt1vV0R+fVuARluXD6zHHenb/N7XJoDk
-MXXAl8OYzNqZ00s7XtDzWzCKTieCfIlWhsdfWIm4YMkyIdTIz6zXSb2lqlSumJPQl//Y6zVHS3zP
-VDtyNCk95e09xdWlvNu2tXrpui47w9fpNh1Odlo3uaEqAsZCG4GFH3eo3Fub2WFGh70YHmf4vg6G
-aDoczN9EPAX6rmPLlsCudQIDAQABoxowGDAJBgNVHRMEAjAAMAsGA1UdDwQEAwIHgDANBgkqhkiG
-9w0BAQsFAAOCAgEAGMgaGThkAsGgnCwXWgPihzhAz0cKC+14bEbK54fbDF3RrQWoVDdQSfEyrmvA
-9m1Kx6Wi138MD0JqK7G96pH0iMkJyP6sAwhEu5mSQw0mit0aPGOsdFj8T34yptwLJFpC4yZhLRMT
-/p4GlgCQ1UwvQxf3kqLj4nccqby/OppoAAWWqnn7QYnnOX1Cita0evbICSjhmKyEuwO9YaCoFTl/
-VyIoqsJi4hNJwJ324lMm676X8fWvI1j8tDgUkSAbSe9jlqqRIPZMbWuTOJ/zOIMVxeqlAANfrnZa
-9EkxCp7ZitXKBueyxbgXMkukN3VY5KHVZckeBa6K+bSl94JUqG3huTENfsgIlfsVfSswWukyNYEk
-fXU/VUQY5JVpMUKmWcZUuhcE9UTvkDSMBHb4LV/3oXP81+CupWUVEgvw1PJMr7ZQgKt58FMeJvP5
-Bs3Bm9uPyjrRQ9vZkMdud71aZUYRipuH+iMwZ93Obr0vM/lp1QesWPv8hiGCKG8J449wCAGi3yIO
-7yiRI0sX+VrlCGl7+zgQ/WSEa1wd9jA8kQPKvioC2DR/5Vgk5cIzJSAu4u+9ZOY9fzGCH7Qf6N8z
-t2+INJ0YWeOocBsFyPhm+0UW8CoMFQ1zmDnE52YHE6HAr1zmPIFNo1bO/qnEjUWGxFkFzXgHkcJk
-jaMd39Czbyrc8q8=
+Ewp0ZXN0Zm9ycWJjMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAn+TCOMNh5Q+iVAFZ
+30hB2cu0E874nEAAbYNtMEyav2Th/mAmqq2MrcByfD6UVJS7z3dkEKwjaM5wpod81SXYnGhGEtAI
+JVaccvZo23B04HLgd1xCZpI8PFHbrGvsSe6k/OSxXRc3pNuaKCymil6Me+A1VXjLX9NuifKM14Te
+JiQHK2BryLhJ9P5M96kjXuziOFp+18AKyZho4nEjgry/f5XYt9ZCWCOmp17rDrS3z6CYJbNhN5j7
+ntSDn6+hn8Y5eqDOQvvSLqI51tgiFgZKWn54dCwqvD6G0XmbkB/wZ/+R8VeqYV4VjU5fAKGJXr1J
+CSIqAD3QS0Ugx8zIJ94K6wIDAQABoxowGDAJBgNVHRMEAjAAMAsGA1UdDwQEAwIHgDANBgkqhkiG
+9w0BAQsFAAOCAgEAhbo4W7iU5HUWKdwO/EXI27aF8EG60SuxGevDSdXy3YmHSVhqlp/SjMl+jRjb
+qBHJzeEhdxB3wXi5XOC8DNSWaWYGrAnnkeKl54LqgXIS2ziULgNqWIugmbGo4GfKOO8d1opc5eRl
+WoA/1Cg4jf8qm0+Rh4TAg3SAgAjwuxoO9TLqlSFe6TK757zao2e+Dd2izqn9qBXEY0HuKrun3jt+
+aYWv8QEEFNO3qc7b//bDyGjxkRPi4OTcDjbrIwVfn3gekvRAP5InPd68BiyMgDLTlF1E8ZklDSgQ
+vMQctKGWXUHQZqjDtxxxj42WpPKGxcdUjL84UHWV9AmDIsbLirwMxak7r/BKPWRCae+M8H8uyqt8
+kq9yf4sMGeZf06FVwvDkXKj+KvpU5WxZ5bafbUUjg/qGfjQa8OCz67IiYdCMYJNb/Cry9g9vC1q1
+8uIPdXQmgYj5Ak3akeK3sQkp22hejcXGwCvrIE1zW/wG/3NesZzwr9HbdfrfG3rlEPmYO6xR1ZeN
+TZnqrmYSZFgROAc+2cPE+ec05dfJvDMMOmbe55cBne09iJGnsNz4OXck1uuiUZJbABr/YLGGOcE2
+iNwA7wSQ9JzuqlaJyK7AGDeNOAZPQ9wTkwYJRmPvQVqIk6hh2qbRnG9XdOo30lI/b2J4j84fKl4D
++z1xkeG6saWdkU8=
 </X509Certificate>
 <X509Certificate>
 MIIEfzCCA2egAwIBAgIEaFN6QzANBgkqhkiG9w0BAQ0FADBeMRowGAYDVQQKDBFUaXplbiBBc3Nv

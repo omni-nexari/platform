@@ -648,6 +648,9 @@ export async function deviceRoutes(app: FastifyInstance) {
       publishedTarget: publishedTargetMap[d.id] ?? null,
       status: resolveReportedDeviceStatus(d),
       latestScreenshotId: latestScreenshotMap[d.id]?.id ?? null,
+      // In-memory timestamp: changes on every new screenshot even if DB row hasn't updated yet.
+      // Used by the portal as a ?t= cache-buster so the browser re-fetches the image file.
+      latestFrameAt: getLatestFrame(d.id)?.updatedAt?.getTime() ?? null,
     }));
 
     const result = status ? enriched.filter((d) => d.status === status) : enriched;

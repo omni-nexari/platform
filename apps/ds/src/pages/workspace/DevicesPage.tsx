@@ -13,20 +13,24 @@ import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Lay
 
 // Shows the device thumbnail using the DB-backed screenshot record.
 // Re-renders automatically when the device list poll returns a new latestScreenshotId.
-function DeviceScreenshot({ deviceId, screenshotId }: {
+function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt }: {
   deviceId: string;
   screenshotId: string | null;
+  latestFrameAt: number | null;
 }) {
   const [errored, setErrored] = useState(false);
-  // Reset error state whenever a fresh screenshot id arrives.
-  useEffect(() => { setErrored(false); }, [screenshotId]);
+  // Reset error state whenever a fresh screenshot id or frame timestamp arrives.
+  useEffect(() => { setErrored(false); }, [screenshotId, latestFrameAt]);
   const showImg = !!screenshotId && !errored;
+  // Append ?t= cache-buster so the browser re-fetches the image file whenever
+  // latestFrameAt changes — even if the DB row UUID hasn't changed yet.
+  const src = buildApiUrl(`/devices/${deviceId}/screenshots/${screenshotId}${latestFrameAt ? `?t=${latestFrameAt}` : ''}`);
   return (
     <div className={`w-full aspect-video rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${showImg ? '' : 'bg-[var(--surface)]'}`}>
       {showImg
         ? <img
-            key={screenshotId}
-            src={buildApiUrl(`/devices/${deviceId}/screenshots/${screenshotId}`)}
+            key={`${screenshotId}-${latestFrameAt ?? 0}`}
+            src={src}
             alt="Latest screenshot"
             className="w-full h-full object-cover"
             onError={() => setErrored(true)}
@@ -113,6 +117,7 @@ interface Device {
   serialNumber: string | null;
   timezone: string;
   latestScreenshotId: string | null;
+  latestFrameAt: number | null;
   publishedTarget: {
     id: string;
     type: 'content' | 'playlist' | 'schedule';
@@ -352,6 +357,7 @@ export default function DevicesPage() {
                         : <DeviceScreenshot
                             deviceId={device.id}
                             screenshotId={device.latestScreenshotId}
+                            latestFrameAt={device.latestFrameAt}
                           />
                       }
 

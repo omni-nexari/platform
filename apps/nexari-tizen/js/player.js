@@ -7061,7 +7061,7 @@ const Player = {
                         const normalizedPath = String(filePath || '').replace(/^file:\/\//, '');
                         const platform = window.Platform;
                         if (platform && platform.isLegacy) {
-                            // Tizen 4: filesystem.openFile does not exist â€” use resolve + openStream
+                            // Tizen 4: filesystem.openFile does not exist — use resolve + openStream
                             tizen.filesystem.resolve(normalizedPath, (file) => {
                                 file.openStream('r', (stream) => {
                                     try {
@@ -7073,32 +7073,49 @@ const Player = {
                                         send(btoa(binary));
                                     }
                                     catch (e) {
-                                        logger.warn('[Screenshot] read stream bytes failed:', e);
+                                        logger.warn('[Screenshot] read stream bytes failed, trying canvas:', e);
+                                        this._canvasFallbackScreenshot(send);
                                     }
-                                }, (e) => logger.warn('[Screenshot] openStream error:', e), 'ISO-8859-1');
-                            }, (e) => logger.warn('[Screenshot] filesystem.resolve failed:', e), 'r');
+                                }, (e) => {
+                                    logger.warn('[Screenshot] openStream error, trying canvas:', e);
+                                    this._canvasFallbackScreenshot(send);
+                                }, 'ISO-8859-1');
+                            }, (e) => {
+                                logger.warn('[Screenshot] filesystem.resolve failed, trying canvas:', e);
+                                this._canvasFallbackScreenshot(send);
+                            }, 'r');
                         }
                         else {
-                            const fh = tizen.filesystem.openFile(normalizedPath, 'r');
                             try {
-                                const bytes = fh.readData();
-                                let binary = '';
-                                for (let i = 0; i < bytes.length; i++)
-                                    binary += String.fromCharCode(bytes[i]);
-                                send(btoa(binary));
-                            }
-                            finally {
+                                const fh = tizen.filesystem.openFile(normalizedPath, 'r');
                                 try {
-                                    fh.close();
+                                    const bytes = fh.readData();
+                                    let binary = '';
+                                    for (let i = 0; i < bytes.length; i++)
+                                        binary += String.fromCharCode(bytes[i]);
+                                    send(btoa(binary));
                                 }
-                                catch (_) { }
+                                finally {
+                                    try {
+                                        fh.close();
+                                    }
+                                    catch (_) { }
+                                }
+                            }
+                            catch (e) {
+                                logger.warn('[Screenshot] openFile failed, trying canvas:', e);
+                                this._canvasFallbackScreenshot(send);
                             }
                         }
                     }
                     catch (e) {
-                        logger.warn('[Screenshot] filesystem access failed:', e);
+                        logger.warn('[Screenshot] filesystem access failed, trying canvas:', e);
+                        this._canvasFallbackScreenshot(send);
                     }
-                }, (e) => logger.warn('[Screenshot] captureScreen error:', (e && e.message) || e));
+                }, (e) => {
+                    logger.warn('[Screenshot] captureScreen error, trying canvas:', (e && e.message) || e);
+                    this._canvasFallbackScreenshot(send);
+                });
                 return;
             }
         }
@@ -7106,6 +7123,9 @@ const Player = {
             logger.warn('[Screenshot] b2b captureScreen threw:', e);
         }
         // Fallback: HTML5 canvas DOM capture
+        this._canvasFallbackScreenshot(send);
+    },
+    _canvasFallbackScreenshot(send) {
         try {
             const canvas = document.createElement('canvas');
             canvas.width = window.innerWidth || 1920;
