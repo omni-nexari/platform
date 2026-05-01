@@ -84,6 +84,13 @@ const Player = {
     // Falls back to FHD until detection completes.
     _panelWidth: 1920,
     _panelHeight: 1080,
+    // Physical panel resolution (in real device pixels) — used for the
+    // b2bapis.b2bsyncplay startSyncPlay() rect, which is interpreted in
+    // physical pixels (NOT AVPlay's fixed 1920×1080 logical space). On a
+    // 4K signage panel this is 3840×2160; on an FHD panel 1920×1080.
+    // Populated asynchronously at init() from tizen.systeminfo DISPLAY.
+    _physicalPanelWidth: 0,
+    _physicalPanelHeight: 0,
     // Seamless AVPlay playlist support
     avPlayer1: null,
     avPlayer2: null,
@@ -123,6 +130,12 @@ const Player = {
     _syncRateRestoreTimer: null,
     _pendingSyncNextItemAt: null,
     _pendingSyncNextItemIndex: -1,
+    // Samsung b2bapis.b2bsyncplay (native firmware SyncPlay) state.
+    // Active when the current playlist is rendered via firmware-level sync
+    // instead of the JS SyncEngine + HTML5 path. The native API auto-discovers
+    // peers via the shared 16-bit groupID and aligns frames in firmware.
+    _nativeSyncActive: false,
+    _nativeSyncGroupId: null,
     // Initialize player
     init(device) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -156,6 +169,49 @@ const Player = {
             this._panelWidth = 1920;
             this._panelHeight = 1080;
             logger.info('AVPlay display rect coordinate space: 1920x1080 (fixed per Samsung API spec)');
+            // Query physical panel resolution for b2bsyncplay rect.
+            // We AWAIT this (with a 1 s timeout) so that _physicalPanelWidth/Height
+            // are set before the first renderPlaylistNativeSync() call.
+            yield new Promise((resolve) => {
+                var _a;
+                const timer = setTimeout(() => {
+                    logger.warn('[Panel] DISPLAY query timed out — using screen.* fallback');
+                    resolve();
+                }, 1000);
+                try {
+                    const tz = window.tizen;
+                    if ((_a = tz === null || tz === void 0 ? void 0 : tz.systeminfo) === null || _a === void 0 ? void 0 : _a.getPropertyValue) {
+                        tz.systeminfo.getPropertyValue('DISPLAY', (d) => {
+                            clearTimeout(timer);
+                            const w = (d && (d.resolutionWidth | 0)) || 0;
+                            const h = (d && (d.resolutionHeight | 0)) || 0;
+                            if (w > 0 && h > 0) {
+                                this._physicalPanelWidth = w;
+                                this._physicalPanelHeight = h;
+                                logger.info('[Panel] physical resolution: ' + w + 'x' + h);
+                            }
+                            else {
+                                logger.warn('[Panel] DISPLAY query returned no resolution');
+                            }
+                            resolve();
+                        }, (err) => {
+                            clearTimeout(timer);
+                            logger.warn('[Panel] DISPLAY query failed: ' + ((err === null || err === void 0 ? void 0 : err.message) || err));
+                            resolve();
+                        });
+                    }
+                    else {
+                        clearTimeout(timer);
+                        logger.warn('[Panel] tizen.systeminfo not available');
+                        resolve();
+                    }
+                }
+                catch (e) {
+                    clearTimeout(timer);
+                    logger.warn('[Panel] systeminfo DISPLAY threw: ' + ((e === null || e === void 0 ? void 0 : e.message) || e));
+                    resolve();
+                }
+            });
             // Synchronize time with server for precise video wall sync
             yield this.syncTimeWithServer();
             // Show player screen
@@ -194,6 +250,31 @@ const Player = {
             catch (e) {
                 logger.warn('SyncEngine init failed:', (e === null || e === void 0 ? void 0 : e.message) || e);
             }
+            // Defensive: clear any leftover firmware SyncPlay state from a previous
+            // app launch — the firmware retains the last registered onChange and
+            // playlist across reloads, which makes startSyncPlay() throw
+            // "Can't register callback" on the next call.
+            try {
+                const nativeApi = this._getB2bSyncPlayApi();
+                if (nativeApi) {
+                    try {
+                        nativeApi.stopSyncPlay(() => {
+                            try {
+                                nativeApi.clearSyncPlayList(() => { }, () => { });
+                            }
+                            catch (_) { }
+                        });
+                    }
+                    catch (_) {
+                        try {
+                            nativeApi.clearSyncPlayList(() => { }, () => { });
+                        }
+                        catch (_) { }
+                    }
+                    logger.info('[NativeSync] firmware sync state reset on init');
+                }
+            }
+            catch (_) { }
             // Load initial content
             yield this.loadContent();
             // Setup refresh interval
@@ -224,6 +305,10 @@ const Player = {
                 void Telemetry.send(this.deviceId).catch((error) => {
                     logger.warn('Initial WebSocket telemetry failed:', error);
                 });
+                // Take a screenshot shortly after connect to populate the device card thumbnail
+                // on first registration and after reconnects (server can't push screenshot_auto
+                // until it knows the player is ready).
+                setTimeout(() => { this.takeScreenshotWithTrigger('content_change'); }, 5000);
                 // Refresh MDC poll after startup MDC setup completes (Phase 1 scan can take up to 8s)
                 setTimeout(() => { this.runMdcPoll(); }, 20000);
             };
@@ -1452,6 +1537,226 @@ const Player = {
             height: 1080,
         };
     },
+    // ── Samsung native SyncPlay (b2bapis.b2bsyncplay) ────────────────────────
+    // Returns the b2bsyncplay module if the firmware exposes it, else null.
+    // Privilege http://developer.samsung.com/privilege/b2bsyncplay must be
+    // declared in config.xml (already present). Tested on Tizen 4 SBB and
+    // Tizen 6.5 QBC commercial signage firmware.
+    _getB2bSyncPlayApi() {
+        try {
+            const w = window;
+            const api = w.b2bapis && w.b2bapis.b2bsyncplay;
+            if (api && typeof api.makeSyncPlayList === 'function' &&
+                typeof api.startSyncPlay === 'function' &&
+                typeof api.stopSyncPlay === 'function' &&
+                typeof api.clearSyncPlayList === 'function') {
+                return api;
+            }
+        }
+        catch (_) { }
+        return null;
+    },
+    // Render a sync-group playlist via Samsung firmware SyncPlay. All TVs that
+    // share the same numeric groupID and call startSyncPlay() with the same
+    // playlist play in lockstep — firmware handles peer discovery, clock
+    // alignment, and frame correction. Audio is left at firmware default
+    // (multi-room audio sync is out of scope for this build).
+    renderPlaylistNativeSync(playableItems, groupId, container) {
+        const api = this._getB2bSyncPlayApi();
+        if (!api) {
+            logger.warn('[NativeSync] API unavailable at render time');
+            return;
+        }
+        // Native SyncPlay owns the firmware video plane until stopped. Just drop
+        // the JS-side playlist controller; do not call cancelCurrentPlayback()
+        // (it would tear down AVPlay paths we are not using).
+        if (this.currentPlaylistController) {
+            this.currentPlaylistController.cancelled = true;
+            this.currentPlaylistController = null;
+        }
+        if (this.playlistTimeout) {
+            clearTimeout(this.playlistTimeout);
+            this.playlistTimeout = null;
+        }
+        // Build the SyncPlayContents array. Native API expects { path, duration }
+        // with file:// paths and integer seconds. content.url is already a
+        // file:// path after content-manager has downloaded the asset.
+        const syncPlayContents = [];
+        for (const item of playableItems) {
+            let url = item && item.content && item.content.url;
+            if (!url)
+                continue;
+            // b2bsyncplay requires a `file://` URI (per Samsung b2bsync sample).
+            // content-manager normally returns one already, but defensively prepend
+            // the scheme if missing — without it the firmware silently drops the
+            // makeSyncPlayList call (no success / no error callback fires).
+            if (typeof url === 'string' && !url.startsWith('file://')) {
+                url = 'file://' + (url.startsWith('/') ? url : ('/' + url));
+            }
+            const dur = Math.max(1, Math.round(Number(item.duration) || 10));
+            syncPlayContents.push({ path: url, duration: dur });
+        }
+        if (syncPlayContents.length === 0) {
+            logger.warn('[NativeSync] No items with usable file:// URLs — aborting');
+            this.showIdleScreen();
+            return;
+        }
+        logger.info('[NativeSync] Building playlist (' + syncPlayContents.length +
+            ' items, groupID=' + groupId + ')');
+        // Promote per-item log to info so the actual paths show up in remote
+        // logs while we are diagnosing native-sync engagement.
+        syncPlayContents.forEach((c, i) => logger.info('[NativeSync]   [' + i + '] ' + c.path + ' (' + c.duration + 's)'));
+        // Hide the DOM content container so the firmware video plane is visible.
+        this.setAvPlayVisualMode(true);
+        if (container) {
+            try {
+                container.innerHTML = '';
+            }
+            catch (_) { }
+        }
+        const startNativeSync = () => {
+            try {
+                api.makeSyncPlayList(syncPlayContents, () => {
+                    logger.info('[NativeSync] makeSyncPlayList ok');
+                    this._startNativeSyncPlay(api, groupId);
+                }, (err) => {
+                    logger.warn('[NativeSync] makeSyncPlayList failed: ' +
+                        (err && (err.message || err.name)) + ' — reverting visual mode');
+                    this._nativeSyncActive = false;
+                    this._nativeSyncGroupId = null;
+                    this.setAvPlayVisualMode(false);
+                });
+            }
+            catch (e) {
+                logger.warn('[NativeSync] makeSyncPlayList threw: ' + ((e === null || e === void 0 ? void 0 : e.message) || e));
+                this._nativeSyncActive = false;
+                this._nativeSyncGroupId = null;
+                this.setAvPlayVisualMode(false);
+            }
+        };
+        // Defensive cleanup: only clearSyncPlayList (resets playlist data).
+        // DO NOT call stopSyncPlay() here — it is queued by the firmware and
+        // can fire *after* the new startSyncPlay() session begins, killing it.
+        // stopSyncPlay() is reserved for explicit teardown in stopNativeSyncPlay().
+        let started = false;
+        const begin = (reason) => {
+            if (started)
+                return;
+            started = true;
+            logger.info('[NativeSync] begin (' + reason + ') → calling makeSyncPlayList');
+            startNativeSync();
+        };
+        try {
+            api.clearSyncPlayList(() => { logger.info('[NativeSync] clearSyncPlayList ok'); begin('clear-ok'); }, () => { logger.warn('[NativeSync] clearSyncPlayList err'); begin('clear-err'); });
+        }
+        catch (e) {
+            logger.warn('[NativeSync] clearSyncPlayList threw: ' + ((e === null || e === void 0 ? void 0 : e.message) || e));
+            begin('clear-throw');
+        }
+        setTimeout(() => begin('timeout'), 600);
+    },
+    // Internal: invoke startSyncPlay() for the full panel rect. The 5th arg
+    // (sample uses 5 for full-screen, 7 for rotated) is mirrored from the
+    // Samsung b2bsync sample.
+    _startNativeSyncPlay(api, groupId) {
+        const onChange = (data) => {
+            try {
+                const code = data && data.code;
+                const payload = data && data.data;
+                const errName = data && data.errorName;
+                const errMsg = data && data.errorMessage;
+                // The firmware reports errorName="success" on normal lifecycle events;
+                // only warn when code is non-zero or errorName is something else.
+                const isError = (typeof code === 'number' && code !== 0) ||
+                    (errName && errName !== 'success');
+                if (isError) {
+                    logger.warn('[NativeSync] onChange code=' + code + ' err=' + errName + ' msg=' + errMsg);
+                }
+                else {
+                    logger.debug('[NativeSync] onChange code=' + code + ' data=' + payload);
+                }
+            }
+            catch (_) { }
+        };
+        // ── Rect & rotation ─────────────────────────────────────────────────
+        // b2bsyncplay's startSyncPlay() rect uses PHYSICAL panel pixel
+        // coordinates, NOT AVPlay's fixed 1920×1080 logical space.
+        //
+        // Evidence: with (0,0,1920,1080) the video fills only the top-left
+        // physical quarter of a 3840×2160 UHD panel, appearing as a 960×540
+        // region that ends at the logical centre (960,540). Passing the full
+        // physical resolution (0,0,3840,2160) is required for full-screen.
+        //
+        // Source of rect:
+        //   1. _physicalPanelWidth/Height — queried at init via
+        //      tizen.systeminfo DISPLAY.resolutionWidth/Height (physical px).
+        //   2. window.screen.width * window.devicePixelRatio — DPR-scaled.
+        //   3. Hard-coded 3840×2160 UHD fallback.
+        //
+        // Rotation arg is for firmware content rotation on top of panel
+        // orientation; we always pass "OFF" and let the CMS supply pre-rotated
+        // assets for portrait layouts.
+        // b2bsyncplay uses a CENTER-ORIGIN coordinate system in logical CSS
+        // pixels (same space as window.innerWidth/innerHeight = 1920×1080).
+        //
+        // Evidence:
+        //   (0, 0, 1920, 1080) → video appears at screen (960,540), size 960×540
+        //     because posX=0 → screen_x = 0+960 = 960, width 1920 clipped at 1920 → 960px wide
+        //   (0, 0, 3840, 2160) → BLACK: rect starts at center (960,540) and extends
+        //     3840px right → entirely off the 1920-wide screen
+        //
+        // For full-screen: origin must be at top-left (0,0) of screen, so
+        //   posX = -(vpW/2), posY = -(vpH/2), width = vpW, height = vpH
+        //
+        // dforum sample (0,0,960,540) = 480×540-sized rect starting at (960,540)
+        //   — a deliberate demo sub-rect, not a full-screen call.
+        const vpW = window.innerWidth || 1920;
+        const vpH = window.innerHeight || 1080;
+        const posX = -(vpW >> 1); // −960 for 1920-wide viewport
+        const posY = -(vpH >> 1); // −540 for 1080-high viewport
+        const rectW = vpW;
+        const rectH = vpH;
+        logger.info('[NativeSync] viewport=' + vpW + 'x' + vpH +
+            ' posX=' + posX + ' posY=' + posY + ' rectW=' + rectW + ' rectH=' + rectH);
+        const rotation = 'OFF';
+        try {
+            const handle = api.startSyncPlay(posX, posY, rectW, rectH, 5, rotation, onChange);
+            this._nativeSyncActive = true;
+            this._nativeSyncGroupId = groupId;
+            logger.info('[NativeSync] startSyncPlay invoked (groupID=' + groupId +
+                ', posX=' + posX + ' posY=' + posY + ' w=' + rectW + ' h=' + rectH + ', handle=' + handle + ')');
+        }
+        catch (e) {
+            logger.warn('[NativeSync] startSyncPlay threw: ' + ((e === null || e === void 0 ? void 0 : e.message) || e));
+            this._nativeSyncActive = false;
+            this._nativeSyncGroupId = null;
+            this.setAvPlayVisualMode(false);
+        }
+    },
+    // Stop and clear any active firmware SyncPlay session. Idempotent.
+    stopNativeSyncPlay() {
+        if (!this._nativeSyncActive)
+            return;
+        const api = this._getB2bSyncPlayApi();
+        this._nativeSyncActive = false;
+        this._nativeSyncGroupId = null;
+        if (!api)
+            return;
+        try {
+            api.stopSyncPlay((data) => {
+                logger.info('[NativeSync] stopSyncPlay onChange code=' + (data && data.code));
+                try {
+                    api.clearSyncPlayList(() => {
+                        logger.debug('[NativeSync] playlist cleared after stop');
+                    }, () => { });
+                }
+                catch (_) { }
+            });
+        }
+        catch (e) {
+            logger.warn('[NativeSync] stopSyncPlay threw: ' + ((e === null || e === void 0 ? void 0 : e.message) || e));
+        }
+    },
     setAvPlayVisualMode(active) {
         const root = document.documentElement;
         const body = document.body;
@@ -1908,6 +2213,12 @@ const Player = {
         // playlist gets a clean container.
         if (this._zoneMode)
             this.stopZoneMode();
+        // Reset thumbnail throttle so the first item of the new playlist always captures.
+        this._lastThumbAt = 0;
+        if (this._thumbTimer) {
+            clearTimeout(this._thumbTimer);
+            this._thumbTimer = undefined;
+        }
         this.renderPlaylist(playlistToPlay);
         this.currentContent = playlistToPlay;
         this.lastContentSignature = signatureToSet;
@@ -1986,9 +2297,9 @@ const Player = {
                 const content = yield API.getCurrentContent(this.deviceId, this.deviceToken);
                 if (content && content.items && content.items.length > 0) {
                     const newSignature = this.getContentSignature(content);
-                    const isPlaying = !!(this.currentPlaylistController && !this.currentPlaylistController.cancelled) || this._zoneMode;
+                    const isPlaying = !!(this.currentPlaylistController && !this.currentPlaylistController.cancelled) || this._zoneMode || this._nativeSyncActive;
                     logger.info(`Content signature: ${newSignature}, Last: ${this.lastContentSignature}`);
-                    logger.info(`Currently playing: ${isPlaying}`);
+                    logger.info(`Currently playing: ${isPlaying} (controller=${!!(this.currentPlaylistController && !this.currentPlaylistController.cancelled)}, zone=${this._zoneMode}, nativeSync=${this._nativeSyncActive})`);
                     if (newSignature &&
                         this.lastContentSignature &&
                         newSignature === this.lastContentSignature &&
@@ -1996,6 +2307,22 @@ const Player = {
                         isPlaying &&
                         true) {
                         logger.info('Content unchanged since last refresh, skipping re-render');
+                        return;
+                    }
+                    // Same signature but nothing is rendering (e.g. native-sync session
+                    // never started, or playback ended). Re-render existing content
+                    // instead of falling into downloadContentInBackground (which would
+                    // see the same signature and skip).
+                    if (newSignature &&
+                        this.lastContentSignature &&
+                        newSignature === this.lastContentSignature &&
+                        this.currentContent &&
+                        !isPlaying) {
+                        logger.warn('Same signature but not playing — forcing re-render from currentContent');
+                        this.cancelCurrentPlayback();
+                        if (this._zoneMode)
+                            this.stopZoneMode();
+                        this.renderPlaylist(this.currentContent);
                         return;
                     }
                     // Got a regular playlist with items
@@ -4643,11 +4970,74 @@ const Player = {
         // SyncPlay mode: if the playlist belongs to a sync group, force HTML5
         // path (AVPlay's per-frame currentTime control is not exposed) and let
         // the SyncEngine gate item boundaries.
-        const syncGroupId = playlist.syncGroupId || null;
+        // The schedule API delivers sync info under `playlist.syncPlay`
+        // (see API._normalizeSyncPlaylist); accept either shape so the player
+        // works with both legacy and Phase-4 servers.
+        const syncPlayInfo = playlist.syncPlay || null;
+        const syncGroupId = playlist.syncGroupId || (syncPlayInfo && syncPlayInfo.syncGroupId) || null;
+        // Always log what we see so we can diagnose why _syncMode may be false.
+        try {
+            logger.info('[Sync] renderPlaylist diag: hasSyncPlay=' + !!syncPlayInfo +
+                ' syncPlay.syncGroupId=' + (syncPlayInfo && syncPlayInfo.syncGroupId) +
+                ' syncPlay.groupID=' + (syncPlayInfo && syncPlayInfo.groupID) +
+                ' playlist.syncGroupId=' + playlist.syncGroupId +
+                ' resolved=' + syncGroupId);
+        }
+        catch (_a) { }
         this._syncMode = !!syncGroupId;
         this._syncGroupId = syncGroupId;
         if (this._syncMode) {
-            logger.info('[Sync] Playlist belongs to sync group ' + syncGroupId + ' — forcing HTML5 path');
+            logger.info('[Sync] Playlist belongs to sync group ' + syncGroupId);
+            // Prefer Samsung firmware-level SyncPlay (b2bapis.b2bsyncplay) when
+            // available — it does frame-accurate alignment without JS-side leader
+            // election, peer NTP, or HTTP messaging. Falls back to the JS engine
+            // path below when the API is missing or the groupID is invalid.
+            const nativeGroupId = (syncPlayInfo && Number.isInteger(syncPlayInfo.groupID)) ? syncPlayInfo.groupID : null;
+            const nativeApi = this._getB2bSyncPlayApi();
+            if (nativeApi && nativeGroupId !== null) {
+                logger.info('[NativeSync] Using b2bapis.b2bsyncplay (groupID=' + nativeGroupId + ')');
+                this.renderPlaylistNativeSync(playableItems, nativeGroupId, container);
+                return;
+            }
+            logger.info('[Sync] b2bsyncplay unavailable (api=' + !!nativeApi +
+                ' groupID=' + nativeGroupId + ') — falling back to HTML5 + JS SyncEngine');
+            // Seed the SyncEngine with a manifest derived from the schedule
+            // payload so leader election, peer NTP, and heartbeats can run even
+            // before the server pushes a SYNC_GROUP_INIT.
+            try {
+                if (typeof SyncEngine !== 'undefined' && SyncEngine.setManifest) {
+                    const peers = Array.isArray(syncPlayInfo && syncPlayInfo.peers) ? syncPlayInfo.peers : [];
+                    const sortedPeers = [...peers].sort((a, b) => { var _a, _b; return ((_a = a.leaderPriority) !== null && _a !== void 0 ? _a : 0) - ((_b = b.leaderPriority) !== null && _b !== void 0 ? _b : 0); });
+                    const manifest = {
+                        // SyncEngine.Manifest.groupId is the sync-group UUID (not the
+                        // 16-bit Samsung native-syncplay number). The numeric Samsung ID
+                        // is only relevant on the legacy AVPlay-native path.
+                        groupId: syncGroupId,
+                        version: 0,
+                        leaderPriority: sortedPeers.map((p) => p.deviceId),
+                        peers: sortedPeers.map((p) => ({
+                            deviceId: p.deviceId,
+                            lastKnownIp: p.ipAddress || p.lastKnownIp || null,
+                            port: 9615,
+                        })),
+                        playlist: {
+                            id: playlist.id || playlist.playlistId,
+                            items: (playableItems || []).map((it, idx) => ({
+                                id: it.id,
+                                contentId: it.contentId,
+                                duration: it.duration || 10,
+                                position: idx,
+                            })),
+                        },
+                    };
+                    SyncEngine.setManifest(manifest);
+                    logger.info('[Sync] Manifest seeded from schedule payload (peers=' +
+                        manifest.peers.length + ', items=' + manifest.playlist.items.length + ')');
+                }
+            }
+            catch (e) {
+                logger.warn('[Sync] setManifest from schedule failed:', (e === null || e === void 0 ? void 0 : e.message) || e);
+            }
             this.renderPlaylistStandard(playableItems, container);
             return;
         }
@@ -5305,6 +5695,11 @@ const Player = {
         if (this.currentPlaylistController) {
             this.currentPlaylistController.cancelled = true;
             this.currentPlaylistController = null;
+        }
+        // Tear down any firmware SyncPlay session — idempotent / no-op if not
+        // active. Must come before AVPlay close so the video plane is released.
+        if (this._nativeSyncActive) {
+            this.stopNativeSyncPlay();
         }
         // Drop any sync-mode references; the next renderPlaylist re-establishes them.
         this._activeSyncVideo = null;
@@ -6627,8 +7022,11 @@ const Player = {
         const lastAt = this._lastThumbAt || 0;
         if (now - lastAt < 10000)
             return;
-        if (this._thumbTimer)
-            return; // already pending
+        // Cancel any pending timer and reschedule so the LATEST item start wins.
+        if (this._thumbTimer) {
+            clearTimeout(this._thumbTimer);
+            this._thumbTimer = undefined;
+        }
         this._thumbTimer = setTimeout(() => {
             this._thumbTimer = undefined;
             this._lastThumbAt = Date.now();

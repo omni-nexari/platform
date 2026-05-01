@@ -614,20 +614,26 @@ export async function deviceRoutes(app: FastifyInstance) {
     const deviceIds = list.map((d) => d.id);
     const screenshotRows = deviceIds.length > 0
       ? await db
-          .select({ deviceId: deviceScreenshots.deviceId, id: deviceScreenshots.id })
+          .select({ deviceId: deviceScreenshots.deviceId, id: deviceScreenshots.id, takenAt: deviceScreenshots.takenAt })
           .from(deviceScreenshots)
           .where(inArray(deviceScreenshots.deviceId, deviceIds))
           .orderBy(desc(deviceScreenshots.takenAt))
       : [];
-    const latestScreenshotMap: Record<string, string> = {};
+    const latestScreenshotMap: Record<string, { id: string; takenAt: Date | null }> = {};
     for (const row of screenshotRows) {
-      if (!latestScreenshotMap[row.deviceId]) latestScreenshotMap[row.deviceId] = row.id;
+      if (!latestScreenshotMap[row.deviceId]) latestScreenshotMap[row.deviceId] = { id: row.id, takenAt: row.takenAt };
     }
 
-    // Auto-request a fresh capture for any online device that has no thumbnail yet.
+    // Auto-request a fresh capture for any online device that:
+    //   a) has no thumbnail yet, OR
+    //   b) has a stale thumbnail (takenAt older than 5 minutes)
     // Throttled per device (30 s) so the 15 s portal poll doesn't spam the player.
+    const STALE_THRESHOLD_MS = 5 * 60 * 1_000;
     for (const d of list) {
-      if (latestScreenshotMap[d.id]) continue;
+      const entry = latestScreenshotMap[d.id];
+      const isMissing = !entry;
+      const isStale = entry && entry.takenAt && (Date.now() - entry.takenAt.getTime() > STALE_THRESHOLD_MS);
+      if (!isMissing && !isStale) continue;
       if (!isDeviceOnline(d.id)) continue;
       const last = autoScreenshotRequestAt.get(d.id) ?? 0;
       if (Date.now() - last < 30_000) continue;
@@ -641,7 +647,7 @@ export async function deviceRoutes(app: FastifyInstance) {
       assignedTags: assignedTagMap[d.id] ?? [],
       publishedTarget: publishedTargetMap[d.id] ?? null,
       status: resolveReportedDeviceStatus(d),
-      latestScreenshotId: latestScreenshotMap[d.id] ?? null,
+      latestScreenshotId: latestScreenshotMap[d.id]?.id ?? null,
     }));
 
     const result = status ? enriched.filter((d) => d.status === status) : enriched;
@@ -1351,12 +1357,11 @@ export async function deviceRoutes(app: FastifyInstance) {
       }
     }, 5_000);
 
-    // Request one screenshot ~10 s after connect to populate the in-memory frame store.
-    // This ensures device cards show a thumbnail immediately after server restarts,
-    // even before the next content-change screenshot arrives.
+    // Request one screenshot ~3 s after connect to populate the device-card thumbnail
+    // immediately after registration or server restarts.
     setTimeout(() => {
       sendCommand(deviceId, { type: 'screenshot_auto' });
-    }, 10_000);
+    }, 3_000);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     socket.on('message', async (rawData: any) => {

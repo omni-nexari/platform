@@ -257,10 +257,17 @@ namespace SyncEngine {
     manifest = m;
     // Resolve self priority from manifest.peers (fallback 99).
     let myPriority = 99;
+    let resolved = false;
     if (Array.isArray(m.peers)) {
       const self = m.peers.find(function (p) { return p && p.deviceId === opts!.deviceId; });
-      if (self && typeof self.priority === 'number') myPriority = self.priority;
-    } else if (Array.isArray(m.leaderPriority)) {
+      if (self && typeof self.priority === 'number') {
+        myPriority = self.priority;
+        resolved = true;
+      }
+    }
+    // Fall through to leaderPriority array when peer entries don't carry a
+    // numeric priority — server seeds the priority order via this array.
+    if (!resolved && Array.isArray(m.leaderPriority)) {
       const idx = m.leaderPriority.indexOf(opts.deviceId);
       if (idx >= 0) myPriority = idx;
     }
@@ -309,11 +316,13 @@ namespace SyncEngine {
     if (!opts || !manifest) return;
     try {
       const data = await bridgeGet('/sync/peers');
-      if (!data || !Array.isArray(data.peers)) return;
-      livePeers = data.peers as PeerEntry[];
+      if (data && Array.isArray(data.peers)) {
+        livePeers = data.peers as PeerEntry[];
+      }
     } catch (e: any) {
       opts.logger.warn('[SyncEngine] /sync/peers GET failed:', e && e.message);
-      return;
+      // Continue to electLeader so manifest-declared peers are still
+      // considered (no live peers ⇒ election still converges via manifest).
     }
     electLeader();
   }
@@ -322,22 +331,52 @@ namespace SyncEngine {
     if (!opts || !manifest) return;
     // Resolve our own priority from manifest.
     let myPriority = 99;
+    let resolvedSelf = false;
     if (Array.isArray(manifest.peers)) {
       const self = manifest.peers.find(function (p) { return p && p.deviceId === opts!.deviceId; });
-      if (self && typeof self.priority === 'number') myPriority = self.priority;
-    } else if (Array.isArray(manifest.leaderPriority)) {
+      if (self && typeof self.priority === 'number') {
+        myPriority = self.priority;
+        resolvedSelf = true;
+      }
+    }
+    if (!resolvedSelf && Array.isArray(manifest.leaderPriority)) {
       const idx = manifest.leaderPriority.indexOf(opts.deviceId);
       if (idx >= 0) myPriority = idx;
     }
-    // Build candidate list: live peers (UDP-confirmed) + ourselves.
+    // Build candidate list: live peers (UDP-confirmed) + ourselves +
+    // manifest-declared peers (so leader election still converges when the
+    // peer mesh isn't reachable, e.g. older Tizen bridges).
     type Cand = { deviceId: string; priority: number; ip: string | null; port: number };
     const candidates: Cand[] = [];
+    const seen: { [id: string]: boolean } = {};
     candidates.push({ deviceId: opts.deviceId, priority: myPriority, ip: '127.0.0.1', port: 9615 });
+    seen[opts.deviceId] = true;
     livePeers.forEach(function (p) {
       if (!p.seen) return;                          // skip manifest-only entries
-      if (p.deviceId === opts!.deviceId) return;    // skip self echo
+      if (seen[p.deviceId]) return;                 // skip self echo
       candidates.push({ deviceId: p.deviceId, priority: p.priority, ip: p.ip, port: p.port });
+      seen[p.deviceId] = true;
     });
+    // Always include manifest peers so election is deterministic across
+    // devices even before the bridge mesh has discovered them via UDP.
+    if (Array.isArray(manifest.peers)) {
+      manifest.peers.forEach(function (p, i) {
+        if (!p || !p.deviceId || seen[p.deviceId]) return;
+        let pri: number;
+        if (typeof p.priority === 'number') pri = p.priority;
+        else if (Array.isArray(manifest!.leaderPriority)) {
+          const idx = manifest!.leaderPriority.indexOf(p.deviceId);
+          pri = idx >= 0 ? idx : 50 + i;
+        } else pri = 50 + i;
+        candidates.push({
+          deviceId: p.deviceId,
+          priority: pri,
+          ip: p.lastKnownIp || null,
+          port: p.port || 9615,
+        });
+        seen[p.deviceId] = true;
+      });
+    }
     // Lowest priority wins (0 highest); tie-break by deviceId for determinism.
     candidates.sort(function (a, b) {
       if (a.priority !== b.priority) return a.priority - b.priority;
@@ -567,11 +606,36 @@ namespace SyncEngine {
   }
 
   // ── Internal: bridge HTTP helpers ──────────────────────────────────────
+  // Tizen 4 (SSSP6) webview rejects fetch() to 127.0.0.1 with "Failed to
+  // fetch" before reaching the local bridge. XMLHttpRequest works in that
+  // environment, so use it for bridge calls and reserve fetch() for LAN
+  // peer-to-peer messaging where it's known to work.
   function bridgePost(path: string, body: any): Promise<any> {
-    return httpPost(BRIDGE_BASE + path, body);
+    return xhrJson('POST', BRIDGE_BASE + path, body);
   }
   function bridgeGet(path: string): Promise<any> {
-    return httpGet(BRIDGE_BASE + path);
+    return xhrJson('GET', BRIDGE_BASE + path, null);
+  }
+  function xhrJson(method: string, url: string, body: any): Promise<any> {
+    return new Promise(function (resolve, reject) {
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open(method, url, true);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.timeout = 4000;
+        xhr.onload = function () {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try { resolve(xhr.responseText ? JSON.parse(xhr.responseText) : null); }
+            catch (_) { resolve(null); }
+          } else {
+            reject(new Error('HTTP ' + xhr.status));
+          }
+        };
+        xhr.onerror = function () { reject(new Error('Network error')); };
+        xhr.ontimeout = function () { reject(new Error('Timeout')); };
+        xhr.send(body == null ? null : JSON.stringify(body));
+      } catch (e: any) { reject(e); }
+    });
   }
   async function loadManifestFromBridge(): Promise<Manifest | null> {
     try {
