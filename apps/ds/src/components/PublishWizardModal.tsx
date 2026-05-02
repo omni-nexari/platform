@@ -124,7 +124,7 @@ function GroupCard({
   group,
   selected,
   onToggle,
-  single?: boolean,
+  single,
 }: {
   group: DeviceGroup;
   selected: boolean;
