@@ -305,10 +305,14 @@ const Player = {
                 void Telemetry.send(this.deviceId).catch((error) => {
                     logger.warn('Initial WebSocket telemetry failed:', error);
                 });
-                // Take a screenshot shortly after connect to populate the device card thumbnail
-                // on first registration and after reconnects (server can't push screenshot_auto
-                // until it knows the player is ready).
-                setTimeout(() => { this.takeScreenshotWithTrigger('content_change'); }, 5000);
+                // Take a screenshot shortly after connect to populate the device card thumbnail,
+                // but ONLY if content is already playing (loaded from cache). If nothing is playing
+                // yet, _thumbnailOnItemStart will fire once the first item renders.
+                setTimeout(() => {
+                    if (this.currentContent) {
+                        this.takeScreenshotWithTrigger('content_change');
+                    }
+                }, 5000);
                 // Refresh MDC poll after startup MDC setup completes (Phase 1 scan can take up to 8s)
                 setTimeout(() => { this.runMdcPoll(); }, 20000);
             };
@@ -1710,21 +1714,13 @@ const Player = {
         //
         // dforum sample (0,0,960,540) = 480×540-sized rect starting at (960,540)
         //   — a deliberate demo sub-rect, not a full-screen call.
-        const vpW = window.innerWidth || 1920;
-        const vpH = window.innerHeight || 1080;
-        const posX = -(vpW >> 1); // −960 for 1920-wide viewport
-        const posY = -(vpH >> 1); // −540 for 1080-high viewport
-        const rectW = vpW;
-        const rectH = vpH;
-        logger.info('[NativeSync] viewport=' + vpW + 'x' + vpH +
-            ' posX=' + posX + ' posY=' + posY + ' rectW=' + rectW + ' rectH=' + rectH);
         const rotation = 'OFF';
         try {
-            const handle = api.startSyncPlay(posX, posY, rectW, rectH, 5, rotation, onChange);
+            logger.info('[NativeSync] startSyncPlay rect=0,0,1920,1080 groupID=' + groupId);
+            const handle = api.startSyncPlay(0, 0, 1920, 1080, 5, rotation, onChange);
             this._nativeSyncActive = true;
             this._nativeSyncGroupId = groupId;
-            logger.info('[NativeSync] startSyncPlay invoked (groupID=' + groupId +
-                ', posX=' + posX + ' posY=' + posY + ' w=' + rectW + ' h=' + rectH + ', handle=' + handle + ')');
+            logger.info('[NativeSync] startSyncPlay invoked (groupID=' + groupId + ', handle=' + handle + ')');
         }
         catch (e) {
             logger.warn('[NativeSync] startSyncPlay threw: ' + ((e === null || e === void 0 ? void 0 : e.message) || e));
@@ -2223,9 +2219,8 @@ const Player = {
         this.currentContent = playlistToPlay;
         this.lastContentSignature = signatureToSet;
         this.cachePlaylist(playlistToPlay, signatureToSet);
-        // Take a screenshot a few seconds after the new content starts rendering
-        // so the device card thumbnail reflects the current content.
-        setTimeout(() => { this.takeScreenshotWithTrigger('content_change'); }, 8000);
+        // _thumbnailOnItemStart fires 3s after the first item starts playing (throttle
+        // already reset above). No extra timer needed here.
     },
     // Download content in background without interrupting playback
     downloadContentInBackground(content, newSignature) {
