@@ -93,7 +93,7 @@ const Player = {
     _physicalPanelWidth: 0,
     _physicalPanelHeight: 0,
     // Seamless AVPlay playlist support
-    avPlayer1: null,\
+    avPlayer1: null,
     avPlayer2: null,
     currentAvPlayer: null,
     seamlessPlaylistActive: false,
@@ -395,19 +395,24 @@ const Player = {
                     }
                     break;
                 case 'VIDEOWALL_INIT':
-                    logger.info('Videowall init received:', message.payload);
-                    this._videowallManifest = message.payload;
+                    // The API sends all wall data as top-level fields on the WS message
+                    // (not nested under .payload). Store the whole message as the manifest.
+                    logger.info('Videowall init received:', message);
+                    this._videowallManifest = message;
                     // Reuse the P2P SyncEngine for wall sync — feed it the peer/priority
                     // list from the videowall manifest.  groupId is the device group UUID
                     // (treated as an opaque string by the engine).
-                    if (typeof SyncEngine !== 'undefined' && message.payload) {
+                    if (typeof SyncEngine !== 'undefined' && message.geometry) {
                         SyncEngine.setManifest({
-                            groupId: message.payload.deviceGroupId,
+                            groupId: message.deviceGroupId,
                             version: Date.now(),
-                            leaderPriority: message.payload.leaderPriority,
-                            peers: message.payload.peers,
+                            leaderPriority: message.leaderPriority,
+                            peers: message.peers,
                         });
                     }
+                    // Re-check content so any pending videowall content starts rendering
+                    // now that the manifest (crop geometry) is available.
+                    this.loadContent();
                     break;
                 case 'SESSION_CONFIG':
                     logger.info('SyncPlay session config received - refreshing content');
@@ -2445,6 +2450,11 @@ const Player = {
             case 'OFFICE':
                 this.renderDocument(container, content);
                 break;
+            case 'VIDEOWALL':
+                // Full-wall video: CSS-crop this panel's region using the manifest geometry.
+                // The manifest must have been received via VIDEOWALL_INIT before this renders.
+                this.renderVideo(container, content);
+                break;
             case 'ZONE_LAYOUT': {
                 // Zone layout content: activate multi-zone mode using zones from metadata
                 let zones = [];
@@ -2637,7 +2647,9 @@ const Player = {
     // Render video content using Samsung AVPlay API for better performance
     renderVideo(container, content) {
         // Videowall mode: CSS-crop the full-wall video to this panel's region.
-        if (this._videowallManifest) {
+        // Guard on content.type so regular video items in a playlist aren't
+        // accidentally rendered in crop mode if a manifest is still in memory.
+        if (this._videowallManifest && content && content.type === 'VIDEOWALL') {
             this._renderVideowallContent(container, content);
             return;
         }
@@ -7131,22 +7143,13 @@ const Player = {
             }
         }, 3000);
     },
-    _captureScreenshot(trigger, _retryCount = 0) {
+    _captureScreenshot(trigger) {
         const ws = this.wsConnection;
         if (!ws || ws.readyState !== 1) {
             logger.warn('[Screenshot] WebSocket not connected, cannot send screenshot');
             return;
         }
         const send = (dataBase64) => {
-            // Skip near-black frames: base64 length < ~13000 chars ≈ < ~9700 raw bytes
-            // which indicates an all-black or blank capture (e.g., caught during a transition).
-            if (dataBase64.length < 13000) {
-                logger.warn('[Screenshot] skipping likely black frame, bytes:', dataBase64.length);
-                if (_retryCount < 3) {
-                    setTimeout(() => this._captureScreenshot(trigger, _retryCount + 1), 3000);
-                }
-                return;
-            }
             ws.send(JSON.stringify({
                 type: 'screenshot_data',
                 payload: { dataBase64, trigger, contentId: null },
