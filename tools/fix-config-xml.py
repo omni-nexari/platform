@@ -1,5 +1,5 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://nexari.app/tizen/NexariPlayer" version="1.0.24" viewmodes="maximized">
+clean = """<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://nexari.app/tizen/NexariPlayer" version="1.0.22" viewmodes="maximized">
     <access origin="*" subdomains="true"></access>
     <tizen:allow-navigation>*</tizen:allow-navigation>
     <tizen:application id="fmDBbBnvJM.NexariTizen" package="fmDBbBnvJM" required_version="4.0"/>
@@ -48,3 +48,11 @@
     <tizen:profile name="tv-samsung"/>
     <tizen:setting screen-orientation="auto-rotation" context-menu="disable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>
 </widget>
+"""
+import os
+path = r"C:\Users\chiho\Projects\Platform\apps\nexari-tizen\config.xml"
+with open(path, "w", encoding="utf-8", newline="\n") as f:
+    f.write(clean)
+print("Written. Size:", os.path.getsize(path), "bytes")
+print("Content:")
+print(clean[:200])

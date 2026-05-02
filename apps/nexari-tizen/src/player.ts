@@ -2740,11 +2740,11 @@ const Player = {
 
     // ── Video: sized to full canvas, translated to show cell region ──────
     const video = document.createElement('video');
-    video.src        = content.url;
-    video.autoplay   = true;
-    video.loop       = content.loop  || false;
-    video.muted      = content.muted || false;
-    video.playsInline = true;
+    video.src      = content.url;
+    video.autoplay = true;
+    video.loop     = content.loop  || false;
+    video.muted    = content.muted || false;
+    // Do NOT set playsInline — not a valid IDL attribute on Tizen 4 WebKit.
 
     video.style.position  = 'absolute';
     video.style.width     = canvasW + 'px';
@@ -4273,7 +4273,7 @@ const Player = {
   // corrections) don't cause a step discontinuity mid-session. The bases are
   // captured lazily on first call so they're always close to init time.
   getSyncedTime() {
-    if (!this._monoPerfBase) {
+    if (this._monoPerfBase === undefined) {
       this._monoPerfBase = performance.now();
       this._monoDateBase = Date.now();
     }

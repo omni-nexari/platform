@@ -73,8 +73,10 @@ try {
 $appVerNew = (Get-Content "$src\package.json" -Raw | ConvertFrom-Json).version
 
 # Sync config.xml widget version attribute to match
+# IMPORTANT: Read with explicit UTF-8 to prevent double-encoding corruption of
+# any non-ASCII characters in the file (PowerShell default encoding is CP1252).
 $configXmlPath = "$src\config.xml"
-$configXmlContent = Get-Content $configXmlPath -Raw
+$configXmlContent = [System.IO.File]::ReadAllText($configXmlPath, [System.Text.UTF8Encoding]::new($false))
 $configXmlContent = $configXmlContent -replace '(<widget\s[^>]*version=")[^"]*(")', "`${1}$appVerNew`${2}"
 [System.IO.File]::WriteAllText($configXmlPath, $configXmlContent, [System.Text.UTF8Encoding]::new($false))
 Write-Host "Version bumped: $appVerNew (package.json + config.xml)"

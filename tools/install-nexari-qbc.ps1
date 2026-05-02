@@ -61,10 +61,12 @@ Write-Host "WGT size: ${sizeKB} KB"
 
 # Update sssp_config.xml with the exact byte-size so Tizen SSSP devices can
 # verify the download before installing.
+# IMPORTANT: Use explicit UTF-8 to avoid double-encoding corruption.
 $wgtBytes   = (Get-Item "$src\NexariPlayer.wgt").Length
 $ssspConfig = "$src\sssp_config.xml"
-(Get-Content $ssspConfig -Raw) -replace '<size>\d+</size>', "<size>$wgtBytes</size>" |
-    Set-Content $ssspConfig -NoNewline
+$ssspXml = [System.IO.File]::ReadAllText($ssspConfig, [System.Text.UTF8Encoding]::new($false))
+$ssspXml = $ssspXml -replace '<size>\d+</size>', "<size>$wgtBytes</size>"
+[System.IO.File]::WriteAllText($ssspConfig, $ssspXml, [System.Text.UTF8Encoding]::new($false))
 Write-Host "Updated sssp_config.xml <size> to $wgtBytes bytes"
 
 # --- 1c. DEPLOY TO PI SERVER ---
