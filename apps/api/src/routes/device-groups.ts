@@ -6,6 +6,7 @@ import {
 } from '@signage/db';
 import { eq, and, isNull, inArray, asc } from 'drizzle-orm';
 import { DeviceCommandSchema } from '@signage/shared';
+import { buildWallGeometry, type WallMember, type WallBezels } from '@signage/shared';
 import { sendCommand, isDeviceOnline } from '../services/ws.js';
 import { writeAuditLog } from '../services/audit.js';
 import { allocateSyncPlayGroupId } from '../services/syncplay-allocator.js';
@@ -221,6 +222,10 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
       description?: string | null;
       videoWallCols?: number | null;
       videoWallRows?: number | null;
+      bezelTopMm?: number | null;
+      bezelRightMm?: number | null;
+      bezelBottomMm?: number | null;
+      bezelLeftMm?: number | null;
     };
 
     const group = await db.query.deviceGroups.findFirst({
@@ -233,6 +238,10 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
     if (body.description !== undefined) patch['description'] = body.description;
     if (body.videoWallCols !== undefined) patch['videoWallCols'] = body.videoWallCols;
     if (body.videoWallRows !== undefined) patch['videoWallRows'] = body.videoWallRows;
+    if (body.bezelTopMm !== undefined) patch['bezelTopMm'] = body.bezelTopMm;
+    if (body.bezelRightMm !== undefined) patch['bezelRightMm'] = body.bezelRightMm;
+    if (body.bezelBottomMm !== undefined) patch['bezelBottomMm'] = body.bezelBottomMm;
+    if (body.bezelLeftMm !== undefined) patch['bezelLeftMm'] = body.bezelLeftMm;
 
     const [updated] = await db.update(deviceGroups).set(patch).where(eq(deviceGroups.id, id)).returning();
 
@@ -310,6 +319,12 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
       position?: number;
       positionCol?: number;
       positionRow?: number;
+      // Videowall per-tile metadata
+      nativeWidthPx?: number | null;
+      nativeHeightPx?: number | null;
+      colSpan?: number | null;
+      rowSpan?: number | null;
+      tileRotation?: string | null;
     }>;
     if (!Array.isArray(body)) return reply.status(400).send({ error: 'Body must be an array' });
 
@@ -317,6 +332,14 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
       where: and(eq(deviceGroups.id, id), isNull(deviceGroups.deletedAt)),
     });
     if (!group || group.orgId !== user.orgId) return reply.status(404).send({ error: 'Not found' });
+
+    // Validate tileRotation values
+    const validRotations = new Set(['0', '90', '180', '270']);
+    for (const m of body) {
+      if (m.tileRotation != null && !validRotations.has(m.tileRotation)) {
+        return reply.status(400).send({ error: `Invalid tileRotation '${m.tileRotation}' for device ${m.deviceId}` });
+      }
+    }
 
     await db.transaction(async (tx) => {
       await tx.delete(deviceGroupMembers).where(eq(deviceGroupMembers.groupId, id));
@@ -328,6 +351,11 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
             position: m.position ?? idx,
             positionCol: m.positionCol ?? null,
             positionRow: m.positionRow ?? null,
+            nativeWidthPx: m.nativeWidthPx ?? null,
+            nativeHeightPx: m.nativeHeightPx ?? null,
+            colSpan: m.colSpan ?? 1,
+            rowSpan: m.rowSpan ?? 1,
+            tileRotation: m.tileRotation ?? '0',
           })),
         );
       }
@@ -446,5 +474,127 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
     }
 
     return reply.send({ sent, skipped });
+  });
+
+  // ── POST /device-groups/:id/videowall-manifest ───────────────────────────
+  // Computes the wall canvas geometry and pushes VIDEOWALL_INIT to every
+  // online member. Each device receives the full geometry plus its own cell
+  // assignment so the player can set up the CSS crop transform.
+  // This endpoint does NOT touch the Samsung SyncPlay / sync_groups pipeline.
+  app.post('/:id/videowall-manifest', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    if (!['owner', 'admin', 'editor'].includes(user.role)) {
+      return reply.status(403).send({ error: 'Forbidden' });
+    }
+
+    const { id } = req.params as { id: string };
+
+    const group = await db.query.deviceGroups.findFirst({
+      where: and(eq(deviceGroups.id, id), isNull(deviceGroups.deletedAt)),
+    });
+    if (!group || group.orgId !== user.orgId) return reply.status(404).send({ error: 'Not found' });
+    if (group.type !== 'videowall') {
+      return reply.status(400).send({ error: 'Device group is not type=videowall' });
+    }
+    if (!group.videoWallCols || !group.videoWallRows) {
+      return reply.status(400).send({ error: 'videoWallCols and videoWallRows must be set before pushing manifest' });
+    }
+
+    const memberRows = await db.query.deviceGroupMembers.findMany({
+      where: eq(deviceGroupMembers.groupId, id),
+      orderBy: [asc(deviceGroupMembers.positionRow), asc(deviceGroupMembers.positionCol)],
+    });
+    if (memberRows.length === 0) return reply.send({ pushed: 0, skipped: 0 });
+
+    // Load last-known IPs from devices table for P2P peer list
+    const deviceIds = memberRows.map((m) => m.deviceId);
+    const deviceRows = await db.query.devices.findMany({
+      where: and(inArray(devices.id, deviceIds), isNull(devices.deletedAt)),
+    });
+    const deviceMap = Object.fromEntries(deviceRows.map((d) => [d.id, d]));
+
+    // Build wall geometry via shared canvas math
+    const wallMembers: WallMember[] = memberRows
+      .filter((m) => m.positionCol != null && m.positionRow != null)
+      .map((m) => ({
+        positionCol: m.positionCol!,
+        positionRow: m.positionRow!,
+        colSpan: m.colSpan,
+        rowSpan: m.rowSpan,
+        nativeWidthPx: m.nativeWidthPx,
+        nativeHeightPx: m.nativeHeightPx,
+        tileRotation: m.tileRotation,
+      }));
+
+    const bezels: WallBezels | null =
+      (group.bezelTopMm != null || group.bezelRightMm != null || group.bezelBottomMm != null || group.bezelLeftMm != null)
+        ? {
+            topMm:    Number(group.bezelTopMm    ?? 0),
+            rightMm:  Number(group.bezelRightMm  ?? 0),
+            bottomMm: Number(group.bezelBottomMm ?? 0),
+            leftMm:   Number(group.bezelLeftMm   ?? 0),
+          }
+        : null;
+
+    const geometry = buildWallGeometry(
+      wallMembers,
+      group.videoWallCols,
+      group.videoWallRows,
+      bezels,
+    );
+
+    // Peer list ordered by positionRow then positionCol (leader = position [0,0]).
+    // Priority order is stable across manifest pushes so leader election is
+    // deterministic regardless of which device receives the manifest first.
+    const sortedMembers = [...memberRows]
+      .filter((m) => m.positionCol != null && m.positionRow != null)
+      .sort((a, b) =>
+        (a.positionRow! - b.positionRow!) || (a.positionCol! - b.positionCol!),
+      );
+    const leaderPriority = sortedMembers.map((m) => m.deviceId);
+    const peers = sortedMembers.map((m) => ({
+      deviceId: m.deviceId,
+      lastKnownIp: (deviceMap[m.deviceId] as any)?.ipAddress ?? null,
+      port: 9615,
+    }));
+
+    let pushed = 0;
+    let skipped = 0;
+    for (const m of sortedMembers) {
+      const msg = {
+        type: 'VIDEOWALL_INIT' as const,
+        deviceGroupId: group.id,
+        geometry,
+        leaderPriority,
+        peers,
+        myCell: {
+          deviceId:     m.deviceId,
+          positionCol:  m.positionCol!,
+          positionRow:  m.positionRow!,
+          colSpan:      m.colSpan  ?? 1,
+          rowSpan:      m.rowSpan  ?? 1,
+          tileRotation: m.tileRotation ?? '0',
+          nativeWidthPx:  m.nativeWidthPx  ?? null,
+          nativeHeightPx: m.nativeHeightPx ?? null,
+        },
+      };
+      if (isDeviceOnline(m.deviceId) && sendCommand(m.deviceId, msg)) {
+        pushed += 1;
+      } else {
+        skipped += 1;
+      }
+    }
+
+    await writeAuditLog({
+      orgId: user.orgId,
+      actorId: user.sub,
+      action: 'VIDEOWALL_MANIFEST_PUSHED',
+      entityType: 'device_group',
+      entityId: id,
+      ipAddress: req.ip,
+      meta: { members: sortedMembers.length, pushed, skipped, canvasW: geometry.canvasW, canvasH: geometry.canvasH },
+    });
+
+    return reply.send({ pushed, skipped, geometry });
   });
 }

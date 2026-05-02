@@ -13,6 +13,7 @@ import {
 } from '../../components/UiPrimitives.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
 import DevicePickerModal, { type PickedDevice } from '../../components/DevicePickerModal.js';
+import VideowallGridEditor from '../../components/VideowallGridEditor.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,11 @@ interface DeviceGroupMember {
   position: number;
   positionCol: number | null;
   positionRow: number | null;
+  colSpan: number | null;
+  rowSpan: number | null;
+  tileRotation: string | null;
+  nativeWidthPx: number | null;
+  nativeHeightPx: number | null;
   device: DeviceLite | null;
 }
 
@@ -59,6 +65,10 @@ interface DeviceGroupDetail {
   syncGroupId: string | null;
   videoWallCols: number | null;
   videoWallRows: number | null;
+  bezelTopMm: number | null;
+  bezelRightMm: number | null;
+  bezelBottomMm: number | null;
+  bezelLeftMm: number | null;
   members: DeviceGroupMember[];
   syncGroup: SyncGroupHydrated | null;
   syncMembers: SyncMember[];
@@ -96,7 +106,15 @@ export default function DeviceGroupDetailPage() {
   });
 
   const isSync = group?.type === 'sync';
+  const isVideowall = group?.type === 'videowall';
   const syncGroupId = group?.syncGroup?.id ?? null;
+
+  // For videowall grid editor: load all workspace devices as assignment options
+  const { data: allDevices = [] } = useQuery<DeviceLite[]>({
+    queryKey: ['devices', wsId],
+    queryFn: () => api.get(`/devices?workspaceId=${wsId}`),
+    enabled: isVideowall && !!wsId,
+  });
 
   const renameMut = useMutation({
     mutationFn: (name: string) => api.patch(`/device-groups/${groupId}`, { name }),
@@ -237,6 +255,15 @@ export default function DeviceGroupDetailPage() {
         </div>
       </div>
 
+      {/* Videowall grid editor (videowall only) */}
+      {isVideowall && (
+        <VideowallGridEditor
+          group={group}
+          workspaceId={wsId ?? ''}
+          availableDevices={allDevices}
+        />
+      )}
+
       {/* SyncPlay settings (sync only) */}
       {isSync && group.syncGroup && (
         <div className="rounded-xl border p-5 flex flex-col gap-4" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
@@ -271,7 +298,8 @@ export default function DeviceGroupDetailPage() {
         </div>
       )}
 
-      {/* Members panel */}
+      {/* Members panel — not shown for videowall (grid editor above handles it) */}
+      {!isVideowall && (
       <div className="rounded-xl border" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
         <div className="p-5 flex items-center justify-between gap-3 border-b" style={{ borderColor: 'var(--border)' }}>
           <h2 className="text-sm font-semibold text-[var(--text)]">
@@ -316,6 +344,7 @@ export default function DeviceGroupDetailPage() {
           </div>
         )}
       </div>
+      )} {/* end !isVideowall members panel */}
 
       {/* Modals */}
       {addPickerOpen && wsId && (

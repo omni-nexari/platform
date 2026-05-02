@@ -372,6 +372,13 @@
       "when": 1774121400000,
       "tag": "0052_syncplay_observability",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1774123200000,
+      "tag": "0053_videowall_columns",
+      "breakpoints": true
     }
   ]
 }

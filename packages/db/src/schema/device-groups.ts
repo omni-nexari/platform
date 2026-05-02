@@ -4,6 +4,7 @@ import {
   text,
   timestamp,
   integer,
+  numeric,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 import { organisations } from './auth.js';
@@ -28,6 +29,11 @@ export const deviceGroups = pgTable('device_groups', {
   // For videowall: grid dimensions
   videoWallCols: integer('video_wall_cols'),
   videoWallRows: integer('video_wall_rows'),
+  // For videowall: bezel compensation (mm per edge). NULL = no compensation.
+  bezelTopMm: numeric('bezel_top_mm', { precision: 6, scale: 2 }),
+  bezelRightMm: numeric('bezel_right_mm', { precision: 6, scale: 2 }),
+  bezelBottomMm: numeric('bezel_bottom_mm', { precision: 6, scale: 2 }),
+  bezelLeftMm: numeric('bezel_left_mm', { precision: 6, scale: 2 }),
   // For sync type: backing Samsung SyncPlay group (auto-created on POST /device-groups when type='sync')
   syncGroupId: uuid('sync_group_id').references(() => syncGroups.id, { onDelete: 'set null' }),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
@@ -43,6 +49,12 @@ export const deviceGroupMembers = pgTable('device_group_members', {
   position: integer('position'),         // 0-based linear index
   positionCol: integer('position_col'),
   positionRow: integer('position_row'),
+  // Per-tile physical metadata (videowall only)
+  nativeWidthPx: integer('native_width_px'),   // NULL = 1920 default
+  nativeHeightPx: integer('native_height_px'), // NULL = 1080 default
+  colSpan: integer('col_span').notNull().default(1),
+  rowSpan: integer('row_span').notNull().default(1),
+  tileRotation: text('tile_rotation').notNull().default('0'), // '0'|'90'|'180'|'270'
   addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

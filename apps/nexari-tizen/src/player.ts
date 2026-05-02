@@ -455,6 +455,22 @@ const Player = {
           }
           break;
 
+        case 'VIDEOWALL_INIT':
+          logger.info('Videowall init received:', message.payload);
+          this._videowallManifest = message.payload;
+          // Reuse the P2P SyncEngine for wall sync — feed it the peer/priority
+          // list from the videowall manifest.  groupId is the device group UUID
+          // (treated as an opaque string by the engine).
+          if (typeof SyncEngine !== 'undefined' && message.payload) {
+            SyncEngine.setManifest({
+              groupId: message.payload.deviceGroupId,
+              version: Date.now(),
+              leaderPriority: message.payload.leaderPriority,
+              peers: message.payload.peers,
+            });
+          }
+          break;
+
         case 'SESSION_CONFIG':
           logger.info('SyncPlay session config received - refreshing content');
           this.loadContent();
@@ -2659,6 +2675,11 @@ const Player = {
 
   // Render video content using Samsung AVPlay API for better performance
   renderVideo(container, content) {
+    // Videowall mode: CSS-crop the full-wall video to this panel's region.
+    if (this._videowallManifest) {
+      this._renderVideowallContent(container, content);
+      return;
+    }
     // SyncPlay forces HTML5 path (per-frame currentTime control + playbackRate
     // are not portably exposed by webapis.avplay).
     if (this._syncMode) {
@@ -2672,6 +2693,78 @@ const Player = {
       // Fallback to HTML5 video
       this.renderVideoHTML5(container, content);
     }
+  },
+
+  // ── Videowall CSS-crop renderer ───────────────────────────────────────────
+  // All panels in the wall download the same full-resolution video and each
+  // clips to their assigned cell region using overflow:hidden + CSS translate.
+  // SyncEngine handles P2P drift correction so frames stay aligned.
+  _renderVideowallContent(container, content) {
+    const mf = this._videowallManifest;
+    if (!mf || !mf.geometry || !mf.myCell) {
+      logger.warn('[Videowall] manifest incomplete — falling back to normal HTML5');
+      this.renderVideoHTML5(container, content);
+      return;
+    }
+
+    const geo     = mf.geometry;         // { colWidths, rowHeights, canvasW, canvasH }
+    const myCell  = mf.myCell;           // { positionCol, positionRow, colSpan, rowSpan, ... }
+    const col     = myCell.positionCol;
+    const row     = myCell.positionRow;
+    const colSpan = myCell.colSpan  || 1;
+    const rowSpan = myCell.rowSpan  || 1;
+
+    // Compute this cell's top-left offset and size on the virtual canvas.
+    let offsetX = 0;
+    for (let c = 0; c < col; c++) offsetX += (geo.colWidths[c] || 0);
+    let offsetY = 0;
+    for (let r = 0; r < row; r++) offsetY += (geo.rowHeights[r] || 0);
+
+    let cellW = 0;
+    for (let c = col; c < col + colSpan; c++) cellW += (geo.colWidths[c] || 0);
+    let cellH = 0;
+    for (let r = row; r < row + rowSpan; r++) cellH += (geo.rowHeights[r] || 0);
+
+    const canvasW = geo.canvasW;
+    const canvasH = geo.canvasH;
+    const panelW  = cellW  || 1920;
+    const panelH  = cellH  || 1080;
+
+    logger.info(`[Videowall] cell(${col},${row}) offset(${offsetX},${offsetY}) panel(${panelW}x${panelH}) canvas(${canvasW}x${canvasH})`);
+
+    // ── Container: clips to panel size ──────────────────────────────────
+    container.style.position = 'relative';
+    container.style.width    = panelW + 'px';
+    container.style.height   = panelH + 'px';
+    container.style.overflow = 'hidden';
+
+    // ── Video: sized to full canvas, translated to show cell region ──────
+    const video = document.createElement('video');
+    video.src        = content.url;
+    video.autoplay   = true;
+    video.loop       = content.loop  || false;
+    video.muted      = content.muted || false;
+    video.playsInline = true;
+
+    video.style.position  = 'absolute';
+    video.style.width     = canvasW + 'px';
+    video.style.height    = canvasH + 'px';
+    video.style.top       = '0';
+    video.style.left      = '0';
+    // Use transform for GPU-composited positioning (better perf on Tizen).
+    video.style.transform = `translate(${-offsetX}px, ${-offsetY}px)`;
+    // Prevent the browser from applying any internal letterbox/pillarbox.
+    video.style.objectFit = 'fill';
+
+    // Register as the active sync target for drift correction.
+    this._activeSyncVideo = video;
+
+    video.onloadedmetadata = () => {
+      video.play().catch((err) => logger.error('[Videowall] play() failed:', err));
+    };
+    video.onerror = (err) => logger.error('[Videowall] video error:', err);
+
+    container.appendChild(video);
   },
 
   // Render video using Samsung AVPlay API
@@ -4175,9 +4268,16 @@ const Player = {
     logger.info('Periodic NTP sync started (every 30s)');
   },
 
-  // Get synchronized time (local time + NTP offset)
+  // Get synchronized time (local time + NTP offset).
+  // Uses a monotonic performance.now() base so wall-clock jumps (e.g. OS NTP
+  // corrections) don't cause a step discontinuity mid-session. The bases are
+  // captured lazily on first call so they're always close to init time.
   getSyncedTime() {
-    return Date.now() + this.ntpOffset;
+    if (!this._monoPerfBase) {
+      this._monoPerfBase = performance.now();
+      this._monoDateBase = Date.now();
+    }
+    return (this._monoDateBase + (performance.now() - this._monoPerfBase)) + this.ntpOffset;
   },
 
   // Drift monitoring disabled - causes more problems than it solves

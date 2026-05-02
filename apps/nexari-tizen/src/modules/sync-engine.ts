@@ -77,7 +77,7 @@ namespace SyncEngine {
   const PEER_NTP_INTERVAL_MS     = 30000;
   const PEER_NTP_RTT_LIMIT_MS    = 250;
   const HEARTBEAT_INTERVAL_MS    = 1000;
-  const DRIFT_NOOP_MS            = 50;   // ≤ this: do nothing
+  const DRIFT_NOOP_MS            = 30;   // ≤ this: do nothing (tightened for adjacent-panel visual quality)
   const DRIFT_NUDGE_MS           = 200;  // ≤ this: playbackRate nudge
   // > DRIFT_NUDGE_MS                       hard snap
 
