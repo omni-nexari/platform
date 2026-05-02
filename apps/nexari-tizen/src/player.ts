@@ -7193,7 +7193,7 @@ const Player = {
     }, 3_000);
   },
 
-  _captureScreenshot(trigger: 'manual' | 'content_change' | 'interval'): void {
+  _captureScreenshot(trigger: 'manual' | 'content_change' | 'interval', _retryCount = 0): void {
     const ws = this.wsConnection;
     if (!ws || ws.readyState !== 1) {
       logger.warn('[Screenshot] WebSocket not connected, cannot send screenshot');
@@ -7204,6 +7204,9 @@ const Player = {
       // which indicates an all-black or blank capture (e.g., caught during a transition).
       if (dataBase64.length < 13_000) {
         logger.warn('[Screenshot] skipping likely black frame, bytes:', dataBase64.length);
+        if (_retryCount < 3) {
+          setTimeout(() => this._captureScreenshot(trigger, _retryCount + 1), 3_000);
+        }
         return;
       }
       ws.send(JSON.stringify({
