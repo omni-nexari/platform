@@ -93,7 +93,7 @@ const Player = {
     _physicalPanelWidth: 0,
     _physicalPanelHeight: 0,
     // Seamless AVPlay playlist support
-    avPlayer1: null,
+    avPlayer1: null,\
     avPlayer2: null,
     currentAvPlayer: null,
     seamlessPlaylistActive: false,

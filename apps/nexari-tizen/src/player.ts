@@ -2676,7 +2676,9 @@ const Player = {
   // Render video content using Samsung AVPlay API for better performance
   renderVideo(container, content) {
     // Videowall mode: CSS-crop the full-wall video to this panel's region.
-    if (this._videowallManifest) {
+    // Guard on content.type so regular video items in a playlist aren't
+    // accidentally rendered in crop mode if a manifest is still in memory.
+    if (this._videowallManifest && content && content.type === 'videowall') {
       this._renderVideowallContent(container, content);
       return;
     }

@@ -8,6 +8,29 @@ import { useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Save, Radio, ChevronDown, X } from 'lucide-react';
+
+// ── Grid size stepper ─────────────────────────────────────────────────────────
+
+function GridStepper({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-xs text-[var(--text-muted)] mr-1">{label}</span>
+      <button
+        type="button"
+        onClick={() => value > 1 && onChange(value - 1)}
+        disabled={value <= 1}
+        className="w-5 h-5 rounded border border-[var(--border)] flex items-center justify-center text-xs text-[var(--text-muted)] hover:text-[var(--text)] hover:border-[var(--accent)] transition-colors disabled:opacity-40"
+      >−</button>
+      <span className="w-5 text-center text-xs font-mono text-[var(--text)]">{value}</span>
+      <button
+        type="button"
+        onClick={() => value < 8 && onChange(value + 1)}
+        disabled={value >= 8}
+        className="w-5 h-5 rounded border border-[var(--border)] flex items-center justify-center text-xs text-[var(--text-muted)] hover:text-[var(--text)] hover:border-[var(--accent)] transition-colors disabled:opacity-40"
+      >+</button>
+    </div>
+  );
+}
 import { api } from '../lib/api.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -58,10 +81,19 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
   const qc = useQueryClient();
   const groupId = group.id;
 
-  const cols = group.videoWallCols ?? 2;
-  const rows = group.videoWallRows ?? 2;
-
   // ── Local state ─────────────────────────────────────────────────────────────
+
+  const [gridCols, setGridCols] = useState(group.videoWallCols ?? 2);
+  const [gridRows, setGridRows] = useState(group.videoWallRows ?? 2);
+
+  const cols = gridCols;
+  const rows = gridRows;
+
+  function changeGrid(newCols: number, newRows: number) {
+    setGridCols(newCols);
+    setGridRows(newRows);
+    setCells({});  // clear assignments — they're invalid for the new dimensions
+  }
 
   // Map from "col,row" → deviceId
   const [cells, setCells] = useState<Record<string, string>>(() => {
@@ -85,6 +117,8 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
 
   // Re-initialise when group data changes (e.g. after a query refetch)
   useEffect(() => {
+    setGridCols(group.videoWallCols ?? 2);
+    setGridRows(group.videoWallRows ?? 2);
     const map: Record<string, string> = {};
     for (const m of group.members) {
       if (m.positionCol != null && m.positionRow != null) {
@@ -115,6 +149,11 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
 
   const saveLayoutMut = useMutation({
     mutationFn: async () => {
+      // Persist grid dimensions first (idempotent)
+      await api.patch(`/device-groups/${groupId}`, {
+        videoWallCols: gridCols,
+        videoWallRows: gridRows,
+      });
       const members = Object.entries(cells)
         .filter(([, deviceId]) => !!deviceId)
         .map(([key, deviceId], idx) => {
@@ -173,19 +212,38 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
 
       {/* Grid assignment */}
       <div className="rounded-xl border" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-        <div className="p-5 border-b flex items-center justify-between gap-3" style={{ borderColor: 'var(--border)' }}>
-          <div>
-            <h2 className="text-sm font-semibold text-[var(--text)]">Panel Layout</h2>
-            <p className="text-xs text-[var(--text-muted)] mt-0.5">{cols}×{rows} grid — assign a screen to each cell</p>
+        <div className="p-5 border-b" style={{ borderColor: 'var(--border)' }}>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--text)]">Panel Layout</h2>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">{cols}×{rows} grid — assign a screen to each cell</p>
+            </div>
+            <button
+              onClick={() => saveLayoutMut.mutate()}
+              disabled={saveLayoutMut.isPending}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-[var(--blue)] text-white rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity"
+            >
+              <Save className="w-3.5 h-3.5" />
+              {saveLayoutMut.isPending ? 'Saving…' : 'Save Layout'}
+            </button>
           </div>
-          <button
-            onClick={() => saveLayoutMut.mutate()}
-            disabled={saveLayoutMut.isPending}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-[var(--blue)] text-white rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity"
-          >
-            <Save className="w-3.5 h-3.5" />
-            {saveLayoutMut.isPending ? 'Saving…' : 'Save Layout'}
-          </button>
+          {/* Grid dimension controls */}
+          <div className="mt-3 flex items-center gap-4">
+            <GridStepper
+              label="Cols"
+              value={gridCols}
+              onChange={(v) => changeGrid(v, gridRows)}
+            />
+            <span className="text-[var(--text-faint)] text-xs">×</span>
+            <GridStepper
+              label="Rows"
+              value={gridRows}
+              onChange={(v) => changeGrid(gridCols, v)}
+            />
+            {(gridCols !== (group.videoWallCols ?? 2) || gridRows !== (group.videoWallRows ?? 2)) && (
+              <span className="text-[10px] text-amber-400 ml-1">unsaved — click Save Layout</span>
+            )}
+          </div>
         </div>
 
         <div className="p-5 overflow-x-auto">
