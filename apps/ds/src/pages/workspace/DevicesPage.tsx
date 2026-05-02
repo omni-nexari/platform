@@ -9,7 +9,7 @@ import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
 
 type PairFormInput = Omit<ClaimDeviceInput, 'workspaceId'>;
-import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon } from 'lucide-react';
+import { Grid2x2, Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon } from 'lucide-react';
 
 // Shows the device thumbnail using the DB-backed screenshot record.
 // Re-renders automatically when the device list poll returns a new latestScreenshotId.
@@ -146,6 +146,88 @@ function TypeBadge({ type }: { type: Device['type'] }) {
   return <Badge tone={t.tone}>{t.label}</Badge>;
 }
 
+interface DeviceGroupListItem {
+  id: string;
+  name: string;
+  type: string;
+  description: string | null;
+  videoWallCols: number | null;
+  videoWallRows: number | null;
+  memberDeviceIds: string[];
+}
+
+function VideowallGroupCard({
+  group,
+  devices,
+  onClick,
+}: {
+  group: DeviceGroupListItem;
+  devices: Device[];
+  onClick: () => void;
+}) {
+  const onlineCount = devices.filter((d) => d.status === 'online').length;
+  return (
+    <div
+      onClick={onClick}
+      className="rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-4 flex flex-col gap-3 cursor-pointer hover:border-[var(--blue)]/60 transition-colors"
+    >
+      {/* Mini preview grid — up to 4 thumbnails */}
+      <div className="grid grid-cols-2 gap-1">
+        {devices.slice(0, 4).map((d) => (
+          <div key={d.id} className="relative">
+            <DeviceScreenshot
+              deviceId={d.id}
+              screenshotId={d.latestScreenshotId}
+              latestFrameAt={d.latestFrameAt}
+            />
+            <div className="absolute bottom-0 left-0 right-0 rounded-b-lg px-1 py-0.5 text-[9px] text-white bg-black/50 truncate">
+              {d.name}
+            </div>
+          </div>
+        ))}
+        {devices.length > 4 && (
+          <div className="aspect-video rounded-lg bg-[var(--surface)] flex items-center justify-center text-xs text-[var(--text-muted)]">
+            +{devices.length - 4} more
+          </div>
+        )}
+      </div>
+
+      {/* Icon + name */}
+      <div className="flex items-start gap-2">
+        <div className="w-8 h-8 rounded-lg bg-[var(--blue)]/15 text-[var(--blue)] flex items-center justify-center shrink-0">
+          <Grid2x2 className="w-4 h-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-[var(--text)] truncate">{group.name}</p>
+          {group.videoWallCols != null && group.videoWallRows != null && (
+            <p className="text-xs text-[var(--text-muted)]">
+              {group.videoWallCols}&times;{group.videoWallRows} wall
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Badges */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge tone="info">Video Wall</Badge>
+        <Badge
+          tone={
+            onlineCount === devices.length
+              ? 'success'
+              : onlineCount > 0
+              ? 'warning'
+              : 'neutral'
+          }
+        >
+          {onlineCount}/{devices.length} online
+        </Badge>
+      </div>
+
+      <ChevronRight className="w-4 h-4 text-[var(--text-muted)] self-end" />
+    </div>
+  );
+}
+
 const STATUS_FILTERS = ['all', 'online', 'offline', 'unclaimed', 'error'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 
@@ -172,6 +254,13 @@ export default function DevicesPage() {
     queryKey: ['devices', wsId, selectedTagIds],
     queryFn: () => api.get(`/devices?workspaceId=${wsId}${tagIdsParam}`),
     refetchInterval: 15_000,
+  });
+
+  const { data: groups = [] } = useQuery<DeviceGroupListItem[]>({
+    queryKey: ['device-groups', wsId],
+    queryFn: () => api.get(`/device-groups?workspaceId=${wsId}`),
+    staleTime: 30_000,
+    refetchInterval: 30_000,
   });
 
   const [liveViewDeviceId, setLiveViewDeviceId] = useState<string | null>(null);
@@ -333,6 +422,19 @@ export default function DevicesPage() {
           ).map(({ key, label, icon }) => {
             const sectionDevices = filteredDevices.filter((d) => (d.type ?? 'signage') === key);
             if (sectionDevices.length === 0) return null;
+
+            // Split into videowall group cards + ungrouped individual cards
+            const groupedDeviceIds = new Set<string>();
+            const videowallGroupsHere: Array<{ group: DeviceGroupListItem; members: Device[] }> = [];
+            for (const g of groups) {
+              if (g.type !== 'videowall') continue;
+              const members = sectionDevices.filter((d) => g.memberDeviceIds.includes(d.id));
+              if (members.length === 0) continue;
+              members.forEach((d) => groupedDeviceIds.add(d.id));
+              videowallGroupsHere.push({ group: g, members });
+            }
+            const ungroupedDevices = sectionDevices.filter((d) => !groupedDeviceIds.has(d.id));
+
             return (
               <div key={key}>
                 <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-[var(--text)]">
@@ -341,7 +443,15 @@ export default function DevicesPage() {
                   <span className="ml-1 text-[var(--text-muted)] font-normal">({sectionDevices.length})</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {sectionDevices.map((device) => (
+                  {videowallGroupsHere.map(({ group, members }) => (
+                    <VideowallGroupCard
+                      key={`group-${group.id}`}
+                      group={group}
+                      devices={members}
+                      onClick={() => navigate(`/workspaces/${wsId}/devices/groups/${group.id}`)}
+                    />
+                  ))}
+                  {ungroupedDevices.map((device) => (
                     <div
                       key={device.id}
                       className={`group rounded-xl border p-4 flex flex-col gap-3 cursor-pointer transition-colors relative bg-[var(--card)] ${

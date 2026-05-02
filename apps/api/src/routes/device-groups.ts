@@ -39,6 +39,94 @@ async function hydrateSyncGroup(group: typeof deviceGroups.$inferSelect) {
   };
 }
 
+/**
+ * Builds wall geometry and pushes VIDEOWALL_INIT to every online member of a
+ * videowall group.  The caller must separately send `refresh_schedule`.
+ */
+async function buildAndPushWallManifest(
+  group: typeof deviceGroups.$inferSelect,
+  memberRows: Array<typeof deviceGroupMembers.$inferSelect>,
+  mode: 'videowall' | 'syncplay',
+): Promise<{ pushed: number; skipped: number }> {
+  const deviceIds = memberRows.map((m) => m.deviceId);
+  const deviceRows = await db.query.devices.findMany({
+    where: and(inArray(devices.id, deviceIds), isNull(devices.deletedAt)),
+  });
+  const deviceMap = Object.fromEntries(deviceRows.map((d) => [d.id, d]));
+
+  const wallMembers: WallMember[] = memberRows
+    .filter((m) => m.positionCol != null && m.positionRow != null)
+    .map((m) => ({
+      positionCol:    m.positionCol!,
+      positionRow:    m.positionRow!,
+      colSpan:        m.colSpan,
+      rowSpan:        m.rowSpan,
+      nativeWidthPx:  m.nativeWidthPx,
+      nativeHeightPx: m.nativeHeightPx,
+      tileRotation:   m.tileRotation,
+    }));
+
+  const bezels: WallBezels | null =
+    (group.bezelTopMm != null || group.bezelRightMm != null ||
+     group.bezelBottomMm != null || group.bezelLeftMm != null)
+      ? {
+          topMm:    Number(group.bezelTopMm    ?? 0),
+          rightMm:  Number(group.bezelRightMm  ?? 0),
+          bottomMm: Number(group.bezelBottomMm ?? 0),
+          leftMm:   Number(group.bezelLeftMm   ?? 0),
+        }
+      : null;
+
+  const geometry = buildWallGeometry(
+    wallMembers,
+    group.videoWallCols!,
+    group.videoWallRows!,
+    bezels,
+  );
+
+  const sortedMembers = [...memberRows]
+    .filter((m) => m.positionCol != null && m.positionRow != null)
+    .sort((a, b) =>
+      (a.positionRow! - b.positionRow!) || (a.positionCol! - b.positionCol!),
+    );
+  const leaderPriority = sortedMembers.map((m) => m.deviceId);
+  const peers = sortedMembers.map((m) => ({
+    deviceId:    m.deviceId,
+    lastKnownIp: (deviceMap[m.deviceId] as any)?.ipAddress ?? null,
+    port:        9615,
+  }));
+
+  let pushed = 0;
+  let skipped = 0;
+  for (const m of sortedMembers) {
+    const msg = {
+      type:          'VIDEOWALL_INIT' as const,
+      mode,
+      deviceGroupId: group.id,
+      geometry,
+      leaderPriority,
+      peers,
+      myCell: {
+        deviceId:       m.deviceId,
+        positionCol:    m.positionCol!,
+        positionRow:    m.positionRow!,
+        colSpan:        m.colSpan        ?? 1,
+        rowSpan:        m.rowSpan        ?? 1,
+        tileRotation:   m.tileRotation   ?? '0',
+        nativeWidthPx:  m.nativeWidthPx  ?? null,
+        nativeHeightPx: m.nativeHeightPx ?? null,
+      },
+    };
+    if (isDeviceOnline(m.deviceId)) {
+      sendCommand(m.deviceId, msg);
+      pushed += 1;
+    } else {
+      skipped += 1;
+    }
+  }
+  return { pushed, skipped };
+}
+
 export async function deviceGroupsRoutes(app: FastifyInstance) {
   // ── GET /device-groups?workspaceId= ──────────────────────────────────────
   app.get('/', { onRequest: [app.authenticate] }, async (req, reply) => {
@@ -57,11 +145,26 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
       orderBy: [asc(deviceGroups.name)],
     });
 
+    // Batch-fetch member device IDs for all groups in one query so the devices
+    // page can determine which devices belong to which videowall group.
+    const groupIdList = rows.map((r) => r.id);
+    const allMemberRows = groupIdList.length > 0
+      ? await db
+          .select({ groupId: deviceGroupMembers.groupId, deviceId: deviceGroupMembers.deviceId })
+          .from(deviceGroupMembers)
+          .where(inArray(deviceGroupMembers.groupId, groupIdList))
+      : [];
+    const memberIdsByGroup: Record<string, string[]> = {};
+    for (const m of allMemberRows) {
+      (memberIdsByGroup[m.groupId] ??= []).push(m.deviceId);
+    }
+
     // Hydrate syncGroup info for sync-type rows so the list page can show
     // the linked playlist + numeric SyncPlay groupId without an extra round-trip.
     const hydrated = await Promise.all(
       rows.map(async (g) => ({
         ...g,
+        memberDeviceIds: memberIdsByGroup[g.id] ?? [],
         syncGroup: g.type === 'sync' ? await hydrateSyncGroup(g) : null,
       })),
     );
@@ -419,12 +522,23 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
       isNull(devices.deletedAt),
     ));
 
+    // For videowall groups: push VIDEOWALL_INIT manifest before content reload
+    if (group.type === 'videowall' && group.videoWallCols && group.videoWallRows) {
+      const positionedMembers = await db.query.deviceGroupMembers.findMany({
+        where: eq(deviceGroupMembers.groupId, id),
+        orderBy: [asc(deviceGroupMembers.positionRow), asc(deviceGroupMembers.positionCol)],
+      });
+      await buildAndPushWallManifest(group, positionedMembers, 'videowall');
+    }
+
     const refreshedDeviceIds: string[] = [];
     for (const deviceId of deviceIds) {
       if (!isDeviceOnline(deviceId)) continue;
       sendCommand(deviceId, { type: 'refresh_schedule' });
-      // Clear any stale videowall manifest so devices revert to normal rendering
-      sendCommand(deviceId, { type: 'VIDEOWALL_CLEAR' });
+      // For non-videowall groups: clear any stale manifest so devices revert to normal rendering
+      if (group.type !== 'videowall') {
+        sendCommand(deviceId, { type: 'VIDEOWALL_CLEAR' });
+      }
       refreshedDeviceIds.push(deviceId);
     }
 
@@ -502,83 +616,11 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
       isNull(devices.deletedAt),
     ));
 
-    // Load device rows for peer IP list
-    const deviceRows = await db.query.devices.findMany({
-      where: and(inArray(devices.id, deviceIds), isNull(devices.deletedAt)),
-    });
-    const deviceMap = Object.fromEntries(deviceRows.map((d) => [d.id, d]));
-
-    // Build wall geometry
-    const wallMembers: WallMember[] = memberRows
-      .filter((m) => m.positionCol != null && m.positionRow != null)
-      .map((m) => ({
-        positionCol: m.positionCol!,
-        positionRow: m.positionRow!,
-        colSpan: m.colSpan,
-        rowSpan: m.rowSpan,
-        nativeWidthPx: m.nativeWidthPx,
-        nativeHeightPx: m.nativeHeightPx,
-        tileRotation: m.tileRotation,
-      }));
-
-    const bezels: WallBezels | null =
-      (group.bezelTopMm != null || group.bezelRightMm != null || group.bezelBottomMm != null || group.bezelLeftMm != null)
-        ? {
-            topMm:    Number(group.bezelTopMm    ?? 0),
-            rightMm:  Number(group.bezelRightMm  ?? 0),
-            bottomMm: Number(group.bezelBottomMm ?? 0),
-            leftMm:   Number(group.bezelLeftMm   ?? 0),
-          }
-        : null;
-
-    const geometry = buildWallGeometry(
-      wallMembers,
-      group.videoWallCols,
-      group.videoWallRows,
-      bezels,
-    );
-
-    const sortedMembers = [...memberRows]
-      .filter((m) => m.positionCol != null && m.positionRow != null)
-      .sort((a, b) =>
-        (a.positionRow! - b.positionRow!) || (a.positionCol! - b.positionCol!),
-      );
-    const leaderPriority = sortedMembers.map((m) => m.deviceId);
-    const peers = sortedMembers.map((m) => ({
-      deviceId: m.deviceId,
-      lastKnownIp: (deviceMap[m.deviceId] as any)?.ipAddress ?? null,
-      port: 9615,
-    }));
-
-    let pushed = 0;
-    let skipped = 0;
-    for (const m of sortedMembers) {
-      const msg = {
-        type: 'VIDEOWALL_INIT' as const,
-        mode,
-        deviceGroupId: group.id,
-        geometry,
-        leaderPriority,
-        peers,
-        myCell: {
-          deviceId:     m.deviceId,
-          positionCol:  m.positionCol!,
-          positionRow:  m.positionRow!,
-          colSpan:      m.colSpan  ?? 1,
-          rowSpan:      m.rowSpan  ?? 1,
-          tileRotation: m.tileRotation ?? '0',
-          nativeWidthPx:  m.nativeWidthPx  ?? null,
-          nativeHeightPx: m.nativeHeightPx ?? null,
-        },
-      };
-      // Also send content refresh so player picks up the new publishedContentId
-      if (isDeviceOnline(m.deviceId)) {
-        sendCommand(m.deviceId, msg);
-        sendCommand(m.deviceId, { type: 'refresh_schedule' });
-        pushed += 1;
-      } else {
-        skipped += 1;
-      }
+    // Build wall geometry + push VIDEOWALL_INIT to all online members
+    const { pushed, skipped } = await buildAndPushWallManifest(group, memberRows, mode);
+    // Send refresh_schedule so players reload the newly published content
+    for (const m of memberRows) {
+      if (isDeviceOnline(m.deviceId)) sendCommand(m.deviceId, { type: 'refresh_schedule' });
     }
 
     await writeAuditLog({

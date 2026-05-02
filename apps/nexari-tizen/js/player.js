@@ -342,7 +342,7 @@ const Player = {
     },
     // Handle WebSocket messages
     handleWebSocketMessage(data) {
-        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u;
+        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v;
         try {
             const message = JSON.parse(data);
             const messageType = message.type || message.event;
@@ -400,7 +400,7 @@ const Player = {
                     logger.info('Videowall init received:', message);
                     this._videowallManifest = message;
                     // mode drives crop vs. full-screen. Default to 'videowall' for back-compat.
-                    this._videowallMode = message.mode ?? 'videowall';
+                    this._videowallMode = (_a = message.mode) !== null && _a !== void 0 ? _a : 'videowall';
                     // Reuse the P2P SyncEngine for wall sync — feed it the peer/priority
                     // list from the videowall manifest.  groupId is the device group UUID
                     // (treated as an opaque string by the engine).
@@ -497,7 +497,7 @@ const Player = {
                     this.executeCommand({ type: 'SCREENSHOT_AUTO' });
                     break;
                 case 'start_live_capture': {
-                    const intervalMs = Math.max(1000, Number((_a = message.payload) === null || _a === void 0 ? void 0 : _a.intervalMs) || 1000);
+                    const intervalMs = Math.max(1000, Number((_b = message.payload) === null || _b === void 0 ? void 0 : _b.intervalMs) || 1000);
                     logger.info('start_live_capture received, intervalMs:', intervalMs);
                     // Stop any existing capture loop
                     if (this._liveInterval) {
@@ -637,7 +637,7 @@ const Player = {
                     }
                     break;
                 case 'remote_key': {
-                    const keyName = ((_c = (_b = message.payload) === null || _b === void 0 ? void 0 : _b.key) !== null && _c !== void 0 ? _c : '');
+                    const keyName = ((_d = (_c = message.payload) === null || _c === void 0 ? void 0 : _c.key) !== null && _d !== void 0 ? _d : '');
                     logger.info('remote_key received:', keyName);
                     const xhr = new XMLHttpRequest();
                     xhr.open('POST', 'http://127.0.0.1:9615/remote-key', true);
@@ -752,7 +752,7 @@ const Player = {
                 case 'remote_status': {
                     // Call /status-full to aggregate status, serial, device-name, model, IP and remote-ctrl
                     // in a single round-trip (server.js performs the MDC commands sequentially).
-                    const rsRequestId = (_d = message.payload) === null || _d === void 0 ? void 0 : _d.requestId;
+                    const rsRequestId = (_f = message.payload) === null || _f === void 0 ? void 0 : _f.requestId;
                     const rsWs = this.wsConnection;
                     function sendMdcStatusResponse(payload) {
                         if (rsRequestId && rsWs && rsWs.readyState === WebSocket.OPEN) {
@@ -781,7 +781,7 @@ const Player = {
                     break;
                 }
                 case 'tizen_probe': {
-                    const tpRequestId = (_f = message.payload) === null || _f === void 0 ? void 0 : _f.requestId;
+                    const tpRequestId = (_g = message.payload) === null || _g === void 0 ? void 0 : _g.requestId;
                     const tpWs = this.wsConnection;
                     function sendTizenProbeResult(sections) {
                         if (tpRequestId && tpWs && tpWs.readyState === WebSocket.OPEN) {
@@ -875,7 +875,7 @@ const Player = {
                                 audioResult[ac] = Boolean(si['isSupportedAudioCodec'](ac));
                             }
                             catch (e) {
-                                audioResult[ac] = `Error: ${(_g = e === null || e === void 0 ? void 0 : e.message) !== null && _g !== void 0 ? _g : String(e)}`;
+                                audioResult[ac] = `Error: ${(_h = e === null || e === void 0 ? void 0 : e.message) !== null && _h !== void 0 ? _h : String(e)}`;
                             }
                         }
                         siEntries.push({ label: 'Audio codec support', value: audioResult });
@@ -886,7 +886,7 @@ const Player = {
                                 videoResult[vc] = Boolean(si['isSupportedVideoCodec'](vc));
                             }
                             catch (e) {
-                                videoResult[vc] = `Error: ${(_h = e === null || e === void 0 ? void 0 : e.message) !== null && _h !== void 0 ? _h : String(e)}`;
+                                videoResult[vc] = `Error: ${(_j = e === null || e === void 0 ? void 0 : e.message) !== null && _j !== void 0 ? _j : String(e)}`;
                             }
                         }
                         siEntries.push({ label: 'Video codec support', value: videoResult });
@@ -929,7 +929,7 @@ const Player = {
                                 srcOrient[stt] = sc['getSourceOrientation'](stt);
                             }
                             catch (e) {
-                                srcOrient[stt] = `Error: ${(_j = e === null || e === void 0 ? void 0 : e.message) !== null && _j !== void 0 ? _j : String(e)}`;
+                                srcOrient[stt] = `Error: ${(_k = e === null || e === void 0 ? void 0 : e.message) !== null && _k !== void 0 ? _k : String(e)}`;
                             }
                         }
                         scEntries.push({ label: 'Source orientations', value: srcOrient });
@@ -1013,7 +1013,7 @@ const Player = {
                             tzEntries.push({ label: 'Device uptime (seconds)', value: tzsiTyped['getDeviceUptime']() });
                         }
                         catch (e) {
-                            tzEntries.push({ label: 'Device uptime (seconds)', error: `${(_k = e === null || e === void 0 ? void 0 : e.name) !== null && _k !== void 0 ? _k : 'Error'}: ${(_l = e === null || e === void 0 ? void 0 : e.message) !== null && _l !== void 0 ? _l : String(e)}` });
+                            tzEntries.push({ label: 'Device uptime (seconds)', error: `${(_l = e === null || e === void 0 ? void 0 : e.name) !== null && _l !== void 0 ? _l : 'Error'}: ${(_m = e === null || e === void 0 ? void 0 : e.message) !== null && _m !== void 0 ? _m : String(e)}` });
                         }
                         const capabilityKeys = [
                             'http://tizen.org/feature/screen',
@@ -1028,7 +1028,7 @@ const Player = {
                                 capabilities[ck] = tzsiTyped['getCapability'](ck);
                             }
                             catch (e) {
-                                capabilities[ck] = `Error: ${(_m = e === null || e === void 0 ? void 0 : e.message) !== null && _m !== void 0 ? _m : String(e)}`;
+                                capabilities[ck] = `Error: ${(_o = e === null || e === void 0 ? void 0 : e.message) !== null && _o !== void 0 ? _o : String(e)}`;
                             }
                         }
                         tzEntries.push({ label: 'Capabilities', value: capabilities });
@@ -1221,11 +1221,11 @@ const Player = {
                                 case 'open': {
                                     const p = tcParams;
                                     const docinfo = {
-                                        docpath: (_o = p === null || p === void 0 ? void 0 : p.docpath) !== null && _o !== void 0 ? _o : '',
-                                        rectX: (_p = p === null || p === void 0 ? void 0 : p.rectX) !== null && _p !== void 0 ? _p : 0,
-                                        rectY: (_q = p === null || p === void 0 ? void 0 : p.rectY) !== null && _q !== void 0 ? _q : 0,
-                                        rectWidth: (_r = p === null || p === void 0 ? void 0 : p.rectWidth) !== null && _r !== void 0 ? _r : (window.innerWidth || 1920),
-                                        rectHeight: (_s = p === null || p === void 0 ? void 0 : p.rectHeight) !== null && _s !== void 0 ? _s : (window.innerHeight || 1080),
+                                        docpath: (_p = p === null || p === void 0 ? void 0 : p.docpath) !== null && _p !== void 0 ? _p : '',
+                                        rectX: (_q = p === null || p === void 0 ? void 0 : p.rectX) !== null && _q !== void 0 ? _q : 0,
+                                        rectY: (_r = p === null || p === void 0 ? void 0 : p.rectY) !== null && _r !== void 0 ? _r : 0,
+                                        rectWidth: (_s = p === null || p === void 0 ? void 0 : p.rectWidth) !== null && _s !== void 0 ? _s : (window.innerWidth || 1920),
+                                        rectHeight: (_t = p === null || p === void 0 ? void 0 : p.rectHeight) !== null && _t !== void 0 ? _t : (window.innerHeight || 1080),
                                     };
                                     adapter.open(docinfo, ok, err);
                                     break;
@@ -1298,7 +1298,7 @@ const Player = {
                     // â”€â”€ B2BControl API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     if (tcAction && tcAction.indexOf('b2b.') === 0) {
                         const rw3 = window;
-                        const b2bc = (_u = (_t = rw3['b2bapis']) === null || _t === void 0 ? void 0 : _t.b2bcontrol) !== null && _u !== void 0 ? _u : null;
+                        const b2bc = (_v = (_u = rw3['b2bapis']) === null || _u === void 0 ? void 0 : _u.b2bcontrol) !== null && _v !== void 0 ? _v : null;
                         if (!b2bc) {
                             sendTizenCommandResult(false, undefined, 'b2bapis.b2bcontrol not available on this device');
                             break;
