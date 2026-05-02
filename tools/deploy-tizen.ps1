@@ -50,9 +50,11 @@ param(
     [string]$ApiBase = "",
     [string]$ReleaseNotes = "",
 
-    # Auto-bump version before packing. Set to "" to skip (use current version).
+    # Auto-bump version before packing. Default "" = use current version from package.json.
+    # Dev builds (install-nexari2.ps1) own the version bumping; prod just builds at the
+    # version that is already in package.json so both builds share the same version number.
     [ValidateSet("patch", "minor", "major", "")]
-    [string]$BumpVersion = "patch",
+    [string]$BumpVersion = "",
 
     # Run Tizen Studio CLI build + sign before uploading.
     # Uses npm run build (production HTTPS API URL: ds.chiho.app).
@@ -136,7 +138,7 @@ if ($Build) {
     if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
     New-Item $tmp -ItemType Directory | Out-Null
 
-    $excludeNames = @('node_modules','src','.sign','.settings','.project','.tproject','.git','vite.config.ts','package-lock.json','sssp_config.xml')
+    $excludeNames = @('node_modules','src','.sign','.settings','.project','.tproject','.git','vite.config.ts','package-lock.json','sssp_config.xml','js')
     foreach ($item in Get-ChildItem $TizenDir) {
         if ($excludeNames -contains $item.Name) { continue }
         if ($item.Extension -eq '.wgt') { continue }

@@ -54,6 +54,7 @@ const Player = {
     _luxSupported: true, // Set to false after first NAK; skips light_sensor_get in subsequent polls
     _onTimerSupported: true, // Set to false after first NAK; skips on_timer_get in subsequent polls
     _clockSupported: true, // Set to false after first NAK; skips get_clock / set_clock
+    _lastClockSyncAt: 0, // Timestamp of last set_clock; rate-limited to once per 24h
     _liveCaptureActive: false, // live-view capture running
     _liveCaptureIntervalMs: 1000, // requested cadence
     _liveCaptureBusy: false, // captureScreen in progress â€” prevents overlapping calls
@@ -2060,7 +2061,11 @@ const Player = {
         if (!ws || ws.readyState !== WebSocket.OPEN)
             return;
         // Sync panel HW RTC to device (web) time every poll â€” fire-and-forget
-        if (this._clockSupported) {
+        // Rate-limited to once per 24h. _lastClockSyncAt=0 ensures it fires on first boot.
+        // Frequent clock adjustments via MDC interrupt b2bsyncplay — do not lower this interval.
+        const CLOCK_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
+        if (this._clockSupported && (Date.now() - this._lastClockSyncAt > CLOCK_SYNC_INTERVAL_MS)) {
+            this._lastClockSyncAt = Date.now();
             this.sendLocalMdcXhr('set_clock', {})
                 .then((r) => {
                 if (r.supported === false) {
@@ -2068,7 +2073,7 @@ const Player = {
                     logger.info('[mdc-clock] set_clock not supported on this model');
                 }
                 else {
-                    logger.debug('[mdc-clock] HW clock sync:', r.ok);
+                    logger.info('[mdc-clock] HW clock sync ok (next sync in 24h)');
                 }
             })
                 .catch(() => { });
@@ -2219,8 +2224,10 @@ const Player = {
         this.currentContent = playlistToPlay;
         this.lastContentSignature = signatureToSet;
         this.cachePlaylist(playlistToPlay, signatureToSet);
-        // _thumbnailOnItemStart fires 3s after the first item starts playing (throttle
-        // already reset above). No extra timer needed here.
+        // For NativeSync playlists, Samsung controls item transitions natively so
+        // _thumbnailOnItemStart never fires. Take a screenshot after a short delay
+        // to capture the new content regardless of playback mode.
+        setTimeout(() => { this.takeScreenshotWithTrigger('content_change'); }, 8000);
     },
     // Download content in background without interrupting playback
     downloadContentInBackground(content, newSignature) {
@@ -7040,6 +7047,12 @@ const Player = {
             return;
         }
         const send = (dataBase64) => {
+            // Skip near-black frames: base64 length < ~13000 chars ≈ < ~9700 raw bytes
+            // which indicates an all-black or blank capture (e.g., caught during a transition).
+            if (dataBase64.length < 13000) {
+                logger.warn('[Screenshot] skipping likely black frame, bytes:', dataBase64.length);
+                return;
+            }
             ws.send(JSON.stringify({
                 type: 'screenshot_data',
                 payload: { dataBase64, trigger, contentId: null },

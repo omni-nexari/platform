@@ -54,6 +54,32 @@ $xml.Save($profilesXml)
 Write-Host "Profile '$signProfile' written to $profilesXml"
 
 # ============================================================
+# PRE-BUILD: Bump patch version in package.json + config.xml
+# SSSP compares <ver> against the installed app version — if
+# they match no update is triggered, even if the WGT changed.
+# Bumping patch on every build guarantees SSSP always detects
+# a new version and installs the updated WGT after reboot.
+# ============================================================
+Write-Host ""
+Write-Host "=== Bumping patch version ==="
+Push-Location $src
+try {
+    npm version patch --no-git-tag-version 2>&1 | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "npm version patch failed" }
+} finally {
+    Pop-Location
+}
+
+$appVerNew = (Get-Content "$src\package.json" -Raw | ConvertFrom-Json).version
+
+# Sync config.xml widget version attribute to match
+$configXmlPath = "$src\config.xml"
+$configXmlContent = Get-Content $configXmlPath -Raw
+$configXmlContent = $configXmlContent -replace '(<widget\s[^>]*version=")[^"]*(")', "`${1}$appVerNew`${2}"
+[System.IO.File]::WriteAllText($configXmlPath, $configXmlContent, [System.Text.UTF8Encoding]::new($false))
+Write-Host "Version bumped: $appVerNew (package.json + config.xml)"
+
+# ============================================================
 # STEP 1: BUILD + PACKAGE (once, shared for both TVs)
 # ============================================================
 Write-Host "=== STEP 1: Build ==="
@@ -64,7 +90,8 @@ New-Item $tmp -ItemType Directory | Out-Null
 $excludeNames = @(
     'node_modules', 'src', '.sign', '.settings',
     '.project', '.tproject', '.git',
-    'vite.config.ts', 'package-lock.json', 'sssp_config.xml'
+    'vite.config.ts', 'package-lock.json', 'sssp_config.xml',
+    'js'   # excluded here — copied fresh after build:dev below
 )
 foreach ($item in Get-ChildItem $src) {
     if ($excludeNames -contains $item.Name) { continue }
@@ -125,9 +152,9 @@ Write-Host ""
 Write-Host "=== STEP 1c: Deploy WGT to Pi server ($pi) ==="
 $piTizenDir = "/var/signage/tizen"
 scp "$src\NexariPlayer.wgt" "${pi}:${piTizenDir}/NexariPlayer.wgt"
-if ($LASTEXITCODE -ne 0) { Write-Warning "WGT SCP failed - check SSH access to $pi" }
+if ($LASTEXITCODE -ne 0) { Write-Error "WGT SCP failed - check SSH access to $pi. Aborting."; exit 1 }
 scp "$src\sssp_config.xml" "${pi}:${piTizenDir}/sssp_config.xml"
-if ($LASTEXITCODE -ne 0) { Write-Warning "sssp_config.xml SCP failed" }
+if ($LASTEXITCODE -ne 0) { Write-Error "sssp_config.xml SCP failed. Aborting."; exit 1 }
 Write-Host "Pi server updated: http://192.168.1.17/tizen/NexariPlayer.wgt"
 
 # ============================================================
@@ -147,7 +174,11 @@ function Install-NexariOnTV {
     $connectOut = & $sdb connect $tv 2>&1 | Out-String
     Write-Host $connectOut
     if ($connectOut -notmatch "connected to|already connected") {
-        Write-Host "WARNING: sdb connect may have failed for $label. Skipping." -ForegroundColor Yellow
+        Write-Host "WARNING: $label ($tv) is not reachable via SDB (likely not in developer mode)." -ForegroundColor Yellow
+        Write-Host "Pi already has the latest build. To update the TV manually:" -ForegroundColor Yellow
+        Write-Host "  1. On the TV: Settings > General > System Manager > URL Launcher Settings" -ForegroundColor Cyan
+        Write-Host "  2. Enter URL: http://192.168.1.17/tizen/sssp_config.xml" -ForegroundColor Cyan
+        Write-Host "  3. The TV will detect the new version and install it automatically." -ForegroundColor Cyan
         return
     }
     Start-Sleep -Seconds 2
@@ -174,6 +205,51 @@ function Install-NexariOnTV {
 }
 
 # ============================================================
+# Helper function: send Samsung MDC reboot command over TCP
+#   Packet: 0xAA 0x11 0xFE 0x01 0x02 0x12
+#   (Header=0xAA, Cmd=0x11/Power, ID=0xFE, Len=0x01, Data=0x02/Reboot, Checksum=0x12)
+# ============================================================
+function Send-MdcReboot {
+    param([string]$ip, [string]$label)
+    $port    = 1515
+    $packet  = [byte[]](0xAA, 0x11, 0xFE, 0x01, 0x02, 0x12)
+    Write-Host ""
+    Write-Host "--- MDC Reboot -> $label ($ip) ---"
+    try {
+        $tcp    = [System.Net.Sockets.TcpClient]::new()
+        $conn   = $tcp.BeginConnect($ip, $port, $null, $null)
+        $ok     = $conn.AsyncWaitHandle.WaitOne(3000)
+        if (-not $ok) { $tcp.Close(); throw "Timed out connecting to ${ip}:${port}" }
+        $tcp.EndConnect($conn)
+        $stream = $tcp.GetStream()
+        $stream.Write($packet, 0, $packet.Length)
+        $stream.Flush()
+
+        # Read ACK: 0xAA 0xFF <ID> 0x03 'A'(0x41) 0x11 <Power> <checksum>
+        $stream.ReadTimeout = 3000
+        $ackBuf = [byte[]]::new(16)
+        try {
+            $read = $stream.Read($ackBuf, 0, $ackBuf.Length)
+            if ($read -ge 5 -and $ackBuf[0] -eq 0xAA -and $ackBuf[1] -eq 0xFF -and $ackBuf[4] -eq 0x41) {
+                Write-Host "$label ACK received - reboot accepted." -ForegroundColor Green
+            } elseif ($read -ge 5 -and $ackBuf[0] -eq 0xAA -and $ackBuf[1] -eq 0xFF -and $ackBuf[4] -eq 0x4E) {
+                Write-Host "WARNING: $label NAK received - TV rejected the reboot command." -ForegroundColor Yellow
+            } else {
+                Write-Host "$label reboot command sent (no ACK parsed)." -ForegroundColor Green
+            }
+        } catch {
+            # ReadTimeout - TV didn't respond but command was delivered
+            Write-Host "$label reboot command sent (no ACK within 3s - TV may be rebooting)." -ForegroundColor Green
+        }
+
+        $tcp.Close()
+    } catch {
+        Write-Host "WARNING: Could not send MDC reboot to $label (${ip}:${port}) - $_" -ForegroundColor Yellow
+        Write-Host "  Check that the TV is powered on and MDC is enabled (port 1515)." -ForegroundColor Yellow
+    }
+}
+
+# ============================================================
 # STEP 2: DEPLOY TO QBC (192.168.1.11)
 # ============================================================
 Install-NexariOnTV -tv $tvQBC -label "QBC"
@@ -182,6 +258,24 @@ Install-NexariOnTV -tv $tvQBC -label "QBC"
 # STEP 3: DEPLOY TO SBB TV (192.168.1.39)
 # ============================================================
 Install-NexariOnTV -tv $tvSBB -label "SBB TV"
+
+# ============================================================
+# STEP 4: OPTIONAL REBOOT (triggers SSSP auto-update on boot)
+# ============================================================
+Write-Host ""
+Write-Host "Pi has the latest build ($appVer). Rebooting a screen will trigger SSSP" -ForegroundColor Cyan
+Write-Host "auto-update if the version in sssp_config.xml is newer than what is installed." -ForegroundColor Cyan
+Write-Host ""
+$rebootChoice = Read-Host "Reboot screens via MDC? [A]ll / [Q]BC only / [S]BB only / [N]o"
+switch ($rebootChoice.Trim().ToUpper()) {
+    "A" {
+        Send-MdcReboot -ip "192.168.1.11" -label "QBC"
+        Send-MdcReboot -ip "192.168.1.39" -label "SBB TV"
+    }
+    "Q" { Send-MdcReboot -ip "192.168.1.11" -label "QBC" }
+    "S" { Send-MdcReboot -ip "192.168.1.39" -label "SBB TV" }
+    default { Write-Host "Skipping reboot." }
+}
 
 Write-Host ""
 Write-Host "=== All done. ===" -ForegroundColor Green
