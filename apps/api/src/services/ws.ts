@@ -91,6 +91,32 @@ export type WsCommand =
       syncGroupId: string;
       reason?: string;
     }
+  | {
+      // Videowall: wall geometry + cell assignment pushed to each panel device.
+      type: 'VIDEOWALL_INIT';
+      deviceGroupId: string;
+      geometry: {
+        gridCols: number;
+        gridRows: number;
+        canvasW: number;
+        canvasH: number;
+        colWidths: number[];
+        rowHeights: number[];
+        bezels: { topMm: number; rightMm: number; bottomMm: number; leftMm: number } | null;
+      };
+      leaderPriority: string[];
+      peers: Array<{ deviceId: string; lastKnownIp: string | null; port: number }>;
+      myCell: {
+        deviceId: string;
+        positionCol: number;
+        positionRow: number;
+        colSpan: number;
+        rowSpan: number;
+        tileRotation: string;
+        nativeWidthPx: number | null;
+        nativeHeightPx: number | null;
+      };
+    }
   | { type: 'tizen_probe'; payload: { requestId: string } }
   | { type: 'tizen_command'; payload: { requestId: string; action: string; params?: unknown } }
   | { type: 'ntp_resync' }
