@@ -713,6 +713,7 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
     for (const m of sortedMembers) {
       const msg = {
         type: 'VIDEOWALL_INIT' as const,
+        mode: 'videowall' as const,
         deviceGroupId: group.id,
         geometry,
         leaderPriority,
