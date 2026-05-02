@@ -40,6 +40,7 @@ interface Device {
   serialNumber: string | null;
   timezone: string;
   latestScreenshotId: string | null;
+  latestFrameAt: number | null;
   publishedTarget: {
     id: string;
     type: 'content' | 'playlist' | 'schedule';
@@ -249,12 +250,15 @@ export default function WorkspaceDashboardPage() {
                   {selectedItems.has(device.id) && <Check className="w-3 h-3 text-white" />}
                 </div>
                 {/* Thumbnail */}
-                <img
-                  src={buildApiUrl(`/devices/${device.id}/screenshot/latest`)}
-                  alt="Last screenshot"
-                  className="absolute inset-0 w-full h-full object-cover"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                />
+                {device.latestScreenshotId && (
+                  <img
+                    key={`${device.latestScreenshotId}-${device.latestFrameAt ?? 0}`}
+                    src={buildApiUrl(`/devices/${device.id}/screenshots/${device.latestScreenshotId}${device.latestFrameAt ? `?t=${device.latestFrameAt}` : ''}`)}
+                    alt="Last screenshot"
+                    className="absolute inset-0 w-full h-full object-cover"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                  />
+                )}
                 {/* Scrim over thumbnail */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-black/30" />
                 <span className={`ui-media-badge absolute top-2 right-2 z-20 ${currentStatusMeta.mediaTone}`}>

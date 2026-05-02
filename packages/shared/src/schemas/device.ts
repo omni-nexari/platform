@@ -232,7 +232,7 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
     payload: z.object({
       dataBase64: z.string(),
       contentId: z.string().uuid().nullable().optional(),
-      trigger: z.enum(['auto_change', 'auto_interval', 'manual', 'live']),
+      trigger: z.enum(['auto_change', 'auto_interval', 'manual', 'live', 'content_change', 'interval']),
     }),
   }),
   z.object({
