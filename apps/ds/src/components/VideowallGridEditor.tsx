@@ -159,7 +159,7 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
   });
 
   const pushManifestMut = useMutation({
-    mutationFn: () => api.post(`/device-groups/${groupId}/videowall-manifest`, {}),
+    mutationFn: () => api.post(`/device-groups/${groupId}/videowall-manifest`, {}) as Promise<{ pushed: number; skipped: number }>,
     onSuccess: (res: { pushed: number; skipped: number }) => {
       toast.success(`Manifest pushed to ${res.pushed} device${res.pushed !== 1 ? 's' : ''}${res.skipped > 0 ? ` (${res.skipped} offline)` : ''}`);
     },
