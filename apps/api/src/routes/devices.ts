@@ -4,18 +4,20 @@ import { createReadStream, existsSync, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import AdmZip from 'adm-zip';
-import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents } from '@signage/db';
+import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents, deviceGroupMembers, deviceGroups } from '@signage/db';
 import { eq, and, isNull, desc, asc, inArray, sql, ilike, gte, lte, lt } from 'drizzle-orm';
 import { z } from 'zod';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
-import { ClaimDeviceSchema, UpdateDeviceSchema, DeviceCommandSchema, PairRequestSchema } from '@signage/shared';
+import { ClaimDeviceSchema, UpdateDeviceSchema, DeviceCommandSchema, PairRequestSchema, buildWallGeometry } from '@signage/shared';
+import type { WallMember, WallBezels } from '@signage/shared';
 import { writeAuditLog } from '../services/audit.js';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
 import { MDC_ALL_COMMAND_NAMES } from '../services/mdc.js';
 import { dispatchWebhookEvent } from '../services/webhooks.js';
 import {
   sendCommand,
+  broadcastToDevices,
   requestRemoteStatus,
   requestMdcControl,
   requestTizenProbe,
@@ -1369,6 +1371,85 @@ export async function deviceRoutes(app: FastifyInstance) {
       sendCommand(deviceId, { type: 'screenshot_auto' });
     }, 3_000);
 
+    // Re-push VIDEOWALL_INIT for any videowall group this device belongs to.
+    // Without this, a device that reconnects after a reinstall plays full-screen
+    // and never enters sync mode because it has no wall manifest.
+    setTimeout(async () => {
+      try {
+        const memberships = await db.query.deviceGroupMembers.findMany({
+          where: eq(deviceGroupMembers.deviceId, deviceId),
+        });
+        for (const membership of memberships) {
+          const group = await db.query.deviceGroups.findFirst({
+            where: and(eq(deviceGroups.id, membership.groupId), isNull(deviceGroups.deletedAt)),
+          });
+          if (!group || group.type !== 'videowall' || !group.videoWallCols || !group.videoWallRows) continue;
+
+          const allMembers = await db.query.deviceGroupMembers.findMany({
+            where: eq(deviceGroupMembers.groupId, group.id),
+          });
+          const memberDeviceIds = allMembers.map((m) => m.deviceId);
+          const memberDeviceRows = await db.query.devices.findMany({
+            where: and(inArray(devices.id, memberDeviceIds), isNull(devices.deletedAt)),
+          });
+          const deviceMap = Object.fromEntries(memberDeviceRows.map((d) => [d.id, d]));
+
+          const wallMembers: WallMember[] = allMembers
+            .filter((m) => m.positionCol != null && m.positionRow != null)
+            .map((m) => ({
+              positionCol: m.positionCol!,
+              positionRow: m.positionRow!,
+              colSpan: m.colSpan,
+              rowSpan: m.rowSpan,
+              nativeWidthPx: m.nativeWidthPx,
+              nativeHeightPx: m.nativeHeightPx,
+              tileRotation: m.tileRotation,
+            }));
+
+          const bezels: WallBezels | null =
+            (group.bezelTopMm != null || group.bezelRightMm != null || group.bezelBottomMm != null || group.bezelLeftMm != null)
+              ? { topMm: Number(group.bezelTopMm ?? 0), rightMm: Number(group.bezelRightMm ?? 0), bottomMm: Number(group.bezelBottomMm ?? 0), leftMm: Number(group.bezelLeftMm ?? 0) }
+              : null;
+
+          const geometry = buildWallGeometry(wallMembers, group.videoWallCols, group.videoWallRows, bezels);
+          const sortedMembers = [...allMembers]
+            .filter((m) => m.positionCol != null && m.positionRow != null)
+            .sort((a, b) => (a.positionRow! - b.positionRow!) || (a.positionCol! - b.positionCol!));
+          const leaderPriority = sortedMembers.map((m) => m.deviceId);
+          const peers = sortedMembers.map((m) => ({
+            deviceId: m.deviceId,
+            lastKnownIp: (deviceMap[m.deviceId] as any)?.ipAddress ?? null,
+            port: 9615,
+          }));
+
+          const myMember = allMembers.find((m) => m.deviceId === deviceId);
+          if (!myMember || myMember.positionCol == null || myMember.positionRow == null) continue;
+
+          sendCommand(deviceId, {
+            type: 'VIDEOWALL_INIT',
+            mode: 'videowall',
+            deviceGroupId: group.id,
+            geometry,
+            leaderPriority,
+            peers,
+            myCell: {
+              deviceId,
+              positionCol: myMember.positionCol,
+              positionRow: myMember.positionRow,
+              colSpan: myMember.colSpan ?? 1,
+              rowSpan: myMember.rowSpan ?? 1,
+              tileRotation: myMember.tileRotation ?? '0',
+              nativeWidthPx: myMember.nativeWidthPx ?? null,
+              nativeHeightPx: myMember.nativeHeightPx ?? null,
+            },
+          });
+          app.log.info({ deviceId, groupId: group.id }, 'VIDEOWALL_INIT re-pushed on device reconnect');
+        }
+      } catch (e) {
+        app.log.warn({ deviceId, err: e }, 'Failed to re-push VIDEOWALL_INIT on reconnect');
+      }
+    }, 4_000);
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     socket.on('message', async (rawData: any) => {
       const rawText = rawData.toString() as string;
@@ -1416,6 +1497,42 @@ export async function deviceRoutes(app: FastifyInstance) {
   // Device-authenticated routes  (JWT type === 'device')
   // Used by the Tizen player app to fetch schedule / content
   // ════════════════════════════════════════════════════════════════════════════
+
+  // ── POST /devices/group-sync-play ─ relay synchronized start cue to all wall panels ─
+  // Called by the leader panel after it decides the syncedStartMs start time.
+  // Broadcasts VIDEOWALL_SYNC_PLAY to every member of the group via their WS
+  // connection so Tizen 4 followers (whose local bridge XHR may be blocked)
+  // still receive the cue over their guaranteed WS connection.
+  app.post('/group-sync-play', async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+
+    const body = req.body as { groupId?: string; syncedStartMs?: number };
+    if (!body?.groupId || typeof body.syncedStartMs !== 'number' || !Number.isFinite(body.syncedStartMs)) {
+      return reply.status(400).send({ error: 'groupId (string) and syncedStartMs (number) required' });
+    }
+
+    // Verify the calling device is actually a member of this group.
+    const membership = await db.query.deviceGroupMembers.findFirst({
+      where: and(
+        eq(deviceGroupMembers.deviceId, auth.deviceId),
+        eq(deviceGroupMembers.groupId, body.groupId),
+      ),
+    });
+    if (!membership) return reply.status(403).send({ error: 'Device is not a member of this group' });
+
+    // Broadcast to all members.
+    const allMembers = await db.query.deviceGroupMembers.findMany({
+      where: eq(deviceGroupMembers.groupId, body.groupId),
+    });
+    const deviceIds = allMembers.map((m) => m.deviceId);
+    broadcastToDevices(deviceIds, {
+      type: 'VIDEOWALL_SYNC_PLAY',
+      payload: { syncedStartMs: body.syncedStartMs },
+    } as any);
+
+    return reply.send({ ok: true, broadcast: deviceIds.length });
+  });
 
   // ── GET /devices/time ─ lightweight server timestamp for player clock sync ─
   app.get('/time', async (_req, reply) => {

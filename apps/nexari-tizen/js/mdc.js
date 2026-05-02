@@ -44,6 +44,11 @@ var syncPeerState = {}; // { [syncGroupId]: { ready: boolean, startAt: number|nu
 // Identity of this device in the sync mesh (set by player via POST /sync/identity).
 var syncIdentity = { deviceId: null, groupId: null, priority: 99 };
 
+// NTP offset (ms) reported by the player after each server-NTP sync.
+// Added to Date.now() in /time so follower peer-NTP aligns to server UTC,
+// not raw wall-clock, preventing a ~ntpOffset ms drift in SYNC_PLAY timing.
+var bridgeNtpOffset = 0;
+
 // Live peer table built from UDP beacons.
 // peerTable[deviceId] = { ip, port, priority, groupId, lastSeenAt }
 var peerTable = {};
@@ -537,10 +542,29 @@ var server = http.createServer(function(req, res) {
   // ──────────────────────────────────────────────────────────────────────
 
   // GET /time  → server-clock NTP source for peer-to-peer clock sync.
-  // Mirrors apps/api/src/routes/devices.ts GET /devices/time.
+  // Returns NTP-corrected time (Date.now() + bridgeNtpOffset) so follower peer-NTP
+  // aligns to server UTC, matching getSyncedTime() across all devices.
   if (req.method === 'GET' && req.url === '/time') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ timestamp: Date.now() }));
+    res.end(JSON.stringify({ timestamp: Date.now() + bridgeNtpOffset }));
+    return;
+  }
+
+  // POST /sync/ntp-offset  { ntpOffset: number }
+  // Player calls this after each server-NTP sync to keep bridgeNtpOffset current.
+  if (req.method === 'POST' && req.url === '/sync/ntp-offset') {
+    var ntpBody = '';
+    req.on('data', function(c) { ntpBody += c.toString(); });
+    req.on('end', function() {
+      try {
+        var p = JSON.parse(ntpBody || '{}');
+        if (typeof p.ntpOffset === 'number' && isFinite(p.ntpOffset)) {
+          bridgeNtpOffset = p.ntpOffset;
+        }
+      } catch(e) {}
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true}');
+    });
     return;
   }
 

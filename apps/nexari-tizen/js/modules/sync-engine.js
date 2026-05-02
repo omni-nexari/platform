@@ -34,7 +34,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 var SyncEngine;
 (function (SyncEngine) {
     // ── State ───────────────────────────────────────────────────────────────
-    const BRIDGE_BASE = 'http://127.0.0.1:9615';
+    const BRIDGE_BASE = 'http://localhost:9615';
     const PEER_REFRESH_INTERVAL_MS = 2000;
     const MESSAGE_POLL_INTERVAL_MS = 1000;
     const PEER_NTP_INTERVAL_MS = 30000;
