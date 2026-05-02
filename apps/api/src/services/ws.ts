@@ -579,12 +579,21 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
           await mkdir(dir, { recursive: true });
           const storageKey = `${deviceId}/thumbnail.jpg`;
           await writeFile(join(STORAGE_ROOT, storageKey), buf);
-          // Delete+insert (not upsert) so the row gets a new UUID each time.
-          // This causes latestScreenshotId in the /devices list API to change,
-          // which makes the portal device cards pick up the fresh image on next poll.
-          await db.delete(deviceScreenshots)
-            .where(and(eq(deviceScreenshots.deviceId, deviceId), eq(deviceScreenshots.trigger, 'thumbnail')));
-          await db.insert(deviceScreenshots).values({ deviceId, storageKey, trigger: 'thumbnail' });
+          // Update existing thumbnail row (stable UUID) or insert if first time.
+          // Keeping the same UUID prevents the portal from getting a 404 during the
+          // 15s poll window after the old UUID was deleted. The latestFrameAt
+          // cache-buster (?t=) in the image URL handles re-fetching new file content.
+          const existingThumb = await db.query.deviceScreenshots.findFirst({
+            where: and(eq(deviceScreenshots.deviceId, deviceId), eq(deviceScreenshots.trigger, 'thumbnail')),
+            columns: { id: true },
+          });
+          if (existingThumb) {
+            await db.update(deviceScreenshots)
+              .set({ storageKey, takenAt: new Date() })
+              .where(eq(deviceScreenshots.id, existingThumb.id));
+          } else {
+            await db.insert(deviceScreenshots).values({ deviceId, storageKey, trigger: 'thumbnail' });
+          }
         } catch (err) {
           console.error('[ws] screenshot_data persist failed', { deviceId, trigger }, err);
         }
