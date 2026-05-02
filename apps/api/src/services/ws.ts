@@ -93,7 +93,10 @@ export type WsCommand =
     }
   | {
       // Videowall: wall geometry + cell assignment pushed to each panel device.
+      // mode='videowall' → player crops its region from the full-wall video.
+      // mode='syncplay' → player runs P2P SyncEngine but renders full-screen (no crop).
       type: 'VIDEOWALL_INIT';
+      mode: 'videowall' | 'syncplay';
       deviceGroupId: string;
       geometry: {
         gridCols: number;
@@ -116,6 +119,11 @@ export type WsCommand =
         nativeWidthPx: number | null;
         nativeHeightPx: number | null;
       };
+    }
+  | {
+      // Clears any active videowall manifest on the device so it reverts to
+      // normal single-screen rendering on next content load.
+      type: 'VIDEOWALL_CLEAR';
     }
   | { type: 'tizen_probe'; payload: { requestId: string } }
   | { type: 'tizen_command'; payload: { requestId: string; action: string; params?: unknown } }

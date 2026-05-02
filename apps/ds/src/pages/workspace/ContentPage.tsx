@@ -15,7 +15,7 @@ import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTag
 import AuthImg from '../../components/AuthImg.js';
 import ContentDetailPanel from '../../components/ContentDetailPanel.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
-import DevicePickerModal from '../../components/DevicePickerModal.js';
+import PublishWizardModal from '../../components/PublishWizardModal.js';
 import BulkTagModal from '../../components/BulkTagModal.js';
 import SmartViewsBar from '../../components/SmartViewsBar.js';
 import TagFilterBar from '../../components/TagFilterBar.js';
@@ -681,23 +681,6 @@ export default function ContentPage() {
       ]
     : [];
 
-  const publishMut = useMutation({
-    mutationFn: (deviceIds: string[]) => {
-      if (!publishCandidate) throw new Error('Select exactly one content item to publish');
-      return api.post('/devices/publish', {
-        workspaceId: wsId,
-        deviceIds,
-        resourceType: 'content',
-        resourceId: publishCandidate.id,
-      });
-    },
-    onSuccess: (_data, deviceIds) => {
-      toast.success(`Published to ${deviceIds.length} screen${deviceIds.length === 1 ? '' : 's'}`);
-      setPublishPickerOpen(false);
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to publish content'),
-  });
-
   function renderFolderTree(parentId: string | null = null, depth = 0): React.ReactNode {
     const children = folders.filter((folder) => folder.parentId === parentId);
     if (children.length === 0) return null;
@@ -1012,13 +995,13 @@ export default function ContentPage() {
       )}
 
       {publishPickerOpen && wsId && publishCandidate && (
-        <DevicePickerModal
+        <PublishWizardModal
           open={publishPickerOpen}
-          onClose={() => setPublishPickerOpen(false)}
-          onSelect={(devices) => publishMut.mutate(devices.map((device) => device.id))}
+          contentId={publishCandidate.id}
+          contentName={publishCandidate.name}
           workspaceId={wsId}
-          title={`Publish ${publishCandidate.name}`}
-          confirmLabel={publishMut.isPending ? 'Publishing…' : 'Publish'}
+          onClose={() => setPublishPickerOpen(false)}
+          onDone={() => setPublishPickerOpen(false)}
         />
       )}
 

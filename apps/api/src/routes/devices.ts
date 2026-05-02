@@ -986,6 +986,8 @@ export async function deviceRoutes(app: FastifyInstance) {
     for (const device of targetDevices) {
       if (!isDeviceOnline(device.id)) continue;
       sendCommand(device.id, { type: 'refresh_schedule' });
+      // Clear any stale videowall manifest so the device reverts to normal rendering
+      sendCommand(device.id, { type: 'VIDEOWALL_CLEAR' });
       refreshedDeviceIds.push(device.id);
     }
 
@@ -1055,6 +1057,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     for (const device of targetDevices) {
       if (!isDeviceOnline(device.id)) continue;
       sendCommand(device.id, { type: 'refresh_schedule' });
+      sendCommand(device.id, { type: 'VIDEOWALL_CLEAR' });
       refreshedDeviceIds.push(device.id);
     }
 

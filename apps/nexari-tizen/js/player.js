@@ -399,6 +399,8 @@ const Player = {
                     // (not nested under .payload). Store the whole message as the manifest.
                     logger.info('Videowall init received:', message);
                     this._videowallManifest = message;
+                    // mode drives crop vs. full-screen. Default to 'videowall' for back-compat.
+                    this._videowallMode = message.mode ?? 'videowall';
                     // Reuse the P2P SyncEngine for wall sync — feed it the peer/priority
                     // list from the videowall manifest.  groupId is the device group UUID
                     // (treated as an opaque string by the engine).
@@ -413,6 +415,13 @@ const Player = {
                     // Re-check content so any pending videowall content starts rendering
                     // now that the manifest (crop geometry) is available.
                     this.loadContent();
+                    break;
+                case 'VIDEOWALL_CLEAR':
+                    // Portal published content outside of a videowall group — reset manifest
+                    // so the next content load renders normally without crop.
+                    logger.info('Videowall manifest cleared');
+                    this._videowallManifest = null;
+                    this._videowallMode = null;
                     break;
                 case 'SESSION_CONFIG':
                     logger.info('SyncPlay session config received - refreshing content');
@@ -2646,10 +2655,10 @@ const Player = {
     },
     // Render video content using Samsung AVPlay API for better performance
     renderVideo(container, content) {
-        // Videowall mode: CSS-crop the full-wall video to this panel's region.
-        // Guard on content.type so regular video items in a playlist aren't
-        // accidentally rendered in crop mode if a manifest is still in memory.
-        if (this._videowallManifest && content && content.type === 'VIDEOWALL') {
+        // Videowall crop mode: CSS-crop the full-wall video to this panel's region.
+        // Guard on _videowallMode='videowall' so P2P-synced single-screen content
+        // (mode='syncplay') plays full-screen even though a manifest is in memory.
+        if (this._videowallManifest && this._videowallMode === 'videowall') {
             this._renderVideowallContent(container, content);
             return;
         }

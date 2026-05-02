@@ -423,6 +423,8 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
     for (const deviceId of deviceIds) {
       if (!isDeviceOnline(deviceId)) continue;
       sendCommand(deviceId, { type: 'refresh_schedule' });
+      // Clear any stale videowall manifest so devices revert to normal rendering
+      sendCommand(deviceId, { type: 'VIDEOWALL_CLEAR' });
       refreshedDeviceIds.push(deviceId);
     }
 
@@ -442,6 +444,154 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
       resourceType: body.resourceType,
       resourceId: body.resourceId,
     });
+  });
+
+  // ── POST /device-groups/:id/publish-videowall ─────────────────────────────
+  // Atomically publishes content to all member devices AND pushes VIDEOWALL_INIT
+  // so the player knows the wall geometry + its cell assignment immediately.
+  // mode='videowall' → player crops its region from the full-wall video.
+  // mode='syncplay'  → player runs P2P SyncEngine but renders full-screen (no crop).
+  app.post('/:id/publish-videowall', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    if (!['owner', 'admin', 'editor'].includes(user.role)) {
+      return reply.status(403).send({ error: 'Forbidden' });
+    }
+
+    const { id } = req.params as { id: string };
+    const body = req.body as { contentId?: string; mode?: string };
+    if (!body.contentId) return reply.status(400).send({ error: 'contentId required' });
+    if (!body.mode || !['videowall', 'syncplay'].includes(body.mode)) {
+      return reply.status(400).send({ error: 'mode must be videowall or syncplay' });
+    }
+    const mode = body.mode as 'videowall' | 'syncplay';
+
+    const group = await db.query.deviceGroups.findFirst({
+      where: and(eq(deviceGroups.id, id), isNull(deviceGroups.deletedAt)),
+    });
+    if (!group || group.orgId !== user.orgId) return reply.status(404).send({ error: 'Not found' });
+    if (group.type !== 'videowall') {
+      return reply.status(400).send({ error: 'Device group is not type=videowall' });
+    }
+    if (!group.videoWallCols || !group.videoWallRows) {
+      return reply.status(400).send({ error: 'videoWallCols and videoWallRows must be set before publishing' });
+    }
+
+    const contentItem = await db.query.contentItems.findFirst({
+      where: and(eq(contentItems.id, body.contentId), isNull(contentItems.deletedAt)),
+    });
+    if (!contentItem) return reply.status(404).send({ error: 'Content not found' });
+
+    const memberRows = await db.query.deviceGroupMembers.findMany({
+      where: eq(deviceGroupMembers.groupId, id),
+      orderBy: [asc(deviceGroupMembers.positionRow), asc(deviceGroupMembers.positionCol)],
+    });
+    if (memberRows.length === 0) return reply.send({ updated: 0, pushed: 0, skipped: 0 });
+
+    const deviceIds = memberRows.map((m) => m.deviceId);
+
+    // Publish content to all member devices
+    await db.update(devices).set({
+      publishedContentId: body.contentId,
+      publishedPlaylistId: null,
+      publishedScheduleId: null,
+      publishedSyncGroupId: null,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(devices.orgId, user.orgId),
+      inArray(devices.id, deviceIds),
+      isNull(devices.deletedAt),
+    ));
+
+    // Load device rows for peer IP list
+    const deviceRows = await db.query.devices.findMany({
+      where: and(inArray(devices.id, deviceIds), isNull(devices.deletedAt)),
+    });
+    const deviceMap = Object.fromEntries(deviceRows.map((d) => [d.id, d]));
+
+    // Build wall geometry
+    const wallMembers: WallMember[] = memberRows
+      .filter((m) => m.positionCol != null && m.positionRow != null)
+      .map((m) => ({
+        positionCol: m.positionCol!,
+        positionRow: m.positionRow!,
+        colSpan: m.colSpan,
+        rowSpan: m.rowSpan,
+        nativeWidthPx: m.nativeWidthPx,
+        nativeHeightPx: m.nativeHeightPx,
+        tileRotation: m.tileRotation,
+      }));
+
+    const bezels: WallBezels | null =
+      (group.bezelTopMm != null || group.bezelRightMm != null || group.bezelBottomMm != null || group.bezelLeftMm != null)
+        ? {
+            topMm:    Number(group.bezelTopMm    ?? 0),
+            rightMm:  Number(group.bezelRightMm  ?? 0),
+            bottomMm: Number(group.bezelBottomMm ?? 0),
+            leftMm:   Number(group.bezelLeftMm   ?? 0),
+          }
+        : null;
+
+    const geometry = buildWallGeometry(
+      wallMembers,
+      group.videoWallCols,
+      group.videoWallRows,
+      bezels,
+    );
+
+    const sortedMembers = [...memberRows]
+      .filter((m) => m.positionCol != null && m.positionRow != null)
+      .sort((a, b) =>
+        (a.positionRow! - b.positionRow!) || (a.positionCol! - b.positionCol!),
+      );
+    const leaderPriority = sortedMembers.map((m) => m.deviceId);
+    const peers = sortedMembers.map((m) => ({
+      deviceId: m.deviceId,
+      lastKnownIp: (deviceMap[m.deviceId] as any)?.ipAddress ?? null,
+      port: 9615,
+    }));
+
+    let pushed = 0;
+    let skipped = 0;
+    for (const m of sortedMembers) {
+      const msg = {
+        type: 'VIDEOWALL_INIT' as const,
+        mode,
+        deviceGroupId: group.id,
+        geometry,
+        leaderPriority,
+        peers,
+        myCell: {
+          deviceId:     m.deviceId,
+          positionCol:  m.positionCol!,
+          positionRow:  m.positionRow!,
+          colSpan:      m.colSpan  ?? 1,
+          rowSpan:      m.rowSpan  ?? 1,
+          tileRotation: m.tileRotation ?? '0',
+          nativeWidthPx:  m.nativeWidthPx  ?? null,
+          nativeHeightPx: m.nativeHeightPx ?? null,
+        },
+      };
+      // Also send content refresh so player picks up the new publishedContentId
+      if (isDeviceOnline(m.deviceId)) {
+        sendCommand(m.deviceId, msg);
+        sendCommand(m.deviceId, { type: 'refresh_schedule' });
+        pushed += 1;
+      } else {
+        skipped += 1;
+      }
+    }
+
+    await writeAuditLog({
+      orgId: user.orgId,
+      actorId: user.sub,
+      action: 'DEVICE_GROUP_PUBLISH',
+      entityType: 'device_group',
+      entityId: id,
+      ipAddress: req.ip,
+      meta: { contentId: body.contentId, mode, deviceCount: deviceIds.length, pushed, skipped },
+    });
+
+    return reply.send({ updated: deviceIds.length, pushed, skipped });
   });
 
   // ── POST /device-groups/:id/command ──────────────────────────────────────

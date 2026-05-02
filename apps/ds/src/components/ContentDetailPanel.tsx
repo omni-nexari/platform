@@ -12,7 +12,7 @@ import { api, buildApiUrl } from '../lib/api.js';
 import { useAuthStore } from '../lib/auth.js';
 import AuthImg from './AuthImg.js';
 import AssignedTagPills, { type AssignedTag } from './AssignedTagPills.js';
-import DevicePickerModal from './DevicePickerModal.js';
+import PublishWizardModal from './PublishWizardModal.js';
 import WorkspaceTagPicker from './WorkspaceTagPicker.js';
 import EditMenuBoardModal from './EditMenuBoardModal.js';
 import Html5EditorModal from './Html5EditorModal.js';
@@ -1007,23 +1007,6 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
     onError: () => toast.error('Failed to duplicate'),
   });
 
-  const publishMut = useMutation({
-    mutationFn: (deviceIds: string[]) => {
-      if (!itemId) throw new Error('Content is not available');
-      return api.post('/devices/publish', {
-        workspaceId,
-        deviceIds,
-        resourceType: 'content',
-        resourceId: itemId,
-      });
-    },
-    onSuccess: (_data, deviceIds) => {
-      toast.success(`Published to ${deviceIds.length} screen${deviceIds.length === 1 ? '' : 's'}`);
-      setConfirmPublishOpen(false);
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to publish content'),
-  });
-
   const submitReviewMut = useMutation({
     mutationFn: () => api.post(`/content/${itemId}/submit-review`),
     onSuccess: () => { toast.success('Submitted for review'); invalidate(); },
@@ -1276,13 +1259,13 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
           onClose={() => setConfirmDuplicateOpen(false)}
         />
 
-        <DevicePickerModal
+        <PublishWizardModal
           open={confirmPublishOpen}
-          onClose={() => setConfirmPublishOpen(false)}
-          onSelect={(devices) => publishMut.mutate(devices.map((device) => device.id))}
+          contentId={itemId ?? ''}
+          contentName={item?.name ?? 'Content'}
           workspaceId={workspaceId}
-          title={`Publish ${item?.name ?? 'Content'}`}
-          confirmLabel={publishMut.isPending ? 'Publishing…' : 'Publish'}
+          onClose={() => setConfirmPublishOpen(false)}
+          onDone={() => setConfirmPublishOpen(false)}
         />
 
         {/* Edit menu board modal */}
