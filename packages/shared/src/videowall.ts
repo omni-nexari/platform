@@ -112,12 +112,12 @@ export function computeColWidths(members: WallMember[], gridCols: number): numbe
     const logW = panelLogicalW(m);
 
     if (span === 1) {
-      widths[col] = Math.max(widths[col], logW);
+      widths[col] = Math.max(widths[col] ?? 0, logW);
     } else {
       // Distribute width evenly; only update cells that currently have 0
       const perCell = Math.round(logW / span);
       for (let c = col; c < col + span && c < gridCols; c++) {
-        widths[c] = Math.max(widths[c], perCell);
+        widths[c] = Math.max(widths[c] ?? 0, perCell);
       }
     }
   }
@@ -145,11 +145,11 @@ export function computeRowHeights(members: WallMember[], gridRows: number): numb
     const logH = panelLogicalH(m);
 
     if (span === 1) {
-      heights[row] = Math.max(heights[row], logH);
+      heights[row] = Math.max(heights[row] ?? 0, logH);
     } else {
       const perCell = Math.round(logH / span);
       for (let r = row; r < row + span && r < gridRows; r++) {
-        heights[r] = Math.max(heights[r], perCell);
+        heights[r] = Math.max(heights[r] ?? 0, perCell);
       }
     }
   }
