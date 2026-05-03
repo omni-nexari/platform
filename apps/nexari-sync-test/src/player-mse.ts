@@ -64,38 +64,11 @@ export async function loadVideo(url: string, itemIndex = 0): Promise<void> {
   logger.info(`[MSE] loading: ${url}`);
   updateHud({ positionMs: 0, expectedMs: 0, driftMs: 0, lastAction: 'Buffering…' });
 
-  try {
-    _ms = new MediaSource();
-    _video.src = URL.createObjectURL(_ms);
-
-    await new Promise<void>((resolve) => {
-      _ms!.addEventListener('sourceopen', () => resolve(), { once: true });
-    });
-
-    // Detect MIME type from URL extension
-    const ext  = url.split('.').pop()?.toLowerCase() ?? 'mp4';
-    const mime = ext === 'webm' ? 'video/webm; codecs="vp9"' : 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
-
-    if (!MediaSource.isTypeSupported(mime)) {
-      throw new Error(`MSE: MIME not supported: ${mime}`);
-    }
-
-    _sb = _ms.addSourceBuffer(mime);
-
-    // Stream-fetch and append in chunks
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`fetch ${url} → ${resp.status}`);
-    const reader = resp.body!.getReader();
-
-    await _streamAppend(reader);
-
-    _ms.endOfStream();
-    logger.info('[MSE] source buffer complete');
-
-  } catch (e: any) {
-    logger.error(`[MSE] load failed: ${e?.message}`);
-    throw e;
-  }
+  // Use direct src assignment — fetch() is unreliable for widget-local files on
+  // Samsung Tizen. The HTML5 video element handles local media natively.
+  _video.preload = 'auto';
+  _video.src = url;
+  _video.load();
 
   // Wait for canplay
   await new Promise<void>((resolve) => {

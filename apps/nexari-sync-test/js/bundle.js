@@ -472,35 +472,15 @@
   }
   function loadVideo(url, itemIndex = 0) {
     return __async(this, null, function* () {
-      var _a, _b;
       if (!_video) return;
       _itemIndex = itemIndex;
       _syncedStartMs = -1;
       _startScheduled = false;
       logger.info(`[MSE] loading: ${url}`);
       updateHud({ positionMs: 0, expectedMs: 0, driftMs: 0, lastAction: "Buffering\u2026" });
-      try {
-        _ms = new MediaSource();
-        _video.src = URL.createObjectURL(_ms);
-        yield new Promise((resolve) => {
-          _ms.addEventListener("sourceopen", () => resolve(), { once: true });
-        });
-        const ext = (_b = (_a = url.split(".").pop()) == null ? void 0 : _a.toLowerCase()) != null ? _b : "mp4";
-        const mime = ext === "webm" ? 'video/webm; codecs="vp9"' : 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
-        if (!MediaSource.isTypeSupported(mime)) {
-          throw new Error(`MSE: MIME not supported: ${mime}`);
-        }
-        _sb = _ms.addSourceBuffer(mime);
-        const resp = yield fetch(url);
-        if (!resp.ok) throw new Error(`fetch ${url} \u2192 ${resp.status}`);
-        const reader = resp.body.getReader();
-        yield _streamAppend(reader);
-        _ms.endOfStream();
-        logger.info("[MSE] source buffer complete");
-      } catch (e) {
-        logger.error(`[MSE] load failed: ${e == null ? void 0 : e.message}`);
-        throw e;
-      }
+      _video.preload = "auto";
+      _video.src = url;
+      _video.load();
       yield new Promise((resolve) => {
         if (!_video) return resolve();
         if (_video.readyState >= 3) {
@@ -600,37 +580,6 @@
       setPlaybackState(_itemIndex, posMs, "mse");
       updateHud({ positionMs: posMs, expectedMs, driftMs });
     }, 50);
-  }
-  function _streamAppend(reader) {
-    return __async(this, null, function* () {
-      let buf = new Uint8Array(0);
-      while (true) {
-        const { done, value } = yield reader.read();
-        if (done) {
-          if (buf.length > 0) yield _appendChunk(buf);
-          break;
-        }
-        const next = new Uint8Array(buf.length + value.length);
-        next.set(buf);
-        next.set(value, buf.length);
-        buf = next;
-        while (buf.length >= CHUNK_SIZE) {
-          yield _appendChunk(buf.slice(0, CHUNK_SIZE));
-          buf = buf.slice(CHUNK_SIZE);
-        }
-      }
-    });
-  }
-  function _appendChunk(chunk) {
-    return __async(this, null, function* () {
-      if (!_sb) return;
-      if (_sb.updating) {
-        yield new Promise((r) => _sb.addEventListener("updateend", () => r(), { once: true }));
-      }
-      const ab = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength);
-      _sb.appendBuffer(ab);
-      yield new Promise((r) => _sb.addEventListener("updateend", () => r(), { once: true }));
-    });
   }
   function _teardown() {
     clearInterval(_stateTickTimer);
