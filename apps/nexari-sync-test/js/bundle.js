@@ -180,8 +180,8 @@
   function broadcastVideoUrl(url) {
     _pendingVideoUrl = url;
     if (_connected && _role === "leader") {
-      _send({ type: "VIDEO_URL", url, durationMs: 0, engineMode: _readyEngineMode });
-      _opts == null ? void 0 : _opts.logger("info", `[P2P] leader sent VIDEO_URL: ${url}`);
+      _sendVideoUrl("broadcast");
+      _startVideoUrlRetry();
     } else {
       _opts == null ? void 0 : _opts.logger("info", `[P2P] VIDEO_URL queued (not connected yet): ${url}`);
     }
@@ -229,12 +229,13 @@
         const res = yield fetch(`${_opts.piBase}/api/v1/test-sync/peers?groupId=${_groupId}`);
         const data = yield res.json();
         _observeServerTime(data.serverTimeMs, t0, Date.now(), "peers");
+        const allPeers = Array.isArray(data.peers) ? data.peers : [];
         const now = typeof data.serverTimeMs === "number" ? data.serverTimeMs : Date.now();
-        const peers = data.peers.filter(
+        const peers = allPeers.filter(
           (p) => p.deviceId !== _opts.deviceId && (p.registeredAt == null || now - p.registeredAt < PEER_MAX_AGE_MS)
         );
         if (!peers.length) {
-          _opts.logger("info", `[P2P] no fresh peers yet (total in group: ${data.peers.length})`);
+          _opts.logger("info", `[P2P] no fresh peers yet (total in group: ${allPeers.length})`);
           return;
         }
         peers.sort((a, b) => {
@@ -250,8 +251,8 @@
         _doRegister();
         clearInterval(_peerPollTimer);
         if (_role === "leader" && _pendingVideoUrl) {
-          _send({ type: "VIDEO_URL", url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
-          _opts.logger("info", `[P2P] leader sent VIDEO_URL on connect: ${_pendingVideoUrl}`);
+          _sendVideoUrl("connect");
+          _startVideoUrlRetry();
         }
         if (_role === "follower" && _readyItemIndex >= 0) _maybeSendReady("connect");
         _startHeartbeat();
@@ -301,8 +302,9 @@
             if (_role === "follower") _startLeaderClockSync();
             if (_role === "follower" && _readyItemIndex >= 0 && !_syncPlaySent) _maybeSendReady("re-route");
             if (_role === "leader" && _pendingVideoUrl) {
-              _send({ type: "VIDEO_URL", url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
-              _opts == null ? void 0 : _opts.logger("info", `[P2P] leader re-sent VIDEO_URL after re-route`);
+              _stopVideoUrlRetry();
+              _sendVideoUrl("re-route");
+              _startVideoUrlRetry();
             }
           }
           try {
@@ -414,6 +416,30 @@
     _readyRetryTimer = null;
     _readyRetryCount = 0;
   }
+  function _stopVideoUrlRetry() {
+    clearInterval(_videoUrlRetryTimer);
+    _videoUrlRetryTimer = null;
+    _videoUrlRetryCount = 0;
+  }
+  function _sendVideoUrl(reason) {
+    if (!_opts || _role !== "leader" || !_pendingVideoUrl || !_peerDeviceId || _syncPlaySent) return;
+    _send({ type: "VIDEO_URL", url: _pendingVideoUrl, durationMs: _videoDurationMs, engineMode: _readyEngineMode });
+    _opts.logger("info", `[P2P] leader sent VIDEO_URL (${reason}): ${_pendingVideoUrl}`);
+  }
+  function _startVideoUrlRetry() {
+    if (!_opts || _role !== "leader" || !_pendingVideoUrl || _videoUrlRetryTimer || _syncPlaySent) return;
+    _videoUrlRetryTimer = setInterval(() => {
+      if (!_opts || _role !== "leader" || !_pendingVideoUrl || !_peerDeviceId || _syncPlaySent) {
+        _stopVideoUrlRetry();
+        return;
+      }
+      _videoUrlRetryCount += 1;
+      _send({ type: "VIDEO_URL", url: _pendingVideoUrl, durationMs: _videoDurationMs, engineMode: _readyEngineMode });
+      if (_videoUrlRetryCount % 5 === 0) {
+        _opts.logger("info", `[P2P] leader VIDEO_URL retry ${_videoUrlRetryCount}`);
+      }
+    }, VIDEO_URL_RETRY_INTERVAL_MS);
+  }
   function _startReadyRetry() {
     if (!_opts || _role !== "follower" || _readyRetryTimer || _syncPlaySent) return;
     _readyRetryTimer = setInterval(() => {
@@ -481,6 +507,7 @@
         _syncPlaySent = true;
         _readySent = true;
         _stopReadyRetry();
+        _stopVideoUrlRetry();
         clearInterval(_clockProbeTimer);
         _clockProbeTimer = null;
         _syncedStartMs = msg.syncedStartMs;
@@ -540,7 +567,7 @@
     }
     return { timelineMs: _pbCurrentMs, positionMs: _pbCurrentMs };
   }
-  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, READY_RETRY_INTERVAL_MS, CLOCK_SYNC_INTERVAL_MS, CLOCK_SYNC_TIMEOUT_MS, CLOCK_SYNC_MIN_SAMPLES, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _readyRetryTimer, _clockProbeTimer, _videoDurationMs, _syncPlaySent, _readySent, _readyRetryCount, _syncedStartMs, _lastClockLogTime, _lastReadyBlockedLogTime, _relaySessionStartedAtMs, _staleSignalLogCount, _clockProbeSeq, _clockSyncStartedAt, _leaderClockSamples, _leaderClockBestRtt, _leaderClockReady, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
+  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, READY_RETRY_INTERVAL_MS, VIDEO_URL_RETRY_INTERVAL_MS, CLOCK_SYNC_INTERVAL_MS, CLOCK_SYNC_TIMEOUT_MS, CLOCK_SYNC_MIN_SAMPLES, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _readyRetryTimer, _videoUrlRetryTimer, _clockProbeTimer, _videoDurationMs, _syncPlaySent, _readySent, _readyRetryCount, _videoUrlRetryCount, _syncedStartMs, _lastClockLogTime, _lastReadyBlockedLogTime, _relaySessionStartedAtMs, _staleSignalLogCount, _clockProbeSeq, _clockSyncStartedAt, _leaderClockSamples, _leaderClockBestRtt, _leaderClockReady, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
   var init_p2p_sync_client = __esm({
     "src/p2p-sync-client.ts"() {
       init_ntp_client();
@@ -549,6 +576,7 @@
       SIGNAL_POLL_INTERVAL_MS = 50;
       HEARTBEAT_INTERVAL_MS = 1e3;
       READY_RETRY_INTERVAL_MS = 1e3;
+      VIDEO_URL_RETRY_INTERVAL_MS = 2e3;
       CLOCK_SYNC_INTERVAL_MS = 100;
       CLOCK_SYNC_TIMEOUT_MS = 5e3;
       CLOCK_SYNC_MIN_SAMPLES = 6;
@@ -572,11 +600,13 @@
       _signalPollTimer = null;
       _heartbeatTimer = null;
       _readyRetryTimer = null;
+      _videoUrlRetryTimer = null;
       _clockProbeTimer = null;
       _videoDurationMs = 0;
       _syncPlaySent = false;
       _readySent = false;
       _readyRetryCount = 0;
+      _videoUrlRetryCount = 0;
       _syncedStartMs = -1;
       _lastClockLogTime = 0;
       _lastReadyBlockedLogTime = 0;

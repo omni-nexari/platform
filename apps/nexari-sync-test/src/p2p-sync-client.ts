@@ -30,6 +30,7 @@ const PEER_POLL_INTERVAL_MS   = 2_000;
 const SIGNAL_POLL_INTERVAL_MS = 50;
 const HEARTBEAT_INTERVAL_MS   = 1_000;
 const READY_RETRY_INTERVAL_MS = 1_000;
+const VIDEO_URL_RETRY_INTERVAL_MS = 2_000;
 const CLOCK_SYNC_INTERVAL_MS  = 100;
 const CLOCK_SYNC_TIMEOUT_MS   = 5_000;
 const CLOCK_SYNC_MIN_SAMPLES  = 6;
@@ -75,11 +76,13 @@ let _peerPollTimer: any   = null;
 let _signalPollTimer: any = null;
 let _heartbeatTimer: any  = null;
 let _readyRetryTimer: any = null;
+let _videoUrlRetryTimer: any = null;
 let _clockProbeTimer: any = null;
 let _videoDurationMs      = 0;
 let _syncPlaySent         = false;  // prevent duplicate SYNC_PLAYs from re-route READY
 let _readySent            = false;
 let _readyRetryCount      = 0;
+let _videoUrlRetryCount   = 0;
 let _syncedStartMs        = -1;
 let _lastClockLogTime     = 0;
 let _lastReadyBlockedLogTime = 0;
@@ -146,8 +149,8 @@ export function setPlaybackState(itemIndex: number, currentTimeMs: number, engin
 export function broadcastVideoUrl(url: string): void {
   _pendingVideoUrl = url;
   if (_connected && _role === 'leader') {
-    _send({ type: 'VIDEO_URL', url, durationMs: 0, engineMode: _readyEngineMode });
-    _opts?.logger('info', `[P2P] leader sent VIDEO_URL: ${url}`);
+    _sendVideoUrl('broadcast');
+    _startVideoUrlRetry();
   } else {
     _opts?.logger('info', `[P2P] VIDEO_URL queued (not connected yet): ${url}`);
   }
@@ -167,12 +170,14 @@ export function shutdown(): void {
   clearInterval(_signalPollTimer);
   clearInterval(_heartbeatTimer);
   clearInterval(_readyRetryTimer);
+  clearInterval(_videoUrlRetryTimer);
   clearInterval(_clockProbeTimer);
   _connected = false;
   _role = 'pending';
   _syncPlaySent = false;
   _readySent = false;
   _readyRetryCount = 0;
+  _videoUrlRetryCount = 0;
   _syncedStartMs = -1;
   _relaySessionStartedAtMs = -1;
   _staleSignalLogCount = 0;
@@ -214,18 +219,19 @@ async function _doPeerPoll(): Promise<void> {
   try {
     const t0 = Date.now();
     const res  = await fetch(`${_opts.piBase}/api/v1/test-sync/peers?groupId=${_groupId}`);
-    const data = await res.json() as { peers: Array<{ deviceId: string; ip: string; registeredAt?: number }>; serverTimeMs?: number };
+    const data = await res.json() as { peers?: Array<{ deviceId: string; ip: string; registeredAt?: number }>; serverTimeMs?: number };
     _observeServerTime(data.serverTimeMs, t0, Date.now(), 'peers');
+    const allPeers = Array.isArray(data.peers) ? data.peers : [];
 
     // Filter out self and stale entries. registeredAt is server-domain time, so
     // compare against serverTimeMs when the relay provides it.
     const now = typeof data.serverTimeMs === 'number' ? data.serverTimeMs : Date.now();
-    const peers = data.peers.filter((p) =>
+    const peers = allPeers.filter((p) =>
       p.deviceId !== _opts!.deviceId &&
       (p.registeredAt == null || (now - p.registeredAt) < PEER_MAX_AGE_MS),
     );
     if (!peers.length) {
-      _opts.logger('info', `[P2P] no fresh peers yet (total in group: ${data.peers.length})`);
+      _opts.logger('info', `[P2P] no fresh peers yet (total in group: ${allPeers.length})`);
       return;
     }
 
@@ -244,8 +250,8 @@ async function _doPeerPoll(): Promise<void> {
 
     // Leader immediately sends VIDEO_URL; follower sends READY if already loaded
     if (_role === 'leader' && _pendingVideoUrl) {
-      _send({ type: 'VIDEO_URL', url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
-      _opts.logger('info', `[P2P] leader sent VIDEO_URL on connect: ${_pendingVideoUrl}`);
+      _sendVideoUrl('connect');
+      _startVideoUrlRetry();
     }
     if (_role === 'follower' && _readyItemIndex >= 0) _maybeSendReady('connect');
 
@@ -301,8 +307,9 @@ async function _doSignalDrain(): Promise<void> {
         if (_role === 'follower') _startLeaderClockSync();
         if (_role === 'follower' && _readyItemIndex >= 0 && !_syncPlaySent) _maybeSendReady('re-route');
         if (_role === 'leader' && _pendingVideoUrl) {
-          _send({ type: 'VIDEO_URL', url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
-          _opts?.logger('info', `[P2P] leader re-sent VIDEO_URL after re-route`);
+          _stopVideoUrlRetry();
+          _sendVideoUrl('re-route');
+          _startVideoUrlRetry();
         }
       }
       try { _handleMessage(entry.body as SyncMessage); } catch { /* ignore malformed */ }
@@ -423,6 +430,33 @@ function _stopReadyRetry(): void {
   _readyRetryCount = 0;
 }
 
+function _stopVideoUrlRetry(): void {
+  clearInterval(_videoUrlRetryTimer);
+  _videoUrlRetryTimer = null;
+  _videoUrlRetryCount = 0;
+}
+
+function _sendVideoUrl(reason: string): void {
+  if (!_opts || _role !== 'leader' || !_pendingVideoUrl || !_peerDeviceId || _syncPlaySent) return;
+  _send({ type: 'VIDEO_URL', url: _pendingVideoUrl, durationMs: _videoDurationMs, engineMode: _readyEngineMode });
+  _opts.logger('info', `[P2P] leader sent VIDEO_URL (${reason}): ${_pendingVideoUrl}`);
+}
+
+function _startVideoUrlRetry(): void {
+  if (!_opts || _role !== 'leader' || !_pendingVideoUrl || _videoUrlRetryTimer || _syncPlaySent) return;
+  _videoUrlRetryTimer = setInterval(() => {
+    if (!_opts || _role !== 'leader' || !_pendingVideoUrl || !_peerDeviceId || _syncPlaySent) {
+      _stopVideoUrlRetry();
+      return;
+    }
+    _videoUrlRetryCount += 1;
+    _send({ type: 'VIDEO_URL', url: _pendingVideoUrl, durationMs: _videoDurationMs, engineMode: _readyEngineMode });
+    if (_videoUrlRetryCount % 5 === 0) {
+      _opts.logger('info', `[P2P] leader VIDEO_URL retry ${_videoUrlRetryCount}`);
+    }
+  }, VIDEO_URL_RETRY_INTERVAL_MS);
+}
+
 function _startReadyRetry(): void {
   if (!_opts || _role !== 'follower' || _readyRetryTimer || _syncPlaySent) return;
   _readyRetryTimer = setInterval(() => {
@@ -496,6 +530,7 @@ function _handleMessage(msg: SyncMessage): void {
       _syncPlaySent = true;  // prevent subsequent READY sends
       _readySent = true;
       _stopReadyRetry();
+      _stopVideoUrlRetry();
       clearInterval(_clockProbeTimer);
       _clockProbeTimer = null;
       _syncedStartMs = (msg as MsgSyncPlay).syncedStartMs;
