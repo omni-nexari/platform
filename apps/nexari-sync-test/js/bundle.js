@@ -346,13 +346,16 @@
     return true;
   }
   function _isWrongPeerSession(entry) {
-    if (!_peerDeviceId || entry.from !== _peerDeviceId || !_peerSessionId) return false;
+    if (!_peerDeviceId || entry.from !== _peerDeviceId) return false;
+    if (!entry.sessionId || !_peerSessionId) return false;
     if (entry.sessionId === _peerSessionId) return false;
-    if (_staleSignalLogCount < 3) {
-      _staleSignalLogCount += 1;
-      _opts == null ? void 0 : _opts.logger("info", `[P2P] ignored stale peer-session signal idx=${entry.idx} from=${entry.from}`);
-    }
-    return true;
+    _opts == null ? void 0 : _opts.logger("info", `[P2P] peer session updated (${entry.from}): ${_peerSessionId} \u2192 ${entry.sessionId}`);
+    _peerSessionId = entry.sessionId;
+    _readySent = false;
+    _stopReadyRetry();
+    _resetLeaderClockSync();
+    if (_role === "follower") _startLeaderClockSync();
+    return false;
   }
   function _newSessionId() {
     return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;

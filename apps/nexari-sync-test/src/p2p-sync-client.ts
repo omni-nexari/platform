@@ -351,13 +351,17 @@ function _isStaleSignal(entry: { idx: number; from: string; at?: number }): bool
 }
 
 function _isWrongPeerSession(entry: { idx: number; from: string; sessionId?: string | null }): boolean {
-  if (!_peerDeviceId || entry.from !== _peerDeviceId || !_peerSessionId) return false;
+  if (!_peerDeviceId || entry.from !== _peerDeviceId) return false;
+  if (!entry.sessionId || !_peerSessionId) return false;
   if (entry.sessionId === _peerSessionId) return false;
-  if (_staleSignalLogCount < 3) {
-    _staleSignalLogCount += 1;
-    _opts?.logger('info', `[P2P] ignored stale peer-session signal idx=${entry.idx} from=${entry.from}`);
-  }
-  return true;
+  // Peer rebooted with a new session — accept and re-sync
+  _opts?.logger('info', `[P2P] peer session updated (${entry.from}): ${_peerSessionId} → ${entry.sessionId}`);
+  _peerSessionId = entry.sessionId;
+  _readySent = false;
+  _stopReadyRetry();
+  _resetLeaderClockSync();
+  if (_role === 'follower') _startLeaderClockSync();
+  return false; // let the signal through
 }
 
 function _newSessionId(): string {
