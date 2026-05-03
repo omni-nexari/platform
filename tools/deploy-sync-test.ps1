@@ -1,7 +1,7 @@
 # Deploy sync-test Tizen app to both TVs using tizen.bat
 # Usage: powershell -ExecutionPolicy Bypass -File .\tools\deploy-sync-test.ps1
 
-$appDir      = (Resolve-Path "$PSScriptRoot\..\apps\sync-test").Path
+$appDir      = (Resolve-Path "$PSScriptRoot\..\apps\nexari-sync-test").Path
 $tizen       = "C:\tizen-studio\tools\ide\bin\tizen.bat"
 $sdb         = "C:\tizen-studio\tools\sdb.exe"
 $appId       = "SyncTest01.SyncTest"

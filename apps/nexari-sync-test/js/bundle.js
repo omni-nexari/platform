@@ -288,10 +288,18 @@
   function _doSignalDrain() {
     return __async(this, null, function* () {
       var _a, _b;
-      if (!_opts) return;
+      if (!_opts || _signalDrainInFlight) return;
+      _signalDrainInFlight = true;
       try {
         const t0 = Date.now();
-        const res = yield fetch(`${_opts.piBase}/api/v1/test-sync/signals/${_opts.deviceId}?since=${_signalPollSince}`);
+        const controller = new AbortController();
+        const fetchTimer = setTimeout(() => controller.abort(), 3e3);
+        let res;
+        try {
+          res = yield fetch(`${_opts.piBase}/api/v1/test-sync/signals/${_opts.deviceId}?since=${_signalPollSince}`, { signal: controller.signal });
+        } finally {
+          clearTimeout(fetchTimer);
+        }
         const data = yield res.json();
         _observeServerTime(data.serverTimeMs, t0, Date.now(), "signals");
         if (data.nextSince != null) _signalPollSince = data.nextSince;
@@ -325,6 +333,8 @@
           }
         }
       } catch (e) {
+      } finally {
+        _signalDrainInFlight = false;
       }
     });
   }
@@ -363,6 +373,8 @@
   function _resetLeaderClockSync() {
     clearInterval(_clockProbeTimer);
     _clockProbeTimer = null;
+    clearTimeout(_clockSyncWatchdog);
+    _clockSyncWatchdog = null;
     _clockProbeSeq = 0;
     _clockSyncStartedAt = 0;
     _leaderClockSamples = 0;
@@ -376,6 +388,9 @@
     _opts.logger("info", "[P2P] leader-clock sync started");
     _sendClockProbe();
     _clockProbeTimer = setInterval(_sendClockProbe, CLOCK_SYNC_INTERVAL_MS);
+    _clockSyncWatchdog = setTimeout(() => {
+      if (!_leaderClockReady) _markLeaderClockReady(_leaderClockSamples > 0 ? "watchdog-with-samples" : "watchdog-no-samples");
+    }, CLOCK_SYNC_TIMEOUT_MS + 500);
   }
   function _sendClockProbe() {
     if (!_opts || _role !== "follower" || !_peerDeviceId || _syncPlaySent) {
@@ -389,8 +404,8 @@
       return;
     }
     const elapsed = Date.now() - _clockSyncStartedAt;
-    if (elapsed > CLOCK_SYNC_TIMEOUT_MS && _leaderClockSamples > 0) {
-      _markLeaderClockReady("timeout-with-samples");
+    if (elapsed > CLOCK_SYNC_TIMEOUT_MS) {
+      _markLeaderClockReady(_leaderClockSamples > 0 ? "timeout-with-samples" : "timeout-no-samples");
       return;
     }
     _send({
@@ -435,6 +450,8 @@
     _leaderClockReady = true;
     clearInterval(_clockProbeTimer);
     _clockProbeTimer = null;
+    clearTimeout(_clockSyncWatchdog);
+    _clockSyncWatchdog = null;
     _opts == null ? void 0 : _opts.logger("info", `[P2P] leader-clock ready (${reason}): samples=${_leaderClockSamples} bestRtt=${Math.round(_leaderClockBestRtt)}ms offset=${Math.round(getNtpOffset())}ms`);
     _maybeSendReady("clock-ready");
   }
@@ -594,7 +611,7 @@
     }
     return { timelineMs: _pbCurrentMs, positionMs: _pbCurrentMs };
   }
-  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, READY_RETRY_INTERVAL_MS, VIDEO_URL_RETRY_INTERVAL_MS, CLOCK_SYNC_INTERVAL_MS, CLOCK_SYNC_TIMEOUT_MS, CLOCK_SYNC_MIN_SAMPLES, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _peerSessionId, _groupId, _connected, _sessionId, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _readyRetryTimer, _videoUrlRetryTimer, _clockProbeTimer, _videoDurationMs, _syncPlaySent, _readySent, _readyRetryCount, _videoUrlRetryCount, _syncedStartMs, _lastClockLogTime, _lastReadyBlockedLogTime, _relaySessionStartedAtMs, _staleSignalLogCount, _clockProbeSeq, _clockSyncStartedAt, _leaderClockSamples, _leaderClockBestRtt, _leaderClockReady, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust, _onRole;
+  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, READY_RETRY_INTERVAL_MS, VIDEO_URL_RETRY_INTERVAL_MS, CLOCK_SYNC_INTERVAL_MS, CLOCK_SYNC_TIMEOUT_MS, CLOCK_SYNC_MIN_SAMPLES, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _peerSessionId, _groupId, _connected, _sessionId, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _signalDrainInFlight, _heartbeatTimer, _readyRetryTimer, _videoUrlRetryTimer, _clockProbeTimer, _clockSyncWatchdog, _videoDurationMs, _syncPlaySent, _readySent, _readyRetryCount, _videoUrlRetryCount, _syncedStartMs, _lastClockLogTime, _lastReadyBlockedLogTime, _relaySessionStartedAtMs, _staleSignalLogCount, _clockProbeSeq, _clockSyncStartedAt, _leaderClockSamples, _leaderClockBestRtt, _leaderClockReady, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust, _onRole;
   var init_p2p_sync_client = __esm({
     "src/p2p-sync-client.ts"() {
       init_ntp_client();
@@ -627,10 +644,12 @@
       _registerTimer = null;
       _peerPollTimer = null;
       _signalPollTimer = null;
+      _signalDrainInFlight = false;
       _heartbeatTimer = null;
       _readyRetryTimer = null;
       _videoUrlRetryTimer = null;
       _clockProbeTimer = null;
+      _clockSyncWatchdog = null;
       _videoDurationMs = 0;
       _syncPlaySent = false;
       _readySent = false;
@@ -1448,7 +1467,9 @@
           onstreamcompleted: () => {
             logger.info(`[AVPlay] onstreamcompleted`);
             if (!_playing2 || _tearingDown) return;
-            _handleLoop();
+            setTimeout(() => {
+              if (_playing2 && !_tearingDown) _handleLoop();
+            }, 0);
           },
           oncurrentplaytime: (_ms2) => {
             if (_tearingDown) return;
@@ -1633,15 +1654,89 @@
     }
     const elapsed = getSyncedTime() - _syncedStartMs4;
     const expectedMs = (elapsed % _videoDurationMs3 + _videoDurationMs3) % _videoDurationMs3;
-    logger.info(`[AVPlay] loop: elapsed=${Math.round(elapsed)}ms seekTo=${Math.round(expectedMs)}ms`);
-    _seekTo(expectedMs, "loop", () => {
-      if (_tearingDown) return;
+    logger.info(`[AVPlay] loop: elapsed=${Math.round(elapsed)}ms \u2192 full-reset seekTo=${Math.round(expectedMs)}ms`);
+    _seekInFlight = true;
+    const t0 = _localNow2();
+    let done = false;
+    const loopTimeout = setTimeout(() => {
+      if (done) return;
+      done = true;
+      _seekInFlight = false;
+      _lastSeekTime2 = _localNow2();
+      logger.warn("[AVPlay] loop full-reset timed out \u2014 forcing play()");
       try {
         av.play();
       } catch (e) {
-        logger.warn(`[AVPlay] loop play() failed: ${e == null ? void 0 : e.message}`);
       }
-    });
+    }, 6e3);
+    const onPlayed = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(loopTimeout);
+      _lastSeekTime2 = _localNow2();
+      _seekInFlight = false;
+      logger.info(`[AVPlay] loop full-reset done in ${Math.round(_localNow2() - t0)}ms`);
+    };
+    const doSeekAndPlay = () => {
+      if (done || _tearingDown) return;
+      const elapsed2 = getSyncedTime() - _syncedStartMs4;
+      const targetMs = Math.round((elapsed2 % _videoDurationMs3 + _videoDurationMs3) % _videoDurationMs3);
+      logger.info(`[AVPlay] loop full-reset: ready \u2014 seekTo=${targetMs}ms`);
+      try {
+        av.seekTo(
+          targetMs,
+          () => {
+            try {
+              av.play();
+            } catch (e) {
+            }
+            onPlayed();
+          },
+          (e) => {
+            var _a;
+            logger.warn(`[AVPlay] loop seekTo ${targetMs}ms failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e} \u2014 playing from start`);
+            try {
+              av.play();
+            } catch (e2) {
+            }
+            onPlayed();
+          }
+        );
+      } catch (e) {
+        logger.warn(`[AVPlay] loop seekTo threw: ${e == null ? void 0 : e.message} \u2014 playing from start`);
+        try {
+          av.play();
+        } catch (e2) {
+        }
+        onPlayed();
+      }
+    };
+    try {
+      av.stop();
+    } catch (e) {
+    }
+    av.prepareAsync(
+      () => {
+        if (done || _tearingDown) return;
+        try {
+          av.setDisplayRect(0, 0, 1920, 1080);
+        } catch (e) {
+        }
+        try {
+          av.setDisplayMethod("PLAYER_DISPLAY_MODE_FULL_SCREEN");
+        } catch (e) {
+        }
+        doSeekAndPlay();
+      },
+      (e) => {
+        var _a;
+        if (done) return;
+        done = true;
+        clearTimeout(loopTimeout);
+        _seekInFlight = false;
+        logger.error(`[AVPlay] loop prepareAsync failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+      }
+    );
   }
   function _seekTo(ms, label, onDone) {
     if (_seekInFlight || _tearingDown) return;

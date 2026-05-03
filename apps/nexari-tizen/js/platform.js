@@ -19,6 +19,6 @@ window.Platform = (function() {
     tizenMinor         : minor,
     isLegacy           : major < 5,   // Tizen ≤4 — old filesystem API + b2bapis era; B2BDoc for documents
     isModern           : major >= 5,  // Tizen 5+ — new FileSystemManager path API
-    supportsDocumentApi: supportsDocumentApi, // Tizen 6.5+ — webapis.document available
+    supportsDocumentApi: supportsDocumentApi, // Tizen 6.5+ — webapis available
   };
 })();

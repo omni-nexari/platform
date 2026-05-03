@@ -232,7 +232,9 @@ function _openAndPrepare(av: AVPlayHandle, absUri: string): Promise<void> {
         onstreamcompleted: () => {
           logger.info(`[AVPlay] onstreamcompleted`);
           if (!_playing || _tearingDown) return;
-          _handleLoop();
+          // Defer outside the AVPlay callback context — calling seekTo synchronously
+          // inside onstreamcompleted causes Tizen 4 to stall the display compositor.
+          setTimeout(() => { if (_playing && !_tearingDown) _handleLoop(); }, 0);
         },
         oncurrentplaytime: (_ms: number) => {
           if (_tearingDown) return;
@@ -432,12 +434,75 @@ function _handleLoop(): void {
 
   const elapsed    = getSyncedTime() - _syncedStartMs;
   const expectedMs = ((elapsed % _videoDurationMs) + _videoDurationMs) % _videoDurationMs;
+  logger.info(`[AVPlay] loop: elapsed=${Math.round(elapsed)}ms → full-reset seekTo=${Math.round(expectedMs)}ms`);
 
-  logger.info(`[AVPlay] loop: elapsed=${Math.round(elapsed)}ms seekTo=${Math.round(expectedMs)}ms`);
-  _seekTo(expectedMs, 'loop', () => {
-    if (_tearingDown) return;
-    try { av.play(); } catch (e: any) { logger.warn(`[AVPlay] loop play() failed: ${e?.message}`); }
-  });
+  // Full decoder + display reset: stop() → prepareAsync() → seekTo() → play().
+  // Calling seekTo() directly from the onstreamcompleted path (even deferred) freezes
+  // the Tizen 4 display compositor on the first decoded frame. stop() resets the
+  // output plane so the next play() produces live frames again.
+  _seekInFlight = true;
+  const t0 = _localNow();
+  let done = false;
+
+  const loopTimeout = setTimeout(() => {
+    if (done) return;
+    done = true;
+    _seekInFlight = false;
+    _lastSeekTime = _localNow();
+    logger.warn('[AVPlay] loop full-reset timed out — forcing play()');
+    try { av.play(); } catch {}
+  }, 6000);
+
+  const onPlayed = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(loopTimeout);
+    _lastSeekTime = _localNow();
+    _seekInFlight = false;
+    logger.info(`[AVPlay] loop full-reset done in ${Math.round(_localNow() - t0)}ms`);
+  };
+
+  const doSeekAndPlay = () => {
+    if (done || _tearingDown) return;
+    // Recompute target after prepare latency
+    const elapsed2 = getSyncedTime() - _syncedStartMs;
+    const targetMs = Math.round(((elapsed2 % _videoDurationMs) + _videoDurationMs) % _videoDurationMs);
+    logger.info(`[AVPlay] loop full-reset: ready — seekTo=${targetMs}ms`);
+    try {
+      av.seekTo(
+        targetMs,
+        () => { try { av.play(); } catch {} onPlayed(); },
+        (e: any) => {
+          logger.warn(`[AVPlay] loop seekTo ${targetMs}ms failed: ${e?.message ?? e} — playing from start`);
+          try { av.play(); } catch {}
+          onPlayed();
+        },
+      );
+    } catch (e: any) {
+      logger.warn(`[AVPlay] loop seekTo threw: ${e?.message} — playing from start`);
+      try { av.play(); } catch {}
+      onPlayed();
+    }
+  };
+
+  try { av.stop(); } catch {}
+
+  av.prepareAsync(
+    () => {
+      if (done || _tearingDown) return;
+      // Re-apply display settings after stop() in case AVPlay cleared them
+      try { av.setDisplayRect(0, 0, 1920, 1080); } catch {}
+      try { av.setDisplayMethod('PLAYER_DISPLAY_MODE_FULL_SCREEN'); } catch {}
+      doSeekAndPlay();
+    },
+    (e: any) => {
+      if (done) return;
+      done = true;
+      clearTimeout(loopTimeout);
+      _seekInFlight = false;
+      logger.error(`[AVPlay] loop prepareAsync failed: ${e?.message ?? e}`);
+    },
+  );
 }
 
 function _seekTo(ms: number, label: string, onDone?: () => void): void {

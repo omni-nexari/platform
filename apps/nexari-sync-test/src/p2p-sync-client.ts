@@ -76,10 +76,12 @@ let _signalPollSince = 0;
 let _registerTimer: any   = null;
 let _peerPollTimer: any   = null;
 let _signalPollTimer: any = null;
+let _signalDrainInFlight = false;
 let _heartbeatTimer: any  = null;
 let _readyRetryTimer: any = null;
 let _videoUrlRetryTimer: any = null;
 let _clockProbeTimer: any = null;
+let _clockSyncWatchdog: any = null;
 let _videoDurationMs      = 0;
 let _syncPlaySent         = false;  // prevent duplicate SYNC_PLAYs from re-route READY
 let _readySent            = false;
@@ -178,6 +180,7 @@ export function shutdown(): void {
   clearInterval(_readyRetryTimer);
   clearInterval(_videoUrlRetryTimer);
   clearInterval(_clockProbeTimer);
+  clearTimeout(_clockSyncWatchdog);
   _connected = false;
   _role = 'pending';
   _peerDeviceId = null;
@@ -291,10 +294,18 @@ function _startSignalDrain(): void {
 }
 
 async function _doSignalDrain(): Promise<void> {
-  if (!_opts) return;
+  if (!_opts || _signalDrainInFlight) return;
+  _signalDrainInFlight = true;
   try {
     const t0 = Date.now();
-    const res  = await fetch(`${_opts.piBase}/api/v1/test-sync/signals/${_opts.deviceId}?since=${_signalPollSince}`);
+    const controller = new AbortController();
+    const fetchTimer = setTimeout(() => controller.abort(), 3000);
+    let res: Response;
+    try {
+      res = await fetch(`${_opts.piBase}/api/v1/test-sync/signals/${_opts.deviceId}?since=${_signalPollSince}`, { signal: controller.signal });
+    } finally {
+      clearTimeout(fetchTimer);
+    }
     const data = await res.json() as { entries: Array<{ idx: number; from: string; sessionId?: string | null; at?: number; body: unknown }>; nextSince: number; serverTimeMs?: number };
     _observeServerTime(data.serverTimeMs, t0, Date.now(), 'signals');
     if (data.nextSince != null) _signalPollSince = data.nextSince;
@@ -328,7 +339,9 @@ async function _doSignalDrain(): Promise<void> {
       }
       try { _handleMessage(entry.body as SyncMessage); } catch { /* ignore malformed */ }
     }
-  } catch { /* silent – network blip */ }
+  } catch { /* silent – network blip */ } finally {
+    _signalDrainInFlight = false;
+  }
 }
 
 function _observeServerTime(serverTimeMs: unknown, t0: number, t3: number, source: string): void {
@@ -371,6 +384,8 @@ function _newSessionId(): string {
 function _resetLeaderClockSync(): void {
   clearInterval(_clockProbeTimer);
   _clockProbeTimer = null;
+  clearTimeout(_clockSyncWatchdog);
+  _clockSyncWatchdog = null;
   _clockProbeSeq = 0;
   _clockSyncStartedAt = 0;
   _leaderClockSamples = 0;
@@ -385,6 +400,10 @@ function _startLeaderClockSync(): void {
   _opts.logger('info', '[P2P] leader-clock sync started');
   _sendClockProbe();
   _clockProbeTimer = setInterval(_sendClockProbe, CLOCK_SYNC_INTERVAL_MS);
+  // Watchdog: fire once after timeout in case setInterval is throttled by the OS
+  _clockSyncWatchdog = setTimeout(() => {
+    if (!_leaderClockReady) _markLeaderClockReady(_leaderClockSamples > 0 ? 'watchdog-with-samples' : 'watchdog-no-samples');
+  }, CLOCK_SYNC_TIMEOUT_MS + 500);
 }
 
 function _sendClockProbe(): void {
@@ -400,8 +419,8 @@ function _sendClockProbe(): void {
   }
 
   const elapsed = Date.now() - _clockSyncStartedAt;
-  if (elapsed > CLOCK_SYNC_TIMEOUT_MS && _leaderClockSamples > 0) {
-    _markLeaderClockReady('timeout-with-samples');
+  if (elapsed > CLOCK_SYNC_TIMEOUT_MS) {
+    _markLeaderClockReady(_leaderClockSamples > 0 ? 'timeout-with-samples' : 'timeout-no-samples');
     return;
   }
 
@@ -452,6 +471,8 @@ function _markLeaderClockReady(reason: string): void {
   _leaderClockReady = true;
   clearInterval(_clockProbeTimer);
   _clockProbeTimer = null;
+  clearTimeout(_clockSyncWatchdog);
+  _clockSyncWatchdog = null;
   _opts?.logger('info', `[P2P] leader-clock ready (${reason}): samples=${_leaderClockSamples} bestRtt=${Math.round(_leaderClockBestRtt)}ms offset=${Math.round(getNtpOffset())}ms`);
   _maybeSendReady('clock-ready');
 }
