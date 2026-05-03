@@ -441,10 +441,16 @@ const Player = {
                             clearTimeout(this._videowallSyncWatchdog);
                             this._videowallSyncWatchdog = null;
                         }
-                        // If the video element is already metadata-ready, dispatch immediately.
-                        // Otherwise store the cue so onloadedmetadata can consume it when ready.
+                        // If the video element is already metadata-ready AND no content switch is
+                        // in progress, dispatch immediately. Otherwise store the cue so
+                        // onloadedmetadata on the NEW video can consume it when ready.
+                        // Key race: cue can arrive while a new playlist is still downloading.
+                        // The old video has readyState >= 1 but we must NOT fire on it — the
+                        // cue is for the incoming content. Checking isDownloadingContent /
+                        // pendingPlaylist catches this case.
+                        const isContentSwitching = !!(this.isDownloadingContent || this.pendingPlaylist);
                         const sv = this._activeSyncVideo;
-                        if (sv && sv.readyState >= 1) {
+                        if (sv && sv.readyState >= 1 && !isContentSwitching) {
                             this._pendingVideowallSyncPlay = null;
                             this.handleSyncCommand({
                                 type: 'SYNC_PLAY',
@@ -454,7 +460,12 @@ const Player = {
                             });
                         }
                         else {
-                            logger.info('[Videowall] video not yet ready — storing SYNC_PLAY cue for onloadedmetadata');
+                            if (isContentSwitching) {
+                                logger.info('[Videowall] content switching — storing SYNC_PLAY cue for new content onloadedmetadata');
+                            }
+                            else {
+                                logger.info('[Videowall] video not yet ready — storing SYNC_PLAY cue for onloadedmetadata');
+                            }
                             this._pendingVideowallSyncPlay = spStartMs;
                         }
                     }
@@ -7116,6 +7127,24 @@ const Player = {
                     // Followers begin/resume playback at the same wall instant.
                     const v = this._activeSyncVideo;
                     if (v) {
+                        // Late-join: if the scheduled start time has already passed (e.g. slow
+                        // download on Tizen 4), seek to the correct position in the loop so
+                        // the follower is in sync with the leader rather than starting from 0.
+                        const elapsed = this.getSyncedTime() - startAt; // ms since leader started
+                        if (elapsed > 200) {
+                            const dur = v.duration; // seconds
+                            if (isFinite(dur) && dur > 0.5) {
+                                const seekTo = v.loop
+                                    ? (elapsed / 1000) % dur
+                                    : Math.min(elapsed / 1000, dur - 0.1);
+                                try {
+                                    v.currentTime = seekTo;
+                                }
+                                catch (_) { }
+                                logger.info('[Sync] late-join seek to ' + seekTo.toFixed(3) +
+                                    's (elapsed=' + Math.round(elapsed) + 'ms, loop=' + v.loop + ')');
+                            }
+                        }
                         try {
                             v.play().catch(() => { });
                         }
