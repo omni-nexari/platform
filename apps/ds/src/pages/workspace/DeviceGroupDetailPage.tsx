@@ -371,7 +371,7 @@ export default function DeviceGroupDetailPage() {
               <div
                 className="grid gap-3"
                 style={{
-                  gridTemplateColumns: `repeat(${Math.min(memberDevices.length, 4)}, minmax(0, 1fr))`,
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 220px))',
                 }}
               >
                 {memberDevices.map((d) => (
