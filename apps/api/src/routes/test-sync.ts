@@ -30,15 +30,23 @@ export async function testSyncRoutes(app: FastifyInstance) {
     const redis = redisOrError(reply);
     if (!redis) return;
 
-    const { deviceId, role, ip, groupId = 'synctest-001' } = req.body as {
-      deviceId: string; role: string; ip: string; groupId?: string;
+    const { deviceId, role, ip, groupId = 'synctest-001', sessionId } = req.body as {
+      deviceId: string; role: string; ip: string; groupId?: string; sessionId?: string;
     };
     if (!deviceId || !role || !ip) {
       return reply.status(400).send({ error: 'deviceId, role, ip required' });
     }
 
     const key = PEER_KEY(groupId);
-    await redis.hset(key, deviceId, JSON.stringify({ deviceId, role, ip, registeredAt: Date.now() }));
+    const previousRaw = await redis.hget(key, deviceId);
+    let previousSessionId = '';
+    if (previousRaw) {
+      try { previousSessionId = JSON.parse(previousRaw)?.sessionId ?? ''; } catch {}
+    }
+    if (sessionId && previousSessionId && previousSessionId !== sessionId) {
+      await redis.del(SIG_KEY(deviceId));
+    }
+    await redis.hset(key, deviceId, JSON.stringify({ deviceId, role, ip, sessionId: sessionId ?? null, registeredAt: Date.now() }));
     await redis.expire(key, PEER_TTL_S);
     return reply.send({ ok: true, serverTimeMs: Date.now() });
   });
@@ -73,11 +81,11 @@ export async function testSyncRoutes(app: FastifyInstance) {
     if (!redis) return;
 
     const { targetDeviceId } = req.params as { targetDeviceId: string };
-    const { from, seq = 0, body } = req.body as { from: string; seq?: number; body: unknown };
+    const { from, seq = 0, sessionId, body } = req.body as { from: string; seq?: number; sessionId?: string; body: unknown };
     if (!from || !body) return reply.status(400).send({ error: 'from, body required' });
 
     const key = SIG_KEY(targetDeviceId);
-    const entry = JSON.stringify({ from, seq, body, at: Date.now() });
+    const entry = JSON.stringify({ from, seq, sessionId: sessionId ?? null, body, at: Date.now() });
     await redis.rpush(key, entry);
     await redis.expire(key, SIGNAL_TTL_S);
     // Cap queue to 100 entries (ice candidate storm guard)

@@ -46,8 +46,10 @@ const PEER_MAX_AGE_MS = 12_000;
 let _opts: P2PSyncOpts | null = null;
 let _role: Role = 'pending';
 let _peerDeviceId: string | null = null;
+let _peerSessionId: string | null = null;
 let _groupId = 'synctest-001';
 let _connected = false;  // true once peer found and role assigned
+let _sessionId = _newSessionId();
 
 // Pending flags
 let _readyItemIndex  = -1;
@@ -112,9 +114,11 @@ export function onAdjust(h: (msg: MsgSyncAdjust) => void)   { _onAdjust    = h; 
 export function init(opts: P2PSyncOpts): void {
   _opts    = opts;
   _groupId = opts.groupId ?? 'synctest-001';
+  _sessionId = _newSessionId();
   _role = 'pending';
   _connected = false;
   _peerDeviceId = null;
+  _peerSessionId = null;
   _signalPollSince = 0;
   _syncPlaySent = false;
   _readySent = false;
@@ -174,6 +178,8 @@ export function shutdown(): void {
   clearInterval(_clockProbeTimer);
   _connected = false;
   _role = 'pending';
+  _peerDeviceId = null;
+  _peerSessionId = null;
   _syncPlaySent = false;
   _readySent = false;
   _readyRetryCount = 0;
@@ -199,6 +205,7 @@ function _doRegister(): void {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       deviceId: _opts.deviceId,
+      sessionId: _sessionId,
       role: _role === 'pending' ? 'peer' : _role,
       ip: _opts.selfIp,
       groupId: _groupId,
@@ -219,7 +226,7 @@ async function _doPeerPoll(): Promise<void> {
   try {
     const t0 = Date.now();
     const res  = await fetch(`${_opts.piBase}/api/v1/test-sync/peers?groupId=${_groupId}`);
-    const data = await res.json() as { peers?: Array<{ deviceId: string; ip: string; registeredAt?: number }>; serverTimeMs?: number };
+    const data = await res.json() as { peers?: Array<{ deviceId: string; ip: string; sessionId?: string | null; registeredAt?: number }>; serverTimeMs?: number };
     _observeServerTime(data.serverTimeMs, t0, Date.now(), 'peers');
     const allPeers = Array.isArray(data.peers) ? data.peers : [];
 
@@ -239,6 +246,7 @@ async function _doPeerPoll(): Promise<void> {
     peers.sort((a, b) => (b.registeredAt ?? 0) - (a.registeredAt ?? 0));
     const peer = peers[0];
     _peerDeviceId = peer.deviceId;
+    _peerSessionId = peer.sessionId ?? null;
 
     _role = _opts.deviceId < peer.deviceId ? 'leader' : 'follower';
     _connected = true;
@@ -268,7 +276,7 @@ function _send(msg: SyncMessage): void {
   fetch(`${_opts.piBase}/api/v1/test-sync/signal/${_peerDeviceId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: _opts.deviceId, seq: Date.now(), body: msg }),
+    body: JSON.stringify({ from: _opts.deviceId, sessionId: _sessionId, seq: Date.now(), body: msg }),
   })
     .then(async (res) => _observeServerTime((await res.json().catch(() => null))?.serverTimeMs, t0, Date.now(), 'signal'))
     .catch((e: any) => _opts?.logger('warn', `[P2P] _send failed: ${e?.message}`));
@@ -284,16 +292,18 @@ async function _doSignalDrain(): Promise<void> {
   try {
     const t0 = Date.now();
     const res  = await fetch(`${_opts.piBase}/api/v1/test-sync/signals/${_opts.deviceId}?since=${_signalPollSince}`);
-    const data = await res.json() as { entries: Array<{ idx: number; from: string; at?: number; body: unknown }>; nextSince: number; serverTimeMs?: number };
+    const data = await res.json() as { entries: Array<{ idx: number; from: string; sessionId?: string | null; at?: number; body: unknown }>; nextSince: number; serverTimeMs?: number };
     _observeServerTime(data.serverTimeMs, t0, Date.now(), 'signals');
     if (data.nextSince != null) _signalPollSince = data.nextSince;
     for (const entry of data.entries ?? []) {
       if (_isStaleSignal(entry)) continue;
+      if (_isWrongPeerSession(entry)) continue;
       // If we're receiving a message from someone other than our current peer,
       // re-route: we likely paired with a stale device initially.
       if (entry.from && entry.from !== _peerDeviceId) {
         _opts?.logger('info', `[P2P] re-routing peer: ${_peerDeviceId ?? 'none'} → ${entry.from}`);
         _peerDeviceId = entry.from;
+        _peerSessionId = entry.sessionId ?? null;
         _readySent = false;
         _stopReadyRetry();
         _resetLeaderClockSync();
@@ -334,6 +344,20 @@ function _isStaleSignal(entry: { idx: number; from: string; at?: number }): bool
     _opts?.logger('info', `[P2P] ignored stale signal idx=${entry.idx} from=${entry.from}`);
   }
   return true;
+}
+
+function _isWrongPeerSession(entry: { idx: number; from: string; sessionId?: string | null }): boolean {
+  if (!_peerDeviceId || entry.from !== _peerDeviceId || !_peerSessionId) return false;
+  if (entry.sessionId === _peerSessionId) return false;
+  if (_staleSignalLogCount < 3) {
+    _staleSignalLogCount += 1;
+    _opts?.logger('info', `[P2P] ignored stale peer-session signal idx=${entry.idx} from=${entry.from}`);
+  }
+  return true;
+}
+
+function _newSessionId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function _resetLeaderClockSync(): void {
