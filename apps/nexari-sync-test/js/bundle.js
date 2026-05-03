@@ -718,10 +718,41 @@
   });
 
   // src/decoder-ffmpeg.ts
+  function _polyfillFetch() {
+    if (window._tizenFetchPolyfilled) return;
+    window._tizenFetchPolyfilled = true;
+    const _orig = window.fetch.bind(window);
+    window.fetch = function(input, init2) {
+      var _a;
+      const url = typeof input === "string" ? input : (_a = input == null ? void 0 : input.url) != null ? _a : "";
+      if (/^https?:\/\//.test(url) || url.startsWith("//")) return _orig(input, init2);
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", url, true);
+        xhr.responseType = "arraybuffer";
+        xhr.onload = () => {
+          resolve(new Response(new Uint8Array(xhr.response), { status: xhr.status }));
+        };
+        xhr.onerror = () => reject(new TypeError(`XHR fetch failed: ${url}`));
+        xhr.send();
+      });
+    };
+  }
+  function _xhrGetBytes(url) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", url, true);
+      xhr.responseType = "arraybuffer";
+      xhr.onload = () => resolve(new Uint8Array(xhr.response));
+      xhr.onerror = () => reject(new Error(`XHR failed: ${url}`));
+      xhr.send();
+    });
+  }
   function decodeVideo(videoUrl) {
     return __async(this, null, function* () {
       logger.info(`[WASM] starting ffmpeg decode: ${videoUrl}`);
       updateHud({ decodePercent: 0, lastAction: "Initialising ffmpeg\u2026" });
+      _polyfillFetch();
       if (!_ffmpeg) {
         const { createFFmpeg } = FFmpeg;
         _ffmpeg = createFFmpeg({
@@ -743,9 +774,8 @@
         logger.info("[WASM] ffmpeg-core.wasm loaded");
       }
       updateHud({ lastAction: "Fetching video\u2026", decodePercent: 5 });
-      const { fetchFile } = FFmpeg;
-      const fileData = yield fetchFile(videoUrl);
-      _ffmpeg.FS("writeFile", "input.mp4", fileData);
+      const videoBytes = yield _xhrGetBytes(videoUrl);
+      _ffmpeg.FS("writeFile", "input.mp4", videoBytes);
       let width = 1920, height = 1080, fps = 25;
       try {
         yield _ffmpeg.run("-i", "input.mp4");

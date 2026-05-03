@@ -24,6 +24,44 @@ import { logger } from './logger.js';
 // @ffmpeg/ffmpeg 0.11.x UMD bundle exposes window.FFmpeg = { createFFmpeg, fetchFile }
 declare const FFmpeg: { createFFmpeg: any; fetchFile: any };
 
+/**
+ * Tizen: window.fetch() cannot load local bundled files (returns "Failed to fetch").
+ * Polyfill fetch() with XHR for any non-http/https URL so that ffmpeg-core.wasm
+ * and the video file can be loaded from the .wgt package.
+ * Call once before any ffmpeg operation.
+ */
+function _polyfillFetch(): void {
+  if ((window as any)._tizenFetchPolyfilled) return;
+  (window as any)._tizenFetchPolyfilled = true;
+  const _orig = (window.fetch as any).bind(window);
+  (window as any).fetch = function (input: any, init?: any): Promise<Response> {
+    const url: string = typeof input === 'string' ? input : (input as any)?.url ?? '';
+    if (/^https?:\/\//.test(url) || url.startsWith('//')) return _orig(input, init);
+    return new Promise<Response>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.responseType = 'arraybuffer';
+      xhr.onload = () => {
+        resolve(new Response(new Uint8Array(xhr.response as ArrayBuffer), { status: xhr.status }));
+      };
+      xhr.onerror = () => reject(new TypeError(`XHR fetch failed: ${url}`));
+      xhr.send();
+    });
+  };
+}
+
+/** Load a local file via XHR (works on Tizen where fetch() does not). */
+function _xhrGetBytes(url: string): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.responseType = 'arraybuffer';
+    xhr.onload = () => resolve(new Uint8Array(xhr.response as ArrayBuffer));
+    xhr.onerror = () => reject(new Error(`XHR failed: ${url}`));
+    xhr.send();
+  });
+}
+
 export interface DecodedVideo {
   frames: ImageData[];
   fps: number;
@@ -41,6 +79,9 @@ let _ffmpeg: any = null;
 export async function decodeVideo(videoUrl: string): Promise<DecodedVideo> {
   logger.info(`[WASM] starting ffmpeg decode: ${videoUrl}`);
   updateHud({ decodePercent: 0, lastAction: 'Initialising ffmpeg…' });
+
+  // Tizen: fetch() fails for local bundled files — patch it to use XHR
+  _polyfillFetch();
 
   if (!_ffmpeg) {
     const { createFFmpeg } = FFmpeg;
@@ -66,11 +107,10 @@ export async function decodeVideo(videoUrl: string): Promise<DecodedVideo> {
     logger.info('[WASM] ffmpeg-core.wasm loaded');
   }
 
-  // Fetch video from Pi into ffmpeg VFS
+  // Load video via XHR (fetch() unreliable on Tizen for local files)
   updateHud({ lastAction: 'Fetching video…', decodePercent: 5 });
-  const { fetchFile } = FFmpeg;
-  const fileData = await fetchFile(videoUrl);
-  _ffmpeg.FS('writeFile', 'input.mp4', fileData);
+  const videoBytes = await _xhrGetBytes(videoUrl);
+  _ffmpeg.FS('writeFile', 'input.mp4', videoBytes);
 
   // Probe: get width, height, fps via ffprobe-like run
   let width = 1920, height = 1080, fps = 25;
