@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router';
+import { useParams, useNavigate, useLocation, Link } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -120,6 +120,8 @@ function getMemberStatusTone(status: string) {
 export default function OrgDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const backPath = pathname.startsWith('/management') ? '/management/orgs' : '/superadmin/orgs';
   const qc = useQueryClient();
   const [inviteEmail, setInviteEmail] = useState('');
   const [showDelete, setShowDelete] = useState(false);
@@ -199,7 +201,7 @@ export default function OrgDetailPage() {
     mutationFn: () => saApi.delete(`/superadmin/orgs/${id}`),
     onSuccess: () => {
       toast.success('Organization deleted');
-      navigate('/superadmin/orgs');
+      navigate(backPath);
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Delete failed'),
   });
@@ -259,7 +261,7 @@ export default function OrgDetailPage() {
     <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto space-y-8">
       {/* Back */}
       <Link
-        to="/superadmin/orgs"
+        to={backPath}
         className="inline-flex items-center gap-2 text-sm text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
       >
         <ArrowLeft size={15} /> All Client Organizations

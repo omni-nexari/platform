@@ -1260,7 +1260,7 @@ export function DeviceDetailContent({
       setReplaceOpen(false);
       setReplaceCode('');
       void queryClient.invalidateQueries({ queryKey: ['devices', wsId] });
-      navigate(`/workspaces/${wsId}`);
+      navigate(`/workspaces/${wsId}/devices`);
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Device replacement failed'),
   });
@@ -1344,7 +1344,7 @@ export function DeviceDetailContent({
       <div>
         {!embedded && (
           <button
-            onClick={() => navigate(`/workspaces/${wsId}`)}
+            onClick={() => navigate(`/workspaces/${wsId}/devices`)}
             className="flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text)] transition-colors mb-4"
           >
             <ArrowLeft className="w-4 h-4" />Back to Devices
