@@ -520,6 +520,10 @@
   function _schedulePlay() {
     if (_startScheduled || !_video) return;
     _startScheduled = true;
+    if (!_video.paused) {
+      _video.pause();
+      _video.currentTime = 0;
+    }
     const wait = _syncedStartMs - getSyncedTime();
     if (wait <= 0) {
       logger.warn("[MSE] SYNC_PLAY cue already past \u2014 playing immediately");

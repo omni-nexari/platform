@@ -111,6 +111,11 @@ function _handleSyncPlay(msg: MsgSyncPlay): void {
 function _schedulePlay(): void {
   if (_startScheduled || !_video) return;
   _startScheduled = true;
+  // If watchdog already started play, reset to beginning so both TVs start from 0
+  if (!_video.paused) {
+    _video.pause();
+    _video.currentTime = 0;
+  }
 
   const wait = _syncedStartMs - getSyncedTime();
   if (wait <= 0) {

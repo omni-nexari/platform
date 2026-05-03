@@ -80,7 +80,7 @@ function LogPanel({ deviceId, label }: { deviceId: string; label: string }) {
 
   const { data, isError } = useQuery({
     queryKey: ['test-sync-logs', deviceId],
-    queryFn:  () => api.get<{ logs: LogEntry[] }>(`/test-sync/logs?deviceId=${deviceId}&limit=200`),
+    queryFn:  () => api.get<{ entries: LogEntry[] }>(`/test-sync/logs?deviceId=${deviceId}&limit=200`),
     refetchInterval: 2000,
   });
 
@@ -93,7 +93,7 @@ function LogPanel({ deviceId, label }: { deviceId: string; label: string }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['test-sync-logs', deviceId] }),
   });
 
-  const entries: LogEntry[] = data?.logs ?? [];
+  const entries: LogEntry[] = data?.entries ?? [];
   const metrics = parseSyncMetrics(entries);
 
   return (
