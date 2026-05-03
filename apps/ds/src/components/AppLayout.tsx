@@ -49,6 +49,7 @@ import {
   FileText,
   Receipt,
   FlaskConical,
+  Radio,
 } from 'lucide-react';
 
 interface Workspace {
@@ -310,6 +311,21 @@ export default function AppLayout() {
               >
                 <FlaskConical className="w-3.5 h-3.5" />
                 B2B Test
+              </NavLink>
+
+              {/* Sync Test -- sub-link under Devices */}
+              <NavLink
+                to="/test-sync"
+                className={({ isActive }) =>
+                  `flex items-center gap-2 pl-8 pr-3 py-1.5 rounded-lg text-xs transition-colors ${
+                    isActive
+                      ? 'bg-[var(--blue)]/20 text-[var(--blue)]'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                  }`
+                }
+              >
+                <Radio className="w-3.5 h-3.5" />
+                Sync Test
               </NavLink>
 
               {contentEnabled && (

@@ -65,19 +65,10 @@
     <div id="status-msg">Initialising…</div>
     <div id="perf-hud"></div>
 
-    <!-- ffmpeg.wasm UMD bundle — must be present at js/lib/ffmpeg/ffmpeg.js -->
+    <!-- ffmpeg.wasm UMD bundle (sets window.FFmpeg) — must load before bundle -->
     <script src="js/lib/ffmpeg/ffmpeg.js"></script>
 
-    <!-- Compiled TypeScript output (tsc module:none → one file per source) -->
-    <!-- Load order matches dependency graph -->
-    <script src="js/ntp-client.js"></script>
-    <script src="js/sync-protocol.js"></script>
-    <script src="js/logger.js"></script>
-    <script src="js/perf-hud.js"></script>
-    <script src="js/p2p-sync-client.js"></script>
-    <script src="js/decoder-ffmpeg.js"></script>
-    <script src="js/player-mse.js"></script>
-    <script src="js/player-wasm.js"></script>
-    <script src="js/app.js"></script>
+    <!-- App bundle (esbuild IIFE, includes all TS modules) -->
+    <script src="js/bundle.js"></script>
 </body>
 </html>

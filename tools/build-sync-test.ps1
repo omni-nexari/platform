@@ -56,8 +56,8 @@ Write-Host "Profile '$signProfile' written."
 Write-Host "=== STEP 1: TypeScript compile ===" -ForegroundColor Cyan
 Push-Location $src
 try {
-    npx tsc 2>&1 | Write-Host
-    if ($LASTEXITCODE -ne 0) { throw "tsc failed" }
+    npm run build 2>&1 | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "build failed" }
 } finally {
     Pop-Location
 }

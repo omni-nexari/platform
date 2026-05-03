@@ -1,10 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2015",
-    "module": "none",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "lib": ["ES2017", "DOM"],
-    "outDir": "./js",
-    "rootDir": "./src",
+    "noEmit": true,
     "strict": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -21,7 +21,6 @@
     "noFallthroughCasesInSwitch": false,
     "allowUnreachableCode": true,
     "allowUnusedLabels": true,
-    "moduleResolution": "node",
     "types": ["tizen-tv-webapis"],
     "removeComments": false,
     "sourceMap": false
