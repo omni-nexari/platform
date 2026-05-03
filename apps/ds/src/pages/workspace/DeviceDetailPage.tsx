@@ -863,9 +863,16 @@ function LiveViewOverlay({ deviceId, isOnline, deviceInfo, onClose, onPowerChang
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function DeviceDetailPage() {
+export function DeviceDetailContent({
+  deviceId,
+  wsId,
+  embedded = false,
+}: {
+  deviceId: string | undefined;
+  wsId: string | undefined;
+  embedded?: boolean;
+}) {
   type DeviceTabId = 'info' | 'power' | 'network' | 'settings' | 'timers' | 'tags' | 'update' | 'logs' | 'kiosk-config' | 'order-filter';
-  const { wsId, deviceId } = useParams<{ wsId: string; deviceId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user, bootstrapped } = useAuthStore();
@@ -1285,7 +1292,7 @@ export default function DeviceDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="p-8 max-w-5xl mx-auto space-y-4">
+      <div className={embedded ? 'space-y-4 p-4' : 'p-8 max-w-5xl mx-auto space-y-4'}>
         <Skeleton className="h-10 w-40 rounded-xl" />
         <Skeleton className="h-24 rounded-2xl" />
         <div className="grid gap-4 md:grid-cols-2">
@@ -1301,7 +1308,7 @@ export default function DeviceDetailPage() {
     return (
       <div className="p-8 text-center text-[var(--text-muted)]">
         Device not found.{' '}
-        <button onClick={() => navigate(-1)} className="underline">Go back</button>
+        {!embedded && <button onClick={() => navigate(-1)} className="underline">Go back</button>}
       </div>
     );
   }
@@ -1331,16 +1338,18 @@ export default function DeviceDetailPage() {
     : null;
 
   return (
-    <div className="p-8 max-w-5xl mx-auto space-y-6">
+    <div className={embedded ? 'space-y-4' : 'p-8 max-w-5xl mx-auto space-y-6'}>
 
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div>
-        <button
-          onClick={() => navigate(`/workspaces/${wsId}`)}
-          className="flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text)] transition-colors mb-4"
-        >
-          <ArrowLeft className="w-4 h-4" />Back to Devices
-        </button>
+        {!embedded && (
+          <button
+            onClick={() => navigate(`/workspaces/${wsId}`)}
+            className="flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text)] transition-colors mb-4"
+          >
+            <ArrowLeft className="w-4 h-4" />Back to Devices
+          </button>
+        )}
         <PageHeader
           className="workspace-page-header mb-0"
           icon={isOnline
@@ -3048,4 +3057,11 @@ export default function DeviceDetailPage() {
       )}
     </div>
   );
+}
+
+// ── Route wrapper ─────────────────────────────────────────────────────────────
+
+export default function DeviceDetailPage() {
+  const { wsId, deviceId } = useParams<{ wsId: string; deviceId: string }>();
+  return <DeviceDetailContent deviceId={deviceId} wsId={wsId} />;
 }

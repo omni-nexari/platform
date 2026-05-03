@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api } from '../../lib/api.js';
+import { api, buildApiUrl } from '../../lib/api.js';
 import {
   ArrowLeft, Monitor, Tv, LayoutGrid, MapPin, Tag, UserPlus, UserMinus,
-  Trash2, Link2, Edit2, Check, X,
+  Trash2, Link2, Edit2, Check, X, Settings2,
 } from 'lucide-react';
 import {
   Badge,
@@ -13,6 +13,7 @@ import {
 } from '../../components/UiPrimitives.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
 import DevicePickerModal, { type PickedDevice } from '../../components/DevicePickerModal.js';
+import { DeviceDetailContent } from './DeviceDetailPage.js';
 import VideowallGridEditor from '../../components/VideowallGridEditor.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -24,6 +25,76 @@ interface DeviceLite {
   name: string;
   status: string;
   lastSeen: string | null;
+  latestScreenshotId: string | null;
+  latestFrameAt: number | null;
+  modelName: string | null;
+  ipAddress: string | null;
+}
+
+// ── Full-width device tile ─────────────────────────────────────────────────
+
+function DeviceTile({
+  device,
+  selected,
+  onClick,
+}: {
+  device: DeviceLite;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const [errored, setErrored] = useState(false);
+  useEffect(() => { setErrored(false); }, [device.latestScreenshotId, device.latestFrameAt]);
+
+  const showImg = !!device.latestScreenshotId && !errored;
+  const src = showImg
+    ? buildApiUrl(
+        `/devices/${device.id}/screenshots/${device.latestScreenshotId}` +
+        (device.latestFrameAt ? `?t=${device.latestFrameAt}` : ''),
+      )
+    : '';
+
+  const dot =
+    device.status === 'online' ? 'bg-emerald-400'
+    : device.status === 'error' ? 'bg-red-400'
+    : 'bg-white/20';
+
+  return (
+    <button
+      onClick={onClick}
+      className={[
+        'flex flex-col rounded-xl border overflow-hidden transition-all text-left min-w-0 w-full',
+        selected
+          ? 'border-[var(--accent)] ring-2 ring-[var(--accent)]/30'
+          : 'border-[var(--border)] hover:border-[var(--accent)]/60',
+      ].join(' ')}
+      style={{ background: 'var(--surface)' }}
+    >
+      {/* Screenshot */}
+      <div
+        className={[
+          'w-full aspect-video flex items-center justify-center overflow-hidden',
+          showImg ? '' : 'bg-[var(--bg)]',
+        ].join(' ')}
+      >
+        {showImg ? (
+          <img
+            key={`${device.latestScreenshotId}-${device.latestFrameAt ?? 0}`}
+            src={src}
+            alt="Screenshot"
+            className="w-full h-full object-cover"
+            onError={() => setErrored(true)}
+          />
+        ) : (
+          <Monitor className="w-8 h-8 text-[var(--text-muted)] opacity-20" />
+        )}
+      </div>
+      {/* Label */}
+      <div className="flex items-center gap-2 px-3 py-2">
+        <div className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+        <span className="text-xs font-medium text-[var(--text)] truncate">{device.name}</span>
+      </div>
+    </button>
+  );
 }
 
 interface DeviceGroupMember {
@@ -98,6 +169,8 @@ export default function DeviceGroupDetailPage() {
   const [nameDraft, setNameDraft] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [addPickerOpen, setAddPickerOpen] = useState(false);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
 
   const { data: group, isLoading } = useQuery<DeviceGroupDetail>({
     queryKey: ['device-group', groupId],
@@ -113,7 +186,7 @@ export default function DeviceGroupDetailPage() {
   const { data: allDevices = [] } = useQuery<DeviceLite[]>({
     queryKey: ['devices', wsId],
     queryFn: () => api.get(`/devices?workspaceId=${wsId}`),
-    enabled: isVideowall && !!wsId,
+    enabled: !!wsId,
   });
 
   const renameMut = useMutation({
@@ -174,177 +247,258 @@ export default function DeviceGroupDetailPage() {
 
   if (isLoading || !group) {
     return (
-      <div className="flex flex-col gap-4 p-6 max-w-4xl mx-auto">
-        <Skeleton className="h-10 w-64" />
-        <Skeleton className="h-32 rounded-xl" />
-        <Skeleton className="h-64 rounded-xl" />
+      <div className="flex flex-col gap-4 p-6">
+        <Skeleton className="h-8 w-48" />
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="aspect-video rounded-xl" />)}
+        </div>
+        <Skeleton className="h-96 rounded-xl" />
       </div>
     );
   }
 
   const meta = TYPE_META[group.type];
   const memberList = isSync ? group.syncMembers : group.members;
+  const memberIds = new Set(memberList.map((m) => m.deviceId));
+  const memberDevices = allDevices.filter((d) => memberIds.has(d.id));
 
   return (
-    <div className="flex flex-col gap-6 p-4 sm:p-6 max-w-4xl mx-auto">
-      {/* Back nav */}
-      <button
-        onClick={() => navigate(`/workspaces/${wsId}/devices/groups`)}
-        className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors w-fit"
+    <div className="flex flex-col min-h-full">
+
+      {/* ── Top bar ─────────────────────────────────────────────────────── */}
+      <div
+        className="flex items-center gap-3 px-4 sm:px-6 py-3 border-b"
+        style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
       >
-        <ArrowLeft className="w-3.5 h-3.5" /> Back to Device Groups
-      </button>
+        <button
+          onClick={() => navigate(`/workspaces/${wsId}/devices/groups`)}
+          className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors shrink-0"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" /> Back
+        </button>
 
-      {/* Header card */}
-      <div className="rounded-xl border p-5 flex flex-col gap-3" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3 min-w-0 flex-1">
-            <div className="w-10 h-10 rounded-lg bg-[var(--bg)] flex items-center justify-center text-[var(--text-muted)] shrink-0">
-              {meta.icon}
+        <div className="w-px h-4 bg-[var(--border)]" />
+
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="text-[var(--text-muted)] shrink-0">{meta.icon}</span>
+          {editingName ? (
+            <div className="flex items-center gap-1.5">
+              <input
+                autoFocus
+                type="text"
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && nameDraft.trim()) renameMut.mutate(nameDraft.trim());
+                  if (e.key === 'Escape') setEditingName(false);
+                }}
+                className="px-2 py-0.5 rounded border border-[var(--border)] bg-[var(--bg)] text-sm font-semibold text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              />
+              <button onClick={() => renameMut.mutate(nameDraft.trim())} disabled={!nameDraft.trim()} className="text-emerald-400 p-0.5">
+                <Check className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={() => setEditingName(false)} className="text-[var(--text-muted)] p-0.5">
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
-            <div className="min-w-0 flex-1">
-              {editingName ? (
-                <div className="flex items-center gap-2">
-                  <input
-                    autoFocus
-                    type="text"
-                    value={nameDraft}
-                    onChange={(e) => setNameDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && nameDraft.trim()) renameMut.mutate(nameDraft.trim());
-                      if (e.key === 'Escape') setEditingName(false);
-                    }}
-                    className="px-2 py-1 rounded border border-[var(--border)] bg-[var(--bg)] text-base font-semibold text-[var(--text)] outline-none focus:border-[var(--accent)]"
-                  />
-                  <button
-                    onClick={() => renameMut.mutate(nameDraft.trim())}
-                    disabled={!nameDraft.trim() || renameMut.isPending}
-                    className="p-1 rounded hover:bg-[var(--bg)] text-emerald-400"
-                  >
-                    <Check className="w-4 h-4" />
-                  </button>
-                  <button onClick={() => setEditingName(false)} className="p-1 rounded hover:bg-[var(--bg)] text-[var(--text-muted)]">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <h1 className="text-base font-semibold text-[var(--text)] truncate">{group.name}</h1>
-                  <button
-                    onClick={() => { setNameDraft(group.name); setEditingName(true); }}
-                    className="p-1 rounded hover:bg-[var(--bg)] text-[var(--text-faint)] hover:text-[var(--text)]"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
-              <div className="mt-1.5 flex items-center gap-2">
-                <Badge tone={meta.tone}>{meta.label}</Badge>
-                {group.description && (
-                  <span className="text-xs text-[var(--text-muted)]">{group.description}</span>
-                )}
-              </div>
+          ) : (
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-sm font-semibold text-[var(--text)] truncate">{group.name}</span>
+              <button
+                onClick={() => { setNameDraft(group.name); setEditingName(true); }}
+                className="p-0.5 text-[var(--text-faint)] hover:text-[var(--text)] transition-colors"
+              >
+                <Edit2 className="w-3 h-3" />
+              </button>
             </div>
-          </div>
-          <button
-            onClick={() => setConfirmDelete(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/10 transition-colors shrink-0"
-          >
-            <Trash2 className="w-3.5 h-3.5" /> Delete
-          </button>
+          )}
+          <Badge tone={meta.tone}>{meta.label}</Badge>
         </div>
-      </div>
 
-      {/* Videowall grid editor (videowall only) */}
-      {isVideowall && (
-        <VideowallGridEditor
-          group={group}
-          workspaceId={wsId ?? ''}
-          availableDevices={allDevices}
-        />
-      )}
-
-      {/* SyncPlay settings (sync only) */}
-      {isSync && group.syncGroup && (
-        <div className="rounded-xl border p-5 flex flex-col gap-4" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold text-[var(--text)] flex items-center gap-2">
-              <Tv className="w-4 h-4 text-[var(--text-muted)]" />
-              SyncPlay Settings
-            </h2>
-            <span className="text-xs text-[var(--text-muted)] flex items-center gap-2">
-              <span>Group ID:</span>
-              <span className="font-mono px-1.5 py-0.5 rounded bg-[var(--bg)] border border-[var(--border)] text-[var(--text)]">
-                {group.syncGroup.groupId}
-              </span>
-            </span>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Link2 className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
-            <div className="text-sm flex-1 min-w-0">
-              <span className="text-[var(--text-muted)]">Published playlist: </span>
-              {group.syncGroup.syncPlaylistName ? (
-                <span className="text-[var(--text)] font-medium">{group.syncGroup.syncPlaylistName}</span>
-              ) : (
-                <span className="text-[var(--text-faint)] italic">None — publish from the Playlists page</span>
-              )}
-            </div>
-          </div>
-
-          <div className="text-xs text-[var(--text-muted)]">
-            Mode: <span className="text-[var(--text)]">{group.syncGroup.mode === 'native-samsung' ? 'Samsung Native SyncPlay' : group.syncGroup.mode}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Members panel — not shown for videowall (grid editor above handles it) */}
-      {!isVideowall && (
-      <div className="rounded-xl border" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-        <div className="p-5 flex items-center justify-between gap-3 border-b" style={{ borderColor: 'var(--border)' }}>
-          <h2 className="text-sm font-semibold text-[var(--text)]">
-            Screens <span className="text-[var(--text-muted)] font-normal ml-1">({memberList.length})</span>
-          </h2>
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setAddPickerOpen(true)}
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-[var(--blue)] text-white rounded-lg hover:opacity-90 transition-opacity"
           >
-            <UserPlus className="w-3.5 h-3.5" /> Add Screens
+            <UserPlus className="w-3.5 h-3.5" /> Add Screen
+          </button>
+          <button
+            onClick={() => setConfigOpen((v) => !v)}
+            className={[
+              'flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border transition-colors',
+              configOpen
+                ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]'
+                : 'border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)]',
+            ].join(' ')}
+          >
+            <Settings2 className="w-3.5 h-3.5" /> Configure
+          </button>
+          <button
+            onClick={() => setConfirmDelete(true)}
+            className="p-1.5 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
+            title="Delete group"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>
+      </div>
 
-        {memberList.length === 0 ? (
-          <div className="p-8 text-center text-sm text-[var(--text-muted)]">
-            No screens in this group yet. Click <span className="text-[var(--text)]">Add Screens</span> to get started.
-          </div>
-        ) : (
-          <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
-            {memberList.map((m) => (
-              <div key={m.deviceId} className="p-3 flex items-center justify-between gap-3 text-sm">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className={`w-2 h-2 rounded-full shrink-0 ${statusDot(m.device?.status ?? 'offline')}`} />
-                  <span className="truncate text-[var(--text)]">{m.device?.name ?? m.deviceId}</span>
+      {/* ── Body ────────────────────────────────────────────────────────── */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+
+        {/* Main column */}
+        <div className="flex flex-col flex-1 min-w-0 overflow-y-auto">
+
+          {/* Device tile grid */}
+          <div className="p-4 sm:p-6 pb-4">
+            {memberDevices.length === 0 ? (
+              <div
+                className="rounded-xl border border-dashed flex items-center justify-center gap-3 py-12"
+                style={{ borderColor: 'var(--border)' }}
+              >
+                <Monitor className="w-8 h-8 text-[var(--text-muted)] opacity-20" />
+                <div className="text-center">
+                  <p className="text-sm text-[var(--text-muted)]">No screens in this group</p>
+                  <button
+                    onClick={() => setAddPickerOpen(true)}
+                    className="mt-1 text-xs text-[var(--accent)] hover:underline"
+                  >
+                    Add screens →
+                  </button>
                 </div>
+              </div>
+            ) : (
+              <div
+                className="grid gap-3"
+                style={{
+                  gridTemplateColumns: `repeat(${Math.min(memberDevices.length, 4)}, minmax(0, 1fr))`,
+                }}
+              >
+                {memberDevices.map((d) => (
+                  <DeviceTile
+                    key={d.id}
+                    device={d}
+                    selected={selectedDeviceId === d.id}
+                    onClick={() => setSelectedDeviceId(selectedDeviceId === d.id ? null : d.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Device detail */}
+          <div className="flex-1 px-4 sm:px-6 pb-6">
+            {selectedDeviceId ? (
+              <DeviceDetailContent deviceId={selectedDeviceId} wsId={wsId} embedded />
+            ) : (
+              <div
+                className="rounded-xl border border-dashed flex flex-col items-center justify-center gap-2 py-16 text-center"
+                style={{ borderColor: 'var(--border)' }}
+              >
+                <Monitor className="w-10 h-10 text-[var(--text-muted)] opacity-20" />
+                <p className="text-sm text-[var(--text-muted)]">Click a screen above to view its details</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Group config right rail (toggled by Configure button) */}
+        {configOpen && (
+          <div
+            className="w-80 xl:w-96 shrink-0 border-l overflow-y-auto"
+            style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
+          >
+            <div className="p-4 flex flex-col gap-4">
+
+              {/* Videowall grid editor */}
+              {isVideowall && (
+                <VideowallGridEditor
+                  group={group}
+                  workspaceId={wsId ?? ''}
+                  availableDevices={allDevices}
+                />
+              )}
+
+              {/* SyncPlay settings */}
+              {isSync && group.syncGroup && (
+                <div className="rounded-xl border p-4 flex flex-col gap-3" style={{ borderColor: 'var(--border)' }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-semibold text-[var(--text)] flex items-center gap-2">
+                      <Tv className="w-4 h-4 text-[var(--text-muted)]" /> SyncPlay Settings
+                    </h3>
+                    <span className="text-xs text-[var(--text-muted)] flex items-center gap-1.5">
+                      ID: <span className="font-mono px-1 py-0.5 rounded bg-[var(--bg)] border border-[var(--border)] text-[var(--text)]">{group.syncGroup.groupId}</span>
+                    </span>
+                  </div>
+                  <div className="flex items-start gap-2 text-sm">
+                    <Link2 className="w-4 h-4 text-[var(--text-muted)] shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <span className="text-[var(--text-muted)]">Playlist: </span>
+                      {group.syncGroup.syncPlaylistName
+                        ? <span className="text-[var(--text)] font-medium">{group.syncGroup.syncPlaylistName}</span>
+                        : <span className="text-[var(--text-faint)] italic">None — publish from Playlists</span>
+                      }
+                    </div>
+                  </div>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Mode: <span className="text-[var(--text)]">{group.syncGroup.mode === 'native-samsung' ? 'Samsung Native SyncPlay' : group.syncGroup.mode}</span>
+                  </p>
+                </div>
+              )}
+
+              {/* Members list (non-videowall) */}
+              {!isVideowall && (
+                <div className="rounded-xl border" style={{ borderColor: 'var(--border)' }}>
+                  <div className="p-3 flex items-center justify-between gap-2 border-b" style={{ borderColor: 'var(--border)' }}>
+                    <h3 className="text-sm font-semibold text-[var(--text)]">
+                      Screens <span className="text-[var(--text-muted)] font-normal">({memberList.length})</span>
+                    </h3>
+                  </div>
+                  {memberList.length === 0 ? (
+                    <p className="p-4 text-xs text-[var(--text-muted)] text-center">No screens yet.</p>
+                  ) : (
+                    <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                      {memberList.map((m) => (
+                        <div key={m.deviceId} className="px-3 py-2 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDot(m.device?.status ?? 'offline')}`} />
+                            <span className="truncate text-[var(--text)] text-xs">{m.device?.name ?? m.deviceId}</span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              if (isSync) {
+                                removeSyncMemberMut.mutate(m.deviceId);
+                              } else {
+                                const remaining = group.members.filter((x) => x.deviceId !== m.deviceId);
+                                replaceMembersMut.mutate(remaining.map((x, idx) => ({ deviceId: x.deviceId, position: idx })));
+                              }
+                            }}
+                            className="p-1 rounded hover:bg-red-500/10 text-[var(--text-faint)] hover:text-red-400 transition-colors"
+                            title="Remove"
+                          >
+                            <UserMinus className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Danger zone */}
+              <div className="rounded-xl border border-red-500/20 p-4" style={{ background: 'var(--bg)' }}>
+                <h3 className="text-xs font-semibold text-red-400 mb-2">Danger Zone</h3>
                 <button
-                  onClick={() => {
-                    if (isSync) {
-                      removeSyncMemberMut.mutate(m.deviceId);
-                    } else {
-                      const remaining = group.members.filter((x) => x.deviceId !== m.deviceId);
-                      replaceMembersMut.mutate(remaining.map((x, idx) => ({ deviceId: x.deviceId, position: idx })));
-                    }
-                  }}
-                  className="p-1.5 rounded hover:bg-red-500/10 text-[var(--text-faint)] hover:text-red-400 transition-colors"
-                  title="Remove from group"
+                  onClick={() => setConfirmDelete(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/10 transition-colors w-full justify-center"
                 >
-                  <UserMinus className="w-4 h-4" />
+                  <Trash2 className="w-3.5 h-3.5" /> Delete Group
                 </button>
               </div>
-            ))}
+            </div>
           </div>
         )}
       </div>
-      )} {/* end !isVideowall members panel */}
 
       {/* Modals */}
       {addPickerOpen && wsId && (
