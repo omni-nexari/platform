@@ -1792,6 +1792,8 @@
             if (duid && duid.trim().length > 0) return tag + duid.trim();
           } catch (e) {
           }
+          const mac = yield _getNetworkMac();
+          if (mac) return tag + mac;
           if (selfIp && selfIp !== "127.0.0.1" && selfIp !== "0.0.0.0") return tag + selfIp.replace(/\./g, "-");
           const storageKey = "_nexari_sync_device_id";
           let id = localStorage.getItem(storageKey);
@@ -1800,6 +1802,43 @@
             localStorage.setItem(storageKey, id);
           }
           return id.startsWith(tag) ? id : tag + id;
+        });
+      }
+      function _getNetworkMac() {
+        return __async(this, null, function* () {
+          var _a, _b, _c, _d, _e, _f;
+          const normalize = (value) => {
+            const text = String(value != null ? value : "").trim().toLowerCase();
+            return /^[0-9a-f]{2}([:-]?[0-9a-f]{2}){5}$/.test(text) ? "mac-" + text.replace(/[^0-9a-f]/g, "") : "";
+          };
+          try {
+            const net = (_a = window.webapis) == null ? void 0 : _a.network;
+            const direct = normalize((_b = net == null ? void 0 : net.getMac) == null ? void 0 : _b.call(net));
+            if (direct) return direct;
+            const info = (_c = net == null ? void 0 : net.getActiveConnectionInfo) == null ? void 0 : _c.call(net);
+            const fromInfo = normalize((_e = (_d = info == null ? void 0 : info.macAddress) != null ? _d : info == null ? void 0 : info.mac) != null ? _e : info == null ? void 0 : info.physicalAddress);
+            if (fromInfo) return fromInfo;
+          } catch (e) {
+          }
+          for (const propertyName of ["WIFI_NETWORK", "ETHERNET_NETWORK", "NETWORK"]) {
+            try {
+              const sysinfo = (_f = window.tizen) == null ? void 0 : _f.systeminfo;
+              if (!(sysinfo == null ? void 0 : sysinfo.getPropertyValue)) continue;
+              const mac = yield new Promise((resolve) => {
+                sysinfo.getPropertyValue(
+                  propertyName,
+                  (info) => {
+                    var _a2, _b2;
+                    return resolve(normalize((_b2 = (_a2 = info == null ? void 0 : info.macAddress) != null ? _a2 : info == null ? void 0 : info.mac) != null ? _b2 : info == null ? void 0 : info.networkMacAddress));
+                  },
+                  () => resolve("")
+                );
+              });
+              if (mac) return mac;
+            } catch (e) {
+            }
+          }
+          return "";
         });
       }
       function _getTizenTag() {

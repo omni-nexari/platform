@@ -208,9 +208,12 @@ async function _getDeviceId(selfIp: string): Promise<string> {
     const duid = (window as any).webapis?.productinfo?.getDuid?.();
     if (duid && duid.trim().length > 0) return tag + duid.trim();
   } catch {}
-  // 3. IP-derived (works when IP detection succeeds)
+  // 3. Network MAC — stable across reinstall when product IDs are unavailable
+  const mac = await _getNetworkMac();
+  if (mac) return tag + mac;
+  // 4. IP-derived (works when IP detection succeeds)
   if (selfIp && selfIp !== '127.0.0.1' && selfIp !== '0.0.0.0') return tag + selfIp.replace(/\./g, '-');
-  // 4. Persistent random ID stored in localStorage
+  // 5. Persistent random ID stored in localStorage
   const storageKey = '_nexari_sync_device_id';
   let id = localStorage.getItem(storageKey);
   if (!id) {
@@ -219,6 +222,40 @@ async function _getDeviceId(selfIp: string): Promise<string> {
   }
   // Only prepend tag if id doesn't already have it (survives reboot)
   return id.startsWith(tag) ? id : tag + id;
+}
+
+async function _getNetworkMac(): Promise<string> {
+  const normalize = (value: unknown): string => {
+    const text = String(value ?? '').trim().toLowerCase();
+    return /^[0-9a-f]{2}([:-]?[0-9a-f]{2}){5}$/.test(text)
+      ? 'mac-' + text.replace(/[^0-9a-f]/g, '')
+      : '';
+  };
+
+  try {
+    const net = (window as any).webapis?.network;
+    const direct = normalize(net?.getMac?.());
+    if (direct) return direct;
+    const info = net?.getActiveConnectionInfo?.();
+    const fromInfo = normalize(info?.macAddress ?? info?.mac ?? info?.physicalAddress);
+    if (fromInfo) return fromInfo;
+  } catch {}
+
+  for (const propertyName of ['WIFI_NETWORK', 'ETHERNET_NETWORK', 'NETWORK']) {
+    try {
+      const sysinfo = (window as any).tizen?.systeminfo;
+      if (!sysinfo?.getPropertyValue) continue;
+      const mac = await new Promise<string>((resolve) => {
+        sysinfo.getPropertyValue(
+          propertyName,
+          (info: any) => resolve(normalize(info?.macAddress ?? info?.mac ?? info?.networkMacAddress)),
+          () => resolve(''),
+        );
+      });
+      if (mac) return mac;
+    } catch {}
+  }
+  return '';
 }
 
 /** Return a short Tizen version prefix: 'tizen4-', 'tizen6.5-', 'tizen7-', etc. */
