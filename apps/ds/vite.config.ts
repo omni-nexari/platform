@@ -35,4 +35,7 @@ export default defineConfig({
     strictPort: true,
     proxy: proxyConfig,
   },
+  build: {
+    chunkSizeWarningLimit: 2500,
+  },
 });
