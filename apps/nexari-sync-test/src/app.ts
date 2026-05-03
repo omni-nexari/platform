@@ -39,6 +39,7 @@ let _container: HTMLElement;
 let _statusEl: HTMLElement | null;
 let _bannerEl: HTMLElement | null;
 let _leaderActivated = false;
+let _followerActivated = false;
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
@@ -76,6 +77,8 @@ window.addEventListener('load', async () => {
   P2PSync.onVideoUrl((msg) => {
     _videoUrl = msg.url;
     logger.info(`[App] VIDEO_URL from leader: ${_videoUrl}`);
+    if (_followerActivated) return;
+    _followerActivated = true;
     _activateEngine(_currentEngine, _videoUrl);
   });
 

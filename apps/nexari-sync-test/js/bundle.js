@@ -1353,6 +1353,17 @@
   function loadVideo3(url, itemIndex = 0) {
     const av = _av();
     if (!av) return Promise.reject(new Error("[AVPlay] webapis.avplay not available"));
+    const state = (() => {
+      try {
+        return av.getState();
+      } catch (e) {
+        return "NONE";
+      }
+    })();
+    if (_startScheduled2 || _playing2 || state !== "NONE" && state !== "IDLE") {
+      logger.info(`[AVPlay] loadVideo ignored (already in state ${state}): ${url}`);
+      return Promise.resolve();
+    }
     _itemIndex3 = itemIndex;
     _syncedStartMs4 = -1;
     _startScheduled2 = false;
@@ -1733,6 +1744,7 @@
       var _statusEl;
       var _bannerEl;
       var _leaderActivated = false;
+      var _followerActivated = false;
       window.addEventListener("load", () => __async(null, null, function* () {
         var _a, _b;
         _container = document.getElementById("video-container");
@@ -1762,6 +1774,8 @@
         onVideoUrl((msg) => {
           _videoUrl = msg.url;
           logger.info(`[App] VIDEO_URL from leader: ${_videoUrl}`);
+          if (_followerActivated) return;
+          _followerActivated = true;
           _activateEngine(_currentEngine, _videoUrl);
         });
         onSetEngine((msg) => {

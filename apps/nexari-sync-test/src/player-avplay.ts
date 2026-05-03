@@ -111,6 +111,14 @@ export function loadVideo(url: string, itemIndex = 0): Promise<void> {
   const av = _av();
   if (!av) return Promise.reject(new Error('[AVPlay] webapis.avplay not available'));
 
+  // If already preparing/ready/playing the same URL, skip — prevents duplicate opens
+  // when VIDEO_URL is retried by the leader.
+  const state = (() => { try { return av.getState(); } catch { return 'NONE'; } })();
+  if (_startScheduled || _playing || (state !== 'NONE' && state !== 'IDLE')) {
+    logger.info(`[AVPlay] loadVideo ignored (already in state ${state}): ${url}`);
+    return Promise.resolve();
+  }
+
   _itemIndex      = itemIndex;
   _syncedStartMs  = -1;
   _startScheduled = false;
