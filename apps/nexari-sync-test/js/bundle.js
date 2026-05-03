@@ -608,6 +608,7 @@
         const elapsed = getSyncedTime() - _syncedStartMs;
         const expectedMs = (elapsed % _videoDurationMs2 + _videoDurationMs2) % _videoDurationMs2;
         logger.info(`[MSE] loop: elapsed=${Math.round(elapsed)}ms seekTo=${Math.round(expectedMs)}ms`);
+        _lastLoopTime = Date.now();
         if (_video) {
           _video.currentTime = expectedMs / 1e3;
           _video.play().catch((e) => logger.warn(`[MSE] loop play() failed: ${e == null ? void 0 : e.message}`));
@@ -623,6 +624,7 @@
   function _startStateTickTimer() {
     _stateTickTimer = setInterval(() => {
       if (!_video || !_playing) return;
+      if (Date.now() - _lastLoopTime < LOOP_GRACE_MS) return;
       const posMs = _video.currentTime * 1e3;
       const syncNow = getSyncedTime();
       let expectedMs = posMs;
@@ -686,7 +688,7 @@
     _videoDurationMs2 = 0;
     _lastSeekTime = 0;
   }
-  var CHUNK_SIZE, _video, _ms, _sb, _syncedStartMs, _startScheduled, _itemIndex, _stateTickTimer, _rVfcSupported, _syncWatchdog, _videoDurationMs2, _pausedForSync, _playing, _lastSeekTime, SYNC_AHEAD_MS, SYNC_BEHIND_MS, SYNC_SEEK_MS, MIN_SEEK_INTERVAL, NUDGE_FAST, NUDGE_SLOW, NEAR_END_MS;
+  var CHUNK_SIZE, _video, _ms, _sb, _syncedStartMs, _startScheduled, _itemIndex, _stateTickTimer, _rVfcSupported, _syncWatchdog, _videoDurationMs2, _pausedForSync, _playing, _lastSeekTime, _lastLoopTime, SYNC_AHEAD_MS, SYNC_BEHIND_MS, SYNC_SEEK_MS, MIN_SEEK_INTERVAL, LOOP_GRACE_MS, NUDGE_FAST, NUDGE_SLOW, NEAR_END_MS;
   var init_player_mse = __esm({
     "src/player-mse.ts"() {
       init_ntp_client();
@@ -707,10 +709,12 @@
       _pausedForSync = false;
       _playing = false;
       _lastSeekTime = 0;
+      _lastLoopTime = 0;
       SYNC_AHEAD_MS = 50;
       SYNC_BEHIND_MS = 50;
       SYNC_SEEK_MS = 300;
       MIN_SEEK_INTERVAL = 800;
+      LOOP_GRACE_MS = 1500;
       NUDGE_FAST = 1.02;
       NUDGE_SLOW = 0.98;
       NEAR_END_MS = 500;
@@ -1035,7 +1039,7 @@
         PI_BASE: "http://192.168.1.17",
         GROUP_ID: "synctest-001"
       };
-      var _currentEngine = "wasm";
+      var _currentEngine = "mse";
       var _videoUrl = "";
       var _container;
       var _statusEl;

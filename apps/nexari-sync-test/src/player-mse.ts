@@ -31,12 +31,14 @@ let _videoDurationMs = 0;   // read from video.duration; shared via SYNC_PLAY
 let _pausedForSync   = false;
 let _playing         = false;
 let _lastSeekTime    = 0;    // wall-clock time of last seek (rate-limit to prevent cascade)
+let _lastLoopTime    = 0;    // wall-clock time of last loop restart
 
 // Tolerances for wall-clock position correction
 const SYNC_AHEAD_MS     = 50;   // nudge slow if ahead by more than this
 const SYNC_BEHIND_MS    = 50;   // nudge fast if behind by more than this
 const SYNC_SEEK_MS      = 300;  // hard seek if drift is larger than this
 const MIN_SEEK_INTERVAL = 800;  // ms between seeks (Tizen seek is async — prevent cascade)
+const LOOP_GRACE_MS     = 1500; // after loop restart, skip corrections until currentTime settles
 const NUDGE_FAST        = 1.02;
 const NUDGE_SLOW        = 0.98;
 const NEAR_END_MS       = 500;  // don't correct within this many ms of loop boundary
@@ -217,6 +219,7 @@ function _registerEndedHandler(): void {
       const elapsed    = getSyncedTime() - _syncedStartMs;
       const expectedMs = ((elapsed % _videoDurationMs) + _videoDurationMs) % _videoDurationMs;
       logger.info(`[MSE] loop: elapsed=${Math.round(elapsed)}ms seekTo=${Math.round(expectedMs)}ms`);
+      _lastLoopTime = Date.now(); // start grace period — currentTime is stale until seek completes
       if (_video) {
         _video.currentTime = expectedMs / 1000;
         _video.play().catch((e: any) => logger.warn(`[MSE] loop play() failed: ${e?.message}`));
@@ -235,6 +238,9 @@ function _registerEndedHandler(): void {
 function _startStateTickTimer(): void {
   _stateTickTimer = setInterval(() => {
     if (!_video || !_playing) return;
+    // Skip corrections during grace period after loop restart — video.currentTime
+    // is stale (shows pre-loop value) for up to 800ms after a seek on Tizen.
+    if (Date.now() - _lastLoopTime < LOOP_GRACE_MS) return;
     const posMs   = _video.currentTime * 1000;
     const syncNow = getSyncedTime();
 
