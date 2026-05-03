@@ -32,7 +32,7 @@ const CONFIG = {
 };
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let _currentEngine: EngineMode = 'mse';
+let _currentEngine: EngineMode = 'wasm';
 let _videoUrl = '';
 let _container: HTMLElement;
 let _statusEl: HTMLElement | null;

@@ -66,6 +66,7 @@ export async function loadVideo(url: string, itemIndex = 0): Promise<void> {
 
   logger.info('[WASM] decode complete — signalling READY');
   updateHud({ lastAction: 'Ready — waiting for SYNC_PLAY', decodePercent: null });
+  P2PSync.setVideoDuration(_decoded.durationMs);
   P2PSync.setVideoReady(_itemIndex, 'wasm');
 
   // Watchdog: start playback unsynced if no SYNC_PLAY arrives in 10s

@@ -845,6 +845,7 @@
       _canvas.height = _decoded.height;
       logger.info("[WASM] decode complete \u2014 signalling READY");
       updateHud({ lastAction: "Ready \u2014 waiting for SYNC_PLAY", decodePercent: null });
+      setVideoDuration(_decoded.durationMs);
       setVideoReady(_itemIndex2, "wasm");
       _syncWatchdog2 = setTimeout(() => {
         if (_syncedStartMs2 < 0) {
@@ -974,7 +975,7 @@
         PI_BASE: "http://192.168.1.17",
         GROUP_ID: "synctest-001"
       };
-      var _currentEngine = "mse";
+      var _currentEngine = "wasm";
       var _videoUrl = "";
       var _container;
       var _statusEl;
