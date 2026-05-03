@@ -29,11 +29,11 @@ const REGISTER_INTERVAL_MS    = 5_000;
 const PEER_POLL_INTERVAL_MS   = 2_000;
 const SIGNAL_POLL_INTERVAL_MS = 500;
 const HEARTBEAT_INTERVAL_MS   = 1_000;
-const DRIFT_NOOP_MS           = 30;
-const DRIFT_NUDGE_MS          = 200;
+const DRIFT_NOOP_MS           = 10;
+const DRIFT_NUDGE_MS          = 150;
 const LEADER_START_AHEAD_MS   = 5_000;
-const NUDGE_FAST  = 1.005;
-const NUDGE_SLOW  = 0.995;
+const NUDGE_FAST  = 1.02;
+const NUDGE_SLOW  = 0.98;
 // Only trust peers registered in the last 12s (keep-alive is every 5s)
 const PEER_MAX_AGE_MS = 12_000;
 
@@ -274,9 +274,12 @@ function _handleMessage(msg: SyncMessage): void {
       const expectedMs = _pbCurrentMs - (getSyncedTime() - hb.syncedTime);
       const driftMs    = hb.currentTimeMs - expectedMs;
       const absDrift   = Math.abs(driftMs);
+      _opts?.logger('info', `[P2P] hb from ${hb.deviceId}: follower=${Math.round(hb.currentTimeMs)}ms leader=${Math.round(_pbCurrentMs)}ms drift=${Math.round(driftMs)}ms`);
       if (absDrift > DRIFT_NUDGE_MS) {
+        _opts?.logger('info', `[P2P] SYNC_ADJUST snap drift=${Math.round(driftMs)}ms`);
         _send({ type: 'SYNC_ADJUST', itemIndex: _pbItemIndex, driftMs: Math.round(driftMs), action: 'snap', driftRate: 1, targetMs: _pbCurrentMs + 60 });
       } else if (absDrift > DRIFT_NOOP_MS) {
+        _opts?.logger('info', `[P2P] SYNC_ADJUST nudge drift=${Math.round(driftMs)}ms rate=${driftMs > 0 ? NUDGE_SLOW : NUDGE_FAST}`);
         _send({ type: 'SYNC_ADJUST', itemIndex: _pbItemIndex, driftMs: Math.round(driftMs), action: 'nudge', driftRate: driftMs > 0 ? NUDGE_SLOW : NUDGE_FAST });
       }
       break;

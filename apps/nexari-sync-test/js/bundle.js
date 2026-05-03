@@ -276,9 +276,12 @@
         const expectedMs = _pbCurrentMs - (getSyncedTime() - hb.syncedTime);
         const driftMs = hb.currentTimeMs - expectedMs;
         const absDrift = Math.abs(driftMs);
+        _opts == null ? void 0 : _opts.logger("info", `[P2P] hb from ${hb.deviceId}: follower=${Math.round(hb.currentTimeMs)}ms leader=${Math.round(_pbCurrentMs)}ms drift=${Math.round(driftMs)}ms`);
         if (absDrift > DRIFT_NUDGE_MS) {
+          _opts == null ? void 0 : _opts.logger("info", `[P2P] SYNC_ADJUST snap drift=${Math.round(driftMs)}ms`);
           _send({ type: "SYNC_ADJUST", itemIndex: _pbItemIndex, driftMs: Math.round(driftMs), action: "snap", driftRate: 1, targetMs: _pbCurrentMs + 60 });
         } else if (absDrift > DRIFT_NOOP_MS) {
+          _opts == null ? void 0 : _opts.logger("info", `[P2P] SYNC_ADJUST nudge drift=${Math.round(driftMs)}ms rate=${driftMs > 0 ? NUDGE_SLOW : NUDGE_FAST}`);
           _send({ type: "SYNC_ADJUST", itemIndex: _pbItemIndex, driftMs: Math.round(driftMs), action: "nudge", driftRate: driftMs > 0 ? NUDGE_SLOW : NUDGE_FAST });
         }
         break;
@@ -309,11 +312,11 @@
       PEER_POLL_INTERVAL_MS = 2e3;
       SIGNAL_POLL_INTERVAL_MS = 500;
       HEARTBEAT_INTERVAL_MS = 1e3;
-      DRIFT_NOOP_MS = 30;
-      DRIFT_NUDGE_MS = 200;
+      DRIFT_NOOP_MS = 10;
+      DRIFT_NUDGE_MS = 150;
       LEADER_START_AHEAD_MS = 5e3;
-      NUDGE_FAST = 1.005;
-      NUDGE_SLOW = 0.995;
+      NUDGE_FAST = 1.02;
+      NUDGE_SLOW = 0.98;
       PEER_MAX_AGE_MS = 12e3;
       _opts = null;
       _role = "pending";
@@ -520,10 +523,8 @@
   function _schedulePlay() {
     if (_startScheduled || !_video) return;
     _startScheduled = true;
-    if (!_video.paused) {
-      _video.pause();
-      _video.currentTime = 0;
-    }
+    _video.pause();
+    _video.currentTime = 0;
     const wait = _syncedStartMs - getSyncedTime();
     if (wait <= 0) {
       logger.warn("[MSE] SYNC_PLAY cue already past \u2014 playing immediately");
