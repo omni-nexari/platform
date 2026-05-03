@@ -182,8 +182,6 @@ const Player = {
   _syncRateRestoreTimer: null as any,
   _pendingSyncNextItemAt: null as number | null,
   _pendingSyncNextItemIndex: -1 as number,
-  _videowallSyncWatchdog: null as any, // clearTimeout handle for follower SYNC_PLAY watchdog
-  _pendingVideowallSyncPlay: null as number | null, // stored SYNC_PLAY cue when it arrives before onloadedmetadata
   // Samsung b2bapis.b2bsyncplay (native firmware SyncPlay) state.
   // Active when the current playlist is rendered via firmware-level sync
   // instead of the JS SyncEngine + HTML5 path. The native API auto-discovers
@@ -462,8 +460,6 @@ const Player = {
           // (not nested under .payload). Store the whole message as the manifest.
           logger.info('Videowall init received:', message);
           this._videowallManifest = message;
-          // mode drives crop vs. full-screen. Default to 'videowall' for back-compat.
-          this._videowallMode = (message as any).mode ?? 'videowall';
           // Reuse the P2P SyncEngine for wall sync — feed it the peer/priority
           // list from the videowall manifest.  groupId is the device group UUID
           // (treated as an opaque string by the engine).
@@ -476,62 +472,9 @@ const Player = {
             });
           }
           // Re-check content so any pending videowall content starts rendering
-          // now that the manifest (crop geometry) is available.  Clear the
-          // signature cache so the "Content unchanged" early-return is bypassed —
-          // the crop transform must be applied even when the playlist hasn't changed.
-          this.lastContentSignature = null;
+          // now that the manifest (crop geometry) is available.
           this.loadContent();
           break;
-
-        case 'VIDEOWALL_CLEAR':
-          // Portal published content outside of a videowall group — reset manifest
-          // so the next content load renders normally without crop.
-          logger.info('Videowall manifest cleared');
-          this._videowallManifest = null;
-          this._videowallMode = null;
-          break;
-
-        case 'VIDEOWALL_SYNC_PLAY': {
-          // API-relayed start cue broadcast by the leader to all group members.
-          // Allows Tizen 4 followers whose local bridge XHR is unavailable to
-          // receive the synchronized start time via their WS connection.
-          const sp = (message as any).payload || {};
-          const spStartMs = Number(sp.syncedStartMs);
-          if (isFinite(spStartMs) && spStartMs > 0) {
-            logger.info('[Videowall] VIDEOWALL_SYNC_PLAY received via API WS: syncedStartMs=' + spStartMs);
-            // Clear the watchdog — we got the real cue.
-            if (this._videowallSyncWatchdog) {
-              clearTimeout(this._videowallSyncWatchdog);
-              this._videowallSyncWatchdog = null;
-            }
-            // If the video element is already metadata-ready AND no content switch is
-            // in progress, dispatch immediately. Otherwise store the cue so
-            // onloadedmetadata on the NEW video can consume it when ready.
-            // Key race: cue can arrive while a new playlist is still downloading.
-            // The old video has readyState >= 1 but we must NOT fire on it — the
-            // cue is for the incoming content. Checking isDownloadingContent /
-            // pendingPlaylist catches this case.
-            const isContentSwitching = !!(this.isDownloadingContent || this.pendingPlaylist);
-            const sv = this._activeSyncVideo as HTMLVideoElement | null;
-            if (sv && sv.readyState >= 1 && !isContentSwitching) {
-              this._pendingVideowallSyncPlay = null;
-              this.handleSyncCommand({
-                type: 'SYNC_PLAY',
-                fromDeviceId: null,
-                payload: { syncedStartMs: spStartMs, itemIndex: 0 },
-                receivedAt: Date.now(),
-              });
-            } else {
-              if (isContentSwitching) {
-                logger.info('[Videowall] content switching — storing SYNC_PLAY cue for new content onloadedmetadata');
-              } else {
-                logger.info('[Videowall] video not yet ready — storing SYNC_PLAY cue for onloadedmetadata');
-              }
-              this._pendingVideowallSyncPlay = spStartMs;
-            }
-          }
-          break;
-        }
 
         case 'SESSION_CONFIG':
           logger.info('SyncPlay session config received - refreshing content');
@@ -677,9 +620,7 @@ const Player = {
                               const bytes = stream.readBytes(file.fileSize);
                               stream.close();
                               let binary = '';
-                              const _CHUNK = 8192;
-                              for (let i = 0; i < bytes.length; i += _CHUNK)
-                                binary += String.fromCharCode.apply(null, (Array.prototype.slice.call(bytes, i, i + _CHUNK) as number[]));
+                              for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
                               send(btoa(binary));
                             } catch (e) {
                               logger.warn('[LiveCapture] read stream bytes failed:', e);
@@ -692,9 +633,7 @@ const Player = {
                         try {
                           const bytes = fh.readData();
                           let binary = '';
-                          const _CHUNK = 8192;
-                          for (let i = 0; i < bytes.length; i += _CHUNK)
-                            binary += String.fromCharCode.apply(null, (Array.prototype.slice.call(bytes, i, i + _CHUNK) as number[]));
+                          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
                           send(btoa(binary));
                         } finally {
                           try { fh.close(); } catch (_) {}
@@ -2747,10 +2686,10 @@ const Player = {
 
   // Render video content using Samsung AVPlay API for better performance
   renderVideo(container, content) {
-    // Videowall crop mode: CSS-crop the full-wall video to this panel's region.
-    // Guard on _videowallMode='videowall' so P2P-synced single-screen content
-    // (mode='syncplay') plays full-screen even though a manifest is in memory.
-    if (this._videowallManifest && this._videowallMode === 'videowall') {
+    // Videowall mode: CSS-crop the full-wall video to this panel's region.
+    // Guard on content.type so regular video items in a playlist aren't
+    // accidentally rendered in crop mode if a manifest is still in memory.
+    if (this._videowallManifest && content && content.type === 'VIDEOWALL') {
       this._renderVideowallContent(container, content);
       return;
     }
@@ -2834,79 +2773,11 @@ const Player = {
     this._activeSyncVideo = video;
 
     video.onloadedmetadata = () => {
-      if (typeof SyncEngine !== 'undefined' && SyncEngine.isActive()) {
-        if (SyncEngine.getRole() === 'leader') {
-          // Leader: broadcast a start cue 2.5s from now so all panels can begin together.
-          // startGroupAt self-dispatches SYNC_PLAY locally so the leader also gates through
-          // handleSyncCommand → waitForPreciseSyncedTime → play (no direct play() here).
-          const startMs = this.getSyncedTime() + 2500;
-          logger.info('[Videowall] leader broadcasting startGroupAt: syncedStartMs=' + startMs);
-          SyncEngine.startGroupAt(startMs, 0);
-          // Also relay via API WebSocket so Tizen 4 / legacy followers (whose bridge
-          // XHR may fail) still receive the cue over their guaranteed WS connection.
-          void this._relayVideowallSyncPlay(startMs);
-        } else {
-          // Follower: keep video paused and wait for SYNC_PLAY via bridge poll or API WS.
-          // Explicitly pause — belt-and-suspenders for Tizen 4 which may autoplay despite autoplay=false.
-          video.pause();
-          // If SYNC_PLAY cue arrived before video was ready (e.g. slow download), apply it now.
-          const pendingCue = this._pendingVideowallSyncPlay;
-          if (pendingCue) {
-            this._pendingVideowallSyncPlay = null;
-            logger.info('[Videowall] follower video ready — applying stored SYNC_PLAY cue: syncedStartMs=' + pendingCue);
-            this.handleSyncCommand({
-              type: 'SYNC_PLAY',
-              fromDeviceId: null,
-              payload: { syncedStartMs: pendingCue, itemIndex: 0 },
-              receivedAt: Date.now(),
-            });
-          } else {
-            logger.info('[Videowall] follower video ready — awaiting SYNC_PLAY cue...');
-            // Watchdog: if no cue arrives within 6s, play unsynced so the wall isn't stuck.
-            if (this._videowallSyncWatchdog) clearTimeout(this._videowallSyncWatchdog);
-            this._videowallSyncWatchdog = setTimeout(() => {
-              this._videowallSyncWatchdog = null;
-              const v = this._activeSyncVideo as HTMLVideoElement | null;
-              logger.warn('[Videowall] watchdog fired — video.paused=' + (v ? v.paused : 'null'));
-              if (v && v.paused) {
-                logger.warn('[Videowall] SYNC_PLAY watchdog fired — playing unsynced after 6s timeout');
-                v.play().catch((e) => logger.error('[Videowall] watchdog play() failed:', e));
-              }
-            }, 6000) as unknown as number;
-          }
-        }
-      } else {
-        // No active SyncEngine — play immediately (standalone / fallback mode).
-        video.play().catch((err) => logger.error('[Videowall] play() failed:', err));
-      }
+      video.play().catch((err) => logger.error('[Videowall] play() failed:', err));
     };
     video.onerror = (err) => logger.error('[Videowall] video error:', err);
 
     container.appendChild(video);
-  },
-
-  // Relay a videowall SYNC_PLAY start cue via the API WebSocket so that
-  // Tizen 4 followers (whose local bridge XHR may be blocked) still receive
-  // the synchronized start time through their guaranteed WS connection.
-  async _relayVideowallSyncPlay(syncedStartMs: number): Promise<void> {
-    const mf = this._videowallManifest;
-    if (!mf || !mf.deviceGroupId) return;
-    const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
-    if (!token) return;
-    try {
-      const resp = await fetch(`${CONFIG.API_BASE}/devices/group-sync-play`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ groupId: mf.deviceGroupId, syncedStartMs }),
-      });
-      if (!resp.ok) {
-        logger.warn('[Videowall] API sync-play relay failed: HTTP ' + resp.status);
-      } else {
-        logger.info('[Videowall] API sync-play relay OK (syncedStartMs=' + syncedStartMs + ')');
-      }
-    } catch (e: any) {
-      logger.warn('[Videowall] API sync-play relay error:', e && e.message);
-    }
   },
 
   // Render video using Samsung AVPlay API
@@ -4380,14 +4251,6 @@ const Player = {
 
       this.ntpOffset = Math.round(nextOffset);
       this.lastNtpSync = Date.now();
-
-      // Keep the local bridge NTP-corrected so peer-NTP requests from followers
-      // return getSyncedTime() rather than raw Date.now() (prevents ~ntpOffset drift).
-      void fetch('http://localhost:9615/sync/ntp-offset', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ntpOffset: Math.round(nextOffset) }),
-      }).catch(() => {}); // best-effort; bridge may not be running
 
       logger.info(
         `NTP sync complete: offset=${Math.round(nextOffset)}ms (raw=${Math.round(best.offset)}ms), bestRTT=${Math.round(best.rtt)}ms, samples=${samples.length}${delta > NTP_SNAP_THRESHOLD_MS ? ' [SNAPPED]' : ''}`
@@ -6083,11 +5946,6 @@ const Player = {
       clearTimeout(this._syncRateRestoreTimer);
       this._syncRateRestoreTimer = null;
     }
-    // Cancel any pending videowall sync watchdog.
-    if (this._videowallSyncWatchdog) {
-      clearTimeout(this._videowallSyncWatchdog);
-      this._videowallSyncWatchdog = null;
-    }
 
     // Stop seamless AVPlay if active
     if (this.seamlessPlaylistActive) {
@@ -7201,23 +7059,8 @@ const Player = {
         this.waitForPreciseSyncedTime(startAt, () => {
           logger.info('[Sync] SYNC_PLAY fire-time reached (itemIndex=' + payload.itemIndex + ')');
           // Followers begin/resume playback at the same wall instant.
-          const v = this._activeSyncVideo as HTMLVideoElement | null;
+          const v = this._activeSyncVideo;
           if (v) {
-            // Late-join: if the scheduled start time has already passed (e.g. slow
-            // download on Tizen 4), seek to the correct position in the loop so
-            // the follower is in sync with the leader rather than starting from 0.
-            const elapsed = this.getSyncedTime() - startAt; // ms since leader started
-            if (elapsed > 200) {
-              const dur = (v as any).duration as number; // seconds
-              if (isFinite(dur) && dur > 0.5) {
-                const seekTo = v.loop
-                  ? (elapsed / 1000) % dur
-                  : Math.min(elapsed / 1000, dur - 0.1);
-                try { v.currentTime = seekTo; } catch (_) {}
-                logger.info('[Sync] late-join seek to ' + seekTo.toFixed(3) +
-                            's (elapsed=' + Math.round(elapsed) + 'ms, loop=' + v.loop + ')');
-              }
-            }
             try { v.play().catch(() => {}); } catch (_) {}
           }
         });
@@ -7394,9 +7237,7 @@ const Player = {
                       const bytes = stream.readBytes(file.fileSize);
                       stream.close();
                       let binary = '';
-                      const _CHUNK = 8192;
-                      for (let i = 0; i < bytes.length; i += _CHUNK)
-                        binary += String.fromCharCode.apply(null, (Array.prototype.slice.call(bytes, i, i + _CHUNK) as number[]));
+                      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
                       send(btoa(binary));
                     } catch (e) {
                       logger.warn('[Screenshot] read stream bytes failed, trying canvas:', e);
@@ -7416,9 +7257,7 @@ const Player = {
                   try {
                     const bytes = fh.readData();
                     let binary = '';
-                    const _CHUNK = 8192;
-                    for (let i = 0; i < bytes.length; i += _CHUNK)
-                      binary += String.fromCharCode.apply(null, (Array.prototype.slice.call(bytes, i, i + _CHUNK) as number[]));
+                    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
                     send(btoa(binary));
                   } finally {
                     try { fh.close(); } catch (_) {}

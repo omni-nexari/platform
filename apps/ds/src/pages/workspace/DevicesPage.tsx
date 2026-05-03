@@ -9,18 +9,36 @@ import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
 
 type PairFormInput = Omit<ClaimDeviceInput, 'workspaceId'>;
-import { Grid2x2, Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon } from 'lucide-react';
+import { Grid2x2, Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon, Copy, CheckCheck } from 'lucide-react';
 
 // Shows the device thumbnail using the DB-backed screenshot record.
 // Re-renders automatically when the device list poll returns a new latestScreenshotId.
-function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt }: {
+function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, powerState }: {
   deviceId: string;
   screenshotId: string | null;
   latestFrameAt: number | null;
+  status: Device['status'];
+  powerState: Device['powerState'];
 }) {
   const [errored, setErrored] = useState(false);
   // Reset error state whenever a fresh screenshot id or frame timestamp arrives.
   useEffect(() => { setErrored(false); }, [screenshotId, latestFrameAt]);
+
+  const isOffline = status !== 'online';
+  const isPoweredOff = powerState === 'off' || powerState === 'standby';
+
+  // When device is offline or powered off, show a state overlay instead of the thumbnail.
+  if (isOffline || isPoweredOff) {
+    const label = isPoweredOff && !isOffline ? 'Powered Off' : status === 'offline' ? 'Offline' : status === 'error' ? 'Error' : 'Unclaimed';
+    const Icon = isPoweredOff && !isOffline ? Monitor : WifiOff;
+    return (
+      <div className="w-full aspect-video rounded-lg border border-[var(--card-border)] flex flex-col items-center justify-center gap-2 bg-[var(--surface)] overflow-hidden">
+        <Icon className="w-6 h-6 text-[var(--text-muted)] opacity-40" />
+        <span className="text-[11px] text-[var(--text-muted)] opacity-60 font-medium">{label}</span>
+      </div>
+    );
+  }
+
   const showImg = !!screenshotId && !errored;
   // Append ?t= cache-buster so the browser re-fetches the image file whenever
   // latestFrameAt changes — even if the DB row UUID hasn't changed yet.
@@ -224,6 +242,53 @@ function VideowallGroupCard({
       </div>
 
       <ChevronRight className="w-4 h-4 text-[var(--text-muted)] self-end" />
+    </div>
+  );
+}
+
+function PairInstructions() {
+  const [copied, setCopied] = useState(false);
+  const playerUrl = window.location.origin;
+
+  function copy() {
+    navigator.clipboard.writeText(playerUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  return (
+    <div className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-3">
+      <p className="text-xs font-semibold text-[var(--text)] uppercase tracking-wider">How to get the pairing code</p>
+      <ol className="space-y-1.5 text-sm text-[var(--text-muted)]">
+        <li className="flex gap-2">
+          <span className="shrink-0 w-5 h-5 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] text-[10px] font-bold flex items-center justify-center">1</span>
+          <span>Power on your Samsung display and launch the <span className="text-[var(--text)]">Nexari Player</span> app.</span>
+        </li>
+        <li className="flex gap-2">
+          <span className="shrink-0 w-5 h-5 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] text-[10px] font-bold flex items-center justify-center">2</span>
+          <span>If prompted, set the <span className="text-[var(--text)]">Player URL</span> on the display to the address below.</span>
+        </li>
+        <li className="flex gap-2">
+          <span className="shrink-0 w-5 h-5 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] text-[10px] font-bold flex items-center justify-center">3</span>
+          <span>A <span className="text-[var(--text)]">6-character pairing code</span> will appear on screen — enter it below.</span>
+        </li>
+      </ol>
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">Player URL (Tizen / URL Launcher)</p>
+        <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+          <span className="flex-1 font-mono text-xs text-[var(--text)] truncate select-all">{playerUrl}</span>
+          <button
+            type="button"
+            onClick={copy}
+            className="shrink-0 flex items-center gap-1 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors text-xs"
+            title="Copy URL"
+          >
+            {copied ? <CheckCheck size={14} className="text-emerald-400" /> : <Copy size={14} />}
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -468,6 +533,8 @@ export default function DevicesPage() {
                             deviceId={device.id}
                             screenshotId={device.latestScreenshotId}
                             latestFrameAt={device.latestFrameAt}
+                            status={device.status}
+                            powerState={device.powerState}
                           />
                       }
 
@@ -571,6 +638,9 @@ export default function DevicesPage() {
       <Modal open={pairOpen} onClose={() => { setPairOpen(false); reset(); }}>
         <ModalHeader>Pair a Device</ModalHeader>
         <ModalBody>
+          {/* How-to instructions */}
+          <PairInstructions />
+
           <form id="pair-form" onSubmit={handleSubmit((d) => claimMutation.mutate(d))} className="space-y-4">
             <div>
               <label className="ui-label">Pairing Code</label>
