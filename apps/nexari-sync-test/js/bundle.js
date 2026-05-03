@@ -294,6 +294,7 @@
   function _startHeartbeat() {
     _heartbeatTimer = setInterval(() => {
       if (!_connected || _role !== "follower" || _pbItemIndex < 0) return;
+      _opts == null ? void 0 : _opts.logger("info", `[P2P] hb sent: pos=${Math.round(_pbCurrentMs)}ms`);
       _send({
         type: "HEARTBEAT",
         deviceId: _opts.deviceId,

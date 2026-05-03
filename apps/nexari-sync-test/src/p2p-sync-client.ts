@@ -295,6 +295,7 @@ function _handleMessage(msg: SyncMessage): void {
 function _startHeartbeat(): void {
   _heartbeatTimer = setInterval(() => {
     if (!_connected || _role !== 'follower' || _pbItemIndex < 0) return;
+    _opts?.logger('info', `[P2P] hb sent: pos=${Math.round(_pbCurrentMs)}ms`);
     _send({
       type: 'HEARTBEAT',
       deviceId: _opts!.deviceId,
