@@ -29,6 +29,7 @@ const REGISTER_INTERVAL_MS    = 5_000;
 const PEER_POLL_INTERVAL_MS   = 2_000;
 const SIGNAL_POLL_INTERVAL_MS = 50;
 const HEARTBEAT_INTERVAL_MS   = 1_000;
+const READY_RETRY_INTERVAL_MS = 1_000;
 const CLOCK_SYNC_INTERVAL_MS  = 100;
 const CLOCK_SYNC_TIMEOUT_MS   = 5_000;
 const CLOCK_SYNC_MIN_SAMPLES  = 6;
@@ -73,10 +74,12 @@ let _registerTimer: any   = null;
 let _peerPollTimer: any   = null;
 let _signalPollTimer: any = null;
 let _heartbeatTimer: any  = null;
+let _readyRetryTimer: any = null;
 let _clockProbeTimer: any = null;
 let _videoDurationMs      = 0;
 let _syncPlaySent         = false;  // prevent duplicate SYNC_PLAYs from re-route READY
 let _readySent            = false;
+let _readyRetryCount      = 0;
 let _syncedStartMs        = -1;
 let _lastClockLogTime     = 0;
 let _lastReadyBlockedLogTime = 0;
@@ -163,11 +166,13 @@ export function shutdown(): void {
   clearInterval(_peerPollTimer);
   clearInterval(_signalPollTimer);
   clearInterval(_heartbeatTimer);
+  clearInterval(_readyRetryTimer);
   clearInterval(_clockProbeTimer);
   _connected = false;
   _role = 'pending';
   _syncPlaySent = false;
   _readySent = false;
+  _readyRetryCount = 0;
   _syncedStartMs = -1;
   _relaySessionStartedAtMs = -1;
   _staleSignalLogCount = 0;
@@ -284,6 +289,7 @@ async function _doSignalDrain(): Promise<void> {
         _opts?.logger('info', `[P2P] re-routing peer: ${_peerDeviceId ?? 'none'} → ${entry.from}`);
         _peerDeviceId = entry.from;
         _readySent = false;
+        _stopReadyRetry();
         _resetLeaderClockSync();
         // Re-evaluate role with the real peer (we may have paired with a stale device initially)
         const newRole: Role = _opts!.deviceId < entry.from ? 'leader' : 'follower';
@@ -411,9 +417,34 @@ function _markLeaderClockReady(reason: string): void {
   _maybeSendReady('clock-ready');
 }
 
+function _stopReadyRetry(): void {
+  clearInterval(_readyRetryTimer);
+  _readyRetryTimer = null;
+  _readyRetryCount = 0;
+}
+
+function _startReadyRetry(): void {
+  if (!_opts || _role !== 'follower' || _readyRetryTimer || _syncPlaySent) return;
+  _readyRetryTimer = setInterval(() => {
+    if (!_opts || _role !== 'follower' || _syncPlaySent || !_peerDeviceId || _readyItemIndex < 0) {
+      _stopReadyRetry();
+      return;
+    }
+    _readyRetryCount += 1;
+    _send({ type: 'READY', deviceId: _opts.deviceId, engineMode: _readyEngineMode });
+    if (_readyRetryCount % 5 === 0) {
+      _opts.logger('info', `[P2P] follower READY retry ${_readyRetryCount}`);
+    }
+  }, READY_RETRY_INTERVAL_MS);
+}
+
 function _maybeSendReady(reason: string): void {
   if (!_opts || !_connected || _role !== 'follower' || !_peerDeviceId) return;
-  if (_readySent || _syncPlaySent || _readyItemIndex < 0) return;
+  if (_syncPlaySent || _readyItemIndex < 0) return;
+  if (_readySent) {
+    _startReadyRetry();
+    return;
+  }
   if (!_leaderClockReady) {
     _startLeaderClockSync();
     const now = Date.now();
@@ -426,6 +457,7 @@ function _maybeSendReady(reason: string): void {
   _readySent = true;
   _send({ type: 'READY', deviceId: _opts.deviceId, engineMode: _readyEngineMode });
   _opts.logger('info', `[P2P] follower READY sent (${reason})`);
+  _startReadyRetry();
 }
 
 // ── Message handler ───────────────────────────────────────────────────────────
@@ -463,6 +495,7 @@ function _handleMessage(msg: SyncMessage): void {
     case 'SYNC_PLAY':
       _syncPlaySent = true;  // prevent subsequent READY sends
       _readySent = true;
+      _stopReadyRetry();
       clearInterval(_clockProbeTimer);
       _clockProbeTimer = null;
       _syncedStartMs = (msg as MsgSyncPlay).syncedStartMs;

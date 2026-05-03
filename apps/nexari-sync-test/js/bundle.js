@@ -291,6 +291,7 @@
             _opts == null ? void 0 : _opts.logger("info", `[P2P] re-routing peer: ${_peerDeviceId != null ? _peerDeviceId : "none"} \u2192 ${entry.from}`);
             _peerDeviceId = entry.from;
             _readySent = false;
+            _stopReadyRetry();
             _resetLeaderClockSync();
             const newRole = _opts.deviceId < entry.from ? "leader" : "follower";
             if (newRole !== _role) {
@@ -408,9 +409,32 @@
     _opts == null ? void 0 : _opts.logger("info", `[P2P] leader-clock ready (${reason}): samples=${_leaderClockSamples} bestRtt=${Math.round(_leaderClockBestRtt)}ms offset=${Math.round(getNtpOffset())}ms`);
     _maybeSendReady("clock-ready");
   }
+  function _stopReadyRetry() {
+    clearInterval(_readyRetryTimer);
+    _readyRetryTimer = null;
+    _readyRetryCount = 0;
+  }
+  function _startReadyRetry() {
+    if (!_opts || _role !== "follower" || _readyRetryTimer || _syncPlaySent) return;
+    _readyRetryTimer = setInterval(() => {
+      if (!_opts || _role !== "follower" || _syncPlaySent || !_peerDeviceId || _readyItemIndex < 0) {
+        _stopReadyRetry();
+        return;
+      }
+      _readyRetryCount += 1;
+      _send({ type: "READY", deviceId: _opts.deviceId, engineMode: _readyEngineMode });
+      if (_readyRetryCount % 5 === 0) {
+        _opts.logger("info", `[P2P] follower READY retry ${_readyRetryCount}`);
+      }
+    }, READY_RETRY_INTERVAL_MS);
+  }
   function _maybeSendReady(reason) {
     if (!_opts || !_connected || _role !== "follower" || !_peerDeviceId) return;
-    if (_readySent || _syncPlaySent || _readyItemIndex < 0) return;
+    if (_syncPlaySent || _readyItemIndex < 0) return;
+    if (_readySent) {
+      _startReadyRetry();
+      return;
+    }
     if (!_leaderClockReady) {
       _startLeaderClockSync();
       const now = Date.now();
@@ -423,6 +447,7 @@
     _readySent = true;
     _send({ type: "READY", deviceId: _opts.deviceId, engineMode: _readyEngineMode });
     _opts.logger("info", `[P2P] follower READY sent (${reason})`);
+    _startReadyRetry();
   }
   function _handleMessage(msg) {
     var _a;
@@ -455,6 +480,7 @@
       case "SYNC_PLAY":
         _syncPlaySent = true;
         _readySent = true;
+        _stopReadyRetry();
         clearInterval(_clockProbeTimer);
         _clockProbeTimer = null;
         _syncedStartMs = msg.syncedStartMs;
@@ -514,7 +540,7 @@
     }
     return { timelineMs: _pbCurrentMs, positionMs: _pbCurrentMs };
   }
-  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, CLOCK_SYNC_INTERVAL_MS, CLOCK_SYNC_TIMEOUT_MS, CLOCK_SYNC_MIN_SAMPLES, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _clockProbeTimer, _videoDurationMs, _syncPlaySent, _readySent, _syncedStartMs, _lastClockLogTime, _lastReadyBlockedLogTime, _relaySessionStartedAtMs, _staleSignalLogCount, _clockProbeSeq, _clockSyncStartedAt, _leaderClockSamples, _leaderClockBestRtt, _leaderClockReady, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
+  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, READY_RETRY_INTERVAL_MS, CLOCK_SYNC_INTERVAL_MS, CLOCK_SYNC_TIMEOUT_MS, CLOCK_SYNC_MIN_SAMPLES, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _readyRetryTimer, _clockProbeTimer, _videoDurationMs, _syncPlaySent, _readySent, _readyRetryCount, _syncedStartMs, _lastClockLogTime, _lastReadyBlockedLogTime, _relaySessionStartedAtMs, _staleSignalLogCount, _clockProbeSeq, _clockSyncStartedAt, _leaderClockSamples, _leaderClockBestRtt, _leaderClockReady, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
   var init_p2p_sync_client = __esm({
     "src/p2p-sync-client.ts"() {
       init_ntp_client();
@@ -522,6 +548,7 @@
       PEER_POLL_INTERVAL_MS = 2e3;
       SIGNAL_POLL_INTERVAL_MS = 50;
       HEARTBEAT_INTERVAL_MS = 1e3;
+      READY_RETRY_INTERVAL_MS = 1e3;
       CLOCK_SYNC_INTERVAL_MS = 100;
       CLOCK_SYNC_TIMEOUT_MS = 5e3;
       CLOCK_SYNC_MIN_SAMPLES = 6;
@@ -544,10 +571,12 @@
       _peerPollTimer = null;
       _signalPollTimer = null;
       _heartbeatTimer = null;
+      _readyRetryTimer = null;
       _clockProbeTimer = null;
       _videoDurationMs = 0;
       _syncPlaySent = false;
       _readySent = false;
+      _readyRetryCount = 0;
       _syncedStartMs = -1;
       _lastClockLogTime = 0;
       _lastReadyBlockedLogTime = 0;
