@@ -5,7 +5,7 @@
  * Polls Pi /api/v1/test-sync endpoints every 2s.
  */
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Activity, Radio, Trash2, Zap } from 'lucide-react';
 import {
@@ -16,8 +16,8 @@ import {
   SectionCard,
   SectionCardBody,
   SectionCardHeader,
-} from '../../components/UiPrimitives.js';
-import { api } from '../../lib/api.js';
+} from '../components/UiPrimitives.js';
+import { api } from '../lib/api.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Peer {
@@ -80,13 +80,13 @@ function LogPanel({ deviceId, label }: { deviceId: string; label: string }) {
 
   const { data, isError } = useQuery({
     queryKey: ['test-sync-logs', deviceId],
-    queryFn:  () => api.get<{ logs: LogEntry[] }>(`/test-sync/logs?deviceId=${deviceId}&limit=200`).then((r) => r.data),
+    queryFn:  () => api.get<{ logs: LogEntry[] }>(`/test-sync/logs?deviceId=${deviceId}&limit=200`).then((r: { data: { logs: LogEntry[] } }) => r.data),
     refetchInterval: 2000,
-    onSuccess: () => {
-      // Auto-scroll
-      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
-    },
   });
+
+  useEffect(() => {
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+  }, [data]);
 
   const clearMutation = useMutation({
     mutationFn: () => api.delete(`/test-sync/logs?deviceId=${deviceId}`),
@@ -158,7 +158,7 @@ export default function TestSyncPage() {
   // Poll registered peers
   const peersQuery = useQuery({
     queryKey: ['test-sync-peers'],
-    queryFn:  () => api.get<{ peers: Peer[] }>('/test-sync/peers?groupId=synctest-001').then((r) => r.data),
+    queryFn:  () => api.get<{ peers: Peer[] }>('/test-sync/peers?groupId=synctest-001').then((r: { data: { peers: Peer[] } }) => r.data),
     refetchInterval: 5000,
   });
 
