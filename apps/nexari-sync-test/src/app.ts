@@ -48,7 +48,7 @@ window.addEventListener('load', async () => {
   _setStatus('Detecting device…');
 
   const selfIp  = await _getSelfIp();
-  const deviceId = selfIp.replace(/\./g, '-');
+  const deviceId = await _getDeviceId(selfIp);
 
   initLogger(CONFIG.PI_BASE, deviceId);
   logger.info(`[App] boot: ip=${selfIp} deviceId=${deviceId}`);
@@ -86,8 +86,8 @@ window.addEventListener('load', async () => {
   try { (window as any).tizen?.tvinputdevice?.registerKey('ChannelUp'); } catch {}
   document.addEventListener('keydown', _onKey);
 
-  _setStatus('Fetching video…');
-  _videoUrl = await _fetchVideoUrl();
+  _setStatus('Loading video…');
+  _videoUrl = _fetchVideoUrl();
   logger.info(`[App] video URL: ${_videoUrl}`);
 
   // Wait briefly for P2P role to be determined (peer poll up to ~4s)
@@ -98,8 +98,7 @@ window.addEventListener('load', async () => {
 
   if (P2PSync.getRole() === 'leader') {
     logger.info('[App] leader: sending VIDEO_URL to follower');
-    // Leader pushes VIDEO_URL to follower via DataChannel (handled in p2p-sync-client internally)
-    // For now, leader also activates its own player directly
+    P2PSync.broadcastVideoUrl(_videoUrl);
     _activateEngine(_currentEngine, _videoUrl);
   } else {
     _setStatus('Follower — waiting for VIDEO_URL…');
@@ -165,31 +164,64 @@ function _onKey(e: KeyboardEvent): void {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function _getSelfIp(): Promise<string> {
+  // 1. Samsung webapis.network (most reliable on Tizen TV)
+  try {
+    const net = (window as any).webapis?.network;
+    if (net) {
+      const info = net.getActiveConnectionInfo?.();
+      if (info?.ipAddress && info.ipAddress !== '0.0.0.0') return info.ipAddress as string;
+    }
+  } catch {}
+  // 2. tizen.systeminfo NETWORK property
   try {
     const sysinfo = (window as any).tizen?.systeminfo;
     if (sysinfo) {
-      return await new Promise<string>((resolve, reject) => {
-        sysinfo.getPropertyValue('NETWORK', (net: any) => {
-          resolve(net?.ipAddress ?? '0.0.0.0');
-        }, reject);
+      const ip = await new Promise<string>((resolve, reject) => {
+        sysinfo.getPropertyValue(
+          'NETWORK',
+          (net: any) => { resolve(net?.ipAddress && net.ipAddress !== '0.0.0.0' ? net.ipAddress : ''); },
+          () => resolve(''),
+        );
       });
+      if (ip) return ip;
     }
   } catch {}
-  // Fallback for dev browser
-  return window.location.hostname || '127.0.0.1';
+  // 3. Dev browser fallback
+  const h = window.location.hostname;
+  return (h && h !== 'localhost') ? h : '127.0.0.1';
 }
 
-async function _fetchVideoUrl(): Promise<string> {
+async function _getDeviceId(selfIp: string): Promise<string> {
+  // 1. TV serial number — guaranteed unique per unit
   try {
-    const res  = await fetch(`${CONFIG.PI_BASE}/api/v1/content?type=video&limit=1`);
-    const data = await res.json();
-    const item = data?.items?.[0] ?? data?.[0];
-    if (item?.url) return item.url as string;
-    if (item?.filePath) return `${CONFIG.PI_BASE}/uploads/${item.filePath}` as string;
-  } catch (e: any) {
-    logger.error(`[App] fetchVideoUrl failed: ${e?.message}`);
+    const serial = (window as any).webapis?.productinfo?.getSerialNumber?.();
+    if (serial && serial.trim().length > 0) return serial.trim();
+  } catch {}
+  // 2. DUID
+  try {
+    const duid = (window as any).webapis?.productinfo?.getDuid?.();
+    if (duid && duid.trim().length > 0) return duid.trim();
+  } catch {}
+  // 3. IP-derived (works when IP detection succeeds)
+  if (selfIp && selfIp !== '127.0.0.1' && selfIp !== '0.0.0.0') return selfIp.replace(/\./g, '-');
+  // 4. Persistent random ID stored in localStorage
+  let id = localStorage.getItem('_nexari_sync_device_id');
+  if (!id) {
+    id = 'dev-' + Math.random().toString(36).slice(2, 10);
+    localStorage.setItem('_nexari_sync_device_id', id);
   }
-  return '';
+  return id;
+}
+
+// Embedded media playlist — files bundled inside the .wgt package
+const EMBEDDED_MEDIA = [
+  './media/1.mp4',
+  './media/2.mp4',
+  './media/3.mp4',
+];
+
+function _fetchVideoUrl(): string {
+  return EMBEDDED_MEDIA[0];
 }
 
 async function _waitForRole(timeoutMs: number): Promise<void> {
