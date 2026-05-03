@@ -1446,13 +1446,12 @@
             logger.info("[AVPlay] buffering complete");
           },
           onstreamcompleted: () => {
-            logger.info(`[AVPlay] onstreamcompleted: _playing=${_playing2} _tearingDown=${_tearingDown}`);
+            logger.info(`[AVPlay] onstreamcompleted`);
             if (!_playing2 || _tearingDown) return;
             _handleLoop();
           },
           oncurrentplaytime: (_ms2) => {
             if (_tearingDown) return;
-            if (_ms2 > 0 || _playing2) logger.info(`[AVPlay] currentPlayTime=${_ms2}ms`);
             setPlaybackState(_itemIndex3, _ms2, "avplay");
           },
           onerror: (eventType) => {
@@ -1560,36 +1559,11 @@
       function tryPlay() {
         if (_tearingDown) return;
         if (getSyncedTime() >= target) {
-          const stateBefore = (() => {
-            try {
-              return av.getState();
-            } catch (e) {
-              return "err";
-            }
-          })();
-          logger.info(`[AVPlay] play() firing \u2014 state=${stateBefore}`);
           _playing2 = true;
           try {
             av.play();
             _lastSeekTime2 = _localNow2();
             updateHud({ lastAction: "play() fired" });
-            setTimeout(() => {
-              const stateAfter = (() => {
-                try {
-                  return av.getState();
-                } catch (e) {
-                  return "err";
-                }
-              })();
-              const pos = (() => {
-                try {
-                  return av.getCurrentTime();
-                } catch (e) {
-                  return -1;
-                }
-              })();
-              logger.info(`[AVPlay] post-play check 1s: state=${stateAfter} pos=${pos}ms`);
-            }, 1e3);
           } catch (e) {
             logger.warn(`[AVPlay] play() failed: ${e == null ? void 0 : e.message}`);
           }

@@ -229,13 +229,12 @@ function _openAndPrepare(av: AVPlayHandle, absUri: string): Promise<void> {
           logger.info('[AVPlay] buffering complete');
         },
         onstreamcompleted: () => {
-          logger.info(`[AVPlay] onstreamcompleted: _playing=${_playing} _tearingDown=${_tearingDown}`);
+          logger.info(`[AVPlay] onstreamcompleted`);
           if (!_playing || _tearingDown) return;
           _handleLoop();
         },
         oncurrentplaytime: (_ms: number) => {
           if (_tearingDown) return;
-          if (_ms > 0 || _playing) logger.info(`[AVPlay] currentPlayTime=${_ms}ms`);
           P2PSync.setPlaybackState(_itemIndex, _ms, 'avplay');
         },
         onerror: (eventType: string) => {
@@ -354,18 +353,11 @@ function _schedulePlay(): void {
     function tryPlay() {
       if (_tearingDown) return;
       if (getSyncedTime() >= target) {
-        const stateBefore = (() => { try { return av.getState(); } catch { return 'err'; } })();
-        logger.info(`[AVPlay] play() firing — state=${stateBefore}`);
         _playing = true;
         try {
           av.play();
           _lastSeekTime = _localNow();
           updateHud({ lastAction: 'play() fired' });
-          setTimeout(() => {
-            const stateAfter = (() => { try { return av.getState(); } catch { return 'err'; } })();
-            const pos = (() => { try { return av.getCurrentTime(); } catch { return -1; } })();
-            logger.info(`[AVPlay] post-play check 1s: state=${stateAfter} pos=${pos}ms`);
-          }, 1000);
         } catch (e: any) {
           logger.warn(`[AVPlay] play() failed: ${e?.message}`);
         }
