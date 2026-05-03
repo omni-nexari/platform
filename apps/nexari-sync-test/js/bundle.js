@@ -903,7 +903,7 @@
         initLogger(CONFIG.PI_BASE, deviceId);
         logger.info(`[App] boot: ip=${selfIp} deviceId=${deviceId}`);
         _setStatus("Syncing time\u2026");
-        yield syncTime(CONFIG.PI_BASE).catch(() => logger.warn("[App] NTP sync failed \u2014 using local clock"));
+        yield syncTime(`${CONFIG.PI_BASE}/api/v1/devices`).catch(() => logger.warn("[App] NTP sync failed \u2014 using local clock"));
         logger.info(`[App] NTP offset: ${getNtpOffset()}ms`);
         updateHud({ ntpOffsetMs: getNtpOffset() });
         _setStatus("Connecting to peer\u2026");
