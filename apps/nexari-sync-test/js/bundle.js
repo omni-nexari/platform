@@ -731,7 +731,11 @@
         xhr.open("GET", url, true);
         xhr.responseType = "arraybuffer";
         xhr.onload = () => {
-          resolve(new Response(new Uint8Array(xhr.response), { status: xhr.status }));
+          if (xhr.status === 0 || xhr.status >= 400) {
+            reject(new TypeError(`XHR fetch failed (${xhr.status}): ${url}`));
+          } else {
+            resolve(new Response(new Uint8Array(xhr.response), { status: 200 }));
+          }
         };
         xhr.onerror = () => reject(new TypeError(`XHR fetch failed: ${url}`));
         xhr.send();
@@ -756,8 +760,12 @@
       if (!_ffmpeg) {
         const { createFFmpeg } = FFmpeg;
         const corePath = new URL("./js/lib/ffmpeg/ffmpeg-core.js", window.location.href).href;
+        const workerPath = new URL("./js/lib/ffmpeg/ffmpeg-core.worker.js", window.location.href).href;
+        const wasmPath = new URL("./js/lib/ffmpeg/ffmpeg-core.wasm", window.location.href).href;
         _ffmpeg = createFFmpeg({
           corePath,
+          workerPath,
+          wasmPath,
           log: false,
           logger: ({ message }) => {
             const m = message.match(/frame=\s*(\d+)/);

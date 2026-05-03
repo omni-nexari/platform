@@ -42,7 +42,11 @@ function _polyfillFetch(): void {
       xhr.open('GET', url, true);
       xhr.responseType = 'arraybuffer';
       xhr.onload = () => {
-        resolve(new Response(new Uint8Array(xhr.response as ArrayBuffer), { status: xhr.status }));
+        if (xhr.status === 0 || xhr.status >= 400) {
+          reject(new TypeError(`XHR fetch failed (${xhr.status}): ${url}`));
+        } else {
+          resolve(new Response(new Uint8Array(xhr.response as ArrayBuffer), { status: 200 }));
+        }
       };
       xhr.onerror = () => reject(new TypeError(`XHR fetch failed: ${url}`));
       xhr.send();
@@ -85,11 +89,15 @@ export async function decodeVideo(videoUrl: string): Promise<DecodedVideo> {
 
   if (!_ffmpeg) {
     const { createFFmpeg } = FFmpeg;
-    // Pass absolute corePath — ffmpeg.js resolves it with new URL(corePath, hardcodedDevBase)
-    // which ignores the base when corePath is already absolute.
-    const corePath = new URL('./js/lib/ffmpeg/ffmpeg-core.js', window.location.href).href;
+    // Pass absolute paths — ffmpeg.js resolves relative paths against a hardcoded
+    // developer base URL, so we must pre-resolve against window.location.href.
+    const corePath   = new URL('./js/lib/ffmpeg/ffmpeg-core.js',     window.location.href).href;
+    const workerPath = new URL('./js/lib/ffmpeg/ffmpeg-core.worker.js', window.location.href).href;
+    const wasmPath   = new URL('./js/lib/ffmpeg/ffmpeg-core.wasm',   window.location.href).href;
     _ffmpeg = createFFmpeg({
       corePath,
+      workerPath,
+      wasmPath,
       log: false,
       logger: ({ message }: { message: string }) => {
         // Parse progress from ffmpeg stderr: "frame=  42 fps= 24"
