@@ -51,17 +51,9 @@ $xml.Save($profilesXml)
 Write-Host "Profile '$signProfile' written."
 
 # ============================================================
-# STEP 1: TypeScript compile
+# STEP 1: (no TypeScript compile — pure JS test harness)
 # ============================================================
-Write-Host "=== STEP 1: TypeScript compile ===" -ForegroundColor Cyan
-Push-Location $src
-try {
-    npm run build 2>&1 | Write-Host
-    if ($LASTEXITCODE -ne 0) { throw "build failed" }
-} finally {
-    Pop-Location
-}
-Write-Host "Compile OK"
+Write-Host "=== STEP 1: skipped (plain JS, no compile needed) ===" -ForegroundColor DarkGray
 
 # ============================================================
 # STEP 2: Stage files for packaging
@@ -90,7 +82,8 @@ foreach ($item in Get-ChildItem $src) {
 }
 
 Write-Host "Staged $((Get-ChildItem $tmp -Recurse -File).Count) files"
-Write-Host "ffmpeg-core.wasm present: $(Test-Path "$tmp\js\lib\ffmpeg\ffmpeg-core.wasm")"
+Write-Host "syncplay-test.js present: $(Test-Path "$tmp\js\syncplay-test.js")"
+Write-Host "signage.mp4 present: $(Test-Path "$tmp\media\signage.mp4")"
 
 # ============================================================
 # STEP 3: Package (sign with testforsbb)
