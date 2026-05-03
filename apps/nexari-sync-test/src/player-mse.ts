@@ -39,6 +39,7 @@ export function initMsePlayer(container: HTMLElement): void {
   _video.muted  = false;
   _video.volume = 1;
   _video.playsInline = true;
+  _video.loop = true;
   container.appendChild(_video);
 
   // Check for requestVideoFrameCallback support
@@ -86,7 +87,7 @@ export async function loadVideo(url: string, itemIndex = 0): Promise<void> {
   _syncWatchdog = setTimeout(() => {
     if (_video?.paused) {
       logger.warn('[MSE] watchdog: no SYNC_PLAY after 8s — playing unsynced');
-      _video.play().catch(() => {});
+      _video.play().catch((e: any) => logger.warn(`[MSE] watchdog play() failed: ${e?.message}`));
     }
   }, 8000);
 
@@ -114,7 +115,7 @@ function _schedulePlay(): void {
   const wait = _syncedStartMs - getSyncedTime();
   if (wait <= 0) {
     logger.warn('[MSE] SYNC_PLAY cue already past — playing immediately');
-    _video.play().catch((e: any) => logger.error(`[MSE] play failed: ${e?.message}`));
+    _video.play().catch((e: any) => logger.warn(`[MSE] play() failed (past cue): ${e?.message}`));
     return;
   }
 
@@ -128,7 +129,7 @@ function _schedulePlay(): void {
     const target = _syncedStartMs;
     function tryPlay() {
       if (getSyncedTime() >= target) {
-        _video?.play().catch((e: any) => logger.error(`[MSE] play() failed: ${e?.message}`));
+        _video?.play().catch((e: any) => logger.warn(`[MSE] play() failed: ${e?.message}`));
         updateHud({ lastAction: 'play() fired' });
       } else {
         setTimeout(tryPlay, 4);

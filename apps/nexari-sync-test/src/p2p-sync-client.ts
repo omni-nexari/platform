@@ -226,6 +226,12 @@ async function _doSignalDrain(): Promise<void> {
     const data = await res.json() as { entries: Array<{ idx: number; from: string; body: unknown }>; nextSince: number };
     if (data.nextSince != null) _signalPollSince = data.nextSince;
     for (const entry of data.entries ?? []) {
+      // If we're receiving a message from someone other than our current peer,
+      // re-route: we likely paired with a stale device initially.
+      if (entry.from && entry.from !== _peerDeviceId) {
+        _opts?.logger('info', `[P2P] re-routing peer: ${_peerDeviceId ?? 'none'} → ${entry.from}`);
+        _peerDeviceId = entry.from;
+      }
       try { _handleMessage(entry.body as SyncMessage); } catch { /* ignore malformed */ }
     }
   } catch { /* silent – network blip */ }

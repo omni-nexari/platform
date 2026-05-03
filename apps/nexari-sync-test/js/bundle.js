@@ -231,6 +231,10 @@
         const data = yield res.json();
         if (data.nextSince != null) _signalPollSince = data.nextSince;
         for (const entry of (_a = data.entries) != null ? _a : []) {
+          if (entry.from && entry.from !== _peerDeviceId) {
+            _opts == null ? void 0 : _opts.logger("info", `[P2P] re-routing peer: ${_peerDeviceId != null ? _peerDeviceId : "none"} \u2192 ${entry.from}`);
+            _peerDeviceId = entry.from;
+          }
           try {
             _handleMessage(entry.body);
           } catch (e) {
@@ -463,6 +467,7 @@
     _video.muted = false;
     _video.volume = 1;
     _video.playsInline = true;
+    _video.loop = true;
     container.appendChild(_video);
     _rVfcSupported = typeof _video.requestVideoFrameCallback === "function";
     logger.info(`[MSE] rVFC supported: ${_rVfcSupported}`);
@@ -496,8 +501,7 @@
       _syncWatchdog = setTimeout(() => {
         if (_video == null ? void 0 : _video.paused) {
           logger.warn("[MSE] watchdog: no SYNC_PLAY after 8s \u2014 playing unsynced");
-          _video.play().catch(() => {
-          });
+          _video.play().catch((e) => logger.warn(`[MSE] watchdog play() failed: ${e == null ? void 0 : e.message}`));
         }
       }, 8e3);
       if (_syncedStartMs > 0) _schedulePlay();
@@ -519,7 +523,7 @@
     const wait = _syncedStartMs - getSyncedTime();
     if (wait <= 0) {
       logger.warn("[MSE] SYNC_PLAY cue already past \u2014 playing immediately");
-      _video.play().catch((e) => logger.error(`[MSE] play failed: ${e == null ? void 0 : e.message}`));
+      _video.play().catch((e) => logger.warn(`[MSE] play() failed (past cue): ${e == null ? void 0 : e.message}`));
       return;
     }
     logger.info(`[MSE] scheduling play in ${Math.round(wait)}ms`);
@@ -529,7 +533,7 @@
       const target = _syncedStartMs;
       function tryPlay() {
         if (getSyncedTime() >= target) {
-          _video == null ? void 0 : _video.play().catch((e) => logger.error(`[MSE] play() failed: ${e == null ? void 0 : e.message}`));
+          _video == null ? void 0 : _video.play().catch((e) => logger.warn(`[MSE] play() failed: ${e == null ? void 0 : e.message}`));
           updateHud({ lastAction: "play() fired" });
         } else {
           setTimeout(tryPlay, 4);
