@@ -755,8 +755,9 @@
       _polyfillFetch();
       if (!_ffmpeg) {
         const { createFFmpeg } = FFmpeg;
+        const corePath = new URL("./js/lib/ffmpeg/ffmpeg-core.js", window.location.href).href;
         _ffmpeg = createFFmpeg({
-          corePath: "./js/lib/ffmpeg/ffmpeg-core.js",
+          corePath,
           log: false,
           logger: ({ message }) => {
             const m = message.match(/frame=\s*(\d+)/);

@@ -85,8 +85,11 @@ export async function decodeVideo(videoUrl: string): Promise<DecodedVideo> {
 
   if (!_ffmpeg) {
     const { createFFmpeg } = FFmpeg;
+    // Pass absolute corePath — ffmpeg.js resolves it with new URL(corePath, hardcodedDevBase)
+    // which ignores the base when corePath is already absolute.
+    const corePath = new URL('./js/lib/ffmpeg/ffmpeg-core.js', window.location.href).href;
     _ffmpeg = createFFmpeg({
-      corePath: './js/lib/ffmpeg/ffmpeg-core.js',
+      corePath,
       log: false,
       logger: ({ message }: { message: string }) => {
         // Parse progress from ffmpeg stderr: "frame=  42 fps= 24"
