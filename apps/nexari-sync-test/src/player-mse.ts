@@ -123,6 +123,10 @@ export function teardown(): void { _teardown(); }
 
 function _handleSyncPlay(msg: MsgSyncPlay): void {
   clearTimeout(_syncWatchdog);
+  if (_startScheduled) {
+    logger.info(`[MSE] SYNC_PLAY ignored (play already scheduled)`);
+    return;
+  }
   _syncedStartMs = msg.syncedStartMs;
   // Prefer leader's duration so both TVs use an identical modulo divisor
   if ((msg.videoDurationMs ?? 0) > 0) _videoDurationMs = msg.videoDurationMs!;

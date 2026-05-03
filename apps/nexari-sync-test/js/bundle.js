@@ -242,7 +242,7 @@
               _opts == null ? void 0 : _opts.logger("info", `[P2P] role updated: ${_role} \u2192 ${newRole}`);
               _role = newRole;
             }
-            if (_role === "follower" && _readyItemIndex >= 0) {
+            if (_role === "follower" && _readyItemIndex >= 0 && !_syncPlaySent) {
               _send({ type: "READY", deviceId: _opts.deviceId, engineMode: _readyEngineMode });
               _opts == null ? void 0 : _opts.logger("info", `[P2P] follower READY sent after re-route`);
             }
@@ -268,16 +268,20 @@
         _onVideoUrl == null ? void 0 : _onVideoUrl(msg);
         break;
       case "READY":
-        if (_role === "leader") {
+        if (_role === "leader" && !_syncPlaySent) {
+          _syncPlaySent = true;
           _opts.logger("info", `[P2P] follower READY received`);
           const startMs = getSyncedTime() + LEADER_START_AHEAD_MS;
           const syncPlay = { type: "SYNC_PLAY", syncedStartMs: startMs, videoDurationMs: _videoDurationMs, itemIndex: _pbItemIndex >= 0 ? _pbItemIndex : 0 };
           _send(syncPlay);
           _onSyncPlay == null ? void 0 : _onSyncPlay(syncPlay);
           _opts.logger("info", `[P2P] SYNC_PLAY sent: startMs=${startMs} durationMs=${_videoDurationMs}`);
+        } else if (_role === "leader" && _syncPlaySent) {
+          _opts.logger("info", `[P2P] duplicate READY ignored (SYNC_PLAY already sent)`);
         }
         break;
       case "SYNC_PLAY":
+        _syncPlaySent = true;
         _opts.logger("info", `[P2P] SYNC_PLAY received: startMs=${msg.syncedStartMs}`);
         _onSyncPlay == null ? void 0 : _onSyncPlay(msg);
         break;
@@ -312,7 +316,7 @@
       });
     }, HEARTBEAT_INTERVAL_MS);
   }
-  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _videoDurationMs, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
+  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _videoDurationMs, _syncPlaySent, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
   var init_p2p_sync_client = __esm({
     "src/p2p-sync-client.ts"() {
       init_ntp_client();
@@ -340,6 +344,7 @@
       _signalPollTimer = null;
       _heartbeatTimer = null;
       _videoDurationMs = 0;
+      _syncPlaySent = false;
       _onSyncPlay = null;
       _onVideoUrl = null;
       _onSetEngine = null;
@@ -528,6 +533,10 @@
   function _handleSyncPlay(msg) {
     var _a;
     clearTimeout(_syncWatchdog);
+    if (_startScheduled) {
+      logger.info(`[MSE] SYNC_PLAY ignored (play already scheduled)`);
+      return;
+    }
     _syncedStartMs = msg.syncedStartMs;
     if (((_a = msg.videoDurationMs) != null ? _a : 0) > 0) _videoDurationMs2 = msg.videoDurationMs;
     logger.info(`[MSE] SYNC_PLAY received: startMs=${msg.syncedStartMs} durationMs=${_videoDurationMs2} (in ${msg.syncedStartMs - getSyncedTime()}ms)`);

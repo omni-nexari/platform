@@ -64,6 +64,7 @@ let _peerPollTimer: any   = null;
 let _signalPollTimer: any = null;
 let _heartbeatTimer: any  = null;
 let _videoDurationMs      = 0;
+let _syncPlaySent         = false;  // prevent duplicate SYNC_PLAYs from re-route READY
 
 // Handlers
 let _onSyncPlay:  ((msg: MsgSyncPlay)   => void) | null = null;
@@ -132,6 +133,7 @@ export function shutdown(): void {
   clearInterval(_heartbeatTimer);
   _connected = false;
   _role = 'pending';
+  _syncPlaySent = false;
   _opts?.logger('info', '[P2P] shutdown');
 }
 
@@ -240,7 +242,7 @@ async function _doSignalDrain(): Promise<void> {
           _role = newRole;
         }
         // Resume the correct side of the handshake
-        if (_role === 'follower' && _readyItemIndex >= 0) {
+        if (_role === 'follower' && _readyItemIndex >= 0 && !_syncPlaySent) {
           _send({ type: 'READY', deviceId: _opts!.deviceId, engineMode: _readyEngineMode });
           _opts?.logger('info', `[P2P] follower READY sent after re-route`);
         }
@@ -264,17 +266,21 @@ function _handleMessage(msg: SyncMessage): void {
       break;
 
     case 'READY':
-      if (_role === 'leader') {
+      if (_role === 'leader' && !_syncPlaySent) {
+        _syncPlaySent = true;
         _opts.logger('info', `[P2P] follower READY received`);
         const startMs = getSyncedTime() + LEADER_START_AHEAD_MS;
         const syncPlay = { type: 'SYNC_PLAY' as const, syncedStartMs: startMs, videoDurationMs: _videoDurationMs, itemIndex: _pbItemIndex >= 0 ? _pbItemIndex : 0 };
         _send(syncPlay);
         _onSyncPlay?.(syncPlay);
         _opts.logger('info', `[P2P] SYNC_PLAY sent: startMs=${startMs} durationMs=${_videoDurationMs}`);
+      } else if (_role === 'leader' && _syncPlaySent) {
+        _opts.logger('info', `[P2P] duplicate READY ignored (SYNC_PLAY already sent)`);
       }
       break;
 
     case 'SYNC_PLAY':
+      _syncPlaySent = true;  // prevent subsequent READY sends
       _opts.logger('info', `[P2P] SYNC_PLAY received: startMs=${(msg as MsgSyncPlay).syncedStartMs}`);
       _onSyncPlay?.(msg as MsgSyncPlay);
       break;
