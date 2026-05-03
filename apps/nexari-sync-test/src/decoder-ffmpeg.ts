@@ -25,43 +25,69 @@ import { logger } from './logger.js';
 declare const FFmpeg: { createFFmpeg: any; fetchFile: any };
 
 /**
- * Tizen: window.fetch() cannot load local bundled files (returns "Failed to fetch").
- * Polyfill fetch() with XHR for any non-http/https URL so that ffmpeg-core.wasm
- * and the video file can be loaded from the .wgt package.
- * Call once before any ffmpeg operation.
+ * Get the true base URL of the .wgt package.
+ * On Tizen, window.location.href returns bare 'file:///' — the app install path is
+ * only accessible via tizen.filesystem.toURI('wgt-package').
  */
-function _polyfillFetch(): void {
-  if ((window as any)._tizenFetchPolyfilled) return;
-  (window as any)._tizenFetchPolyfilled = true;
-  const _orig = (window.fetch as any).bind(window);
-  (window as any).fetch = function (input: any, init?: any): Promise<Response> {
-    const url: string = typeof input === 'string' ? input : (input as any)?.url ?? '';
-    if (/^https?:\/\//.test(url) || url.startsWith('//')) return _orig(input, init);
-    return new Promise<Response>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('GET', url, true);
-      xhr.responseType = 'arraybuffer';
-      xhr.onload = () => {
-        if (xhr.status === 0 || xhr.status >= 400) {
-          reject(new TypeError(`XHR fetch failed (${xhr.status}): ${url}`));
-        } else {
-          resolve(new Response(new Uint8Array(xhr.response as ArrayBuffer), { status: 200 }));
-        }
-      };
-      xhr.onerror = () => reject(new TypeError(`XHR fetch failed: ${url}`));
-      xhr.send();
-    });
-  };
+function _getWgtBase(): string {
+  // 1. Tizen filesystem API — returns e.g. 'file:///opt/usr/apps/{appId}/res/wgt'
+  try {
+    const uri = (window as any).tizen?.filesystem?.toURI('wgt-package');
+    if (uri && typeof uri === 'string' && uri.length > 10) {
+      const base = uri.endsWith('/') ? uri : uri + '/';
+      logger.info(`[WASM] wgt base (tizen.fs): ${base}`);
+      return base;
+    }
+  } catch (e: any) {
+    logger.warn(`[WASM] tizen.filesystem.toURI failed: ${e?.message}`);
+  }
+  // 2. Derive from a <script> tag's .src property (absolute per HTML spec)
+  for (const s of Array.from(document.scripts) as HTMLScriptElement[]) {
+    if (s.src && s.src.startsWith('file:///') && s.src.includes('bundle.js')) {
+      const base = s.src.replace(/js\/bundle\.js.*$/, '');
+      logger.info(`[WASM] wgt base (script.src): ${base}`);
+      return base;
+    }
+  }
+  // 3. Last resort — will likely be wrong on Tizen
+  const loc = window.location.href.replace(/[^\/]*$/, '');
+  logger.warn(`[WASM] wgt base (location.href fallback): ${loc}`);
+  return loc;
 }
 
-/** Load a local file via XHR (works on Tizen where fetch() does not). */
-function _xhrGetBytes(url: string): Promise<Uint8Array> {
+/**
+ * Load a file via XHR and return a blob: URL.
+ * Blob URLs bypass all file:// path resolution issues in ffmpeg.js internals.
+ */
+function _loadBlob(absUrl: string, mime: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('GET', url, true);
+    xhr.open('GET', absUrl, true);
+    xhr.responseType = 'arraybuffer';
+    xhr.onload = () => {
+      if (xhr.status === 0 || xhr.status >= 400) {
+        reject(new Error(`XHR failed (${xhr.status}): ${absUrl}`));
+      } else {
+        resolve(URL.createObjectURL(new Blob([xhr.response as ArrayBuffer], { type: mime })));
+      }
+    };
+    xhr.onerror = () => reject(new Error(`XHR error: ${absUrl}`));
+    xhr.send();
+  });
+}
+
+/** Load a local file via XHR. Relative paths resolved by browser against wgt base. */
+function _xhrGetBytes(url: string): Promise<Uint8Array> {
+  // For relative paths, prepend the correct wgt base so we hit the right file.
+  const absUrl = url.startsWith('http') || url.startsWith('blob:') || url.startsWith('file:///opt')
+    ? url
+    : _getWgtBase() + url.replace(/^\.\//, '');
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', absUrl, true);
     xhr.responseType = 'arraybuffer';
     xhr.onload = () => resolve(new Uint8Array(xhr.response as ArrayBuffer));
-    xhr.onerror = () => reject(new Error(`XHR failed: ${url}`));
+    xhr.onerror = () => reject(new Error(`XHR failed: ${absUrl}`));
     xhr.send();
   });
 }
@@ -84,20 +110,26 @@ export async function decodeVideo(videoUrl: string): Promise<DecodedVideo> {
   logger.info(`[WASM] starting ffmpeg decode: ${videoUrl}`);
   updateHud({ decodePercent: 0, lastAction: 'Initialising ffmpeg…' });
 
-  // Tizen: fetch() fails for local bundled files — patch it to use XHR
-  _polyfillFetch();
-
   if (!_ffmpeg) {
     const { createFFmpeg } = FFmpeg;
-    // Pass absolute paths — ffmpeg.js resolves relative paths against a hardcoded
-    // developer base URL, so we must pre-resolve against window.location.href.
-    const corePath   = new URL('./js/lib/ffmpeg/ffmpeg-core.js',     window.location.href).href;
-    const workerPath = new URL('./js/lib/ffmpeg/ffmpeg-core.worker.js', window.location.href).href;
-    const wasmPath   = new URL('./js/lib/ffmpeg/ffmpeg-core.wasm',   window.location.href).href;
+
+    // Pre-load ffmpeg core files as blob: URLs.
+    // ffmpeg.js resolves relative/wrong-base paths internally; blob: URLs bypass
+    // all path resolution and work on Tizen's restricted file:// environment.
+    const base = _getWgtBase();
+    logger.info(`[WASM] loading core files from: ${base}`);
+    updateHud({ lastAction: 'Loading ffmpeg core…', decodePercent: 0 });
+    const [corePath, wasmPath, workerPath] = await Promise.all([
+      _loadBlob(base + 'js/lib/ffmpeg/ffmpeg-core.js',        'application/javascript'),
+      _loadBlob(base + 'js/lib/ffmpeg/ffmpeg-core.wasm',      'application/wasm'),
+      _loadBlob(base + 'js/lib/ffmpeg/ffmpeg-core.worker.js', 'application/javascript'),
+    ]);
+    logger.info('[WASM] core blobs created');
+
     _ffmpeg = createFFmpeg({
       corePath,
-      workerPath,
       wasmPath,
+      workerPath,
       log: false,
       logger: ({ message }: { message: string }) => {
         // Parse progress from ffmpeg stderr: "frame=  42 fps= 24"
@@ -118,7 +150,7 @@ export async function decodeVideo(videoUrl: string): Promise<DecodedVideo> {
     logger.info('[WASM] ffmpeg-core.wasm loaded');
   }
 
-  // Load video via XHR (fetch() unreliable on Tizen for local files)
+  // Load video via XHR using the correct wgt base path
   updateHud({ lastAction: 'Fetching video…', decodePercent: 5 });
   const videoBytes = await _xhrGetBytes(videoUrl);
   _ffmpeg.FS('writeFile', 'input.mp4', videoBytes);

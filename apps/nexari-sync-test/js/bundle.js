@@ -718,37 +718,53 @@
   });
 
   // src/decoder-ffmpeg.ts
-  function _polyfillFetch() {
-    if (window._tizenFetchPolyfilled) return;
-    window._tizenFetchPolyfilled = true;
-    const _orig = window.fetch.bind(window);
-    window.fetch = function(input, init2) {
-      var _a;
-      const url = typeof input === "string" ? input : (_a = input == null ? void 0 : input.url) != null ? _a : "";
-      if (/^https?:\/\//.test(url) || url.startsWith("//")) return _orig(input, init2);
-      return new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("GET", url, true);
-        xhr.responseType = "arraybuffer";
-        xhr.onload = () => {
-          if (xhr.status === 0 || xhr.status >= 400) {
-            reject(new TypeError(`XHR fetch failed (${xhr.status}): ${url}`));
-          } else {
-            resolve(new Response(new Uint8Array(xhr.response), { status: 200 }));
-          }
-        };
-        xhr.onerror = () => reject(new TypeError(`XHR fetch failed: ${url}`));
-        xhr.send();
-      });
-    };
+  function _getWgtBase() {
+    var _a, _b;
+    try {
+      const uri = (_b = (_a = window.tizen) == null ? void 0 : _a.filesystem) == null ? void 0 : _b.toURI("wgt-package");
+      if (uri && typeof uri === "string" && uri.length > 10) {
+        const base = uri.endsWith("/") ? uri : uri + "/";
+        logger.info(`[WASM] wgt base (tizen.fs): ${base}`);
+        return base;
+      }
+    } catch (e) {
+      logger.warn(`[WASM] tizen.filesystem.toURI failed: ${e == null ? void 0 : e.message}`);
+    }
+    for (const s of Array.from(document.scripts)) {
+      if (s.src && s.src.startsWith("file:///") && s.src.includes("bundle.js")) {
+        const base = s.src.replace(/js\/bundle\.js.*$/, "");
+        logger.info(`[WASM] wgt base (script.src): ${base}`);
+        return base;
+      }
+    }
+    const loc = window.location.href.replace(/[^\/]*$/, "");
+    logger.warn(`[WASM] wgt base (location.href fallback): ${loc}`);
+    return loc;
   }
-  function _xhrGetBytes(url) {
+  function _loadBlob(absUrl, mime) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open("GET", url, true);
+      xhr.open("GET", absUrl, true);
+      xhr.responseType = "arraybuffer";
+      xhr.onload = () => {
+        if (xhr.status === 0 || xhr.status >= 400) {
+          reject(new Error(`XHR failed (${xhr.status}): ${absUrl}`));
+        } else {
+          resolve(URL.createObjectURL(new Blob([xhr.response], { type: mime })));
+        }
+      };
+      xhr.onerror = () => reject(new Error(`XHR error: ${absUrl}`));
+      xhr.send();
+    });
+  }
+  function _xhrGetBytes(url) {
+    const absUrl = url.startsWith("http") || url.startsWith("blob:") || url.startsWith("file:///opt") ? url : _getWgtBase() + url.replace(/^\.\//, "");
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", absUrl, true);
       xhr.responseType = "arraybuffer";
       xhr.onload = () => resolve(new Uint8Array(xhr.response));
-      xhr.onerror = () => reject(new Error(`XHR failed: ${url}`));
+      xhr.onerror = () => reject(new Error(`XHR failed: ${absUrl}`));
       xhr.send();
     });
   }
@@ -756,16 +772,21 @@
     return __async(this, null, function* () {
       logger.info(`[WASM] starting ffmpeg decode: ${videoUrl}`);
       updateHud({ decodePercent: 0, lastAction: "Initialising ffmpeg\u2026" });
-      _polyfillFetch();
       if (!_ffmpeg) {
         const { createFFmpeg } = FFmpeg;
-        const corePath = new URL("./js/lib/ffmpeg/ffmpeg-core.js", window.location.href).href;
-        const workerPath = new URL("./js/lib/ffmpeg/ffmpeg-core.worker.js", window.location.href).href;
-        const wasmPath = new URL("./js/lib/ffmpeg/ffmpeg-core.wasm", window.location.href).href;
+        const base = _getWgtBase();
+        logger.info(`[WASM] loading core files from: ${base}`);
+        updateHud({ lastAction: "Loading ffmpeg core\u2026", decodePercent: 0 });
+        const [corePath, wasmPath, workerPath] = yield Promise.all([
+          _loadBlob(base + "js/lib/ffmpeg/ffmpeg-core.js", "application/javascript"),
+          _loadBlob(base + "js/lib/ffmpeg/ffmpeg-core.wasm", "application/wasm"),
+          _loadBlob(base + "js/lib/ffmpeg/ffmpeg-core.worker.js", "application/javascript")
+        ]);
+        logger.info("[WASM] core blobs created");
         _ffmpeg = createFFmpeg({
           corePath,
-          workerPath,
           wasmPath,
+          workerPath,
           log: false,
           logger: ({ message }) => {
             const m = message.match(/frame=\s*(\d+)/);
