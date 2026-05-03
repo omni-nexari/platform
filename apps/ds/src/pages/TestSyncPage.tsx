@@ -80,7 +80,7 @@ function LogPanel({ deviceId, label }: { deviceId: string; label: string }) {
 
   const { data, isError } = useQuery({
     queryKey: ['test-sync-logs', deviceId],
-    queryFn:  () => api.get<{ logs: LogEntry[] }>(`/test-sync/logs?deviceId=${deviceId}&limit=200`).then((r: { data: { logs: LogEntry[] } }) => r.data),
+    queryFn:  () => api.get<{ logs: LogEntry[] }>(`/test-sync/logs?deviceId=${deviceId}&limit=200`),
     refetchInterval: 2000,
   });
 
@@ -103,16 +103,14 @@ function LogPanel({ deviceId, label }: { deviceId: string; label: string }) {
           <div className="flex items-center gap-2">
             <Activity className="h-4 w-4 text-[var(--text-muted)]" />
             <h2 className="text-base font-semibold text-[var(--text)]">{label}</h2>
-            <Badge tone={isError ? 'danger' : 'default'}>{deviceId}</Badge>
+            <Badge tone={isError ? 'danger' : 'neutral'}>{deviceId}</Badge>
           </div>
           <ActionButton
-            size="sm"
-            tone="ghost"
-            icon={<Trash2 className="h-3.5 w-3.5" />}
+            tone="default"
             onClick={() => clearMutation.mutate()}
             disabled={clearMutation.isPending}
           >
-            Clear
+            <Trash2 className="h-3.5 w-3.5 mr-1 inline" /> Clear
           </ActionButton>
         </div>
         {/* Metrics summary row */}
@@ -158,7 +156,7 @@ export default function TestSyncPage() {
   // Poll registered peers
   const peersQuery = useQuery({
     queryKey: ['test-sync-peers'],
-    queryFn:  () => api.get<{ peers: Peer[] }>('/test-sync/peers?groupId=synctest-001').then((r: { data: { peers: Peer[] } }) => r.data),
+    queryFn:  () => api.get<{ peers: Peer[] }>('/test-sync/peers?groupId=synctest-001'),
     refetchInterval: 5000,
   });
 
@@ -216,7 +214,7 @@ export default function TestSyncPage() {
                 <div key={p.deviceId} className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 text-sm space-y-1 min-w-48">
                   <div className="font-semibold text-[var(--text)]">{p.deviceId}</div>
                   <div className="text-[var(--text-muted)]">IP: {p.ip}</div>
-                  {p.role && <Badge tone={p.role === 'leader' ? 'success' : 'default'}>{p.role}</Badge>}
+                  {p.role && <Badge tone={p.role === 'leader' ? 'success' : 'neutral'}>{p.role}</Badge>}
                 </div>
               ))}
             </div>
@@ -235,14 +233,14 @@ export default function TestSyncPage() {
         <SectionCardBody>
           <div className="flex items-center gap-3">
             <ActionButton
-              tone={engineOverride === 'mse' ? 'primary' : 'ghost'}
+              tone={engineOverride === 'mse' ? 'primary' : 'default'}
               onClick={() => handleSetEngine('mse')}
               disabled={!leaderPeer}
             >
               Use MSE
             </ActionButton>
             <ActionButton
-              tone={engineOverride === 'wasm' ? 'primary' : 'ghost'}
+              tone={engineOverride === 'wasm' ? 'primary' : 'default'}
               onClick={() => handleSetEngine('wasm')}
               disabled={!leaderPeer}
             >
