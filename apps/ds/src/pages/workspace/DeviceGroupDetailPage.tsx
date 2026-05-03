@@ -205,7 +205,7 @@ export default function DeviceGroupDetailPage() {
     onSuccess: () => {
       toast.success('Group deleted');
       void qc.invalidateQueries({ queryKey: ['device-groups', wsId] });
-      navigate(`/workspaces/${wsId}/devices/groups`);
+      navigate(`/workspaces/${wsId}/devices`);
     },
     onError: () => toast.error('Failed to delete'),
   });
@@ -267,10 +267,10 @@ export default function DeviceGroupDetailPage() {
 
       {/* â”€â”€ Back nav â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <button
-        onClick={() => navigate(`/workspaces/${wsId}/devices/groups`)}
+        onClick={() => navigate(`/workspaces/${wsId}/devices`)}
         className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
       >
-        <ArrowLeft className="w-3.5 h-3.5" /> Back to Device Groups
+        <ArrowLeft className="w-3.5 h-3.5" /> Back to Devices
       </button>
 
       {/* â”€â”€ Group header card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
