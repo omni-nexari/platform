@@ -513,4 +513,3 @@ export default function DeviceGroupDetailPage() {
     </div>
   );
 }
-        <button
