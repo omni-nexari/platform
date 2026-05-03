@@ -42,6 +42,7 @@ let _videoDurationMs = 0;
 let _playing         = false;
 let _seekInFlight    = false;  // AVPlay blocks all API calls during seekTo
 let _tearingDown     = false;
+let _objElem: HTMLObjectElement | null = null;  // AVPlay requires an <object> element
 
 // ── AVPlay accessor ────────────────────────────────────────────────────────────
 
@@ -69,7 +70,7 @@ function _av(): AVPlayHandle | null {
 // ── Public API ─────────────────────────────────────────────────────────────────
 
 /** Initialise AVPlay and register P2P sync handlers. container param ignored — AVPlay renders natively. */
-export function initAvplayPlayer(_container: HTMLElement): void {
+export function initAvplayPlayer(container: HTMLElement): void {
   _teardown();
   _tearingDown = false;
 
@@ -77,6 +78,13 @@ export function initAvplayPlayer(_container: HTMLElement): void {
     logger.warn('[AVPlay] webapis.avplay not available — falling back gracefully');
     return;
   }
+
+  // AVPlay requires an <object type="application/avplayer"> element in the DOM.
+  // The element itself is invisible; AVPlay renders natively behind it.
+  _objElem = document.createElement('object') as HTMLObjectElement;
+  _objElem.type = 'application/avplayer';
+  _objElem.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;';
+  container.appendChild(_objElem);
 
   P2PSync.onSyncPlay(_handleSyncPlay);
   P2PSync.onAdjust(_handleAdjust);
@@ -98,10 +106,94 @@ export function loadVideo(url: string, itemIndex = 0): Promise<void> {
   logger.info(`[AVPlay] loading: ${url}`);
   updateHud({ positionMs: 0, expectedMs: 0, driftMs: 0, lastAction: 'Opening…' });
 
+  // AVPlay needs an absolute file:// URI — resolve async for Tizen 4 compat.
+  return _resolveAbsoluteUri(url).then((absUri) => _openAndPrepare(av, absUri));
+}
+
+export function teardown(): void { _teardown(); }
+
+// ── URI resolution ─────────────────────────────────────────────────────────────
+
+/**
+ * Resolve a relative URL (e.g. "./media/1.mp4") to an absolute file:// URI
+ * suitable for webapis.avplay.open().
+ *
+ * Strategy:
+ *  1. If already absolute (http/https/file) — return as-is.
+ *  2. Tizen 5+ — tizen.filesystem.toURI('wgt-package') is synchronous.
+ *  3. Tizen 4  — tizen.filesystem.resolve() is async (callback); wrap in Promise.
+ *  4. Fallback — derive base from a <script> src attribute (always absolute per spec).
+ */
+function _resolveAbsoluteUri(url: string): Promise<string> {
+  // Already absolute
+  if (/^(https?|file):\/\//i.test(url)) return Promise.resolve(url);
+
+  // Strip leading ./
+  const rel = url.replace(/^\.\//, '');
+
+  // 1. Tizen 5+ synchronous path
+  try {
+    const base: string = (window as any).tizen?.filesystem?.toURI('wgt-package');
+    if (base && typeof base === 'string' && base.length > 5) {
+      const abs = (base.endsWith('/') ? base : base + '/') + rel;
+      logger.info(`[AVPlay] resolved URI (toURI): ${abs}`);
+      return Promise.resolve(abs);
+    }
+  } catch (e: any) {
+    logger.warn(`[AVPlay] toURI failed: ${e?.message} — trying resolve()`);
+  }
+
+  // 2. Tizen 4 async callback resolve
+  const tizen = (window as any).tizen;
+  if (tizen?.filesystem?.resolve) {
+    return new Promise<string>((res, rej) => {
+      try {
+        tizen.filesystem.resolve(
+          'wgt-package',
+          (dir: any) => {
+            const base: string = dir.toURI ? dir.toURI() : String(dir);
+            const abs = (base.endsWith('/') ? base : base + '/') + rel;
+            logger.info(`[AVPlay] resolved URI (resolve): ${abs}`);
+            res(abs);
+          },
+          (e: any) => {
+            logger.warn(`[AVPlay] filesystem.resolve failed: ${e?.message} — using script fallback`);
+            res(_scriptBaseFallback(rel));
+          },
+          'r',
+        );
+      } catch (e: any) {
+        logger.warn(`[AVPlay] filesystem.resolve threw: ${e?.message}`);
+        res(_scriptBaseFallback(rel));
+      }
+    });
+  }
+
+  // 3. Script src fallback
+  return Promise.resolve(_scriptBaseFallback(rel));
+}
+
+function _scriptBaseFallback(rel: string): string {
+  for (const s of Array.from(document.scripts) as HTMLScriptElement[]) {
+    if (s.src && s.src.startsWith('file:///') && s.src.includes('bundle.js')) {
+      const base = s.src.replace(/js\/bundle\.js.*$/, '');
+      const abs = base + rel;
+      logger.info(`[AVPlay] resolved URI (script): ${abs}`);
+      return abs;
+    }
+  }
+  // Last resort — relative path (will likely fail on Tizen, but surfaces the error)
+  logger.warn(`[AVPlay] could not resolve absolute URI for: ${rel}`);
+  return rel;
+}
+
+// ── Open and prepare ───────────────────────────────────────────────────────────
+
+function _openAndPrepare(av: AVPlayHandle, absUri: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     try {
-      av.open(url);
-      // Must set display before prepare
+      logger.info(`[AVPlay] open: ${absUri}`);
+      av.open(absUri);
       av.setDisplayRect(0, 0, 1920, 1080);
       av.setDisplayMethod('PLAYER_DISPLAY_MODE_FULL_SCREEN');
 
@@ -118,7 +210,7 @@ export function loadVideo(url: string, itemIndex = 0): Promise<void> {
           _handleLoop();
         },
         oncurrentplaytime: (_ms: number) => {
-          // Position updates arrive here too; the 50ms tick handles sync corrections
+          // The 50ms tick handles position sync; nothing to do here
         },
         onerror: (eventType: string) => {
           logger.error(`[AVPlay] error: ${eventType}`);
@@ -133,15 +225,12 @@ export function loadVideo(url: string, itemIndex = 0): Promise<void> {
 
       av.prepareAsync(
         () => {
-          // State is now READY
           _videoDurationMs = av.getDuration();
           P2PSync.setVideoDuration(_videoDurationMs);
           logger.info(`[AVPlay] READY — duration=${_videoDurationMs}ms`);
           updateHud({ lastAction: 'Ready — waiting for SYNC_PLAY' });
           P2PSync.setVideoReady(_itemIndex, 'avplay');
 
-          // Player is paused in READY state — no auto-play. Wait for SYNC_PLAY.
-          // Watchdog: play unsynced after 8s if no SYNC_PLAY arrives.
           _syncWatchdog = setTimeout(() => {
             if (!_playing && !_tearingDown) {
               logger.warn('[AVPlay] watchdog: no SYNC_PLAY in 8s — playing unsynced');
@@ -150,13 +239,12 @@ export function loadVideo(url: string, itemIndex = 0): Promise<void> {
             }
           }, 8000);
 
-          // If SYNC_PLAY already arrived before prepare completed, apply now
           if (_syncedStartMs > 0) _schedulePlay();
           resolve();
         },
         (e: any) => {
           logger.error(`[AVPlay] prepareAsync failed: ${e?.message ?? String(e)}`);
-          reject(e);
+          reject(new Error(e?.message ?? String(e)));
         },
       );
     } catch (e: any) {
@@ -165,8 +253,6 @@ export function loadVideo(url: string, itemIndex = 0): Promise<void> {
     }
   });
 }
-
-export function teardown(): void { _teardown(); }
 
 // ── Sync handlers ──────────────────────────────────────────────────────────────
 
@@ -340,6 +426,11 @@ function _teardown(): void {
         av.close();
       }
     } catch {}
+  }
+
+  if (_objElem) {
+    _objElem.remove();
+    _objElem = null;
   }
 
   _playing        = false;

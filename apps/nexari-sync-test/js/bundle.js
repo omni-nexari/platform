@@ -1026,13 +1026,17 @@
     var _a, _b;
     return (_b = (_a = window.webapis) == null ? void 0 : _a.avplay) != null ? _b : null;
   }
-  function initAvplayPlayer(_container) {
+  function initAvplayPlayer(container) {
     _teardown3();
     _tearingDown = false;
     if (!_av()) {
       logger.warn("[AVPlay] webapis.avplay not available \u2014 falling back gracefully");
       return;
     }
+    _objElem = document.createElement("object");
+    _objElem.type = "application/avplayer";
+    _objElem.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;";
+    container.appendChild(_objElem);
     onSyncPlay(_handleSyncPlay3);
     onAdjust(_handleAdjust3);
     _startStateTickTimer2();
@@ -1048,10 +1052,69 @@
     _playing2 = false;
     logger.info(`[AVPlay] loading: ${url}`);
     updateHud({ positionMs: 0, expectedMs: 0, driftMs: 0, lastAction: "Opening\u2026" });
+    return _resolveAbsoluteUri(url).then((absUri) => _openAndPrepare(av, absUri));
+  }
+  function teardown3() {
+    _teardown3();
+  }
+  function _resolveAbsoluteUri(url) {
+    var _a, _b, _c;
+    if (/^(https?|file):\/\//i.test(url)) return Promise.resolve(url);
+    const rel = url.replace(/^\.\//, "");
+    try {
+      const base = (_b = (_a = window.tizen) == null ? void 0 : _a.filesystem) == null ? void 0 : _b.toURI("wgt-package");
+      if (base && typeof base === "string" && base.length > 5) {
+        const abs = (base.endsWith("/") ? base : base + "/") + rel;
+        logger.info(`[AVPlay] resolved URI (toURI): ${abs}`);
+        return Promise.resolve(abs);
+      }
+    } catch (e) {
+      logger.warn(`[AVPlay] toURI failed: ${e == null ? void 0 : e.message} \u2014 trying resolve()`);
+    }
+    const tizen = window.tizen;
+    if ((_c = tizen == null ? void 0 : tizen.filesystem) == null ? void 0 : _c.resolve) {
+      return new Promise((res, rej) => {
+        try {
+          tizen.filesystem.resolve(
+            "wgt-package",
+            (dir) => {
+              const base = dir.toURI ? dir.toURI() : String(dir);
+              const abs = (base.endsWith("/") ? base : base + "/") + rel;
+              logger.info(`[AVPlay] resolved URI (resolve): ${abs}`);
+              res(abs);
+            },
+            (e) => {
+              logger.warn(`[AVPlay] filesystem.resolve failed: ${e == null ? void 0 : e.message} \u2014 using script fallback`);
+              res(_scriptBaseFallback(rel));
+            },
+            "r"
+          );
+        } catch (e) {
+          logger.warn(`[AVPlay] filesystem.resolve threw: ${e == null ? void 0 : e.message}`);
+          res(_scriptBaseFallback(rel));
+        }
+      });
+    }
+    return Promise.resolve(_scriptBaseFallback(rel));
+  }
+  function _scriptBaseFallback(rel) {
+    for (const s of Array.from(document.scripts)) {
+      if (s.src && s.src.startsWith("file:///") && s.src.includes("bundle.js")) {
+        const base = s.src.replace(/js\/bundle\.js.*$/, "");
+        const abs = base + rel;
+        logger.info(`[AVPlay] resolved URI (script): ${abs}`);
+        return abs;
+      }
+    }
+    logger.warn(`[AVPlay] could not resolve absolute URI for: ${rel}`);
+    return rel;
+  }
+  function _openAndPrepare(av, absUri) {
     return new Promise((resolve, reject) => {
       var _a;
       try {
-        av.open(url);
+        logger.info(`[AVPlay] open: ${absUri}`);
+        av.open(absUri);
         av.setDisplayRect(0, 0, 1920, 1080);
         av.setDisplayMethod("PLAYER_DISPLAY_MODE_FULL_SCREEN");
         av.setListener({
@@ -1099,9 +1162,9 @@
             resolve();
           },
           (e) => {
-            var _a2;
+            var _a2, _b;
             logger.error(`[AVPlay] prepareAsync failed: ${(_a2 = e == null ? void 0 : e.message) != null ? _a2 : String(e)}`);
-            reject(e);
+            reject(new Error((_b = e == null ? void 0 : e.message) != null ? _b : String(e)));
           }
         );
       } catch (e) {
@@ -1109,9 +1172,6 @@
         reject(e);
       }
     });
-  }
-  function teardown3() {
-    _teardown3();
   }
   function _handleSyncPlay3(msg) {
     var _a;
@@ -1271,13 +1331,17 @@
       } catch (e) {
       }
     }
+    if (_objElem) {
+      _objElem.remove();
+      _objElem = null;
+    }
     _playing2 = false;
     _seekInFlight = false;
     _startScheduled2 = false;
     _syncedStartMs3 = -1;
     _videoDurationMs3 = 0;
   }
-  var SYNC_SEEK_MS2, NEAR_END_MS2, _syncedStartMs3, _startScheduled2, _itemIndex3, _stateTickTimer2, _syncWatchdog3, _videoDurationMs3, _playing2, _seekInFlight, _tearingDown;
+  var SYNC_SEEK_MS2, NEAR_END_MS2, _syncedStartMs3, _startScheduled2, _itemIndex3, _stateTickTimer2, _syncWatchdog3, _videoDurationMs3, _playing2, _seekInFlight, _tearingDown, _objElem;
   var init_player_avplay = __esm({
     "src/player-avplay.ts"() {
       init_ntp_client();
@@ -1295,6 +1359,7 @@
       _playing2 = false;
       _seekInFlight = false;
       _tearingDown = false;
+      _objElem = null;
     }
   });
 
@@ -1456,24 +1521,43 @@
       function _getDeviceId(selfIp) {
         return __async(this, null, function* () {
           var _a, _b, _c, _d, _e, _f;
+          const tag = _getTizenTag();
           try {
             const serial = (_c = (_b = (_a = window.webapis) == null ? void 0 : _a.productinfo) == null ? void 0 : _b.getSerialNumber) == null ? void 0 : _c.call(_b);
-            if (serial && serial.trim().length > 0) return serial.trim();
+            if (serial && serial.trim().length > 0) return tag + serial.trim();
           } catch (e) {
           }
           try {
             const duid = (_f = (_e = (_d = window.webapis) == null ? void 0 : _d.productinfo) == null ? void 0 : _e.getDuid) == null ? void 0 : _f.call(_e);
-            if (duid && duid.trim().length > 0) return duid.trim();
+            if (duid && duid.trim().length > 0) return tag + duid.trim();
           } catch (e) {
           }
-          if (selfIp && selfIp !== "127.0.0.1" && selfIp !== "0.0.0.0") return selfIp.replace(/\./g, "-");
-          let id = localStorage.getItem("_nexari_sync_device_id");
+          if (selfIp && selfIp !== "127.0.0.1" && selfIp !== "0.0.0.0") return tag + selfIp.replace(/\./g, "-");
+          const storageKey = "_nexari_sync_device_id";
+          let id = localStorage.getItem(storageKey);
           if (!id) {
             id = "dev-" + Math.random().toString(36).slice(2, 10);
-            localStorage.setItem("_nexari_sync_device_id", id);
+            localStorage.setItem(storageKey, id);
           }
-          return id;
+          return id.startsWith(tag) ? id : tag + id;
         });
+      }
+      function _getTizenTag() {
+        var _a, _b, _c;
+        try {
+          const ver = (_b = (_a = window.tizen) == null ? void 0 : _a.systeminfo) == null ? void 0 : _b.getCapability(
+            "http://tizen.org/feature/platform.version"
+          );
+          if (ver && typeof ver === "string") {
+            const parts = ver.split(".");
+            const major = parseInt(parts[0], 10);
+            const minor = parseInt((_c = parts[1]) != null ? _c : "0", 10);
+            const label = minor > 0 ? `${major}.${minor}` : `${major}`;
+            return `tizen${label}-`;
+          }
+        } catch (e) {
+        }
+        return "";
       }
       var EMBEDDED_MEDIA = [
         "./media/1.mp4",

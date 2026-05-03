@@ -154,7 +154,7 @@ function _onKey(e: KeyboardEvent): void {
   if (CH_PLUS.includes(e.keyCode)) {
     if (P2PSync.getRole() === 'leader') {
       // Cycle: avplay → mse → avplay (wasm excluded — requires SharedArrayBuffer)
-    const next: EngineMode = _currentEngine === 'avplay' ? 'mse' : 'avplay';
+      const next: EngineMode = _currentEngine === 'avplay' ? 'mse' : 'avplay';
       logger.info(`[App] CH+ key → broadcastSetEngine(${next})`);
       P2PSync.broadcastSetEngine(next);
       _currentEngine = next;
@@ -198,25 +198,46 @@ async function _getSelfIp(): Promise<string> {
 }
 
 async function _getDeviceId(selfIp: string): Promise<string> {
+  const tag = _getTizenTag(); // e.g. 'tizen4-', 'tizen6.5-', ''
   // 1. TV serial number — guaranteed unique per unit
   try {
     const serial = (window as any).webapis?.productinfo?.getSerialNumber?.();
-    if (serial && serial.trim().length > 0) return serial.trim();
+    if (serial && serial.trim().length > 0) return tag + serial.trim();
   } catch {}
   // 2. DUID
   try {
     const duid = (window as any).webapis?.productinfo?.getDuid?.();
-    if (duid && duid.trim().length > 0) return duid.trim();
+    if (duid && duid.trim().length > 0) return tag + duid.trim();
   } catch {}
   // 3. IP-derived (works when IP detection succeeds)
-  if (selfIp && selfIp !== '127.0.0.1' && selfIp !== '0.0.0.0') return selfIp.replace(/\./g, '-');
+  if (selfIp && selfIp !== '127.0.0.1' && selfIp !== '0.0.0.0') return tag + selfIp.replace(/\./g, '-');
   // 4. Persistent random ID stored in localStorage
-  let id = localStorage.getItem('_nexari_sync_device_id');
+  const storageKey = '_nexari_sync_device_id';
+  let id = localStorage.getItem(storageKey);
   if (!id) {
     id = 'dev-' + Math.random().toString(36).slice(2, 10);
-    localStorage.setItem('_nexari_sync_device_id', id);
+    localStorage.setItem(storageKey, id);
   }
-  return id;
+  // Only prepend tag if id doesn't already have it (survives reboot)
+  return id.startsWith(tag) ? id : tag + id;
+}
+
+/** Return a short Tizen version prefix: 'tizen4-', 'tizen6.5-', 'tizen7-', etc. */
+function _getTizenTag(): string {
+  try {
+    const ver = (window as any).tizen?.systeminfo?.getCapability(
+      'http://tizen.org/feature/platform.version',
+    ) as string | undefined;
+    if (ver && typeof ver === 'string') {
+      const parts = ver.split('.');
+      const major = parseInt(parts[0], 10);
+      const minor = parseInt(parts[1] ?? '0', 10);
+      // Use major.minor only when minor is non-zero, else just major
+      const label = minor > 0 ? `${major}.${minor}` : `${major}`;
+      return `tizen${label}-`;
+    }
+  } catch {}
+  return '';
 }
 
 // Embedded media playlist — files bundled inside the .wgt package
