@@ -37,6 +37,7 @@ import DeviceDetailPage from './pages/workspace/DeviceDetailPage.js';
 import DeviceGroupsPage from './pages/workspace/DeviceGroupsPage.js';
 import DeviceGroupDetailPage from './pages/workspace/DeviceGroupDetailPage.js';
 import TizenTestPage from './pages/workspace/TizenTestPage.js';
+import TestSyncPage from './pages/TestSyncPage.js';
 import B2BTestPage from './pages/workspace/B2BTestPage.js';
 import PosMenuPage from './pages/workspace/PosMenuPage.js';
 import PosOrderPage from './pages/workspace/PosOrderPage.js';
@@ -305,6 +306,7 @@ export default function App() {
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/dashboard" element={<OrgDashboardPage />} />
         <Route path="/tizen-test" element={<TizenTestPage />} />
+        <Route path="/test-sync" element={<TestSyncPage />} />
         <Route path="/workspaces/:wsId" element={<WorkspaceDashboardPage />} />
         <Route path="/workspaces/:wsId/devices" element={<DevicesPage />} />
         <Route path="/workspaces/:wsId/devices/groups" element={<DeviceGroupsPage />} />

@@ -1,0 +1,19 @@
+{
+  "name": "nexari-sync-test",
+  "version": "0.1.0",
+  "description": "Nexari Sync Test — MSE vs WASM engine comparison harness (Tizen 4+)",
+  "scripts": {
+    "build": "tsc",
+    "build:dev": "cross-env PI_BASE=http://192.168.1.17 tsc",
+    "watch": "tsc --watch"
+  },
+  "type": "commonjs",
+  "devDependencies": {
+    "@ffmpeg/core": "^0.11.0",
+    "@ffmpeg/ffmpeg": "^0.11.6",
+    "@types/tizen-tv-webapis": "^2.0.9",
+    "cross-env": "^10.1.0",
+    "tizen-tv-webapis": "^2.0.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -23,6 +23,15 @@ var dgram = require('dgram');
 
 module.exports = function startMdcBridge() {
 
+// ── Last-resort crash guard ───────────────────────────────────────────────
+// Prevents the Node process from dying silently on any uncaught exception.
+// Individual error paths are handled explicitly above; this is a safety net
+// for anything we missed (e.g. future Samsung firmware quirks on Tizen 4).
+process.on('uncaughtException', function(err) {
+  console.error('[mdc-bridge] UNCAUGHT EXCEPTION (bridge staying up):',
+    err && err.message, err && err.stack ? '\n' + err.stack : '');
+});
+
 // ── MDC protocol constants ────────────────────────────────────────────────
 var MDC_TCP_PORT     = 1515;
 var HTTP_PORT        = 9615;
@@ -206,10 +215,14 @@ function sendMdcPacket_raw(packet, cb) {
     });
   });
 
-  socket.once('error', function(err) {
+  // Use socket.on (not once) so a late ECONNRESET from Samsung MDC firmware
+  // — which fires AFTER the write callback already fired — is silently swallowed
+  // by the 'done' guard instead of becoming an uncaught exception that kills the process.
+  socket.on('error', function(err) {
     if (done) return;
     done = true;
     clearTimeout(timer);
+    socket.destroy();
     cb(err);
   });
 }
@@ -257,8 +270,15 @@ function sendMdcPacketWithResponse_raw(packet, cb) {
     }
   });
 
-  socket.once('error', function(err) {
+  // Use socket.on (not once) — same ECONNRESET race as sendMdcPacket_raw.
+  socket.on('error', function(err) {
     finish(err);
+  });
+  // 'close' fires when the MDC server drops the connection without sending data
+  // (or before the full response arrives). Without this, we'd wait CONNECT_TIMEOUT
+  // (3 s) for the timer to fire. Fail fast instead.
+  socket.on('close', function() {
+    finish(new Error('MDC connection closed before full response'));
   });
 }
 function sendMdcPacketWithResponse(packet, cb) {
@@ -2088,11 +2108,21 @@ var server = http.createServer(function(req, res) {
         var ext = path.extname(fileName).toLowerCase();
         var mime = MIME_TYPES[ext] || 'application/octet-stream';
         res.writeHead(200, { 'Content-Type': mime, 'Content-Length': stat.size });
-        fs.createReadStream(filePath).pipe(res);
+        var rStream = fs.createReadStream(filePath);
+        rStream.on('error', function(streamErr) {
+          // Guard against storage read failures crashing the process via unhandled EventEmitter error.
+          console.warn('[mdc-bridge] content stream error:', streamErr && streamErr.message);
+          try { res.end(); } catch (_) {}
+        });
+        rStream.pipe(res);
       });
       return;
     }
     origHandler(req, res);
+  });
+
+  server.on('error', function(err) {
+    console.error('[mdc-bridge] HTTP server error:', err && err.message);
   });
 
   server.listen(HTTP_PORT, '0.0.0.0', function() {

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexari Sync Test</title>
+    <script>
+    (function() {
+      function showErr(msg) {
+        var show = function() {
+          var b = document.getElementById('_jserr');
+          if (!b) {
+            b = document.createElement('div');
+            b.id = '_jserr';
+            b.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#b00040;color:#fff;padding:10px 16px;font:13px monospace;word-break:break-all;white-space:pre-line;max-height:30vh;overflow-y:auto;';
+            (document.body || document.documentElement).appendChild(b);
+          }
+          b.textContent += msg + '\n';
+        };
+        if (document.body) show(); else document.addEventListener('DOMContentLoaded', show);
+      }
+      window.onerror = function(msg, src, line) {
+        showErr('[JS ERROR] ' + msg + '\n  ' + src + ':' + line);
+        return false;
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        var r = e.reason;
+        showErr('[REJECTION] ' + (r && r.message ? r.message : String(r)));
+      });
+    })();
+    </script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        width: 100%; height: 100%;
+        background: #000; color: #fff;
+        font-family: monospace; overflow: hidden;
+      }
+      #video-container {
+        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      }
+      #engine-banner {
+        position: fixed; top: 0; left: 50%; transform: translateX(-50%);
+        background: rgba(0,0,200,0.7); color: #fff;
+        padding: 4px 24px; font-size: 18px; font-weight: bold;
+        border-radius: 0 0 8px 8px; z-index: 999; letter-spacing: 2px;
+        pointer-events: none;
+      }
+      #status-msg {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+        font-size: 22px; color: #8df; text-align: center; z-index: 100;
+        pointer-events: none;
+      }
+      #perf-hud {
+        position: fixed; top: 0; left: 0; right: 0;
+        background: rgba(0,0,0,0.72); color: #0f0;
+        font: 13px/1.6 monospace; padding: 8px 14px;
+        z-index: 9999; pointer-events: none;
+      }
+    </style>
+</head>
+<body>
+    <div id="video-container"></div>
+    <div id="engine-banner">MSE</div>
+    <div id="status-msg">Initialising…</div>
+    <div id="perf-hud"></div>
+
+    <!-- ffmpeg.wasm UMD bundle — must be present at js/lib/ffmpeg/ffmpeg.js -->
+    <script src="js/lib/ffmpeg/ffmpeg.js"></script>
+
+    <!-- Compiled TypeScript output (tsc module:none → one file per source) -->
+    <!-- Load order matches dependency graph -->
+    <script src="js/ntp-client.js"></script>
+    <script src="js/sync-protocol.js"></script>
+    <script src="js/logger.js"></script>
+    <script src="js/perf-hud.js"></script>
+    <script src="js/p2p-sync-client.js"></script>
+    <script src="js/decoder-ffmpeg.js"></script>
+    <script src="js/player-mse.js"></script>
+    <script src="js/player-wasm.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

@@ -132,6 +132,7 @@ const Player = {
     _pendingSyncNextItemAt: null,
     _pendingSyncNextItemIndex: -1,
     _videowallSyncWatchdog: null, // clearTimeout handle for follower SYNC_PLAY watchdog
+    _pendingVideowallSyncPlay: null, // stored SYNC_PLAY cue when it arrives before onloadedmetadata
     // Samsung b2bapis.b2bsyncplay (native firmware SyncPlay) state.
     // Active when the current playlist is rendered via firmware-level sync
     // instead of the JS SyncEngine + HTML5 path. The native API auto-discovers
@@ -414,7 +415,10 @@ const Player = {
                         });
                     }
                     // Re-check content so any pending videowall content starts rendering
-                    // now that the manifest (crop geometry) is available.
+                    // now that the manifest (crop geometry) is available.  Clear the
+                    // signature cache so the "Content unchanged" early-return is bypassed —
+                    // the crop transform must be applied even when the playlist hasn't changed.
+                    this.lastContentSignature = null;
                     this.loadContent();
                     break;
                 case 'VIDEOWALL_CLEAR':
@@ -437,12 +441,22 @@ const Player = {
                             clearTimeout(this._videowallSyncWatchdog);
                             this._videowallSyncWatchdog = null;
                         }
-                        this.handleSyncCommand({
-                            type: 'SYNC_PLAY',
-                            fromDeviceId: null,
-                            payload: { syncedStartMs: spStartMs, itemIndex: 0 },
-                            receivedAt: Date.now(),
-                        });
+                        // If the video element is already metadata-ready, dispatch immediately.
+                        // Otherwise store the cue so onloadedmetadata can consume it when ready.
+                        const sv = this._activeSyncVideo;
+                        if (sv && sv.readyState >= 1) {
+                            this._pendingVideowallSyncPlay = null;
+                            this.handleSyncCommand({
+                                type: 'SYNC_PLAY',
+                                fromDeviceId: null,
+                                payload: { syncedStartMs: spStartMs, itemIndex: 0 },
+                                receivedAt: Date.now(),
+                            });
+                        }
+                        else {
+                            logger.info('[Videowall] video not yet ready — storing SYNC_PLAY cue for onloadedmetadata');
+                            this._pendingVideowallSyncPlay = spStartMs;
+                        }
                     }
                     break;
                 }
@@ -2777,19 +2791,33 @@ const Player = {
                     // Follower: keep video paused and wait for SYNC_PLAY via bridge poll or API WS.
                     // Explicitly pause — belt-and-suspenders for Tizen 4 which may autoplay despite autoplay=false.
                     video.pause();
-                    logger.info('[Videowall] follower video ready — awaiting SYNC_PLAY cue...');
-                    // Watchdog: if no cue arrives within 6s, play unsynced so the wall isn't stuck.
-                    if (this._videowallSyncWatchdog)
-                        clearTimeout(this._videowallSyncWatchdog);
-                    this._videowallSyncWatchdog = setTimeout(() => {
-                        this._videowallSyncWatchdog = null;
-                        const v = this._activeSyncVideo;
-                        logger.warn('[Videowall] watchdog fired — video.paused=' + (v ? v.paused : 'null'));
-                        if (v && v.paused) {
-                            logger.warn('[Videowall] SYNC_PLAY watchdog fired — playing unsynced after 6s timeout');
-                            v.play().catch((e) => logger.error('[Videowall] watchdog play() failed:', e));
-                        }
-                    }, 6000);
+                    // If SYNC_PLAY cue arrived before video was ready (e.g. slow download), apply it now.
+                    const pendingCue = this._pendingVideowallSyncPlay;
+                    if (pendingCue) {
+                        this._pendingVideowallSyncPlay = null;
+                        logger.info('[Videowall] follower video ready — applying stored SYNC_PLAY cue: syncedStartMs=' + pendingCue);
+                        this.handleSyncCommand({
+                            type: 'SYNC_PLAY',
+                            fromDeviceId: null,
+                            payload: { syncedStartMs: pendingCue, itemIndex: 0 },
+                            receivedAt: Date.now(),
+                        });
+                    }
+                    else {
+                        logger.info('[Videowall] follower video ready — awaiting SYNC_PLAY cue...');
+                        // Watchdog: if no cue arrives within 6s, play unsynced so the wall isn't stuck.
+                        if (this._videowallSyncWatchdog)
+                            clearTimeout(this._videowallSyncWatchdog);
+                        this._videowallSyncWatchdog = setTimeout(() => {
+                            this._videowallSyncWatchdog = null;
+                            const v = this._activeSyncVideo;
+                            logger.warn('[Videowall] watchdog fired — video.paused=' + (v ? v.paused : 'null'));
+                            if (v && v.paused) {
+                                logger.warn('[Videowall] SYNC_PLAY watchdog fired — playing unsynced after 6s timeout');
+                                v.play().catch((e) => logger.error('[Videowall] watchdog play() failed:', e));
+                            }
+                        }, 6000);
+                    }
                 }
             }
             else {
