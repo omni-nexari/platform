@@ -55,8 +55,11 @@ window.addEventListener('load', async () => {
   logger.info(`[App] boot: ip=${selfIp} deviceId=${deviceId}`);
 
   _setStatus('Syncing time…');
-  await syncTime(`${CONFIG.PI_BASE}/api/v1/devices`).catch(() => logger.warn('[App] NTP sync failed — using local clock'));
-  logger.info(`[App] NTP offset: ${getNtpOffset()}ms`);
+  const ntp = await syncTime(`${CONFIG.PI_BASE}/api/v1/devices`).catch(() => {
+    logger.warn('[App] NTP sync failed — using local clock');
+    return null;
+  });
+  logger.info(`[App] NTP offset: ${getNtpOffset()}ms samples=${ntp?.samples ?? 0} rtt=${ntp?.rttMs ?? 0}ms`);
 
   updateHud({ ntpOffsetMs: getNtpOffset() });
 

@@ -51,11 +51,26 @@
     _monoBaseMs = _monotonicNow();
     _syncedBaseMs = Date.now() + _offsetMs;
   }
+  function _applyOffsetSample(offset, rtt, samples) {
+    const prev = _offsetMs;
+    const delta = Math.abs(offset - prev);
+    _offsetMs = delta > SNAP_THRESHOLD ? offset : prev * (1 - EWMA_ALPHA) + offset * EWMA_ALPHA;
+    _resetSyncedTimeBase();
+    return { offsetMs: Math.round(_offsetMs), rttMs: Math.round(rtt), samples };
+  }
   function getNtpOffset() {
     return _offsetMs;
   }
   function getSyncedTime() {
     return _syncedBaseMs + (_monotonicNow() - _monoBaseMs);
+  }
+  function observeServerTime(serverTimestampMs, t0Ms, t3Ms) {
+    const ts = Number(serverTimestampMs);
+    if (!isFinite(ts)) return null;
+    const rtt = Math.max(0, t3Ms - t0Ms);
+    if (rtt > RTT_LIMIT_MS) return null;
+    const offset = ts - t0Ms - rtt / 2;
+    return _applyOffsetSample(offset, rtt, 1);
   }
   function syncTime(piBase) {
     return __async(this, null, function* () {
@@ -84,11 +99,7 @@
       }
       good.sort((a, b) => a.rtt - b.rtt);
       const best = good[0];
-      const prev = _offsetMs;
-      const delta = Math.abs(best.offset - prev);
-      _offsetMs = delta > SNAP_THRESHOLD ? best.offset : prev * (1 - EWMA_ALPHA) + best.offset * EWMA_ALPHA;
-      _resetSyncedTimeBase();
-      return { offsetMs: Math.round(_offsetMs), rttMs: Math.round(best.rtt), samples: good.length };
+      return _applyOffsetSample(best.offset, best.rtt, good.length);
     });
   }
   var NTP_SAMPLES, RTT_LIMIT_MS, SNAP_THRESHOLD, EWMA_ALPHA, _offsetMs, _monoBaseMs, _syncedBaseMs;
@@ -169,6 +180,7 @@
   }
   function _doRegister() {
     if (!_opts) return;
+    const t0 = Date.now();
     fetch(`${_opts.piBase}/api/v1/test-sync/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -178,7 +190,10 @@
         ip: _opts.selfIp,
         groupId: _groupId
       })
-    }).catch(() => {
+    }).then((res) => __async(null, null, function* () {
+      var _a;
+      return _observeServerTime((_a = yield res.json().catch(() => null)) == null ? void 0 : _a.serverTimeMs, t0, Date.now(), "register");
+    })).catch(() => {
     });
   }
   function _startPeerPoll() {
@@ -192,8 +207,10 @@
       }
       if (!_opts) return;
       try {
+        const t0 = Date.now();
         const res = yield fetch(`${_opts.piBase}/api/v1/test-sync/peers?groupId=${_groupId}`);
         const data = yield res.json();
+        _observeServerTime(data.serverTimeMs, t0, Date.now(), "peers");
         const now = Date.now();
         const peers = data.peers.filter(
           (p) => p.deviceId !== _opts.deviceId && (p.registeredAt == null || now - p.registeredAt < PEER_MAX_AGE_MS)
@@ -229,11 +246,15 @@
   }
   function _send(msg) {
     if (!_opts || !_peerDeviceId) return;
+    const t0 = Date.now();
     fetch(`${_opts.piBase}/api/v1/test-sync/signal/${_peerDeviceId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ from: _opts.deviceId, seq: Date.now(), body: msg })
-    }).catch((e) => _opts == null ? void 0 : _opts.logger("warn", `[P2P] _send failed: ${e == null ? void 0 : e.message}`));
+    }).then((res) => __async(null, null, function* () {
+      var _a;
+      return _observeServerTime((_a = yield res.json().catch(() => null)) == null ? void 0 : _a.serverTimeMs, t0, Date.now(), "signal");
+    })).catch((e) => _opts == null ? void 0 : _opts.logger("warn", `[P2P] _send failed: ${e == null ? void 0 : e.message}`));
   }
   function _startSignalDrain() {
     _signalPollTimer = setInterval(_doSignalDrain, SIGNAL_POLL_INTERVAL_MS);
@@ -243,8 +264,10 @@
       var _a;
       if (!_opts) return;
       try {
+        const t0 = Date.now();
         const res = yield fetch(`${_opts.piBase}/api/v1/test-sync/signals/${_opts.deviceId}?since=${_signalPollSince}`);
         const data = yield res.json();
+        _observeServerTime(data.serverTimeMs, t0, Date.now(), "signals");
         if (data.nextSince != null) _signalPollSince = data.nextSince;
         for (const entry of (_a = data.entries) != null ? _a : []) {
           if (entry.from && entry.from !== _peerDeviceId) {
@@ -272,6 +295,17 @@
       } catch (e) {
       }
     });
+  }
+  function _observeServerTime(serverTimeMs, t0, t3, source) {
+    if (_syncedStartMs > 0 || typeof serverTimeMs !== "number") return;
+    const before = getNtpOffset();
+    const result = observeServerTime(serverTimeMs, t0, t3);
+    if (!result) return;
+    const now = Date.now();
+    if (Math.abs(result.offsetMs - before) >= 250 && now - _lastClockLogTime > 5e3) {
+      _lastClockLogTime = now;
+      _opts == null ? void 0 : _opts.logger("info", `[P2P] relay clock calibrated via ${source}: offset=${result.offsetMs}ms rtt=${result.rttMs}ms`);
+    }
   }
   function _handleMessage(msg) {
     var _a;
@@ -354,7 +388,7 @@
     }
     return { timelineMs: _pbCurrentMs, positionMs: _pbCurrentMs };
   }
-  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _videoDurationMs, _syncPlaySent, _syncedStartMs, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
+  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _videoDurationMs, _syncPlaySent, _syncedStartMs, _lastClockLogTime, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
   var init_p2p_sync_client = __esm({
     "src/p2p-sync-client.ts"() {
       init_ntp_client();
@@ -384,6 +418,7 @@
       _videoDurationMs = 0;
       _syncPlaySent = false;
       _syncedStartMs = -1;
+      _lastClockLogTime = 0;
       _onSyncPlay = null;
       _onVideoUrl = null;
       _onSetEngine = null;
@@ -1176,6 +1211,7 @@
             _handleLoop();
           },
           oncurrentplaytime: (_ms2) => {
+            if (!_tearingDown) setPlaybackState(_itemIndex3, _ms2, "avplay");
           },
           onerror: (eventType) => {
             logger.error(`[AVPlay] error: ${eventType}`);
@@ -1201,6 +1237,7 @@
                 _playing2 = true;
                 try {
                   av.play();
+                  _lastSeekTime2 = _localNow2();
                 } catch (e) {
                 }
               }
@@ -1274,6 +1311,7 @@
       _playing2 = true;
       try {
         av.play();
+        _lastSeekTime2 = _localNow2();
       } catch (e) {
         logger.warn(`[AVPlay] play() failed: ${e == null ? void 0 : e.message}`);
       }
@@ -1290,6 +1328,7 @@
           _playing2 = true;
           try {
             av.play();
+            _lastSeekTime2 = _localNow2();
             updateHud({ lastAction: "play() fired" });
           } catch (e) {
             logger.warn(`[AVPlay] play() failed: ${e == null ? void 0 : e.message}`);
@@ -1304,23 +1343,12 @@
   function _handleAdjust3(_msg) {
   }
   function _handleLoop() {
-    var _a;
     if (_seekInFlight || _tearingDown) return;
     const av = _av();
     if (!av) return;
     if (_syncedStartMs4 <= 0 || _videoDurationMs3 <= 0) {
       logger.info("[AVPlay] loop: no syncedStart \u2014 seeking to 0");
-      _seekInFlight = true;
-      av.seekTo(0, () => {
-        _lastSeekTime2 = _localNow2();
-        _seekInFlight = false;
-        if (!_tearingDown) try {
-          av.play();
-        } catch (e) {
-        }
-      }, () => {
-        _lastSeekTime2 = _localNow2();
-        _seekInFlight = false;
+      _seekTo(0, "loop", () => {
         if (!_tearingDown) try {
           av.play();
         } catch (e) {
@@ -1331,41 +1359,42 @@
     const elapsed = getSyncedTime() - _syncedStartMs4;
     const expectedMs = (elapsed % _videoDurationMs3 + _videoDurationMs3) % _videoDurationMs3;
     logger.info(`[AVPlay] loop: elapsed=${Math.round(elapsed)}ms seekTo=${Math.round(expectedMs)}ms`);
-    _seekInFlight = true;
-    const onDone = () => {
-      _lastSeekTime2 = _localNow2();
-      _seekInFlight = false;
+    _seekTo(expectedMs, "loop", () => {
       if (_tearingDown) return;
       try {
         av.play();
       } catch (e) {
         logger.warn(`[AVPlay] loop play() failed: ${e == null ? void 0 : e.message}`);
       }
-    };
-    try {
-      av.seekTo(Math.round(expectedMs), onDone, (e) => {
-        var _a2;
-        logger.warn(`[AVPlay] loop seekTo failed: ${(_a2 = e == null ? void 0 : e.message) != null ? _a2 : e} \u2014 playing from 0`);
-        _lastSeekTime2 = _localNow2();
-        _seekInFlight = false;
-        if (!_tearingDown) try {
-          av.play();
-        } catch (e2) {
-        }
-      });
-    } catch (e) {
-      logger.warn(`[AVPlay] loop seekTo threw: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+    });
+  }
+  function _seekTo(ms, label, onDone) {
+    if (_seekInFlight || _tearingDown) return;
+    const av = _av();
+    if (!av) return;
+    _seekInFlight = true;
+    let done = false;
+    let timeout = null;
+    const targetMs = Math.round(ms);
+    const finish = (ok, err) => {
+      var _a, _b;
+      if (done) return;
+      done = true;
+      if (timeout) clearTimeout(timeout);
       _lastSeekTime2 = _localNow2();
       _seekInFlight = false;
-      try {
-        av.play();
-      } catch (e2) {
-      }
+      if (!ok) logger.warn(`[AVPlay] ${label} seekTo ${targetMs}ms failed/timeout: ${(_b = (_a = err == null ? void 0 : err.message) != null ? _a : err) != null ? _b : "timeout"}`);
+      onDone == null ? void 0 : onDone();
+    };
+    timeout = setTimeout(() => finish(false, "timeout"), SEEK_TIMEOUT_MS);
+    try {
+      av.seekTo(targetMs, () => finish(true), (e) => finish(false, e));
+    } catch (e) {
+      finish(false, e);
     }
   }
   function _startStateTickTimer2() {
     _stateTickTimer2 = setInterval(() => {
-      var _a;
       if (!_playing2 || _tearingDown) return;
       const now = _localNow2();
       if (_seekInFlight || now - _lastSeekTime2 < SEEK_SETTLE_MS2) return;
@@ -1392,26 +1421,7 @@
         }
         if (!nearBoundary && absDrift >= SYNC_SEEK_MS2) {
           logger.info(`[AVPlay] sync-seek: drift ${Math.round(driftMs)}ms \u2192 ${Math.round(expectedMs)}ms`);
-          _seekInFlight = true;
-          try {
-            av.seekTo(
-              Math.round(expectedMs),
-              () => {
-                _lastSeekTime2 = _localNow2();
-                _seekInFlight = false;
-              },
-              (e) => {
-                var _a2;
-                _lastSeekTime2 = _localNow2();
-                _seekInFlight = false;
-                logger.warn(`[AVPlay] sync-seek failed: ${(_a2 = e == null ? void 0 : e.message) != null ? _a2 : e}`);
-              }
-            );
-          } catch (e) {
-            _lastSeekTime2 = _localNow2();
-            _seekInFlight = false;
-            logger.warn(`[AVPlay] seekTo threw: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
-          }
+          _seekTo(expectedMs, "sync-seek");
         }
       }
     }, 50);
@@ -1447,7 +1457,7 @@
     _syncedStartMs4 = -1;
     _videoDurationMs3 = 0;
   }
-  var DRIFT_NOOP_MS, SYNC_SEEK_MS2, NEAR_END_MS2, SEEK_SETTLE_MS2, _syncedStartMs4, _startScheduled2, _itemIndex3, _stateTickTimer2, _syncWatchdog3, _videoDurationMs3, _playing2, _seekInFlight, _lastSeekTime2, _lastSoftDriftLogTime, _tearingDown, _objElem;
+  var DRIFT_NOOP_MS, SYNC_SEEK_MS2, NEAR_END_MS2, SEEK_SETTLE_MS2, SEEK_TIMEOUT_MS, _syncedStartMs4, _startScheduled2, _itemIndex3, _stateTickTimer2, _syncWatchdog3, _videoDurationMs3, _playing2, _seekInFlight, _lastSeekTime2, _lastSoftDriftLogTime, _tearingDown, _objElem;
   var init_player_avplay = __esm({
     "src/player-avplay.ts"() {
       init_ntp_client();
@@ -1458,6 +1468,7 @@
       SYNC_SEEK_MS2 = 300;
       NEAR_END_MS2 = 500;
       SEEK_SETTLE_MS2 = 2500;
+      SEEK_TIMEOUT_MS = 2500;
       _syncedStartMs4 = -1;
       _startScheduled2 = false;
       _itemIndex3 = 0;
@@ -1493,7 +1504,7 @@
       var _statusEl;
       var _bannerEl;
       window.addEventListener("load", () => __async(null, null, function* () {
-        var _a, _b;
+        var _a, _b, _c, _d;
         _container = document.getElementById("video-container");
         _statusEl = document.getElementById("status-msg");
         _bannerEl = document.getElementById("engine-banner");
@@ -1504,8 +1515,11 @@
         initLogger(CONFIG.PI_BASE, deviceId);
         logger.info(`[App] boot: ip=${selfIp} deviceId=${deviceId}`);
         _setStatus("Syncing time\u2026");
-        yield syncTime(`${CONFIG.PI_BASE}/api/v1/devices`).catch(() => logger.warn("[App] NTP sync failed \u2014 using local clock"));
-        logger.info(`[App] NTP offset: ${getNtpOffset()}ms`);
+        const ntp = yield syncTime(`${CONFIG.PI_BASE}/api/v1/devices`).catch(() => {
+          logger.warn("[App] NTP sync failed \u2014 using local clock");
+          return null;
+        });
+        logger.info(`[App] NTP offset: ${getNtpOffset()}ms samples=${(_a = ntp == null ? void 0 : ntp.samples) != null ? _a : 0} rtt=${(_b = ntp == null ? void 0 : ntp.rttMs) != null ? _b : 0}ms`);
         updateHud({ ntpOffsetMs: getNtpOffset() });
         _setStatus("Connecting to peer\u2026");
         init({
@@ -1528,7 +1542,7 @@
           _switchEngine(msg.engineMode);
         });
         try {
-          (_b = (_a = window.tizen) == null ? void 0 : _a.tvinputdevice) == null ? void 0 : _b.registerKey("ChannelUp");
+          (_d = (_c = window.tizen) == null ? void 0 : _c.tvinputdevice) == null ? void 0 : _d.registerKey("ChannelUp");
         } catch (e) {
         }
         document.addEventListener("keydown", _onKey);

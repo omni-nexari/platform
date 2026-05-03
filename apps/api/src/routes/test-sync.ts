@@ -40,7 +40,7 @@ export async function testSyncRoutes(app: FastifyInstance) {
     const key = PEER_KEY(groupId);
     await redis.hset(key, deviceId, JSON.stringify({ deviceId, role, ip, registeredAt: Date.now() }));
     await redis.expire(key, PEER_TTL_S);
-    return reply.send({ ok: true });
+    return reply.send({ ok: true, serverTimeMs: Date.now() });
   });
 
   /**
@@ -53,14 +53,14 @@ export async function testSyncRoutes(app: FastifyInstance) {
 
     const { groupId = 'synctest-001' } = req.query as { groupId?: string };
     const raw = await redis.hgetall(PEER_KEY(groupId));
-    if (!raw) return reply.send({ peers: [] });
+    if (!raw) return reply.send({ peers: [], serverTimeMs: Date.now() });
 
     const now = Date.now();
     const peers = Object.values(raw)
       .map((v) => { try { return JSON.parse(v); } catch { return null; } })
       .filter((p) => p && (now - p.registeredAt) < PEER_TTL_S * 1000);
 
-    return reply.send({ peers });
+    return reply.send({ peers, serverTimeMs: Date.now() });
   });
 
   /**
@@ -82,7 +82,7 @@ export async function testSyncRoutes(app: FastifyInstance) {
     await redis.expire(key, SIGNAL_TTL_S);
     // Cap queue to 100 entries (ice candidate storm guard)
     await redis.ltrim(key, -100, -1);
-    return reply.send({ ok: true });
+    return reply.send({ ok: true, serverTimeMs: Date.now() });
   });
 
   /**
@@ -104,7 +104,7 @@ export async function testSyncRoutes(app: FastifyInstance) {
       .map((v, i) => { try { return { idx: fromIdx + i, ...JSON.parse(v) }; } catch { return null; } })
       .filter(Boolean);
 
-    return reply.send({ entries, nextSince: fromIdx + raw.length });
+    return reply.send({ entries, nextSince: fromIdx + raw.length, serverTimeMs: Date.now() });
   });
 
   /**

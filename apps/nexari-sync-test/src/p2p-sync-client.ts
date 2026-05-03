@@ -11,7 +11,7 @@
  */
 
 import type { SyncMessage, EngineMode, MsgSyncPlay, MsgVideoUrl, MsgSetEngine, MsgSyncAdjust } from './sync-protocol.js';
-import { getSyncedTime } from './ntp-client.js';
+import { getNtpOffset, getSyncedTime, observeServerTime } from './ntp-client.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 export interface P2PSyncOpts {
@@ -73,6 +73,7 @@ let _heartbeatTimer: any  = null;
 let _videoDurationMs      = 0;
 let _syncPlaySent         = false;  // prevent duplicate SYNC_PLAYs from re-route READY
 let _syncedStartMs        = -1;
+let _lastClockLogTime     = 0;
 
 // Handlers
 let _onSyncPlay:  ((msg: MsgSyncPlay)   => void) | null = null;
@@ -157,6 +158,7 @@ function _startRegister(): void {
 
 function _doRegister(): void {
   if (!_opts) return;
+  const t0 = Date.now();
   fetch(`${_opts.piBase}/api/v1/test-sync/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -166,7 +168,9 @@ function _doRegister(): void {
       ip: _opts.selfIp,
       groupId: _groupId,
     }),
-  }).catch(() => {});
+  })
+    .then(async (res) => _observeServerTime((await res.json().catch(() => null))?.serverTimeMs, t0, Date.now(), 'register'))
+    .catch(() => {});
 }
 
 // ── Peer discovery ────────────────────────────────────────────────────────────
@@ -178,8 +182,10 @@ async function _doPeerPoll(): Promise<void> {
   if (_connected) { clearInterval(_peerPollTimer); return; }
   if (!_opts) return;
   try {
+    const t0 = Date.now();
     const res  = await fetch(`${_opts.piBase}/api/v1/test-sync/peers?groupId=${_groupId}`);
-    const data = await res.json() as { peers: Array<{ deviceId: string; ip: string; registeredAt?: number }> };
+    const data = await res.json() as { peers: Array<{ deviceId: string; ip: string; registeredAt?: number }>; serverTimeMs?: number };
+    _observeServerTime(data.serverTimeMs, t0, Date.now(), 'peers');
 
     // Filter out self and stale entries
     const now = Date.now();
@@ -223,11 +229,14 @@ async function _doPeerPoll(): Promise<void> {
 // ── Send via Pi HTTP relay ─────────────────────────────────────────────────────
 function _send(msg: SyncMessage): void {
   if (!_opts || !_peerDeviceId) return;
+  const t0 = Date.now();
   fetch(`${_opts.piBase}/api/v1/test-sync/signal/${_peerDeviceId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ from: _opts.deviceId, seq: Date.now(), body: msg }),
-  }).catch((e: any) => _opts?.logger('warn', `[P2P] _send failed: ${e?.message}`));
+  })
+    .then(async (res) => _observeServerTime((await res.json().catch(() => null))?.serverTimeMs, t0, Date.now(), 'signal'))
+    .catch((e: any) => _opts?.logger('warn', `[P2P] _send failed: ${e?.message}`));
 }
 
 // ── Signal drain (application messages from Pi relay) ────────────────────────
@@ -238,8 +247,10 @@ function _startSignalDrain(): void {
 async function _doSignalDrain(): Promise<void> {
   if (!_opts) return;
   try {
+    const t0 = Date.now();
     const res  = await fetch(`${_opts.piBase}/api/v1/test-sync/signals/${_opts.deviceId}?since=${_signalPollSince}`);
-    const data = await res.json() as { entries: Array<{ idx: number; from: string; body: unknown }>; nextSince: number };
+    const data = await res.json() as { entries: Array<{ idx: number; from: string; body: unknown }>; nextSince: number; serverTimeMs?: number };
+    _observeServerTime(data.serverTimeMs, t0, Date.now(), 'signals');
     if (data.nextSince != null) _signalPollSince = data.nextSince;
     for (const entry of data.entries ?? []) {
       // If we're receiving a message from someone other than our current peer,
@@ -266,6 +277,18 @@ async function _doSignalDrain(): Promise<void> {
       try { _handleMessage(entry.body as SyncMessage); } catch { /* ignore malformed */ }
     }
   } catch { /* silent – network blip */ }
+}
+
+function _observeServerTime(serverTimeMs: unknown, t0: number, t3: number, source: string): void {
+  if (_syncedStartMs > 0 || typeof serverTimeMs !== 'number') return;
+  const before = getNtpOffset();
+  const result = observeServerTime(serverTimeMs, t0, t3);
+  if (!result) return;
+  const now = Date.now();
+  if (Math.abs(result.offsetMs - before) >= 250 && now - _lastClockLogTime > 5000) {
+    _lastClockLogTime = now;
+    _opts?.logger('info', `[P2P] relay clock calibrated via ${source}: offset=${result.offsetMs}ms rtt=${result.rttMs}ms`);
+  }
 }
 
 // ── Message handler ───────────────────────────────────────────────────────────

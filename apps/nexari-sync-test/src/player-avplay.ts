@@ -33,6 +33,7 @@ const DRIFT_NOOP_MS   = 80;    // ignore tiny phase error
 const SYNC_SEEK_MS    = 300;   // AVPlay cannot fractional-nudge; seek only above this
 const NEAR_END_MS     = 500;   // skip corrections within this ms of loop boundary
 const SEEK_SETTLE_MS  = 2500;  // post-seek cooldown; AVPlay can report stale position while buffering
+const SEEK_TIMEOUT_MS = 2500;  // some Tizen builds do not call seekTo callbacks reliably
 
 let _syncedStartMs  = -1;
 let _startScheduled = false;
@@ -221,7 +222,7 @@ function _openAndPrepare(av: AVPlayHandle, absUri: string): Promise<void> {
           _handleLoop();
         },
         oncurrentplaytime: (_ms: number) => {
-          // The 50ms tick handles position sync; nothing to do here
+          if (!_tearingDown) P2PSync.setPlaybackState(_itemIndex, _ms, 'avplay');
         },
         onerror: (eventType: string) => {
           logger.error(`[AVPlay] error: ${eventType}`);
@@ -248,7 +249,10 @@ function _openAndPrepare(av: AVPlayHandle, absUri: string): Promise<void> {
               // Set a synthetic start time so loop math stays numerically valid
               if (_syncedStartMs <= 0) _syncedStartMs = getSyncedTime();
               _playing = true;
-              try { av.play(); } catch {}
+              try {
+                av.play();
+                _lastSeekTime = _localNow();
+              } catch {}
             }
           }, 8000);
 
@@ -327,7 +331,10 @@ function _schedulePlay(): void {
   if (wait <= 0) {
     logger.warn('[AVPlay] SYNC_PLAY cue already past — playing immediately');
     _playing = true;
-    try { av.play(); } catch (e: any) { logger.warn(`[AVPlay] play() failed: ${e?.message}`); }
+    try {
+      av.play();
+      _lastSeekTime = _localNow();
+    } catch (e: any) { logger.warn(`[AVPlay] play() failed: ${e?.message}`); }
     return;
   }
 
@@ -343,6 +350,7 @@ function _schedulePlay(): void {
         _playing = true;
         try {
           av.play();
+          _lastSeekTime = _localNow();
           updateHud({ lastAction: 'play() fired' });
         } catch (e: any) {
           logger.warn(`[AVPlay] play() failed: ${e?.message}`);
@@ -369,16 +377,7 @@ function _handleLoop(): void {
   // Guard: if no synced start time, just restart from 0 (watchdog / unsynced mode)
   if (_syncedStartMs <= 0 || _videoDurationMs <= 0) {
     logger.info('[AVPlay] loop: no syncedStart — seeking to 0');
-    _seekInFlight = true;
-    av.seekTo(0, () => {
-      _lastSeekTime = _localNow();
-      _seekInFlight = false;
-      if (!_tearingDown) try { av.play(); } catch {}
-    }, () => {
-      _lastSeekTime = _localNow();
-      _seekInFlight = false;
-      if (!_tearingDown) try { av.play(); } catch {}
-    });
+    _seekTo(0, 'loop', () => { if (!_tearingDown) try { av.play(); } catch {} });
     return;
   }
 
@@ -386,27 +385,37 @@ function _handleLoop(): void {
   const expectedMs = ((elapsed % _videoDurationMs) + _videoDurationMs) % _videoDurationMs;
 
   logger.info(`[AVPlay] loop: elapsed=${Math.round(elapsed)}ms seekTo=${Math.round(expectedMs)}ms`);
-  _seekInFlight = true;
-
-  const onDone = () => {
-    _lastSeekTime = _localNow();  // start settle window from loop seek completion
-    _seekInFlight = false;
+  _seekTo(expectedMs, 'loop', () => {
     if (_tearingDown) return;
     try { av.play(); } catch (e: any) { logger.warn(`[AVPlay] loop play() failed: ${e?.message}`); }
-  };
+  });
+}
 
-  try {
-    av.seekTo(Math.round(expectedMs), onDone, (e: any) => {
-      logger.warn(`[AVPlay] loop seekTo failed: ${e?.message ?? e} — playing from 0`);
-      _lastSeekTime = _localNow();
-      _seekInFlight = false;
-      if (!_tearingDown) try { av.play(); } catch {}
-    });
-  } catch (e: any) {
-    logger.warn(`[AVPlay] loop seekTo threw: ${e?.message ?? e}`);
+function _seekTo(ms: number, label: string, onDone?: () => void): void {
+  if (_seekInFlight || _tearingDown) return;
+  const av = _av();
+  if (!av) return;
+
+  _seekInFlight = true;
+  let done = false;
+  let timeout: any = null;
+  const targetMs = Math.round(ms);
+
+  const finish = (ok: boolean, err?: any) => {
+    if (done) return;
+    done = true;
+    if (timeout) clearTimeout(timeout);
     _lastSeekTime = _localNow();
     _seekInFlight = false;
-    try { av.play(); } catch {}
+    if (!ok) logger.warn(`[AVPlay] ${label} seekTo ${targetMs}ms failed/timeout: ${err?.message ?? err ?? 'timeout'}`);
+    onDone?.();
+  };
+
+  timeout = setTimeout(() => finish(false, 'timeout'), SEEK_TIMEOUT_MS);
+  try {
+    av.seekTo(targetMs, () => finish(true), (e: any) => finish(false, e));
+  } catch (e: any) {
+    finish(false, e);
   }
 }
 
@@ -449,22 +458,7 @@ function _startStateTickTimer(): void {
 
       if (!nearBoundary && absDrift >= SYNC_SEEK_MS) {
         logger.info(`[AVPlay] sync-seek: drift ${Math.round(driftMs)}ms → ${Math.round(expectedMs)}ms`);
-        _seekInFlight = true;
-        try {
-          av.seekTo(
-            Math.round(expectedMs),
-            () => { _lastSeekTime = _localNow(); _seekInFlight = false; },
-            (e: any) => {
-              _lastSeekTime = _localNow();
-              _seekInFlight = false;
-              logger.warn(`[AVPlay] sync-seek failed: ${e?.message ?? e}`);
-            },
-          );
-        } catch (e: any) {
-          _lastSeekTime = _localNow();
-          _seekInFlight = false;
-          logger.warn(`[AVPlay] seekTo threw: ${e?.message ?? e}`);
-        }
+        _seekTo(expectedMs, 'sync-seek');
       }
     }
   }, 50);

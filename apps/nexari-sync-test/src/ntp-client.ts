@@ -31,6 +31,17 @@ function _resetSyncedTimeBase(): void {
   _syncedBaseMs = Date.now() + _offsetMs;
 }
 
+function _applyOffsetSample(offset: number, rtt: number, samples: number): NtpResult {
+  const prev = _offsetMs;
+  const delta = Math.abs(offset - prev);
+  _offsetMs = delta > SNAP_THRESHOLD
+    ? offset
+    : prev * (1 - EWMA_ALPHA) + offset * EWMA_ALPHA;
+  _resetSyncedTimeBase();
+
+  return { offsetMs: Math.round(_offsetMs), rttMs: Math.round(rtt), samples };
+}
+
 /** Returns the current best NTP offset in milliseconds. */
 export function getNtpOffset(): number { return _offsetMs; }
 
@@ -41,6 +52,16 @@ export function getSyncedTime(): number { return _syncedBaseMs + (_monotonicNow(
 export function setNtpOffset(ms: number): void {
   _offsetMs = ms;
   _resetSyncedTimeBase();
+}
+
+/** Fold a server timestamp from any Pi HTTP response into the clock estimate. */
+export function observeServerTime(serverTimestampMs: number, t0Ms: number, t3Ms: number): NtpResult | null {
+  const ts = Number(serverTimestampMs);
+  if (!isFinite(ts)) return null;
+  const rtt = Math.max(0, t3Ms - t0Ms);
+  if (rtt > RTT_LIMIT_MS) return null;
+  const offset = ts - t0Ms - rtt / 2;
+  return _applyOffsetSample(offset, rtt, 1);
 }
 
 /**
@@ -77,12 +98,5 @@ export async function syncTime(piBase: string): Promise<NtpResult> {
 
   good.sort((a, b) => a.rtt - b.rtt);
   const best = good[0];
-  const prev = _offsetMs;
-  const delta = Math.abs(best.offset - prev);
-  _offsetMs = delta > SNAP_THRESHOLD
-    ? best.offset
-    : prev * (1 - EWMA_ALPHA) + best.offset * EWMA_ALPHA;
-  _resetSyncedTimeBase();
-
-  return { offsetMs: Math.round(_offsetMs), rttMs: Math.round(best.rtt), samples: good.length };
+  return _applyOffsetSample(best.offset, best.rtt, good.length);
 }
