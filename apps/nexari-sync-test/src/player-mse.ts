@@ -30,11 +30,16 @@ let _syncWatchdog: any = null;
 let _videoDurationMs = 0;   // read from video.duration; shared via SYNC_PLAY
 let _pausedForSync   = false;
 let _playing         = false;
+let _lastSeekTime    = 0;    // wall-clock time of last seek (rate-limit to prevent cascade)
 
 // Tolerances for wall-clock position correction
-const SYNC_AHEAD_MS  = 80;  // pause if ahead of wall-clock by more than this
-const SYNC_RESUME_MS = 20;  // resume once within this tolerance
-const SYNC_BEHIND_MS = 80;  // seek forward if behind by more than this
+const SYNC_AHEAD_MS     = 50;   // nudge slow if ahead by more than this
+const SYNC_BEHIND_MS    = 50;   // nudge fast if behind by more than this
+const SYNC_SEEK_MS      = 300;  // hard seek if drift is larger than this
+const MIN_SEEK_INTERVAL = 800;  // ms between seeks (Tizen seek is async — prevent cascade)
+const NUDGE_FAST        = 1.02;
+const NUDGE_SLOW        = 0.98;
+const NEAR_END_MS       = 500;  // don't correct within this many ms of loop boundary
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -240,19 +245,37 @@ function _startStateTickTimer(): void {
     P2PSync.setPlaybackState(_itemIndex, posMs, 'mse');
     updateHud({ positionMs: posMs, expectedMs, driftMs });
 
-    // Active position correction every tick
+    // Active position correction — skip near loop boundary to avoid modulo wrap issues
     if (_syncedStartMs > 0 && _videoDurationMs > 0) {
-      if (!_video.paused && !_pausedForSync && driftMs > SYNC_AHEAD_MS) {
-        _video.pause();
-        _pausedForSync = true;
-        logger.info(`[MSE] sync-pause: ahead ${Math.round(driftMs)}ms`);
-      } else if (_video.paused && _pausedForSync && driftMs <= SYNC_RESUME_MS) {
-        _pausedForSync = false;
-        _video.play().catch((e: any) => logger.warn(`[MSE] sync-resume play() failed: ${e?.message}`));
-        logger.info(`[MSE] sync-resume: drift now ${Math.round(driftMs)}ms`);
-      } else if (!_video.paused && !_pausedForSync && driftMs < -SYNC_BEHIND_MS) {
-        logger.info(`[MSE] sync-seek: behind ${Math.round(-driftMs)}ms → ${Math.round(expectedMs)}ms`);
-        _video.currentTime = expectedMs / 1000;
+      const nearBoundary = expectedMs < NEAR_END_MS || expectedMs > _videoDurationMs - NEAR_END_MS;
+      const absDrift = Math.abs(driftMs);
+
+      if (!nearBoundary) {
+        if (absDrift > SYNC_SEEK_MS) {
+          // Large drift — seek once (rate-limited to prevent Tizen async cascade)
+          const now = Date.now();
+          if (now - _lastSeekTime > MIN_SEEK_INTERVAL) {
+            _lastSeekTime = now;
+            logger.info(`[MSE] sync-seek: drift ${Math.round(driftMs)}ms → ${Math.round(expectedMs)}ms`);
+            _video.currentTime = expectedMs / 1000;
+          }
+        } else if (driftMs > SYNC_AHEAD_MS) {
+          // Slightly ahead — play slower
+          if (_video.playbackRate !== NUDGE_SLOW) {
+            _video.playbackRate = NUDGE_SLOW;
+            logger.info(`[MSE] sync-nudge slow: ahead ${Math.round(driftMs)}ms`);
+          }
+        } else if (driftMs < -SYNC_BEHIND_MS) {
+          // Slightly behind — play faster
+          if (_video.playbackRate !== NUDGE_FAST) {
+            _video.playbackRate = NUDGE_FAST;
+            logger.info(`[MSE] sync-nudge fast: behind ${Math.round(-driftMs)}ms`);
+          }
+        } else if (_video.playbackRate !== 1.0 && absDrift < 20) {
+          // Back in tolerance — restore normal rate
+          _video.playbackRate = 1.0;
+          logger.info(`[MSE] sync-restored: drift ${Math.round(driftMs)}ms`);
+        }
       }
     }
   }, 50);
@@ -314,4 +337,5 @@ function _teardown(): void {
   _playing         = false;
   _pausedForSync   = false;
   _videoDurationMs = 0;
+  _lastSeekTime    = 0;
 }

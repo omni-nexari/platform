@@ -612,17 +612,30 @@
       setPlaybackState(_itemIndex, posMs, "mse");
       updateHud({ positionMs: posMs, expectedMs, driftMs });
       if (_syncedStartMs > 0 && _videoDurationMs2 > 0) {
-        if (!_video.paused && !_pausedForSync && driftMs > SYNC_AHEAD_MS) {
-          _video.pause();
-          _pausedForSync = true;
-          logger.info(`[MSE] sync-pause: ahead ${Math.round(driftMs)}ms`);
-        } else if (_video.paused && _pausedForSync && driftMs <= SYNC_RESUME_MS) {
-          _pausedForSync = false;
-          _video.play().catch((e) => logger.warn(`[MSE] sync-resume play() failed: ${e == null ? void 0 : e.message}`));
-          logger.info(`[MSE] sync-resume: drift now ${Math.round(driftMs)}ms`);
-        } else if (!_video.paused && !_pausedForSync && driftMs < -SYNC_BEHIND_MS) {
-          logger.info(`[MSE] sync-seek: behind ${Math.round(-driftMs)}ms \u2192 ${Math.round(expectedMs)}ms`);
-          _video.currentTime = expectedMs / 1e3;
+        const nearBoundary = expectedMs < NEAR_END_MS || expectedMs > _videoDurationMs2 - NEAR_END_MS;
+        const absDrift = Math.abs(driftMs);
+        if (!nearBoundary) {
+          if (absDrift > SYNC_SEEK_MS) {
+            const now = Date.now();
+            if (now - _lastSeekTime > MIN_SEEK_INTERVAL) {
+              _lastSeekTime = now;
+              logger.info(`[MSE] sync-seek: drift ${Math.round(driftMs)}ms \u2192 ${Math.round(expectedMs)}ms`);
+              _video.currentTime = expectedMs / 1e3;
+            }
+          } else if (driftMs > SYNC_AHEAD_MS) {
+            if (_video.playbackRate !== NUDGE_SLOW) {
+              _video.playbackRate = NUDGE_SLOW;
+              logger.info(`[MSE] sync-nudge slow: ahead ${Math.round(driftMs)}ms`);
+            }
+          } else if (driftMs < -SYNC_BEHIND_MS) {
+            if (_video.playbackRate !== NUDGE_FAST) {
+              _video.playbackRate = NUDGE_FAST;
+              logger.info(`[MSE] sync-nudge fast: behind ${Math.round(-driftMs)}ms`);
+            }
+          } else if (_video.playbackRate !== 1 && absDrift < 20) {
+            _video.playbackRate = 1;
+            logger.info(`[MSE] sync-restored: drift ${Math.round(driftMs)}ms`);
+          }
         }
       }
     }, 50);
@@ -649,8 +662,9 @@
     _playing = false;
     _pausedForSync = false;
     _videoDurationMs2 = 0;
+    _lastSeekTime = 0;
   }
-  var CHUNK_SIZE, _video, _ms, _sb, _syncedStartMs, _startScheduled, _itemIndex, _stateTickTimer, _rVfcSupported, _syncWatchdog, _videoDurationMs2, _pausedForSync, _playing, SYNC_AHEAD_MS, SYNC_RESUME_MS, SYNC_BEHIND_MS;
+  var CHUNK_SIZE, _video, _ms, _sb, _syncedStartMs, _startScheduled, _itemIndex, _stateTickTimer, _rVfcSupported, _syncWatchdog, _videoDurationMs2, _pausedForSync, _playing, _lastSeekTime, SYNC_AHEAD_MS, SYNC_BEHIND_MS, SYNC_SEEK_MS, MIN_SEEK_INTERVAL, NUDGE_FAST, NUDGE_SLOW, NEAR_END_MS;
   var init_player_mse = __esm({
     "src/player-mse.ts"() {
       init_ntp_client();
@@ -670,9 +684,14 @@
       _videoDurationMs2 = 0;
       _pausedForSync = false;
       _playing = false;
-      SYNC_AHEAD_MS = 80;
-      SYNC_RESUME_MS = 20;
-      SYNC_BEHIND_MS = 80;
+      _lastSeekTime = 0;
+      SYNC_AHEAD_MS = 50;
+      SYNC_BEHIND_MS = 50;
+      SYNC_SEEK_MS = 300;
+      MIN_SEEK_INTERVAL = 800;
+      NUDGE_FAST = 1.02;
+      NUDGE_SLOW = 0.98;
+      NEAR_END_MS = 500;
     }
   });
 
