@@ -38,6 +38,7 @@ let _videoUrl = '';
 let _container: HTMLElement;
 let _statusEl: HTMLElement | null;
 let _bannerEl: HTMLElement | null;
+let _leaderActivated = false;
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
@@ -83,6 +84,12 @@ window.addEventListener('load', async () => {
     _switchEngine(msg.engineMode);
   });
 
+  P2PSync.onRole((role) => {
+    updateHud({ role, engineMode: _currentEngine });
+    if (role === 'leader') _activateLeaderIfNeeded('role');
+    if (role === 'follower') _setStatus('Follower — waiting for VIDEO_URL…');
+  });
+
   // Register remote key handler
   try { (window as any).tizen?.tvinputdevice?.registerKey('ChannelUp'); } catch {}
   document.addEventListener('keydown', _onKey);
@@ -90,6 +97,7 @@ window.addEventListener('load', async () => {
   _setStatus('Loading video…');
   _videoUrl = _fetchVideoUrl();
   logger.info(`[App] video URL: ${_videoUrl}`);
+  P2PSync.broadcastVideoUrl(_videoUrl);
 
   // Wait briefly for P2P role to be determined (peer poll up to ~4s)
   await _waitForRole(8000);
@@ -98,9 +106,7 @@ window.addEventListener('load', async () => {
   _setBanner(_currentEngine);
 
   if (P2PSync.getRole() === 'leader') {
-    logger.info('[App] leader: sending VIDEO_URL to follower');
-    P2PSync.broadcastVideoUrl(_videoUrl);
-    _activateEngine(_currentEngine, _videoUrl);
+    _activateLeaderIfNeeded('initial');
   } else {
     _setStatus('Follower — waiting for VIDEO_URL…');
     // Follower activates engine only when VIDEO_URL arrives (onVideoUrl above).
@@ -130,6 +136,14 @@ function _activateEngine(engine: EngineMode, url: string): void {
   setLoggerEngine(engine);
   updateHud({ engineMode: engine });
   _setBanner(engine);
+}
+
+function _activateLeaderIfNeeded(reason: string): void {
+  if (_leaderActivated || !_videoUrl) return;
+  _leaderActivated = true;
+  logger.info(`[App] leader: sending VIDEO_URL to follower (${reason})`);
+  P2PSync.broadcastVideoUrl(_videoUrl);
+  _activateEngine(_currentEngine, _videoUrl);
 }
 
 function _switchEngine(newEngine: EngineMode): void {

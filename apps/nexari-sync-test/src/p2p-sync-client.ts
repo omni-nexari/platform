@@ -101,6 +101,7 @@ let _onSyncPlay:  ((msg: MsgSyncPlay)   => void) | null = null;
 let _onVideoUrl:  ((msg: MsgVideoUrl)   => void) | null = null;
 let _onSetEngine: ((msg: MsgSetEngine)  => void) | null = null;
 let _onAdjust:    ((msg: MsgSyncAdjust) => void) | null = null;
+let _onRole:      ((role: Role)         => void) | null = null;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 export function getRole(): Role { return _role; }
@@ -110,6 +111,7 @@ export function onSyncPlay(h: (msg: MsgSyncPlay) => void)   { _onSyncPlay  = h; 
 export function onVideoUrl(h: (msg: MsgVideoUrl) => void)   { _onVideoUrl  = h; }
 export function onSetEngine(h: (msg: MsgSetEngine) => void) { _onSetEngine = h; }
 export function onAdjust(h: (msg: MsgSyncAdjust) => void)   { _onAdjust    = h; }
+export function onRole(h: (role: Role) => void)              { _onRole      = h; }
 
 export function init(opts: P2PSyncOpts): void {
   _opts    = opts;
@@ -251,6 +253,7 @@ async function _doPeerPoll(): Promise<void> {
     _role = _opts.deviceId < peer.deviceId ? 'leader' : 'follower';
     _connected = true;
     _opts.logger('info', `[P2P] paired with ${peer.deviceId} -> self is ${_role}`);
+    _onRole?.(_role);
     if (_role === 'follower') _startLeaderClockSync();
 
     _doRegister();
@@ -312,6 +315,7 @@ async function _doSignalDrain(): Promise<void> {
         if (newRole !== _role) {
           _opts?.logger('info', `[P2P] role updated: ${_role} → ${newRole}`);
           _role = newRole;
+          _onRole?.(_role);
         }
         // Resume the correct side of the handshake
         if (_role === 'follower') _startLeaderClockSync();

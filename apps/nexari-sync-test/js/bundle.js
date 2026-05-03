@@ -145,6 +145,9 @@
   function onAdjust(h) {
     _onAdjust = h;
   }
+  function onRole(h) {
+    _onRole = h;
+  }
   function init(opts) {
     var _a;
     _opts = opts;
@@ -252,6 +255,7 @@
         _role = _opts.deviceId < peer.deviceId ? "leader" : "follower";
         _connected = true;
         _opts.logger("info", `[P2P] paired with ${peer.deviceId} -> self is ${_role}`);
+        _onRole == null ? void 0 : _onRole(_role);
         if (_role === "follower") _startLeaderClockSync();
         _doRegister();
         clearInterval(_peerPollTimer);
@@ -305,6 +309,7 @@
             if (newRole !== _role) {
               _opts == null ? void 0 : _opts.logger("info", `[P2P] role updated: ${_role} \u2192 ${newRole}`);
               _role = newRole;
+              _onRole == null ? void 0 : _onRole(_role);
             }
             if (_role === "follower") _startLeaderClockSync();
             if (_role === "follower" && _readyItemIndex >= 0 && !_syncPlaySent) _maybeSendReady("re-route");
@@ -586,7 +591,7 @@
     }
     return { timelineMs: _pbCurrentMs, positionMs: _pbCurrentMs };
   }
-  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, READY_RETRY_INTERVAL_MS, VIDEO_URL_RETRY_INTERVAL_MS, CLOCK_SYNC_INTERVAL_MS, CLOCK_SYNC_TIMEOUT_MS, CLOCK_SYNC_MIN_SAMPLES, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _peerSessionId, _groupId, _connected, _sessionId, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _readyRetryTimer, _videoUrlRetryTimer, _clockProbeTimer, _videoDurationMs, _syncPlaySent, _readySent, _readyRetryCount, _videoUrlRetryCount, _syncedStartMs, _lastClockLogTime, _lastReadyBlockedLogTime, _relaySessionStartedAtMs, _staleSignalLogCount, _clockProbeSeq, _clockSyncStartedAt, _leaderClockSamples, _leaderClockBestRtt, _leaderClockReady, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
+  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, READY_RETRY_INTERVAL_MS, VIDEO_URL_RETRY_INTERVAL_MS, CLOCK_SYNC_INTERVAL_MS, CLOCK_SYNC_TIMEOUT_MS, CLOCK_SYNC_MIN_SAMPLES, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _peerSessionId, _groupId, _connected, _sessionId, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _readyRetryTimer, _videoUrlRetryTimer, _clockProbeTimer, _videoDurationMs, _syncPlaySent, _readySent, _readyRetryCount, _videoUrlRetryCount, _syncedStartMs, _lastClockLogTime, _lastReadyBlockedLogTime, _relaySessionStartedAtMs, _staleSignalLogCount, _clockProbeSeq, _clockSyncStartedAt, _leaderClockSamples, _leaderClockBestRtt, _leaderClockReady, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust, _onRole;
   var init_p2p_sync_client = __esm({
     "src/p2p-sync-client.ts"() {
       init_ntp_client();
@@ -642,6 +647,7 @@
       _onVideoUrl = null;
       _onSetEngine = null;
       _onAdjust = null;
+      _onRole = null;
     }
   });
 
@@ -1723,6 +1729,7 @@
       var _container;
       var _statusEl;
       var _bannerEl;
+      var _leaderActivated = false;
       window.addEventListener("load", () => __async(null, null, function* () {
         var _a, _b;
         _container = document.getElementById("video-container");
@@ -1758,6 +1765,11 @@
           logger.info(`[App] SET_ENGINE: ${msg.engineMode}`);
           _switchEngine(msg.engineMode);
         });
+        onRole((role) => {
+          updateHud({ role, engineMode: _currentEngine });
+          if (role === "leader") _activateLeaderIfNeeded("role");
+          if (role === "follower") _setStatus("Follower \u2014 waiting for VIDEO_URL\u2026");
+        });
         try {
           (_b = (_a = window.tizen) == null ? void 0 : _a.tvinputdevice) == null ? void 0 : _b.registerKey("ChannelUp");
         } catch (e) {
@@ -1766,13 +1778,12 @@
         _setStatus("Loading video\u2026");
         _videoUrl = _fetchVideoUrl();
         logger.info(`[App] video URL: ${_videoUrl}`);
+        broadcastVideoUrl(_videoUrl);
         yield _waitForRole(8e3);
         updateHud({ role: getRole(), engineMode: _currentEngine });
         _setBanner(_currentEngine);
         if (getRole() === "leader") {
-          logger.info("[App] leader: sending VIDEO_URL to follower");
-          broadcastVideoUrl(_videoUrl);
-          _activateEngine(_currentEngine, _videoUrl);
+          _activateLeaderIfNeeded("initial");
         } else {
           _setStatus("Follower \u2014 waiting for VIDEO_URL\u2026");
           setTimeout(() => {
@@ -1797,6 +1808,13 @@
         setLoggerEngine(engine);
         updateHud({ engineMode: engine });
         _setBanner(engine);
+      }
+      function _activateLeaderIfNeeded(reason) {
+        if (_leaderActivated || !_videoUrl) return;
+        _leaderActivated = true;
+        logger.info(`[App] leader: sending VIDEO_URL to follower (${reason})`);
+        broadcastVideoUrl(_videoUrl);
+        _activateEngine(_currentEngine, _videoUrl);
       }
       function _switchEngine(newEngine) {
         if (newEngine === _currentEngine) return;

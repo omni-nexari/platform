@@ -43,7 +43,7 @@ export async function testSyncRoutes(app: FastifyInstance) {
     if (previousRaw) {
       try { previousSessionId = JSON.parse(previousRaw)?.sessionId ?? ''; } catch {}
     }
-    if (sessionId && previousSessionId && previousSessionId !== sessionId) {
+    if (sessionId && previousRaw && previousSessionId !== sessionId) {
       await redis.del(SIG_KEY(deviceId));
     }
     await redis.hset(key, deviceId, JSON.stringify({ deviceId, role, ip, sessionId: sessionId ?? null, registeredAt: Date.now() }));
