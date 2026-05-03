@@ -132,6 +132,15 @@
     _pbCurrentMs = currentTimeMs;
     _pbEngineMode = engineMode;
   }
+  function broadcastVideoUrl(url) {
+    _pendingVideoUrl = url;
+    if (_dcOpen && _role === "leader") {
+      _send({ type: "VIDEO_URL", url, durationMs: 0, engineMode: _readyEngineMode });
+      _opts == null ? void 0 : _opts.logger("info", `[P2P] leader sent VIDEO_URL: ${url}`);
+    } else {
+      _opts == null ? void 0 : _opts.logger("info", `[P2P] VIDEO_URL queued (DC not open yet): ${url}`);
+    }
+  }
   function broadcastSetEngine(mode) {
     if (_role !== "leader") return;
     _send({ type: "SET_ENGINE", engineMode: mode });
@@ -216,6 +225,10 @@
     _dcOpen = true;
     _opts == null ? void 0 : _opts.logger("info", `[P2P] DataChannel open \u2014 role=${_role}`);
     if (_role === "leader") {
+      if (_pendingVideoUrl) {
+        _send({ type: "VIDEO_URL", url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
+        _opts == null ? void 0 : _opts.logger("info", `[P2P] leader sent VIDEO_URL on dc open: ${_pendingVideoUrl}`);
+      }
       if (_readyItemIndex >= 0) {
         _send({ type: "READY", deviceId: _opts.deviceId, engineMode: _readyEngineMode });
       }
@@ -354,7 +367,7 @@
       _opts == null ? void 0 : _opts.logger("warn", `[P2P] send failed: ${e == null ? void 0 : e.message}`);
     }
   }
-  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, DRIFT_NOOP_MS, DRIFT_NUDGE_MS, LEADER_START_AHEAD_MS, NUDGE_FAST, NUDGE_SLOW, _opts, _role, _peerIp, _peerDeviceId, _groupId, _pc, _dc, _dcOpen, _readyItemIndex, _readyEngineMode, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
+  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, DRIFT_NOOP_MS, DRIFT_NUDGE_MS, LEADER_START_AHEAD_MS, NUDGE_FAST, NUDGE_SLOW, _opts, _role, _peerIp, _peerDeviceId, _groupId, _pc, _dc, _dcOpen, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
   var init_p2p_sync_client = __esm({
     "src/p2p-sync-client.ts"() {
       init_ntp_client();
@@ -377,6 +390,7 @@
       _dcOpen = false;
       _readyItemIndex = -1;
       _readyEngineMode = "mse";
+      _pendingVideoUrl = null;
       _pbItemIndex = -1;
       _pbCurrentMs = 0;
       _pbEngineMode = "mse";
@@ -1000,7 +1014,7 @@
         initHud();
         _setStatus("Detecting device\u2026");
         const selfIp = yield _getSelfIp();
-        const deviceId = selfIp.replace(/\./g, "-");
+        const deviceId = yield _getDeviceId(selfIp);
         initLogger(CONFIG.PI_BASE, deviceId);
         logger.info(`[App] boot: ip=${selfIp} deviceId=${deviceId}`);
         _setStatus("Syncing time\u2026");
@@ -1032,14 +1046,15 @@
         } catch (e) {
         }
         document.addEventListener("keydown", _onKey);
-        _setStatus("Fetching video\u2026");
-        _videoUrl = yield _fetchVideoUrl();
+        _setStatus("Loading video\u2026");
+        _videoUrl = _fetchVideoUrl();
         logger.info(`[App] video URL: ${_videoUrl}`);
         yield _waitForRole(8e3);
         updateHud({ role: getRole(), engineMode: _currentEngine });
         _setBanner(_currentEngine);
         if (getRole() === "leader") {
           logger.info("[App] leader: sending VIDEO_URL to follower");
+          broadcastVideoUrl(_videoUrl);
           _activateEngine(_currentEngine, _videoUrl);
         } else {
           _setStatus("Follower \u2014 waiting for VIDEO_URL\u2026");
@@ -1094,36 +1109,64 @@
       }
       function _getSelfIp() {
         return __async(this, null, function* () {
-          var _a;
+          var _a, _b, _c;
           try {
-            const sysinfo = (_a = window.tizen) == null ? void 0 : _a.systeminfo;
-            if (sysinfo) {
-              return yield new Promise((resolve, reject) => {
-                sysinfo.getPropertyValue("NETWORK", (net) => {
-                  var _a2;
-                  resolve((_a2 = net == null ? void 0 : net.ipAddress) != null ? _a2 : "0.0.0.0");
-                }, reject);
-              });
+            const net = (_a = window.webapis) == null ? void 0 : _a.network;
+            if (net) {
+              const info = (_b = net.getActiveConnectionInfo) == null ? void 0 : _b.call(net);
+              if ((info == null ? void 0 : info.ipAddress) && info.ipAddress !== "0.0.0.0") return info.ipAddress;
             }
           } catch (e) {
           }
-          return window.location.hostname || "127.0.0.1";
+          try {
+            const sysinfo = (_c = window.tizen) == null ? void 0 : _c.systeminfo;
+            if (sysinfo) {
+              const ip = yield new Promise((resolve, reject) => {
+                sysinfo.getPropertyValue(
+                  "NETWORK",
+                  (net) => {
+                    resolve((net == null ? void 0 : net.ipAddress) && net.ipAddress !== "0.0.0.0" ? net.ipAddress : "");
+                  },
+                  () => resolve("")
+                );
+              });
+              if (ip) return ip;
+            }
+          } catch (e) {
+          }
+          const h = window.location.hostname;
+          return h && h !== "localhost" ? h : "127.0.0.1";
         });
       }
-      function _fetchVideoUrl() {
+      function _getDeviceId(selfIp) {
         return __async(this, null, function* () {
-          var _a, _b;
+          var _a, _b, _c, _d, _e, _f;
           try {
-            const res = yield fetch(`${CONFIG.PI_BASE}/api/v1/content?type=video&limit=1`);
-            const data = yield res.json();
-            const item = (_b = (_a = data == null ? void 0 : data.items) == null ? void 0 : _a[0]) != null ? _b : data == null ? void 0 : data[0];
-            if (item == null ? void 0 : item.url) return item.url;
-            if (item == null ? void 0 : item.filePath) return `${CONFIG.PI_BASE}/uploads/${item.filePath}`;
+            const serial = (_c = (_b = (_a = window.webapis) == null ? void 0 : _a.productinfo) == null ? void 0 : _b.getSerialNumber) == null ? void 0 : _c.call(_b);
+            if (serial && serial.trim().length > 0) return serial.trim();
           } catch (e) {
-            logger.error(`[App] fetchVideoUrl failed: ${e == null ? void 0 : e.message}`);
           }
-          return "";
+          try {
+            const duid = (_f = (_e = (_d = window.webapis) == null ? void 0 : _d.productinfo) == null ? void 0 : _e.getDuid) == null ? void 0 : _f.call(_e);
+            if (duid && duid.trim().length > 0) return duid.trim();
+          } catch (e) {
+          }
+          if (selfIp && selfIp !== "127.0.0.1" && selfIp !== "0.0.0.0") return selfIp.replace(/\./g, "-");
+          let id = localStorage.getItem("_nexari_sync_device_id");
+          if (!id) {
+            id = "dev-" + Math.random().toString(36).slice(2, 10);
+            localStorage.setItem("_nexari_sync_device_id", id);
+          }
+          return id;
         });
+      }
+      var EMBEDDED_MEDIA = [
+        "./media/1.mp4",
+        "./media/2.mp4",
+        "./media/3.mp4"
+      ];
+      function _fetchVideoUrl() {
+        return EMBEDDED_MEDIA[0];
       }
       function _waitForRole(timeoutMs) {
         return __async(this, null, function* () {

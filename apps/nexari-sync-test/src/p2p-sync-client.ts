@@ -64,6 +64,9 @@ let _dcOpen = false;
 let _readyItemIndex = -1;
 let _readyEngineMode: EngineMode = 'mse';
 
+// Pending VIDEO_URL to send to follower once DC opens (leader only)
+let _pendingVideoUrl: string | null = null;
+
 // Playback state for heartbeat/drift
 let _pbItemIndex   = -1;
 let _pbCurrentMs   = 0;
@@ -118,6 +121,17 @@ export function setPlaybackState(itemIndex: number, currentTimeMs: number, engin
   _pbItemIndex  = itemIndex;
   _pbCurrentMs  = currentTimeMs;
   _pbEngineMode = engineMode;
+}
+
+/** Leader-only: broadcast the video URL to the follower. Call after init() once URL is known. */
+export function broadcastVideoUrl(url: string): void {
+  _pendingVideoUrl = url;
+  if (_dcOpen && _role === 'leader') {
+    _send({ type: 'VIDEO_URL', url, durationMs: 0, engineMode: _readyEngineMode });
+    _opts?.logger('info', `[P2P] leader sent VIDEO_URL: ${url}`);
+  } else {
+    _opts?.logger('info', `[P2P] VIDEO_URL queued (DC not open yet): ${url}`);
+  }
 }
 
 /** Leader-only: trigger an engine switch broadcast (CH+ remote key handler). */
@@ -227,6 +241,11 @@ function _onDcOpen(): void {
   _opts?.logger('info', `[P2P] DataChannel open — role=${_role}`);
 
   if (_role === 'leader') {
+    // Send pending VIDEO_URL so follower can load the video
+    if (_pendingVideoUrl) {
+      _send({ type: 'VIDEO_URL', url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
+      _opts?.logger('info', `[P2P] leader sent VIDEO_URL on dc open: ${_pendingVideoUrl}`);
+    }
     // Send READY if player already signalled readiness before dc opened
     if (_readyItemIndex >= 0) {
       _send({ type: 'READY', deviceId: _opts!.deviceId, engineMode: _readyEngineMode });
