@@ -1,29 +1,17 @@
 /**
  * p2p-sync-client.ts
- * WebRTC DataChannel P2P sync coordinator.
+ * HTTP-relay sync coordinator (no WebRTC).
  *
- * Role determination: both devices register at Pi relay; the device with the
- * lexicographically lower IP becomes the leader. The leader drives the sync
- * protocol; the follower waits for cues.
+ * All messages go through the Pi signal queue:
+ *   POST /api/v1/test-sync/signal/:targetDeviceId  { from, seq, body: SyncMessage }
+ *   GET  /api/v1/test-sync/signals/:deviceId?since=N  -> { entries, nextSince }
  *
- * Pi relay is used ONLY for WebRTC SDP/ICE signaling. Once the DataChannel
- * is open all messages are direct device-to-device.
- *
- * Public API:
- *   P2PSync.init(opts)
- *   P2PSync.setVideoReady(itemIndex, engineMode)     // called by player after load/decode
- *   P2PSync.setPlaybackState(itemIndex, currentTimeMs, engineMode)  // called every 1s
- *   P2PSync.onSyncPlay(handler)                      // player subscribes for SYNC_PLAY
- *   P2PSync.onVideoUrl(handler)                      // follower subscribes for VIDEO_URL
- *   P2PSync.onSetEngine(handler)                     // both subscribe for engine toggle
- *   P2PSync.onAdjust(handler)                        // follower subscribes for SYNC_ADJUST
- *   P2PSync.broadcastSetEngine(mode)                 // leader-only: toggle engines
- *   P2PSync.getRole()                                // 'leader' | 'follower' | 'pending'
- *   P2PSync.shutdown()
+ * Role: lower deviceId lexicographically = leader.
+ * Leader sends VIDEO_URL -> follower loads -> follower sends READY -> leader sends SYNC_PLAY.
  */
 
 import type { SyncMessage, EngineMode, MsgSyncPlay, MsgVideoUrl, MsgSetEngine, MsgSyncAdjust } from './sync-protocol.js';
-import { getSyncedTime, setNtpOffset, getNtpOffset } from './ntp-client.js';
+import { getSyncedTime } from './ntp-client.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 export interface P2PSyncOpts {
@@ -37,42 +25,36 @@ export interface P2PSyncOpts {
 type Role = 'leader' | 'follower' | 'pending';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-const REGISTER_INTERVAL_MS  = 5_000;   // keep-alive re-registration
-const PEER_POLL_INTERVAL_MS = 2_000;   // poll /peers until partner found
-const SIGNAL_POLL_INTERVAL_MS = 500;   // drain /signals while negotiating
-const HEARTBEAT_INTERVAL_MS = 1_000;   // follower sends heartbeat
-const DRIFT_NOOP_MS         = 30;
-const DRIFT_NUDGE_MS        = 200;
-const LEADER_START_AHEAD_MS = 5_000;   // leader fires SYNC_PLAY this far ahead
-
-// Drift correction rates — smooth nudge for MSE (HTML5 supports fractional rates)
+const REGISTER_INTERVAL_MS    = 5_000;
+const PEER_POLL_INTERVAL_MS   = 2_000;
+const SIGNAL_POLL_INTERVAL_MS = 500;
+const HEARTBEAT_INTERVAL_MS   = 1_000;
+const DRIFT_NOOP_MS           = 30;
+const DRIFT_NUDGE_MS          = 200;
+const LEADER_START_AHEAD_MS   = 5_000;
 const NUDGE_FAST  = 1.005;
 const NUDGE_SLOW  = 0.995;
+// Only trust peers registered in the last 12s (keep-alive is every 5s)
+const PEER_MAX_AGE_MS = 12_000;
 
 // ── Module state ──────────────────────────────────────────────────────────────
 let _opts: P2PSyncOpts | null = null;
 let _role: Role = 'pending';
-let _peerIp: string | null = null;
 let _peerDeviceId: string | null = null;
 let _groupId = 'synctest-001';
+let _connected = false;  // true once peer found and role assigned
 
-let _pc: RTCPeerConnection | null = null;
-let _dc: RTCDataChannel | null = null;
-let _dcOpen = false;
-
-// Pending READY flag — set by player after load/decode, consumed when dc opens
-let _readyItemIndex = -1;
+// Pending flags
+let _readyItemIndex  = -1;
 let _readyEngineMode: EngineMode = 'mse';
-
-// Pending VIDEO_URL to send to follower once DC opens (leader only)
 let _pendingVideoUrl: string | null = null;
 
-// Playback state for heartbeat/drift
+// Playback state
 let _pbItemIndex   = -1;
 let _pbCurrentMs   = 0;
 let _pbEngineMode: EngineMode = 'mse';
 
-// Follower view (leader only): deviceId → last heartbeat
+// Follower view (leader only)
 interface FollowerView { currentMs: number; syncedTime: number; itemIndex: number; receivedAt: number; }
 const _followerViews: Record<string, FollowerView> = {};
 
@@ -82,10 +64,10 @@ let _peerPollTimer: any   = null;
 let _signalPollTimer: any = null;
 let _heartbeatTimer: any  = null;
 
-// Handlers set by the player
-let _onSyncPlay:  ((msg: MsgSyncPlay)  => void) | null = null;
-let _onVideoUrl:  ((msg: MsgVideoUrl)  => void) | null = null;
-let _onSetEngine: ((msg: MsgSetEngine) => void) | null = null;
+// Handlers
+let _onSyncPlay:  ((msg: MsgSyncPlay)   => void) | null = null;
+let _onVideoUrl:  ((msg: MsgVideoUrl)   => void) | null = null;
+let _onSetEngine: ((msg: MsgSetEngine)  => void) | null = null;
 let _onAdjust:    ((msg: MsgSyncAdjust) => void) | null = null;
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -99,7 +81,7 @@ export function onAdjust(h: (msg: MsgSyncAdjust) => void)   { _onAdjust    = h; 
 export function init(opts: P2PSyncOpts): void {
   _opts    = opts;
   _groupId = opts.groupId ?? 'synctest-001';
-  _opts.logger('info', `[P2P] init: deviceId=${opts.deviceId} ip=${opts.selfIp}`);
+  _opts.logger('info', `[P2P] init: deviceId=${opts.deviceId}`);
   _startRegister();
   _startPeerPoll();
   _startSignalDrain();
@@ -109,11 +91,10 @@ export function init(opts: P2PSyncOpts): void {
 export function setVideoReady(itemIndex: number, engineMode: EngineMode): void {
   _readyItemIndex  = itemIndex;
   _readyEngineMode = engineMode;
-  if (_dcOpen && _role === 'follower') {
+  if (_connected && _role === 'follower') {
     _send({ type: 'READY', deviceId: _opts!.deviceId, engineMode });
-    _opts?.logger('info', `[P2P] follower READY sent (itemIndex=${itemIndex})`);
+    _opts?.logger('info', `[P2P] follower READY sent`);
   }
-  // If leader and dc not open yet, READY is sent once channel opens (in _onDcOpen)
 }
 
 /** Player calls this on a 1s tick to update playback state. */
@@ -126,11 +107,11 @@ export function setPlaybackState(itemIndex: number, currentTimeMs: number, engin
 /** Leader-only: broadcast the video URL to the follower. Call after init() once URL is known. */
 export function broadcastVideoUrl(url: string): void {
   _pendingVideoUrl = url;
-  if (_dcOpen && _role === 'leader') {
+  if (_connected && _role === 'leader') {
     _send({ type: 'VIDEO_URL', url, durationMs: 0, engineMode: _readyEngineMode });
     _opts?.logger('info', `[P2P] leader sent VIDEO_URL: ${url}`);
   } else {
-    _opts?.logger('info', `[P2P] VIDEO_URL queued (DC not open yet): ${url}`);
+    _opts?.logger('info', `[P2P] VIDEO_URL queued (not connected yet): ${url}`);
   }
 }
 
@@ -139,7 +120,6 @@ export function broadcastSetEngine(mode: EngineMode): void {
   if (_role !== 'leader') return;
   _send({ type: 'SET_ENGINE', engineMode: mode });
   _opts?.logger('info', `[P2P] leader broadcast SET_ENGINE: ${mode}`);
-  // Also fire locally so leader's own player switches
   _onSetEngine?.({ type: 'SET_ENGINE', engineMode: mode });
 }
 
@@ -148,9 +128,7 @@ export function shutdown(): void {
   clearInterval(_peerPollTimer);
   clearInterval(_signalPollTimer);
   clearInterval(_heartbeatTimer);
-  _dc?.close();
-  _pc?.close();
-  _dc = null; _pc = null; _dcOpen = false;
+  _connected = false;
   _role = 'pending';
   _opts?.logger('info', '[P2P] shutdown');
 }
@@ -166,8 +144,13 @@ function _doRegister(): void {
   fetch(`${_opts.piBase}/api/v1/test-sync/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ deviceId: _opts.deviceId, role: _role === 'pending' ? 'peer' : _role, ip: _opts.selfIp, groupId: _groupId }),
-  }).catch(() => { /* silent – registration is best-effort */ });
+    body: JSON.stringify({
+      deviceId: _opts.deviceId,
+      role: _role === 'pending' ? 'peer' : _role,
+      ip: _opts.selfIp,
+      groupId: _groupId,
+    }),
+  }).catch(() => {});
 }
 
 // ── Peer discovery ────────────────────────────────────────────────────────────
@@ -176,231 +159,140 @@ function _startPeerPoll(): void {
 }
 
 async function _doPeerPoll(): Promise<void> {
-  if (_dcOpen) { clearInterval(_peerPollTimer); return; }
+  if (_connected) { clearInterval(_peerPollTimer); return; }
   if (!_opts) return;
   try {
     const res  = await fetch(`${_opts.piBase}/api/v1/test-sync/peers?groupId=${_groupId}`);
-    const data = await res.json() as { peers: Array<{ deviceId: string; ip: string }> };
-    const peers = data.peers.filter((p) => p.deviceId !== _opts!.deviceId);
-    if (!peers.length) return;  // wait for partner
+    const data = await res.json() as { peers: Array<{ deviceId: string; ip: string; registeredAt?: number }> };
 
+    // Filter out self and stale entries
+    const now = Date.now();
+    const peers = data.peers.filter((p) =>
+      p.deviceId !== _opts!.deviceId &&
+      (p.registeredAt == null || (now - p.registeredAt) < PEER_MAX_AGE_MS),
+    );
+    if (!peers.length) {
+      _opts.logger('info', `[P2P] no fresh peers yet (total in group: ${data.peers.length})`);
+      return;
+    }
+
+    // Pick the most recently registered peer
+    peers.sort((a, b) => (b.registeredAt ?? 0) - (a.registeredAt ?? 0));
     const peer = peers[0];
-    _peerIp       = peer.ip;
     _peerDeviceId = peer.deviceId;
 
-    // Role: lower deviceId (lexicographic) is leader — works even when IP detection fails
     _role = _opts.deviceId < peer.deviceId ? 'leader' : 'follower';
-    _opts.logger('info', `[P2P] peer found: ${peer.deviceId} (${peer.ip}) -> self is ${_role}`);
+    _connected = true;
+    _opts.logger('info', `[P2P] paired with ${peer.deviceId} -> self is ${_role}`);
 
-    // Re-register immediately with the resolved role so the dashboard can show it
     _doRegister();
-
     clearInterval(_peerPollTimer);
-    _initWebRTC();
+
+    // Leader immediately sends VIDEO_URL; follower sends READY if already loaded
+    if (_role === 'leader' && _pendingVideoUrl) {
+      _send({ type: 'VIDEO_URL', url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
+      _opts.logger('info', `[P2P] leader sent VIDEO_URL on connect: ${_pendingVideoUrl}`);
+    }
+    if (_role === 'follower' && _readyItemIndex >= 0) {
+      _send({ type: 'READY', deviceId: _opts.deviceId, engineMode: _readyEngineMode });
+      _opts.logger('info', `[P2P] follower sent READY on connect`);
+    }
+
+    _startHeartbeat();
   } catch (e: any) {
     _opts?.logger('warn', `[P2P] peer poll failed: ${e?.message}`);
   }
 }
 
-// ── WebRTC ────────────────────────────────────────────────────────────────────
-function _initWebRTC(): void {
-  const config: RTCConfiguration = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-    ],
-  };
-  _pc = new RTCPeerConnection(config);
-
-  _pc.onicecandidate = (ev) => {
-    if (ev.candidate) _sendSignal({ type: 'ice', candidate: ev.candidate.toJSON() });
-  };
-
-  _pc.ondatachannel = (ev) => {
-    _dc = ev.channel;
-    _setupDc();
-  };
-
-  if (_role === 'leader') {
-    _dc = _pc.createDataChannel('sync', { ordered: true });
-    _setupDc();
-    _pc.createOffer()
-      .then((offer) => _pc!.setLocalDescription(offer))
-      .then(() => _sendSignal({ type: 'offer', sdp: _pc!.localDescription!.toJSON() }))
-      .catch((e: any) => _opts?.logger('error', `[P2P] offer failed: ${e?.message}`));
-  }
+// ── Send via Pi HTTP relay ─────────────────────────────────────────────────────
+function _send(msg: SyncMessage): void {
+  if (!_opts || !_peerDeviceId) return;
+  fetch(`${_opts.piBase}/api/v1/test-sync/signal/${_peerDeviceId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: _opts.deviceId, seq: Date.now(), body: msg }),
+  }).catch((e: any) => _opts?.logger('warn', `[P2P] _send failed: ${e?.message}`));
 }
 
-function _setupDc(): void {
-  if (!_dc) return;
-  _dc.onopen  = _onDcOpen;
-  _dc.onclose = () => { _dcOpen = false; _opts?.logger('warn', '[P2P] DataChannel closed'); };
-  _dc.onmessage = (ev) => {
-    try { _handleMessage(JSON.parse(ev.data as string)); } catch { /* ignore malformed */ }
-  };
-}
-
-function _onDcOpen(): void {
-  _dcOpen = true;
-  _opts?.logger('info', `[P2P] DataChannel open — role=${_role}`);
-
-  if (_role === 'leader') {
-    // Send pending VIDEO_URL so follower can load the video
-    if (_pendingVideoUrl) {
-      _send({ type: 'VIDEO_URL', url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
-      _opts?.logger('info', `[P2P] leader sent VIDEO_URL on dc open: ${_pendingVideoUrl}`);
-    }
-    // Send READY if player already signalled readiness before dc opened
-    if (_readyItemIndex >= 0) {
-      _send({ type: 'READY', deviceId: _opts!.deviceId, engineMode: _readyEngineMode });
-    }
-    _startHeartbeat();
-  } else {
-    // Follower: send READY if already loaded
-    if (_readyItemIndex >= 0) {
-      _send({ type: 'READY', deviceId: _opts!.deviceId, engineMode: _readyEngineMode });
-    }
-    _startHeartbeat();
-  }
-}
-
-function _handleMessage(msg: SyncMessage): void {
-  if (!_opts) return;
-  switch (msg.type) {
-    case 'READY':
-      if (_role === 'leader') {
-        _opts.logger('info', `[P2P] follower READY received (engine=${msg.engineMode})`);
-        // Schedule SYNC_PLAY 5s ahead so both have time to react
-        const startMs = getSyncedTime() + LEADER_START_AHEAD_MS;
-        _send({ type: 'SYNC_PLAY', syncedStartMs: startMs, itemIndex: _pbItemIndex >= 0 ? _pbItemIndex : 0 });
-        // Also deliver to leader's own player
-        _onSyncPlay?.({ type: 'SYNC_PLAY', syncedStartMs: startMs, itemIndex: _pbItemIndex >= 0 ? _pbItemIndex : 0 });
-        _opts.logger('info', `[P2P] leader broadcast SYNC_PLAY at +5s (syncedStartMs=${startMs})`);
-      }
-      break;
-
-    case 'VIDEO_URL':
-      _onVideoUrl?.(msg);
-      break;
-
-    case 'SET_ENGINE':
-      _opts.logger('info', `[P2P] SET_ENGINE received: ${msg.engineMode}`);
-      _onSetEngine?.(msg);
-      break;
-
-    case 'SYNC_PLAY':
-      _opts.logger('info', `[P2P] SYNC_PLAY received: startMs=${msg.syncedStartMs}`);
-      _onSyncPlay?.(msg);
-      break;
-
-    case 'HEARTBEAT':
-      if (_role === 'leader') _handleHeartbeat(msg);
-      break;
-
-    case 'SYNC_ADJUST':
-      _onAdjust?.(msg);
-      break;
-  }
-}
-
-// ── Heartbeat + drift correction (leader receives, follower sends) ─────────────
-function _startHeartbeat(): void {
-  _heartbeatTimer = setInterval(() => {
-    if (!_dcOpen) return;
-    if (_role === 'follower') {
-      _send({
-        type: 'HEARTBEAT',
-        deviceId: _opts!.deviceId,
-        itemIndex: _pbItemIndex,
-        currentTimeMs: _pbCurrentMs,
-        syncedTime: getSyncedTime(),
-        engineMode: _pbEngineMode,
-      });
-    } else {
-      _expireStaleFollowers();
-    }
-  }, HEARTBEAT_INTERVAL_MS);
-}
-
-function _handleHeartbeat(msg: { type: 'HEARTBEAT'; deviceId: string; itemIndex: number; currentTimeMs: number; syncedTime: number; engineMode: EngineMode }): void {
-  if (_pbItemIndex < 0 || msg.itemIndex !== _pbItemIndex) return;
-  _followerViews[msg.deviceId] = {
-    currentMs: msg.currentTimeMs,
-    syncedTime: msg.syncedTime,
-    itemIndex: msg.itemIndex,
-    receivedAt: Date.now(),
-  };
-
-  const leaderNow       = getSyncedTime();
-  const expectedMs      = _pbCurrentMs - (leaderNow - msg.syncedTime);
-  const driftMs         = msg.currentTimeMs - expectedMs;
-  const absDrift        = Math.abs(driftMs);
-
-  let action: 'noop' | 'nudge' | 'snap' = 'noop';
-  let driftRate = 1.0;
-  let targetMs: number | undefined;
-
-  if (absDrift > DRIFT_NUDGE_MS) {
-    action   = 'snap';
-    targetMs = _pbCurrentMs + 60; // project 60ms forward for one-way trip
-  } else if (absDrift > DRIFT_NOOP_MS) {
-    action    = 'nudge';
-    driftRate = driftMs > 0 ? NUDGE_SLOW : NUDGE_FAST;
-  }
-
-  if (action === 'noop') return;
-  _send({ type: 'SYNC_ADJUST', itemIndex: _pbItemIndex, driftMs: Math.round(driftMs), action, driftRate, targetMs });
-  _opts?.logger('info', `[P2P] SYNC_ADJUST → ${msg.deviceId}: drift=${Math.round(driftMs)}ms action=${action}`);
-}
-
-function _expireStaleFollowers(): void {
-  const STALE = 6000;
-  const now = Date.now();
-  Object.keys(_followerViews).forEach((id) => {
-    if (now - _followerViews[id].receivedAt > STALE) delete _followerViews[id];
-  });
-}
-
-// ── Signal drain (SDP + ICE from Pi relay) ────────────────────────────────────
+// ── Signal drain (application messages from Pi relay) ────────────────────────
 function _startSignalDrain(): void {
   _signalPollTimer = setInterval(_doSignalDrain, SIGNAL_POLL_INTERVAL_MS);
 }
 
 async function _doSignalDrain(): Promise<void> {
-  if (_dcOpen) return;
-  if (!_opts || !_pc) return;
+  if (!_opts) return;
   try {
     const res  = await fetch(`${_opts.piBase}/api/v1/test-sync/signals/${_opts.deviceId}?since=${_signalPollSince}`);
-    const data = await res.json() as { entries: Array<{ idx: number; from: string; body: any }>; nextSince: number };
-    _signalPollSince = data.nextSince;
-
-    for (const entry of data.entries) {
-      const { body } = entry;
-      if (body.type === 'offer' && _role === 'follower') {
-        await _pc.setRemoteDescription(new RTCSessionDescription(body.sdp));
-        const answer = await _pc.createAnswer();
-        await _pc.setLocalDescription(answer);
-        _sendSignal({ type: 'answer', sdp: _pc.localDescription!.toJSON() });
-      } else if (body.type === 'answer' && _role === 'leader') {
-        await _pc.setRemoteDescription(new RTCSessionDescription(body.sdp));
-      } else if (body.type === 'ice') {
-        await _pc.addIceCandidate(new RTCIceCandidate(body.candidate)).catch(() => {});
-      }
+    const data = await res.json() as { entries: Array<{ idx: number; from: string; body: unknown }>; nextSince: number };
+    if (data.nextSince != null) _signalPollSince = data.nextSince;
+    for (const entry of data.entries ?? []) {
+      try { _handleMessage(entry.body as SyncMessage); } catch { /* ignore malformed */ }
     }
-  } catch { /* silent – network errors are non-fatal during negotiation */ }
+  } catch { /* silent – network blip */ }
 }
 
-function _sendSignal(body: unknown): void {
-  if (!_opts || !_peerDeviceId) return;
-  fetch(`${_opts.piBase}/api/v1/test-sync/signal/${_peerDeviceId}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: _opts.deviceId, seq: Date.now(), body }),
-  }).catch(() => {});
-}
+// ── Message handler ───────────────────────────────────────────────────────────
+function _handleMessage(msg: SyncMessage): void {
+  if (!_opts) return;
+  switch (msg.type) {
+    case 'VIDEO_URL':
+      _opts.logger('info', `[P2P] VIDEO_URL received: ${(msg as MsgVideoUrl).url}`);
+      _onVideoUrl?.(msg as MsgVideoUrl);
+      break;
 
-function _send(msg: SyncMessage): void {
-  if (!_dc || !_dcOpen) return;
-  try { _dc.send(JSON.stringify(msg)); } catch (e: any) {
-    _opts?.logger('warn', `[P2P] send failed: ${e?.message}`);
+    case 'READY':
+      if (_role === 'leader') {
+        _opts.logger('info', `[P2P] follower READY received`);
+        const startMs = getSyncedTime() + LEADER_START_AHEAD_MS;
+        const syncPlay = { type: 'SYNC_PLAY' as const, syncedStartMs: startMs, itemIndex: _pbItemIndex >= 0 ? _pbItemIndex : 0 };
+        _send(syncPlay);
+        _onSyncPlay?.(syncPlay);
+        _opts.logger('info', `[P2P] SYNC_PLAY sent: startMs=${startMs}`);
+      }
+      break;
+
+    case 'SYNC_PLAY':
+      _opts.logger('info', `[P2P] SYNC_PLAY received: startMs=${(msg as MsgSyncPlay).syncedStartMs}`);
+      _onSyncPlay?.(msg as MsgSyncPlay);
+      break;
+
+    case 'SET_ENGINE':
+      _opts.logger('info', `[P2P] SET_ENGINE received: ${(msg as MsgSetEngine).engineMode}`);
+      _onSetEngine?.(msg as MsgSetEngine);
+      break;
+
+    case 'HEARTBEAT': {
+      const hb = msg as any;
+      if (_role !== 'leader' || _pbItemIndex < 0 || hb.itemIndex !== _pbItemIndex) break;
+      _followerViews[hb.deviceId] = { currentMs: hb.currentTimeMs, syncedTime: hb.syncedTime, itemIndex: hb.itemIndex, receivedAt: Date.now() };
+      const expectedMs = _pbCurrentMs - (getSyncedTime() - hb.syncedTime);
+      const driftMs    = hb.currentTimeMs - expectedMs;
+      const absDrift   = Math.abs(driftMs);
+      if (absDrift > DRIFT_NUDGE_MS) {
+        _send({ type: 'SYNC_ADJUST', itemIndex: _pbItemIndex, driftMs: Math.round(driftMs), action: 'snap', driftRate: 1, targetMs: _pbCurrentMs + 60 });
+      } else if (absDrift > DRIFT_NOOP_MS) {
+        _send({ type: 'SYNC_ADJUST', itemIndex: _pbItemIndex, driftMs: Math.round(driftMs), action: 'nudge', driftRate: driftMs > 0 ? NUDGE_SLOW : NUDGE_FAST });
+      }
+      break;
+    }
+
+    case 'SYNC_ADJUST':
+      _onAdjust?.(msg as MsgSyncAdjust);
+      break;
   }
+}
+
+// ── Heartbeat ─────────────────────────────────────────────────────────────────
+function _startHeartbeat(): void {
+  _heartbeatTimer = setInterval(() => {
+    if (!_connected || _role !== 'follower' || _pbItemIndex < 0) return;
+    _send({
+      type: 'HEARTBEAT',
+      deviceId: _opts!.deviceId,
+      itemIndex: _pbItemIndex,
+      currentTimeMs: _pbCurrentMs,
+      syncedTime: getSyncedTime(),
+      engineMode: _pbEngineMode,
+    });
+  }, HEARTBEAT_INTERVAL_MS);
 }

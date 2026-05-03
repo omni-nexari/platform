@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { getRedis } from '../services/redis.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-const PEER_TTL_S    = 120;  // peer registration expiry
+const PEER_TTL_S    = 15;   // peer registration expiry (keep-alive is 5s, so 15s = 3 missed)
 const LOG_CAP       = 500;  // max log entries per device kept in Redis
 const LOG_TTL_S     = 3600; // 1h expiry on log lists
 const SIGNAL_TTL_S  = 60;   // SDP/ICE signal queue expiry

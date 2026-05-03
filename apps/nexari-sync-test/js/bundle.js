@@ -114,7 +114,7 @@
     var _a;
     _opts = opts;
     _groupId = (_a = opts.groupId) != null ? _a : "synctest-001";
-    _opts.logger("info", `[P2P] init: deviceId=${opts.deviceId} ip=${opts.selfIp}`);
+    _opts.logger("info", `[P2P] init: deviceId=${opts.deviceId}`);
     _startRegister();
     _startPeerPoll();
     _startSignalDrain();
@@ -122,9 +122,9 @@
   function setVideoReady(itemIndex, engineMode) {
     _readyItemIndex = itemIndex;
     _readyEngineMode = engineMode;
-    if (_dcOpen && _role === "follower") {
+    if (_connected && _role === "follower") {
       _send({ type: "READY", deviceId: _opts.deviceId, engineMode });
-      _opts == null ? void 0 : _opts.logger("info", `[P2P] follower READY sent (itemIndex=${itemIndex})`);
+      _opts == null ? void 0 : _opts.logger("info", `[P2P] follower READY sent`);
     }
   }
   function setPlaybackState(itemIndex, currentTimeMs, engineMode) {
@@ -134,11 +134,11 @@
   }
   function broadcastVideoUrl(url) {
     _pendingVideoUrl = url;
-    if (_dcOpen && _role === "leader") {
+    if (_connected && _role === "leader") {
       _send({ type: "VIDEO_URL", url, durationMs: 0, engineMode: _readyEngineMode });
       _opts == null ? void 0 : _opts.logger("info", `[P2P] leader sent VIDEO_URL: ${url}`);
     } else {
-      _opts == null ? void 0 : _opts.logger("info", `[P2P] VIDEO_URL queued (DC not open yet): ${url}`);
+      _opts == null ? void 0 : _opts.logger("info", `[P2P] VIDEO_URL queued (not connected yet): ${url}`);
     }
   }
   function broadcastSetEngine(mode) {
@@ -156,7 +156,12 @@
     fetch(`${_opts.piBase}/api/v1/test-sync/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ deviceId: _opts.deviceId, role: "peer", ip: _opts.selfIp, groupId: _groupId })
+      body: JSON.stringify({
+        deviceId: _opts.deviceId,
+        role: _role === "pending" ? "peer" : _role,
+        ip: _opts.selfIp,
+        groupId: _groupId
+      })
     }).catch(() => {
     });
   }
@@ -165,7 +170,7 @@
   }
   function _doPeerPoll() {
     return __async(this, null, function* () {
-      if (_dcOpen) {
+      if (_connected) {
         clearInterval(_peerPollTimer);
         return;
       }
@@ -173,99 +178,107 @@
       try {
         const res = yield fetch(`${_opts.piBase}/api/v1/test-sync/peers?groupId=${_groupId}`);
         const data = yield res.json();
-        const peers = data.peers.filter((p) => p.deviceId !== _opts.deviceId);
-        if (!peers.length) return;
+        const now = Date.now();
+        const peers = data.peers.filter(
+          (p) => p.deviceId !== _opts.deviceId && (p.registeredAt == null || now - p.registeredAt < PEER_MAX_AGE_MS)
+        );
+        if (!peers.length) {
+          _opts.logger("info", `[P2P] no fresh peers yet (total in group: ${data.peers.length})`);
+          return;
+        }
+        peers.sort((a, b) => {
+          var _a, _b;
+          return ((_a = b.registeredAt) != null ? _a : 0) - ((_b = a.registeredAt) != null ? _b : 0);
+        });
         const peer = peers[0];
-        _peerIp = peer.ip;
         _peerDeviceId = peer.deviceId;
-        _role = _opts.selfIp < peer.ip ? "leader" : "follower";
-        _opts.logger("info", `[P2P] peer found: ${peer.ip} \u2192 self is ${_role}`);
+        _role = _opts.deviceId < peer.deviceId ? "leader" : "follower";
+        _connected = true;
+        _opts.logger("info", `[P2P] paired with ${peer.deviceId} -> self is ${_role}`);
+        _doRegister();
         clearInterval(_peerPollTimer);
-        _initWebRTC();
+        if (_role === "leader" && _pendingVideoUrl) {
+          _send({ type: "VIDEO_URL", url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
+          _opts.logger("info", `[P2P] leader sent VIDEO_URL on connect: ${_pendingVideoUrl}`);
+        }
+        if (_role === "follower" && _readyItemIndex >= 0) {
+          _send({ type: "READY", deviceId: _opts.deviceId, engineMode: _readyEngineMode });
+          _opts.logger("info", `[P2P] follower sent READY on connect`);
+        }
+        _startHeartbeat();
       } catch (e) {
         _opts == null ? void 0 : _opts.logger("warn", `[P2P] peer poll failed: ${e == null ? void 0 : e.message}`);
       }
     });
   }
-  function _initWebRTC() {
-    const config = {
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" }
-      ]
-    };
-    _pc = new RTCPeerConnection(config);
-    _pc.onicecandidate = (ev) => {
-      if (ev.candidate) _sendSignal({ type: "ice", candidate: ev.candidate.toJSON() });
-    };
-    _pc.ondatachannel = (ev) => {
-      _dc = ev.channel;
-      _setupDc();
-    };
-    if (_role === "leader") {
-      _dc = _pc.createDataChannel("sync", { ordered: true });
-      _setupDc();
-      _pc.createOffer().then((offer) => _pc.setLocalDescription(offer)).then(() => _sendSignal({ type: "offer", sdp: _pc.localDescription.toJSON() })).catch((e) => _opts == null ? void 0 : _opts.logger("error", `[P2P] offer failed: ${e == null ? void 0 : e.message}`));
-    }
+  function _send(msg) {
+    if (!_opts || !_peerDeviceId) return;
+    fetch(`${_opts.piBase}/api/v1/test-sync/signal/${_peerDeviceId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from: _opts.deviceId, seq: Date.now(), body: msg })
+    }).catch((e) => _opts == null ? void 0 : _opts.logger("warn", `[P2P] _send failed: ${e == null ? void 0 : e.message}`));
   }
-  function _setupDc() {
-    if (!_dc) return;
-    _dc.onopen = _onDcOpen;
-    _dc.onclose = () => {
-      _dcOpen = false;
-      _opts == null ? void 0 : _opts.logger("warn", "[P2P] DataChannel closed");
-    };
-    _dc.onmessage = (ev) => {
+  function _startSignalDrain() {
+    _signalPollTimer = setInterval(_doSignalDrain, SIGNAL_POLL_INTERVAL_MS);
+  }
+  function _doSignalDrain() {
+    return __async(this, null, function* () {
+      var _a;
+      if (!_opts) return;
       try {
-        _handleMessage(JSON.parse(ev.data));
+        const res = yield fetch(`${_opts.piBase}/api/v1/test-sync/signals/${_opts.deviceId}?since=${_signalPollSince}`);
+        const data = yield res.json();
+        if (data.nextSince != null) _signalPollSince = data.nextSince;
+        for (const entry of (_a = data.entries) != null ? _a : []) {
+          try {
+            _handleMessage(entry.body);
+          } catch (e) {
+          }
+        }
       } catch (e) {
       }
-    };
-  }
-  function _onDcOpen() {
-    _dcOpen = true;
-    _opts == null ? void 0 : _opts.logger("info", `[P2P] DataChannel open \u2014 role=${_role}`);
-    if (_role === "leader") {
-      if (_pendingVideoUrl) {
-        _send({ type: "VIDEO_URL", url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
-        _opts == null ? void 0 : _opts.logger("info", `[P2P] leader sent VIDEO_URL on dc open: ${_pendingVideoUrl}`);
-      }
-      if (_readyItemIndex >= 0) {
-        _send({ type: "READY", deviceId: _opts.deviceId, engineMode: _readyEngineMode });
-      }
-      _startHeartbeat();
-    } else {
-      if (_readyItemIndex >= 0) {
-        _send({ type: "READY", deviceId: _opts.deviceId, engineMode: _readyEngineMode });
-      }
-      _startHeartbeat();
-    }
+    });
   }
   function _handleMessage(msg) {
     if (!_opts) return;
     switch (msg.type) {
-      case "READY":
-        if (_role === "leader") {
-          _opts.logger("info", `[P2P] follower READY received (engine=${msg.engineMode})`);
-          const startMs = getSyncedTime() + LEADER_START_AHEAD_MS;
-          _send({ type: "SYNC_PLAY", syncedStartMs: startMs, itemIndex: _pbItemIndex >= 0 ? _pbItemIndex : 0 });
-          _onSyncPlay == null ? void 0 : _onSyncPlay({ type: "SYNC_PLAY", syncedStartMs: startMs, itemIndex: _pbItemIndex >= 0 ? _pbItemIndex : 0 });
-          _opts.logger("info", `[P2P] leader broadcast SYNC_PLAY at +5s (syncedStartMs=${startMs})`);
-        }
-        break;
       case "VIDEO_URL":
+        _opts.logger("info", `[P2P] VIDEO_URL received: ${msg.url}`);
         _onVideoUrl == null ? void 0 : _onVideoUrl(msg);
         break;
-      case "SET_ENGINE":
-        _opts.logger("info", `[P2P] SET_ENGINE received: ${msg.engineMode}`);
-        _onSetEngine == null ? void 0 : _onSetEngine(msg);
+      case "READY":
+        if (_role === "leader") {
+          _opts.logger("info", `[P2P] follower READY received`);
+          const startMs = getSyncedTime() + LEADER_START_AHEAD_MS;
+          const syncPlay = { type: "SYNC_PLAY", syncedStartMs: startMs, itemIndex: _pbItemIndex >= 0 ? _pbItemIndex : 0 };
+          _send(syncPlay);
+          _onSyncPlay == null ? void 0 : _onSyncPlay(syncPlay);
+          _opts.logger("info", `[P2P] SYNC_PLAY sent: startMs=${startMs}`);
+        }
         break;
       case "SYNC_PLAY":
         _opts.logger("info", `[P2P] SYNC_PLAY received: startMs=${msg.syncedStartMs}`);
         _onSyncPlay == null ? void 0 : _onSyncPlay(msg);
         break;
-      case "HEARTBEAT":
-        if (_role === "leader") _handleHeartbeat(msg);
+      case "SET_ENGINE":
+        _opts.logger("info", `[P2P] SET_ENGINE received: ${msg.engineMode}`);
+        _onSetEngine == null ? void 0 : _onSetEngine(msg);
         break;
+      case "HEARTBEAT": {
+        const hb = msg;
+        if (_role !== "leader" || _pbItemIndex < 0 || hb.itemIndex !== _pbItemIndex) break;
+        _followerViews[hb.deviceId] = { currentMs: hb.currentTimeMs, syncedTime: hb.syncedTime, itemIndex: hb.itemIndex, receivedAt: Date.now() };
+        const expectedMs = _pbCurrentMs - (getSyncedTime() - hb.syncedTime);
+        const driftMs = hb.currentTimeMs - expectedMs;
+        const absDrift = Math.abs(driftMs);
+        if (absDrift > DRIFT_NUDGE_MS) {
+          _send({ type: "SYNC_ADJUST", itemIndex: _pbItemIndex, driftMs: Math.round(driftMs), action: "snap", driftRate: 1, targetMs: _pbCurrentMs + 60 });
+        } else if (absDrift > DRIFT_NOOP_MS) {
+          _send({ type: "SYNC_ADJUST", itemIndex: _pbItemIndex, driftMs: Math.round(driftMs), action: "nudge", driftRate: driftMs > 0 ? NUDGE_SLOW : NUDGE_FAST });
+        }
+        break;
+      }
       case "SYNC_ADJUST":
         _onAdjust == null ? void 0 : _onAdjust(msg);
         break;
@@ -273,101 +286,18 @@
   }
   function _startHeartbeat() {
     _heartbeatTimer = setInterval(() => {
-      if (!_dcOpen) return;
-      if (_role === "follower") {
-        _send({
-          type: "HEARTBEAT",
-          deviceId: _opts.deviceId,
-          itemIndex: _pbItemIndex,
-          currentTimeMs: _pbCurrentMs,
-          syncedTime: getSyncedTime(),
-          engineMode: _pbEngineMode
-        });
-      } else {
-        _expireStaleFollowers();
-      }
+      if (!_connected || _role !== "follower" || _pbItemIndex < 0) return;
+      _send({
+        type: "HEARTBEAT",
+        deviceId: _opts.deviceId,
+        itemIndex: _pbItemIndex,
+        currentTimeMs: _pbCurrentMs,
+        syncedTime: getSyncedTime(),
+        engineMode: _pbEngineMode
+      });
     }, HEARTBEAT_INTERVAL_MS);
   }
-  function _handleHeartbeat(msg) {
-    if (_pbItemIndex < 0 || msg.itemIndex !== _pbItemIndex) return;
-    _followerViews[msg.deviceId] = {
-      currentMs: msg.currentTimeMs,
-      syncedTime: msg.syncedTime,
-      itemIndex: msg.itemIndex,
-      receivedAt: Date.now()
-    };
-    const leaderNow = getSyncedTime();
-    const expectedMs = _pbCurrentMs - (leaderNow - msg.syncedTime);
-    const driftMs = msg.currentTimeMs - expectedMs;
-    const absDrift = Math.abs(driftMs);
-    let action = "noop";
-    let driftRate = 1;
-    let targetMs;
-    if (absDrift > DRIFT_NUDGE_MS) {
-      action = "snap";
-      targetMs = _pbCurrentMs + 60;
-    } else if (absDrift > DRIFT_NOOP_MS) {
-      action = "nudge";
-      driftRate = driftMs > 0 ? NUDGE_SLOW : NUDGE_FAST;
-    }
-    if (action === "noop") return;
-    _send({ type: "SYNC_ADJUST", itemIndex: _pbItemIndex, driftMs: Math.round(driftMs), action, driftRate, targetMs });
-    _opts == null ? void 0 : _opts.logger("info", `[P2P] SYNC_ADJUST \u2192 ${msg.deviceId}: drift=${Math.round(driftMs)}ms action=${action}`);
-  }
-  function _expireStaleFollowers() {
-    const STALE = 6e3;
-    const now = Date.now();
-    Object.keys(_followerViews).forEach((id) => {
-      if (now - _followerViews[id].receivedAt > STALE) delete _followerViews[id];
-    });
-  }
-  function _startSignalDrain() {
-    _signalPollTimer = setInterval(_doSignalDrain, SIGNAL_POLL_INTERVAL_MS);
-  }
-  function _doSignalDrain() {
-    return __async(this, null, function* () {
-      if (_dcOpen) return;
-      if (!_opts || !_pc) return;
-      try {
-        const res = yield fetch(`${_opts.piBase}/api/v1/test-sync/signals/${_opts.deviceId}?since=${_signalPollSince}`);
-        const data = yield res.json();
-        _signalPollSince = data.nextSince;
-        for (const entry of data.entries) {
-          const { body } = entry;
-          if (body.type === "offer" && _role === "follower") {
-            yield _pc.setRemoteDescription(new RTCSessionDescription(body.sdp));
-            const answer = yield _pc.createAnswer();
-            yield _pc.setLocalDescription(answer);
-            _sendSignal({ type: "answer", sdp: _pc.localDescription.toJSON() });
-          } else if (body.type === "answer" && _role === "leader") {
-            yield _pc.setRemoteDescription(new RTCSessionDescription(body.sdp));
-          } else if (body.type === "ice") {
-            yield _pc.addIceCandidate(new RTCIceCandidate(body.candidate)).catch(() => {
-            });
-          }
-        }
-      } catch (e) {
-      }
-    });
-  }
-  function _sendSignal(body) {
-    if (!_opts || !_peerDeviceId) return;
-    fetch(`${_opts.piBase}/api/v1/test-sync/signal/${_peerDeviceId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ from: _opts.deviceId, seq: Date.now(), body })
-    }).catch(() => {
-    });
-  }
-  function _send(msg) {
-    if (!_dc || !_dcOpen) return;
-    try {
-      _dc.send(JSON.stringify(msg));
-    } catch (e) {
-      _opts == null ? void 0 : _opts.logger("warn", `[P2P] send failed: ${e == null ? void 0 : e.message}`);
-    }
-  }
-  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, DRIFT_NOOP_MS, DRIFT_NUDGE_MS, LEADER_START_AHEAD_MS, NUDGE_FAST, NUDGE_SLOW, _opts, _role, _peerIp, _peerDeviceId, _groupId, _pc, _dc, _dcOpen, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
+  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, DRIFT_NOOP_MS, DRIFT_NUDGE_MS, LEADER_START_AHEAD_MS, NUDGE_FAST, NUDGE_SLOW, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
   var init_p2p_sync_client = __esm({
     "src/p2p-sync-client.ts"() {
       init_ntp_client();
@@ -380,14 +310,12 @@
       LEADER_START_AHEAD_MS = 5e3;
       NUDGE_FAST = 1.005;
       NUDGE_SLOW = 0.995;
+      PEER_MAX_AGE_MS = 12e3;
       _opts = null;
       _role = "pending";
-      _peerIp = null;
       _peerDeviceId = null;
       _groupId = "synctest-001";
-      _pc = null;
-      _dc = null;
-      _dcOpen = false;
+      _connected = false;
       _readyItemIndex = -1;
       _readyEngineMode = "mse";
       _pendingVideoUrl = null;
