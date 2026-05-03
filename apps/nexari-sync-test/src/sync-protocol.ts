@@ -35,6 +35,7 @@ export interface MsgSetEngine {
 export interface MsgSyncPlay {
   type: 'SYNC_PLAY';
   syncedStartMs: number;
+  videoDurationMs?: number;  // shared so both TVs use identical modulo divisor
   itemIndex: number;
 }
 

@@ -63,6 +63,7 @@ let _registerTimer: any   = null;
 let _peerPollTimer: any   = null;
 let _signalPollTimer: any = null;
 let _heartbeatTimer: any  = null;
+let _videoDurationMs      = 0;
 
 // Handlers
 let _onSyncPlay:  ((msg: MsgSyncPlay)   => void) | null = null;
@@ -72,6 +73,7 @@ let _onAdjust:    ((msg: MsgSyncAdjust) => void) | null = null;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 export function getRole(): Role { return _role; }
+export function setVideoDuration(ms: number): void { _videoDurationMs = ms; }
 
 export function onSyncPlay(h: (msg: MsgSyncPlay) => void)   { _onSyncPlay  = h; }
 export function onVideoUrl(h: (msg: MsgVideoUrl) => void)   { _onVideoUrl  = h; }
@@ -250,10 +252,10 @@ function _handleMessage(msg: SyncMessage): void {
       if (_role === 'leader') {
         _opts.logger('info', `[P2P] follower READY received`);
         const startMs = getSyncedTime() + LEADER_START_AHEAD_MS;
-        const syncPlay = { type: 'SYNC_PLAY' as const, syncedStartMs: startMs, itemIndex: _pbItemIndex >= 0 ? _pbItemIndex : 0 };
+        const syncPlay = { type: 'SYNC_PLAY' as const, syncedStartMs: startMs, videoDurationMs: _videoDurationMs, itemIndex: _pbItemIndex >= 0 ? _pbItemIndex : 0 };
         _send(syncPlay);
         _onSyncPlay?.(syncPlay);
-        _opts.logger('info', `[P2P] SYNC_PLAY sent: startMs=${startMs}`);
+        _opts.logger('info', `[P2P] SYNC_PLAY sent: startMs=${startMs} durationMs=${_videoDurationMs}`);
       }
       break;
 
@@ -271,17 +273,9 @@ function _handleMessage(msg: SyncMessage): void {
       const hb = msg as any;
       if (_role !== 'leader' || _pbItemIndex < 0 || hb.itemIndex !== _pbItemIndex) break;
       _followerViews[hb.deviceId] = { currentMs: hb.currentTimeMs, syncedTime: hb.syncedTime, itemIndex: hb.itemIndex, receivedAt: Date.now() };
-      const expectedMs = _pbCurrentMs - (getSyncedTime() - hb.syncedTime);
-      const driftMs    = hb.currentTimeMs - expectedMs;
-      const absDrift   = Math.abs(driftMs);
-      _opts?.logger('info', `[P2P] hb from ${hb.deviceId}: follower=${Math.round(hb.currentTimeMs)}ms leader=${Math.round(_pbCurrentMs)}ms drift=${Math.round(driftMs)}ms`);
-      if (absDrift > DRIFT_NUDGE_MS) {
-        _opts?.logger('info', `[P2P] SYNC_ADJUST snap drift=${Math.round(driftMs)}ms`);
-        _send({ type: 'SYNC_ADJUST', itemIndex: _pbItemIndex, driftMs: Math.round(driftMs), action: 'snap', driftRate: 1, targetMs: _pbCurrentMs + 60 });
-      } else if (absDrift > DRIFT_NOOP_MS) {
-        _opts?.logger('info', `[P2P] SYNC_ADJUST nudge drift=${Math.round(driftMs)}ms rate=${driftMs > 0 ? NUDGE_SLOW : NUDGE_FAST}`);
-        _send({ type: 'SYNC_ADJUST', itemIndex: _pbItemIndex, driftMs: Math.round(driftMs), action: 'nudge', driftRate: driftMs > 0 ? NUDGE_SLOW : NUDGE_FAST });
-      }
+      // Each TV self-corrects via wall-clock tick — just log drift for DS dashboard
+      const driftMs = hb.currentTimeMs - _pbCurrentMs;
+      _opts?.logger('info', `[P2P] hb: follower=${Math.round(hb.currentTimeMs)}ms leader=${Math.round(_pbCurrentMs)}ms drift=${Math.round(driftMs)}ms`);
       break;
     }
 

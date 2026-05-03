@@ -27,6 +27,14 @@ let _itemIndex = 0;
 let _stateTickTimer: any = null;
 let _rVfcSupported = false;
 let _syncWatchdog: any = null;
+let _videoDurationMs = 0;   // read from video.duration; shared via SYNC_PLAY
+let _pausedForSync   = false;
+let _playing         = false;
+
+// Tolerances for wall-clock position correction
+const SYNC_AHEAD_MS  = 80;  // pause if ahead of wall-clock by more than this
+const SYNC_RESUME_MS = 20;  // resume once within this tolerance
+const SYNC_BEHIND_MS = 80;  // seek forward if behind by more than this
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -39,8 +47,8 @@ export function initMsePlayer(container: HTMLElement): void {
   _video.muted  = false;
   _video.volume = 1;
   _video.playsInline = true;
-  _video.loop = true;
   container.appendChild(_video);
+  _registerEndedHandler();
 
   // Check for requestVideoFrameCallback support
   _rVfcSupported = typeof (_video as any).requestVideoFrameCallback === 'function';
@@ -79,6 +87,12 @@ export async function loadVideo(url: string, itemIndex = 0): Promise<void> {
   });
 
   logger.info('[MSE] canplay — signalling READY');
+  _videoDurationMs = (_video.duration > 0 && isFinite(_video.duration))
+    ? Math.round(_video.duration * 1000) : 0;
+  if (_videoDurationMs > 0) {
+    P2PSync.setVideoDuration(_videoDurationMs);
+    logger.info(`[MSE] duration: ${_videoDurationMs}ms`);
+  }
   updateHud({ lastAction: 'Ready — waiting for SYNC_PLAY' });
   P2PSync.setVideoReady(_itemIndex, 'mse');
 
@@ -87,6 +101,7 @@ export async function loadVideo(url: string, itemIndex = 0): Promise<void> {
   _syncWatchdog = setTimeout(() => {
     if (_video?.paused) {
       logger.warn('[MSE] watchdog: no SYNC_PLAY after 8s — playing unsynced');
+      _playing = true;
       _video.play().catch((e: any) => logger.warn(`[MSE] watchdog play() failed: ${e?.message}`));
     }
   }, 8000);
@@ -104,7 +119,9 @@ export function teardown(): void { _teardown(); }
 function _handleSyncPlay(msg: MsgSyncPlay): void {
   clearTimeout(_syncWatchdog);
   _syncedStartMs = msg.syncedStartMs;
-  logger.info(`[MSE] SYNC_PLAY received: startMs=${msg.syncedStartMs} (in ${msg.syncedStartMs - getSyncedTime()}ms)`);
+  // Prefer leader's duration so both TVs use an identical modulo divisor
+  if ((msg.videoDurationMs ?? 0) > 0) _videoDurationMs = msg.videoDurationMs!;
+  logger.info(`[MSE] SYNC_PLAY received: startMs=${msg.syncedStartMs} durationMs=${_videoDurationMs} (in ${msg.syncedStartMs - getSyncedTime()}ms)`);
   if (_video && _video.readyState >= 3) _schedulePlay();
 }
 
@@ -132,6 +149,7 @@ function _schedulePlay(): void {
     const target = _syncedStartMs;
     function tryPlay() {
       if (getSyncedTime() >= target) {
+        _playing = true;
         _video?.play().catch((e: any) => logger.warn(`[MSE] play() failed: ${e?.message}`));
         updateHud({ lastAction: 'play() fired' });
       } else {
@@ -144,6 +162,7 @@ function _schedulePlay(): void {
 
 function _handleAdjust(msg: MsgSyncAdjust): void {
   if (!_video) return;
+  if (_videoDurationMs > 0) return; // wall-clock position-sync handles it
   updateHud({ driftMs: msg.driftMs, lastAction: `${msg.action} ${Math.round(msg.driftMs)}ms` });
 
   if (msg.action === 'snap' && msg.targetMs !== undefined) {
@@ -179,20 +198,63 @@ function _onFrame(_now: number, meta: { expectedDisplayTime: number; mediaTime: 
   _registerRVFC(); // re-register for next frame
 }
 
-// ── State tick (polyfill path for Tizen 4/5 without rVFC) ─────────────────────
+// ── Loop restart handler ──────────────────────────────────────────────────────
+
+function _registerEndedHandler(): void {
+  if (!_video) return;
+  _video.addEventListener('ended', () => {
+    if (_syncedStartMs > 0 && _videoDurationMs > 0) {
+      // Seek to where wall-clock says we should be at the start of the new loop
+      const elapsed    = getSyncedTime() - _syncedStartMs;
+      const expectedMs = ((elapsed % _videoDurationMs) + _videoDurationMs) % _videoDurationMs;
+      logger.info(`[MSE] loop: elapsed=${Math.round(elapsed)}ms seekTo=${Math.round(expectedMs)}ms`);
+      if (_video) {
+        _video.currentTime = expectedMs / 1000;
+        _video.play().catch((e: any) => logger.warn(`[MSE] loop play() failed: ${e?.message}`));
+      }
+    } else {
+      if (_video) {
+        _video.currentTime = 0;
+        _video.play().catch((e: any) => logger.warn(`[MSE] loop play() failed: ${e?.message}`));
+      }
+    }
+  });
+}
+
+// ── State tick — wall-clock position sync + reporting ─────────────────────────
 
 function _startStateTickTimer(): void {
-  if (_rVfcSupported) return; // rVFC handles it
   _stateTickTimer = setInterval(() => {
-    if (!_video) return;
-    const posMs  = _video.currentTime * 1000;
+    if (!_video || !_playing) return;
+    const posMs   = _video.currentTime * 1000;
     const syncNow = getSyncedTime();
-    const elapsed = syncNow - _syncedStartMs;
-    const expectedMs = _syncedStartMs > 0 && elapsed > 0 ? elapsed : posMs;
+
+    // Compute where both TVs should be right now
+    let expectedMs = posMs;
+    if (_syncedStartMs > 0 && _videoDurationMs > 0) {
+      const elapsed = syncNow - _syncedStartMs;
+      expectedMs = ((elapsed % _videoDurationMs) + _videoDurationMs) % _videoDurationMs;
+    }
     const driftMs = posMs - expectedMs;
 
     P2PSync.setPlaybackState(_itemIndex, posMs, 'mse');
     updateHud({ positionMs: posMs, expectedMs, driftMs });
+
+    // Active position correction every tick
+    if (_syncedStartMs > 0 && _videoDurationMs > 0) {
+      if (!_video.paused && !_pausedForSync && driftMs > SYNC_AHEAD_MS) {
+        _video.pause();
+        _pausedForSync = true;
+        logger.info(`[MSE] sync-pause: ahead ${Math.round(driftMs)}ms`);
+      } else if (_video.paused && _pausedForSync && driftMs <= SYNC_RESUME_MS) {
+        _pausedForSync = false;
+        _video.play().catch((e: any) => logger.warn(`[MSE] sync-resume play() failed: ${e?.message}`));
+        logger.info(`[MSE] sync-resume: drift now ${Math.round(driftMs)}ms`);
+      } else if (!_video.paused && !_pausedForSync && driftMs < -SYNC_BEHIND_MS) {
+        logger.info(`[MSE] sync-seek: behind ${Math.round(-driftMs)}ms → ${Math.round(expectedMs)}ms`);
+        _video.currentTime = expectedMs / 1000;
+      }
+    }
   }, 50);
 }
 
@@ -247,6 +309,9 @@ function _teardown(): void {
   }
   _ms = null;
   _sb = null;
-  _startScheduled = false;
-  _syncedStartMs  = -1;
+  _startScheduled  = false;
+  _syncedStartMs   = -1;
+  _playing         = false;
+  _pausedForSync   = false;
+  _videoDurationMs = 0;
 }

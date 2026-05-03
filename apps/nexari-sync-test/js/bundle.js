@@ -98,6 +98,9 @@
   function getRole() {
     return _role;
   }
+  function setVideoDuration(ms) {
+    _videoDurationMs = ms;
+  }
   function onSyncPlay(h) {
     _onSyncPlay = h;
   }
@@ -255,10 +258,10 @@
         if (_role === "leader") {
           _opts.logger("info", `[P2P] follower READY received`);
           const startMs = getSyncedTime() + LEADER_START_AHEAD_MS;
-          const syncPlay = { type: "SYNC_PLAY", syncedStartMs: startMs, itemIndex: _pbItemIndex >= 0 ? _pbItemIndex : 0 };
+          const syncPlay = { type: "SYNC_PLAY", syncedStartMs: startMs, videoDurationMs: _videoDurationMs, itemIndex: _pbItemIndex >= 0 ? _pbItemIndex : 0 };
           _send(syncPlay);
           _onSyncPlay == null ? void 0 : _onSyncPlay(syncPlay);
-          _opts.logger("info", `[P2P] SYNC_PLAY sent: startMs=${startMs}`);
+          _opts.logger("info", `[P2P] SYNC_PLAY sent: startMs=${startMs} durationMs=${_videoDurationMs}`);
         }
         break;
       case "SYNC_PLAY":
@@ -273,17 +276,8 @@
         const hb = msg;
         if (_role !== "leader" || _pbItemIndex < 0 || hb.itemIndex !== _pbItemIndex) break;
         _followerViews[hb.deviceId] = { currentMs: hb.currentTimeMs, syncedTime: hb.syncedTime, itemIndex: hb.itemIndex, receivedAt: Date.now() };
-        const expectedMs = _pbCurrentMs - (getSyncedTime() - hb.syncedTime);
-        const driftMs = hb.currentTimeMs - expectedMs;
-        const absDrift = Math.abs(driftMs);
-        _opts == null ? void 0 : _opts.logger("info", `[P2P] hb from ${hb.deviceId}: follower=${Math.round(hb.currentTimeMs)}ms leader=${Math.round(_pbCurrentMs)}ms drift=${Math.round(driftMs)}ms`);
-        if (absDrift > DRIFT_NUDGE_MS) {
-          _opts == null ? void 0 : _opts.logger("info", `[P2P] SYNC_ADJUST snap drift=${Math.round(driftMs)}ms`);
-          _send({ type: "SYNC_ADJUST", itemIndex: _pbItemIndex, driftMs: Math.round(driftMs), action: "snap", driftRate: 1, targetMs: _pbCurrentMs + 60 });
-        } else if (absDrift > DRIFT_NOOP_MS) {
-          _opts == null ? void 0 : _opts.logger("info", `[P2P] SYNC_ADJUST nudge drift=${Math.round(driftMs)}ms rate=${driftMs > 0 ? NUDGE_SLOW : NUDGE_FAST}`);
-          _send({ type: "SYNC_ADJUST", itemIndex: _pbItemIndex, driftMs: Math.round(driftMs), action: "nudge", driftRate: driftMs > 0 ? NUDGE_SLOW : NUDGE_FAST });
-        }
+        const driftMs = hb.currentTimeMs - _pbCurrentMs;
+        _opts == null ? void 0 : _opts.logger("info", `[P2P] hb: follower=${Math.round(hb.currentTimeMs)}ms leader=${Math.round(_pbCurrentMs)}ms drift=${Math.round(driftMs)}ms`);
         break;
       }
       case "SYNC_ADJUST":
@@ -305,7 +299,7 @@
       });
     }, HEARTBEAT_INTERVAL_MS);
   }
-  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, DRIFT_NOOP_MS, DRIFT_NUDGE_MS, LEADER_START_AHEAD_MS, NUDGE_FAST, NUDGE_SLOW, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
+  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _videoDurationMs, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
   var init_p2p_sync_client = __esm({
     "src/p2p-sync-client.ts"() {
       init_ntp_client();
@@ -313,11 +307,7 @@
       PEER_POLL_INTERVAL_MS = 2e3;
       SIGNAL_POLL_INTERVAL_MS = 500;
       HEARTBEAT_INTERVAL_MS = 1e3;
-      DRIFT_NOOP_MS = 10;
-      DRIFT_NUDGE_MS = 150;
       LEADER_START_AHEAD_MS = 5e3;
-      NUDGE_FAST = 1.02;
-      NUDGE_SLOW = 0.98;
       PEER_MAX_AGE_MS = 12e3;
       _opts = null;
       _role = "pending";
@@ -336,6 +326,7 @@
       _peerPollTimer = null;
       _signalPollTimer = null;
       _heartbeatTimer = null;
+      _videoDurationMs = 0;
       _onSyncPlay = null;
       _onVideoUrl = null;
       _onSetEngine = null;
@@ -471,8 +462,8 @@
     _video.muted = false;
     _video.volume = 1;
     _video.playsInline = true;
-    _video.loop = true;
     container.appendChild(_video);
+    _registerEndedHandler();
     _rVfcSupported = typeof _video.requestVideoFrameCallback === "function";
     logger.info(`[MSE] rVFC supported: ${_rVfcSupported}`);
     onSyncPlay(_handleSyncPlay);
@@ -499,12 +490,18 @@
         _video.addEventListener("canplay", () => resolve(), { once: true });
       });
       logger.info("[MSE] canplay \u2014 signalling READY");
+      _videoDurationMs2 = _video.duration > 0 && isFinite(_video.duration) ? Math.round(_video.duration * 1e3) : 0;
+      if (_videoDurationMs2 > 0) {
+        setVideoDuration(_videoDurationMs2);
+        logger.info(`[MSE] duration: ${_videoDurationMs2}ms`);
+      }
       updateHud({ lastAction: "Ready \u2014 waiting for SYNC_PLAY" });
       setVideoReady(_itemIndex, "mse");
       _video.pause();
       _syncWatchdog = setTimeout(() => {
         if (_video == null ? void 0 : _video.paused) {
           logger.warn("[MSE] watchdog: no SYNC_PLAY after 8s \u2014 playing unsynced");
+          _playing = true;
           _video.play().catch((e) => logger.warn(`[MSE] watchdog play() failed: ${e == null ? void 0 : e.message}`));
         }
       }, 8e3);
@@ -516,9 +513,11 @@
     _teardown();
   }
   function _handleSyncPlay(msg) {
+    var _a;
     clearTimeout(_syncWatchdog);
     _syncedStartMs = msg.syncedStartMs;
-    logger.info(`[MSE] SYNC_PLAY received: startMs=${msg.syncedStartMs} (in ${msg.syncedStartMs - getSyncedTime()}ms)`);
+    if (((_a = msg.videoDurationMs) != null ? _a : 0) > 0) _videoDurationMs2 = msg.videoDurationMs;
+    logger.info(`[MSE] SYNC_PLAY received: startMs=${msg.syncedStartMs} durationMs=${_videoDurationMs2} (in ${msg.syncedStartMs - getSyncedTime()}ms)`);
     if (_video && _video.readyState >= 3) _schedulePlay();
   }
   function _schedulePlay() {
@@ -539,6 +538,7 @@
       const target = _syncedStartMs;
       function tryPlay() {
         if (getSyncedTime() >= target) {
+          _playing = true;
           _video == null ? void 0 : _video.play().catch((e) => logger.warn(`[MSE] play() failed: ${e == null ? void 0 : e.message}`));
           updateHud({ lastAction: "play() fired" });
         } else {
@@ -550,6 +550,7 @@
   }
   function _handleAdjust(msg) {
     if (!_video) return;
+    if (_videoDurationMs2 > 0) return;
     updateHud({ driftMs: msg.driftMs, lastAction: `${msg.action} ${Math.round(msg.driftMs)}ms` });
     if (msg.action === "snap" && msg.targetMs !== void 0) {
       _video.currentTime = msg.targetMs / 1e3;
@@ -578,17 +579,52 @@
     updateHud({ positionMs: posMs, expectedMs, driftMs });
     _registerRVFC();
   }
+  function _registerEndedHandler() {
+    if (!_video) return;
+    _video.addEventListener("ended", () => {
+      if (_syncedStartMs > 0 && _videoDurationMs2 > 0) {
+        const elapsed = getSyncedTime() - _syncedStartMs;
+        const expectedMs = (elapsed % _videoDurationMs2 + _videoDurationMs2) % _videoDurationMs2;
+        logger.info(`[MSE] loop: elapsed=${Math.round(elapsed)}ms seekTo=${Math.round(expectedMs)}ms`);
+        if (_video) {
+          _video.currentTime = expectedMs / 1e3;
+          _video.play().catch((e) => logger.warn(`[MSE] loop play() failed: ${e == null ? void 0 : e.message}`));
+        }
+      } else {
+        if (_video) {
+          _video.currentTime = 0;
+          _video.play().catch((e) => logger.warn(`[MSE] loop play() failed: ${e == null ? void 0 : e.message}`));
+        }
+      }
+    });
+  }
   function _startStateTickTimer() {
-    if (_rVfcSupported) return;
     _stateTickTimer = setInterval(() => {
-      if (!_video) return;
+      if (!_video || !_playing) return;
       const posMs = _video.currentTime * 1e3;
       const syncNow = getSyncedTime();
-      const elapsed = syncNow - _syncedStartMs;
-      const expectedMs = _syncedStartMs > 0 && elapsed > 0 ? elapsed : posMs;
+      let expectedMs = posMs;
+      if (_syncedStartMs > 0 && _videoDurationMs2 > 0) {
+        const elapsed = syncNow - _syncedStartMs;
+        expectedMs = (elapsed % _videoDurationMs2 + _videoDurationMs2) % _videoDurationMs2;
+      }
       const driftMs = posMs - expectedMs;
       setPlaybackState(_itemIndex, posMs, "mse");
       updateHud({ positionMs: posMs, expectedMs, driftMs });
+      if (_syncedStartMs > 0 && _videoDurationMs2 > 0) {
+        if (!_video.paused && !_pausedForSync && driftMs > SYNC_AHEAD_MS) {
+          _video.pause();
+          _pausedForSync = true;
+          logger.info(`[MSE] sync-pause: ahead ${Math.round(driftMs)}ms`);
+        } else if (_video.paused && _pausedForSync && driftMs <= SYNC_RESUME_MS) {
+          _pausedForSync = false;
+          _video.play().catch((e) => logger.warn(`[MSE] sync-resume play() failed: ${e == null ? void 0 : e.message}`));
+          logger.info(`[MSE] sync-resume: drift now ${Math.round(driftMs)}ms`);
+        } else if (!_video.paused && !_pausedForSync && driftMs < -SYNC_BEHIND_MS) {
+          logger.info(`[MSE] sync-seek: behind ${Math.round(-driftMs)}ms \u2192 ${Math.round(expectedMs)}ms`);
+          _video.currentTime = expectedMs / 1e3;
+        }
+      }
     }, 50);
   }
   function _teardown() {
@@ -610,8 +646,11 @@
     _sb = null;
     _startScheduled = false;
     _syncedStartMs = -1;
+    _playing = false;
+    _pausedForSync = false;
+    _videoDurationMs2 = 0;
   }
-  var CHUNK_SIZE, _video, _ms, _sb, _syncedStartMs, _startScheduled, _itemIndex, _stateTickTimer, _rVfcSupported, _syncWatchdog;
+  var CHUNK_SIZE, _video, _ms, _sb, _syncedStartMs, _startScheduled, _itemIndex, _stateTickTimer, _rVfcSupported, _syncWatchdog, _videoDurationMs2, _pausedForSync, _playing, SYNC_AHEAD_MS, SYNC_RESUME_MS, SYNC_BEHIND_MS;
   var init_player_mse = __esm({
     "src/player-mse.ts"() {
       init_ntp_client();
@@ -628,6 +667,12 @@
       _stateTickTimer = null;
       _rVfcSupported = false;
       _syncWatchdog = null;
+      _videoDurationMs2 = 0;
+      _pausedForSync = false;
+      _playing = false;
+      SYNC_AHEAD_MS = 80;
+      SYNC_RESUME_MS = 20;
+      SYNC_BEHIND_MS = 80;
     }
   });
 
