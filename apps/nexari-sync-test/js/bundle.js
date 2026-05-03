@@ -237,6 +237,19 @@
           if (entry.from && entry.from !== _peerDeviceId) {
             _opts == null ? void 0 : _opts.logger("info", `[P2P] re-routing peer: ${_peerDeviceId != null ? _peerDeviceId : "none"} \u2192 ${entry.from}`);
             _peerDeviceId = entry.from;
+            const newRole = _opts.deviceId < entry.from ? "leader" : "follower";
+            if (newRole !== _role) {
+              _opts == null ? void 0 : _opts.logger("info", `[P2P] role updated: ${_role} \u2192 ${newRole}`);
+              _role = newRole;
+            }
+            if (_role === "follower" && _readyItemIndex >= 0) {
+              _send({ type: "READY", deviceId: _opts.deviceId, engineMode: _readyEngineMode });
+              _opts == null ? void 0 : _opts.logger("info", `[P2P] follower READY sent after re-route`);
+            }
+            if (_role === "leader" && _pendingVideoUrl) {
+              _send({ type: "VIDEO_URL", url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
+              _opts == null ? void 0 : _opts.logger("info", `[P2P] leader re-sent VIDEO_URL after re-route`);
+            }
           }
           try {
             _handleMessage(entry.body);

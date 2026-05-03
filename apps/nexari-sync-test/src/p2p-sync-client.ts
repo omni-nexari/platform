@@ -233,6 +233,21 @@ async function _doSignalDrain(): Promise<void> {
       if (entry.from && entry.from !== _peerDeviceId) {
         _opts?.logger('info', `[P2P] re-routing peer: ${_peerDeviceId ?? 'none'} → ${entry.from}`);
         _peerDeviceId = entry.from;
+        // Re-evaluate role with the real peer (we may have paired with a stale device initially)
+        const newRole: Role = _opts!.deviceId < entry.from ? 'leader' : 'follower';
+        if (newRole !== _role) {
+          _opts?.logger('info', `[P2P] role updated: ${_role} → ${newRole}`);
+          _role = newRole;
+        }
+        // Resume the correct side of the handshake
+        if (_role === 'follower' && _readyItemIndex >= 0) {
+          _send({ type: 'READY', deviceId: _opts!.deviceId, engineMode: _readyEngineMode });
+          _opts?.logger('info', `[P2P] follower READY sent after re-route`);
+        }
+        if (_role === 'leader' && _pendingVideoUrl) {
+          _send({ type: 'VIDEO_URL', url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
+          _opts?.logger('info', `[P2P] leader re-sent VIDEO_URL after re-route`);
+        }
       }
       try { _handleMessage(entry.body as SyncMessage); } catch { /* ignore malformed */ }
     }
