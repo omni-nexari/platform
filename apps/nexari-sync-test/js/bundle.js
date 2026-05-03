@@ -1371,16 +1371,9 @@
             setVideoReady(_itemIndex3, "avplay");
             _syncWatchdog3 = setTimeout(() => {
               if (!_playing2 && !_tearingDown) {
-                logger.warn("[AVPlay] watchdog: no SYNC_PLAY in 8s \u2014 playing unsynced");
-                if (_syncedStartMs4 <= 0) _syncedStartMs4 = getSyncedTime();
-                _playing2 = true;
-                try {
-                  av.play();
-                  _lastSeekTime2 = _localNow2();
-                } catch (e) {
-                }
+                logger.warn("[AVPlay] watchdog: still waiting for SYNC_PLAY; not starting unsynced");
               }
-            }, 8e3);
+            }, 15e3);
             if (_syncedStartMs4 > 0) _schedulePlay2();
             resolve();
           },

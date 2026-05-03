@@ -248,16 +248,9 @@ function _openAndPrepare(av: AVPlayHandle, absUri: string): Promise<void> {
 
           _syncWatchdog = setTimeout(() => {
             if (!_playing && !_tearingDown) {
-              logger.warn('[AVPlay] watchdog: no SYNC_PLAY in 8s — playing unsynced');
-              // Set a synthetic start time so loop math stays numerically valid
-              if (_syncedStartMs <= 0) _syncedStartMs = getSyncedTime();
-              _playing = true;
-              try {
-                av.play();
-                _lastSeekTime = _localNow();
-              } catch {}
+              logger.warn('[AVPlay] watchdog: still waiting for SYNC_PLAY; not starting unsynced');
             }
-          }, 8000);
+          }, 15000);
 
           if (_syncedStartMs > 0) _schedulePlay();
           resolve();
