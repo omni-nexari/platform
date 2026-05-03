@@ -167,7 +167,7 @@ export default function SyncPlaylistEditorPage() {
       {/* Header */}
       <div className="flex items-center gap-3 px-6 py-4 border-b border-[var(--border)] shrink-0">
         <button
-          onClick={() => navigate(`/workspaces/${wsId}/sync-playlists`)}
+          onClick={() => navigate(`/workspaces/${wsId}/playlist`)}
           className="p-1.5 rounded hover:bg-[var(--bg)] transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />
