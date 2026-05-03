@@ -17,15 +17,31 @@ export interface NtpResult {
 }
 
 let _offsetMs = 0;
+let _monoBaseMs = _monotonicNow();
+let _syncedBaseMs = Date.now();
+
+function _monotonicNow(): number {
+  return (typeof performance !== 'undefined' && typeof performance.now === 'function')
+    ? performance.now()
+    : Date.now();
+}
+
+function _resetSyncedTimeBase(): void {
+  _monoBaseMs = _monotonicNow();
+  _syncedBaseMs = Date.now() + _offsetMs;
+}
 
 /** Returns the current best NTP offset in milliseconds. */
 export function getNtpOffset(): number { return _offsetMs; }
 
-/** Returns Date.now() adjusted by the current NTP offset. */
-export function getSyncedTime(): number { return Date.now() + _offsetMs; }
+/** Returns NTP-adjusted time advanced by a monotonic local clock. */
+export function getSyncedTime(): number { return _syncedBaseMs + (_monotonicNow() - _monoBaseMs); }
 
 /** Overwrites the NTP offset (used by p2p-sync-client for leader-derived offsets). */
-export function setNtpOffset(ms: number): void { _offsetMs = ms; }
+export function setNtpOffset(ms: number): void {
+  _offsetMs = ms;
+  _resetSyncedTimeBase();
+}
 
 /**
  * Synchronise with the Pi /time endpoint.
@@ -66,6 +82,7 @@ export async function syncTime(piBase: string): Promise<NtpResult> {
   _offsetMs = delta > SNAP_THRESHOLD
     ? best.offset
     : prev * (1 - EWMA_ALPHA) + best.offset * EWMA_ALPHA;
+  _resetSyncedTimeBase();
 
   return { offsetMs: Math.round(_offsetMs), rttMs: Math.round(best.rtt), samples: good.length };
 }

@@ -13,7 +13,8 @@
  *
  * Speed control:
  *   AVPlay setSpeed() only accepts integer rates (no 1.02x nudge).
- *   All drift correction is seek-based (threshold: SYNC_SEEK_MS).
+ *   Drift correction is therefore conservative: ignore tiny drift, hold soft drift,
+ *   and seek only for larger errors.
  *
  * State machine (Samsung AVPlay):
  *   NONE → open() → IDLE → setListener/setDisplayRect → prepareAsync() → READY → play() → PLAYING
@@ -28,11 +29,10 @@ import { updateHud } from './perf-hud.js';
 import { logger } from './logger.js';
 import type { MsgSyncPlay, MsgSyncAdjust } from './sync-protocol.js';
 
-// Drift threshold — seek when |drift| exceeds this.
-// AVPlay has no sub-integer speed control so nudge is unavailable; seeks only.
-const SYNC_SEEK_MS    = 200;
+const DRIFT_NOOP_MS   = 80;    // ignore tiny phase error
+const SYNC_SEEK_MS    = 300;   // AVPlay cannot fractional-nudge; seek only above this
 const NEAR_END_MS     = 500;   // skip corrections within this ms of loop boundary
-const SEEK_SETTLE_MS  = 1000;  // post-seek cooldown — prevents oscillation cascade
+const SEEK_SETTLE_MS  = 2500;  // post-seek cooldown; AVPlay can report stale position while buffering
 
 let _syncedStartMs  = -1;
 let _startScheduled = false;
@@ -43,8 +43,15 @@ let _videoDurationMs = 0;
 let _playing         = false;
 let _seekInFlight    = false;  // AVPlay blocks all API calls during seekTo
 let _lastSeekTime    = 0;      // timestamp of last completed seek — throttles cascade
+let _lastSoftDriftLogTime = 0;
 let _tearingDown     = false;
 let _objElem: HTMLObjectElement | null = null;  // AVPlay requires an <object> element
+
+function _localNow(): number {
+  return (typeof performance !== 'undefined' && typeof performance.now === 'function')
+    ? performance.now()
+    : Date.now();
+}
 
 // ── AVPlay accessor ────────────────────────────────────────────────────────────
 
@@ -53,6 +60,7 @@ interface AVPlayHandle {
   close(): void;
   prepare(): void;
   prepareAsync(success: () => void, error: (e: any) => void): void;
+  setBufferingParam?(option: string, unitOrAmount: string, amount?: number): void;
   setDisplayRect(x: number, y: number, w: number, h: number): void;
   setDisplayMethod(mode: string): void;
   setListener(cb: object): void;
@@ -196,6 +204,7 @@ function _openAndPrepare(av: AVPlayHandle, absUri: string): Promise<void> {
     try {
       logger.info(`[AVPlay] open: ${absUri}`);
       av.open(absUri);
+      _disableInternalBuffering(av);
       av.setDisplayRect(0, 0, 1920, 1080);
       av.setDisplayMethod('PLAYER_DISPLAY_MODE_FULL_SCREEN');
 
@@ -256,6 +265,32 @@ function _openAndPrepare(av: AVPlayHandle, absUri: string): Promise<void> {
       reject(e);
     }
   });
+}
+
+function _disableInternalBuffering(av: AVPlayHandle): void {
+  if (typeof av.setBufferingParam !== 'function') {
+    logger.warn('[AVPlay] setBufferingParam unavailable');
+    return;
+  }
+
+  const setZero = (option: 'PLAYER_BUFFER_FOR_PLAY' | 'PLAYER_BUFFER_FOR_RESUME'): boolean => {
+    try {
+      av.setBufferingParam!(option, 'PLAYER_BUFFER_SIZE_IN_SECOND', 0);
+      return true;
+    } catch (e1: any) {
+      try {
+        av.setBufferingParam!(option, '0');
+        return true;
+      } catch (e2: any) {
+        logger.warn(`[AVPlay] setBufferingParam ${option}=0 failed: ${e2?.message ?? e1?.message ?? e2}`);
+        return false;
+      }
+    }
+  };
+
+  const playOk = setZero('PLAYER_BUFFER_FOR_PLAY');
+  const resumeOk = setZero('PLAYER_BUFFER_FOR_RESUME');
+  if (playOk || resumeOk) logger.info(`[AVPlay] buffering disabled: play=${playOk} resume=${resumeOk}`);
 }
 
 // ── Sync handlers ──────────────────────────────────────────────────────────────
@@ -336,11 +371,11 @@ function _handleLoop(): void {
     logger.info('[AVPlay] loop: no syncedStart — seeking to 0');
     _seekInFlight = true;
     av.seekTo(0, () => {
-      _lastSeekTime = Date.now();
+      _lastSeekTime = _localNow();
       _seekInFlight = false;
       if (!_tearingDown) try { av.play(); } catch {}
     }, () => {
-      _lastSeekTime = Date.now();
+      _lastSeekTime = _localNow();
       _seekInFlight = false;
       if (!_tearingDown) try { av.play(); } catch {}
     });
@@ -354,7 +389,7 @@ function _handleLoop(): void {
   _seekInFlight = true;
 
   const onDone = () => {
-    _lastSeekTime = Date.now();  // start settle window from loop seek completion
+    _lastSeekTime = _localNow();  // start settle window from loop seek completion
     _seekInFlight = false;
     if (_tearingDown) return;
     try { av.play(); } catch (e: any) { logger.warn(`[AVPlay] loop play() failed: ${e?.message}`); }
@@ -363,13 +398,13 @@ function _handleLoop(): void {
   try {
     av.seekTo(Math.round(expectedMs), onDone, (e: any) => {
       logger.warn(`[AVPlay] loop seekTo failed: ${e?.message ?? e} — playing from 0`);
-      _lastSeekTime = Date.now();
+      _lastSeekTime = _localNow();
       _seekInFlight = false;
       if (!_tearingDown) try { av.play(); } catch {}
     });
   } catch (e: any) {
     logger.warn(`[AVPlay] loop seekTo threw: ${e?.message ?? e}`);
-    _lastSeekTime = Date.now();
+    _lastSeekTime = _localNow();
     _seekInFlight = false;
     try { av.play(); } catch {}
   }
@@ -381,7 +416,8 @@ function _startStateTickTimer(): void {
   _stateTickTimer = setInterval(() => {
     if (!_playing || _tearingDown) return;
     // Skip tick while a seek is in progress or within the post-seek settle window
-    if (_seekInFlight || Date.now() - _lastSeekTime < SEEK_SETTLE_MS) return;
+    const now = _localNow();
+    if (_seekInFlight || now - _lastSeekTime < SEEK_SETTLE_MS) return;
 
     const av = _av();
     if (!av) return;
@@ -404,21 +440,28 @@ function _startStateTickTimer(): void {
       const nearBoundary = expectedMs < NEAR_END_MS || expectedMs > _videoDurationMs - NEAR_END_MS;
       const absDrift = Math.abs(driftMs);
 
-      if (!nearBoundary && absDrift > SYNC_SEEK_MS) {
+      if (!nearBoundary && absDrift > DRIFT_NOOP_MS && absDrift < SYNC_SEEK_MS) {
+        if (now - _lastSoftDriftLogTime > 1000) {
+          _lastSoftDriftLogTime = now;
+          logger.info(`[AVPlay] soft drift ${Math.round(driftMs)}ms — no fractional speed support; holding`);
+        }
+      }
+
+      if (!nearBoundary && absDrift >= SYNC_SEEK_MS) {
         logger.info(`[AVPlay] sync-seek: drift ${Math.round(driftMs)}ms → ${Math.round(expectedMs)}ms`);
         _seekInFlight = true;
         try {
           av.seekTo(
             Math.round(expectedMs),
-            () => { _lastSeekTime = Date.now(); _seekInFlight = false; },
+            () => { _lastSeekTime = _localNow(); _seekInFlight = false; },
             (e: any) => {
-              _lastSeekTime = Date.now();
+              _lastSeekTime = _localNow();
               _seekInFlight = false;
               logger.warn(`[AVPlay] sync-seek failed: ${e?.message ?? e}`);
             },
           );
         } catch (e: any) {
-          _lastSeekTime = Date.now();
+          _lastSeekTime = _localNow();
           _seekInFlight = false;
           logger.warn(`[AVPlay] seekTo threw: ${e?.message ?? e}`);
         }
@@ -457,6 +500,7 @@ function _teardown(): void {
   _playing        = false;
   _seekInFlight   = false;
   _lastSeekTime   = 0;
+  _lastSoftDriftLogTime = 0;
   _startScheduled = false;
   _syncedStartMs  = -1;
   _videoDurationMs = 0;

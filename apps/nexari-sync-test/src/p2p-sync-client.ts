@@ -55,7 +55,14 @@ let _pbCurrentMs   = 0;
 let _pbEngineMode: EngineMode = 'mse';
 
 // Follower view (leader only)
-interface FollowerView { currentMs: number; syncedTime: number; itemIndex: number; receivedAt: number; }
+interface FollowerView {
+  currentMs: number;
+  timelineMs: number;
+  actualTimeMs: number;
+  syncedTime: number;
+  itemIndex: number;
+  receivedAt: number;
+}
 const _followerViews: Record<string, FollowerView> = {};
 
 let _signalPollSince = 0;
@@ -65,6 +72,7 @@ let _signalPollTimer: any = null;
 let _heartbeatTimer: any  = null;
 let _videoDurationMs      = 0;
 let _syncPlaySent         = false;  // prevent duplicate SYNC_PLAYs from re-route READY
+let _syncedStartMs        = -1;
 
 // Handlers
 let _onSyncPlay:  ((msg: MsgSyncPlay)   => void) | null = null;
@@ -94,6 +102,9 @@ export function init(opts: P2PSyncOpts): void {
 export function setVideoReady(itemIndex: number, engineMode: EngineMode): void {
   _readyItemIndex  = itemIndex;
   _readyEngineMode = engineMode;
+  _pbItemIndex     = itemIndex;
+  _pbCurrentMs     = 0;
+  _pbEngineMode    = engineMode;
   if (_connected && _role === 'follower') {
     _send({ type: 'READY', deviceId: _opts!.deviceId, engineMode });
     _opts?.logger('info', `[P2P] follower READY sent`);
@@ -134,6 +145,7 @@ export function shutdown(): void {
   _connected = false;
   _role = 'pending';
   _syncPlaySent = false;
+  _syncedStartMs = -1;
   _opts?.logger('info', '[P2P] shutdown');
 }
 
@@ -270,6 +282,7 @@ function _handleMessage(msg: SyncMessage): void {
         _syncPlaySent = true;
         _opts.logger('info', `[P2P] follower READY received`);
         const startMs = getSyncedTime() + LEADER_START_AHEAD_MS;
+        _syncedStartMs = startMs;
         const syncPlay = { type: 'SYNC_PLAY' as const, syncedStartMs: startMs, videoDurationMs: _videoDurationMs, itemIndex: _pbItemIndex >= 0 ? _pbItemIndex : 0 };
         _send(syncPlay);
         _onSyncPlay?.(syncPlay);
@@ -281,6 +294,8 @@ function _handleMessage(msg: SyncMessage): void {
 
     case 'SYNC_PLAY':
       _syncPlaySent = true;  // prevent subsequent READY sends
+      _syncedStartMs = (msg as MsgSyncPlay).syncedStartMs;
+      if (((msg as MsgSyncPlay).videoDurationMs ?? 0) > 0) _videoDurationMs = (msg as MsgSyncPlay).videoDurationMs!;
       _opts.logger('info', `[P2P] SYNC_PLAY received: startMs=${(msg as MsgSyncPlay).syncedStartMs}`);
       _onSyncPlay?.(msg as MsgSyncPlay);
       break;
@@ -293,10 +308,19 @@ function _handleMessage(msg: SyncMessage): void {
     case 'HEARTBEAT': {
       const hb = msg as any;
       if (_role !== 'leader' || _pbItemIndex < 0 || hb.itemIndex !== _pbItemIndex) break;
-      _followerViews[hb.deviceId] = { currentMs: hb.currentTimeMs, syncedTime: hb.syncedTime, itemIndex: hb.itemIndex, receivedAt: Date.now() };
-      // Each TV self-corrects via wall-clock tick — just log drift for DS dashboard
-      const driftMs = hb.currentTimeMs - _pbCurrentMs;
-      _opts?.logger('info', `[P2P] hb: follower=${Math.round(hb.currentTimeMs)}ms leader=${Math.round(_pbCurrentMs)}ms drift=${Math.round(driftMs)}ms`);
+      const local = _getTimelineSnapshot();
+      const followerTimelineMs = Number.isFinite(hb.timelineMs) ? hb.timelineMs : hb.currentTimeMs;
+      const followerActualMs = Number.isFinite(hb.actualTimeMs) ? hb.actualTimeMs : hb.currentTimeMs;
+      _followerViews[hb.deviceId] = {
+        currentMs: hb.currentTimeMs,
+        timelineMs: followerTimelineMs,
+        actualTimeMs: followerActualMs,
+        syncedTime: hb.syncedTime,
+        itemIndex: hb.itemIndex,
+        receivedAt: Date.now(),
+      };
+      const driftMs = followerTimelineMs - local.timelineMs;
+      _opts?.logger('info', `[P2P] hb: followerTl=${Math.round(followerTimelineMs)}ms leaderTl=${Math.round(local.timelineMs)}ms drift=${Math.round(driftMs)}ms actualFollower=${Math.round(followerActualMs)}ms actualLeader=${Math.round(_pbCurrentMs)}ms`);
       break;
     }
 
@@ -310,14 +334,28 @@ function _handleMessage(msg: SyncMessage): void {
 function _startHeartbeat(): void {
   _heartbeatTimer = setInterval(() => {
     if (!_connected || _role !== 'follower' || _pbItemIndex < 0) return;
-    _opts?.logger('info', `[P2P] hb sent: pos=${Math.round(_pbCurrentMs)}ms`);
+    const timeline = _getTimelineSnapshot();
+    _opts?.logger('info', `[P2P] hb sent: timeline=${Math.round(timeline.timelineMs)}ms pos=${Math.round(timeline.positionMs)}ms actual=${Math.round(_pbCurrentMs)}ms`);
     _send({
       type: 'HEARTBEAT',
       deviceId: _opts!.deviceId,
       itemIndex: _pbItemIndex,
-      currentTimeMs: _pbCurrentMs,
+      currentTimeMs: timeline.positionMs,
+      timelineMs: timeline.timelineMs,
+      actualTimeMs: _pbCurrentMs,
       syncedTime: getSyncedTime(),
       engineMode: _pbEngineMode,
     });
   }, HEARTBEAT_INTERVAL_MS);
+}
+
+function _getTimelineSnapshot(): { timelineMs: number; positionMs: number } {
+  if (_syncedStartMs > 0) {
+    const elapsed = Math.max(0, getSyncedTime() - _syncedStartMs);
+    const positionMs = _videoDurationMs > 0
+      ? ((elapsed % _videoDurationMs) + _videoDurationMs) % _videoDurationMs
+      : elapsed;
+    return { timelineMs: elapsed, positionMs };
+  }
+  return { timelineMs: _pbCurrentMs, positionMs: _pbCurrentMs };
 }

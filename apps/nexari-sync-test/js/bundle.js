@@ -44,11 +44,18 @@
   };
 
   // src/ntp-client.ts
+  function _monotonicNow() {
+    return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+  }
+  function _resetSyncedTimeBase() {
+    _monoBaseMs = _monotonicNow();
+    _syncedBaseMs = Date.now() + _offsetMs;
+  }
   function getNtpOffset() {
     return _offsetMs;
   }
   function getSyncedTime() {
-    return Date.now() + _offsetMs;
+    return _syncedBaseMs + (_monotonicNow() - _monoBaseMs);
   }
   function syncTime(piBase) {
     return __async(this, null, function* () {
@@ -80,10 +87,11 @@
       const prev = _offsetMs;
       const delta = Math.abs(best.offset - prev);
       _offsetMs = delta > SNAP_THRESHOLD ? best.offset : prev * (1 - EWMA_ALPHA) + best.offset * EWMA_ALPHA;
+      _resetSyncedTimeBase();
       return { offsetMs: Math.round(_offsetMs), rttMs: Math.round(best.rtt), samples: good.length };
     });
   }
-  var NTP_SAMPLES, RTT_LIMIT_MS, SNAP_THRESHOLD, EWMA_ALPHA, _offsetMs;
+  var NTP_SAMPLES, RTT_LIMIT_MS, SNAP_THRESHOLD, EWMA_ALPHA, _offsetMs, _monoBaseMs, _syncedBaseMs;
   var init_ntp_client = __esm({
     "src/ntp-client.ts"() {
       NTP_SAMPLES = 8;
@@ -91,6 +99,8 @@
       SNAP_THRESHOLD = 80;
       EWMA_ALPHA = 0.2;
       _offsetMs = 0;
+      _monoBaseMs = _monotonicNow();
+      _syncedBaseMs = Date.now();
     }
   });
 
@@ -125,6 +135,9 @@
   function setVideoReady(itemIndex, engineMode) {
     _readyItemIndex = itemIndex;
     _readyEngineMode = engineMode;
+    _pbItemIndex = itemIndex;
+    _pbCurrentMs = 0;
+    _pbEngineMode = engineMode;
     if (_connected && _role === "follower") {
       _send({ type: "READY", deviceId: _opts.deviceId, engineMode });
       _opts == null ? void 0 : _opts.logger("info", `[P2P] follower READY sent`);
@@ -261,6 +274,7 @@
     });
   }
   function _handleMessage(msg) {
+    var _a;
     if (!_opts) return;
     switch (msg.type) {
       case "VIDEO_URL":
@@ -272,6 +286,7 @@
           _syncPlaySent = true;
           _opts.logger("info", `[P2P] follower READY received`);
           const startMs = getSyncedTime() + LEADER_START_AHEAD_MS;
+          _syncedStartMs = startMs;
           const syncPlay = { type: "SYNC_PLAY", syncedStartMs: startMs, videoDurationMs: _videoDurationMs, itemIndex: _pbItemIndex >= 0 ? _pbItemIndex : 0 };
           _send(syncPlay);
           _onSyncPlay == null ? void 0 : _onSyncPlay(syncPlay);
@@ -282,6 +297,8 @@
         break;
       case "SYNC_PLAY":
         _syncPlaySent = true;
+        _syncedStartMs = msg.syncedStartMs;
+        if (((_a = msg.videoDurationMs) != null ? _a : 0) > 0) _videoDurationMs = msg.videoDurationMs;
         _opts.logger("info", `[P2P] SYNC_PLAY received: startMs=${msg.syncedStartMs}`);
         _onSyncPlay == null ? void 0 : _onSyncPlay(msg);
         break;
@@ -292,9 +309,19 @@
       case "HEARTBEAT": {
         const hb = msg;
         if (_role !== "leader" || _pbItemIndex < 0 || hb.itemIndex !== _pbItemIndex) break;
-        _followerViews[hb.deviceId] = { currentMs: hb.currentTimeMs, syncedTime: hb.syncedTime, itemIndex: hb.itemIndex, receivedAt: Date.now() };
-        const driftMs = hb.currentTimeMs - _pbCurrentMs;
-        _opts == null ? void 0 : _opts.logger("info", `[P2P] hb: follower=${Math.round(hb.currentTimeMs)}ms leader=${Math.round(_pbCurrentMs)}ms drift=${Math.round(driftMs)}ms`);
+        const local = _getTimelineSnapshot();
+        const followerTimelineMs = Number.isFinite(hb.timelineMs) ? hb.timelineMs : hb.currentTimeMs;
+        const followerActualMs = Number.isFinite(hb.actualTimeMs) ? hb.actualTimeMs : hb.currentTimeMs;
+        _followerViews[hb.deviceId] = {
+          currentMs: hb.currentTimeMs,
+          timelineMs: followerTimelineMs,
+          actualTimeMs: followerActualMs,
+          syncedTime: hb.syncedTime,
+          itemIndex: hb.itemIndex,
+          receivedAt: Date.now()
+        };
+        const driftMs = followerTimelineMs - local.timelineMs;
+        _opts == null ? void 0 : _opts.logger("info", `[P2P] hb: followerTl=${Math.round(followerTimelineMs)}ms leaderTl=${Math.round(local.timelineMs)}ms drift=${Math.round(driftMs)}ms actualFollower=${Math.round(followerActualMs)}ms actualLeader=${Math.round(_pbCurrentMs)}ms`);
         break;
       }
       case "SYNC_ADJUST":
@@ -305,18 +332,29 @@
   function _startHeartbeat() {
     _heartbeatTimer = setInterval(() => {
       if (!_connected || _role !== "follower" || _pbItemIndex < 0) return;
-      _opts == null ? void 0 : _opts.logger("info", `[P2P] hb sent: pos=${Math.round(_pbCurrentMs)}ms`);
+      const timeline = _getTimelineSnapshot();
+      _opts == null ? void 0 : _opts.logger("info", `[P2P] hb sent: timeline=${Math.round(timeline.timelineMs)}ms pos=${Math.round(timeline.positionMs)}ms actual=${Math.round(_pbCurrentMs)}ms`);
       _send({
         type: "HEARTBEAT",
         deviceId: _opts.deviceId,
         itemIndex: _pbItemIndex,
-        currentTimeMs: _pbCurrentMs,
+        currentTimeMs: timeline.positionMs,
+        timelineMs: timeline.timelineMs,
+        actualTimeMs: _pbCurrentMs,
         syncedTime: getSyncedTime(),
         engineMode: _pbEngineMode
       });
     }, HEARTBEAT_INTERVAL_MS);
   }
-  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _videoDurationMs, _syncPlaySent, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
+  function _getTimelineSnapshot() {
+    if (_syncedStartMs > 0) {
+      const elapsed = Math.max(0, getSyncedTime() - _syncedStartMs);
+      const positionMs = _videoDurationMs > 0 ? (elapsed % _videoDurationMs + _videoDurationMs) % _videoDurationMs : elapsed;
+      return { timelineMs: elapsed, positionMs };
+    }
+    return { timelineMs: _pbCurrentMs, positionMs: _pbCurrentMs };
+  }
+  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _videoDurationMs, _syncPlaySent, _syncedStartMs, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
   var init_p2p_sync_client = __esm({
     "src/p2p-sync-client.ts"() {
       init_ntp_client();
@@ -345,6 +383,7 @@
       _heartbeatTimer = null;
       _videoDurationMs = 0;
       _syncPlaySent = false;
+      _syncedStartMs = -1;
       _onSyncPlay = null;
       _onVideoUrl = null;
       _onSetEngine = null;
@@ -473,6 +512,9 @@
   });
 
   // src/player-mse.ts
+  function _localNow() {
+    return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+  }
   function initMsePlayer(container) {
     _teardown();
     _video = document.createElement("video");
@@ -492,7 +534,7 @@
     return __async(this, null, function* () {
       if (!_video) return;
       _itemIndex = itemIndex;
-      _syncedStartMs = -1;
+      _syncedStartMs2 = -1;
       _startScheduled = false;
       logger.info(`[MSE] loading: ${url}`);
       updateHud({ positionMs: 0, expectedMs: 0, driftMs: 0, lastAction: "Buffering\u2026" });
@@ -523,7 +565,7 @@
           _video.play().catch((e) => logger.warn(`[MSE] watchdog play() failed: ${e == null ? void 0 : e.message}`));
         }
       }, 8e3);
-      if (_syncedStartMs > 0) _schedulePlay();
+      if (_syncedStartMs2 > 0) _schedulePlay();
       if (_rVfcSupported) _registerRVFC();
     });
   }
@@ -537,7 +579,7 @@
       logger.info(`[MSE] SYNC_PLAY ignored (play already scheduled)`);
       return;
     }
-    _syncedStartMs = msg.syncedStartMs;
+    _syncedStartMs2 = msg.syncedStartMs;
     if (((_a = msg.videoDurationMs) != null ? _a : 0) > 0) _videoDurationMs2 = msg.videoDurationMs;
     logger.info(`[MSE] SYNC_PLAY received: startMs=${msg.syncedStartMs} durationMs=${_videoDurationMs2} (in ${msg.syncedStartMs - getSyncedTime()}ms)`);
     if (_video && _video.readyState >= 3) _schedulePlay();
@@ -547,7 +589,7 @@
     _startScheduled = true;
     _video.pause();
     _video.currentTime = 0;
-    const wait = _syncedStartMs - getSyncedTime();
+    const wait = _syncedStartMs2 - getSyncedTime();
     if (wait <= 0) {
       logger.warn("[MSE] SYNC_PLAY cue already past \u2014 playing immediately");
       _video.play().catch((e) => logger.warn(`[MSE] play() failed (past cue): ${e == null ? void 0 : e.message}`));
@@ -557,7 +599,7 @@
     const COARSE_THRESHOLD = 50;
     const coarseWait = Math.max(0, wait - COARSE_THRESHOLD);
     setTimeout(() => {
-      const target = _syncedStartMs;
+      const target = _syncedStartMs2;
       function tryPlay() {
         if (getSyncedTime() >= target) {
           _playing = true;
@@ -594,8 +636,8 @@
     if (!_video) return;
     const posMs = meta.mediaTime * 1e3;
     const syncNow = getSyncedTime();
-    const elapsed = syncNow - _syncedStartMs;
-    const expectedMs = _syncedStartMs > 0 && elapsed > 0 ? elapsed : posMs;
+    const elapsed = syncNow - _syncedStartMs2;
+    const expectedMs = _syncedStartMs2 > 0 && elapsed > 0 ? elapsed : posMs;
     const driftMs = posMs - expectedMs;
     setPlaybackState(_itemIndex, posMs, "mse");
     updateHud({ positionMs: posMs, expectedMs, driftMs });
@@ -604,11 +646,11 @@
   function _registerEndedHandler() {
     if (!_video) return;
     _video.addEventListener("ended", () => {
-      if (_syncedStartMs > 0 && _videoDurationMs2 > 0) {
-        const elapsed = getSyncedTime() - _syncedStartMs;
+      if (_syncedStartMs2 > 0 && _videoDurationMs2 > 0) {
+        const elapsed = getSyncedTime() - _syncedStartMs2;
         const expectedMs = (elapsed % _videoDurationMs2 + _videoDurationMs2) % _videoDurationMs2;
         logger.info(`[MSE] loop: elapsed=${Math.round(elapsed)}ms seekTo=${Math.round(expectedMs)}ms`);
-        _lastSeekTime = Date.now();
+        _lastSeekTime = _localNow();
         if (_video) {
           _video.currentTime = expectedMs / 1e3;
           _video.play().catch((e) => logger.warn(`[MSE] loop play() failed: ${e == null ? void 0 : e.message}`));
@@ -624,23 +666,23 @@
   function _startStateTickTimer() {
     _stateTickTimer = setInterval(() => {
       if (!_video || !_playing) return;
-      if (Date.now() - _lastSeekTime < SEEK_SETTLE_MS) return;
+      if (_localNow() - _lastSeekTime < SEEK_SETTLE_MS) return;
       const posMs = _video.currentTime * 1e3;
       const syncNow = getSyncedTime();
       let expectedMs = posMs;
-      if (_syncedStartMs > 0 && _videoDurationMs2 > 0) {
-        const elapsed = syncNow - _syncedStartMs;
+      if (_syncedStartMs2 > 0 && _videoDurationMs2 > 0) {
+        const elapsed = syncNow - _syncedStartMs2;
         expectedMs = (elapsed % _videoDurationMs2 + _videoDurationMs2) % _videoDurationMs2;
       }
       const driftMs = posMs - expectedMs;
       setPlaybackState(_itemIndex, posMs, "mse");
       updateHud({ positionMs: posMs, expectedMs, driftMs });
-      if (_syncedStartMs > 0 && _videoDurationMs2 > 0) {
+      if (_syncedStartMs2 > 0 && _videoDurationMs2 > 0) {
         const nearBoundary = expectedMs < NEAR_END_MS || expectedMs > _videoDurationMs2 - NEAR_END_MS;
         const absDrift = Math.abs(driftMs);
         if (!nearBoundary) {
           if (absDrift > SYNC_SEEK_MS) {
-            _lastSeekTime = Date.now();
+            _lastSeekTime = _localNow();
             logger.info(`[MSE] sync-seek: drift ${Math.round(driftMs)}ms \u2192 ${Math.round(expectedMs)}ms`);
             _video.currentTime = expectedMs / 1e3;
           } else if (driftMs > SYNC_AHEAD_MS) {
@@ -679,13 +721,13 @@
     _ms = null;
     _sb = null;
     _startScheduled = false;
-    _syncedStartMs = -1;
+    _syncedStartMs2 = -1;
     _playing = false;
     _pausedForSync = false;
     _videoDurationMs2 = 0;
     _lastSeekTime = 0;
   }
-  var CHUNK_SIZE, _video, _ms, _sb, _syncedStartMs, _startScheduled, _itemIndex, _stateTickTimer, _rVfcSupported, _syncWatchdog, _videoDurationMs2, _pausedForSync, _playing, _lastSeekTime, SYNC_AHEAD_MS, SYNC_BEHIND_MS, SYNC_SEEK_MS, SEEK_SETTLE_MS, NUDGE_FAST, NUDGE_SLOW, NEAR_END_MS;
+  var CHUNK_SIZE, _video, _ms, _sb, _syncedStartMs2, _startScheduled, _itemIndex, _stateTickTimer, _rVfcSupported, _syncWatchdog, _videoDurationMs2, _pausedForSync, _playing, _lastSeekTime, SYNC_AHEAD_MS, SYNC_BEHIND_MS, SYNC_SEEK_MS, SEEK_SETTLE_MS, NUDGE_FAST, NUDGE_SLOW, NEAR_END_MS;
   var init_player_mse = __esm({
     "src/player-mse.ts"() {
       init_ntp_client();
@@ -696,7 +738,7 @@
       _video = null;
       _ms = null;
       _sb = null;
-      _syncedStartMs = -1;
+      _syncedStartMs2 = -1;
       _startScheduled = false;
       _itemIndex = 0;
       _stateTickTimer = null;
@@ -706,9 +748,9 @@
       _pausedForSync = false;
       _playing = false;
       _lastSeekTime = 0;
-      SYNC_AHEAD_MS = 50;
-      SYNC_BEHIND_MS = 50;
-      SYNC_SEEK_MS = 500;
+      SYNC_AHEAD_MS = 80;
+      SYNC_BEHIND_MS = 80;
+      SYNC_SEEK_MS = 300;
       SEEK_SETTLE_MS = 2500;
       NUDGE_FAST = 1.02;
       NUDGE_SLOW = 0.98;
@@ -891,7 +933,7 @@
     return __async(this, null, function* () {
       if (!_canvas || !_ctx) return;
       _itemIndex2 = itemIndex;
-      _syncedStartMs2 = -1;
+      _syncedStartMs3 = -1;
       _snapOffset = 0;
       updateHud({ lastAction: "Decoding\u2026", decodePercent: 0 });
       try {
@@ -907,9 +949,9 @@
       setVideoDuration(_decoded.durationMs);
       setVideoReady(_itemIndex2, "wasm");
       _syncWatchdog2 = setTimeout(() => {
-        if (_syncedStartMs2 < 0) {
+        if (_syncedStartMs3 < 0) {
           logger.warn("[WASM] watchdog: no SYNC_PLAY after 10s \u2014 playing unsynced");
-          _syncedStartMs2 = getSyncedTime();
+          _syncedStartMs3 = getSyncedTime();
           _startRaf();
         }
       }, 1e4);
@@ -920,8 +962,8 @@
   }
   function _handleSyncPlay2(msg) {
     clearTimeout(_syncWatchdog2);
-    _syncedStartMs2 = msg.syncedStartMs;
-    const wait = _syncedStartMs2 - getSyncedTime();
+    _syncedStartMs3 = msg.syncedStartMs;
+    const wait = _syncedStartMs3 - getSyncedTime();
     logger.info(`[WASM] SYNC_PLAY received: startMs=${msg.syncedStartMs} (in ${Math.round(wait)}ms)`);
     updateHud({ lastAction: `SYNC_PLAY in ${Math.round(wait)}ms` });
     if (!_decoded) {
@@ -936,7 +978,7 @@
     const COARSE_THRESHOLD = 50;
     const coarseWait = Math.max(0, wait - COARSE_THRESHOLD);
     setTimeout(() => {
-      const target = _syncedStartMs2;
+      const target = _syncedStartMs3;
       function tryStart() {
         if (getSyncedTime() >= target) {
           updateHud({ lastAction: "rAF started" });
@@ -956,7 +998,7 @@
     }
     if (msg.action === "nudge" && msg.driftRate !== void 0) {
       const shiftMs = (msg.driftRate - 1) * 1e3;
-      _syncedStartMs2 -= shiftMs;
+      _syncedStartMs3 -= shiftMs;
       logger.drift(`[WASM] nudge: shifted syncedStartMs by ${Math.round(-shiftMs)}ms`, msg.driftMs);
     }
   }
@@ -969,7 +1011,7 @@
     const frames = _decoded.frames;
     const frameDurationMs = 1e3 / _decoded.fps;
     const totalFrames = frames.length;
-    const elapsed = getSyncedTime() - _syncedStartMs2 + _snapOffset;
+    const elapsed = getSyncedTime() - _syncedStartMs3 + _snapOffset;
     let frameIdx = Math.floor(elapsed / frameDurationMs);
     frameIdx = (frameIdx % totalFrames + totalFrames) % totalFrames;
     const posMs = frameIdx * frameDurationMs;
@@ -981,9 +1023,9 @@
     _rafHandle = requestAnimationFrame(_rafTick);
   }
   function _getCurrentPositionMs() {
-    if (!_decoded || _syncedStartMs2 < 0) return 0;
+    if (!_decoded || _syncedStartMs3 < 0) return 0;
     const frameDurationMs = 1e3 / _decoded.fps;
-    const elapsed = getSyncedTime() - _syncedStartMs2 + _snapOffset;
+    const elapsed = getSyncedTime() - _syncedStartMs3 + _snapOffset;
     const frameIdx = Math.floor(elapsed / frameDurationMs);
     return frameIdx * frameDurationMs;
   }
@@ -999,10 +1041,10 @@
     }
     _ctx = null;
     _decoded = null;
-    _syncedStartMs2 = -1;
+    _syncedStartMs3 = -1;
     _snapOffset = 0;
   }
-  var _canvas, _ctx, _decoded, _syncedStartMs2, _rafHandle, _itemIndex2, _snapOffset, _syncWatchdog2;
+  var _canvas, _ctx, _decoded, _syncedStartMs3, _rafHandle, _itemIndex2, _snapOffset, _syncWatchdog2;
   var init_player_wasm = __esm({
     "src/player-wasm.ts"() {
       init_ntp_client();
@@ -1013,7 +1055,7 @@
       _canvas = null;
       _ctx = null;
       _decoded = null;
-      _syncedStartMs2 = -1;
+      _syncedStartMs3 = -1;
       _rafHandle = 0;
       _itemIndex2 = 0;
       _snapOffset = 0;
@@ -1022,6 +1064,9 @@
   });
 
   // src/player-avplay.ts
+  function _localNow2() {
+    return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+  }
   function _av() {
     var _a, _b;
     return (_b = (_a = window.webapis) == null ? void 0 : _a.avplay) != null ? _b : null;
@@ -1046,7 +1091,7 @@
     const av = _av();
     if (!av) return Promise.reject(new Error("[AVPlay] webapis.avplay not available"));
     _itemIndex3 = itemIndex;
-    _syncedStartMs3 = -1;
+    _syncedStartMs4 = -1;
     _startScheduled2 = false;
     _seekInFlight = false;
     _playing2 = false;
@@ -1115,6 +1160,7 @@
       try {
         logger.info(`[AVPlay] open: ${absUri}`);
         av.open(absUri);
+        _disableInternalBuffering(av);
         av.setDisplayRect(0, 0, 1920, 1080);
         av.setDisplayMethod("PLAYER_DISPLAY_MODE_FULL_SCREEN");
         av.setListener({
@@ -1151,7 +1197,7 @@
             _syncWatchdog3 = setTimeout(() => {
               if (!_playing2 && !_tearingDown) {
                 logger.warn("[AVPlay] watchdog: no SYNC_PLAY in 8s \u2014 playing unsynced");
-                if (_syncedStartMs3 <= 0) _syncedStartMs3 = getSyncedTime();
+                if (_syncedStartMs4 <= 0) _syncedStartMs4 = getSyncedTime();
                 _playing2 = true;
                 try {
                   av.play();
@@ -1159,7 +1205,7 @@
                 }
               }
             }, 8e3);
-            if (_syncedStartMs3 > 0) _schedulePlay2();
+            if (_syncedStartMs4 > 0) _schedulePlay2();
             resolve();
           },
           (e) => {
@@ -1174,6 +1220,30 @@
       }
     });
   }
+  function _disableInternalBuffering(av) {
+    if (typeof av.setBufferingParam !== "function") {
+      logger.warn("[AVPlay] setBufferingParam unavailable");
+      return;
+    }
+    const setZero = (option) => {
+      var _a, _b;
+      try {
+        av.setBufferingParam(option, "PLAYER_BUFFER_SIZE_IN_SECOND", 0);
+        return true;
+      } catch (e1) {
+        try {
+          av.setBufferingParam(option, "0");
+          return true;
+        } catch (e2) {
+          logger.warn(`[AVPlay] setBufferingParam ${option}=0 failed: ${(_b = (_a = e2 == null ? void 0 : e2.message) != null ? _a : e1 == null ? void 0 : e1.message) != null ? _b : e2}`);
+          return false;
+        }
+      }
+    };
+    const playOk = setZero("PLAYER_BUFFER_FOR_PLAY");
+    const resumeOk = setZero("PLAYER_BUFFER_FOR_RESUME");
+    if (playOk || resumeOk) logger.info(`[AVPlay] buffering disabled: play=${playOk} resume=${resumeOk}`);
+  }
   function _handleSyncPlay3(msg) {
     var _a;
     clearTimeout(_syncWatchdog3);
@@ -1181,7 +1251,7 @@
       logger.info("[AVPlay] SYNC_PLAY ignored (play already scheduled)");
       return;
     }
-    _syncedStartMs3 = msg.syncedStartMs;
+    _syncedStartMs4 = msg.syncedStartMs;
     if (((_a = msg.videoDurationMs) != null ? _a : 0) > 0) _videoDurationMs3 = msg.videoDurationMs;
     logger.info(
       `[AVPlay] SYNC_PLAY: startMs=${msg.syncedStartMs} durationMs=${_videoDurationMs3} (in ${msg.syncedStartMs - getSyncedTime()}ms)`
@@ -1198,7 +1268,7 @@
       if (state === "PLAYING") av.pause();
     } catch (e) {
     }
-    const wait = _syncedStartMs3 - getSyncedTime();
+    const wait = _syncedStartMs4 - getSyncedTime();
     if (wait <= 0) {
       logger.warn("[AVPlay] SYNC_PLAY cue already past \u2014 playing immediately");
       _playing2 = true;
@@ -1213,7 +1283,7 @@
     const COARSE_THRESHOLD = 50;
     const coarseWait = Math.max(0, wait - COARSE_THRESHOLD);
     setTimeout(() => {
-      const target = _syncedStartMs3;
+      const target = _syncedStartMs4;
       function tryPlay() {
         if (_tearingDown) return;
         if (getSyncedTime() >= target) {
@@ -1238,18 +1308,18 @@
     if (_seekInFlight || _tearingDown) return;
     const av = _av();
     if (!av) return;
-    if (_syncedStartMs3 <= 0 || _videoDurationMs3 <= 0) {
+    if (_syncedStartMs4 <= 0 || _videoDurationMs3 <= 0) {
       logger.info("[AVPlay] loop: no syncedStart \u2014 seeking to 0");
       _seekInFlight = true;
       av.seekTo(0, () => {
-        _lastSeekTime2 = Date.now();
+        _lastSeekTime2 = _localNow2();
         _seekInFlight = false;
         if (!_tearingDown) try {
           av.play();
         } catch (e) {
         }
       }, () => {
-        _lastSeekTime2 = Date.now();
+        _lastSeekTime2 = _localNow2();
         _seekInFlight = false;
         if (!_tearingDown) try {
           av.play();
@@ -1258,12 +1328,12 @@
       });
       return;
     }
-    const elapsed = getSyncedTime() - _syncedStartMs3;
+    const elapsed = getSyncedTime() - _syncedStartMs4;
     const expectedMs = (elapsed % _videoDurationMs3 + _videoDurationMs3) % _videoDurationMs3;
     logger.info(`[AVPlay] loop: elapsed=${Math.round(elapsed)}ms seekTo=${Math.round(expectedMs)}ms`);
     _seekInFlight = true;
     const onDone = () => {
-      _lastSeekTime2 = Date.now();
+      _lastSeekTime2 = _localNow2();
       _seekInFlight = false;
       if (_tearingDown) return;
       try {
@@ -1276,7 +1346,7 @@
       av.seekTo(Math.round(expectedMs), onDone, (e) => {
         var _a2;
         logger.warn(`[AVPlay] loop seekTo failed: ${(_a2 = e == null ? void 0 : e.message) != null ? _a2 : e} \u2014 playing from 0`);
-        _lastSeekTime2 = Date.now();
+        _lastSeekTime2 = _localNow2();
         _seekInFlight = false;
         if (!_tearingDown) try {
           av.play();
@@ -1285,7 +1355,7 @@
       });
     } catch (e) {
       logger.warn(`[AVPlay] loop seekTo threw: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
-      _lastSeekTime2 = Date.now();
+      _lastSeekTime2 = _localNow2();
       _seekInFlight = false;
       try {
         av.play();
@@ -1297,41 +1367,48 @@
     _stateTickTimer2 = setInterval(() => {
       var _a;
       if (!_playing2 || _tearingDown) return;
-      if (_seekInFlight || Date.now() - _lastSeekTime2 < SEEK_SETTLE_MS2) return;
+      const now = _localNow2();
+      if (_seekInFlight || now - _lastSeekTime2 < SEEK_SETTLE_MS2) return;
       const av = _av();
       if (!av) return;
       const posMs = av.getCurrentTime();
       const syncNow = getSyncedTime();
       let expectedMs = posMs;
-      if (_syncedStartMs3 > 0 && _videoDurationMs3 > 0) {
-        const elapsed = syncNow - _syncedStartMs3;
+      if (_syncedStartMs4 > 0 && _videoDurationMs3 > 0) {
+        const elapsed = syncNow - _syncedStartMs4;
         expectedMs = (elapsed % _videoDurationMs3 + _videoDurationMs3) % _videoDurationMs3;
       }
       const driftMs = posMs - expectedMs;
       setPlaybackState(_itemIndex3, posMs, "avplay");
       updateHud({ positionMs: posMs, expectedMs, driftMs });
-      if (_syncedStartMs3 > 0 && _videoDurationMs3 > 0) {
+      if (_syncedStartMs4 > 0 && _videoDurationMs3 > 0) {
         const nearBoundary = expectedMs < NEAR_END_MS2 || expectedMs > _videoDurationMs3 - NEAR_END_MS2;
         const absDrift = Math.abs(driftMs);
-        if (!nearBoundary && absDrift > SYNC_SEEK_MS2) {
+        if (!nearBoundary && absDrift > DRIFT_NOOP_MS && absDrift < SYNC_SEEK_MS2) {
+          if (now - _lastSoftDriftLogTime > 1e3) {
+            _lastSoftDriftLogTime = now;
+            logger.info(`[AVPlay] soft drift ${Math.round(driftMs)}ms \u2014 no fractional speed support; holding`);
+          }
+        }
+        if (!nearBoundary && absDrift >= SYNC_SEEK_MS2) {
           logger.info(`[AVPlay] sync-seek: drift ${Math.round(driftMs)}ms \u2192 ${Math.round(expectedMs)}ms`);
           _seekInFlight = true;
           try {
             av.seekTo(
               Math.round(expectedMs),
               () => {
-                _lastSeekTime2 = Date.now();
+                _lastSeekTime2 = _localNow2();
                 _seekInFlight = false;
               },
               (e) => {
                 var _a2;
-                _lastSeekTime2 = Date.now();
+                _lastSeekTime2 = _localNow2();
                 _seekInFlight = false;
                 logger.warn(`[AVPlay] sync-seek failed: ${(_a2 = e == null ? void 0 : e.message) != null ? _a2 : e}`);
               }
             );
           } catch (e) {
-            _lastSeekTime2 = Date.now();
+            _lastSeekTime2 = _localNow2();
             _seekInFlight = false;
             logger.warn(`[AVPlay] seekTo threw: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
           }
@@ -1365,21 +1442,23 @@
     _playing2 = false;
     _seekInFlight = false;
     _lastSeekTime2 = 0;
+    _lastSoftDriftLogTime = 0;
     _startScheduled2 = false;
-    _syncedStartMs3 = -1;
+    _syncedStartMs4 = -1;
     _videoDurationMs3 = 0;
   }
-  var SYNC_SEEK_MS2, NEAR_END_MS2, SEEK_SETTLE_MS2, _syncedStartMs3, _startScheduled2, _itemIndex3, _stateTickTimer2, _syncWatchdog3, _videoDurationMs3, _playing2, _seekInFlight, _lastSeekTime2, _tearingDown, _objElem;
+  var DRIFT_NOOP_MS, SYNC_SEEK_MS2, NEAR_END_MS2, SEEK_SETTLE_MS2, _syncedStartMs4, _startScheduled2, _itemIndex3, _stateTickTimer2, _syncWatchdog3, _videoDurationMs3, _playing2, _seekInFlight, _lastSeekTime2, _lastSoftDriftLogTime, _tearingDown, _objElem;
   var init_player_avplay = __esm({
     "src/player-avplay.ts"() {
       init_ntp_client();
       init_p2p_sync_client();
       init_perf_hud();
       init_logger();
-      SYNC_SEEK_MS2 = 200;
+      DRIFT_NOOP_MS = 80;
+      SYNC_SEEK_MS2 = 300;
       NEAR_END_MS2 = 500;
-      SEEK_SETTLE_MS2 = 1e3;
-      _syncedStartMs3 = -1;
+      SEEK_SETTLE_MS2 = 2500;
+      _syncedStartMs4 = -1;
       _startScheduled2 = false;
       _itemIndex3 = 0;
       _stateTickTimer2 = null;
@@ -1388,6 +1467,7 @@
       _playing2 = false;
       _seekInFlight = false;
       _lastSeekTime2 = 0;
+      _lastSoftDriftLogTime = 0;
       _tearingDown = false;
       _objElem = null;
     }
@@ -1465,11 +1545,10 @@
         } else {
           _setStatus("Follower \u2014 waiting for VIDEO_URL\u2026");
           setTimeout(() => {
-            if (_videoUrl && !_container.querySelector("video, canvas")) {
-              logger.warn("[App] follower fallback: starting engine without leader sync");
-              _activateEngine(_currentEngine, _videoUrl);
+            if (_videoUrl && !_container.querySelector('video, canvas, object[type="application/avplayer"]')) {
+              logger.warn("[App] follower still waiting for leader VIDEO_URL \u2014 not starting unsynced");
             }
-          }, 5e3);
+          }, 12e3);
         }
       }));
       function _activateEngine(engine, url) {

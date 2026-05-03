@@ -30,7 +30,7 @@ export interface MsgSetEngine {
 
 /**
  * Leader → Follower: start playback at the given synced wall-clock time.
- * syncedStartMs is a getSyncedTime() value (Date.now() + ntpOffset).
+ * syncedStartMs is a getSyncedTime() value (NTP-adjusted monotonic time).
  */
 export interface MsgSyncPlay {
   type: 'SYNC_PLAY';
@@ -44,8 +44,10 @@ export interface MsgHeartbeat {
   type: 'HEARTBEAT';
   deviceId: string;
   itemIndex: number;
-  currentTimeMs: number;
-  syncedTime: number;  // getSyncedTime() at the instant of measurement
+  currentTimeMs: number;  // stable timeline position, modulo videoDurationMs when known
+  timelineMs?: number;    // stable unwrapped timeline: getSyncedTime() - syncedStartMs
+  actualTimeMs?: number;  // decoder position from video/AVPlay, for diagnostics only
+  syncedTime: number;     // getSyncedTime() at the instant of measurement
   engineMode: EngineMode;
 }
 

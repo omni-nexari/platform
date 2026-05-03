@@ -103,14 +103,13 @@ window.addEventListener('load', async () => {
     _activateEngine(_currentEngine, _videoUrl);
   } else {
     _setStatus('Follower — waiting for VIDEO_URL…');
-    // Follower activates engine when VIDEO_URL arrives (onVideoUrl above)
-    // Fallback: if we already have a URL and no DC yet, start directly after 5s
+    // Follower activates engine only when VIDEO_URL arrives (onVideoUrl above).
+    // Starting unsynced makes heartbeat/state logs stale and destabilizes the test.
     setTimeout(() => {
-      if (_videoUrl && !_container.querySelector('video, canvas')) {
-        logger.warn('[App] follower fallback: starting engine without leader sync');
-        _activateEngine(_currentEngine, _videoUrl);
+      if (_videoUrl && !_container.querySelector('video, canvas, object[type="application/avplayer"]')) {
+        logger.warn('[App] follower still waiting for leader VIDEO_URL — not starting unsynced');
       }
-    }, 5000);
+    }, 12000);
   }
 });
 
