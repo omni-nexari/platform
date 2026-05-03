@@ -616,8 +616,8 @@ export default function OrgDashboardPage() {
               error={summary?.deviceError ?? 0}
               powerOn={summary?.devicePowerOn ?? 0}
               powerOff={summary?.devicePowerOff ?? 0}
-              onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}`)}
-              onAdd={() => selectedWsId && navigate(`/workspaces/${selectedWsId}`)}
+              onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/devices/groups`)}
+              onAdd={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/devices/groups`)}
             />
             <ContentCard
               stats={summary?.contentStats ?? []}

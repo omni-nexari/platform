@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useParams, useNavigate } from 'react-router';
+import { useParams, useNavigate, useSearchParams } from 'react-router';
 import { useState, useMemo } from 'react';
 import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
@@ -104,6 +104,8 @@ export default function DeviceGroupsPage() {
   const [wizard, setWizard] = useState<WizardState>(INITIAL_WIZARD);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deviceSearch, setDeviceSearch] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const view = (searchParams.get('view') ?? 'groups') as 'groups' | 'singles';
 
   // ── Queries ───────────────────────────────────────────────────────────────
 
@@ -116,8 +118,9 @@ export default function DeviceGroupsPage() {
   const { data: allDevices = [], isLoading: devicesLoading } = useQuery<DeviceLite[]>({
     queryKey: ['devices', wsId],
     queryFn: () => api.get(`/devices?workspaceId=${wsId}`),
-    enabled: wizard.open && wizard.step === 2 && !!wsId,
+    enabled: !!wsId,
     staleTime: 30_000,
+    refetchInterval: 15_000,
   });
 
   const filteredDevices = useMemo(() => {
@@ -206,49 +209,108 @@ export default function DeviceGroupsPage() {
         }
       />
 
-      {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}
-        </div>
-      ) : groups.length === 0 ? (
-        <EmptyState
-          icon={<Layers className="w-8 h-8" />}
-          title="No device groups"
-          description="Create groups to organise devices for sync playback, video walls, or physical locations."
-          action={<button className="ui-btn-primary" onClick={openWizard}>New Group</button>}
-        />
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {groups.map((group) => {
-            const meta = TYPE_META[group.type] ?? TYPE_META.location;
-            return (
-              <div
-                key={group.id}
-                className="ui-card p-4 flex flex-col gap-3 cursor-pointer hover:border-[var(--blue)] transition-colors"
-                onClick={() => navigate(`/workspaces/${wsId}/devices/groups/${group.id}`)}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-[var(--surface)] flex items-center justify-center text-[var(--text-muted)]">
-                      {meta.icon}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-[var(--text)] truncate">{group.name}</p>
-                      <p className="text-xs text-[var(--text-muted)]">
-                        {group.memberCount} device{group.memberCount !== 1 ? 's' : ''}
-                      </p>
-                    </div>
+      {/* Singles / Groups filter */}
+      <div className="flex items-center gap-1 rounded-lg border border-[var(--card-border)] overflow-hidden text-xs self-start">
+        {(['groups', 'singles'] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => {
+              const next = new URLSearchParams(searchParams);
+              if (v === 'groups') next.delete('view'); else next.set('view', v);
+              setSearchParams(next, { replace: true });
+            }}
+            className={`px-3 py-1.5 capitalize transition-colors ${
+              view === v
+                ? 'bg-[var(--blue)] text-white'
+                : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+            }`}
+          >
+            {v === 'groups' ? 'Groups' : 'Singles'}
+          </button>
+        ))}
+      </div>
+
+      {/* Singles view */}
+      {view === 'singles' && (
+        devicesLoading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+          </div>
+        ) : allDevices.length === 0 ? (
+          <EmptyState
+            icon={<Monitor className="w-8 h-8" />}
+            title="No devices"
+            description="Pair your first device to get started."
+          />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {allDevices.map((d) => {
+              const dot = d.status === 'online' ? 'bg-emerald-400' : d.status === 'error' ? 'bg-red-400' : 'bg-white/20';
+              return (
+                <div
+                  key={d.id}
+                  className="ui-card p-4 flex items-center gap-3 cursor-pointer hover:border-[var(--blue)] transition-colors"
+                  onClick={() => navigate(`/workspaces/${wsId}/devices/${d.id}`)}
+                >
+                  <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${dot}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-[var(--text)] truncate">{d.name}</p>
+                    <p className="text-xs text-[var(--text-muted)] capitalize">{d.status}</p>
                   </div>
                   <ChevronRight className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
                 </div>
-                {group.description && (
-                  <p className="text-xs text-[var(--text-muted)] line-clamp-2">{group.description}</p>
-                )}
-                <Badge tone={meta.tone}>{meta.label}</Badge>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )
+      )}
+
+      {/* Groups view */}
+      {view === 'groups' && (
+        isLoading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}
+          </div>
+        ) : groups.length === 0 ? (
+          <EmptyState
+            icon={<Layers className="w-8 h-8" />}
+            title="No device groups"
+            description="Create groups to organise devices for sync playback, video walls, or physical locations."
+            action={<button className="ui-btn-primary" onClick={openWizard}>New Group</button>}
+          />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {groups.map((group) => {
+              const meta = TYPE_META[group.type] ?? TYPE_META.location;
+              return (
+                <div
+                  key={group.id}
+                  className="ui-card p-4 flex flex-col gap-3 cursor-pointer hover:border-[var(--blue)] transition-colors"
+                  onClick={() => navigate(`/workspaces/${wsId}/devices/groups/${group.id}`)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-[var(--surface)] flex items-center justify-center text-[var(--text-muted)]">
+                        {meta.icon}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-[var(--text)] truncate">{group.name}</p>
+                        <p className="text-xs text-[var(--text-muted)]">
+                          {group.memberCount} device{group.memberCount !== 1 ? 's' : ''}
+                        </p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                  </div>
+                  {group.description && (
+                    <p className="text-xs text-[var(--text-muted)] line-clamp-2">{group.description}</p>
+                  )}
+                  <Badge tone={meta.tone}>{meta.label}</Badge>
+                </div>
+              );
+            })}
+          </div>
+        )
       )}
 
       {/* ── Creation wizard ─────────────────────────────────────────────────── */}
