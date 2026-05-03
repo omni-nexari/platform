@@ -47,71 +47,82 @@
   function _monotonicNow() {
     return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
   }
+  function _readDeviceTimeMs() {
+    var _a, _b, _c;
+    try {
+      const tzDate = (_c = (_b = (_a = window.tizen) == null ? void 0 : _a.time) == null ? void 0 : _b.getCurrentDateTime) == null ? void 0 : _c.call(_b);
+      if (tzDate) {
+        const utc = typeof tzDate.toUTC === "function" ? tzDate.toUTC() : tzDate;
+        const ms = Date.UTC(
+          typeof utc.getUTCFullYear === "function" ? utc.getUTCFullYear() : utc.getFullYear(),
+          typeof utc.getUTCMonth === "function" ? utc.getUTCMonth() : utc.getMonth(),
+          typeof utc.getUTCDate === "function" ? utc.getUTCDate() : utc.getDate(),
+          typeof utc.getUTCHours === "function" ? utc.getUTCHours() : utc.getHours(),
+          typeof utc.getUTCMinutes === "function" ? utc.getUTCMinutes() : utc.getMinutes(),
+          typeof utc.getUTCSeconds === "function" ? utc.getUTCSeconds() : utc.getSeconds(),
+          typeof utc.getUTCMilliseconds === "function" ? utc.getUTCMilliseconds() : utc.getMilliseconds()
+        );
+        if (isFinite(ms)) {
+          _clockSource = "tizen-time";
+          return ms;
+        }
+      }
+    } catch (e) {
+    }
+    _clockSource = "date-now";
+    return Date.now();
+  }
   function _resetSyncedTimeBase() {
     _monoBaseMs = _monotonicNow();
-    _syncedBaseMs = Date.now() + _offsetMs;
+    _rawBaseMs = _readDeviceTimeMs();
+    _syncedBaseMs = _rawBaseMs + _offsetMs;
   }
-  function _applyOffsetSample(offset, rtt, samples) {
+  function _applyOffsetSample(offset, rtt, samples, source) {
     const prev = _offsetMs;
     const delta = Math.abs(offset - prev);
     _offsetMs = delta > SNAP_THRESHOLD ? offset : prev * (1 - EWMA_ALPHA) + offset * EWMA_ALPHA;
     _resetSyncedTimeBase();
+    _clockSource = source;
     return { offsetMs: Math.round(_offsetMs), rttMs: Math.round(rtt), samples };
+  }
+  function initializeDeviceClock() {
+    _resetSyncedTimeBase();
   }
   function getNtpOffset() {
     return _offsetMs;
   }
+  function getClockSource() {
+    return _clockSource;
+  }
+  function getLocalClockTime() {
+    return _rawBaseMs + (_monotonicNow() - _monoBaseMs);
+  }
   function getSyncedTime() {
     return _syncedBaseMs + (_monotonicNow() - _monoBaseMs);
   }
-  function observeServerTime(serverTimestampMs, t0Ms, t3Ms) {
-    const ts = Number(serverTimestampMs);
-    if (!isFinite(ts)) return null;
-    const rtt = Math.max(0, t3Ms - t0Ms);
+  function observeRemoteClock(remoteReceiveMs, remoteSendMs, localSendMs, localReceiveMs, samples, source = "leader") {
+    const t0 = Number(localSendMs);
+    const t1 = Number(remoteReceiveMs);
+    const t2 = Number(remoteSendMs);
+    const t3 = Number(localReceiveMs);
+    if (![t0, t1, t2, t3].every(isFinite)) return null;
+    const remoteProcessingMs = Math.max(0, t2 - t1);
+    const rtt = Math.max(0, t3 - t0 - remoteProcessingMs);
     if (rtt > RTT_LIMIT_MS) return null;
-    const offset = ts - t0Ms - rtt / 2;
-    return _applyOffsetSample(offset, rtt, 1);
+    const offset = (t1 - t0 + (t2 - t3)) / 2;
+    return _applyOffsetSample(offset, rtt, samples, source);
   }
-  function syncTime(piBase) {
-    return __async(this, null, function* () {
-      const url = `${piBase}/time`;
-      const good = [];
-      for (let i = 0; i < NTP_SAMPLES; i++) {
-        try {
-          const t0 = Date.now();
-          const ctrl = new AbortController();
-          const tid = setTimeout(() => ctrl.abort(), 1500);
-          const res = yield fetch(url, { signal: ctrl.signal });
-          clearTimeout(tid);
-          const t3 = Date.now();
-          const json = yield res.json();
-          const ts = Number(json == null ? void 0 : json.timestamp);
-          if (!isFinite(ts)) continue;
-          const rtt = t3 - t0;
-          if (rtt > RTT_LIMIT_MS) continue;
-          good.push({ offset: ts - t0 - rtt / 2, rtt });
-        } catch (e) {
-        }
-        yield new Promise((r) => setTimeout(r, 20));
-      }
-      if (good.length === 0) {
-        return { offsetMs: _offsetMs, rttMs: 0, samples: 0 };
-      }
-      good.sort((a, b) => a.rtt - b.rtt);
-      const best = good[0];
-      return _applyOffsetSample(best.offset, best.rtt, good.length);
-    });
-  }
-  var NTP_SAMPLES, RTT_LIMIT_MS, SNAP_THRESHOLD, EWMA_ALPHA, _offsetMs, _monoBaseMs, _syncedBaseMs;
+  var RTT_LIMIT_MS, SNAP_THRESHOLD, EWMA_ALPHA, _offsetMs, _monoBaseMs, _rawBaseMs, _syncedBaseMs, _clockSource;
   var init_ntp_client = __esm({
     "src/ntp-client.ts"() {
-      NTP_SAMPLES = 8;
       RTT_LIMIT_MS = 300;
       SNAP_THRESHOLD = 80;
       EWMA_ALPHA = 0.2;
       _offsetMs = 0;
       _monoBaseMs = _monotonicNow();
-      _syncedBaseMs = Date.now();
+      _rawBaseMs = _readDeviceTimeMs();
+      _syncedBaseMs = _rawBaseMs;
+      _clockSource = "device";
     }
   });
 
@@ -138,6 +149,14 @@
     var _a;
     _opts = opts;
     _groupId = (_a = opts.groupId) != null ? _a : "synctest-001";
+    _role = "pending";
+    _connected = false;
+    _peerDeviceId = null;
+    _signalPollSince = 0;
+    _syncPlaySent = false;
+    _readySent = false;
+    _syncedStartMs = -1;
+    _resetLeaderClockSync();
     _opts.logger("info", `[P2P] init: deviceId=${opts.deviceId}`);
     _startRegister();
     _startPeerPoll();
@@ -150,8 +169,7 @@
     _pbCurrentMs = 0;
     _pbEngineMode = engineMode;
     if (_connected && _role === "follower") {
-      _send({ type: "READY", deviceId: _opts.deviceId, engineMode });
-      _opts == null ? void 0 : _opts.logger("info", `[P2P] follower READY sent`);
+      _maybeSendReady("video-ready");
     }
   }
   function setPlaybackState(itemIndex, currentTimeMs, engineMode) {
@@ -211,7 +229,7 @@
         const res = yield fetch(`${_opts.piBase}/api/v1/test-sync/peers?groupId=${_groupId}`);
         const data = yield res.json();
         _observeServerTime(data.serverTimeMs, t0, Date.now(), "peers");
-        const now = Date.now();
+        const now = typeof data.serverTimeMs === "number" ? data.serverTimeMs : Date.now();
         const peers = data.peers.filter(
           (p) => p.deviceId !== _opts.deviceId && (p.registeredAt == null || now - p.registeredAt < PEER_MAX_AGE_MS)
         );
@@ -228,16 +246,14 @@
         _role = _opts.deviceId < peer.deviceId ? "leader" : "follower";
         _connected = true;
         _opts.logger("info", `[P2P] paired with ${peer.deviceId} -> self is ${_role}`);
+        if (_role === "follower") _startLeaderClockSync();
         _doRegister();
         clearInterval(_peerPollTimer);
         if (_role === "leader" && _pendingVideoUrl) {
           _send({ type: "VIDEO_URL", url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
           _opts.logger("info", `[P2P] leader sent VIDEO_URL on connect: ${_pendingVideoUrl}`);
         }
-        if (_role === "follower" && _readyItemIndex >= 0) {
-          _send({ type: "READY", deviceId: _opts.deviceId, engineMode: _readyEngineMode });
-          _opts.logger("info", `[P2P] follower sent READY on connect`);
-        }
+        if (_role === "follower" && _readyItemIndex >= 0) _maybeSendReady("connect");
         _startHeartbeat();
       } catch (e) {
         _opts == null ? void 0 : _opts.logger("warn", `[P2P] peer poll failed: ${e == null ? void 0 : e.message}`);
@@ -274,15 +290,15 @@
           if (entry.from && entry.from !== _peerDeviceId) {
             _opts == null ? void 0 : _opts.logger("info", `[P2P] re-routing peer: ${_peerDeviceId != null ? _peerDeviceId : "none"} \u2192 ${entry.from}`);
             _peerDeviceId = entry.from;
+            _readySent = false;
+            _resetLeaderClockSync();
             const newRole = _opts.deviceId < entry.from ? "leader" : "follower";
             if (newRole !== _role) {
               _opts == null ? void 0 : _opts.logger("info", `[P2P] role updated: ${_role} \u2192 ${newRole}`);
               _role = newRole;
             }
-            if (_role === "follower" && _readyItemIndex >= 0 && !_syncPlaySent) {
-              _send({ type: "READY", deviceId: _opts.deviceId, engineMode: _readyEngineMode });
-              _opts == null ? void 0 : _opts.logger("info", `[P2P] follower READY sent after re-route`);
-            }
+            if (_role === "follower") _startLeaderClockSync();
+            if (_role === "follower" && _readyItemIndex >= 0 && !_syncPlaySent) _maybeSendReady("re-route");
             if (_role === "leader" && _pendingVideoUrl) {
               _send({ type: "VIDEO_URL", url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
               _opts == null ? void 0 : _opts.logger("info", `[P2P] leader re-sent VIDEO_URL after re-route`);
@@ -298,16 +314,11 @@
     });
   }
   function _observeServerTime(serverTimeMs, t0, t3, source) {
-    if (_syncedStartMs > 0 || typeof serverTimeMs !== "number") return;
+    void t0;
+    void t3;
+    void source;
+    if (typeof serverTimeMs !== "number") return;
     if (_relaySessionStartedAtMs <= 0) _relaySessionStartedAtMs = serverTimeMs;
-    const before = getNtpOffset();
-    const result = observeServerTime(serverTimeMs, t0, t3);
-    if (!result) return;
-    const now = Date.now();
-    if (Math.abs(result.offsetMs - before) >= 250 && now - _lastClockLogTime > 5e3) {
-      _lastClockLogTime = now;
-      _opts == null ? void 0 : _opts.logger("info", `[P2P] relay clock calibrated via ${source}: offset=${result.offsetMs}ms rtt=${result.rttMs}ms`);
-    }
   }
   function _isStaleSignal(entry) {
     const at = Number(entry.at);
@@ -318,6 +329,100 @@
       _opts == null ? void 0 : _opts.logger("info", `[P2P] ignored stale signal idx=${entry.idx} from=${entry.from}`);
     }
     return true;
+  }
+  function _resetLeaderClockSync() {
+    clearInterval(_clockProbeTimer);
+    _clockProbeTimer = null;
+    _clockProbeSeq = 0;
+    _clockSyncStartedAt = 0;
+    _leaderClockSamples = 0;
+    _leaderClockBestRtt = Number.POSITIVE_INFINITY;
+    _leaderClockReady = false;
+    _lastReadyBlockedLogTime = 0;
+  }
+  function _startLeaderClockSync() {
+    if (!_opts || _role !== "follower" || !_peerDeviceId || _leaderClockReady || _clockProbeTimer) return;
+    _clockSyncStartedAt = Date.now();
+    _opts.logger("info", "[P2P] leader-clock sync started");
+    _sendClockProbe();
+    _clockProbeTimer = setInterval(_sendClockProbe, CLOCK_SYNC_INTERVAL_MS);
+  }
+  function _sendClockProbe() {
+    if (!_opts || _role !== "follower" || !_peerDeviceId || _syncPlaySent) {
+      clearInterval(_clockProbeTimer);
+      _clockProbeTimer = null;
+      return;
+    }
+    if (_leaderClockReady) {
+      clearInterval(_clockProbeTimer);
+      _clockProbeTimer = null;
+      return;
+    }
+    const elapsed = Date.now() - _clockSyncStartedAt;
+    if (elapsed > CLOCK_SYNC_TIMEOUT_MS && _leaderClockSamples > 0) {
+      _markLeaderClockReady("timeout-with-samples");
+      return;
+    }
+    _send({
+      type: "CLOCK_PROBE",
+      probeId: ++_clockProbeSeq,
+      clientSendMs: getLocalClockTime()
+    });
+  }
+  function _handleClockProbe(msg) {
+    if (_role !== "leader") return;
+    const leaderReceiveMs = getSyncedTime();
+    _send({
+      type: "CLOCK_REPLY",
+      probeId: msg.probeId,
+      clientSendMs: msg.clientSendMs,
+      leaderReceiveMs,
+      leaderSendMs: getSyncedTime()
+    });
+  }
+  function _handleClockReply(msg) {
+    if (_role !== "follower" || _leaderClockReady) return;
+    const result = observeRemoteClock(
+      msg.leaderReceiveMs,
+      msg.leaderSendMs,
+      msg.clientSendMs,
+      getLocalClockTime(),
+      _leaderClockSamples + 1,
+      "leader"
+    );
+    if (!result) return;
+    _leaderClockSamples += 1;
+    _leaderClockBestRtt = Math.min(_leaderClockBestRtt, result.rttMs);
+    const now = Date.now();
+    if (now - _lastClockLogTime > 1e3 || _leaderClockSamples >= CLOCK_SYNC_MIN_SAMPLES) {
+      _lastClockLogTime = now;
+      _opts == null ? void 0 : _opts.logger("info", `[P2P] leader clock sample ${_leaderClockSamples}: offset=${result.offsetMs}ms rtt=${result.rttMs}ms best=${_leaderClockBestRtt}ms`);
+    }
+    if (_leaderClockSamples >= CLOCK_SYNC_MIN_SAMPLES) _markLeaderClockReady("samples");
+  }
+  function _markLeaderClockReady(reason) {
+    if (_leaderClockReady) return;
+    _leaderClockReady = true;
+    clearInterval(_clockProbeTimer);
+    _clockProbeTimer = null;
+    _opts == null ? void 0 : _opts.logger("info", `[P2P] leader-clock ready (${reason}): samples=${_leaderClockSamples} bestRtt=${Math.round(_leaderClockBestRtt)}ms offset=${Math.round(getNtpOffset())}ms`);
+    _maybeSendReady("clock-ready");
+  }
+  function _maybeSendReady(reason) {
+    if (!_opts || !_connected || _role !== "follower" || !_peerDeviceId) return;
+    if (_readySent || _syncPlaySent || _readyItemIndex < 0) return;
+    if (!_leaderClockReady) {
+      _startLeaderClockSync();
+      const now = Date.now();
+      if (now - _lastReadyBlockedLogTime > 1e3) {
+        _lastReadyBlockedLogTime = now;
+        _opts.logger("info", `[P2P] follower READY waiting for leader clock (${reason})`);
+      }
+      return;
+    }
+    _readySent = true;
+    _send({ type: "READY", deviceId: _opts.deviceId, engineMode: _readyEngineMode });
+    _opts.logger("info", `[P2P] follower READY sent (${reason})`);
   }
   function _handleMessage(msg) {
     var _a;
@@ -341,8 +446,17 @@
           _opts.logger("info", `[P2P] duplicate READY ignored (SYNC_PLAY already sent)`);
         }
         break;
+      case "CLOCK_PROBE":
+        _handleClockProbe(msg);
+        break;
+      case "CLOCK_REPLY":
+        _handleClockReply(msg);
+        break;
       case "SYNC_PLAY":
         _syncPlaySent = true;
+        _readySent = true;
+        clearInterval(_clockProbeTimer);
+        _clockProbeTimer = null;
         _syncedStartMs = msg.syncedStartMs;
         if (((_a = msg.videoDurationMs) != null ? _a : 0) > 0) _videoDurationMs = msg.videoDurationMs;
         _opts.logger("info", `[P2P] SYNC_PLAY received: startMs=${msg.syncedStartMs}`);
@@ -400,14 +514,17 @@
     }
     return { timelineMs: _pbCurrentMs, positionMs: _pbCurrentMs };
   }
-  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _videoDurationMs, _syncPlaySent, _syncedStartMs, _lastClockLogTime, _relaySessionStartedAtMs, _staleSignalLogCount, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
+  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, CLOCK_SYNC_INTERVAL_MS, CLOCK_SYNC_TIMEOUT_MS, CLOCK_SYNC_MIN_SAMPLES, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _clockProbeTimer, _videoDurationMs, _syncPlaySent, _readySent, _syncedStartMs, _lastClockLogTime, _lastReadyBlockedLogTime, _relaySessionStartedAtMs, _staleSignalLogCount, _clockProbeSeq, _clockSyncStartedAt, _leaderClockSamples, _leaderClockBestRtt, _leaderClockReady, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
   var init_p2p_sync_client = __esm({
     "src/p2p-sync-client.ts"() {
       init_ntp_client();
       REGISTER_INTERVAL_MS = 5e3;
       PEER_POLL_INTERVAL_MS = 2e3;
-      SIGNAL_POLL_INTERVAL_MS = 500;
+      SIGNAL_POLL_INTERVAL_MS = 50;
       HEARTBEAT_INTERVAL_MS = 1e3;
+      CLOCK_SYNC_INTERVAL_MS = 100;
+      CLOCK_SYNC_TIMEOUT_MS = 5e3;
+      CLOCK_SYNC_MIN_SAMPLES = 6;
       LEADER_START_AHEAD_MS = 5e3;
       PEER_MAX_AGE_MS = 12e3;
       _opts = null;
@@ -427,12 +544,20 @@
       _peerPollTimer = null;
       _signalPollTimer = null;
       _heartbeatTimer = null;
+      _clockProbeTimer = null;
       _videoDurationMs = 0;
       _syncPlaySent = false;
+      _readySent = false;
       _syncedStartMs = -1;
       _lastClockLogTime = 0;
+      _lastReadyBlockedLogTime = 0;
       _relaySessionStartedAtMs = -1;
       _staleSignalLogCount = 0;
+      _clockProbeSeq = 0;
+      _clockSyncStartedAt = 0;
+      _leaderClockSamples = 0;
+      _leaderClockBestRtt = Number.POSITIVE_INFINITY;
+      _leaderClockReady = false;
       _onSyncPlay = null;
       _onVideoUrl = null;
       _onSetEngine = null;
@@ -1434,8 +1559,13 @@
           }
         }
         if (!nearBoundary && absDrift >= SYNC_SEEK_MS2) {
-          logger.info(`[AVPlay] sync-seek: drift ${Math.round(driftMs)}ms \u2192 ${Math.round(expectedMs)}ms`);
-          _seekTo(expectedMs, "sync-seek");
+          if (RUNTIME_SEEK_ENABLED) {
+            logger.info(`[AVPlay] sync-seek: drift ${Math.round(driftMs)}ms \u2192 ${Math.round(expectedMs)}ms`);
+            _seekTo(expectedMs, "sync-seek");
+          } else if (now - _lastHardDriftLogTime > 2e3) {
+            _lastHardDriftLogTime = now;
+            logger.warn(`[AVPlay] hard drift ${Math.round(driftMs)}ms \u2014 runtime seek disabled; holding timeline`);
+          }
         }
       }
     }, 50);
@@ -1467,11 +1597,12 @@
     _seekInFlight = false;
     _lastSeekTime2 = 0;
     _lastSoftDriftLogTime = 0;
+    _lastHardDriftLogTime = 0;
     _startScheduled2 = false;
     _syncedStartMs4 = -1;
     _videoDurationMs3 = 0;
   }
-  var DRIFT_NOOP_MS, SYNC_SEEK_MS2, NEAR_END_MS2, SEEK_SETTLE_MS2, SEEK_TIMEOUT_MS, _syncedStartMs4, _startScheduled2, _itemIndex3, _stateTickTimer2, _syncWatchdog3, _videoDurationMs3, _playing2, _seekInFlight, _lastSeekTime2, _lastSoftDriftLogTime, _tearingDown, _objElem;
+  var DRIFT_NOOP_MS, SYNC_SEEK_MS2, NEAR_END_MS2, SEEK_SETTLE_MS2, SEEK_TIMEOUT_MS, RUNTIME_SEEK_ENABLED, _syncedStartMs4, _startScheduled2, _itemIndex3, _stateTickTimer2, _syncWatchdog3, _videoDurationMs3, _playing2, _seekInFlight, _lastSeekTime2, _lastSoftDriftLogTime, _lastHardDriftLogTime, _tearingDown, _objElem;
   var init_player_avplay = __esm({
     "src/player-avplay.ts"() {
       init_ntp_client();
@@ -1483,6 +1614,7 @@
       NEAR_END_MS2 = 500;
       SEEK_SETTLE_MS2 = 2500;
       SEEK_TIMEOUT_MS = 2500;
+      RUNTIME_SEEK_ENABLED = false;
       _syncedStartMs4 = -1;
       _startScheduled2 = false;
       _itemIndex3 = 0;
@@ -1493,6 +1625,7 @@
       _seekInFlight = false;
       _lastSeekTime2 = 0;
       _lastSoftDriftLogTime = 0;
+      _lastHardDriftLogTime = 0;
       _tearingDown = false;
       _objElem = null;
     }
@@ -1518,7 +1651,7 @@
       var _statusEl;
       var _bannerEl;
       window.addEventListener("load", () => __async(null, null, function* () {
-        var _a, _b, _c, _d;
+        var _a, _b;
         _container = document.getElementById("video-container");
         _statusEl = document.getElementById("status-msg");
         _bannerEl = document.getElementById("engine-banner");
@@ -1528,12 +1661,9 @@
         const deviceId = yield _getDeviceId(selfIp);
         initLogger(CONFIG.PI_BASE, deviceId);
         logger.info(`[App] boot: ip=${selfIp} deviceId=${deviceId}`);
-        _setStatus("Syncing time\u2026");
-        const ntp = yield syncTime(`${CONFIG.PI_BASE}/api/v1/devices`).catch(() => {
-          logger.warn("[App] NTP sync failed \u2014 using local clock");
-          return null;
-        });
-        logger.info(`[App] NTP offset: ${getNtpOffset()}ms samples=${(_a = ntp == null ? void 0 : ntp.samples) != null ? _a : 0} rtt=${(_b = ntp == null ? void 0 : ntp.rttMs) != null ? _b : 0}ms`);
+        _setStatus("Initializing clock\u2026");
+        initializeDeviceClock();
+        logger.info(`[App] clock initialized: source=${getClockSource()} offset=${Math.round(getNtpOffset())}ms`);
         updateHud({ ntpOffsetMs: getNtpOffset() });
         _setStatus("Connecting to peer\u2026");
         init({
@@ -1556,7 +1686,7 @@
           _switchEngine(msg.engineMode);
         });
         try {
-          (_d = (_c = window.tizen) == null ? void 0 : _c.tvinputdevice) == null ? void 0 : _d.registerKey("ChannelUp");
+          (_b = (_a = window.tizen) == null ? void 0 : _a.tvinputdevice) == null ? void 0 : _b.registerKey("ChannelUp");
         } catch (e) {
         }
         document.addEventListener("keydown", _onKey);

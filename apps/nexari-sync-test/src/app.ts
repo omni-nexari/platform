@@ -4,7 +4,7 @@
  *
  * Boot sequence:
  *   1. Detect device IP from tizen.systeminfo (or fallback to window.location.hostname)
- *   2. syncTime() — 8-sample NTP against Pi
+ *   2. Initialize a local monotonic clock from Tizen Time API/Date
  *   3. P2PSync.init() — register + start peer discovery
  *   4. Fetch first video URL from Pi /api/v1/content?type=video&limit=1
  *   5. Activate MSE player (default engine) and load the video
@@ -17,7 +17,7 @@
 
 // All modules are loaded as globals via <script> tags (module:none TypeScript build)
 // TypeScript sees them via import for type checking; runtime uses the global names.
-import { syncTime, getNtpOffset } from './ntp-client.js';
+import { getClockSource, getNtpOffset, initializeDeviceClock } from './ntp-client.js';
 import * as P2PSync from './p2p-sync-client.js';
 import { initMsePlayer, loadVideo as msLoad, teardown as msTeardown } from './player-mse.js';
 import { initWasmPlayer, loadVideo as wasmLoad, teardown as wasmTeardown } from './player-wasm.js';
@@ -54,12 +54,9 @@ window.addEventListener('load', async () => {
   initLogger(CONFIG.PI_BASE, deviceId);
   logger.info(`[App] boot: ip=${selfIp} deviceId=${deviceId}`);
 
-  _setStatus('Syncing time…');
-  const ntp = await syncTime(`${CONFIG.PI_BASE}/api/v1/devices`).catch(() => {
-    logger.warn('[App] NTP sync failed — using local clock');
-    return null;
-  });
-  logger.info(`[App] NTP offset: ${getNtpOffset()}ms samples=${ntp?.samples ?? 0} rtt=${ntp?.rttMs ?? 0}ms`);
+  _setStatus('Initializing clock…');
+  initializeDeviceClock();
+  logger.info(`[App] clock initialized: source=${getClockSource()} offset=${Math.round(getNtpOffset())}ms`);
 
   updateHud({ ntpOffsetMs: getNtpOffset() });
 

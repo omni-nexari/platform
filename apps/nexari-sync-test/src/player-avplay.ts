@@ -2,9 +2,10 @@
  * player-avplay.ts
  * Samsung native AVPlay engine.
  *
- * Key advantage over MSE:
- *   getCurrentTime() is a synchronous native call — always accurate.
- *   No Tizen async-seek stale-DOM problem → cascade is impossible.
+ * AVPlay does not support fractional playback-rate nudging, and some Tizen TV
+ * builds report stale decoder position or reject seekTo while buffering.
+ * Runtime correction is therefore diagnostic-only; sync quality comes from a
+ * precise shared start epoch and stable local timeline.
  *
  * Seek strategy:
  *   seekTo(ms, successCb, errorCb) fires callback when seek is complete.
@@ -34,6 +35,7 @@ const SYNC_SEEK_MS    = 300;   // AVPlay cannot fractional-nudge; seek only abov
 const NEAR_END_MS     = 500;   // skip corrections within this ms of loop boundary
 const SEEK_SETTLE_MS  = 2500;  // post-seek cooldown; AVPlay can report stale position while buffering
 const SEEK_TIMEOUT_MS = 2500;  // some Tizen builds do not call seekTo callbacks reliably
+const RUNTIME_SEEK_ENABLED = false;
 
 let _syncedStartMs  = -1;
 let _startScheduled = false;
@@ -45,6 +47,7 @@ let _playing         = false;
 let _seekInFlight    = false;  // AVPlay blocks all API calls during seekTo
 let _lastSeekTime    = 0;      // timestamp of last completed seek — throttles cascade
 let _lastSoftDriftLogTime = 0;
+let _lastHardDriftLogTime = 0;
 let _tearingDown     = false;
 let _objElem: HTMLObjectElement | null = null;  // AVPlay requires an <object> element
 
@@ -431,7 +434,6 @@ function _startStateTickTimer(): void {
     const av = _av();
     if (!av) return;
 
-    // getCurrentTime() is a native call — always accurate, never stale after seek
     const posMs   = av.getCurrentTime();
     const syncNow = getSyncedTime();
 
@@ -457,8 +459,13 @@ function _startStateTickTimer(): void {
       }
 
       if (!nearBoundary && absDrift >= SYNC_SEEK_MS) {
-        logger.info(`[AVPlay] sync-seek: drift ${Math.round(driftMs)}ms → ${Math.round(expectedMs)}ms`);
-        _seekTo(expectedMs, 'sync-seek');
+        if (RUNTIME_SEEK_ENABLED) {
+          logger.info(`[AVPlay] sync-seek: drift ${Math.round(driftMs)}ms → ${Math.round(expectedMs)}ms`);
+          _seekTo(expectedMs, 'sync-seek');
+        } else if (now - _lastHardDriftLogTime > 2000) {
+          _lastHardDriftLogTime = now;
+          logger.warn(`[AVPlay] hard drift ${Math.round(driftMs)}ms — runtime seek disabled; holding timeline`);
+        }
       }
     }
   }, 50);
@@ -495,6 +502,7 @@ function _teardown(): void {
   _seekInFlight   = false;
   _lastSeekTime   = 0;
   _lastSoftDriftLogTime = 0;
+  _lastHardDriftLogTime = 0;
   _startScheduled = false;
   _syncedStartMs  = -1;
   _videoDurationMs = 0;

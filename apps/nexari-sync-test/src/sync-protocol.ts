@@ -22,6 +22,22 @@ export interface MsgReady {
   engineMode: EngineMode;
 }
 
+/** Follower → Leader: NTP-style local clock probe. */
+export interface MsgClockProbe {
+  type: 'CLOCK_PROBE';
+  probeId: number;
+  clientSendMs: number;
+}
+
+/** Leader → Follower: clock response using leader getSyncedTime() values. */
+export interface MsgClockReply {
+  type: 'CLOCK_REPLY';
+  probeId: number;
+  clientSendMs: number;
+  leaderReceiveMs: number;
+  leaderSendMs: number;
+}
+
 /** Leader → Follower: switch engine mode; both must reload and re-sync */
 export interface MsgSetEngine {
   type: 'SET_ENGINE';
@@ -30,7 +46,8 @@ export interface MsgSetEngine {
 
 /**
  * Leader → Follower: start playback at the given synced wall-clock time.
- * syncedStartMs is a getSyncedTime() value (NTP-adjusted monotonic time).
+ * syncedStartMs is a getSyncedTime() value in the leader-calibrated monotonic
+ * clock domain.
  */
 export interface MsgSyncPlay {
   type: 'SYNC_PLAY';
@@ -69,6 +86,8 @@ export interface MsgSyncAdjust {
 export type SyncMessage =
   | MsgVideoUrl
   | MsgReady
+  | MsgClockProbe
+  | MsgClockReply
   | MsgSetEngine
   | MsgSyncPlay
   | MsgHeartbeat

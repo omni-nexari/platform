@@ -10,8 +10,8 @@
  * Leader sends VIDEO_URL -> follower loads -> follower sends READY -> leader sends SYNC_PLAY.
  */
 
-import type { SyncMessage, EngineMode, MsgSyncPlay, MsgVideoUrl, MsgSetEngine, MsgSyncAdjust } from './sync-protocol.js';
-import { getNtpOffset, getSyncedTime, observeServerTime } from './ntp-client.js';
+import type { SyncMessage, EngineMode, MsgClockProbe, MsgClockReply, MsgSyncPlay, MsgVideoUrl, MsgSetEngine, MsgSyncAdjust } from './sync-protocol.js';
+import { getLocalClockTime, getNtpOffset, getSyncedTime, observeRemoteClock } from './ntp-client.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 export interface P2PSyncOpts {
@@ -27,8 +27,11 @@ type Role = 'leader' | 'follower' | 'pending';
 // ── Constants ──────────────────────────────────────────────────────────────────
 const REGISTER_INTERVAL_MS    = 5_000;
 const PEER_POLL_INTERVAL_MS   = 2_000;
-const SIGNAL_POLL_INTERVAL_MS = 500;
+const SIGNAL_POLL_INTERVAL_MS = 50;
 const HEARTBEAT_INTERVAL_MS   = 1_000;
+const CLOCK_SYNC_INTERVAL_MS  = 100;
+const CLOCK_SYNC_TIMEOUT_MS   = 5_000;
+const CLOCK_SYNC_MIN_SAMPLES  = 6;
 const DRIFT_NOOP_MS           = 10;
 const DRIFT_NUDGE_MS          = 150;
 const LEADER_START_AHEAD_MS   = 5_000;
@@ -70,12 +73,20 @@ let _registerTimer: any   = null;
 let _peerPollTimer: any   = null;
 let _signalPollTimer: any = null;
 let _heartbeatTimer: any  = null;
+let _clockProbeTimer: any = null;
 let _videoDurationMs      = 0;
 let _syncPlaySent         = false;  // prevent duplicate SYNC_PLAYs from re-route READY
+let _readySent            = false;
 let _syncedStartMs        = -1;
 let _lastClockLogTime     = 0;
+let _lastReadyBlockedLogTime = 0;
 let _relaySessionStartedAtMs = -1;
 let _staleSignalLogCount = 0;
+let _clockProbeSeq = 0;
+let _clockSyncStartedAt = 0;
+let _leaderClockSamples = 0;
+let _leaderClockBestRtt = Number.POSITIVE_INFINITY;
+let _leaderClockReady = false;
 
 // Handlers
 let _onSyncPlay:  ((msg: MsgSyncPlay)   => void) | null = null;
@@ -95,6 +106,14 @@ export function onAdjust(h: (msg: MsgSyncAdjust) => void)   { _onAdjust    = h; 
 export function init(opts: P2PSyncOpts): void {
   _opts    = opts;
   _groupId = opts.groupId ?? 'synctest-001';
+  _role = 'pending';
+  _connected = false;
+  _peerDeviceId = null;
+  _signalPollSince = 0;
+  _syncPlaySent = false;
+  _readySent = false;
+  _syncedStartMs = -1;
+  _resetLeaderClockSync();
   _opts.logger('info', `[P2P] init: deviceId=${opts.deviceId}`);
   _startRegister();
   _startPeerPoll();
@@ -109,8 +128,7 @@ export function setVideoReady(itemIndex: number, engineMode: EngineMode): void {
   _pbCurrentMs     = 0;
   _pbEngineMode    = engineMode;
   if (_connected && _role === 'follower') {
-    _send({ type: 'READY', deviceId: _opts!.deviceId, engineMode });
-    _opts?.logger('info', `[P2P] follower READY sent`);
+    _maybeSendReady('video-ready');
   }
 }
 
@@ -145,12 +163,15 @@ export function shutdown(): void {
   clearInterval(_peerPollTimer);
   clearInterval(_signalPollTimer);
   clearInterval(_heartbeatTimer);
+  clearInterval(_clockProbeTimer);
   _connected = false;
   _role = 'pending';
   _syncPlaySent = false;
+  _readySent = false;
   _syncedStartMs = -1;
   _relaySessionStartedAtMs = -1;
   _staleSignalLogCount = 0;
+  _resetLeaderClockSync();
   _opts?.logger('info', '[P2P] shutdown');
 }
 
@@ -191,8 +212,9 @@ async function _doPeerPoll(): Promise<void> {
     const data = await res.json() as { peers: Array<{ deviceId: string; ip: string; registeredAt?: number }>; serverTimeMs?: number };
     _observeServerTime(data.serverTimeMs, t0, Date.now(), 'peers');
 
-    // Filter out self and stale entries
-    const now = Date.now();
+    // Filter out self and stale entries. registeredAt is server-domain time, so
+    // compare against serverTimeMs when the relay provides it.
+    const now = typeof data.serverTimeMs === 'number' ? data.serverTimeMs : Date.now();
     const peers = data.peers.filter((p) =>
       p.deviceId !== _opts!.deviceId &&
       (p.registeredAt == null || (now - p.registeredAt) < PEER_MAX_AGE_MS),
@@ -210,6 +232,7 @@ async function _doPeerPoll(): Promise<void> {
     _role = _opts.deviceId < peer.deviceId ? 'leader' : 'follower';
     _connected = true;
     _opts.logger('info', `[P2P] paired with ${peer.deviceId} -> self is ${_role}`);
+    if (_role === 'follower') _startLeaderClockSync();
 
     _doRegister();
     clearInterval(_peerPollTimer);
@@ -219,10 +242,7 @@ async function _doPeerPoll(): Promise<void> {
       _send({ type: 'VIDEO_URL', url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
       _opts.logger('info', `[P2P] leader sent VIDEO_URL on connect: ${_pendingVideoUrl}`);
     }
-    if (_role === 'follower' && _readyItemIndex >= 0) {
-      _send({ type: 'READY', deviceId: _opts.deviceId, engineMode: _readyEngineMode });
-      _opts.logger('info', `[P2P] follower sent READY on connect`);
-    }
+    if (_role === 'follower' && _readyItemIndex >= 0) _maybeSendReady('connect');
 
     _startHeartbeat();
   } catch (e: any) {
@@ -263,6 +283,8 @@ async function _doSignalDrain(): Promise<void> {
       if (entry.from && entry.from !== _peerDeviceId) {
         _opts?.logger('info', `[P2P] re-routing peer: ${_peerDeviceId ?? 'none'} → ${entry.from}`);
         _peerDeviceId = entry.from;
+        _readySent = false;
+        _resetLeaderClockSync();
         // Re-evaluate role with the real peer (we may have paired with a stale device initially)
         const newRole: Role = _opts!.deviceId < entry.from ? 'leader' : 'follower';
         if (newRole !== _role) {
@@ -270,10 +292,8 @@ async function _doSignalDrain(): Promise<void> {
           _role = newRole;
         }
         // Resume the correct side of the handshake
-        if (_role === 'follower' && _readyItemIndex >= 0 && !_syncPlaySent) {
-          _send({ type: 'READY', deviceId: _opts!.deviceId, engineMode: _readyEngineMode });
-          _opts?.logger('info', `[P2P] follower READY sent after re-route`);
-        }
+        if (_role === 'follower') _startLeaderClockSync();
+        if (_role === 'follower' && _readyItemIndex >= 0 && !_syncPlaySent) _maybeSendReady('re-route');
         if (_role === 'leader' && _pendingVideoUrl) {
           _send({ type: 'VIDEO_URL', url: _pendingVideoUrl, durationMs: 0, engineMode: _readyEngineMode });
           _opts?.logger('info', `[P2P] leader re-sent VIDEO_URL after re-route`);
@@ -285,16 +305,11 @@ async function _doSignalDrain(): Promise<void> {
 }
 
 function _observeServerTime(serverTimeMs: unknown, t0: number, t3: number, source: string): void {
-  if (_syncedStartMs > 0 || typeof serverTimeMs !== 'number') return;
+  void t0;
+  void t3;
+  void source;
+  if (typeof serverTimeMs !== 'number') return;
   if (_relaySessionStartedAtMs <= 0) _relaySessionStartedAtMs = serverTimeMs;
-  const before = getNtpOffset();
-  const result = observeServerTime(serverTimeMs, t0, t3);
-  if (!result) return;
-  const now = Date.now();
-  if (Math.abs(result.offsetMs - before) >= 250 && now - _lastClockLogTime > 5000) {
-    _lastClockLogTime = now;
-    _opts?.logger('info', `[P2P] relay clock calibrated via ${source}: offset=${result.offsetMs}ms rtt=${result.rttMs}ms`);
-  }
 }
 
 function _isStaleSignal(entry: { idx: number; from: string; at?: number }): boolean {
@@ -306,6 +321,111 @@ function _isStaleSignal(entry: { idx: number; from: string; at?: number }): bool
     _opts?.logger('info', `[P2P] ignored stale signal idx=${entry.idx} from=${entry.from}`);
   }
   return true;
+}
+
+function _resetLeaderClockSync(): void {
+  clearInterval(_clockProbeTimer);
+  _clockProbeTimer = null;
+  _clockProbeSeq = 0;
+  _clockSyncStartedAt = 0;
+  _leaderClockSamples = 0;
+  _leaderClockBestRtt = Number.POSITIVE_INFINITY;
+  _leaderClockReady = false;
+  _lastReadyBlockedLogTime = 0;
+}
+
+function _startLeaderClockSync(): void {
+  if (!_opts || _role !== 'follower' || !_peerDeviceId || _leaderClockReady || _clockProbeTimer) return;
+  _clockSyncStartedAt = Date.now();
+  _opts.logger('info', '[P2P] leader-clock sync started');
+  _sendClockProbe();
+  _clockProbeTimer = setInterval(_sendClockProbe, CLOCK_SYNC_INTERVAL_MS);
+}
+
+function _sendClockProbe(): void {
+  if (!_opts || _role !== 'follower' || !_peerDeviceId || _syncPlaySent) {
+    clearInterval(_clockProbeTimer);
+    _clockProbeTimer = null;
+    return;
+  }
+  if (_leaderClockReady) {
+    clearInterval(_clockProbeTimer);
+    _clockProbeTimer = null;
+    return;
+  }
+
+  const elapsed = Date.now() - _clockSyncStartedAt;
+  if (elapsed > CLOCK_SYNC_TIMEOUT_MS && _leaderClockSamples > 0) {
+    _markLeaderClockReady('timeout-with-samples');
+    return;
+  }
+
+  _send({
+    type: 'CLOCK_PROBE',
+    probeId: ++_clockProbeSeq,
+    clientSendMs: getLocalClockTime(),
+  });
+}
+
+function _handleClockProbe(msg: MsgClockProbe): void {
+  if (_role !== 'leader') return;
+  const leaderReceiveMs = getSyncedTime();
+  _send({
+    type: 'CLOCK_REPLY',
+    probeId: msg.probeId,
+    clientSendMs: msg.clientSendMs,
+    leaderReceiveMs,
+    leaderSendMs: getSyncedTime(),
+  });
+}
+
+function _handleClockReply(msg: MsgClockReply): void {
+  if (_role !== 'follower' || _leaderClockReady) return;
+  const result = observeRemoteClock(
+    msg.leaderReceiveMs,
+    msg.leaderSendMs,
+    msg.clientSendMs,
+    getLocalClockTime(),
+    _leaderClockSamples + 1,
+    'leader',
+  );
+  if (!result) return;
+
+  _leaderClockSamples += 1;
+  _leaderClockBestRtt = Math.min(_leaderClockBestRtt, result.rttMs);
+  const now = Date.now();
+  if (now - _lastClockLogTime > 1000 || _leaderClockSamples >= CLOCK_SYNC_MIN_SAMPLES) {
+    _lastClockLogTime = now;
+    _opts?.logger('info', `[P2P] leader clock sample ${_leaderClockSamples}: offset=${result.offsetMs}ms rtt=${result.rttMs}ms best=${_leaderClockBestRtt}ms`);
+  }
+
+  if (_leaderClockSamples >= CLOCK_SYNC_MIN_SAMPLES) _markLeaderClockReady('samples');
+}
+
+function _markLeaderClockReady(reason: string): void {
+  if (_leaderClockReady) return;
+  _leaderClockReady = true;
+  clearInterval(_clockProbeTimer);
+  _clockProbeTimer = null;
+  _opts?.logger('info', `[P2P] leader-clock ready (${reason}): samples=${_leaderClockSamples} bestRtt=${Math.round(_leaderClockBestRtt)}ms offset=${Math.round(getNtpOffset())}ms`);
+  _maybeSendReady('clock-ready');
+}
+
+function _maybeSendReady(reason: string): void {
+  if (!_opts || !_connected || _role !== 'follower' || !_peerDeviceId) return;
+  if (_readySent || _syncPlaySent || _readyItemIndex < 0) return;
+  if (!_leaderClockReady) {
+    _startLeaderClockSync();
+    const now = Date.now();
+    if (now - _lastReadyBlockedLogTime > 1000) {
+      _lastReadyBlockedLogTime = now;
+      _opts.logger('info', `[P2P] follower READY waiting for leader clock (${reason})`);
+    }
+    return;
+  }
+  _readySent = true;
+  _send({ type: 'READY', deviceId: _opts.deviceId, engineMode: _readyEngineMode });
+  _opts.logger('info', `[P2P] follower READY sent (${reason})`);
 }
 
 // ── Message handler ───────────────────────────────────────────────────────────
@@ -332,8 +452,19 @@ function _handleMessage(msg: SyncMessage): void {
       }
       break;
 
+    case 'CLOCK_PROBE':
+      _handleClockProbe(msg as MsgClockProbe);
+      break;
+
+    case 'CLOCK_REPLY':
+      _handleClockReply(msg as MsgClockReply);
+      break;
+
     case 'SYNC_PLAY':
       _syncPlaySent = true;  // prevent subsequent READY sends
+      _readySent = true;
+      clearInterval(_clockProbeTimer);
+      _clockProbeTimer = null;
       _syncedStartMs = (msg as MsgSyncPlay).syncedStartMs;
       if (((msg as MsgSyncPlay).videoDurationMs ?? 0) > 0) _videoDurationMs = (msg as MsgSyncPlay).videoDurationMs!;
       _opts.logger('info', `[P2P] SYNC_PLAY received: startMs=${(msg as MsgSyncPlay).syncedStartMs}`);
