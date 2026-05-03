@@ -30,8 +30,9 @@ import type { MsgSyncPlay, MsgSyncAdjust } from './sync-protocol.js';
 
 // Drift threshold — seek when |drift| exceeds this.
 // AVPlay has no sub-integer speed control so nudge is unavailable; seeks only.
-const SYNC_SEEK_MS = 200;
-const NEAR_END_MS  = 500;  // skip corrections within this ms of loop boundary
+const SYNC_SEEK_MS    = 200;
+const NEAR_END_MS     = 500;   // skip corrections within this ms of loop boundary
+const SEEK_SETTLE_MS  = 1000;  // post-seek cooldown — prevents oscillation cascade
 
 let _syncedStartMs  = -1;
 let _startScheduled = false;
@@ -41,6 +42,7 @@ let _syncWatchdog: any   = null;
 let _videoDurationMs = 0;
 let _playing         = false;
 let _seekInFlight    = false;  // AVPlay blocks all API calls during seekTo
+let _lastSeekTime    = 0;      // timestamp of last completed seek — throttles cascade
 let _tearingDown     = false;
 let _objElem: HTMLObjectElement | null = null;  // AVPlay requires an <object> element
 
@@ -234,6 +236,8 @@ function _openAndPrepare(av: AVPlayHandle, absUri: string): Promise<void> {
           _syncWatchdog = setTimeout(() => {
             if (!_playing && !_tearingDown) {
               logger.warn('[AVPlay] watchdog: no SYNC_PLAY in 8s — playing unsynced');
+              // Set a synthetic start time so loop math stays numerically valid
+              if (_syncedStartMs <= 0) _syncedStartMs = getSyncedTime();
               _playing = true;
               try { av.play(); } catch {}
             }
@@ -327,15 +331,30 @@ function _handleLoop(): void {
   const av = _av();
   if (!av) return;
 
+  // Guard: if no synced start time, just restart from 0 (watchdog / unsynced mode)
+  if (_syncedStartMs <= 0 || _videoDurationMs <= 0) {
+    logger.info('[AVPlay] loop: no syncedStart — seeking to 0');
+    _seekInFlight = true;
+    av.seekTo(0, () => {
+      _lastSeekTime = Date.now();
+      _seekInFlight = false;
+      if (!_tearingDown) try { av.play(); } catch {}
+    }, () => {
+      _lastSeekTime = Date.now();
+      _seekInFlight = false;
+      if (!_tearingDown) try { av.play(); } catch {}
+    });
+    return;
+  }
+
   const elapsed    = getSyncedTime() - _syncedStartMs;
-  const expectedMs = _syncedStartMs > 0 && _videoDurationMs > 0
-    ? ((elapsed % _videoDurationMs) + _videoDurationMs) % _videoDurationMs
-    : 0;
+  const expectedMs = ((elapsed % _videoDurationMs) + _videoDurationMs) % _videoDurationMs;
 
   logger.info(`[AVPlay] loop: elapsed=${Math.round(elapsed)}ms seekTo=${Math.round(expectedMs)}ms`);
   _seekInFlight = true;
 
   const onDone = () => {
+    _lastSeekTime = Date.now();  // start settle window from loop seek completion
     _seekInFlight = false;
     if (_tearingDown) return;
     try { av.play(); } catch (e: any) { logger.warn(`[AVPlay] loop play() failed: ${e?.message}`); }
@@ -344,13 +363,13 @@ function _handleLoop(): void {
   try {
     av.seekTo(Math.round(expectedMs), onDone, (e: any) => {
       logger.warn(`[AVPlay] loop seekTo failed: ${e?.message ?? e} — playing from 0`);
+      _lastSeekTime = Date.now();
       _seekInFlight = false;
-      // State after onstreamcompleted may not allow seekTo on some models;
-      // just restart from 0 — tick will immediately do a wall-clock correction.
       if (!_tearingDown) try { av.play(); } catch {}
     });
   } catch (e: any) {
     logger.warn(`[AVPlay] loop seekTo threw: ${e?.message ?? e}`);
+    _lastSeekTime = Date.now();
     _seekInFlight = false;
     try { av.play(); } catch {}
   }
@@ -361,8 +380,8 @@ function _handleLoop(): void {
 function _startStateTickTimer(): void {
   _stateTickTimer = setInterval(() => {
     if (!_playing || _tearingDown) return;
-    // Skip tick while seek is in progress — AVPlay blocks all API calls during seekTo
-    if (_seekInFlight) return;
+    // Skip tick while a seek is in progress or within the post-seek settle window
+    if (_seekInFlight || Date.now() - _lastSeekTime < SEEK_SETTLE_MS) return;
 
     const av = _av();
     if (!av) return;
@@ -391,13 +410,15 @@ function _startStateTickTimer(): void {
         try {
           av.seekTo(
             Math.round(expectedMs),
-            () => { _seekInFlight = false; },
+            () => { _lastSeekTime = Date.now(); _seekInFlight = false; },
             (e: any) => {
+              _lastSeekTime = Date.now();
               _seekInFlight = false;
               logger.warn(`[AVPlay] sync-seek failed: ${e?.message ?? e}`);
             },
           );
         } catch (e: any) {
+          _lastSeekTime = Date.now();
           _seekInFlight = false;
           logger.warn(`[AVPlay] seekTo threw: ${e?.message ?? e}`);
         }
@@ -435,6 +456,7 @@ function _teardown(): void {
 
   _playing        = false;
   _seekInFlight   = false;
+  _lastSeekTime   = 0;
   _startScheduled = false;
   _syncedStartMs  = -1;
   _videoDurationMs = 0;

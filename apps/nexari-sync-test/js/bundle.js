@@ -1151,6 +1151,7 @@
             _syncWatchdog3 = setTimeout(() => {
               if (!_playing2 && !_tearingDown) {
                 logger.warn("[AVPlay] watchdog: no SYNC_PLAY in 8s \u2014 playing unsynced");
+                if (_syncedStartMs3 <= 0) _syncedStartMs3 = getSyncedTime();
                 _playing2 = true;
                 try {
                   av.play();
@@ -1237,11 +1238,32 @@
     if (_seekInFlight || _tearingDown) return;
     const av = _av();
     if (!av) return;
+    if (_syncedStartMs3 <= 0 || _videoDurationMs3 <= 0) {
+      logger.info("[AVPlay] loop: no syncedStart \u2014 seeking to 0");
+      _seekInFlight = true;
+      av.seekTo(0, () => {
+        _lastSeekTime2 = Date.now();
+        _seekInFlight = false;
+        if (!_tearingDown) try {
+          av.play();
+        } catch (e) {
+        }
+      }, () => {
+        _lastSeekTime2 = Date.now();
+        _seekInFlight = false;
+        if (!_tearingDown) try {
+          av.play();
+        } catch (e) {
+        }
+      });
+      return;
+    }
     const elapsed = getSyncedTime() - _syncedStartMs3;
-    const expectedMs = _syncedStartMs3 > 0 && _videoDurationMs3 > 0 ? (elapsed % _videoDurationMs3 + _videoDurationMs3) % _videoDurationMs3 : 0;
+    const expectedMs = (elapsed % _videoDurationMs3 + _videoDurationMs3) % _videoDurationMs3;
     logger.info(`[AVPlay] loop: elapsed=${Math.round(elapsed)}ms seekTo=${Math.round(expectedMs)}ms`);
     _seekInFlight = true;
     const onDone = () => {
+      _lastSeekTime2 = Date.now();
       _seekInFlight = false;
       if (_tearingDown) return;
       try {
@@ -1254,6 +1276,7 @@
       av.seekTo(Math.round(expectedMs), onDone, (e) => {
         var _a2;
         logger.warn(`[AVPlay] loop seekTo failed: ${(_a2 = e == null ? void 0 : e.message) != null ? _a2 : e} \u2014 playing from 0`);
+        _lastSeekTime2 = Date.now();
         _seekInFlight = false;
         if (!_tearingDown) try {
           av.play();
@@ -1262,6 +1285,7 @@
       });
     } catch (e) {
       logger.warn(`[AVPlay] loop seekTo threw: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+      _lastSeekTime2 = Date.now();
       _seekInFlight = false;
       try {
         av.play();
@@ -1273,7 +1297,7 @@
     _stateTickTimer2 = setInterval(() => {
       var _a;
       if (!_playing2 || _tearingDown) return;
-      if (_seekInFlight) return;
+      if (_seekInFlight || Date.now() - _lastSeekTime2 < SEEK_SETTLE_MS2) return;
       const av = _av();
       if (!av) return;
       const posMs = av.getCurrentTime();
@@ -1296,15 +1320,18 @@
             av.seekTo(
               Math.round(expectedMs),
               () => {
+                _lastSeekTime2 = Date.now();
                 _seekInFlight = false;
               },
               (e) => {
                 var _a2;
+                _lastSeekTime2 = Date.now();
                 _seekInFlight = false;
                 logger.warn(`[AVPlay] sync-seek failed: ${(_a2 = e == null ? void 0 : e.message) != null ? _a2 : e}`);
               }
             );
           } catch (e) {
+            _lastSeekTime2 = Date.now();
             _seekInFlight = false;
             logger.warn(`[AVPlay] seekTo threw: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
           }
@@ -1337,11 +1364,12 @@
     }
     _playing2 = false;
     _seekInFlight = false;
+    _lastSeekTime2 = 0;
     _startScheduled2 = false;
     _syncedStartMs3 = -1;
     _videoDurationMs3 = 0;
   }
-  var SYNC_SEEK_MS2, NEAR_END_MS2, _syncedStartMs3, _startScheduled2, _itemIndex3, _stateTickTimer2, _syncWatchdog3, _videoDurationMs3, _playing2, _seekInFlight, _tearingDown, _objElem;
+  var SYNC_SEEK_MS2, NEAR_END_MS2, SEEK_SETTLE_MS2, _syncedStartMs3, _startScheduled2, _itemIndex3, _stateTickTimer2, _syncWatchdog3, _videoDurationMs3, _playing2, _seekInFlight, _lastSeekTime2, _tearingDown, _objElem;
   var init_player_avplay = __esm({
     "src/player-avplay.ts"() {
       init_ntp_client();
@@ -1350,6 +1378,7 @@
       init_logger();
       SYNC_SEEK_MS2 = 200;
       NEAR_END_MS2 = 500;
+      SEEK_SETTLE_MS2 = 1e3;
       _syncedStartMs3 = -1;
       _startScheduled2 = false;
       _itemIndex3 = 0;
@@ -1358,6 +1387,7 @@
       _videoDurationMs3 = 0;
       _playing2 = false;
       _seekInFlight = false;
+      _lastSeekTime2 = 0;
       _tearingDown = false;
       _objElem = null;
     }
