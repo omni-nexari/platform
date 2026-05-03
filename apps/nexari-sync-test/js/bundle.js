@@ -1021,6 +1021,283 @@
     }
   });
 
+  // src/player-avplay.ts
+  function _av() {
+    var _a, _b;
+    return (_b = (_a = window.webapis) == null ? void 0 : _a.avplay) != null ? _b : null;
+  }
+  function initAvplayPlayer(_container) {
+    _teardown3();
+    _tearingDown = false;
+    if (!_av()) {
+      logger.warn("[AVPlay] webapis.avplay not available \u2014 falling back gracefully");
+      return;
+    }
+    onSyncPlay(_handleSyncPlay3);
+    onAdjust(_handleAdjust3);
+    _startStateTickTimer2();
+    logger.info("[AVPlay] engine initialised");
+  }
+  function loadVideo3(url, itemIndex = 0) {
+    const av = _av();
+    if (!av) return Promise.reject(new Error("[AVPlay] webapis.avplay not available"));
+    _itemIndex3 = itemIndex;
+    _syncedStartMs3 = -1;
+    _startScheduled2 = false;
+    _seekInFlight = false;
+    _playing2 = false;
+    logger.info(`[AVPlay] loading: ${url}`);
+    updateHud({ positionMs: 0, expectedMs: 0, driftMs: 0, lastAction: "Opening\u2026" });
+    return new Promise((resolve, reject) => {
+      var _a;
+      try {
+        av.open(url);
+        av.setDisplayRect(0, 0, 1920, 1080);
+        av.setDisplayMethod("PLAYER_DISPLAY_MODE_FULL_SCREEN");
+        av.setListener({
+          onbufferingstart: () => {
+            updateHud({ lastAction: "Buffering\u2026" });
+            logger.info("[AVPlay] buffering start");
+          },
+          onbufferingcomplete: () => {
+            logger.info("[AVPlay] buffering complete");
+          },
+          onstreamcompleted: () => {
+            if (!_playing2 || _tearingDown) return;
+            _handleLoop();
+          },
+          oncurrentplaytime: (_ms2) => {
+          },
+          onerror: (eventType) => {
+            logger.error(`[AVPlay] error: ${eventType}`);
+          },
+          onerrormsg: (eventType, msg) => {
+            logger.error(`[AVPlay] errormsg: ${eventType} \u2014 ${msg}`);
+          },
+          onresourceconflicted: () => {
+            logger.warn("[AVPlay] resource conflict");
+          }
+        });
+        av.prepareAsync(
+          () => {
+            _videoDurationMs3 = av.getDuration();
+            setVideoDuration(_videoDurationMs3);
+            logger.info(`[AVPlay] READY \u2014 duration=${_videoDurationMs3}ms`);
+            updateHud({ lastAction: "Ready \u2014 waiting for SYNC_PLAY" });
+            setVideoReady(_itemIndex3, "avplay");
+            _syncWatchdog3 = setTimeout(() => {
+              if (!_playing2 && !_tearingDown) {
+                logger.warn("[AVPlay] watchdog: no SYNC_PLAY in 8s \u2014 playing unsynced");
+                _playing2 = true;
+                try {
+                  av.play();
+                } catch (e) {
+                }
+              }
+            }, 8e3);
+            if (_syncedStartMs3 > 0) _schedulePlay2();
+            resolve();
+          },
+          (e) => {
+            var _a2;
+            logger.error(`[AVPlay] prepareAsync failed: ${(_a2 = e == null ? void 0 : e.message) != null ? _a2 : String(e)}`);
+            reject(e);
+          }
+        );
+      } catch (e) {
+        logger.error(`[AVPlay] open/setup failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : String(e)}`);
+        reject(e);
+      }
+    });
+  }
+  function teardown3() {
+    _teardown3();
+  }
+  function _handleSyncPlay3(msg) {
+    var _a;
+    clearTimeout(_syncWatchdog3);
+    if (_startScheduled2) {
+      logger.info("[AVPlay] SYNC_PLAY ignored (play already scheduled)");
+      return;
+    }
+    _syncedStartMs3 = msg.syncedStartMs;
+    if (((_a = msg.videoDurationMs) != null ? _a : 0) > 0) _videoDurationMs3 = msg.videoDurationMs;
+    logger.info(
+      `[AVPlay] SYNC_PLAY: startMs=${msg.syncedStartMs} durationMs=${_videoDurationMs3} (in ${msg.syncedStartMs - getSyncedTime()}ms)`
+    );
+    if (_av()) _schedulePlay2();
+  }
+  function _schedulePlay2() {
+    if (_startScheduled2 || _tearingDown) return;
+    _startScheduled2 = true;
+    const av = _av();
+    if (!av) return;
+    try {
+      const state = av.getState();
+      if (state === "PLAYING") av.pause();
+    } catch (e) {
+    }
+    const wait = _syncedStartMs3 - getSyncedTime();
+    if (wait <= 0) {
+      logger.warn("[AVPlay] SYNC_PLAY cue already past \u2014 playing immediately");
+      _playing2 = true;
+      try {
+        av.play();
+      } catch (e) {
+        logger.warn(`[AVPlay] play() failed: ${e == null ? void 0 : e.message}`);
+      }
+      return;
+    }
+    logger.info(`[AVPlay] scheduling play in ${Math.round(wait)}ms`);
+    const COARSE_THRESHOLD = 50;
+    const coarseWait = Math.max(0, wait - COARSE_THRESHOLD);
+    setTimeout(() => {
+      const target = _syncedStartMs3;
+      function tryPlay() {
+        if (_tearingDown) return;
+        if (getSyncedTime() >= target) {
+          _playing2 = true;
+          try {
+            av.play();
+            updateHud({ lastAction: "play() fired" });
+          } catch (e) {
+            logger.warn(`[AVPlay] play() failed: ${e == null ? void 0 : e.message}`);
+          }
+        } else {
+          setTimeout(tryPlay, 4);
+        }
+      }
+      tryPlay();
+    }, coarseWait);
+  }
+  function _handleAdjust3(_msg) {
+  }
+  function _handleLoop() {
+    var _a;
+    if (_seekInFlight || _tearingDown) return;
+    const av = _av();
+    if (!av) return;
+    const elapsed = getSyncedTime() - _syncedStartMs3;
+    const expectedMs = _syncedStartMs3 > 0 && _videoDurationMs3 > 0 ? (elapsed % _videoDurationMs3 + _videoDurationMs3) % _videoDurationMs3 : 0;
+    logger.info(`[AVPlay] loop: elapsed=${Math.round(elapsed)}ms seekTo=${Math.round(expectedMs)}ms`);
+    _seekInFlight = true;
+    const onDone = () => {
+      _seekInFlight = false;
+      if (_tearingDown) return;
+      try {
+        av.play();
+      } catch (e) {
+        logger.warn(`[AVPlay] loop play() failed: ${e == null ? void 0 : e.message}`);
+      }
+    };
+    try {
+      av.seekTo(Math.round(expectedMs), onDone, (e) => {
+        var _a2;
+        logger.warn(`[AVPlay] loop seekTo failed: ${(_a2 = e == null ? void 0 : e.message) != null ? _a2 : e} \u2014 playing from 0`);
+        _seekInFlight = false;
+        if (!_tearingDown) try {
+          av.play();
+        } catch (e2) {
+        }
+      });
+    } catch (e) {
+      logger.warn(`[AVPlay] loop seekTo threw: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+      _seekInFlight = false;
+      try {
+        av.play();
+      } catch (e2) {
+      }
+    }
+  }
+  function _startStateTickTimer2() {
+    _stateTickTimer2 = setInterval(() => {
+      var _a;
+      if (!_playing2 || _tearingDown) return;
+      if (_seekInFlight) return;
+      const av = _av();
+      if (!av) return;
+      const posMs = av.getCurrentTime();
+      const syncNow = getSyncedTime();
+      let expectedMs = posMs;
+      if (_syncedStartMs3 > 0 && _videoDurationMs3 > 0) {
+        const elapsed = syncNow - _syncedStartMs3;
+        expectedMs = (elapsed % _videoDurationMs3 + _videoDurationMs3) % _videoDurationMs3;
+      }
+      const driftMs = posMs - expectedMs;
+      setPlaybackState(_itemIndex3, posMs, "avplay");
+      updateHud({ positionMs: posMs, expectedMs, driftMs });
+      if (_syncedStartMs3 > 0 && _videoDurationMs3 > 0) {
+        const nearBoundary = expectedMs < NEAR_END_MS2 || expectedMs > _videoDurationMs3 - NEAR_END_MS2;
+        const absDrift = Math.abs(driftMs);
+        if (!nearBoundary && absDrift > SYNC_SEEK_MS2) {
+          logger.info(`[AVPlay] sync-seek: drift ${Math.round(driftMs)}ms \u2192 ${Math.round(expectedMs)}ms`);
+          _seekInFlight = true;
+          try {
+            av.seekTo(
+              Math.round(expectedMs),
+              () => {
+                _seekInFlight = false;
+              },
+              (e) => {
+                var _a2;
+                _seekInFlight = false;
+                logger.warn(`[AVPlay] sync-seek failed: ${(_a2 = e == null ? void 0 : e.message) != null ? _a2 : e}`);
+              }
+            );
+          } catch (e) {
+            _seekInFlight = false;
+            logger.warn(`[AVPlay] seekTo threw: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+          }
+        }
+      }
+    }, 50);
+  }
+  function _teardown3() {
+    _tearingDown = true;
+    clearInterval(_stateTickTimer2);
+    clearTimeout(_syncWatchdog3);
+    _stateTickTimer2 = null;
+    _syncWatchdog3 = null;
+    const av = _av();
+    if (av) {
+      try {
+        const state = av.getState();
+        if (state === "PLAYING" || state === "PAUSED" || state === "READY") {
+          av.stop();
+        }
+        if (state !== "NONE") {
+          av.close();
+        }
+      } catch (e) {
+      }
+    }
+    _playing2 = false;
+    _seekInFlight = false;
+    _startScheduled2 = false;
+    _syncedStartMs3 = -1;
+    _videoDurationMs3 = 0;
+  }
+  var SYNC_SEEK_MS2, NEAR_END_MS2, _syncedStartMs3, _startScheduled2, _itemIndex3, _stateTickTimer2, _syncWatchdog3, _videoDurationMs3, _playing2, _seekInFlight, _tearingDown;
+  var init_player_avplay = __esm({
+    "src/player-avplay.ts"() {
+      init_ntp_client();
+      init_p2p_sync_client();
+      init_perf_hud();
+      init_logger();
+      SYNC_SEEK_MS2 = 200;
+      NEAR_END_MS2 = 500;
+      _syncedStartMs3 = -1;
+      _startScheduled2 = false;
+      _itemIndex3 = 0;
+      _stateTickTimer2 = null;
+      _syncWatchdog3 = null;
+      _videoDurationMs3 = 0;
+      _playing2 = false;
+      _seekInFlight = false;
+      _tearingDown = false;
+    }
+  });
+
   // src/app.ts
   var require_app = __commonJS({
     "src/app.ts"(exports) {
@@ -1028,13 +1305,14 @@
       init_p2p_sync_client();
       init_player_mse();
       init_player_wasm();
+      init_player_avplay();
       init_perf_hud();
       init_logger();
       var CONFIG = {
         PI_BASE: "http://192.168.1.17",
         GROUP_ID: "synctest-001"
       };
-      var _currentEngine = "mse";
+      var _currentEngine = "avplay";
       var _videoUrl = "";
       var _container;
       var _statusEl;
@@ -1101,7 +1379,10 @@
       }));
       function _activateEngine(engine, url) {
         _hideStatus();
-        if (engine === "mse") {
+        if (engine === "avplay") {
+          initAvplayPlayer(_container);
+          loadVideo3(url).catch((e) => logger.error(`[App] AVPlay load failed: ${e == null ? void 0 : e.message}`));
+        } else if (engine === "mse") {
           initMsePlayer(_container);
           loadVideo(url).catch((e) => logger.error(`[App] MSE load failed: ${e == null ? void 0 : e.message}`));
         } else {
@@ -1116,6 +1397,7 @@
         if (newEngine === _currentEngine) return;
         logger.info(`[App] switching engine: ${_currentEngine} \u2192 ${newEngine}`);
         _currentEngine = newEngine;
+        teardown3();
         teardown();
         teardown2();
         _activateEngine(newEngine, _videoUrl);
@@ -1125,7 +1407,7 @@
         const CH_PLUS = [427, 33];
         if (CH_PLUS.includes(e.keyCode)) {
           if (getRole() === "leader") {
-            const next = _currentEngine === "mse" ? "wasm" : "mse";
+            const next = _currentEngine === "avplay" ? "mse" : "avplay";
             logger.info(`[App] CH+ key \u2192 broadcastSetEngine(${next})`);
             broadcastSetEngine(next);
             _currentEngine = next;

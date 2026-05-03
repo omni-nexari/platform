@@ -3,7 +3,7 @@
  * Shared message type definitions for the WebRTC DataChannel P2P sync protocol.
  */
 
-export type EngineMode = 'mse' | 'wasm';
+export type EngineMode = 'mse' | 'wasm' | 'avplay';
 
 // ── Outbound (sender → peer) ───────────────────────────────────────────────────
 

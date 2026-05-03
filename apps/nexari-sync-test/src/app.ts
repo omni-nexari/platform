@@ -21,6 +21,7 @@ import { syncTime, getNtpOffset } from './ntp-client.js';
 import * as P2PSync from './p2p-sync-client.js';
 import { initMsePlayer, loadVideo as msLoad, teardown as msTeardown } from './player-mse.js';
 import { initWasmPlayer, loadVideo as wasmLoad, teardown as wasmTeardown } from './player-wasm.js';
+import { initAvplayPlayer, loadVideo as avLoad, teardown as avTeardown } from './player-avplay.js';
 import { initHud, updateHud } from './perf-hud.js';
 import { initLogger, setLoggerEngine, logger } from './logger.js';
 import type { EngineMode } from './sync-protocol.js';
@@ -32,7 +33,7 @@ const CONFIG = {
 };
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let _currentEngine: EngineMode = 'mse';
+let _currentEngine: EngineMode = 'avplay';
 let _videoUrl = '';
 let _container: HTMLElement;
 let _statusEl: HTMLElement | null;
@@ -117,7 +118,10 @@ window.addEventListener('load', async () => {
 
 function _activateEngine(engine: EngineMode, url: string): void {
   _hideStatus();
-  if (engine === 'mse') {
+  if (engine === 'avplay') {
+    initAvplayPlayer(_container);
+    avLoad(url).catch((e: any) => logger.error(`[App] AVPlay load failed: ${e?.message}`));
+  } else if (engine === 'mse') {
     initMsePlayer(_container);
     msLoad(url).catch((e: any) => logger.error(`[App] MSE load failed: ${e?.message}`));
   } else {
@@ -134,7 +138,8 @@ function _switchEngine(newEngine: EngineMode): void {
   logger.info(`[App] switching engine: ${_currentEngine} → ${newEngine}`);
   _currentEngine = newEngine;
 
-  // Teardown both (only one is active but tear both for safety)
+  // Teardown all engines (only one is active but tear all for safety)
+  avTeardown();
   msTeardown();
   wasmTeardown();
 
@@ -148,7 +153,8 @@ function _onKey(e: KeyboardEvent): void {
   const CH_PLUS = [427, 33];
   if (CH_PLUS.includes(e.keyCode)) {
     if (P2PSync.getRole() === 'leader') {
-      const next: EngineMode = _currentEngine === 'mse' ? 'wasm' : 'mse';
+      // Cycle: avplay → mse → avplay (wasm excluded — requires SharedArrayBuffer)
+    const next: EngineMode = _currentEngine === 'avplay' ? 'mse' : 'avplay';
       logger.info(`[App] CH+ key → broadcastSetEngine(${next})`);
       P2PSync.broadcastSetEngine(next);
       _currentEngine = next;
