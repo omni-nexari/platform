@@ -549,7 +549,7 @@ export default function AppLayout() {
               {workspaces.map((ws) => (
                 <button
                   key={ws.id}
-                  onClick={() => navigate(`/workspaces/${ws.id}`)}
+                  onClick={() => navigate(`/dashboard?workspaceId=${ws.id}`)}
                   className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors text-left"
                 >
                   <Monitor className="w-4 h-4" />
