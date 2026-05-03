@@ -166,7 +166,7 @@ function _doRegister(): void {
   fetch(`${_opts.piBase}/api/v1/test-sync/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ deviceId: _opts.deviceId, role: 'peer', ip: _opts.selfIp, groupId: _groupId }),
+    body: JSON.stringify({ deviceId: _opts.deviceId, role: _role === 'pending' ? 'peer' : _role, ip: _opts.selfIp, groupId: _groupId }),
   }).catch(() => { /* silent – registration is best-effort */ });
 }
 
@@ -188,9 +188,12 @@ async function _doPeerPoll(): Promise<void> {
     _peerIp       = peer.ip;
     _peerDeviceId = peer.deviceId;
 
-    // Role: lower IP (lexicographic) is leader
-    _role = _opts.selfIp < peer.ip ? 'leader' : 'follower';
-    _opts.logger('info', `[P2P] peer found: ${peer.ip} → self is ${_role}`);
+    // Role: lower deviceId (lexicographic) is leader — works even when IP detection fails
+    _role = _opts.deviceId < peer.deviceId ? 'leader' : 'follower';
+    _opts.logger('info', `[P2P] peer found: ${peer.deviceId} (${peer.ip}) -> self is ${_role}`);
+
+    // Re-register immediately with the resolved role so the dashboard can show it
+    _doRegister();
 
     clearInterval(_peerPollTimer);
     _initWebRTC();

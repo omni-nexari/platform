@@ -253,10 +253,18 @@ export default function TestSyncPage() {
         </SectionCardBody>
       </SectionCard>
 
-      {/* Device log panels */}
+      {/* Device log panels — use live peer deviceIds so they always match */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <LogPanel deviceId="sbb" label="SBB TV" />
-        <LogPanel deviceId="qbc" label="QBC TV" />
+        {peers.length === 0 ? (
+          <>
+            <LogPanel deviceId="sbb" label="SBB TV" />
+            <LogPanel deviceId="qbc" label="QBC TV" />
+          </>
+        ) : (
+          peers.slice(0, 2).map((p, i) => (
+            <LogPanel key={p.deviceId} deviceId={p.deviceId} label={`TV ${i + 1} (${p.role ?? 'peer'})`} />
+          ))
+        )}
       </div>
     </div>
   );
