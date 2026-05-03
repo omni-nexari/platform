@@ -1564,6 +1564,7 @@
             av.play();
             _lastSeekTime2 = _localNow2();
             updateHud({ lastAction: "play() fired" });
+            _scheduleNextLoopResync();
           } catch (e) {
             logger.warn(`[AVPlay] play() failed: ${e == null ? void 0 : e.message}`);
           }
@@ -1575,6 +1576,46 @@
     }, coarseWait);
   }
   function _handleAdjust3(_msg) {
+  }
+  function _scheduleNextLoopResync() {
+    clearTimeout(_loopResyncTimer);
+    if (_tearingDown || _syncedStartMs4 <= 0 || _videoDurationMs3 <= 0) return;
+    const syncNow = getSyncedTime();
+    const elapsed = Math.max(0, syncNow - _syncedStartMs4);
+    const loopsCompleted = Math.floor(elapsed / _videoDurationMs3);
+    const nextBoundaryMs = _syncedStartMs4 + (loopsCompleted + 1) * _videoDurationMs3;
+    const waitMs = Math.max(50, nextBoundaryMs - syncNow + 150);
+    _loopResyncTimer = setTimeout(() => {
+      if (_tearingDown || !_playing2) return;
+      const av = _av();
+      if (!av) return;
+      if (_seekInFlight) {
+        _scheduleNextLoopResync();
+        return;
+      }
+      const posMs = (() => {
+        try {
+          return av.getCurrentTime();
+        } catch (e) {
+          return -1;
+        }
+      })();
+      if (posMs > 50) {
+        _scheduleNextLoopResync();
+        return;
+      }
+      const elapsed2 = getSyncedTime() - _syncedStartMs4;
+      const expectedMs = (elapsed2 % _videoDurationMs3 + _videoDurationMs3) % _videoDurationMs3;
+      logger.info(`[AVPlay] clock-loop: elapsed=${Math.round(elapsed2)}ms seekTo=${Math.round(expectedMs)}ms`);
+      _seekTo(expectedMs, "clock-loop", () => {
+        if (_tearingDown) return;
+        try {
+          av.play();
+        } catch (e) {
+        }
+        _scheduleNextLoopResync();
+      });
+    }, waitMs);
   }
   function _handleLoop() {
     if (_seekInFlight || _tearingDown) return;
@@ -1669,6 +1710,7 @@
     _tearingDown = true;
     clearInterval(_stateTickTimer2);
     clearTimeout(_syncWatchdog3);
+    clearTimeout(_loopResyncTimer);
     _stateTickTimer2 = null;
     _syncWatchdog3 = null;
     const av = _av();
@@ -1697,7 +1739,7 @@
     _syncedStartMs4 = -1;
     _videoDurationMs3 = 0;
   }
-  var DRIFT_NOOP_MS, SYNC_SEEK_MS2, NEAR_END_MS2, SEEK_SETTLE_MS2, SEEK_TIMEOUT_MS, RUNTIME_SEEK_ENABLED, _syncedStartMs4, _startScheduled2, _itemIndex3, _stateTickTimer2, _syncWatchdog3, _videoDurationMs3, _playing2, _seekInFlight, _lastSeekTime2, _lastSoftDriftLogTime, _lastHardDriftLogTime, _tearingDown, _objElem;
+  var DRIFT_NOOP_MS, SYNC_SEEK_MS2, NEAR_END_MS2, SEEK_SETTLE_MS2, SEEK_TIMEOUT_MS, RUNTIME_SEEK_ENABLED, _syncedStartMs4, _startScheduled2, _itemIndex3, _stateTickTimer2, _syncWatchdog3, _loopResyncTimer, _videoDurationMs3, _playing2, _seekInFlight, _lastSeekTime2, _lastSoftDriftLogTime, _lastHardDriftLogTime, _tearingDown, _objElem;
   var init_player_avplay = __esm({
     "src/player-avplay.ts"() {
       init_ntp_client();
@@ -1715,6 +1757,7 @@
       _itemIndex3 = 0;
       _stateTickTimer2 = null;
       _syncWatchdog3 = null;
+      _loopResyncTimer = null;
       _videoDurationMs3 = 0;
       _playing2 = false;
       _seekInFlight = false;

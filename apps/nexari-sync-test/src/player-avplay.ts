@@ -42,6 +42,7 @@ let _startScheduled = false;
 let _itemIndex      = 0;
 let _stateTickTimer: any = null;
 let _syncWatchdog: any   = null;
+let _loopResyncTimer: any = null;
 let _videoDurationMs = 0;
 let _playing         = false;
 let _seekInFlight    = false;  // AVPlay blocks all API calls during seekTo
@@ -358,6 +359,7 @@ function _schedulePlay(): void {
           av.play();
           _lastSeekTime = _localNow();
           updateHud({ lastAction: 'play() fired' });
+          _scheduleNextLoopResync();
         } catch (e: any) {
           logger.warn(`[AVPlay] play() failed: ${e?.message}`);
         }
@@ -371,6 +373,47 @@ function _schedulePlay(): void {
 
 function _handleAdjust(_msg: MsgSyncAdjust): void {
   // Wall-clock tick handles all drift correction when videoDurationMs > 0
+}
+
+// ── Clock-based loop resync (fallback for TVs where onstreamcompleted doesn't fire) ───────────
+
+function _scheduleNextLoopResync(): void {
+  clearTimeout(_loopResyncTimer);
+  if (_tearingDown || _syncedStartMs <= 0 || _videoDurationMs <= 0) return;
+
+  const syncNow = getSyncedTime();
+  const elapsed = Math.max(0, syncNow - _syncedStartMs);
+  const loopsCompleted = Math.floor(elapsed / _videoDurationMs);
+  // Fire 150ms after the next loop boundary (enough for the loop to actually flip)
+  const nextBoundaryMs = _syncedStartMs + (loopsCompleted + 1) * _videoDurationMs;
+  const waitMs = Math.max(50, nextBoundaryMs - syncNow + 150);
+
+  _loopResyncTimer = setTimeout(() => {
+    if (_tearingDown || !_playing) return;
+
+    const av = _av();
+    if (!av) return;
+
+    // If onstreamcompleted already triggered a seek, skip — onstreamcompleted handles this TV
+    if (_seekInFlight) { _scheduleNextLoopResync(); return; }
+
+    // Only intervene when position tracking is broken (always 0ms)
+    const posMs = (() => { try { return av.getCurrentTime(); } catch { return -1; } })();
+    if (posMs > 50) {
+      // Position tracking works; onstreamcompleted handles looping on this TV
+      _scheduleNextLoopResync();
+      return;
+    }
+
+    const elapsed2 = getSyncedTime() - _syncedStartMs;
+    const expectedMs = ((elapsed2 % _videoDurationMs) + _videoDurationMs) % _videoDurationMs;
+    logger.info(`[AVPlay] clock-loop: elapsed=${Math.round(elapsed2)}ms seekTo=${Math.round(expectedMs)}ms`);
+    _seekTo(expectedMs, 'clock-loop', () => {
+      if (_tearingDown) return;
+      try { av.play(); } catch {}
+      _scheduleNextLoopResync();
+    });
+  }, waitMs);
 }
 
 // ── Loop handler ───────────────────────────────────────────────────────────────
@@ -480,6 +523,7 @@ function _teardown(): void {
   _tearingDown = true;
   clearInterval(_stateTickTimer);
   clearTimeout(_syncWatchdog);
+  clearTimeout(_loopResyncTimer);
   _stateTickTimer = null;
   _syncWatchdog   = null;
 
