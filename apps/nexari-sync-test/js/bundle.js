@@ -270,6 +270,7 @@
         _observeServerTime(data.serverTimeMs, t0, Date.now(), "signals");
         if (data.nextSince != null) _signalPollSince = data.nextSince;
         for (const entry of (_a = data.entries) != null ? _a : []) {
+          if (_isStaleSignal(entry)) continue;
           if (entry.from && entry.from !== _peerDeviceId) {
             _opts == null ? void 0 : _opts.logger("info", `[P2P] re-routing peer: ${_peerDeviceId != null ? _peerDeviceId : "none"} \u2192 ${entry.from}`);
             _peerDeviceId = entry.from;
@@ -298,6 +299,7 @@
   }
   function _observeServerTime(serverTimeMs, t0, t3, source) {
     if (_syncedStartMs > 0 || typeof serverTimeMs !== "number") return;
+    if (_relaySessionStartedAtMs <= 0) _relaySessionStartedAtMs = serverTimeMs;
     const before = getNtpOffset();
     const result = observeServerTime(serverTimeMs, t0, t3);
     if (!result) return;
@@ -306,6 +308,16 @@
       _lastClockLogTime = now;
       _opts == null ? void 0 : _opts.logger("info", `[P2P] relay clock calibrated via ${source}: offset=${result.offsetMs}ms rtt=${result.rttMs}ms`);
     }
+  }
+  function _isStaleSignal(entry) {
+    const at = Number(entry.at);
+    if (_relaySessionStartedAtMs <= 0 || !isFinite(at)) return false;
+    if (at >= _relaySessionStartedAtMs - 1e3) return false;
+    if (_staleSignalLogCount < 3) {
+      _staleSignalLogCount += 1;
+      _opts == null ? void 0 : _opts.logger("info", `[P2P] ignored stale signal idx=${entry.idx} from=${entry.from}`);
+    }
+    return true;
   }
   function _handleMessage(msg) {
     var _a;
@@ -388,7 +400,7 @@
     }
     return { timelineMs: _pbCurrentMs, positionMs: _pbCurrentMs };
   }
-  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _videoDurationMs, _syncPlaySent, _syncedStartMs, _lastClockLogTime, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
+  var REGISTER_INTERVAL_MS, PEER_POLL_INTERVAL_MS, SIGNAL_POLL_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, LEADER_START_AHEAD_MS, PEER_MAX_AGE_MS, _opts, _role, _peerDeviceId, _groupId, _connected, _readyItemIndex, _readyEngineMode, _pendingVideoUrl, _pbItemIndex, _pbCurrentMs, _pbEngineMode, _followerViews, _signalPollSince, _registerTimer, _peerPollTimer, _signalPollTimer, _heartbeatTimer, _videoDurationMs, _syncPlaySent, _syncedStartMs, _lastClockLogTime, _relaySessionStartedAtMs, _staleSignalLogCount, _onSyncPlay, _onVideoUrl, _onSetEngine, _onAdjust;
   var init_p2p_sync_client = __esm({
     "src/p2p-sync-client.ts"() {
       init_ntp_client();
@@ -419,6 +431,8 @@
       _syncPlaySent = false;
       _syncedStartMs = -1;
       _lastClockLogTime = 0;
+      _relaySessionStartedAtMs = -1;
+      _staleSignalLogCount = 0;
       _onSyncPlay = null;
       _onVideoUrl = null;
       _onSetEngine = null;

@@ -74,6 +74,8 @@ let _videoDurationMs      = 0;
 let _syncPlaySent         = false;  // prevent duplicate SYNC_PLAYs from re-route READY
 let _syncedStartMs        = -1;
 let _lastClockLogTime     = 0;
+let _relaySessionStartedAtMs = -1;
+let _staleSignalLogCount = 0;
 
 // Handlers
 let _onSyncPlay:  ((msg: MsgSyncPlay)   => void) | null = null;
@@ -147,6 +149,8 @@ export function shutdown(): void {
   _role = 'pending';
   _syncPlaySent = false;
   _syncedStartMs = -1;
+  _relaySessionStartedAtMs = -1;
+  _staleSignalLogCount = 0;
   _opts?.logger('info', '[P2P] shutdown');
 }
 
@@ -249,10 +253,11 @@ async function _doSignalDrain(): Promise<void> {
   try {
     const t0 = Date.now();
     const res  = await fetch(`${_opts.piBase}/api/v1/test-sync/signals/${_opts.deviceId}?since=${_signalPollSince}`);
-    const data = await res.json() as { entries: Array<{ idx: number; from: string; body: unknown }>; nextSince: number; serverTimeMs?: number };
+    const data = await res.json() as { entries: Array<{ idx: number; from: string; at?: number; body: unknown }>; nextSince: number; serverTimeMs?: number };
     _observeServerTime(data.serverTimeMs, t0, Date.now(), 'signals');
     if (data.nextSince != null) _signalPollSince = data.nextSince;
     for (const entry of data.entries ?? []) {
+      if (_isStaleSignal(entry)) continue;
       // If we're receiving a message from someone other than our current peer,
       // re-route: we likely paired with a stale device initially.
       if (entry.from && entry.from !== _peerDeviceId) {
@@ -281,6 +286,7 @@ async function _doSignalDrain(): Promise<void> {
 
 function _observeServerTime(serverTimeMs: unknown, t0: number, t3: number, source: string): void {
   if (_syncedStartMs > 0 || typeof serverTimeMs !== 'number') return;
+  if (_relaySessionStartedAtMs <= 0) _relaySessionStartedAtMs = serverTimeMs;
   const before = getNtpOffset();
   const result = observeServerTime(serverTimeMs, t0, t3);
   if (!result) return;
@@ -289,6 +295,17 @@ function _observeServerTime(serverTimeMs: unknown, t0: number, t3: number, sourc
     _lastClockLogTime = now;
     _opts?.logger('info', `[P2P] relay clock calibrated via ${source}: offset=${result.offsetMs}ms rtt=${result.rttMs}ms`);
   }
+}
+
+function _isStaleSignal(entry: { idx: number; from: string; at?: number }): boolean {
+  const at = Number(entry.at);
+  if (_relaySessionStartedAtMs <= 0 || !isFinite(at)) return false;
+  if (at >= _relaySessionStartedAtMs - 1000) return false;
+  if (_staleSignalLogCount < 3) {
+    _staleSignalLogCount += 1;
+    _opts?.logger('info', `[P2P] ignored stale signal idx=${entry.idx} from=${entry.from}`);
+  }
+  return true;
 }
 
 // ── Message handler ───────────────────────────────────────────────────────────
