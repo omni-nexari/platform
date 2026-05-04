@@ -20,7 +20,7 @@
  * either completes or times out.
  */
 import { logger } from './logger.js';
-import { getCurrentPosMs, nudgePhase, isPlaying as engineIsPlaying, getDuration as engineGetDuration } from './engine.js';
+import { getCurrentPosMs, nudgePhase, hardSeekTo, isPlaying as engineIsPlaying, getDuration as engineGetDuration } from './engine.js';
 import { measureOffset, getOffsetMs, localToServer, serverToLocal } from './clock.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -42,6 +42,10 @@ export interface SyncConfig {
   prepareEngine:     (url: string) => Promise<void>;
   schedulePlay:      (epochMs: number) => void;
   getEngineDuration: () => number;
+  // Optional: tear down + reinitialise the active engine. Called when a new
+  // follower joins mid-play so the leader can resync from a clean state.
+  // If omitted, resync still runs but `prepareEngine` must be idempotent.
+  restartEngine?:    () => void;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -87,18 +91,37 @@ let _selfLatencyCached = 0;
 function _selfLatencyMs(): number { return _selfLatencyCached; }
 
 // ── Plan B + C: PLAYHEAD heartbeat & drift correction ──────────────────────────
-const PHASE_HEARTBEAT_MS    = 3000;  // broadcast playhead every 3s
-const PHASE_PEER_FRESH_MS   = 6000;  // ignore peer playheads older than this
-const PHASE_NUDGE_THRESHOLD = 15;    // ms — only correct if |drift| > this
-const PHASE_NUDGE_DAMPING   = 0.5;   // apply only half the drift per round (avoid oscillation)
-const PHASE_NUDGE_CAP_MS    = 80;    // hard cap per single nudge to keep video smooth
-const PHASE_CAL_GRACE_MS    = 10_000;// ignore first N ms after play start (decoder warm-up)
+// HTML5 engine corrects via playbackRate rubber-band (engine.nudgePhase),
+// which is smooth and audible-free up to ±5%. We can therefore tick faster
+// and react to smaller drifts than the AVPlay wrap-boundary shifter could.
+const PHASE_HEARTBEAT_MS    = 1500;  // broadcast playhead every 1.5s
+const PHASE_PEER_FRESH_MS   = 4000;  // ignore peer playheads older than this
+const PHASE_NUDGE_THRESHOLD = 8;     // ms — only correct if |drift| > this
+const PHASE_HARD_SEEK_MS    = 500;   // ms — if |drift| > this, hard-seek to leader
+                                     // instead of slow rate-band. Catches startup
+                                     // skew on Tizen 4 where decoder warmup leaves
+                                     // the follower seconds behind.
+const PHASE_NUDGE_DAMPING   = 0.6;   // rate correction is smoother → push harder
+const PHASE_NUDGE_CAP_MS    = 150;   // hard cap per nudge (≈10% rate at 1.5s window)
+// Shortest-arc already wraps myDrift into [-duration/2, +duration/2] so loop
+// boundaries are handled mathematically. We still skip truly ambiguous values
+// (|myDrift| > duration/2, which can't happen with shortest-arc) plus values
+// that would be wrong if the leaderPos projection is slightly stale.
+// Set above duration/2 (7520ms for a 15s clip) so it never fires in practice;
+// the PHASE_PEER_FRESH_MS guard covers the stale-leader case.
+const PHASE_DRIFT_SKIP_MS   = 14000;
+const PHASE_CAL_GRACE_MS    = 6_000; // ignore first N ms after play start (decoder warm-up)
 const PHASE_CAL_EWMA_ALPHA  = 0.2;   // smoothing for stored latency
 let   _peerPlayheads        = new Map<string, { serverNow: number; posMs: number; receivedAt: number }>();
 let   _phaseTimer: any      = null;
 let   _phaseStartedAt       = 0;
 let   _calibrationEwma      = 0;     // EWMA of (myPos - groupMedian); ms
 let   _calibrationSamples   = 0;
+// After a hard-seek the playhead jumps; the next tick will see a stale PLAYHEAD
+// from the peer (broadcast before our seek) and would re-correct. Skip ticks
+// during this cooldown so the system settles.
+const PHASE_NUDGE_COOLDOWN_MS = 2500;
+let   _phaseCooldownUntil   = 0;
 
 // ── State ──────────────────────────────────────────────────────────────────────
 
@@ -115,6 +138,12 @@ let _goSent              = false;
 
 // Follower
 let _loadReceived = false;
+
+// Leader live-join watcher — detects new followers after solo play has begun.
+const LEADER_PEER_SCAN_MS = 4000;       // how often leader polls /peers
+const LEADER_PEER_FRESH_MS = 30_000;    // ignore stale peer entries
+let   _leaderPeerWatchTimer: any = null;
+let   _resyncInProgress = false;
 
 // ── Public ────────────────────────────────────────────────────────────────────
 
@@ -168,6 +197,7 @@ export async function init(cfg: SyncConfig): Promise<void> {
 
   if (_role === 'leader') {
     await _runLeader();
+    _startLeaderPeerWatch();
   } else {
     cfg.onStatus('Follower — waiting for LOAD_URL from leader…');
   }
@@ -176,6 +206,7 @@ export async function init(cfg: SyncConfig): Promise<void> {
 export function stop(): void {
   _stopped = true;
   _stopPhaseHeartbeat();
+  _stopLeaderPeerWatch();
   logger.info('[Sync] stopped');
 }
 
@@ -227,6 +258,68 @@ function _checkAllReady(): void {
   logger.info(`[Sync] leader self-schedule localPlayAt=${localPlayAt} latencyOffset=+${selfLatency}ms`);
   _cfg.schedulePlay(localPlayAt + selfLatency);
   _startPhaseHeartbeat();
+}
+
+// ── Leader live-join watcher ──────────────────────────────────────────────────
+//
+// Once the leader has started playing (alone or with the initial follower set),
+// this loop keeps polling /peers and triggers a resync whenever a NEW fresh
+// peer appears. The user contract: don't wait for the current loop to finish —
+// reload + GO immediately so joiners can syncplay as soon as they're ready.
+function _startLeaderPeerWatch(): void {
+  if (_leaderPeerWatchTimer || _stopped || _role !== 'leader') return;
+  _leaderPeerWatchTimer = setInterval(_leaderPeerScan, LEADER_PEER_SCAN_MS);
+  logger.info('[Sync] leader peer-watch started');
+}
+
+function _stopLeaderPeerWatch(): void {
+  if (_leaderPeerWatchTimer) { clearInterval(_leaderPeerWatchTimer); _leaderPeerWatchTimer = null; }
+}
+
+async function _leaderPeerScan(): Promise<void> {
+  if (_stopped || _resyncInProgress || _role !== 'leader') return;
+  try {
+    const res = await _fetchTimeout(
+      `${_cfg.piBase}/api/v1/test-sync/peers?groupId=${_cfg.groupId}`,
+    );
+    if (!res.ok) return;
+    const { peers = [] } = await res.json() as {
+      peers: Array<{ deviceId: string; registeredAt: number }>;
+    };
+    const now      = Date.now();
+    const fresh    = peers.filter((p) => now - p.registeredAt < LEADER_PEER_FRESH_MS);
+    const others   = fresh.filter((p) => p.deviceId !== _cfg.deviceId).map((p) => p.deviceId);
+    const known    = new Set(_peers);
+    const joiners  = others.filter((id) => !known.has(id));
+    if (joiners.length === 0) return;
+
+    logger.info(`[Sync] new follower(s) joined: [${joiners.join(',')}] — triggering resync`);
+    _cfg.onStatus(`New follower joined (${joiners.join(',')}) — resyncing…`);
+    _peers = others;
+    await _resyncLeader();
+  } catch (e: any) {
+    logger.warn(`[Sync] leader peer scan failed: ${e?.message}`);
+  }
+}
+
+async function _resyncLeader(): Promise<void> {
+  if (_resyncInProgress || _stopped) return;
+  _resyncInProgress = true;
+  try {
+    // Stop drift correction tied to the previous play cycle and persist any
+    // calibration we accumulated. Then wipe the engine so prepare() is fresh.
+    _stopPhaseHeartbeat();
+    _leaderEngineReady = false;
+    _followerReadySet  = new Set();
+    _goSent            = false;
+    if (_cfg.restartEngine) {
+      try { _cfg.restartEngine(); }
+      catch (e: any) { logger.warn(`[Sync] restartEngine failed: ${e?.message}`); }
+    }
+    await _runLeader();
+  } finally {
+    _resyncInProgress = false;
+  }
 }
 
 // ── Signal dispatch ────────────────────────────────────────────────────────────
@@ -298,6 +391,7 @@ function _startPhaseHeartbeat(): void {
   _peerPlayheads    = new Map();
   _calibrationEwma  = 0;
   _calibrationSamples = 0;
+  _phaseCooldownUntil = 0;
   _phaseTimer = setInterval(_phaseTick, PHASE_HEARTBEAT_MS);
   logger.info('[Sync] phase heartbeat started');
 }
@@ -325,15 +419,84 @@ function _phaseTick(): void {
   const duration  = engineGetDuration();
   if (duration <= 0) return;
 
-  // Broadcast my playhead to all peers
+  // Broadcast my playhead to all peers (always — even during cooldown the peers
+  // need fresh data so when their cooldown ends they have something to compare).
   for (const peer of _peers) {
     _send(peer, { type: 'PLAYHEAD', serverNow, posMs: myPos });
   }
 
-  // Build sample set: self + fresh peers, all projected to commonServerTime = serverNow
-  // For peer P with report (peerServerNow, peerPos) at receivedAt R:
-  //   projected = (peerPos + (serverNow - peerServerNow)) mod duration
-  // Use shortest-arc for circular median (modular distance).
+  if (localNow < _phaseCooldownUntil) {
+    return; // settling after a recent hard-seek
+  }
+
+  // ── Leader-anchored sync (2-device case) ──
+  // For a 2-device cluster, median-of-2 = midpoint, which causes both devices
+  // to chase each other and oscillate. Designate the leader as the canonical
+  // clock: leader never self-nudges; follower locks to leader's playhead.
+  // Median consensus is still used for 3+ device clusters.
+  if (_role === 'leader' && _peers.length >= 1) {
+    return;
+  }
+  if (_role === 'follower' && _peers.length === 1) {
+    const leaderId = _peers[0];
+    const ph = _peerPlayheads.get(leaderId);
+    if (!ph) {
+      logger.info('[Sync] phase wait: no leader playhead yet');
+      return;
+    }
+    if (localNow - ph.receivedAt > PHASE_PEER_FRESH_MS) {
+      logger.info(`[Sync] phase skip: leader playhead stale (${localNow - ph.receivedAt}ms)`);
+      return;
+    }
+    const leaderProjected = ((ph.posMs + (serverNow - ph.serverNow)) % duration + duration) % duration;
+    // leaderProjected is where the leader is NOW. I want to be there.
+    // myDrift > 0 means "I'm ahead of leader" → engine slows me / seeks back.
+    let myDrift: number;
+    {
+      let d = myPos - leaderProjected;
+      if (d >  duration / 2) d -= duration;
+      if (d < -duration / 2) d += duration;
+      myDrift = d;
+    }
+
+    // Loop-boundary safety: if the apparent drift is huge, one TV has just
+    // looped and the other hasn't. Rate correction can't help here and a seek
+    // would land in the wrong cycle. Wait for next tick.
+    if (Math.abs(myDrift) > PHASE_DRIFT_SKIP_MS) {
+      logger.info(`[Sync] phase skip follower myDrift=${Math.round(myDrift)}ms (> ${PHASE_DRIFT_SKIP_MS}ms, loop-boundary)`);
+      return;
+    }
+
+    if (Date.now() - _phaseStartedAt < PHASE_CAL_GRACE_MS) {
+      logger.info(`[Sync] phase warm-up follower myDrift=${Math.round(myDrift)}ms (no nudge yet)`);
+      return;
+    }
+
+    _calibrationEwma = _calibrationSamples === 0
+      ? myDrift
+      : PHASE_CAL_EWMA_ALPHA * myDrift + (1 - PHASE_CAL_EWMA_ALPHA) * _calibrationEwma;
+    _calibrationSamples++;
+
+    if (Math.abs(myDrift) < PHASE_NUDGE_THRESHOLD) {
+      logger.info(`[Sync] phase OK follower myDrift=${Math.round(myDrift)}ms ewma=${Math.round(_calibrationEwma)}ms (within ±${PHASE_NUDGE_THRESHOLD}ms)`);
+      return;
+    }
+
+    // NOTE: Hard-seek catch-up was tried but Tizen 4 seekTo is ~700ms
+    // inaccurate even mid-stream, which caused the follower to oscillate.
+    // Decoder primer (engine.prepare()) brings startup skew down to ~400ms,
+    // and that closes via rate correction in a few seconds — no seek needed.
+
+    let nudge = myDrift * PHASE_NUDGE_DAMPING;
+    if (nudge >  PHASE_NUDGE_CAP_MS) nudge =  PHASE_NUDGE_CAP_MS;
+    if (nudge < -PHASE_NUDGE_CAP_MS) nudge = -PHASE_NUDGE_CAP_MS;
+    logger.info(`[Sync] phase NUDGE follower myDrift=${Math.round(myDrift)}ms ewma=${Math.round(_calibrationEwma)}ms → nudge=${Math.round(nudge)}ms`);
+    nudgePhase(Math.round(nudge));
+    _phaseCooldownUntil = Date.now() + PHASE_NUDGE_COOLDOWN_MS;
+    return;
+  }
+
+  // ── 3+ device fallback: median consensus ──
   const samples: { id: string; pos: number }[] = [{ id: _cfg.deviceId, pos: myPos }];
   for (const [peerId, ph] of _peerPlayheads) {
     if (localNow - ph.receivedAt > PHASE_PEER_FRESH_MS) continue;
@@ -384,6 +547,7 @@ function _phaseTick(): void {
   if (nudge < -PHASE_NUDGE_CAP_MS) nudge = -PHASE_NUDGE_CAP_MS;
   logger.info(`[Sync] phase NUDGE samples=${samples.length} myDrift=${Math.round(myDrift)}ms ewma=${Math.round(_calibrationEwma)}ms → nudge=${Math.round(nudge)}ms`);
   nudgePhase(Math.round(nudge));
+  _phaseCooldownUntil = Date.now() + PHASE_NUDGE_COOLDOWN_MS;
 }
 
 // ── Signal poll (sequential async loop) ───────────────────────────────────────

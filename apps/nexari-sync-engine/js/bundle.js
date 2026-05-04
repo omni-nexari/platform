@@ -98,604 +98,117 @@
   });
 
   // src/engine.ts
-  function _activeSlot() {
-    var _a;
-    return (_a = _slots[_activeIdx]) != null ? _a : null;
-  }
-  function _otherSlot() {
-    return _slots.length > 1 ? _slots[1 - _activeIdx] : null;
-  }
-  function _av() {
-    var _a, _b;
-    return (_b = (_a = _activeSlot()) == null ? void 0 : _a.av) != null ? _b : null;
-  }
-  function _logDrift(ms) {
-    if (_destroyed || !_playing || _playStartEpoch < 0 || _durationMs <= 0) return;
-    const now = Date.now();
-    if (now - _lastDriftLog < 2e3) return;
-    _lastDriftLog = now;
-    const exp = _expectedMs();
-    const drift = ms - exp;
-    logger.drift(`[AVPlay] pos=${ms}ms exp=${Math.round(exp)}ms drift=${Math.round(drift)}ms`, drift);
-  }
-  function _applyDisplay(a) {
-    const portrait = window.screen.width < window.screen.height;
-    if (portrait && typeof a.setDisplayRotation === "function") {
-      try {
-        a.setDisplayRotation("PLAYER_DISPLAY_ROTATION_90");
-        logger.info("[AVPlay] setDisplayRotation(ROTATION_90) OK");
-      } catch (e) {
-        logger.warn(`[AVPlay] setDisplayRotation failed: ${e == null ? void 0 : e.message}`);
-      }
-    }
-    try {
-      a.setDisplayRect(0, 0, 1920, 1080);
-      logger.info("[AVPlay] setDisplayRect(0,0,1920,1080) OK");
-    } catch (e) {
-      logger.error(`[AVPlay] setDisplayRect failed: ${e == null ? void 0 : e.message}`);
-    }
-    const mode = portrait ? "PLAYER_DISPLAY_MODE_FULL_SCREEN" : "PLAYER_DISPLAY_MODE_LETTER_BOX";
-    try {
-      a.setDisplayMethod(mode);
-      logger.info(`[AVPlay] setDisplayMethod(${mode}) OK`);
-    } catch (e) {
-      logger.error(`[AVPlay] setDisplayMethod failed: ${e == null ? void 0 : e.message}`);
-    }
-  }
   function initEngine(container) {
-    var _a, _b;
     _destroyed = false;
     _playing = false;
     _durationMs = 0;
-    _swapFlight = false;
     _playAtEpoch = -1;
     _playStartEpoch = -1;
-    _firstPlaytimeLogged = false;
-    _url = "";
-    _slots = [];
-    _activeIdx = 0;
-    Array.from(container.querySelectorAll('object[type="application/avplayer"]')).forEach((o) => {
-      var _a2;
-      return (_a2 = o.parentNode) == null ? void 0 : _a2.removeChild(o);
-    });
-    const w = window;
-    const store = (_a = w.webapis) == null ? void 0 : _a.avplaystore;
-    const avplay = (_b = w.webapis) == null ? void 0 : _b.avplay;
-    const slotCount = store ? 2 : avplay ? 1 : 0;
-    if (slotCount === 0) {
-      logger.warn("[AVPlay] webapis.avplay/avplaystore not available");
-      return;
-    }
-    for (let i = 0; i < slotCount; i++) {
-      const obj = document.createElement("object");
-      obj.type = "application/avplayer";
-      obj.setAttribute("width", "1920");
-      obj.setAttribute("height", "1080");
-      obj.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;";
-      container.appendChild(obj);
-      const av = store ? store.getPlayer() : avplay;
-      _slots.push({ av, obj, ready: false, preparing: false });
-    }
-    logger.info(`[AVPlay] engine init slots=${slotCount} screen=${window.screen.width}x${window.screen.height} portrait=${window.screen.width < window.screen.height} seamless=${slotCount === 2}`);
-  }
-  function prepare(url) {
-    if (_destroyed || _slots.length === 0) return Promise.reject(new Error("[AVPlay] not available"));
-    _playing = false;
-    _durationMs = 0;
-    _swapFlight = false;
-    return _resolveUri(url).then((abs) => {
-      _url = abs;
-      return _openSlot(_slots[0], abs, 0);
-    });
-  }
-  function _openSlot(slot, absUri, idx) {
-    return new Promise((resolve, reject) => {
-      var _a;
-      if (_destroyed) {
-        reject(new Error("destroyed"));
-        return;
-      }
-      const a = slot.av;
-      try {
-        logger.info(`[AVPlay] slot${idx} open \u2192 ${absUri}`);
-        a.open(absUri);
-        try {
-          logger.info(`[AVPlay] slot${idx} state after open: ${a.getState()}`);
-        } catch (e) {
-        }
-        const isLocalFile = /^file:\/\//i.test(absUri);
-        if (!isLocalFile && typeof a.setBufferingParam === "function") {
-          try {
-            a.setBufferingParam("PLAYER_BUFFER_FOR_PLAY", "PLAYER_BUFFER_SIZE_IN_SECOND", 0);
-          } catch (e) {
-          }
-          try {
-            a.setBufferingParam("PLAYER_BUFFER_FOR_RESUME", "PLAYER_BUFFER_SIZE_IN_SECOND", 0);
-          } catch (e) {
-          }
-        }
-        _applyDisplay(a);
-        a.setListener(_makeListener(slot, idx));
-        slot.preparing = true;
-        a.prepareAsync(
-          () => {
-            if (_destroyed) {
-              reject(new Error("destroyed during prepare"));
-              return;
-            }
-            _applyDisplay(a);
-            slot.ready = true;
-            slot.preparing = false;
-            if (idx === 0) _durationMs = a.getDuration();
-            if (idx !== _activeIdx && typeof a.setVideoStillMode === "function") {
-              try {
-                a.setVideoStillMode("true");
-                logger.info(`[AVPlay] slot${idx} setVideoStillMode(true) \u2014 held ready`);
-              } catch (e) {
-                logger.warn(`[AVPlay] slot${idx} setVideoStillMode failed: ${e == null ? void 0 : e.message}`);
-              }
-            }
-            logger.info(`[AVPlay] slot${idx} READY \u2014 duration=${_durationMs}ms state=${a.getState()}`);
-            resolve();
-          },
-          (e) => {
-            var _a2, _b;
-            slot.preparing = false;
-            logger.error(`[AVPlay] slot${idx} prepareAsync failed: ${(_a2 = e == null ? void 0 : e.message) != null ? _a2 : e}`);
-            reject(new Error((_b = e == null ? void 0 : e.message) != null ? _b : String(e)));
-          }
-        );
-      } catch (e) {
-        logger.error(`[AVPlay] slot${idx} open failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
-        reject(e);
-      }
-    });
-  }
-  function _makeListener(slot, idx) {
-    return {
-      onbufferingstart: () => logger.info(`[AVPlay] slot${idx} buffering start`),
-      onbufferingcomplete: () => logger.info(`[AVPlay] slot${idx} buffering complete`),
-      onstreamcompleted: () => {
-        if (slot !== _activeSlot()) {
-          logger.info(`[AVPlay] slot${idx} stream completed (inactive \u2014 ignored)`);
-          return;
-        }
-        logger.info(`[AVPlay] slot${idx} stream completed \u2192 swap scheduled`);
-        if (!_destroyed) setTimeout(() => {
-          if (!_destroyed) _handleLoop();
-        }, 0);
-      },
-      oncurrentplaytime: (ms) => {
-        if (slot !== _activeSlot()) return;
-        if (!_firstPlaytimeLogged) {
-          _firstPlaytimeLogged = true;
-          logger.info(`[AVPlay] slot${idx} oncurrentplaytime first call: ms=${ms}`);
-        }
-        if (ms === 0) return;
-        _logDrift(ms);
-      },
-      onerror: (t) => logger.error(`[AVPlay] slot${idx} error type=${t}`),
-      onerrormsg: (t, m) => logger.error(`[AVPlay] slot${idx} errormsg type=${t} msg=${m}`),
-      onevent: (t, d) => logger.info(`[AVPlay] slot${idx} event type=${t} data=${d}`),
-      onstreaminfo: (w, h, bw, bh) => logger.info(`[AVPlay] slot${idx} streaminfo ${w}x${h} base=${bw}x${bh}`),
-      ondrmevent: (t, d) => logger.info(`[AVPlay] slot${idx} drmevent type=${t} data=${d}`),
-      onresolutionchanged: (w, h) => logger.info(`[AVPlay] slot${idx} resolution changed ${w}x${h}`),
-      onbufferlevelchanged: (pct) => logger.info(`[AVPlay] slot${idx} buffer level ${pct}%`),
-      onopenstatecompleted: () => logger.info(`[AVPlay] slot${idx} openstate completed`),
-      onresourceconflicted: () => logger.warn(`[AVPlay] slot${idx} resource conflict`)
-    };
-  }
-  function schedulePlayAt(epochMs) {
-    if (_destroyed) return;
-    _playAtEpoch = epochMs;
-    clearTimeout(_playTimer);
-    const slot = _activeSlot();
-    if (!slot) return;
-    const wait = epochMs - Date.now();
-    logger.info(`[AVPlay] schedulePlayAt epoch=${epochMs} T-${Math.round(Math.max(0, wait))}ms slot=${_activeIdx}`);
-    if (wait <= 0) {
-      _doPlay(slot);
-      return;
-    }
-    _playTimer = setTimeout(() => {
-      (function spin() {
-        if (_destroyed) return;
-        if (Date.now() >= _playAtEpoch) {
-          _doPlay(slot);
-          return;
-        }
-        setTimeout(spin, 4);
-      })();
-    }, Math.max(0, wait - 60));
-  }
-  function _doPlay(slot) {
-    if (_destroyed || _playing) return;
-    const a = slot.av;
-    try {
-      _applyDisplay(a);
-      if (typeof a.setVideoStillMode === "function") {
-        try {
-          a.setVideoStillMode("false");
-        } catch (e) {
-        }
-      }
-      try {
-        logger.info(`[AVPlay] slot${_activeIdx} state before play: ${a.getState()}`);
-      } catch (e) {
-      }
-      a.play();
-      _playing = true;
-      _playStartEpoch = _playAtEpoch > 0 ? _playAtEpoch : Date.now();
-      logger.info(`[AVPlay] slot${_activeIdx} play() OK startEpoch=${_playStartEpoch}`);
-      setTimeout(() => {
-        if (_destroyed || !_playing) return;
-        try {
-          const st = a.getState();
-          const ms = a.getCurrentTime ? a.getCurrentTime() : -1;
-          if (st === "PLAYING" && ms === 0) logger.warn(`[AVPlay] STALL DETECTED \u2014 state=${st} pos=${ms}ms after 4s`);
-          else logger.info(`[AVPlay] watchdog OK \u2014 state=${st} pos=${ms}ms`);
-        } catch (e) {
-        }
-      }, 4e3);
-      _startPoll();
-    } catch (e) {
-      logger.error(`[AVPlay] play() failed: ${e == null ? void 0 : e.message}`);
-    }
-  }
-  function _startPoll() {
-    clearInterval(_pollTimer);
-    _pollTimer = setInterval(() => {
-      if (_destroyed || !_playing) {
-        clearInterval(_pollTimer);
-        return;
-      }
-      const a = _av();
-      if (!a) return;
-      try {
-        const ms = a.getCurrentTime ? a.getCurrentTime() : -1;
-        const st = a.getState ? a.getState() : "?";
-        logger.info(`[AVPlay] poll slot${_activeIdx} state=${st} pos=${ms}ms`);
-        if (ms > 0) _logDrift(ms);
-      } catch (e) {
-        logger.warn(`[AVPlay] poll err: ${e == null ? void 0 : e.message}`);
-      }
-    }, 5e3);
-  }
-  function _handleLoop() {
-    if (_swapFlight || _destroyed) return;
-    const fromSlot = _activeSlot();
-    if (!fromSlot) return;
-    const toSlot = _otherSlot();
-    if (!toSlot) {
-      _fullResetLoop(fromSlot);
-      return;
-    }
-    _swapFlight = true;
-    _playing = false;
-    clearInterval(_pollTimer);
-    const fromAv = fromSlot.av;
-    const toAv = toSlot.av;
-    const fromIdx = _activeIdx;
-    const toIdx = 1 - _activeIdx;
-    logger.info(`[AVPlay] swap slot${fromIdx}\u2192slot${toIdx} starting`);
-    if (typeof fromAv.setVideoStillMode === "function") {
-      try {
-        fromAv.setVideoStillMode("true");
-        logger.info(`[AVPlay] slot${fromIdx} setVideoStillMode(true) \u2014 frame frozen`);
-      } catch (e) {
-        logger.warn(`[AVPlay] slot${fromIdx} stillMode(true) err: ${e == null ? void 0 : e.message}`);
-      }
-    }
-    try {
-      fromAv.stop();
-      logger.info(`[AVPlay] slot${fromIdx} stopped`);
-    } catch (e) {
-      logger.warn(`[AVPlay] slot${fromIdx} stop err: ${e == null ? void 0 : e.message}`);
-    }
-    try {
-      fromAv.close();
-      fromSlot.ready = false;
-      logger.info(`[AVPlay] slot${fromIdx} closed`);
-    } catch (e) {
-      logger.warn(`[AVPlay] slot${fromIdx} close err: ${e == null ? void 0 : e.message}`);
-    }
-    try {
-      logger.info(`[AVPlay] slot${toIdx} open \u2192 ${_url}`);
-      toAv.open(_url);
-    } catch (e) {
-      logger.error(`[AVPlay] slot${toIdx} open failed: ${e == null ? void 0 : e.message}`);
-      _swapFlight = false;
-      return;
-    }
-    _applyDisplay(toAv);
-    toAv.setListener(_makeListener(toSlot, toIdx));
-    if (typeof toAv.setVideoStillMode === "function") {
-      try {
-        toAv.setVideoStillMode("true");
-      } catch (e) {
-      }
-    }
-    toSlot.preparing = true;
-    toAv.prepareAsync(
-      () => {
-        if (_destroyed) return;
-        toSlot.preparing = false;
-        toSlot.ready = true;
-        _applyDisplay(toAv);
-        const targetMs = _playStartEpoch > 0 && _durationMs > 0 ? Math.round(((Date.now() - _playStartEpoch) % _durationMs + _durationMs) % _durationMs) : 0;
-        const useSeek = targetMs > 100 && targetMs < _durationMs - 500;
-        logger.info(`[AVPlay] slot${toIdx} prepared \u2014 target=${targetMs}ms useSeek=${useSeek}`);
-        const finalize = () => {
-          if (typeof toAv.setVideoStillMode === "function") {
-            try {
-              toAv.setVideoStillMode("false");
-            } catch (e) {
-            }
-          }
-          try {
-            toAv.play();
-          } catch (e) {
-            logger.error(`[AVPlay] slot${toIdx} play() failed: ${e == null ? void 0 : e.message}`);
-          }
-          _activeIdx = toIdx;
-          _playing = true;
-          _swapFlight = false;
-          logger.info(`[AVPlay] swap complete \u2014 playing slot${_activeIdx}`);
-          _startPoll();
-        };
-        if (useSeek) {
-          try {
-            toAv.seekTo(targetMs, finalize, (e) => {
-              logger.warn(`[AVPlay] slot${toIdx} seekTo failed: ${e == null ? void 0 : e.message} \u2014 playing from 0`);
-              finalize();
-            });
-          } catch (e) {
-            logger.warn(`[AVPlay] slot${toIdx} seekTo threw: ${e == null ? void 0 : e.message}`);
-            finalize();
-          }
-        } else {
-          finalize();
-        }
-      },
-      (e) => {
-        var _a;
-        toSlot.preparing = false;
-        _swapFlight = false;
-        logger.error(`[AVPlay] slot${toIdx} swap prepareAsync failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e} \u2014 falling back to full reset on slot${fromIdx}`);
-        try {
-          fromAv.open(_url);
-        } catch (e2) {
-        }
-        _applyDisplay(fromAv);
-        fromAv.setListener(_makeListener(fromSlot, fromIdx));
-        _fullResetLoop(fromSlot);
-      }
-    );
-  }
-  function _fullResetLoop(slot) {
-    _swapFlight = true;
-    _playing = false;
-    clearInterval(_pollTimer);
-    const a = slot.av;
-    let done = false;
-    const guard = setTimeout(() => {
-      if (done) return;
-      done = true;
-      _swapFlight = false;
-      logger.warn("[AVPlay] full-reset loop timeout \u2014 forcing play()");
-      try {
-        a.play();
-      } catch (e) {
-      }
-      _playing = true;
-      _startPoll();
-    }, 6e3);
-    try {
-      a.stop();
-    } catch (e) {
-    }
-    a.prepareAsync(
-      () => {
-        if (done || _destroyed) return;
-        const targetMs = _playStartEpoch > 0 && _durationMs > 0 ? Math.round(((Date.now() - _playStartEpoch) % _durationMs + _durationMs) % _durationMs) : 0;
-        logger.info(`[AVPlay] full-reset loop ready, seekTo=${targetMs}ms`);
-        _applyDisplay(a);
-        const finishPlay = () => {
-          if (done) return;
-          done = true;
-          clearTimeout(guard);
-          _swapFlight = false;
-          try {
-            a.play();
-          } catch (e) {
-          }
-          _playing = true;
-          _startPoll();
-        };
-        if (targetMs > 100 && targetMs < _durationMs - 200) {
-          a.seekTo(targetMs, finishPlay, (e) => {
-            logger.warn(`[AVPlay] reset seekTo failed: ${e == null ? void 0 : e.message}`);
-            finishPlay();
-          });
-        } else {
-          finishPlay();
-        }
-      },
-      (e) => {
-        var _a;
-        if (done) return;
-        done = true;
-        clearTimeout(guard);
-        _swapFlight = false;
-        logger.error(`[AVPlay] full-reset prepareAsync failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
-      }
-    );
-  }
-  function getDuration() {
-    return _durationMs;
-  }
-  function isPlaying() {
-    return _playing;
-  }
-  function getCurrentPosMs() {
-    if (!_playing) return null;
-    const a = _av();
-    if (!a || !a.getCurrentTime) return null;
-    try {
-      const ms = a.getCurrentTime();
-      if (ms <= 0) return null;
-      return ms;
-    } catch (e) {
-      return null;
-    }
-  }
-  function nudgePhase(deltaMs) {
-    if (!_playing || _playStartEpoch < 0) return;
-    _playStartEpoch += deltaMs;
-    logger.info(`[AVPlay] phase nudge ${deltaMs >= 0 ? "+" : ""}${deltaMs}ms \u2192 playStartEpoch=${_playStartEpoch}`);
-  }
-  function destroyEngine() {
-    var _a;
-    _destroyed = true;
-    _playing = false;
-    clearTimeout(_playTimer);
-    clearInterval(_pollTimer);
-    for (const slot of _slots) {
-      try {
-        const s = slot.av.getState();
-        if (s === "PLAYING" || s === "PAUSED" || s === "READY") slot.av.stop();
-        slot.av.close();
-      } catch (e) {
-      }
-      if ((_a = slot.obj) == null ? void 0 : _a.parentNode) slot.obj.parentNode.removeChild(slot.obj);
-    }
-    _slots = [];
-    logger.info("[AVPlay] engine destroyed");
-  }
-  function _resolveUri(url) {
-    var _a, _b, _c;
-    if (/^(https?|file):\/\//i.test(url)) return Promise.resolve(url);
-    const rel = url.replace(/^\.\//, "");
-    try {
-      const base = (_b = (_a = window.tizen) == null ? void 0 : _a.filesystem) == null ? void 0 : _b.toURI("wgt-package");
-      if (base && base.length > 5) {
-        const abs = (base.endsWith("/") ? base : base + "/") + rel;
-        logger.info(`[AVPlay] uri (toURI): ${abs}`);
-        return Promise.resolve(abs);
-      }
-    } catch (e) {
-    }
-    const tizen = window.tizen;
-    if ((_c = tizen == null ? void 0 : tizen.filesystem) == null ? void 0 : _c.resolve) {
-      return new Promise((res) => {
-        try {
-          tizen.filesystem.resolve(
-            "wgt-package",
-            (dir) => {
-              const base = dir.toURI ? dir.toURI() : String(dir);
-              const abs = (base.endsWith("/") ? base : base + "/") + rel;
-              logger.info(`[AVPlay] uri (resolve): ${abs}`);
-              res(abs);
-            },
-            () => res(_scriptBase(rel)),
-            "r"
-          );
-        } catch (e) {
-          res(_scriptBase(rel));
-        }
-      });
-    }
-    return Promise.resolve(_scriptBase(rel));
-  }
-  function _scriptBase(rel) {
-    var _a;
-    for (const s of Array.from(document.scripts)) {
-      if (((_a = s.src) == null ? void 0 : _a.startsWith("file:///")) && s.src.includes("bundle.js"))
-        return s.src.replace(/js\/bundle\.js.*$/, "") + rel;
-    }
-    logger.warn(`[AVPlay] could not resolve absolute URI for: ${rel}`);
-    return rel;
-  }
-  function _expectedMs() {
-    if (_playStartEpoch < 0 || _durationMs <= 0) return 0;
-    return ((Date.now() - _playStartEpoch) % _durationMs + _durationMs) % _durationMs;
-  }
-  var _slots, _activeIdx, _url, _destroyed, _playing, _durationMs, _swapFlight, _playAtEpoch, _playStartEpoch, _playTimer, _lastDriftLog, _pollTimer, _firstPlaytimeLogged;
-  var init_engine = __esm({
-    "src/engine.ts"() {
-      init_logger();
-      _slots = [];
-      _activeIdx = 0;
-      _url = "";
-      _destroyed = false;
-      _playing = false;
-      _durationMs = 0;
-      _swapFlight = false;
-      _playAtEpoch = -1;
-      _playStartEpoch = -1;
-      _playTimer = null;
-      _lastDriftLog = 0;
-      _pollTimer = null;
-      _firstPlaytimeLogged = false;
-    }
-  });
-
-  // src/engine-html5.ts
-  function initHtml5Engine(container) {
-    _destroyed2 = false;
-    _playing2 = false;
-    _durationMs2 = 0;
-    _playAtEpoch2 = -1;
-    _playStartEpoch2 = -1;
+    const portrait = window.screen.width < window.screen.height;
+    logger.info(`[HTML5] init \u2014 screen=${window.screen.width}x${window.screen.height} layout=${portrait ? "portrait" : "landscape"}`);
     _video = document.createElement("video");
-    _video.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;object-fit:fill;background:#000;";
+    _video.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;object-fit:contain;background:#000;";
     _video.setAttribute("playsinline", "");
     _video.setAttribute("webkit-playsinline", "");
+    _video.muted = true;
+    _video.loop = true;
     container.appendChild(_video);
     _video.addEventListener("ended", () => {
-      if (_destroyed2 || !_playing2) return;
-      logger.info("[HTML5] ended \u2192 loop");
-      _handleLoop2();
+      logger.warn("[HTML5] ended fired despite loop=true \u2014 forcing replay");
+      if (_video && !_destroyed) {
+        try {
+          _video.currentTime = 0;
+          _video.play();
+        } catch (e) {
+        }
+      }
     });
     _video.addEventListener("error", () => {
       var _a, _b, _c;
       logger.error(`[HTML5] video error: ${(_b = (_a = _video == null ? void 0 : _video.error) == null ? void 0 : _a.message) != null ? _b : "unknown"} (code ${(_c = _video == null ? void 0 : _video.error) == null ? void 0 : _c.code})`);
     });
     _video.addEventListener("timeupdate", () => {
-      var _a;
-      if (_destroyed2 || !_playing2 || _playStartEpoch2 < 0 || _durationMs2 <= 0) return;
+      var _a, _b;
+      if (_destroyed || !_playing || _playStartEpoch < 0 || _durationMs <= 0) return;
       const now = Date.now();
-      if (now - _lastDriftLog2 < 2e3) return;
-      _lastDriftLog2 = now;
-      const posMs = Math.round(((_a = _video.currentTime) != null ? _a : 0) * 1e3);
-      const exp = _expectedMs2();
+      if (now - _lastDriftLog < 2e3) return;
+      _lastDriftLog = now;
+      const v = _video;
+      const posMs = Math.round(((_a = v.currentTime) != null ? _a : 0) * 1e3);
+      let actualRate = null;
+      let actualRateStr = "";
+      const ct = (_b = v.currentTime) != null ? _b : 0;
+      if (_prevProbeCt >= 0 && _prevProbeWall >= 0) {
+        const dtWall = (now - _prevProbeWall) / 1e3;
+        let dtCt = ct - _prevProbeCt;
+        if (dtCt < -1) dtCt += _durationMs / 1e3;
+        if (dtWall > 0.1) {
+          actualRate = dtCt / dtWall;
+          actualRateStr = ` actualRate=${actualRate.toFixed(3)}`;
+        }
+      }
+      _prevProbeCt = ct;
+      _prevProbeWall = now;
+      const inGrace = _playStartedAt >= 0 && now - _playStartedAt < STARTUP_ANCHOR_GRACE_MS;
+      const rateOk = actualRate === null || actualRate >= 0.85 && actualRate <= 1.1;
+      if (!inGrace && rateOk) {
+        _reanchorClock();
+      }
+      const exp = _expectedMs();
       const drift = posMs - exp;
-      logger.drift(`[HTML5] pos=${posMs}ms exp=${Math.round(exp)}ms drift=${Math.round(drift)}ms`, drift);
+      let bufStr = "";
+      try {
+        const buf = v.buffered;
+        if (buf && buf.length > 0) {
+          const end = Math.round(buf.end(buf.length - 1) * 1e3);
+          bufStr = ` buf=0-${end}ms`;
+        } else {
+          bufStr = " buf=empty";
+        }
+      } catch (e) {
+      }
+      logger.drift(
+        `[HTML5] pos=${posMs}ms exp=${Math.round(exp)}ms drift=${Math.round(drift)}ms rate=${v.playbackRate.toFixed(3)}${actualRateStr}${bufStr}`,
+        drift
+      );
     });
     logger.info("[HTML5] <video> engine initialised");
   }
-  function prepareHtml5(url) {
-    if (!_video || _destroyed2) return Promise.reject(new Error("[HTML5] engine not initialised"));
-    _playing2 = false;
-    _durationMs2 = 0;
+  function prepare(url) {
+    if (!_video || _destroyed) return Promise.reject(new Error("[HTML5] engine not initialised"));
+    _playing = false;
+    _durationMs = 0;
     return new Promise((resolve, reject) => {
       const v = _video;
       const cleanup = () => {
         v.removeEventListener("canplaythrough", onReady);
+        v.removeEventListener("loadedmetadata", onMeta);
         v.removeEventListener("error", onErr);
       };
-      const onReady = () => {
+      const onMeta = () => {
+        var _a;
+        _durationMs = Math.round(((_a = v.duration) != null ? _a : 0) * 1e3);
+        logger.info(`[HTML5] loadedmetadata \u2014 duration=${_durationMs}ms videoSize=${v.videoWidth}x${v.videoHeight}`);
+      };
+      const onReady = () => __async(null, null, function* () {
         var _a;
         cleanup();
-        _durationMs2 = Math.round(((_a = v.duration) != null ? _a : 0) * 1e3);
-        logger.info(`[HTML5] canplaythrough \u2014 duration=${_durationMs2}ms`);
+        if (_durationMs <= 0) _durationMs = Math.round(((_a = v.duration) != null ? _a : 0) * 1e3);
+        logger.info(`[HTML5] canplaythrough \u2014 duration=${_durationMs}ms`);
+        try {
+          yield _primeDecoder(v);
+          logger.info("[HTML5] decoder primed \u2014 ready to play instantly");
+        } catch (e) {
+          logger.warn(`[HTML5] decoder prime failed (continuing): ${e == null ? void 0 : e.message}`);
+        }
         resolve();
-      };
+      });
       const onErr = () => {
         var _a, _b;
         cleanup();
         reject(new Error(`[HTML5] load error: ${(_b = (_a = v.error) == null ? void 0 : _a.message) != null ? _b : "unknown"}`));
       };
+      v.addEventListener("loadedmetadata", onMeta);
       v.addEventListener("canplaythrough", onReady);
       v.addEventListener("error", onErr);
       v.src = url;
@@ -704,49 +217,108 @@
       logger.info(`[HTML5] loading: ${url}`);
     });
   }
-  function scheduleHtml5PlayAt(epochMs) {
-    if (_destroyed2) return;
-    _playAtEpoch2 = epochMs;
-    clearTimeout(_playTimer2);
+  function _primeDecoder(v) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const PRIME_PLAY_MS = 250;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        try {
+          v.pause();
+        } catch (e) {
+        }
+        const onSeeked = () => {
+          v.removeEventListener("seeked", onSeeked);
+          try {
+            v.playbackRate = 1;
+          } catch (e) {
+          }
+          resolve();
+        };
+        v.addEventListener("seeked", onSeeked);
+        try {
+          v.currentTime = 0;
+        } catch (e) {
+          resolve();
+        }
+        setTimeout(() => {
+          v.removeEventListener("seeked", onSeeked);
+          resolve();
+        }, 1500);
+      };
+      setTimeout(finish, 4e3);
+      v.muted = true;
+      v.playbackRate = 1;
+      v.play().then(() => {
+        setTimeout(finish, PRIME_PLAY_MS);
+      }).catch(() => finish());
+    });
+  }
+  function schedulePlayAt(epochMs) {
+    if (_destroyed) return;
+    _playAtEpoch = epochMs;
+    clearTimeout(_playTimer);
     const wait = epochMs - Date.now();
     logger.info(`[HTML5] schedulePlayAt epoch=${epochMs} T-${Math.round(Math.max(0, wait))}ms`);
     if (wait <= 0) {
-      _doPlay2();
+      _doPlay();
       return;
     }
-    _playTimer2 = setTimeout(() => {
+    _playTimer = setTimeout(() => {
       (function spin() {
-        if (_destroyed2) return;
-        if (Date.now() >= _playAtEpoch2) {
-          _doPlay2();
+        if (_destroyed) return;
+        if (Date.now() >= _playAtEpoch) {
+          _doPlay();
           return;
         }
         setTimeout(spin, 4);
       })();
     }, Math.max(0, wait - 60));
   }
-  function _doPlay2() {
-    if (_destroyed2 || _playing2 || !_video) return;
+  function _doPlay() {
+    if (_destroyed || _playing || !_video) return;
+    _video.currentTime = 0;
+    _video.playbackRate = 1;
+    _prevProbeCt = -1;
+    _prevProbeWall = -1;
     _video.play().then(() => {
-      _playing2 = true;
-      _playStartEpoch2 = _playAtEpoch2 > 0 ? _playAtEpoch2 : Date.now();
-      logger.info(`[HTML5] play() \u2014 startEpoch=${_playStartEpoch2}`);
+      _playing = true;
+      _playStartEpoch = _playAtEpoch > 0 ? _playAtEpoch : Date.now();
+      _playStartedAt = Date.now();
+      logger.info(`[HTML5] play() \u2014 startEpoch=${_playStartEpoch}`);
     }).catch((e) => logger.error(`[HTML5] play() failed: ${e == null ? void 0 : e.message}`));
   }
-  function _handleLoop2() {
-    if (!_video || _destroyed2) return;
-    const targetMs = _playStartEpoch2 > 0 && _durationMs2 > 0 ? Math.round(((Date.now() - _playStartEpoch2) % _durationMs2 + _durationMs2) % _durationMs2) : 0;
-    logger.info(`[HTML5] loop \u2192 seekTo ${targetMs}ms`);
-    _video.currentTime = targetMs / 1e3;
-    _video.play().catch((e) => logger.warn(`[HTML5] loop play() failed: ${e == null ? void 0 : e.message}`));
+  function getDuration() {
+    return _durationMs;
   }
-  function getHtml5Duration() {
-    return _durationMs2;
+  function isPlaying() {
+    return _playing;
   }
-  function destroyHtml5Engine() {
-    _destroyed2 = true;
-    _playing2 = false;
-    clearTimeout(_playTimer2);
+  function getCurrentPosMs() {
+    var _a;
+    if (!_video || !_playing) return null;
+    return Math.round(((_a = _video.currentTime) != null ? _a : 0) * 1e3);
+  }
+  function nudgePhase(deltaMs) {
+    if (_destroyed || !_playing || !_video) return;
+    if (Math.abs(deltaMs) < RATE_MIN_DELTA_MS) return;
+    let rateOffset = -deltaMs / RATE_WINDOW_MS;
+    if (rateOffset > RATE_MAX_OFFSET) rateOffset = RATE_MAX_OFFSET;
+    if (rateOffset < -RATE_MAX_OFFSET) rateOffset = -RATE_MAX_OFFSET;
+    const newRate = Math.max(0.5, Math.min(2, 1 + rateOffset));
+    _video.playbackRate = newRate;
+    clearTimeout(_rateTimer);
+    _rateTimer = setTimeout(() => {
+      if (_video && !_destroyed) _video.playbackRate = 1;
+    }, RATE_WINDOW_MS);
+    logger.info(`[HTML5] nudge drift=${deltaMs}ms \u2192 rate=${newRate.toFixed(3)} for ${RATE_WINDOW_MS}ms`);
+  }
+  function destroyEngine() {
+    _destroyed = true;
+    _playing = false;
+    clearTimeout(_playTimer);
+    clearTimeout(_rateTimer);
     if (_video) {
       try {
         _video.pause();
@@ -762,22 +334,48 @@
     }
     logger.info("[HTML5] engine destroyed");
   }
-  function _expectedMs2() {
-    if (_playStartEpoch2 < 0 || _durationMs2 <= 0) return 0;
-    return ((Date.now() - _playStartEpoch2) % _durationMs2 + _durationMs2) % _durationMs2;
+  function _expectedMs() {
+    if (_playStartEpoch < 0 || _durationMs <= 0) return 0;
+    return ((Date.now() - _playStartEpoch) % _durationMs + _durationMs) % _durationMs;
   }
-  var _video, _destroyed2, _playing2, _durationMs2, _playAtEpoch2, _playStartEpoch2, _playTimer2, _lastDriftLog2;
-  var init_engine_html5 = __esm({
-    "src/engine-html5.ts"() {
+  function _reanchorClock() {
+    var _a;
+    if (!_video || _playStartEpoch < 0 || _durationMs <= 0) return;
+    const posMs = Math.round(((_a = _video.currentTime) != null ? _a : 0) * 1e3);
+    if (posMs < 200) return;
+    const now = Date.now();
+    const elapsed = now - _playStartEpoch;
+    const loopN = Math.floor(elapsed / _durationMs);
+    const corrected = now - (loopN * _durationMs + posMs);
+    const delta = corrected - _playStartEpoch;
+    const firstAnchor = _playStartedAt >= 0 && now - _playStartedAt < STARTUP_ANCHOR_GRACE_MS + 6e3;
+    const maxDelta = firstAnchor ? _durationMs * 1.5 : 2e3;
+    if (Math.abs(delta) > 20 && Math.abs(delta) < maxDelta) {
+      const tag = Math.abs(delta) > 500 ? "startup-anchor" : "re-anchor";
+      logger.info(`[HTML5] clock ${tag}: _playStartEpoch ${delta > 0 ? "+" : ""}${Math.round(delta)}ms \u2192 actualPos=${posMs}ms`);
+      _playStartEpoch = corrected;
+    }
+  }
+  var _video, _destroyed, _playing, _durationMs, _playAtEpoch, _playStartEpoch, _playTimer, _lastDriftLog, _prevProbeCt, _prevProbeWall, STARTUP_ANCHOR_GRACE_MS, _playStartedAt, _rateTimer, RATE_WINDOW_MS, RATE_MAX_OFFSET, RATE_MIN_DELTA_MS;
+  var init_engine = __esm({
+    "src/engine.ts"() {
       init_logger();
       _video = null;
-      _destroyed2 = false;
-      _playing2 = false;
-      _durationMs2 = 0;
-      _playAtEpoch2 = -1;
-      _playStartEpoch2 = -1;
-      _playTimer2 = null;
-      _lastDriftLog2 = 0;
+      _destroyed = false;
+      _playing = false;
+      _durationMs = 0;
+      _playAtEpoch = -1;
+      _playStartEpoch = -1;
+      _playTimer = null;
+      _lastDriftLog = 0;
+      _prevProbeCt = -1;
+      _prevProbeWall = -1;
+      STARTUP_ANCHOR_GRACE_MS = 15e3;
+      _playStartedAt = -1;
+      _rateTimer = null;
+      RATE_WINDOW_MS = 2500;
+      RATE_MAX_OFFSET = 0.1;
+      RATE_MIN_DELTA_MS = 4;
     }
   });
 
@@ -903,9 +501,10 @@
       yield _waitForPeers();
       logger.info(`[Sync] role=${_role} peers=[${_peers.join(", ")}]`);
       cfg.onStatus(`Role: ${_role} \u2014 peer(s): ${_peers.join(", ")}`);
-      _startPoll2();
+      _startPoll();
       if (_role === "leader") {
         yield _runLeader();
+        _startLeaderPeerWatch();
       } else {
         cfg.onStatus("Follower \u2014 waiting for LOAD_URL from leader\u2026");
       }
@@ -914,6 +513,7 @@
   function stop() {
     _stopped = true;
     _stopPhaseHeartbeat();
+    _stopLeaderPeerWatch();
     logger.info("[Sync] stopped");
   }
   function _runLeader() {
@@ -954,6 +554,63 @@
     logger.info(`[Sync] leader self-schedule localPlayAt=${localPlayAt} latencyOffset=+${selfLatency}ms`);
     _cfg.schedulePlay(localPlayAt + selfLatency);
     _startPhaseHeartbeat();
+  }
+  function _startLeaderPeerWatch() {
+    if (_leaderPeerWatchTimer || _stopped || _role !== "leader") return;
+    _leaderPeerWatchTimer = setInterval(_leaderPeerScan, LEADER_PEER_SCAN_MS);
+    logger.info("[Sync] leader peer-watch started");
+  }
+  function _stopLeaderPeerWatch() {
+    if (_leaderPeerWatchTimer) {
+      clearInterval(_leaderPeerWatchTimer);
+      _leaderPeerWatchTimer = null;
+    }
+  }
+  function _leaderPeerScan() {
+    return __async(this, null, function* () {
+      if (_stopped || _resyncInProgress || _role !== "leader") return;
+      try {
+        const res = yield _fetchTimeout(
+          `${_cfg.piBase}/api/v1/test-sync/peers?groupId=${_cfg.groupId}`
+        );
+        if (!res.ok) return;
+        const { peers = [] } = yield res.json();
+        const now = Date.now();
+        const fresh = peers.filter((p) => now - p.registeredAt < LEADER_PEER_FRESH_MS);
+        const others = fresh.filter((p) => p.deviceId !== _cfg.deviceId).map((p) => p.deviceId);
+        const known = new Set(_peers);
+        const joiners = others.filter((id) => !known.has(id));
+        if (joiners.length === 0) return;
+        logger.info(`[Sync] new follower(s) joined: [${joiners.join(",")}] \u2014 triggering resync`);
+        _cfg.onStatus(`New follower joined (${joiners.join(",")}) \u2014 resyncing\u2026`);
+        _peers = others;
+        yield _resyncLeader();
+      } catch (e) {
+        logger.warn(`[Sync] leader peer scan failed: ${e == null ? void 0 : e.message}`);
+      }
+    });
+  }
+  function _resyncLeader() {
+    return __async(this, null, function* () {
+      if (_resyncInProgress || _stopped) return;
+      _resyncInProgress = true;
+      try {
+        _stopPhaseHeartbeat();
+        _leaderEngineReady = false;
+        _followerReadySet = /* @__PURE__ */ new Set();
+        _goSent = false;
+        if (_cfg.restartEngine) {
+          try {
+            _cfg.restartEngine();
+          } catch (e) {
+            logger.warn(`[Sync] restartEngine failed: ${e == null ? void 0 : e.message}`);
+          }
+        }
+        yield _runLeader();
+      } finally {
+        _resyncInProgress = false;
+      }
+    });
   }
   function _dispatch(msg, from) {
     logger.info(`[Sync] \u2190 ${msg.type} from=${from}`);
@@ -1016,6 +673,7 @@
     _peerPlayheads = /* @__PURE__ */ new Map();
     _calibrationEwma = 0;
     _calibrationSamples = 0;
+    _phaseCooldownUntil = 0;
     _phaseTimer = setInterval(_phaseTick, PHASE_HEARTBEAT_MS);
     logger.info("[Sync] phase heartbeat started");
   }
@@ -1040,6 +698,53 @@
     if (duration <= 0) return;
     for (const peer of _peers) {
       _send(peer, { type: "PLAYHEAD", serverNow, posMs: myPos });
+    }
+    if (localNow < _phaseCooldownUntil) {
+      return;
+    }
+    if (_role === "leader" && _peers.length >= 1) {
+      return;
+    }
+    if (_role === "follower" && _peers.length === 1) {
+      const leaderId = _peers[0];
+      const ph = _peerPlayheads.get(leaderId);
+      if (!ph) {
+        logger.info("[Sync] phase wait: no leader playhead yet");
+        return;
+      }
+      if (localNow - ph.receivedAt > PHASE_PEER_FRESH_MS) {
+        logger.info(`[Sync] phase skip: leader playhead stale (${localNow - ph.receivedAt}ms)`);
+        return;
+      }
+      const leaderProjected = ((ph.posMs + (serverNow - ph.serverNow)) % duration + duration) % duration;
+      let myDrift2;
+      {
+        let d = myPos - leaderProjected;
+        if (d > duration / 2) d -= duration;
+        if (d < -duration / 2) d += duration;
+        myDrift2 = d;
+      }
+      if (Math.abs(myDrift2) > PHASE_DRIFT_SKIP_MS) {
+        logger.info(`[Sync] phase skip follower myDrift=${Math.round(myDrift2)}ms (> ${PHASE_DRIFT_SKIP_MS}ms, loop-boundary)`);
+        return;
+      }
+      if (Date.now() - _phaseStartedAt < PHASE_CAL_GRACE_MS) {
+        logger.info(`[Sync] phase warm-up follower myDrift=${Math.round(myDrift2)}ms (no nudge yet)`);
+        return;
+      }
+      _calibrationEwma = _calibrationSamples === 0 ? myDrift2 : PHASE_CAL_EWMA_ALPHA * myDrift2 + (1 - PHASE_CAL_EWMA_ALPHA) * _calibrationEwma;
+      _calibrationSamples++;
+      if (Math.abs(myDrift2) < PHASE_NUDGE_THRESHOLD) {
+        logger.info(`[Sync] phase OK follower myDrift=${Math.round(myDrift2)}ms ewma=${Math.round(_calibrationEwma)}ms (within \xB1${PHASE_NUDGE_THRESHOLD}ms)`);
+        return;
+      }
+      let nudge2 = myDrift2 * PHASE_NUDGE_DAMPING;
+      if (nudge2 > PHASE_NUDGE_CAP_MS) nudge2 = PHASE_NUDGE_CAP_MS;
+      if (nudge2 < -PHASE_NUDGE_CAP_MS) nudge2 = -PHASE_NUDGE_CAP_MS;
+      logger.info(`[Sync] phase NUDGE follower myDrift=${Math.round(myDrift2)}ms ewma=${Math.round(_calibrationEwma)}ms \u2192 nudge=${Math.round(nudge2)}ms`);
+      nudgePhase(Math.round(nudge2));
+      _phaseCooldownUntil = Date.now() + PHASE_NUDGE_COOLDOWN_MS;
+      return;
     }
     const samples = [{ id: _cfg.deviceId, pos: myPos }];
     for (const [peerId, ph] of _peerPlayheads) {
@@ -1077,8 +782,9 @@
     if (nudge < -PHASE_NUDGE_CAP_MS) nudge = -PHASE_NUDGE_CAP_MS;
     logger.info(`[Sync] phase NUDGE samples=${samples.length} myDrift=${Math.round(myDrift)}ms ewma=${Math.round(_calibrationEwma)}ms \u2192 nudge=${Math.round(nudge)}ms`);
     nudgePhase(Math.round(nudge));
+    _phaseCooldownUntil = Date.now() + PHASE_NUDGE_COOLDOWN_MS;
   }
-  function _startPoll2() {
+  function _startPoll() {
     (function poll() {
       return __async(this, null, function* () {
         var _a, _b;
@@ -1197,7 +903,7 @@
       return Promise.race([fetch(url, opts), timeout]);
     });
   }
-  var GO_AHEAD_MS, FETCH_TIMEOUT, POLL_SLEEP_MS, REGISTER_EVERY, SEND_RETRIES, SEND_RETRY_MS, DEVICE_LATENCY_FALLBACK_MS, CAL_LS_KEY_PREFIX, _selfLatencyCached, PHASE_HEARTBEAT_MS, PHASE_PEER_FRESH_MS, PHASE_NUDGE_THRESHOLD, PHASE_NUDGE_DAMPING, PHASE_NUDGE_CAP_MS, PHASE_CAL_GRACE_MS, PHASE_CAL_EWMA_ALPHA, _peerPlayheads, _phaseTimer, _phaseStartedAt, _calibrationEwma, _calibrationSamples, _cfg, _role, _peers, _stopped, _pollSince, _leaderEngineReady, _followerReadySet, _goSent, _loadReceived;
+  var GO_AHEAD_MS, FETCH_TIMEOUT, POLL_SLEEP_MS, REGISTER_EVERY, SEND_RETRIES, SEND_RETRY_MS, DEVICE_LATENCY_FALLBACK_MS, CAL_LS_KEY_PREFIX, _selfLatencyCached, PHASE_HEARTBEAT_MS, PHASE_PEER_FRESH_MS, PHASE_NUDGE_THRESHOLD, PHASE_NUDGE_DAMPING, PHASE_NUDGE_CAP_MS, PHASE_DRIFT_SKIP_MS, PHASE_CAL_GRACE_MS, PHASE_CAL_EWMA_ALPHA, _peerPlayheads, _phaseTimer, _phaseStartedAt, _calibrationEwma, _calibrationSamples, PHASE_NUDGE_COOLDOWN_MS, _phaseCooldownUntil, _cfg, _role, _peers, _stopped, _pollSince, _leaderEngineReady, _followerReadySet, _goSent, _loadReceived, LEADER_PEER_SCAN_MS, LEADER_PEER_FRESH_MS, _leaderPeerWatchTimer, _resyncInProgress;
   var init_sync = __esm({
     "src/sync.ts"() {
       init_logger();
@@ -1215,18 +921,21 @@
       };
       CAL_LS_KEY_PREFIX = "nexari.cal.";
       _selfLatencyCached = 0;
-      PHASE_HEARTBEAT_MS = 3e3;
-      PHASE_PEER_FRESH_MS = 6e3;
-      PHASE_NUDGE_THRESHOLD = 15;
-      PHASE_NUDGE_DAMPING = 0.5;
-      PHASE_NUDGE_CAP_MS = 80;
-      PHASE_CAL_GRACE_MS = 1e4;
+      PHASE_HEARTBEAT_MS = 1500;
+      PHASE_PEER_FRESH_MS = 4e3;
+      PHASE_NUDGE_THRESHOLD = 8;
+      PHASE_NUDGE_DAMPING = 0.6;
+      PHASE_NUDGE_CAP_MS = 150;
+      PHASE_DRIFT_SKIP_MS = 14e3;
+      PHASE_CAL_GRACE_MS = 6e3;
       PHASE_CAL_EWMA_ALPHA = 0.2;
       _peerPlayheads = /* @__PURE__ */ new Map();
       _phaseTimer = null;
       _phaseStartedAt = 0;
       _calibrationEwma = 0;
       _calibrationSamples = 0;
+      PHASE_NUDGE_COOLDOWN_MS = 2500;
+      _phaseCooldownUntil = 0;
       _role = "pending";
       _peers = [];
       _stopped = false;
@@ -1235,6 +944,10 @@
       _followerReadySet = /* @__PURE__ */ new Set();
       _goSent = false;
       _loadReceived = false;
+      LEADER_PEER_SCAN_MS = 4e3;
+      LEADER_PEER_FRESH_MS = 3e4;
+      _leaderPeerWatchTimer = null;
+      _resyncInProgress = false;
     }
   });
 
@@ -1242,21 +955,22 @@
   var require_app = __commonJS({
     "src/app.ts"(exports) {
       init_engine();
-      init_engine_html5();
       init_logger();
       init_sync();
       var RELAY_IP = "192.168.1.11";
       var RELAY_PORT = 9616;
       var CONFIG = {
         PI_BASE: `http://${RELAY_IP}:${RELAY_PORT}`,
+        // Logger still posts to the Pi while we stabilise.
+        LOG_BASE: "http://192.168.1.17",
         GROUP_ID: "syncengine-001",
-        EXPECTED_PEERS: 2
+        // Solo-leader friendly: leader proceeds as soon as it self-registers;
+        // followers that arrive later trigger a live resync.
+        EXPECTED_PEERS: 1
       };
-      var _mode = "avplay";
       var _container;
       var _syncStarted = false;
       window.addEventListener("load", () => __async(null, null, function* () {
-        var _a;
         _container = document.getElementById("player-container");
         const statusEl = document.getElementById("status");
         const deviceInfo = document.getElementById("device-info");
@@ -1264,41 +978,25 @@
         const setStatus = (msg) => {
           statusEl.textContent = msg;
         };
-        const setModeLabel = (m) => {
-          modeEl.textContent = m === "avplay" ? "2 \xB7 AVPlay (active)" : "1 \xB7 HTML5 (active)";
-        };
+        modeEl.textContent = "HTML5 <video>";
         setStatus("Detecting device\u2026");
         const selfIp = yield _getSelfIp();
         const deviceId = yield _makeDeviceId(selfIp);
-        initLogger(CONFIG.PI_BASE, deviceId);
+        initLogger(CONFIG.LOG_BASE, deviceId);
         deviceInfo.textContent = `${deviceId}  |  ${selfIp}  |  group: ${CONFIG.GROUP_ID}`;
         logger.info(`[App] boot ip=${selfIp} deviceId=${deviceId}`);
-        try {
-          const td = (_a = window.tizen) == null ? void 0 : _a.tvinputdevice;
-          if (td) {
-            td.registerKey("1");
-            td.registerKey("2");
-          }
-        } catch (e) {
-          logger.warn(`[App] registerKey failed: ${e == null ? void 0 : e.message}`);
-        }
         document.addEventListener("keydown", (e) => {
-          var _a2, _b;
-          if (e.keyCode === 49) {
-            _switchEngine("html5", setStatus, setModeLabel);
-          } else if (e.keyCode === 50) {
-            _switchEngine("avplay", setStatus, setModeLabel);
-          } else if (e.keyCode === 10009 || e.keyCode === 27) {
+          var _a, _b;
+          if (e.keyCode === 10009 || e.keyCode === 27) {
             logger.info("[App] exit requested");
             stop();
             try {
-              (_b = (_a2 = window.tizen) == null ? void 0 : _a2.application) == null ? void 0 : _b.getCurrentApplication().exit();
+              (_b = (_a = window.tizen) == null ? void 0 : _a.application) == null ? void 0 : _b.getCurrentApplication().exit();
             } catch (e2) {
             }
           }
         });
-        _activateEngine(_mode, _container);
-        setModeLabel(_mode);
+        initEngine(_container);
         _startNodeRelay(setStatus);
         if (!_syncStarted) {
           _syncStarted = true;
@@ -1315,49 +1013,28 @@
               setStatus(msg);
               logger.info(`[Sync] status: ${msg}`);
             },
-            prepareEngine: (url) => {
-              if (_mode === "avplay") return prepare(url);
-              return prepareHtml5(url);
+            prepareEngine: (url) => prepare(url),
+            // Wipe + reinitialise the engine. sync.ts calls this when a new
+            // follower joins mid-play so leader + followers restart cleanly.
+            restartEngine: () => {
+              logger.info("[App] engine restart requested");
+              try {
+                destroyEngine();
+              } catch (e) {
+              }
+              const old = _container.querySelector("video");
+              if (old == null ? void 0 : old.parentNode) old.parentNode.removeChild(old);
+              initEngine(_container);
             },
             schedulePlay: (epochMs) => {
               if (overlay) overlay.style.display = "none";
               if (logPanel) logPanel.style.display = "none";
-              if (_mode === "avplay") schedulePlayAt(epochMs);
-              else scheduleHtml5PlayAt(epochMs);
+              schedulePlayAt(epochMs);
             },
-            getEngineDuration: () => {
-              if (_mode === "avplay") return getDuration();
-              return getHtml5Duration();
-            }
+            getEngineDuration: () => getDuration()
           });
         }
       }));
-      function _activateEngine(mode, container) {
-        var _a;
-        try {
-          destroyEngine();
-        } catch (e) {
-        }
-        try {
-          destroyHtml5Engine();
-        } catch (e) {
-        }
-        const old = container.querySelector('object[type="application/avplayer"], video');
-        if (old) (_a = old.parentNode) == null ? void 0 : _a.removeChild(old);
-        if (mode === "avplay") {
-          initEngine(container);
-        } else {
-          initHtml5Engine(container);
-        }
-      }
-      function _switchEngine(mode, setStatus, setModeLabel) {
-        if (_mode === mode) return;
-        logger.info(`[App] engine switch ${_mode} \u2192 ${mode}`);
-        _mode = mode;
-        setModeLabel(mode);
-        _activateEngine(mode, _container);
-        setStatus(`Engine: ${mode === "avplay" ? "AVPlay" : "HTML5 video"} \u2014 waiting for next sync cue`);
-      }
       function _pickSignedStub() {
         var _a, _b;
         let v = "6.5";

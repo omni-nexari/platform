@@ -1,219 +1,247 @@
 /**
- * engine.ts — AVPlay engine for Nexari Sync Engine
+ * engine.ts — HTML5 <video> engine for Nexari Sync Engine (single-engine build)
  *
- * AVPlay state machine: NONE → open() → IDLE → prepareAsync() → READY → play() → PLAYING
+ * Public API (consumed by app.ts and sync.ts):
+ *   initEngine(container)            — create the <video> element
+ *   prepare(url)                     — load + canplaythrough
+ *   schedulePlayAt(epochMs)          — coarse setTimeout + 4ms spin → play()
+ *   destroyEngine()                  — tear down
+ *   getDuration()                    — ms
+ *   isPlaying()                      — boolean
+ *   getCurrentPosMs()                — current playhead ms (or null)
+ *   nudgePhase(deltaMs)              — playbackRate rubber-band drift correction
  *
- * Loop: onstreamcompleted → stop() + prepareAsync() + seekTo(expectedMs) + play()
- *   - MUST defer onstreamcompleted via setTimeout(0) — calling stop() synchronously
- *     inside the callback freezes the Tizen 4 display compositor.
- *   - After stop(), re-apply setDisplayRect + setDisplayMethod before play().
- *
- * Play scheduling: coarse setTimeout → 4ms spin-wait → play() at exact epoch.
- *   Uses Date.now() which is NTP-synced at OS level on Samsung TVs.
+ * Layout policy (matches AVPlay engine behaviour):
+ *   - object-fit: contain  → portrait content fills portrait panel (QBC) and
+ *     letterboxes on landscape panel (SBB) with black bars on the sides.
+ *   - We rely on the OS-level panel orientation reported via window.screen
+ *     (AVPlay engine used the same heuristic). No CSS rotation is needed.
  */
 import { logger } from './logger.js';
 
-interface AV {
-  open(url: string): void;
-  close(): void;
-  prepareAsync(ok: () => void, err: (e: any) => void): void;
-  setBufferingParam?(opt: string, unit: string, amount?: number): void;
-  setDisplayRect(x: number, y: number, w: number, h: number): void;
-  setDisplayMethod(mode: string): void;
-  setDisplayRotation?(rotation: string): void;
-  setStreamingProperty?(name: string, value: string): void;
-  setListener(cb: object): void;
-  play(): void;
-  stop(): void;
-  pause(): void;
-  seekTo(ms: number, ok: () => void, err: (e: any) => void): void;
-  getDuration(): number;
-  getCurrentTime(): number;
-  getState(): string;
-  setVideoStillMode?(value: string): void; // 'true' freezes last frame; 'false' resumes drawing
-}
+let _video:         HTMLVideoElement | null = null;
+let _destroyed      = false;
+let _playing        = false;
+let _durationMs     = 0;
+let _playAtEpoch    = -1;
+let _playStartEpoch = -1;
+let _playTimer: any = null;
+let _lastDriftLog   = 0;
 
-type Slot = {
-  av:        AV;
-  obj:       HTMLObjectElement;
-  ready:     boolean;
-  preparing: boolean;
-};
+// Actual-rate probe: sample (currentTime, wallClock) each drift tick and
+// compute Δct/Δwall to see if the hardware decoder runs below 1×.
+let _prevProbeCt  = -1;   // seconds
+let _prevProbeWall = -1;  // ms
 
-let _slots: Slot[] = [];     // [active, inactive] when avplaystore present; [solo] for single-slot fallback
-let _activeIdx       = 0;    // index of currently-displaying slot in _slots
+// Startup re-anchor grace window (ms): allow large _playStartEpoch corrections
+// for this long after play() starts. Tizen 4 can take ~7s before the first
+// real frame, and the video may play a "catch-up" burst at >1× rate during
+// pipeline init. We keep the large-correction window open for the whole startup
+// period instead of using a one-shot flag that fires too early.
+const STARTUP_ANCHOR_GRACE_MS = 15000;
+let _playStartedAt = -1;   // wall clock ms when _doPlay() called play()
 
-let _url             = '';   // resolved absolute URI (shared by both slots for looping)
-let _destroyed       = false;
-let _playing         = false;
-let _durationMs      = 0;
-let _swapFlight      = false; // a loop boundary swap (or single-slot reset) is in flight
-let _playAtEpoch     = -1;
-let _playStartEpoch  = -1;
-let _playTimer: any  = null;
-let _lastDriftLog    = 0;
-let _pollTimer: any  = null;
-let _firstPlaytimeLogged = false;
-
-function _activeSlot(): Slot | null { return _slots[_activeIdx] ?? null; }
-function _otherSlot():  Slot | null { return _slots.length > 1 ? _slots[1 - _activeIdx] : null; }
-function _av():         AV | null   { return _activeSlot()?.av ?? null; }
-
-function _logDrift(ms: number): void {
-  if (_destroyed || !_playing || _playStartEpoch < 0 || _durationMs <= 0) return;
-  const now = Date.now();
-  if (now - _lastDriftLog < 2000) return;
-  _lastDriftLog = now;
-  const exp   = _expectedMs();
-  const drift = ms - exp;
-  logger.drift(`[AVPlay] pos=${ms}ms exp=${Math.round(exp)}ms drift=${Math.round(drift)}ms`, drift);
-}
+// playbackRate rubber-band state — see nudgePhase()
+let _rateTimer: any = null;
+const RATE_WINDOW_MS    = 2500;   // how long a correction is applied
+                                  // (longer than sync tick @1500ms so rate
+                                  // persists between successive nudges)
+const RATE_MAX_OFFSET   = 0.10;   // ±10% rate clamp — more aggressive since
+                                  // Tizen 4 only partially honours rate.
+const RATE_MIN_DELTA_MS = 4;      // ignore tiny nudges
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 
-// Apply display rotation + rect + mode based on screen orientation.
-// Portrait: rotate 90° then use 1920×1080 landscape coords (rotation changes coordinate origin).
-// Landscape: no rotation, letterbox to preserve content aspect ratio.
-function _applyDisplay(a: AV): void {
-  const portrait = window.screen.width < window.screen.height;
-  if (portrait && typeof a.setDisplayRotation === 'function') {
-    try { a.setDisplayRotation('PLAYER_DISPLAY_ROTATION_90'); logger.info('[AVPlay] setDisplayRotation(ROTATION_90) OK'); }
-    catch (e: any) { logger.warn(`[AVPlay] setDisplayRotation failed: ${e?.message}`); }
-  }
-  try { a.setDisplayRect(0, 0, 1920, 1080); logger.info('[AVPlay] setDisplayRect(0,0,1920,1080) OK'); }
-  catch (e: any) { logger.error(`[AVPlay] setDisplayRect failed: ${e?.message}`); }
-  // Portrait after rotation fills full rotated canvas; landscape letterboxes to preserve content ratio
-  const mode = portrait ? 'PLAYER_DISPLAY_MODE_FULL_SCREEN' : 'PLAYER_DISPLAY_MODE_LETTER_BOX';
-  try { a.setDisplayMethod(mode); logger.info(`[AVPlay] setDisplayMethod(${mode}) OK`); }
-  catch (e: any) { logger.error(`[AVPlay] setDisplayMethod failed: ${e?.message}`); }
-}
-
 export function initEngine(container: HTMLElement): void {
   _destroyed = false; _playing = false; _durationMs = 0;
-  _swapFlight = false; _playAtEpoch = -1; _playStartEpoch = -1;
-  _firstPlaytimeLogged = false;
-  _url = '';
-  _slots = [];
-  _activeIdx = 0;
+  _playAtEpoch = -1; _playStartEpoch = -1;
 
-  // Remove any leftover AVPlay objects from a previous engine init
-  Array.from(container.querySelectorAll('object[type="application/avplayer"]')).forEach(o => o.parentNode?.removeChild(o));
+  const portrait = window.screen.width < window.screen.height;
+  logger.info(`[HTML5] init — screen=${window.screen.width}x${window.screen.height} layout=${portrait ? 'portrait' : 'landscape'}`);
 
-  const w: any = window;
-  const store  = w.webapis?.avplaystore;
-  const avplay = w.webapis?.avplay;
-  // Two slots when AVPlayStore is available (enables seamless still-mode swap);
-  // single slot fallback uses the legacy webapis.avplay (no seamless — black gap on loop).
-  const slotCount = store ? 2 : (avplay ? 1 : 0);
-  if (slotCount === 0) { logger.warn('[AVPlay] webapis.avplay/avplaystore not available'); return; }
+  _video = document.createElement('video');
+  // object-fit:contain → fill on matching aspect, letterbox otherwise.
+  _video.style.cssText =
+    'position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;'
+    + 'object-fit:contain;background:#000;';
+  _video.setAttribute('playsinline', '');
+  _video.setAttribute('webkit-playsinline', '');
+  _video.muted = true;            // autoplay-without-gesture compliance on Tizen
+  // Native looping. Avoids the Tizen 4 quirk where seeking near end-of-video
+  // (target ~= duration) lands at an arbitrary earlier position.
+  _video.loop = true;
+  container.appendChild(_video);
 
-  for (let i = 0; i < slotCount; i++) {
-    const obj = document.createElement('object') as HTMLObjectElement;
-    obj.type = 'application/avplayer';
-    obj.setAttribute('width',  '1920');
-    obj.setAttribute('height', '1080');
-    obj.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;';
-    container.appendChild(obj);
-    const av: AV = store ? (store.getPlayer() as AV) : (avplay as AV);
-    _slots.push({ av, obj, ready: false, preparing: false });
-  }
-  logger.info(`[AVPlay] engine init slots=${slotCount} screen=${window.screen.width}x${window.screen.height} portrait=${window.screen.width < window.screen.height} seamless=${slotCount === 2}`);
+  // 'ended' should not fire while loop=true, but log if firmware ignores it.
+  _video.addEventListener('ended', () => {
+    logger.warn('[HTML5] ended fired despite loop=true — forcing replay');
+    if (_video && !_destroyed) {
+      try { _video.currentTime = 0; _video.play(); } catch {}
+    }
+  });
+
+  _video.addEventListener('error', () => {
+    logger.error(`[HTML5] video error: ${_video?.error?.message ?? 'unknown'} (code ${_video?.error?.code})`);
+  });
+
+  _video.addEventListener('timeupdate', () => {
+    if (_destroyed || !_playing || _playStartEpoch < 0 || _durationMs <= 0) return;
+    const now = Date.now();
+    if (now - _lastDriftLog < 2000) return;
+    _lastDriftLog = now;
+
+    const v     = _video!;
+    const posMs = Math.round((v.currentTime ?? 0) * 1000);
+
+    // ── Actual decode rate probe ──────────────────────────────────────────
+    // Compute first so we can gate _reanchorClock on a stable playback rate.
+    let actualRate: number | null = null;
+    let actualRateStr = '';
+    const ct = v.currentTime ?? 0;
+    if (_prevProbeCt >= 0 && _prevProbeWall >= 0) {
+      const dtWall = (now - _prevProbeWall) / 1000;
+      let   dtCt   = ct - _prevProbeCt;
+      if (dtCt < -1) dtCt += _durationMs / 1000;
+      if (dtWall > 0.1) {
+        actualRate    = dtCt / dtWall;
+        actualRateStr = ` actualRate=${actualRate.toFixed(3)}`;
+      }
+    }
+    _prevProbeCt   = ct;
+    _prevProbeWall = now;
+
+    // Re-anchor the expected-clock only when the decoder is running at a
+    // steady 1× rate (not during Tizen 4 catch-up bursts where actualRate
+    // reaches 1.5×+). The burst lasts ~8-10s and corrupts _playStartEpoch
+    // with each corrective tick. Guard with two conditions:
+    //   1. actualRate must be in [0.85, 1.10] — burst runs at >1.2×
+    //   2. at least STARTUP_ANCHOR_GRACE_MS ms must have elapsed since play()
+    //      so that even a brief 1× reading during the burst doesn't slip through
+    const inGrace = _playStartedAt >= 0 && (now - _playStartedAt) < STARTUP_ANCHOR_GRACE_MS;
+    const rateOk  = actualRate === null || (actualRate >= 0.85 && actualRate <= 1.10);
+    if (!inGrace && rateOk) {
+      _reanchorClock();
+    }
+
+    const exp   = _expectedMs();
+    const drift = posMs - exp;
+
+    // ── Buffer fill probe ─────────────────────────────────────────────────
+    let bufStr = '';
+    try {
+      const buf = v.buffered;
+      if (buf && buf.length > 0) {
+        const end = Math.round(buf.end(buf.length - 1) * 1000);
+        bufStr = ` buf=0-${end}ms`;
+      } else {
+        bufStr = ' buf=empty';
+      }
+    } catch {}
+
+    logger.drift(
+      `[HTML5] pos=${posMs}ms exp=${Math.round(exp)}ms drift=${Math.round(drift)}ms`
+      + ` rate=${v.playbackRate.toFixed(3)}${actualRateStr}${bufStr}`,
+      drift,
+    );
+  });
+
+  logger.info('[HTML5] <video> engine initialised');
 }
 
 // ── Prepare ────────────────────────────────────────────────────────────────────
 
 export function prepare(url: string): Promise<void> {
-  if (_destroyed || _slots.length === 0) return Promise.reject(new Error('[AVPlay] not available'));
-  _playing = false; _durationMs = 0; _swapFlight = false;
-  return _resolveUri(url).then((abs) => {
-    _url = abs;
-    // IMPORTANT: open ONLY slot0 here. AVPlayStore serializes open() across players —
-    // opening slot1 concurrently will silently abort slot0's prepareAsync. Slot1 is opened
-    // on demand inside _handleLoop at the loop boundary (matches Samsung still-mode sample).
-    return _openSlot(_slots[0], abs, 0);
-  });
-}
+  if (!_video || _destroyed) return Promise.reject(new Error('[HTML5] engine not initialised'));
+  _playing = false; _durationMs = 0;
 
-function _openSlot(slot: Slot, absUri: string, idx: number): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    if (_destroyed) { reject(new Error('destroyed')); return; }
-    const a = slot.av;
-    try {
-      logger.info(`[AVPlay] slot${idx} open → ${absUri}`);
-      a.open(absUri);
-      try { logger.info(`[AVPlay] slot${idx} state after open: ${a.getState()}`); } catch {}
+    const v = _video!;
+    const cleanup = () => {
+      v.removeEventListener('canplaythrough', onReady);
+      v.removeEventListener('loadedmetadata', onMeta);
+      v.removeEventListener('error',          onErr);
+    };
+    const onMeta = () => {
+      _durationMs = Math.round((v.duration ?? 0) * 1000);
+      logger.info(`[HTML5] loadedmetadata — duration=${_durationMs}ms videoSize=${v.videoWidth}x${v.videoHeight}`);
+    };
+    const onReady = async () => {
+      cleanup();
+      if (_durationMs <= 0) _durationMs = Math.round((v.duration ?? 0) * 1000);
+      logger.info(`[HTML5] canplaythrough — duration=${_durationMs}ms`);
 
-      // Skip setBufferingParam on local file:// URIs — silently stalls Tizen 7's decode pipeline
-      const isLocalFile = /^file:\/\//i.test(absUri);
-      if (!isLocalFile && typeof a.setBufferingParam === 'function') {
-        try { a.setBufferingParam('PLAYER_BUFFER_FOR_PLAY',   'PLAYER_BUFFER_SIZE_IN_SECOND', 0); } catch {}
-        try { a.setBufferingParam('PLAYER_BUFFER_FOR_RESUME', 'PLAYER_BUFFER_SIZE_IN_SECOND', 0); } catch {}
+      // ── Decoder primer ────────────────────────────────────────────────
+      // canplaythrough means "buffer is full enough" but on Tizen 4 the
+      // first real play() still pays a 1-9s pipeline-warmup tax. Fix it
+      // by actually starting playback for a few frames, then pausing and
+      // rewinding to 0. The next play() reuses the warm pipeline and
+      // starts within a frame, so READY now means "ready to play instantly".
+      try {
+        await _primeDecoder(v);
+        logger.info('[HTML5] decoder primed — ready to play instantly');
+      } catch (e: any) {
+        logger.warn(`[HTML5] decoder prime failed (continuing): ${e?.message}`);
       }
+      resolve();
+    };
+    const onErr = () => {
+      cleanup();
+      reject(new Error(`[HTML5] load error: ${v.error?.message ?? 'unknown'}`));
+    };
 
-      _applyDisplay(a);
-      a.setListener(_makeListener(slot, idx));
-      slot.preparing = true;
+    v.addEventListener('loadedmetadata', onMeta);
+    v.addEventListener('canplaythrough', onReady);
+    v.addEventListener('error',          onErr);
 
-      a.prepareAsync(
-        () => {
-          if (_destroyed) { reject(new Error('destroyed during prepare')); return; }
-          _applyDisplay(a);
-          slot.ready = true;
-          slot.preparing = false;
-          if (idx === 0) _durationMs = a.getDuration();
-          // Hold non-active slots frozen so they don't blank the display before the swap.
-          if (idx !== _activeIdx && typeof a.setVideoStillMode === 'function') {
-            try { a.setVideoStillMode('true'); logger.info(`[AVPlay] slot${idx} setVideoStillMode(true) — held ready`); }
-            catch (e: any) { logger.warn(`[AVPlay] slot${idx} setVideoStillMode failed: ${e?.message}`); }
-          }
-          logger.info(`[AVPlay] slot${idx} READY — duration=${_durationMs}ms state=${a.getState()}`);
-          resolve();
-        },
-        (e: any) => {
-          slot.preparing = false;
-          logger.error(`[AVPlay] slot${idx} prepareAsync failed: ${e?.message ?? e}`);
-          reject(new Error(e?.message ?? String(e)));
-        },
-      );
-    } catch (e: any) {
-      logger.error(`[AVPlay] slot${idx} open failed: ${e?.message ?? e}`);
-      reject(e);
-    }
+    v.src     = url;
+    v.preload = 'auto';
+    v.load();
+    logger.info(`[HTML5] loading: ${url}`);
   });
 }
 
-function _makeListener(slot: Slot, idx: number): object {
-  return {
-    onbufferingstart:    () => logger.info(`[AVPlay] slot${idx} buffering start`),
-    onbufferingcomplete: () => logger.info(`[AVPlay] slot${idx} buffering complete`),
-    onstreamcompleted: () => {
-      // Only act when the active slot ends; inactive slots are held in still-mode
-      if (slot !== _activeSlot()) {
-        logger.info(`[AVPlay] slot${idx} stream completed (inactive — ignored)`);
-        return;
-      }
-      logger.info(`[AVPlay] slot${idx} stream completed → swap scheduled`);
-      if (!_destroyed) setTimeout(() => { if (!_destroyed) _handleLoop(); }, 0);
-    },
-    oncurrentplaytime: (ms: number) => {
-      if (slot !== _activeSlot()) return;
-      if (!_firstPlaytimeLogged) {
-        _firstPlaytimeLogged = true;
-        logger.info(`[AVPlay] slot${idx} oncurrentplaytime first call: ms=${ms}`);
-      }
-      if (ms === 0) return;
-      _logDrift(ms);
-    },
-    onerror:     (t: string)            => logger.error(`[AVPlay] slot${idx} error type=${t}`),
-    onerrormsg:  (t: string, m: string) => logger.error(`[AVPlay] slot${idx} errormsg type=${t} msg=${m}`),
-    onevent:     (t: string, d: string) => logger.info(`[AVPlay] slot${idx} event type=${t} data=${d}`),
-    onstreaminfo: (w: number, h: number, bw: number, bh: number) => logger.info(`[AVPlay] slot${idx} streaminfo ${w}x${h} base=${bw}x${bh}`),
-    ondrmevent:  (t: string, d: string) => logger.info(`[AVPlay] slot${idx} drmevent type=${t} data=${d}`),
-    onresolutionchanged: (w: number, h: number) => logger.info(`[AVPlay] slot${idx} resolution changed ${w}x${h}`),
-    onbufferlevelchanged: (pct: number) => logger.info(`[AVPlay] slot${idx} buffer level ${pct}%`),
-    onopenstatecompleted: () => logger.info(`[AVPlay] slot${idx} openstate completed`),
-    onresourceconflicted: ()            => logger.warn(`[AVPlay] slot${idx} resource conflict`),
-  };
+/**
+ * Force the decoder to allocate buffers and decode the first frames so
+ * subsequent play() is instant on Tizen 4 (whose firmware otherwise
+ * pays a 5-9s warmup tax on the first real play).
+ *
+ * Strategy: muted play() for a fixed 250ms (long enough to render real
+ * frames), then pause, then seek back to 0, then explicitly reset
+ * playbackRate. The fixed duration avoids racing with the 'playing'
+ * event which on Tizen 4 fires before any frames are actually decoded.
+ */
+function _primeDecoder(v: HTMLVideoElement): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const PRIME_PLAY_MS = 250;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try { v.pause(); } catch {}
+      // Seek back to 0 and wait for the seek to land before resolving
+      // so the real play() starts at frame 0.
+      const onSeeked = () => {
+        v.removeEventListener('seeked', onSeeked);
+        // Explicit rate reset — some firmwares retain stale rate state.
+        try { v.playbackRate = 1.0; } catch {}
+        resolve();
+      };
+      v.addEventListener('seeked', onSeeked);
+      try { v.currentTime = 0; } catch { resolve(); }
+      // Fallback in case 'seeked' never fires
+      setTimeout(() => { v.removeEventListener('seeked', onSeeked); resolve(); }, 1500);
+    };
+
+    // Hard timeout — never block READY indefinitely.
+    setTimeout(finish, 4000);
+
+    v.muted = true;
+    v.playbackRate = 1.0;
+    v.play()
+      .then(() => { setTimeout(finish, PRIME_PLAY_MS); })
+      .catch(() => finish());
+  });
 }
 
 // ── Scheduled play ─────────────────────────────────────────────────────────────
@@ -222,309 +250,157 @@ export function schedulePlayAt(epochMs: number): void {
   if (_destroyed) return;
   _playAtEpoch = epochMs;
   clearTimeout(_playTimer);
-  const slot = _activeSlot(); if (!slot) return;
 
   const wait = epochMs - Date.now();
-  logger.info(`[AVPlay] schedulePlayAt epoch=${epochMs} T-${Math.round(Math.max(0, wait))}ms slot=${_activeIdx}`);
+  logger.info(`[HTML5] schedulePlayAt epoch=${epochMs} T-${Math.round(Math.max(0, wait))}ms`);
 
-  if (wait <= 0) { _doPlay(slot); return; }
+  if (wait <= 0) { _doPlay(); return; }
 
-  // Coarse sleep then tight spin-wait
   _playTimer = setTimeout(() => {
     (function spin() {
       if (_destroyed) return;
-      if (Date.now() >= _playAtEpoch) { _doPlay(slot); return; }
+      if (Date.now() >= _playAtEpoch) { _doPlay(); return; }
       setTimeout(spin, 4);
     })();
   }, Math.max(0, wait - 60));
 }
 
-function _doPlay(slot: Slot): void {
-  if (_destroyed || _playing) return;
-  const a = slot.av;
-  try {
-    _applyDisplay(a);
-    // Active slot must NOT be in still-mode at play time, else video freezes on first frame
-    if (typeof a.setVideoStillMode === 'function') {
-      try { a.setVideoStillMode('false'); } catch {}
-    }
-    try { logger.info(`[AVPlay] slot${_activeIdx} state before play: ${a.getState()}`); } catch {}
-    a.play();
-    _playing        = true;
-    _playStartEpoch = _playAtEpoch > 0 ? _playAtEpoch : Date.now();
-    logger.info(`[AVPlay] slot${_activeIdx} play() OK startEpoch=${_playStartEpoch}`);
-    setTimeout(() => {
-      if (_destroyed || !_playing) return;
-      try {
-        const st = a.getState(); const ms = a.getCurrentTime ? a.getCurrentTime() : -1;
-        if (st === 'PLAYING' && ms === 0) logger.warn(`[AVPlay] STALL DETECTED — state=${st} pos=${ms}ms after 4s`);
-        else logger.info(`[AVPlay] watchdog OK — state=${st} pos=${ms}ms`);
-      } catch {}
-    }, 4000);
-    _startPoll();
-  } catch (e: any) {
-    logger.error(`[AVPlay] play() failed: ${e?.message}`);
-  }
+function _doPlay(): void {
+  if (_destroyed || _playing || !_video) return;
+  _video.currentTime = 0;
+  _video.playbackRate = 1.0;
+  _prevProbeCt   = -1;   // reset rate probe so first tick gets a clean baseline
+  _prevProbeWall = -1;
+  _video.play()
+    .then(() => {
+      _playing        = true;
+      _playStartEpoch = _playAtEpoch > 0 ? _playAtEpoch : Date.now();
+      _playStartedAt  = Date.now();   // start grace window for large re-anchors
+      logger.info(`[HTML5] play() — startEpoch=${_playStartEpoch}`);
+    })
+    .catch((e: any) => logger.error(`[HTML5] play() failed: ${e?.message}`));
 }
 
-function _startPoll(): void {
-  clearInterval(_pollTimer);
-  _pollTimer = setInterval(() => {
-    if (_destroyed || !_playing) { clearInterval(_pollTimer); return; }
-    const a = _av(); if (!a) return;
-    try {
-      const ms = a.getCurrentTime ? a.getCurrentTime() : -1;
-      const st = a.getState ? a.getState() : '?';
-      logger.info(`[AVPlay] poll slot${_activeIdx} state=${st} pos=${ms}ms`);
-      if (ms > 0) _logDrift(ms);
-    } catch (e: any) { logger.warn(`[AVPlay] poll err: ${e?.message}`); }
-  }, 5000);
-}
+// ── Loop ───────────────────────────────────────────────────────────────────────
+// (handled natively by `video.loop = true` set in initEngine)
 
-// ── Seamless still-mode loop ────────────────────────────────────────────────────────
-//
-// At end-of-stream on the active slot:
-//   1. activate other slot:   other.setVideoStillMode('false')  + (optional seekTo)  + other.play()
-//   2. deactivate from slot:  from.setVideoStillMode('true')   freezes last frame  + from.stop()
-//   3. re-prepare from slot:  from.prepareAsync()  (silent, held in stillMode for next swap)
-//
-// The video output never blanks: outgoing slot freezes its last frame at the same instant the
-// incoming slot starts pushing decoded frames into the hardware overlay.
+// ── Public accessors used by sync.ts ───────────────────────────────────────────
 
-function _handleLoop(): void {
-  if (_swapFlight || _destroyed) return;
-  const fromSlot = _activeSlot(); if (!fromSlot) return;
-  const toSlot   = _otherSlot();
+export function getDuration():      number  { return _durationMs; }
+export function isPlaying():        boolean { return _playing; }
 
-  if (!toSlot) { _fullResetLoop(fromSlot); return; }
-
-  _swapFlight = true;
-  _playing    = false;
-  clearInterval(_pollTimer);
-
-  const fromAv  = fromSlot.av;
-  const toAv    = toSlot.av;
-  const fromIdx = _activeIdx;
-  const toIdx   = 1 - _activeIdx;
-
-  logger.info(`[AVPlay] swap slot${fromIdx}→slot${toIdx} starting`);
-
-  // 1. Freeze fromSlot's last frame on the hardware overlay
-  if (typeof fromAv.setVideoStillMode === 'function') {
-    try { fromAv.setVideoStillMode('true'); logger.info(`[AVPlay] slot${fromIdx} setVideoStillMode(true) — frame frozen`); }
-    catch (e: any) { logger.warn(`[AVPlay] slot${fromIdx} stillMode(true) err: ${e?.message}`); }
-  }
-  try { fromAv.stop(); logger.info(`[AVPlay] slot${fromIdx} stopped`); } catch (e: any) { logger.warn(`[AVPlay] slot${fromIdx} stop err: ${e?.message}`); }
-  // Close fully so AVPlayStore frees its slot for the incoming open.
-  try { fromAv.close(); fromSlot.ready = false; logger.info(`[AVPlay] slot${fromIdx} closed`); } catch (e: any) { logger.warn(`[AVPlay] slot${fromIdx} close err: ${e?.message}`); }
-
-  // 2. Open + prepare toSlot. Frozen frame on outgoing keeps display painted during prepare.
-  try {
-    logger.info(`[AVPlay] slot${toIdx} open → ${_url}`);
-    toAv.open(_url);
-  } catch (e: any) { logger.error(`[AVPlay] slot${toIdx} open failed: ${e?.message}`); _swapFlight = false; return; }
-  _applyDisplay(toAv);
-  toAv.setListener(_makeListener(toSlot, toIdx));
-  // Hold incoming in still mode while it prepares (so the moment we flip it false, frames flow).
-  if (typeof toAv.setVideoStillMode === 'function') {
-    try { toAv.setVideoStillMode('true'); } catch {}
-  }
-
-  toSlot.preparing = true;
-  toAv.prepareAsync(
-    () => {
-      if (_destroyed) return;
-      toSlot.preparing = false;
-      toSlot.ready    = true;
-      _applyDisplay(toAv);
-
-      // Recompute target NOW (after the 200-700ms prepare latency) so we land at correct phase.
-      const targetMs = _playStartEpoch > 0 && _durationMs > 0
-        ? Math.round(((Date.now() - _playStartEpoch) % _durationMs + _durationMs) % _durationMs)
-        : 0;
-      // Wrap-around guard: if we're in the last 500ms or first 100ms, just play from start —
-      // seeking that close to a boundary is unreliable and produces large drift glitches.
-      const useSeek = targetMs > 100 && targetMs < _durationMs - 500;
-      logger.info(`[AVPlay] slot${toIdx} prepared — target=${targetMs}ms useSeek=${useSeek}`);
-
-      const finalize = () => {
-        if (typeof toAv.setVideoStillMode === 'function') {
-          try { toAv.setVideoStillMode('false'); } catch {}
-        }
-        try { toAv.play(); } catch (e: any) { logger.error(`[AVPlay] slot${toIdx} play() failed: ${e?.message}`); }
-        _activeIdx  = toIdx;
-        _playing    = true;
-        _swapFlight = false;
-        logger.info(`[AVPlay] swap complete — playing slot${_activeIdx}`);
-        _startPoll();
-      };
-
-      if (useSeek) {
-        try {
-          toAv.seekTo(targetMs, finalize, (e: any) => { logger.warn(`[AVPlay] slot${toIdx} seekTo failed: ${e?.message} — playing from 0`); finalize(); });
-        } catch (e: any) { logger.warn(`[AVPlay] slot${toIdx} seekTo threw: ${e?.message}`); finalize(); }
-      } else {
-        finalize();
-      }
-    },
-    (e: any) => {
-      toSlot.preparing = false;
-      _swapFlight      = false;
-      logger.error(`[AVPlay] slot${toIdx} swap prepareAsync failed: ${e?.message ?? e} — falling back to full reset on slot${fromIdx}`);
-      // Try to recover by reopening fromSlot from scratch
-      try { fromAv.open(_url); } catch {}
-      _applyDisplay(fromAv);
-      fromAv.setListener(_makeListener(fromSlot, fromIdx));
-      _fullResetLoop(fromSlot);
-    },
-  );
-}
-
-// Single-slot fallback (no AVPlayStore): full pipeline reset on the same player.
-// Will produce a brief black gap on Tizen builds without webapis.avplaystore.
-function _fullResetLoop(slot: Slot): void {
-  _swapFlight = true;
-  _playing    = false;
-  clearInterval(_pollTimer);
-  const a = slot.av;
-  let done = false;
-
-  const guard = setTimeout(() => {
-    if (done) return; done = true; _swapFlight = false;
-    logger.warn('[AVPlay] full-reset loop timeout — forcing play()');
-    try { a.play(); } catch {}
-    _playing = true; _startPoll();
-  }, 6000);
-
-  try { a.stop(); } catch {}
-  a.prepareAsync(
-    () => {
-      if (done || _destroyed) return;
-      const targetMs = _playStartEpoch > 0 && _durationMs > 0
-        ? Math.round(((Date.now() - _playStartEpoch) % _durationMs + _durationMs) % _durationMs)
-        : 0;
-      logger.info(`[AVPlay] full-reset loop ready, seekTo=${targetMs}ms`);
-      _applyDisplay(a);
-      const finishPlay = () => {
-        if (done) return; done = true; clearTimeout(guard); _swapFlight = false;
-        try { a.play(); } catch {}
-        _playing = true; _startPoll();
-      };
-      if (targetMs > 100 && targetMs < _durationMs - 200) {
-        a.seekTo(targetMs, finishPlay, (e: any) => { logger.warn(`[AVPlay] reset seekTo failed: ${e?.message}`); finishPlay(); });
-      } else {
-        finishPlay();
-      }
-    },
-    (e: any) => {
-      if (done) return; done = true; clearTimeout(guard); _swapFlight = false;
-      logger.error(`[AVPlay] full-reset prepareAsync failed: ${e?.message ?? e}`);
-    },
-  );
-}
-
-// ── Public accessors ───────────────────────────────────────────────────────────
-
-export function getDuration(): number  { return _durationMs; }
-export function isPlaying():   boolean { return _playing; }
-
-/**
- * Current playhead position in milliseconds, or null if not stably playing.
- * Returns the AVPlay reported pos (post-decoder), so reflects what's actually on the panel.
- */
 export function getCurrentPosMs(): number | null {
-  if (!_playing) return null;
-  const a = _av(); if (!a || !a.getCurrentTime) return null;
-  try {
-    const ms = a.getCurrentTime();
-    if (ms <= 0) return null;
-    return ms;
-  } catch { return null; }
+  if (!_video || !_playing) return null;
+  return Math.round((_video.currentTime ?? 0) * 1000);
 }
 
 /**
- * Shift the play-start epoch by deltaMs.
- *   delta > 0 → the device's next loop swap fires deltaMs LATER (use when local video is running ahead)
- *   delta < 0 → the device's next loop swap fires |delta|ms EARLIER (use when running behind)
- * Affects the targetMs computed inside _handleLoop on the next swap, giving a phase
- * correction without interrupting the currently-playing cycle.
+ * Hard catch-up seek used by the follower when startup-skew leaves it
+ * far enough behind/ahead of the leader that rate correction can't close
+ * the gap in a reasonable time. Refuses to seek inside the loop-boundary
+ * danger zone (Tizen 4 lands at the wrong position when the target is
+ * within ~500ms of duration).
+ *
+ * Returns true if the seek was issued, false if it was refused.
+ */
+export function hardSeekTo(posMs: number): boolean {
+  if (_destroyed || !_playing || !_video || _durationMs <= 0) return false;
+  const safe = 500;                       // avoid loop boundary on Tizen 4
+  const clamped = Math.max(safe, Math.min(_durationMs - safe, posMs));
+  if (Math.abs(clamped - posMs) > 1) {
+    logger.info(`[HTML5] hardSeekTo ${posMs}ms refused (in loop-boundary zone)`);
+    return false;
+  }
+  // Reset any pending rate correction — we're starting clean.
+  clearTimeout(_rateTimer);
+  _video.playbackRate = 1.0;
+  _video.currentTime  = clamped / 1000;
+  logger.info(`[HTML5] hardSeekTo ${clamped}ms`);
+  return true;
+}
+
+/**
+ * Plan C live drift correction — playbackRate rubber-band.
+ *
+ * Sign convention (matches sync.ts): deltaMs > 0 means "I'm ahead of group, slow me down".
+ * We map the desired ms shift to a rate offset over a fixed window:
+ *
+ *   rate = 1 - (deltaMs / RATE_WINDOW_MS)   clamped to ±RATE_MAX_OFFSET
+ *
+ * After RATE_WINDOW_MS the rate snaps back to 1.0. With sync.ts damping (0.5)
+ * and per-tick cap (80ms), the worst-case rate is ~5%, which is inaudible
+ * for music/voice on consumer TVs and visually invisible.
  */
 export function nudgePhase(deltaMs: number): void {
-  if (!_playing || _playStartEpoch < 0) return;
-  _playStartEpoch += deltaMs;
-  logger.info(`[AVPlay] phase nudge ${deltaMs >= 0 ? '+' : ''}${deltaMs}ms → playStartEpoch=${_playStartEpoch}`);
-}
+  if (_destroyed || !_playing || !_video) return;
+  if (Math.abs(deltaMs) < RATE_MIN_DELTA_MS) return;
 
-/** Internal play-start epoch (local clock); negative if not yet playing. */
-export function getPlayStartEpoch(): number { return _playStartEpoch; }
+  // Smooth playbackRate rubber-band only. We deliberately do NOT seek mid-stream:
+  // on Tizen 4 (SBB) seeks near the loop boundary land in unpredictable spots
+  // and ping-pong with the leader. Drift correction therefore happens gradually.
+  let rateOffset = -deltaMs / RATE_WINDOW_MS;
+  if (rateOffset >  RATE_MAX_OFFSET) rateOffset =  RATE_MAX_OFFSET;
+  if (rateOffset < -RATE_MAX_OFFSET) rateOffset = -RATE_MAX_OFFSET;
+  const newRate = Math.max(0.5, Math.min(2.0, 1 + rateOffset));
+
+  _video.playbackRate = newRate;
+  clearTimeout(_rateTimer);
+  _rateTimer = setTimeout(() => {
+    if (_video && !_destroyed) _video.playbackRate = 1.0;
+  }, RATE_WINDOW_MS);
+
+  logger.info(`[HTML5] nudge drift=${deltaMs}ms → rate=${newRate.toFixed(3)} for ${RATE_WINDOW_MS}ms`);
+}
 
 // ── Teardown ───────────────────────────────────────────────────────────────────
 
 export function destroyEngine(): void {
   _destroyed = true; _playing = false;
   clearTimeout(_playTimer);
-  clearInterval(_pollTimer);
-  for (const slot of _slots) {
-    try {
-      const s = slot.av.getState();
-      if (s === 'PLAYING' || s === 'PAUSED' || s === 'READY') slot.av.stop();
-      slot.av.close();
-    } catch {}
-    if (slot.obj?.parentNode) slot.obj.parentNode.removeChild(slot.obj);
+  clearTimeout(_rateTimer);
+  if (_video) {
+    try { _video.pause(); } catch {}
+    _video.src = '';
+    try { _video.load(); } catch {}
+    if (_video.parentNode) _video.parentNode.removeChild(_video);
+    _video = null;
   }
-  _slots = [];
-  logger.info('[AVPlay] engine destroyed');
+  logger.info('[HTML5] engine destroyed');
 }
 
-// ── URI resolution ─────────────────────────────────────────────────────────────
-
-function _resolveUri(url: string): Promise<string> {
-  if (/^(https?|file):\/\//i.test(url)) return Promise.resolve(url);
-  const rel = url.replace(/^\.\//, '');
-
-  // Tizen 5+ — synchronous toURI
-  try {
-    const base: string = (window as any).tizen?.filesystem?.toURI('wgt-package');
-    if (base && base.length > 5) {
-      const abs = (base.endsWith('/') ? base : base + '/') + rel;
-      logger.info(`[AVPlay] uri (toURI): ${abs}`);
-      return Promise.resolve(abs);
-    }
-  } catch {}
-
-  // Tizen 4 — async resolve callback
-  const tizen = (window as any).tizen;
-  if (tizen?.filesystem?.resolve) {
-    return new Promise<string>((res) => {
-      try {
-        tizen.filesystem.resolve(
-          'wgt-package',
-          (dir: any) => {
-            const base: string = dir.toURI ? dir.toURI() : String(dir);
-            const abs = (base.endsWith('/') ? base : base + '/') + rel;
-            logger.info(`[AVPlay] uri (resolve): ${abs}`);
-            res(abs);
-          },
-          () => res(_scriptBase(rel)),
-          'r',
-        );
-      } catch { res(_scriptBase(rel)); }
-    });
-  }
-
-  return Promise.resolve(_scriptBase(rel));
-}
-
-function _scriptBase(rel: string): string {
-  for (const s of Array.from(document.scripts) as HTMLScriptElement[]) {
-    if (s.src?.startsWith('file:///') && s.src.includes('bundle.js'))
-      return s.src.replace(/js\/bundle\.js.*$/, '') + rel;
-  }
-  logger.warn(`[AVPlay] could not resolve absolute URI for: ${rel}`);
-  return rel;
-}
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function _expectedMs(): number {
   if (_playStartEpoch < 0 || _durationMs <= 0) return 0;
   return ((Date.now() - _playStartEpoch) % _durationMs + _durationMs) % _durationMs;
+}
+
+/**
+ * Re-anchor _playStartEpoch so exp tracks the actual decoder position.
+ * Called once per drift tick. Without this, the initial play() latency
+ * (difference between scheduled GO epoch and first real frame) accumulates
+ * as a fixed offset that grows ~linearly with loops.
+ *
+ * We compute what _playStartEpoch SHOULD be given the video's current
+ * position and wall clock, then replace only if the correction is large
+ * enough to be meaningful (> 20ms) and not a loop-wrap artefact.
+ */
+function _reanchorClock(): void {
+  if (!_video || _playStartEpoch < 0 || _durationMs <= 0) return;
+  const posMs  = Math.round((_video.currentTime ?? 0) * 1000);
+  if (posMs < 200) return;
+  const now    = Date.now();
+  const elapsed   = now - _playStartEpoch;
+  const loopN     = Math.floor(elapsed / _durationMs);
+  const corrected = now - (loopN * _durationMs + posMs);
+  const delta     = corrected - _playStartEpoch;
+  // Allow up to 1.5× duration for the first post-burst correction (Tizen 4
+  // decoder burst can bake in a full-loop offset). After that ±2s is enough.
+  const firstAnchor = _playStartedAt >= 0 && (now - _playStartedAt) < STARTUP_ANCHOR_GRACE_MS + 6000;
+  const maxDelta = firstAnchor ? (_durationMs * 1.5) : 2000;
+  if (Math.abs(delta) > 20 && Math.abs(delta) < maxDelta) {
+    const tag = Math.abs(delta) > 500 ? 'startup-anchor' : 're-anchor';
+    logger.info(`[HTML5] clock ${tag}: _playStartEpoch ${delta > 0 ? '+' : ''}${Math.round(delta)}ms → actualPos=${posMs}ms`);
+    _playStartEpoch = corrected;
+  }
 }

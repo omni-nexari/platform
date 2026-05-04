@@ -86,6 +86,15 @@ foreach ($cmd in @("ssh", "scp")) {
     }
 }
 
+# -- Auto-bump when building --------------------------------------------------
+# install-nexari2.ps1 bumps patch for dev; deploy-tizen bumps patch for prod.
+# This guarantees the prod WGT is always a higher version than the last dev
+# build so SSSP detects a change and downloads the prod WGT on reboot.
+if ($Build -and $BumpVersion -eq "") {
+    $BumpVersion = "patch"
+    Write-Host "==> Auto-bumping patch version for prod build..." -ForegroundColor Cyan
+}
+
 # -- Bump version (optional) --------------------------------------------------
 # Must happen BEFORE build so config.xml version is baked into the WGT
 if ($BumpVersion -ne "") {
@@ -103,7 +112,7 @@ if ($BumpVersion -ne "") {
     $pkgForVer = Get-Content (Join-Path $TizenDir "package.json") -Raw | ConvertFrom-Json
     $newVer = $pkgForVer.version
     $configXmlPath = Join-Path $TizenDir "config.xml"
-    $cfgXml = Get-Content $configXmlPath -Raw
+    $cfgXml = [System.IO.File]::ReadAllText($configXmlPath, [System.Text.UTF8Encoding]::new($false))
     $cfgXml = $cfgXml -replace '(<widget[^>]+version=")[^"]*(")', "`${1}$newVer`${2}"
     [System.IO.File]::WriteAllText($configXmlPath, $cfgXml, [System.Text.UTF8Encoding]::new($false))
     Write-Host "  config.xml + package.json version set to $newVer" -ForegroundColor Green
@@ -299,11 +308,9 @@ else {
     Write-Host "(Skipping release publish - add -SuperadminEmail / -SuperadminPassword to publish)" -ForegroundColor DarkGray
 }
 
+$finalVer = (Get-Content (Join-Path $TizenDir "package.json") -Raw | ConvertFrom-Json).version
 Write-Host ""
 Write-Host "Done." -ForegroundColor Green
+Write-Host "  Prod build : v$finalVer  (API: https://ds.chiho.app)" -ForegroundColor Green
 Write-Host "  TV launcher URL (HTTPS): https://ds.chiho.app/tizen/sssp_config.xml" -ForegroundColor Gray
 Write-Host "  TV launcher URL (LAN):   http://${PiHost}/tizen/sssp_config.xml" -ForegroundColor Gray
-Write-Host ""
-Write-Host "On existing test TVs with a different cert installed:" -ForegroundColor Yellow
-Write-Host "  tizen uninstall -s [TV_IP]:26101 -p fmDBbBnvJM.NexariTizen" -ForegroundColor Yellow
-Write-Host "  Then use the URL Launcher on the TV to install fresh." -ForegroundColor Yellow
