@@ -1245,8 +1245,10 @@
       init_engine_html5();
       init_logger();
       init_sync();
+      var RELAY_IP = "192.168.1.11";
+      var RELAY_PORT = 9616;
       var CONFIG = {
-        PI_BASE: "http://192.168.1.17",
+        PI_BASE: `http://${RELAY_IP}:${RELAY_PORT}`,
         GROUP_ID: "syncengine-001",
         EXPECTED_PEERS: 2
       };
@@ -1297,10 +1299,12 @@
         });
         _activateEngine(_mode, _container);
         setModeLabel(_mode);
+        _startNodeRelay(setStatus);
         if (!_syncStarted) {
           _syncStarted = true;
           const overlay = document.getElementById("overlay");
           const logPanel = document.getElementById("log-panel");
+          yield new Promise((r) => setTimeout(r, 2500));
           init({
             piBase: CONFIG.PI_BASE,
             groupId: CONFIG.GROUP_ID,
@@ -1353,6 +1357,47 @@
         setModeLabel(mode);
         _activateEngine(mode, _container);
         setStatus(`Engine: ${mode === "avplay" ? "AVPlay" : "HTML5 video"} \u2014 waiting for next sync cue`);
+      }
+      function _pickSignedStub() {
+        var _a, _b;
+        let v = "6.5";
+        try {
+          v = ((_b = (_a = window.tizen) == null ? void 0 : _a.systeminfo) == null ? void 0 : _b.getCapability(
+            "http://tizen.org/feature/platform.version"
+          )) || v;
+        } catch (e) {
+        }
+        if (v === "2.4" || v === "2.4.0") return "../lib/server2016.js.signed";
+        if (v === "3.0" || v === "3.0.0") return "../lib/server2017.js.signed";
+        if (v === "4.0" || v === "4.0.0") return "../lib/server2018.js.signed";
+        if (v === "5.0" || v === "5.0.0") return "../lib/server2019.js.signed";
+        return "../lib/server2022.js.signed";
+      }
+      function _startNodeRelay(setStatus) {
+        var _a;
+        const b2b = (_a = window.b2bapis) == null ? void 0 : _a.b2bcontrol;
+        if (!b2b || typeof b2b.startNodeServer !== "function") {
+          logger.warn("[NodeRelay] b2bcontrol.startNodeServer unavailable on this firmware");
+          return;
+        }
+        const stub = _pickSignedStub();
+        logger.info(`[NodeRelay] starting ${stub} \u2192 :${RELAY_PORT}`);
+        setStatus(`Starting Node relay (${stub.split("/").pop()})\u2026`);
+        try {
+          b2b.startNodeServer(
+            stub,
+            "nexari-sync-relay",
+            () => {
+              logger.info(`[NodeRelay] running on :${RELAY_PORT}`);
+            },
+            (e) => {
+              var _a2;
+              logger.warn(`[NodeRelay] start failed: ${(_a2 = e == null ? void 0 : e.message) != null ? _a2 : e}`);
+            }
+          );
+        } catch (e) {
+          logger.warn(`[NodeRelay] startNodeServer threw: ${e == null ? void 0 : e.message}`);
+        }
       }
       function _getSelfIp() {
         return __async(this, null, function* () {

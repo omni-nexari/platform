@@ -17,8 +17,15 @@ import { init as syncInit, stop as syncStop } from './sync.js';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
+// Pi-less mode: a Samsung-signed Node server is started on each TV via
+// b2bapis.b2bcontrol.startNodeServer (see _startNodeRelay below). One TV
+// (RELAY_IP) is the rendezvous — all peers POST register/signal there and
+// poll signals from there. PORT must match logic.js (9616).
+const RELAY_IP   = '192.168.1.11';   // QBC — designated relay TV
+const RELAY_PORT = 9616;
+
 const CONFIG = {
-  PI_BASE:        'http://192.168.1.17',
+  PI_BASE:        `http://${RELAY_IP}:${RELAY_PORT}`,
   GROUP_ID:       'syncengine-001',
   EXPECTED_PEERS: 2,
 };
@@ -79,11 +86,19 @@ window.addEventListener('load', async () => {
   _activateEngine(_mode, _container);
   setModeLabel(_mode);
 
+  // Start the on-device Node sidecar relay (Pi-less mode). Fire and forget;
+  // sync.ts will retry connections to RELAY_IP until it comes up.
+  _startNodeRelay(setStatus);
+
   // ── SYNC MODE ─────────────────────────────────────────────────────────────
   if (!_syncStarted) {
     _syncStarted = true;
     const overlay  = document.getElementById('overlay');
     const logPanel = document.getElementById('log-panel');
+    // Brief delay so the local Node relay has a chance to bind before
+    // sync starts polling/registering. Connections still retry, but this
+    // avoids a noisy initial wave of timeouts.
+    await new Promise((r) => setTimeout(r, 2500));
     syncInit({
       piBase:        CONFIG.PI_BASE,
       groupId:       CONFIG.GROUP_ID,
@@ -138,6 +153,54 @@ function _switchEngine(mode: EngineMode, setStatus: (s: string) => void, setMode
   setModeLabel(mode);
   _activateEngine(mode, _container);
   setStatus(`Engine: ${mode === 'avplay' ? 'AVPlay' : 'HTML5 video'} — waiting for next sync cue`);
+}
+
+// ── Node sidecar (Pi-less relay) ──────────────────────────────────────────────
+
+/**
+ * Start the Samsung-signed Node sidecar via b2bapis.b2bcontrol.startNodeServer.
+ * The signed stub `lib/server20XX.js.signed` (verbatim from Samsung NodeTester
+ * sample) does `require('../js/logic.js')()`. logic.js binds an HTTP server
+ * on RELAY_PORT (9616) that mirrors the subset of Pi `test-sync` endpoints
+ * the WebApp uses.
+ *
+ * Stub selection by Tizen platform.version (matches NodeTester/main.js):
+ *   2.4 → server2016, 3.0 → server2017, 4.0 → server2018,
+ *   5.0 → server2019, 6.0+ → server2022
+ */
+function _pickSignedStub(): string {
+  let v = '6.5';
+  try {
+    v = (window as any).tizen?.systeminfo?.getCapability(
+      'http://tizen.org/feature/platform.version',
+    ) || v;
+  } catch {}
+  if (v === '2.4' || v === '2.4.0') return '../lib/server2016.js.signed';
+  if (v === '3.0' || v === '3.0.0') return '../lib/server2017.js.signed';
+  if (v === '4.0' || v === '4.0.0') return '../lib/server2018.js.signed';
+  if (v === '5.0' || v === '5.0.0') return '../lib/server2019.js.signed';
+  return '../lib/server2022.js.signed';
+}
+
+function _startNodeRelay(setStatus: (s: string) => void): void {
+  const b2b = (window as any).b2bapis?.b2bcontrol;
+  if (!b2b || typeof b2b.startNodeServer !== 'function') {
+    logger.warn('[NodeRelay] b2bcontrol.startNodeServer unavailable on this firmware');
+    return;
+  }
+  const stub = _pickSignedStub();
+  logger.info(`[NodeRelay] starting ${stub} → :${RELAY_PORT}`);
+  setStatus(`Starting Node relay (${stub.split('/').pop()})…`);
+  try {
+    b2b.startNodeServer(
+      stub,
+      'nexari-sync-relay',
+      () => { logger.info(`[NodeRelay] running on :${RELAY_PORT}`); },
+      (e: any) => { logger.warn(`[NodeRelay] start failed: ${e?.message ?? e}`); },
+    );
+  } catch (e: any) {
+    logger.warn(`[NodeRelay] startNodeServer threw: ${e?.message}`);
+  }
 }
 
 // ── Device identification ─────────────────────────────────────────────────────
