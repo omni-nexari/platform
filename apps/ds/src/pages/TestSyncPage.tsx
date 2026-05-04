@@ -156,7 +156,7 @@ export default function TestSyncPage() {
   // Poll registered peers
   const peersQuery = useQuery({
     queryKey: ['test-sync-peers'],
-    queryFn:  () => api.get<{ peers: Peer[] }>('/test-sync/peers?groupId=synctest-001'),
+    queryFn:  () => api.get<{ peers: Peer[] }>('/test-sync/peers?groupId=syncengine-001'),
     refetchInterval: 5000,
   });
 
@@ -190,7 +190,7 @@ export default function TestSyncPage() {
       <PageHeader
         icon={<Radio className="h-5 w-5" />}
         title="Sync Engine Test"
-        description="Live view of MSE vs WASM engine comparison on SBB + QBC TVs. CH+ on the leader TV toggles both engines simultaneously."
+        description="Live logs from QBC + SBB TVs running Nexari Sync Engine. KEY 1 = HTML5, KEY 2 = AVPlay on each TV."
       />
 
       {/* Connection status */}
@@ -206,7 +206,7 @@ export default function TestSyncPage() {
         </SectionCardHeader>
         <SectionCardBody>
           {peers.length === 0 && (
-            <Callout tone="warning">No devices have registered yet. Install NexariSyncTest.wgt on both TVs and launch the app.</Callout>
+            <Callout tone="warning">No devices registered yet. Install NexariSyncEngine.wgt on both TVs and launch the app.</Callout>
           )}
           {peers.length > 0 && (
             <div className="flex flex-wrap gap-4">

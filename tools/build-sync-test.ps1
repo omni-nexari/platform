@@ -1,11 +1,11 @@
-$src    = "C:\Users\chiho\Projects\Platform\apps\nexari-sync-test"
+$src    = "C:\Users\chiho\Projects\Platform\apps\nexari-sync-engine"
 $tizen  = "C:\tizen-studio\tools\ide\bin\tizen.bat"
 $sdb    = "C:\tizen-studio\tools\sdb.exe"
 $tvQBC  = "192.168.1.11:26101"
 $tvSBB  = "192.168.1.39:26101"
-$appId  = "fmDBbBnvJM.NexariSyncTest"
-$wgtName = "NexariSyncTest.wgt"
-$tmp    = "$env:TEMP\nexari-sync-test-build"
+$appId  = "fmDBbBnvJM.NexariSyncEngine"
+$wgtName = "NexariSyncEngine.wgt"
+$tmp    = "$env:TEMP\nexari-sync-engine-build"
 
 $signProfile  = "nado-prod"
 $profilesXml  = "C:\tizen-studio-data\profile\profiles.xml"
@@ -51,9 +51,26 @@ $xml.Save($profilesXml)
 Write-Host "Profile '$signProfile' written."
 
 # ============================================================
-# STEP 1: (no TypeScript compile — pure JS test harness)
+# STEP 1: TypeScript compile -> js/bundle.js
 # ============================================================
-Write-Host "=== STEP 1: skipped (plain JS, no compile needed) ===" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "=== STEP 1: Build ===" -ForegroundColor Cyan
+
+Push-Location $src
+if (-not (Test-Path "node_modules")) {
+    Write-Host "Installing node_modules..."
+    npm install 2>&1
+}
+$buildOut = npm run build 2>&1 | Out-String
+Write-Host $buildOut
+Pop-Location
+
+if (-not (Test-Path "$src\js\bundle.js")) {
+    Write-Error "Build failed - js\bundle.js not found"
+    exit 1
+}
+$bundleKB = [math]::Round((Get-Item "$src\js\bundle.js").Length / 1KB)
+Write-Host ("bundle.js: " + $bundleKB + " KB") -ForegroundColor Green
 
 # ============================================================
 # STEP 2: Stage files for packaging
@@ -82,8 +99,7 @@ foreach ($item in Get-ChildItem $src) {
 }
 
 Write-Host "Staged $((Get-ChildItem $tmp -Recurse -File).Count) files"
-Write-Host "syncplay-test.js present: $(Test-Path "$tmp\js\syncplay-test.js")"
-Write-Host "signage.mp4 present: $(Test-Path "$tmp\media\signage.mp4")"
+Write-Host "bundle.js present:  $(Test-Path "$tmp\js\bundle.js")"
 
 # ============================================================
 # STEP 3: Package (sign with testforsbb)
@@ -102,7 +118,7 @@ if ($wgt.Name -ne $wgtName) {
     Write-Host "Renamed $($wgt.Name) -> $wgtName"
 }
 $sizeKB = [math]::Round((Get-Item "$src\$wgtName").Length / 1KB)
-Write-Host "WGT ready: $wgtName (${sizeKB} KB)"
+Write-Host ("WGT ready: " + $wgtName + " (" + $sizeKB + " KB)")
 
 # ============================================================
 # Helper: connect -> uninstall -> install -> launch on one TV

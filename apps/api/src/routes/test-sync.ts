@@ -22,6 +22,15 @@ function redisOrError(reply: any) {
 export async function testSyncRoutes(app: FastifyInstance) {
 
   /**
+   * GET /test-sync/time
+   * Lightweight NTP-style time endpoint for client clock-offset measurement.
+   * No Redis touch — must be fast and consistent for accurate RTT.
+   */
+  app.get('/time', async (_req, reply) => {
+    return reply.send({ serverTimeMs: Date.now() });
+  });
+
+  /**
    * POST /test-sync/register
    * Body: { deviceId: string, role: 'sbb'|'qbc', ip: string }
    * Stores peer info in a Redis hash keyed by groupId (default 'synctest-001').
