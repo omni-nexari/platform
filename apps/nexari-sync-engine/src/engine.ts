@@ -428,6 +428,36 @@ function _fullResetLoop(slot: Slot): void {
 export function getDuration(): number  { return _durationMs; }
 export function isPlaying():   boolean { return _playing; }
 
+/**
+ * Current playhead position in milliseconds, or null if not stably playing.
+ * Returns the AVPlay reported pos (post-decoder), so reflects what's actually on the panel.
+ */
+export function getCurrentPosMs(): number | null {
+  if (!_playing) return null;
+  const a = _av(); if (!a || !a.getCurrentTime) return null;
+  try {
+    const ms = a.getCurrentTime();
+    if (ms <= 0) return null;
+    return ms;
+  } catch { return null; }
+}
+
+/**
+ * Shift the play-start epoch by deltaMs.
+ *   delta > 0 → the device's next loop swap fires deltaMs LATER (use when local video is running ahead)
+ *   delta < 0 → the device's next loop swap fires |delta|ms EARLIER (use when running behind)
+ * Affects the targetMs computed inside _handleLoop on the next swap, giving a phase
+ * correction without interrupting the currently-playing cycle.
+ */
+export function nudgePhase(deltaMs: number): void {
+  if (!_playing || _playStartEpoch < 0) return;
+  _playStartEpoch += deltaMs;
+  logger.info(`[AVPlay] phase nudge ${deltaMs >= 0 ? '+' : ''}${deltaMs}ms → playStartEpoch=${_playStartEpoch}`);
+}
+
+/** Internal play-start epoch (local clock); negative if not yet playing. */
+export function getPlayStartEpoch(): number { return _playStartEpoch; }
+
 // ── Teardown ───────────────────────────────────────────────────────────────────
 
 export function destroyEngine(): void {

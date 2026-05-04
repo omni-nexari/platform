@@ -534,6 +534,26 @@
   function getDuration() {
     return _durationMs;
   }
+  function isPlaying() {
+    return _playing;
+  }
+  function getCurrentPosMs() {
+    if (!_playing) return null;
+    const a = _av();
+    if (!a || !a.getCurrentTime) return null;
+    try {
+      const ms = a.getCurrentTime();
+      if (ms <= 0) return null;
+      return ms;
+    } catch (e) {
+      return null;
+    }
+  }
+  function nudgePhase(deltaMs) {
+    if (!_playing || _playStartEpoch < 0) return;
+    _playStartEpoch += deltaMs;
+    logger.info(`[AVPlay] phase nudge ${deltaMs >= 0 ? "+" : ""}${deltaMs}ms \u2192 playStartEpoch=${_playStartEpoch}`);
+  }
   function destroyEngine() {
     var _a;
     _destroyed = true;
@@ -822,8 +842,33 @@
   });
 
   // src/sync.ts
+  function _calLsKey() {
+    return CAL_LS_KEY_PREFIX + _cfg.deviceId;
+  }
+  function _loadStoredLatency() {
+    var _a;
+    try {
+      const v = (_a = window.localStorage) == null ? void 0 : _a.getItem(_calLsKey());
+      if (v == null) return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function _saveStoredLatency(ms) {
+    var _a;
+    try {
+      (_a = window.localStorage) == null ? void 0 : _a.setItem(_calLsKey(), String(Math.round(ms)));
+    } catch (e) {
+    }
+  }
+  function _selfLatencyMs() {
+    return _selfLatencyCached;
+  }
   function init(cfg) {
     return __async(this, null, function* () {
+      var _a;
       _cfg = cfg;
       _stopped = false;
       _role = "pending";
@@ -835,6 +880,14 @@
       _loadReceived = false;
       logger.info(`[Sync] init deviceId=${cfg.deviceId} group=${cfg.groupId}`);
       cfg.onStatus("Registering with relay\u2026");
+      const stored = _loadStoredLatency();
+      if (stored != null) {
+        _selfLatencyCached = stored;
+        logger.info(`[Sync] self-latency loaded from localStorage: ${stored}ms`);
+      } else {
+        _selfLatencyCached = (_a = DEVICE_LATENCY_FALLBACK_MS[cfg.deviceId]) != null ? _a : 0;
+        logger.info(`[Sync] self-latency seeded from fallback table: ${_selfLatencyCached}ms`);
+      }
       yield _register();
       setInterval(_register, REGISTER_EVERY);
       cfg.onStatus("Measuring clock offset\u2026");
@@ -860,6 +913,7 @@
   }
   function stop() {
     _stopped = true;
+    _stopPhaseHeartbeat();
     logger.info("[Sync] stopped");
   }
   function _runLeader() {
@@ -896,7 +950,10 @@
     for (const peer of _peers) {
       _send(peer, { type: "GO", playAt: serverPlayAt, durationMs });
     }
-    _cfg.schedulePlay(localPlayAt);
+    const selfLatency = _selfLatencyMs();
+    logger.info(`[Sync] leader self-schedule localPlayAt=${localPlayAt} latencyOffset=+${selfLatency}ms`);
+    _cfg.schedulePlay(localPlayAt + selfLatency);
+    _startPhaseHeartbeat();
   }
   function _dispatch(msg, from) {
     logger.info(`[Sync] \u2190 ${msg.type} from=${from}`);
@@ -938,12 +995,88 @@
       if (_role !== "follower") return;
       const serverPlayAt = msg.playAt;
       const localPlayAt = serverToLocal(serverPlayAt);
-      const wait = localPlayAt - Date.now();
-      logger.info(`[Sync] GO \u2192 schedulePlay in T-${Math.round(wait)}ms (serverEpoch=${serverPlayAt} localEpoch=${localPlayAt} offset=${getOffsetMs()}ms)`);
+      const selfLatency = _selfLatencyMs();
+      const adjustedLocal = localPlayAt + selfLatency;
+      const wait = adjustedLocal - Date.now();
+      logger.info(`[Sync] GO \u2192 schedulePlay in T-${Math.round(wait)}ms (serverEpoch=${serverPlayAt} localEpoch=${localPlayAt} latencyOffset=+${selfLatency}ms adjusted=${adjustedLocal} clockOffset=${getOffsetMs()}ms)`);
       _cfg.onStatus(`GO received \u2014 playing in ${Math.round(wait / 100) * 100 / 1e3}s`);
-      _cfg.schedulePlay(localPlayAt);
+      _cfg.schedulePlay(adjustedLocal);
+      _startPhaseHeartbeat();
       return;
     }
+    if (msg.type === "PLAYHEAD") {
+      const ph = msg;
+      _peerPlayheads.set(from, { serverNow: ph.serverNow, posMs: ph.posMs, receivedAt: Date.now() });
+      return;
+    }
+  }
+  function _startPhaseHeartbeat() {
+    if (_phaseTimer) return;
+    _phaseStartedAt = Date.now();
+    _peerPlayheads = /* @__PURE__ */ new Map();
+    _calibrationEwma = 0;
+    _calibrationSamples = 0;
+    _phaseTimer = setInterval(_phaseTick, PHASE_HEARTBEAT_MS);
+    logger.info("[Sync] phase heartbeat started");
+  }
+  function _stopPhaseHeartbeat() {
+    if (_phaseTimer) {
+      clearInterval(_phaseTimer);
+      _phaseTimer = null;
+    }
+    if (_calibrationSamples >= 3) {
+      const newLatency = _selfLatencyCached + _calibrationEwma;
+      _saveStoredLatency(newLatency);
+      logger.info(`[Sync] saved latency calibration: ${Math.round(newLatency)}ms (was ${_selfLatencyCached}ms, ewma=${Math.round(_calibrationEwma)}ms over ${_calibrationSamples} samples)`);
+    }
+  }
+  function _phaseTick() {
+    if (_stopped || !isPlaying()) return;
+    const myPos = getCurrentPosMs();
+    if (myPos == null) return;
+    const localNow = Date.now();
+    const serverNow = localToServer(localNow);
+    const duration = getDuration();
+    if (duration <= 0) return;
+    for (const peer of _peers) {
+      _send(peer, { type: "PLAYHEAD", serverNow, posMs: myPos });
+    }
+    const samples = [{ id: _cfg.deviceId, pos: myPos }];
+    for (const [peerId, ph] of _peerPlayheads) {
+      if (localNow - ph.receivedAt > PHASE_PEER_FRESH_MS) continue;
+      const projected = ((ph.posMs + (serverNow - ph.serverNow)) % duration + duration) % duration;
+      samples.push({ id: peerId, pos: projected });
+    }
+    if (samples.length < 2) return;
+    const arc = (a, ref) => {
+      let d = a - ref;
+      if (d > duration / 2) d -= duration;
+      if (d < -duration / 2) d += duration;
+      return d;
+    };
+    const deltasFromSelf = samples.map((s) => arc(s.pos, myPos)).sort((a, b) => a - b);
+    let consensusDelta;
+    if (deltasFromSelf.length === 2) {
+      consensusDelta = (deltasFromSelf[0] + deltasFromSelf[1]) / 2;
+    } else {
+      consensusDelta = deltasFromSelf[Math.floor(deltasFromSelf.length / 2)];
+    }
+    const myDrift = -consensusDelta;
+    if (Date.now() - _phaseStartedAt < PHASE_CAL_GRACE_MS) {
+      logger.info(`[Sync] phase warm-up samples=${samples.length} myDrift=${Math.round(myDrift)}ms (no nudge yet)`);
+      return;
+    }
+    _calibrationEwma = _calibrationSamples === 0 ? myDrift : PHASE_CAL_EWMA_ALPHA * myDrift + (1 - PHASE_CAL_EWMA_ALPHA) * _calibrationEwma;
+    _calibrationSamples++;
+    if (Math.abs(myDrift) < PHASE_NUDGE_THRESHOLD) {
+      logger.info(`[Sync] phase OK samples=${samples.length} myDrift=${Math.round(myDrift)}ms ewma=${Math.round(_calibrationEwma)}ms (within \xB1${PHASE_NUDGE_THRESHOLD}ms)`);
+      return;
+    }
+    let nudge = myDrift * PHASE_NUDGE_DAMPING;
+    if (nudge > PHASE_NUDGE_CAP_MS) nudge = PHASE_NUDGE_CAP_MS;
+    if (nudge < -PHASE_NUDGE_CAP_MS) nudge = -PHASE_NUDGE_CAP_MS;
+    logger.info(`[Sync] phase NUDGE samples=${samples.length} myDrift=${Math.round(myDrift)}ms ewma=${Math.round(_calibrationEwma)}ms \u2192 nudge=${Math.round(nudge)}ms`);
+    nudgePhase(Math.round(nudge));
   }
   function _startPoll2() {
     (function poll() {
@@ -1064,10 +1197,11 @@
       return Promise.race([fetch(url, opts), timeout]);
     });
   }
-  var GO_AHEAD_MS, FETCH_TIMEOUT, POLL_SLEEP_MS, REGISTER_EVERY, SEND_RETRIES, SEND_RETRY_MS, _cfg, _role, _peers, _stopped, _pollSince, _leaderEngineReady, _followerReadySet, _goSent, _loadReceived;
+  var GO_AHEAD_MS, FETCH_TIMEOUT, POLL_SLEEP_MS, REGISTER_EVERY, SEND_RETRIES, SEND_RETRY_MS, DEVICE_LATENCY_FALLBACK_MS, CAL_LS_KEY_PREFIX, _selfLatencyCached, PHASE_HEARTBEAT_MS, PHASE_PEER_FRESH_MS, PHASE_NUDGE_THRESHOLD, PHASE_NUDGE_DAMPING, PHASE_NUDGE_CAP_MS, PHASE_CAL_GRACE_MS, PHASE_CAL_EWMA_ALPHA, _peerPlayheads, _phaseTimer, _phaseStartedAt, _calibrationEwma, _calibrationSamples, _cfg, _role, _peers, _stopped, _pollSince, _leaderEngineReady, _followerReadySet, _goSent, _loadReceived;
   var init_sync = __esm({
     "src/sync.ts"() {
       init_logger();
+      init_engine();
       init_clock();
       GO_AHEAD_MS = 6e3;
       FETCH_TIMEOUT = 2e3;
@@ -1075,6 +1209,24 @@
       REGISTER_EVERY = 5e3;
       SEND_RETRIES = 6;
       SEND_RETRY_MS = 2e3;
+      DEVICE_LATENCY_FALLBACK_MS = {
+        "tizen7.0-mac-28af427a99db": 0,
+        "tizen4.0-mac-d49dc0aa111b": 30
+      };
+      CAL_LS_KEY_PREFIX = "nexari.cal.";
+      _selfLatencyCached = 0;
+      PHASE_HEARTBEAT_MS = 3e3;
+      PHASE_PEER_FRESH_MS = 6e3;
+      PHASE_NUDGE_THRESHOLD = 15;
+      PHASE_NUDGE_DAMPING = 0.5;
+      PHASE_NUDGE_CAP_MS = 80;
+      PHASE_CAL_GRACE_MS = 1e4;
+      PHASE_CAL_EWMA_ALPHA = 0.2;
+      _peerPlayheads = /* @__PURE__ */ new Map();
+      _phaseTimer = null;
+      _phaseStartedAt = 0;
+      _calibrationEwma = 0;
+      _calibrationSamples = 0;
       _role = "pending";
       _peers = [];
       _stopped = false;

@@ -20,6 +20,7 @@
  * either completes or times out.
  */
 import { logger } from './logger.js';
+import { getCurrentPosMs, nudgePhase, isPlaying as engineIsPlaying, getDuration as engineGetDuration } from './engine.js';
 import { measureOffset, getOffsetMs, localToServer, serverToLocal } from './clock.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -27,7 +28,8 @@ import { measureOffset, getOffsetMs, localToServer, serverToLocal } from './cloc
 type SyncMsg =
   | { type: 'LOAD_URL'; url: string }
   | { type: 'READY' }
-  | { type: 'GO'; playAt: number; durationMs: number };
+  | { type: 'GO'; playAt: number; durationMs: number }
+  | { type: 'PLAYHEAD'; serverNow: number; posMs: number };
 
 export interface SyncConfig {
   piBase:        string;
@@ -50,6 +52,53 @@ const POLL_SLEEP_MS  = 500;   // gap between signal polls
 const REGISTER_EVERY = 5000;  // re-register heartbeat interval
 const SEND_RETRIES   = 6;     // max attempts to send a signal
 const SEND_RETRY_MS  = 2000;  // delay between send retries
+
+/**
+ * Per-device play-latency calibration (ms ADDED to scheduled local playAt).
+ *
+ * Plan A (manual seed): static fallbacks if localStorage is empty.
+ * Plan B (auto-cal):    after stable play, EWMA of measured drift (vs group median)
+ *                       is persisted to localStorage('nexari.cal.<deviceId>') and used
+ *                       as the latency offset on next session start.
+ * Plan C (live):        drift vs group median is applied to engine via nudgePhase()
+ *                       at every PLAYHEAD broadcast tick.
+ *
+ * Sign convention: positive = device fires play() / shows frames EARLIER than group,
+ * so we delay it. Negative = device is slower; reduce offset (or run other devices later).
+ */
+const DEVICE_LATENCY_FALLBACK_MS: Record<string, number> = {
+  'tizen7.0-mac-28af427a99db': 0,
+  'tizen4.0-mac-d49dc0aa111b': 30,
+};
+const CAL_LS_KEY_PREFIX = 'nexari.cal.';
+function _calLsKey(): string { return CAL_LS_KEY_PREFIX + _cfg.deviceId; }
+function _loadStoredLatency(): number | null {
+  try {
+    const v = window.localStorage?.getItem(_calLsKey());
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  } catch { return null; }
+}
+function _saveStoredLatency(ms: number): void {
+  try { window.localStorage?.setItem(_calLsKey(), String(Math.round(ms))); } catch {}
+}
+let _selfLatencyCached = 0;
+function _selfLatencyMs(): number { return _selfLatencyCached; }
+
+// ── Plan B + C: PLAYHEAD heartbeat & drift correction ──────────────────────────
+const PHASE_HEARTBEAT_MS    = 3000;  // broadcast playhead every 3s
+const PHASE_PEER_FRESH_MS   = 6000;  // ignore peer playheads older than this
+const PHASE_NUDGE_THRESHOLD = 15;    // ms — only correct if |drift| > this
+const PHASE_NUDGE_DAMPING   = 0.5;   // apply only half the drift per round (avoid oscillation)
+const PHASE_NUDGE_CAP_MS    = 80;    // hard cap per single nudge to keep video smooth
+const PHASE_CAL_GRACE_MS    = 10_000;// ignore first N ms after play start (decoder warm-up)
+const PHASE_CAL_EWMA_ALPHA  = 0.2;   // smoothing for stored latency
+let   _peerPlayheads        = new Map<string, { serverNow: number; posMs: number; receivedAt: number }>();
+let   _phaseTimer: any      = null;
+let   _phaseStartedAt       = 0;
+let   _calibrationEwma      = 0;     // EWMA of (myPos - groupMedian); ms
+let   _calibrationSamples   = 0;
 
 // ── State ──────────────────────────────────────────────────────────────────────
 
@@ -82,6 +131,16 @@ export async function init(cfg: SyncConfig): Promise<void> {
 
   logger.info(`[Sync] init deviceId=${cfg.deviceId} group=${cfg.groupId}`);
   cfg.onStatus('Registering with relay…');
+
+  // Load self-latency from localStorage (Plan B), falling back to static defaults.
+  const stored = _loadStoredLatency();
+  if (stored != null) {
+    _selfLatencyCached = stored;
+    logger.info(`[Sync] self-latency loaded from localStorage: ${stored}ms`);
+  } else {
+    _selfLatencyCached = DEVICE_LATENCY_FALLBACK_MS[cfg.deviceId] ?? 0;
+    logger.info(`[Sync] self-latency seeded from fallback table: ${_selfLatencyCached}ms`);
+  }
 
   await _register();
   setInterval(_register, REGISTER_EVERY);
@@ -116,6 +175,7 @@ export async function init(cfg: SyncConfig): Promise<void> {
 
 export function stop(): void {
   _stopped = true;
+  _stopPhaseHeartbeat();
   logger.info('[Sync] stopped');
 }
 
@@ -162,8 +222,11 @@ function _checkAllReady(): void {
   for (const peer of _peers) {
     _send(peer, { type: 'GO', playAt: serverPlayAt, durationMs });
   }
-  // Leader uses local time directly — no conversion needed for self.
-  _cfg.schedulePlay(localPlayAt);
+  // Leader uses local time directly + own latency calibration.
+  const selfLatency = _selfLatencyMs();
+  logger.info(`[Sync] leader self-schedule localPlayAt=${localPlayAt} latencyOffset=+${selfLatency}ms`);
+  _cfg.schedulePlay(localPlayAt + selfLatency);
+  _startPhaseHeartbeat();
 }
 
 // ── Signal dispatch ────────────────────────────────────────────────────────────
@@ -210,12 +273,117 @@ function _dispatch(msg: SyncMsg, from: string): void {
     if (_role !== 'follower') return;
     const serverPlayAt = (msg as any).playAt;
     const localPlayAt  = serverToLocal(serverPlayAt);
-    const wait         = localPlayAt - Date.now();
-    logger.info(`[Sync] GO → schedulePlay in T-${Math.round(wait)}ms (serverEpoch=${serverPlayAt} localEpoch=${localPlayAt} offset=${getOffsetMs()}ms)`);
+    const selfLatency  = _selfLatencyMs();
+    const adjustedLocal = localPlayAt + selfLatency;
+    const wait         = adjustedLocal - Date.now();
+    logger.info(`[Sync] GO → schedulePlay in T-${Math.round(wait)}ms (serverEpoch=${serverPlayAt} localEpoch=${localPlayAt} latencyOffset=+${selfLatency}ms adjusted=${adjustedLocal} clockOffset=${getOffsetMs()}ms)`);
     _cfg.onStatus(`GO received — playing in ${(Math.round(wait / 100) * 100) / 1000}s`);
-    _cfg.schedulePlay(localPlayAt);
+    _cfg.schedulePlay(adjustedLocal);
+    _startPhaseHeartbeat();
     return;
   }
+
+  if (msg.type === 'PLAYHEAD') {
+    const ph = msg as { type: 'PLAYHEAD'; serverNow: number; posMs: number };
+    _peerPlayheads.set(from, { serverNow: ph.serverNow, posMs: ph.posMs, receivedAt: Date.now() });
+    return;
+  }
+}
+
+// ── Plan B + C: PLAYHEAD heartbeat & drift correction ─────────────────────────
+
+function _startPhaseHeartbeat(): void {
+  if (_phaseTimer) return;
+  _phaseStartedAt   = Date.now();
+  _peerPlayheads    = new Map();
+  _calibrationEwma  = 0;
+  _calibrationSamples = 0;
+  _phaseTimer = setInterval(_phaseTick, PHASE_HEARTBEAT_MS);
+  logger.info('[Sync] phase heartbeat started');
+}
+
+function _stopPhaseHeartbeat(): void {
+  if (_phaseTimer) { clearInterval(_phaseTimer); _phaseTimer = null; }
+  // Persist calibration if we got a stable EWMA
+  if (_calibrationSamples >= 3) {
+    const newLatency = _selfLatencyCached + _calibrationEwma;
+    _saveStoredLatency(newLatency);
+    logger.info(`[Sync] saved latency calibration: ${Math.round(newLatency)}ms (was ${_selfLatencyCached}ms, ewma=${Math.round(_calibrationEwma)}ms over ${_calibrationSamples} samples)`);
+  }
+}
+
+/**
+ * Compute "expected" position at server time `serverNow` for a given peer report.
+ * Group consensus = median of all peer playheads (incl self) projected to a common server time.
+ */
+function _phaseTick(): void {
+  if (_stopped || !engineIsPlaying()) return;
+  const myPos = getCurrentPosMs();
+  if (myPos == null) return;
+  const localNow  = Date.now();
+  const serverNow = localToServer(localNow);
+  const duration  = engineGetDuration();
+  if (duration <= 0) return;
+
+  // Broadcast my playhead to all peers
+  for (const peer of _peers) {
+    _send(peer, { type: 'PLAYHEAD', serverNow, posMs: myPos });
+  }
+
+  // Build sample set: self + fresh peers, all projected to commonServerTime = serverNow
+  // For peer P with report (peerServerNow, peerPos) at receivedAt R:
+  //   projected = (peerPos + (serverNow - peerServerNow)) mod duration
+  // Use shortest-arc for circular median (modular distance).
+  const samples: { id: string; pos: number }[] = [{ id: _cfg.deviceId, pos: myPos }];
+  for (const [peerId, ph] of _peerPlayheads) {
+    if (localNow - ph.receivedAt > PHASE_PEER_FRESH_MS) continue;
+    const projected = ((ph.posMs + (serverNow - ph.serverNow)) % duration + duration) % duration;
+    samples.push({ id: peerId, pos: projected });
+  }
+  if (samples.length < 2) return; // need at least one peer to correct
+
+  // Median on a circular axis: anchor on self, compute signed shortest-arc deltas, median those.
+  const arc = (a: number, ref: number): number => {
+    let d = a - ref;
+    if (d >  duration / 2) d -= duration;
+    if (d < -duration / 2) d += duration;
+    return d;
+  };
+  const deltasFromSelf = samples.map(s => arc(s.pos, myPos)).sort((a, b) => a - b);
+  // For 2 samples (self + 1 peer), use the average of the two deltas (= peerDelta/2)
+  // so each device meets in the middle. For 3+ samples, true median is robust to outliers.
+  let consensusDelta: number;
+  if (deltasFromSelf.length === 2) {
+    consensusDelta = (deltasFromSelf[0] + deltasFromSelf[1]) / 2;
+  } else {
+    consensusDelta = deltasFromSelf[Math.floor(deltasFromSelf.length / 2)];
+  }
+  // myPos - consensusPos = -consensusDelta
+  const myDrift = -consensusDelta;
+
+  if (Date.now() - _phaseStartedAt < PHASE_CAL_GRACE_MS) {
+    logger.info(`[Sync] phase warm-up samples=${samples.length} myDrift=${Math.round(myDrift)}ms (no nudge yet)`);
+    return;
+  }
+
+  // EWMA for Plan B persistence (track how much MORE delay this device needs)
+  // myDrift > 0 means "I'm running ahead of group" → I need MORE latency offset → +EWMA
+  _calibrationEwma = _calibrationSamples === 0
+    ? myDrift
+    : PHASE_CAL_EWMA_ALPHA * myDrift + (1 - PHASE_CAL_EWMA_ALPHA) * _calibrationEwma;
+  _calibrationSamples++;
+
+  if (Math.abs(myDrift) < PHASE_NUDGE_THRESHOLD) {
+    logger.info(`[Sync] phase OK samples=${samples.length} myDrift=${Math.round(myDrift)}ms ewma=${Math.round(_calibrationEwma)}ms (within ±${PHASE_NUDGE_THRESHOLD}ms)`);
+    return;
+  }
+
+  // Plan C: live nudge. Apply damped, capped correction to engine.
+  let nudge = myDrift * PHASE_NUDGE_DAMPING;
+  if (nudge >  PHASE_NUDGE_CAP_MS) nudge =  PHASE_NUDGE_CAP_MS;
+  if (nudge < -PHASE_NUDGE_CAP_MS) nudge = -PHASE_NUDGE_CAP_MS;
+  logger.info(`[Sync] phase NUDGE samples=${samples.length} myDrift=${Math.round(myDrift)}ms ewma=${Math.round(_calibrationEwma)}ms → nudge=${Math.round(nudge)}ms`);
+  nudgePhase(Math.round(nudge));
 }
 
 // ── Signal poll (sequential async loop) ───────────────────────────────────────
