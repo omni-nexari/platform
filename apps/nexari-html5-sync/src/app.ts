@@ -30,6 +30,17 @@ let _syncStarted = false;
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
+window.addEventListener('error', (e) => {
+  const msg = `[App] UNCAUGHT ERROR: ${e?.message} (${e?.filename}:${e?.lineno})`;
+  console.error(msg);
+  try { (window as any).__nexariLog?.(msg); } catch {}
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const msg = `[App] UNHANDLED REJECTION: ${e?.reason?.message ?? e?.reason}`;
+  console.error(msg);
+  try { (window as any).__nexariLog?.(msg); } catch {}
+});
+
 window.addEventListener('load', async () => {
   _container = document.getElementById('player-container')!;
   const statusEl   = document.getElementById('status')!;
@@ -55,7 +66,7 @@ window.addEventListener('load', async () => {
     }
   });
 
-  initEngine(_container);
+  initEngine(_container).catch(e => logger.error(`[App] initEngine failed: ${e?.message ?? e}`));
 
   // Start the on-device Node sidecar relay (Pi-less). Fire and forget;
   // sync.ts will retry connections to RELAY_IP until it comes up.
@@ -86,7 +97,7 @@ window.addEventListener('load', async () => {
         try { destroyEngine(); } catch {}
         const old = _container.querySelector('video');
         if (old?.parentNode) old.parentNode.removeChild(old);
-        initEngine(_container);
+        initEngine(_container).catch(e => logger.error(`[App] restartEngine failed: ${e?.message ?? e}`));
       },
       schedulePlay: (epochMs) => {
         if (overlay)  overlay.style.display  = 'none';

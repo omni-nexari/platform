@@ -517,10 +517,13 @@ function _resolveBundledUrl(filename: string): Promise<string> {
  */
 async function _fetchPlaylistUrls(): Promise<string[]> {
   try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(
       'http://192.168.1.17/api/v1/display/content?format=sync',
-      { signal: AbortSignal.timeout(3000) } as any,
+      { signal: controller.signal },
     );
+    clearTimeout(tid);
     if (res.ok) {
       const data = await res.json();
       if (data?.url) {
@@ -529,7 +532,9 @@ async function _fetchPlaylistUrls(): Promise<string[]> {
       }
     }
   } catch {}
-  // Bundled playlist
+  // Bundled playlist — multi-clip. Engine uses A/B swap between two HTML5
+  // <video> elements: only the hidden+paused element ever has its src reassigned,
+  // never the visible/playing one (which is what corrupts Tizen 4 overlay).
   const files = ['1.mp4', '2.mp4', '3.mp4'];
   const urls  = await Promise.all(files.map((f) => _resolveBundledUrl(f)));
   logger.info(`[Sync] playlist (bundled): ${urls.map((u) => u.split('/').pop()).join(', ')}`);

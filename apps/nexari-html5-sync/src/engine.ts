@@ -1,436 +1,372 @@
 /**
- * engine.ts - HTML5 Video engine for Nexari HTML5 Sync (A/B swap)
+ * engine.ts — A/B HTML5 <video> engine for multi-clip Nexari Sync
  *
- * Why A/B swap:
- *   On Tizen 4.0 WebKit the <video> element renders into a hardware overlay
- *   surface. When you reassign `src` on the same element, internal state
- *   (currentTime, duration, decoder) updates correctly, but the overlay
- *   surface keeps showing the LAST frame of the previous clip until the
- *   element itself is replaced. play()+pause() does NOT force a repaint.
+ * Two persistent <video> elements:
+ *   foreground (fg) — currently playing the active clip (z-index 2, opacity 1)
+ *   background (bg) — hidden, paused at frame 0 of the *next* clip (z-index 1, opacity 0)
  *
- *   The fix is a classic A/B (ping-pong) swap. Two <video> elements are
- *   stacked. While A is the visible/playing element, B is hidden behind A
- *   and prebuffers the next clip. On LOOP_GO we hide A and show B, then
- *   play B. The Tizen compositor sees a different element come forward and
- *   renders correctly. After playing B, it becomes the "active" element and
- *   A becomes the next prebuffer target.
- *
- *   Bonus: the formerly-active element keeps its last frame visible until
- *   the next swap, so transitions remain smooth (no black flash).
- *
- * Public API is unchanged from the single-element version.
+ * Only the hidden+paused bg ever has its src reassigned. The fg's src is never
+ * touched while it's visible/playing — that's what corrupts Tizen 4's hardware
+ * overlay. On LOOP_GO we swap (show+play bg, pause fg), then preload the
+ * clip-after-next onto the now-bg.
  */
 import { logger } from './logger.js';
+type Role = 'leader' | 'follower';
 
-// ---------------------------------------------------------------------------
-// Module state
-// ---------------------------------------------------------------------------
+let _role: Role = 'follower';
+let _playlist: string[] = [];
+let _onLoop: (() => void) | null = null;
 
-let _videoA: HTMLVideoElement | null = null;
-let _videoB: HTMLVideoElement | null = null;
-
-// _active = currently visible / playing.
-// _buffer = hidden, used to prebuffer the next clip.
-let _active: HTMLVideoElement | null = null;
-let _buffer: HTMLVideoElement | null = null;
-
+let _videos: HTMLVideoElement[] = [];   // [A, B]
+let _fg: 0 | 1 = 0;
 let _container: HTMLElement | null = null;
 
-let _url            = '';
-let _durationMs     = 0;     // duration of the ACTIVE clip
-let _bufferedDurMs  = 0;     // duration of the BUFFER clip (set after prebuffer)
-let _playing        = false;
-let _destroyed      = false;
-let _prebuffered    = false;
-let _looping        = false;
+let _idx = 0;                  // playlist index of the foreground clip
+let _durationMs = 0;
+let _prebuffered = false;
+let _looping = false;
+let _firstPlay = true;
 
-let _playTimer:  any = null;
-let _driftTimer: any = null;
-
-let _role:   'leader' | 'follower' | null = null;
-let _onLoop: (() => void) | null          = null;
-
-let _playlist:    string[] = [];
-let _playlistIdx: number   = 0;
-
-const DRIFT_LOG_MS = 2000;
-// Tizen 4.0 hardware video overlays ignore ALL CSS (position, top/left,
-// z-index, opacity) — every <video> element renders at (0,0) on the hardware
-// compositor regardless of styling.  display:none is the ONLY property that
-// actually suppresses a Tizen hardware overlay surface.
+let _eosWatchTimer: ReturnType<typeof setInterval> | null = null;
+let _playTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ---------------------------------------------------------------------------
-// Public config
+// Public API
 // ---------------------------------------------------------------------------
 
-export function setRole(role: 'leader' | 'follower'): void {
-  _role = role;
-  if (_videoA) _applyStyle(_videoA);
-  if (_videoB) _applyStyle(_videoB);
-}
-
+export function setRole(r: Role): void { _role = r; }
 export function setOnLoop(cb: () => void): void { _onLoop = cb; }
-
 export function setPlaylist(urls: string[]): void {
-  if (urls.length === 0) return;
-  _playlist    = urls;
-  _playlistIdx = 0;
-  _url         = urls[0];
-  logger.info(`[HTML5] playlist (${urls.length}): ${urls.map((u) => u.split('/').pop()).join(', ')}`);
+  _playlist = urls;
+  _idx = 0;
+  _log('[Engine] playlist set (' + urls.length + '): ' + urls.map(u => u.split('/').pop()).join(', '));
+}
+export function getPlaylistUrls(): string[] { return _playlist; }
+
+export function isPlaying(): boolean {
+  const v = _videos[_fg];
+  return !!v && !v.paused && !v.ended && v.readyState >= 2;
 }
 
-// ---------------------------------------------------------------------------
-// Init
-// ---------------------------------------------------------------------------
-
-export function initEngine(container: HTMLElement): void {
-  _container = container;
-  _destroyed = false; _playing = false; _durationMs = 0; _bufferedDurMs = 0;
-  _url = ''; _looping = false; _prebuffered = false;
-  clearTimeout(_playTimer); _stopDriftLog();
-
-  // Remove any stale <video> elements from prior runs
-  Array.from(container.querySelectorAll('video')).forEach((v) => {
-    try { (v as HTMLVideoElement).pause(); } catch {}
-    if (v.parentNode) v.parentNode.removeChild(v);
-  });
-
-  // Container must be a positioned ancestor for our absolute children.
-  if (!container.style.position || container.style.position === 'static') {
-    container.style.position = 'relative';
-  }
-
-  _videoA = _createVideoElement();
-  _videoB = _createVideoElement();
-  container.appendChild(_videoA);
-  container.appendChild(_videoB);
-
-  _active = _videoA;
-  _buffer = _videoB;
-  _showActive();
-
-  logger.info('[HTML5] engine initialised (A/B swap)');
+export function getCurrentPosMs(): number {
+  const v = _videos[_fg];
+  return v ? v.currentTime * 1000 : 0;
 }
-
-function _createVideoElement(): HTMLVideoElement {
-  const v = document.createElement('video');
-  v.autoplay  = false;
-  v.muted     = false;
-  v.playsInline = true;
-  _applyStyle(v);
-  return v;
-}
-
-function _applyStyle(v: HTMLVideoElement): void {
-  v.style.position   = 'absolute';
-  v.style.top        = '0';
-  v.style.left       = '0';
-  v.style.width      = '100%';
-  v.style.height     = '100%';
-  v.style.objectFit  = 'contain';
-  v.style.background = '#000';
-  // Hidden by default; _showActive() flips active to display:block.
-  v.style.display    = 'none';
-}
-
-/**
- * Show active element, hide buffer element.
- * display:none is the ONLY CSS property that suppresses a Tizen 4.0
- * hardware video overlay — opacity/z-index/position are all ignored.
- */
-function _showActive(): void {
-  if (_active) _active.style.display = 'block';
-  if (_buffer) _buffer.style.display = 'none';
-}
-
-// ---------------------------------------------------------------------------
-// Prepare (first clip)
-// ---------------------------------------------------------------------------
-
-export function prepare(url: string): Promise<void> {
-  _url = url; _durationMs = 0; _playing = false;
-  _prebuffered = false; _looping = false;
-  clearTimeout(_playTimer); _stopDriftLog();
-  if (_playlist.length === 0) { _playlist = [url]; _playlistIdx = 0; }
-
-  logger.info(`[HTML5] prepare: ${url.split('/').pop()}`);
-  return _loadActive(url);
-}
-
-// ---------------------------------------------------------------------------
-// Core load helpers
-// ---------------------------------------------------------------------------
-
-/** Load a URL into the ACTIVE element (used for the very first clip only). */
-function _loadActive(url: string): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const v = _active;
-    if (!v) return reject(new Error('no active video'));
-
-    v.onended = null;
-    v.onerror = null;
-
-    try { v.pause(); } catch {}
-    v.src = url;
-    v.load();
-
-    const cleanup = () => {
-      v.removeEventListener('loadedmetadata', onMeta);
-      v.removeEventListener('error', onErr);
-    };
-    const onErr = () => {
-      const e = v.error;
-      cleanup();
-      reject(new Error(`active load error code=${e?.code} msg=${e?.message}`));
-    };
-    const onMeta = () => {
-      cleanup();
-      if (_destroyed) return resolve();
-      _durationMs = Math.round((v.duration || 0) * 1000);
-      logger.info(`[HTML5] prepared (active): ${url.split('/').pop()} duration=${_durationMs}ms`);
-      _attachEosListener(v);
-      resolve();
-    };
-    v.addEventListener('loadedmetadata', onMeta, { once: true });
-    v.addEventListener('error', onErr, { once: true });
-  });
-}
-
-/**
- * Load a URL into the BUFFER (hidden) element and pause at frame 0.
- * Because this element is behind the visible one, we can do play+pause to
- * force the decoder to render frame 0 onto its surface without showing
- * anything on screen yet. On swap, this surface becomes visible.
- */
-function _loadBuffer(url: string): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const v = _buffer;
-    if (!v) return reject(new Error('no buffer video'));
-
-    v.onended = null;
-    v.onerror = null;
-
-    try { v.pause(); } catch {}
-    v.src = url;
-    v.load();
-
-    const cleanup = () => {
-      v.removeEventListener('loadedmetadata', onMeta);
-      v.removeEventListener('error', onErr);
-    };
-    const onErr = () => {
-      const e = v.error;
-      cleanup();
-      reject(new Error(`buffer load error code=${e?.code} msg=${e?.message}`));
-    };
-    const onMeta = () => {
-      cleanup();
-      if (_destroyed) return resolve();
-      _bufferedDurMs = Math.round((v.duration || 0) * 1000);
-      logger.info(`[HTML5] prepared (buffer): ${url.split('/').pop()} duration=${_bufferedDurMs}ms`);
-
-      // Force decoder to render frame 0 onto buffer's overlay surface.
-      // Buffer is hidden (z-index=0, opacity=0) so the user sees nothing.
-      setTimeout(() => {
-        v.play().then(() => {
-          setTimeout(() => {
-            try { v.pause(); } catch {}
-            try { v.currentTime = 0; } catch {}
-            _prebuffered = true;
-            logger.info('[HTML5] buffer prebuffered at frame 0 -- LOOP_READY');
-            resolve();
-          }, 120);
-        }).catch((e: any) => {
-          logger.warn(`[HTML5] buffer play() rejected: ${e?.message ?? e} (continuing)`);
-          _prebuffered = true;
-          resolve();
-        });
-      }, 60);
-    };
-    v.addEventListener('loadedmetadata', onMeta, { once: true });
-    v.addEventListener('error', onErr, { once: true });
-  });
-}
-
-// ---------------------------------------------------------------------------
-// EOS listener
-// ---------------------------------------------------------------------------
-
-function _attachEosListener(v: HTMLVideoElement): void {
-  v.onended = () => {
-    if (_destroyed) return;
-    const pos = Math.round((v.currentTime || 0) * 1000);
-    if (_durationMs > 0 && pos < _durationMs - 600) {
-      logger.info(`[HTML5] spurious ended pos=${pos}ms dur=${_durationMs}ms -- ignored`);
-      return;
-    }
-    logger.info(`[HTML5] EOS at ${pos}ms -- starting prebuffer`);
-    _playing = false;
-    _prebufferForBarrier();
-  };
-  v.onerror = (e) => {
-    logger.error(`[HTML5] video error: ${JSON.stringify(e)}`);
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Barrier prebuffer (loads NEXT clip into hidden buffer element)
-// ---------------------------------------------------------------------------
-
-function _prebufferForBarrier(): void {
-  if (_destroyed || _looping) return;
-  _looping     = true;
-  _prebuffered = false;
-  _stopDriftLog();
-
-  if (_playlist.length > 1) {
-    _playlistIdx = (_playlistIdx + 1) % _playlist.length;
-    _url = _playlist[_playlistIdx];
-    logger.info(`[HTML5] playlist -> [${_playlistIdx + 1}/${_playlist.length}] ${_url.split('/').pop()}`);
-  }
-
-  logger.info('[HTML5] prebuffer: load next clip into hidden buffer element');
-
-  _loadBuffer(_url).then(() => {
-    if (_destroyed) { _looping = false; return; }
-    _looping = false;
-    if (_onLoop) _onLoop();
-  }).catch((err) => {
-    _looping = false;
-    logger.error(`[HTML5] prebuffer failed: ${err?.message ?? err}`);
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Drift log
-// ---------------------------------------------------------------------------
-
-function _startDriftLog(): void {
-  if (_driftTimer) return;
-  _driftTimer = setInterval(() => {
-    if (_destroyed || !_playing || !_active) return;
-    const pos = Math.round((_active.currentTime || 0) * 1000);
-    const st  = _active.paused ? 'PAUSED' : 'PLAYING';
-    logger.info(`[HTML5] pos=${pos}ms duration=${_durationMs}ms state=${st}`);
-  }, DRIFT_LOG_MS);
-}
-
-function _stopDriftLog(): void {
-  if (_driftTimer) { clearInterval(_driftTimer); _driftTimer = null; }
-}
-
-// ---------------------------------------------------------------------------
-// Scheduled play
-// ---------------------------------------------------------------------------
-
-export function schedulePlayAt(epochMs: number): void {
-  if (_destroyed) return;
-  clearTimeout(_playTimer);
-  const wait = epochMs - Date.now();
-  logger.info(`[HTML5] schedulePlayAt epoch=${epochMs} T-${Math.round(Math.max(0, wait))}ms`);
-  if (wait <= 0) { _doPlay(); return; }
-  _playTimer = setTimeout(() => {
-    (function spin() {
-      if (_destroyed) return;
-      if (Date.now() >= epochMs) { _doPlay(); return; }
-      setTimeout(spin, 4);
-    })();
-  }, Math.max(0, wait - 60));
-}
-
-function _doPlay(): void {
-  _playTimer = null;
-  if (_destroyed || _playing) return;
-  _playing = true;
-
-  // If we've prebuffered into the buffer element, swap A↔B so that buffer
-  // becomes the visible/active one.
-  if (_prebuffered && _buffer && _active) {
-    const oldActive = _active;
-    const newActive = _buffer;
-
-    // Swap pointers
-    _active = newActive;
-    _buffer = oldActive;
-
-    // Roll buffered duration into active duration
-    _durationMs    = _bufferedDurMs;
-    _bufferedDurMs = 0;
-
-    // display:none suppresses the hardware overlay surface on Tizen 4.0.
-    // Hide old BEFORE showing new so both surfaces are never on-screen together.
-    oldActive.style.display = 'none';
-    newActive.style.display = 'block';
-
-    // Detach EOS from old, attach to new
-    oldActive.onended = null;
-    oldActive.onerror = null;
-    _attachEosListener(newActive);
-
-    logger.info('[HTML5] swap A<->B (buffer is now active)');
-
-    // Clear old active's src shortly after so its surface is freed for the
-    // next prebuffer cycle.  Wait a few frames so the new active's play()
-    // call below has already started before we touch the old element.
-    setTimeout(() => {
-      try { oldActive.pause(); } catch {}
-      try { oldActive.removeAttribute('src'); oldActive.load(); } catch {}
-    }, 300);
-  }
-
-  if (!_active) { logger.error('[HTML5] _doPlay: no active video'); _playing = false; return; }
-
-  // Reset position (the brief play+pause during prebuffer may have advanced ~120ms)
-  try { _active.currentTime = 0; } catch {}
-  _prebuffered = false;
-
-  _active.play().then(() => {
-    logger.info('[HTML5] play() -- synchronized start');
-    _startDriftLog();
-  }).catch((e: any) => {
-    logger.error(`[HTML5] play() failed: ${e?.message ?? e}`);
-    _playing = false;
-  });
-}
-
-export function playFromPrebuffer(): void {
-  if (_destroyed) return;
-  if (!_prebuffered) logger.warn('[HTML5] playFromPrebuffer: not prebuffered');
-  _doPlay();
-}
-
-// ---------------------------------------------------------------------------
-// Public accessors
-// ---------------------------------------------------------------------------
 
 export function getDuration(): number { return _durationMs; }
 
-export function isPlaying(): boolean {
-  return _playing && !!_active && !_active.paused;
+export function initEngine(container: HTMLElement): Promise<void> {
+  if (_videos.length) return Promise.resolve();
+  _container = container;
+
+  for (let i = 0; i < 2; i++) {
+    const v = document.createElement('video');
+    v.id = 'nexari-player-' + (i === 0 ? 'A' : 'B');
+    v.style.cssText = [
+      'position:absolute', 'top:0', 'left:0', 'width:100%', 'height:100%',
+      'object-fit:contain', 'background:#000'
+    ].join(';');
+    v.style.zIndex  = i === 0 ? '2' : '1';
+    v.style.opacity = i === 0 ? '1' : '0';
+    v.playsInline = true;
+    v.autoplay    = false;
+    v.muted       = false;
+    v.loop        = false;
+    v.preload     = 'auto';
+    container.appendChild(v);
+    _videos.push(v);
+  }
+
+  _log('[Engine] initialised (HTML5 A/B-swap, 2 video elements)');
+  return Promise.resolve();
 }
 
-export function getCurrentPosMs(): number | null {
-  if (!_playing || !_active) return null;
-  return Math.round((_active.currentTime || 0) * 1000);
+/**
+ * prepare — load the first clip onto the foreground element. After load+seek,
+ * fires LOOP_READY (matches single-src engine semantics). Kicks off bg preload.
+ */
+export function prepare(url: string): Promise<void> {
+  if (_videos.length === 0) return Promise.reject(new Error('call initEngine first'));
+
+  // Align _idx with the playlist URL (sync.ts may reorder playlist on follower).
+  if (_playlist.length > 0) {
+    const found = _playlist.indexOf(url);
+    _idx = found >= 0 ? found : 0;
+  }
+
+  const fgVideo = _videos[_fg];
+
+  // Same src already loaded → just rewind and fire LOOP_READY.
+  if (fgVideo.src && fgVideo.src === url) {
+    _log('[Engine] prepare: same src — reusing fg');
+    return _rewindFgAndArm().then(() => { _preloadNext().catch(() => {}); });
+  }
+
+  _log('[Engine] prepare: ' + url.split('/').pop() + ' onto fg=' + _fgLabel());
+  return _loadSrc(fgVideo, url).then(() => {
+    _durationMs = Math.round((fgVideo.duration || 0) * 1000);
+    _log('[Engine] prepare done — duration=' + (_durationMs / 1000).toFixed(2) + 's');
+    return _rewindFgAndArm();
+  }).then(() => {
+    // Preload next clip onto bg in the background.
+    _preloadNext().catch((e) => _log('[Engine] preload next failed: ' + e));
+  });
 }
 
-export function getPlaylistUrls(): string[] { return _playlist.slice(); }
+/**
+ * schedulePlayAt — play at a specific epoch ms (used with GO and LOOP_GO).
+ * On cycle 0 (just after prepare) we just play the fg — no swap yet.
+ * On subsequent LOOP_GO calls, we swap A↔B atomically at the epoch.
+ */
+export function schedulePlayAt(epochMs: number): void {
+  if (_playTimer !== null) clearTimeout(_playTimer);
+  const waitMs = epochMs - Date.now();
+  _log('[Engine] schedulePlayAt T-' + waitMs + 'ms firstPlay=' + _firstPlay);
 
-// ---------------------------------------------------------------------------
-// Teardown
-// ---------------------------------------------------------------------------
+  _playTimer = setTimeout(() => {
+    (function spin() {
+      if (Date.now() >= epochMs) { _doPlayOrSwap(); return; }
+      setTimeout(spin, 4);
+    })();
+  }, Math.max(0, waitMs - 60));
+}
+
+/** Immediate play (resync path / first prebuffer). */
+export function playFromPrebuffer(): void {
+  _doPlayOrSwap();
+}
 
 export function destroyEngine(): void {
-  _destroyed = true; _playing = false; _prebuffered = false; _looping = false;
-  clearTimeout(_playTimer); _stopDriftLog();
-  [ _videoA, _videoB ].forEach((v) => {
-    if (!v) return;
+  _stopEosWatch();
+  if (_playTimer !== null) { clearTimeout(_playTimer); _playTimer = null; }
+  for (const v of _videos) {
     try { v.pause(); } catch {}
-    v.onended = null;
-    v.onerror = null;
-    try { v.removeAttribute('src'); v.load(); } catch {}
     if (v.parentNode) v.parentNode.removeChild(v);
+  }
+  _videos = [];
+  _durationMs = 0;
+  _prebuffered = false;
+  _looping = false;
+  _firstPlay = true;
+  _fg = 0;
+  _idx = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Internals
+// ---------------------------------------------------------------------------
+
+function _log(msg: string): void {
+  logger.info(msg);
+}
+
+function _fgLabel(): string { return _fg === 0 ? 'A' : 'B'; }
+function _bgLabel(): string { return _fg === 0 ? 'B' : 'A'; }
+
+/** Load src on a video element and wait for canplay. */
+function _loadSrc(v: HTMLVideoElement, url: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onCanPlay = () => { cleanup(); resolve(); };
+    const onError   = () => {
+      cleanup();
+      const ve = v.error;
+      reject(new Error('video error code=' + (ve?.code ?? '?') + ' src=' + url));
+    };
+    function cleanup() {
+      v.removeEventListener('canplay', onCanPlay);
+      v.removeEventListener('error', onError);
+    }
+    v.addEventListener('canplay', onCanPlay, { once: true });
+    v.addEventListener('error', onError, { once: true });
+    try { v.pause(); } catch {}
+    v.src = url;
+    v.load();
   });
-  _videoA = null; _videoB = null; _active = null; _buffer = null;
-  logger.info('[HTML5] engine destroyed');
+}
+
+/** Seek the freshly-loaded fg to 0 and fire LOOP_READY. */
+function _rewindFgAndArm(): Promise<void> {
+  const v = _videos[_fg];
+  if (_looping) return Promise.resolve();
+  if (_prebuffered) {
+    if (_onLoop) _onLoop();
+    return Promise.resolve();
+  }
+
+  _stopEosWatch();
+  _looping = true;
+  _prebuffered = false;
+
+  return new Promise<void>((resolve) => {
+    let armed = false;
+    let safetyTid: ReturnType<typeof setTimeout>;
+
+    const arm = () => {
+      if (armed) return;
+      armed = true;
+      clearTimeout(safetyTid);
+      _looping = false;
+      _prebuffered = true;
+      _log('[Engine] fg(' + _fgLabel() + ') armed at frame 0 — firing LOOP_READY');
+      if (_onLoop) _onLoop();
+      resolve();
+    };
+
+    const onSeeked = () => {
+      v.removeEventListener('seeked', onSeeked);
+      arm();
+    };
+    v.addEventListener('seeked', onSeeked, { once: true });
+
+    try {
+      v.pause();
+      v.currentTime = 0;
+    } catch {
+      v.removeEventListener('seeked', onSeeked);
+      arm();
+      return;
+    }
+
+    safetyTid = setTimeout(() => {
+      v.removeEventListener('seeked', onSeeked);
+      _log('[Engine] fg seek timeout — arming anyway');
+      arm();
+    }, 500);
+  });
+}
+
+/** Load the *next* playlist clip onto the bg element and seek to 0. Idempotent. */
+function _preloadNext(): Promise<void> {
+  if (_videos.length < 2 || _playlist.length < 2) return Promise.resolve();
+  const bg = _videos[1 - _fg];
+  const nextIdx = (_idx + 1) % _playlist.length;
+  const nextUrl = _playlist[nextIdx];
+
+  if (bg.src === nextUrl && bg.readyState >= 2 && Math.abs(bg.currentTime) < 0.05) {
+    return Promise.resolve();   // already prebuffered at frame 0
+  }
+
+  _log('[Engine] bg(' + _bgLabel() + ') preload: ' + nextUrl.split('/').pop());
+
+  // Make sure bg is hidden + paused before src reassignment.
+  bg.style.opacity = '0';
+  bg.style.zIndex  = '1';
+  try { bg.pause(); } catch {}
+
+  const loadOrReuse = (bg.src === nextUrl) ? Promise.resolve() : _loadSrc(bg, nextUrl);
+
+  return loadOrReuse.then(() => new Promise<void>((res) => {
+    if (Math.abs(bg.currentTime) < 0.05) { res(); return; }
+    const onSeeked = () => { bg.removeEventListener('seeked', onSeeked); res(); };
+    bg.addEventListener('seeked', onSeeked, { once: true });
+    try { bg.currentTime = 0; } catch { res(); return; }
+    setTimeout(() => { bg.removeEventListener('seeked', onSeeked); res(); }, 1500);
+  })).then(() => {
+    _log('[Engine] bg(' + _bgLabel() + ') prebuffered at frame 0');
+  });
+}
+
+/** Cycle 0: just play fg. Cycle 1+: swap fg↔bg and play new fg. */
+function _doPlayOrSwap(): void {
+  if (_videos.length === 0) return;
+
+  if (_firstPlay) {
+    _firstPlay = false;
+    _prebuffered = false;
+    _videos[_fg].play().then(() => {
+      _log('[Engine] play() fg(' + _fgLabel() + ') OK');
+      _durationMs = Math.round((_videos[_fg].duration || 0) * 1000);
+      _startEosWatch();
+    }).catch(e => _log('[Engine] play() failed: ' + e));
+    return;
+  }
+
+  // Swap path
+  const oldFg = _fg;
+  const newFg = (1 - _fg) as 0 | 1;
+  const oldV  = _videos[oldFg];
+  const newV  = _videos[newFg];
+
+  // Bring new in front; old goes behind. Start new BEFORE pausing old so the
+  // compositor briefly overlaps two frames (hides any single-slot decoder dip).
+  newV.style.zIndex  = '2';
+  newV.style.opacity = '1';
+  oldV.style.zIndex  = '1';
+
+  newV.play().then(() => {
+    _log('[Engine] swap: now playing fg(' + (newFg === 0 ? 'A' : 'B') + ') idx=' + ((_idx + 1) % _playlist.length));
+    oldV.style.opacity = '0';
+    try { oldV.pause(); } catch {}
+    _fg = newFg;
+    _idx = (_idx + 1) % _playlist.length;
+    _durationMs = Math.round((newV.duration || 0) * 1000);
+    _prebuffered = false;
+    _looping = false;
+    _startEosWatch();
+    // Preload clip-after-next onto the now-bg (the old fg).
+    _preloadNext().catch((e) => _log('[Engine] preload-after-swap failed: ' + e));
+  }).catch(e => {
+    _log('[Engine] swap play() failed: ' + e);
+    oldV.style.zIndex  = '2';
+    oldV.style.opacity = '1';
+    newV.style.zIndex  = '1';
+    newV.style.opacity = '0';
+  });
+}
+
+function _startEosWatch(): void {
+  _stopEosWatch();
+  const fgV = _videos[_fg];
+  _eosWatchTimer = setInterval(() => {
+    const v = _videos[_fg];
+    if (!v || _prebuffered || _looping) return;
+    const ct  = v.currentTime;
+    const dur = v.duration;
+    if (!dur || !isFinite(dur)) return;
+    if (dur - ct < 1.0) {
+      _log('[Engine] EOS approaching — arming for next loop');
+      _stopEosWatch();
+      _armNextLoop().catch(e => _log('[Engine] arm next-loop failed: ' + e));
+    }
+  }, 200);
+
+  fgV.addEventListener('ended', _onVideoEnded, { once: true });
+}
+
+function _stopEosWatch(): void {
+  if (_eosWatchTimer !== null) {
+    clearInterval(_eosWatchTimer);
+    _eosWatchTimer = null;
+  }
+  for (const v of _videos) v.removeEventListener('ended', _onVideoEnded);
+}
+
+function _onVideoEnded(): void {
+  _log('[Engine] video.ended');
+  if (!_looping && !_prebuffered) {
+    _armNextLoop().catch(e => _log('[Engine] arm-on-ended failed: ' + e));
+  }
+}
+
+/** Ensure bg has next clip prebuffered, then fire LOOP_READY. */
+function _armNextLoop(): Promise<void> {
+  if (_looping) return Promise.resolve();
+  if (_prebuffered) {
+    if (_onLoop) _onLoop();
+    return Promise.resolve();
+  }
+  _looping = true;
+
+  return _preloadNext().then(() => {
+    _looping = false;
+    _prebuffered = true;
+    _log('[Engine] bg prebuffered — firing LOOP_READY');
+    if (_onLoop) _onLoop();
+  }).catch((e) => {
+    _looping = false;
+    _log('[Engine] arm next-loop preload error: ' + e);
+    // Fire LOOP_READY anyway so the barrier doesn't stall the whole group.
+    _prebuffered = true;
+    if (_onLoop) _onLoop();
+  });
 }

@@ -89,12 +89,21 @@ $excludeNames = @(
 $excludeExtensions = @('.wgt')
 $excludeFiles = @('author-signature.xml', 'signature1.xml', '.manifest.tmp')
 
+# Don't bundle the unused signage.mp4 / playlist.mp4 (1/2/3.mp4 ARE bundled — A/B-swap engine consumes them)
+$excludeMediaFiles = @('signage.mp4', 'playlist.mp4')
+
 foreach ($item in Get-ChildItem $src) {
     if ($excludeNames -contains $item.Name) { continue }
     if ($excludeExtensions -contains $item.Extension) { continue }
     if ($excludeFiles -contains $item.Name) { continue }
     if ($item.PSIsContainer) {
         Copy-Item $item.FullName "$tmp\$($item.Name)" -Recurse
+        if ($item.Name -eq 'media') {
+            foreach ($ex in $excludeMediaFiles) {
+                $exPath = Join-Path "$tmp\media" $ex
+                if (Test-Path $exPath) { Remove-Item $exPath -Force }
+            }
+        }
     } else {
         Copy-Item $item.FullName $tmp
     }

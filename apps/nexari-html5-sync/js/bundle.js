@@ -98,361 +98,342 @@
   });
 
   // src/engine.ts
-  function setRole(role) {
-    _role = role;
-    if (_videoA) _applyStyle(_videoA);
-    if (_videoB) _applyStyle(_videoB);
+  function setRole(r) {
+    _role = r;
   }
   function setOnLoop(cb) {
     _onLoop = cb;
   }
   function setPlaylist(urls) {
-    if (urls.length === 0) return;
     _playlist = urls;
-    _playlistIdx = 0;
-    _url = urls[0];
-    logger.info(`[HTML5] playlist (${urls.length}): ${urls.map((u) => u.split("/").pop()).join(", ")}`);
+    _idx = 0;
+    _log("[Engine] playlist set (" + urls.length + "): " + urls.map((u) => u.split("/").pop()).join(", "));
   }
-  function initEngine(container) {
-    _container = container;
-    _destroyed = false;
-    _playing = false;
-    _durationMs = 0;
-    _bufferedDurMs = 0;
-    _url = "";
-    _looping = false;
-    _prebuffered = false;
-    clearTimeout(_playTimer);
-    _stopDriftLog();
-    Array.from(container.querySelectorAll("video")).forEach((v) => {
-      try {
-        v.pause();
-      } catch (e) {
-      }
-      if (v.parentNode) v.parentNode.removeChild(v);
-    });
-    if (!container.style.position || container.style.position === "static") {
-      container.style.position = "relative";
-    }
-    _videoA = _createVideoElement();
-    _videoB = _createVideoElement();
-    container.appendChild(_videoA);
-    container.appendChild(_videoB);
-    _active = _videoA;
-    _buffer = _videoB;
-    _showActive();
-    logger.info("[HTML5] engine initialised (A/B swap)");
+  function getPlaylistUrls() {
+    return _playlist;
   }
-  function _createVideoElement() {
-    const v = document.createElement("video");
-    v.autoplay = false;
-    v.muted = false;
-    v.playsInline = true;
-    _applyStyle(v);
-    return v;
+  function isPlaying() {
+    const v = _videos[_fg];
+    return !!v && !v.paused && !v.ended && v.readyState >= 2;
   }
-  function _applyStyle(v) {
-    v.style.position = "absolute";
-    v.style.top = "0";
-    v.style.left = "0";
-    v.style.width = "100%";
-    v.style.height = "100%";
-    v.style.objectFit = "contain";
-    v.style.background = "#000";
-    v.style.display = "none";
-  }
-  function _showActive() {
-    if (_active) _active.style.display = "block";
-    if (_buffer) _buffer.style.display = "none";
-  }
-  function prepare(url) {
-    _url = url;
-    _durationMs = 0;
-    _playing = false;
-    _prebuffered = false;
-    _looping = false;
-    clearTimeout(_playTimer);
-    _stopDriftLog();
-    if (_playlist.length === 0) {
-      _playlist = [url];
-      _playlistIdx = 0;
-    }
-    logger.info(`[HTML5] prepare: ${url.split("/").pop()}`);
-    return _loadActive(url);
-  }
-  function _loadActive(url) {
-    return new Promise((resolve, reject) => {
-      const v = _active;
-      if (!v) return reject(new Error("no active video"));
-      v.onended = null;
-      v.onerror = null;
-      try {
-        v.pause();
-      } catch (e) {
-      }
-      v.src = url;
-      v.load();
-      const cleanup = () => {
-        v.removeEventListener("loadedmetadata", onMeta);
-        v.removeEventListener("error", onErr);
-      };
-      const onErr = () => {
-        const e = v.error;
-        cleanup();
-        reject(new Error(`active load error code=${e == null ? void 0 : e.code} msg=${e == null ? void 0 : e.message}`));
-      };
-      const onMeta = () => {
-        cleanup();
-        if (_destroyed) return resolve();
-        _durationMs = Math.round((v.duration || 0) * 1e3);
-        logger.info(`[HTML5] prepared (active): ${url.split("/").pop()} duration=${_durationMs}ms`);
-        _attachEosListener(v);
-        resolve();
-      };
-      v.addEventListener("loadedmetadata", onMeta, { once: true });
-      v.addEventListener("error", onErr, { once: true });
-    });
-  }
-  function _loadBuffer(url) {
-    return new Promise((resolve, reject) => {
-      const v = _buffer;
-      if (!v) return reject(new Error("no buffer video"));
-      v.onended = null;
-      v.onerror = null;
-      try {
-        v.pause();
-      } catch (e) {
-      }
-      v.src = url;
-      v.load();
-      const cleanup = () => {
-        v.removeEventListener("loadedmetadata", onMeta);
-        v.removeEventListener("error", onErr);
-      };
-      const onErr = () => {
-        const e = v.error;
-        cleanup();
-        reject(new Error(`buffer load error code=${e == null ? void 0 : e.code} msg=${e == null ? void 0 : e.message}`));
-      };
-      const onMeta = () => {
-        cleanup();
-        if (_destroyed) return resolve();
-        _bufferedDurMs = Math.round((v.duration || 0) * 1e3);
-        logger.info(`[HTML5] prepared (buffer): ${url.split("/").pop()} duration=${_bufferedDurMs}ms`);
-        setTimeout(() => {
-          v.play().then(() => {
-            setTimeout(() => {
-              try {
-                v.pause();
-              } catch (e) {
-              }
-              try {
-                v.currentTime = 0;
-              } catch (e) {
-              }
-              _prebuffered = true;
-              logger.info("[HTML5] buffer prebuffered at frame 0 -- LOOP_READY");
-              resolve();
-            }, 120);
-          }).catch((e) => {
-            var _a;
-            logger.warn(`[HTML5] buffer play() rejected: ${(_a = e == null ? void 0 : e.message) != null ? _a : e} (continuing)`);
-            _prebuffered = true;
-            resolve();
-          });
-        }, 60);
-      };
-      v.addEventListener("loadedmetadata", onMeta, { once: true });
-      v.addEventListener("error", onErr, { once: true });
-    });
-  }
-  function _attachEosListener(v) {
-    v.onended = () => {
-      if (_destroyed) return;
-      const pos = Math.round((v.currentTime || 0) * 1e3);
-      if (_durationMs > 0 && pos < _durationMs - 600) {
-        logger.info(`[HTML5] spurious ended pos=${pos}ms dur=${_durationMs}ms -- ignored`);
-        return;
-      }
-      logger.info(`[HTML5] EOS at ${pos}ms -- starting prebuffer`);
-      _playing = false;
-      _prebufferForBarrier();
-    };
-    v.onerror = (e) => {
-      logger.error(`[HTML5] video error: ${JSON.stringify(e)}`);
-    };
-  }
-  function _prebufferForBarrier() {
-    if (_destroyed || _looping) return;
-    _looping = true;
-    _prebuffered = false;
-    _stopDriftLog();
-    if (_playlist.length > 1) {
-      _playlistIdx = (_playlistIdx + 1) % _playlist.length;
-      _url = _playlist[_playlistIdx];
-      logger.info(`[HTML5] playlist -> [${_playlistIdx + 1}/${_playlist.length}] ${_url.split("/").pop()}`);
-    }
-    logger.info("[HTML5] prebuffer: load next clip into hidden buffer element");
-    _loadBuffer(_url).then(() => {
-      if (_destroyed) {
-        _looping = false;
-        return;
-      }
-      _looping = false;
-      if (_onLoop) _onLoop();
-    }).catch((err) => {
-      var _a;
-      _looping = false;
-      logger.error(`[HTML5] prebuffer failed: ${(_a = err == null ? void 0 : err.message) != null ? _a : err}`);
-    });
-  }
-  function _startDriftLog() {
-    if (_driftTimer) return;
-    _driftTimer = setInterval(() => {
-      if (_destroyed || !_playing || !_active) return;
-      const pos = Math.round((_active.currentTime || 0) * 1e3);
-      const st = _active.paused ? "PAUSED" : "PLAYING";
-      logger.info(`[HTML5] pos=${pos}ms duration=${_durationMs}ms state=${st}`);
-    }, DRIFT_LOG_MS);
-  }
-  function _stopDriftLog() {
-    if (_driftTimer) {
-      clearInterval(_driftTimer);
-      _driftTimer = null;
-    }
-  }
-  function schedulePlayAt(epochMs) {
-    if (_destroyed) return;
-    clearTimeout(_playTimer);
-    const wait = epochMs - Date.now();
-    logger.info(`[HTML5] schedulePlayAt epoch=${epochMs} T-${Math.round(Math.max(0, wait))}ms`);
-    if (wait <= 0) {
-      _doPlay();
-      return;
-    }
-    _playTimer = setTimeout(() => {
-      (function spin() {
-        if (_destroyed) return;
-        if (Date.now() >= epochMs) {
-          _doPlay();
-          return;
-        }
-        setTimeout(spin, 4);
-      })();
-    }, Math.max(0, wait - 60));
-  }
-  function _doPlay() {
-    _playTimer = null;
-    if (_destroyed || _playing) return;
-    _playing = true;
-    if (_prebuffered && _buffer && _active) {
-      const oldActive = _active;
-      const newActive = _buffer;
-      _active = newActive;
-      _buffer = oldActive;
-      _durationMs = _bufferedDurMs;
-      _bufferedDurMs = 0;
-      oldActive.style.display = "none";
-      newActive.style.display = "block";
-      oldActive.onended = null;
-      oldActive.onerror = null;
-      _attachEosListener(newActive);
-      logger.info("[HTML5] swap A<->B (buffer is now active)");
-      setTimeout(() => {
-        try {
-          oldActive.pause();
-        } catch (e) {
-        }
-        try {
-          oldActive.removeAttribute("src");
-          oldActive.load();
-        } catch (e) {
-        }
-      }, 300);
-    }
-    if (!_active) {
-      logger.error("[HTML5] _doPlay: no active video");
-      _playing = false;
-      return;
-    }
-    try {
-      _active.currentTime = 0;
-    } catch (e) {
-    }
-    _prebuffered = false;
-    _active.play().then(() => {
-      logger.info("[HTML5] play() -- synchronized start");
-      _startDriftLog();
-    }).catch((e) => {
-      var _a;
-      logger.error(`[HTML5] play() failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
-      _playing = false;
-    });
+  function getCurrentPosMs() {
+    const v = _videos[_fg];
+    return v ? v.currentTime * 1e3 : 0;
   }
   function getDuration() {
     return _durationMs;
   }
-  function isPlaying() {
-    return _playing && !!_active && !_active.paused;
+  function initEngine(container) {
+    if (_videos.length) return Promise.resolve();
+    _container = container;
+    for (let i = 0; i < 2; i++) {
+      const v = document.createElement("video");
+      v.id = "nexari-player-" + (i === 0 ? "A" : "B");
+      v.style.cssText = [
+        "position:absolute",
+        "top:0",
+        "left:0",
+        "width:100%",
+        "height:100%",
+        "object-fit:contain",
+        "background:#000"
+      ].join(";");
+      v.style.zIndex = i === 0 ? "2" : "1";
+      v.style.opacity = i === 0 ? "1" : "0";
+      v.playsInline = true;
+      v.autoplay = false;
+      v.muted = false;
+      v.loop = false;
+      v.preload = "auto";
+      container.appendChild(v);
+      _videos.push(v);
+    }
+    _log("[Engine] initialised (HTML5 A/B-swap, 2 video elements)");
+    return Promise.resolve();
   }
-  function getCurrentPosMs() {
-    if (!_playing || !_active) return null;
-    return Math.round((_active.currentTime || 0) * 1e3);
+  function prepare(url) {
+    if (_videos.length === 0) return Promise.reject(new Error("call initEngine first"));
+    if (_playlist.length > 0) {
+      const found = _playlist.indexOf(url);
+      _idx = found >= 0 ? found : 0;
+    }
+    const fgVideo = _videos[_fg];
+    if (fgVideo.src && fgVideo.src === url) {
+      _log("[Engine] prepare: same src \u2014 reusing fg");
+      return _rewindFgAndArm().then(() => {
+        _preloadNext().catch(() => {
+        });
+      });
+    }
+    _log("[Engine] prepare: " + url.split("/").pop() + " onto fg=" + _fgLabel());
+    return _loadSrc(fgVideo, url).then(() => {
+      _durationMs = Math.round((fgVideo.duration || 0) * 1e3);
+      _log("[Engine] prepare done \u2014 duration=" + (_durationMs / 1e3).toFixed(2) + "s");
+      return _rewindFgAndArm();
+    }).then(() => {
+      _preloadNext().catch((e) => _log("[Engine] preload next failed: " + e));
+    });
   }
-  function getPlaylistUrls() {
-    return _playlist.slice();
+  function schedulePlayAt(epochMs) {
+    if (_playTimer !== null) clearTimeout(_playTimer);
+    const waitMs = epochMs - Date.now();
+    _log("[Engine] schedulePlayAt T-" + waitMs + "ms firstPlay=" + _firstPlay);
+    _playTimer = setTimeout(() => {
+      (function spin() {
+        if (Date.now() >= epochMs) {
+          _doPlayOrSwap();
+          return;
+        }
+        setTimeout(spin, 4);
+      })();
+    }, Math.max(0, waitMs - 60));
   }
   function destroyEngine() {
-    _destroyed = true;
-    _playing = false;
-    _prebuffered = false;
-    _looping = false;
-    clearTimeout(_playTimer);
-    _stopDriftLog();
-    [_videoA, _videoB].forEach((v) => {
-      if (!v) return;
+    _stopEosWatch();
+    if (_playTimer !== null) {
+      clearTimeout(_playTimer);
+      _playTimer = null;
+    }
+    for (const v of _videos) {
       try {
         v.pause();
       } catch (e) {
       }
-      v.onended = null;
-      v.onerror = null;
+      if (v.parentNode) v.parentNode.removeChild(v);
+    }
+    _videos = [];
+    _durationMs = 0;
+    _prebuffered = false;
+    _looping = false;
+    _firstPlay = true;
+    _fg = 0;
+    _idx = 0;
+  }
+  function _log(msg) {
+    logger.info(msg);
+  }
+  function _fgLabel() {
+    return _fg === 0 ? "A" : "B";
+  }
+  function _bgLabel() {
+    return _fg === 0 ? "B" : "A";
+  }
+  function _loadSrc(v, url) {
+    return new Promise((resolve, reject) => {
+      const onCanPlay = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = () => {
+        var _a;
+        cleanup();
+        const ve = v.error;
+        reject(new Error("video error code=" + ((_a = ve == null ? void 0 : ve.code) != null ? _a : "?") + " src=" + url));
+      };
+      function cleanup() {
+        v.removeEventListener("canplay", onCanPlay);
+        v.removeEventListener("error", onError);
+      }
+      v.addEventListener("canplay", onCanPlay, { once: true });
+      v.addEventListener("error", onError, { once: true });
       try {
-        v.removeAttribute("src");
-        v.load();
+        v.pause();
       } catch (e) {
       }
-      if (v.parentNode) v.parentNode.removeChild(v);
+      v.src = url;
+      v.load();
     });
-    _videoA = null;
-    _videoB = null;
-    _active = null;
-    _buffer = null;
-    logger.info("[HTML5] engine destroyed");
   }
-  var _videoA, _videoB, _active, _buffer, _container, _url, _durationMs, _bufferedDurMs, _playing, _destroyed, _prebuffered, _looping, _playTimer, _driftTimer, _role, _onLoop, _playlist, _playlistIdx, DRIFT_LOG_MS;
+  function _rewindFgAndArm() {
+    const v = _videos[_fg];
+    if (_looping) return Promise.resolve();
+    if (_prebuffered) {
+      if (_onLoop) _onLoop();
+      return Promise.resolve();
+    }
+    _stopEosWatch();
+    _looping = true;
+    _prebuffered = false;
+    return new Promise((resolve) => {
+      let armed = false;
+      let safetyTid;
+      const arm = () => {
+        if (armed) return;
+        armed = true;
+        clearTimeout(safetyTid);
+        _looping = false;
+        _prebuffered = true;
+        _log("[Engine] fg(" + _fgLabel() + ") armed at frame 0 \u2014 firing LOOP_READY");
+        if (_onLoop) _onLoop();
+        resolve();
+      };
+      const onSeeked = () => {
+        v.removeEventListener("seeked", onSeeked);
+        arm();
+      };
+      v.addEventListener("seeked", onSeeked, { once: true });
+      try {
+        v.pause();
+        v.currentTime = 0;
+      } catch (e) {
+        v.removeEventListener("seeked", onSeeked);
+        arm();
+        return;
+      }
+      safetyTid = setTimeout(() => {
+        v.removeEventListener("seeked", onSeeked);
+        _log("[Engine] fg seek timeout \u2014 arming anyway");
+        arm();
+      }, 500);
+    });
+  }
+  function _preloadNext() {
+    if (_videos.length < 2 || _playlist.length < 2) return Promise.resolve();
+    const bg = _videos[1 - _fg];
+    const nextIdx = (_idx + 1) % _playlist.length;
+    const nextUrl = _playlist[nextIdx];
+    if (bg.src === nextUrl && bg.readyState >= 2 && Math.abs(bg.currentTime) < 0.05) {
+      return Promise.resolve();
+    }
+    _log("[Engine] bg(" + _bgLabel() + ") preload: " + nextUrl.split("/").pop());
+    bg.style.opacity = "0";
+    bg.style.zIndex = "1";
+    try {
+      bg.pause();
+    } catch (e) {
+    }
+    const loadOrReuse = bg.src === nextUrl ? Promise.resolve() : _loadSrc(bg, nextUrl);
+    return loadOrReuse.then(() => new Promise((res) => {
+      if (Math.abs(bg.currentTime) < 0.05) {
+        res();
+        return;
+      }
+      const onSeeked = () => {
+        bg.removeEventListener("seeked", onSeeked);
+        res();
+      };
+      bg.addEventListener("seeked", onSeeked, { once: true });
+      try {
+        bg.currentTime = 0;
+      } catch (e) {
+        res();
+        return;
+      }
+      setTimeout(() => {
+        bg.removeEventListener("seeked", onSeeked);
+        res();
+      }, 1500);
+    })).then(() => {
+      _log("[Engine] bg(" + _bgLabel() + ") prebuffered at frame 0");
+    });
+  }
+  function _doPlayOrSwap() {
+    if (_videos.length === 0) return;
+    if (_firstPlay) {
+      _firstPlay = false;
+      _prebuffered = false;
+      _videos[_fg].play().then(() => {
+        _log("[Engine] play() fg(" + _fgLabel() + ") OK");
+        _durationMs = Math.round((_videos[_fg].duration || 0) * 1e3);
+        _startEosWatch();
+      }).catch((e) => _log("[Engine] play() failed: " + e));
+      return;
+    }
+    const oldFg = _fg;
+    const newFg = 1 - _fg;
+    const oldV = _videos[oldFg];
+    const newV = _videos[newFg];
+    newV.style.zIndex = "2";
+    newV.style.opacity = "1";
+    oldV.style.zIndex = "1";
+    newV.play().then(() => {
+      _log("[Engine] swap: now playing fg(" + (newFg === 0 ? "A" : "B") + ") idx=" + (_idx + 1) % _playlist.length);
+      oldV.style.opacity = "0";
+      try {
+        oldV.pause();
+      } catch (e) {
+      }
+      _fg = newFg;
+      _idx = (_idx + 1) % _playlist.length;
+      _durationMs = Math.round((newV.duration || 0) * 1e3);
+      _prebuffered = false;
+      _looping = false;
+      _startEosWatch();
+      _preloadNext().catch((e) => _log("[Engine] preload-after-swap failed: " + e));
+    }).catch((e) => {
+      _log("[Engine] swap play() failed: " + e);
+      oldV.style.zIndex = "2";
+      oldV.style.opacity = "1";
+      newV.style.zIndex = "1";
+      newV.style.opacity = "0";
+    });
+  }
+  function _startEosWatch() {
+    _stopEosWatch();
+    const fgV = _videos[_fg];
+    _eosWatchTimer = setInterval(() => {
+      const v = _videos[_fg];
+      if (!v || _prebuffered || _looping) return;
+      const ct = v.currentTime;
+      const dur = v.duration;
+      if (!dur || !isFinite(dur)) return;
+      if (dur - ct < 1) {
+        _log("[Engine] EOS approaching \u2014 arming for next loop");
+        _stopEosWatch();
+        _armNextLoop().catch((e) => _log("[Engine] arm next-loop failed: " + e));
+      }
+    }, 200);
+    fgV.addEventListener("ended", _onVideoEnded, { once: true });
+  }
+  function _stopEosWatch() {
+    if (_eosWatchTimer !== null) {
+      clearInterval(_eosWatchTimer);
+      _eosWatchTimer = null;
+    }
+    for (const v of _videos) v.removeEventListener("ended", _onVideoEnded);
+  }
+  function _onVideoEnded() {
+    _log("[Engine] video.ended");
+    if (!_looping && !_prebuffered) {
+      _armNextLoop().catch((e) => _log("[Engine] arm-on-ended failed: " + e));
+    }
+  }
+  function _armNextLoop() {
+    if (_looping) return Promise.resolve();
+    if (_prebuffered) {
+      if (_onLoop) _onLoop();
+      return Promise.resolve();
+    }
+    _looping = true;
+    return _preloadNext().then(() => {
+      _looping = false;
+      _prebuffered = true;
+      _log("[Engine] bg prebuffered \u2014 firing LOOP_READY");
+      if (_onLoop) _onLoop();
+    }).catch((e) => {
+      _looping = false;
+      _log("[Engine] arm next-loop preload error: " + e);
+      _prebuffered = true;
+      if (_onLoop) _onLoop();
+    });
+  }
+  var _role, _playlist, _onLoop, _videos, _fg, _container, _idx, _durationMs, _prebuffered, _looping, _firstPlay, _eosWatchTimer, _playTimer;
   var init_engine = __esm({
     "src/engine.ts"() {
       init_logger();
-      _videoA = null;
-      _videoB = null;
-      _active = null;
-      _buffer = null;
+      _role = "follower";
+      _playlist = [];
+      _onLoop = null;
+      _videos = [];
+      _fg = 0;
       _container = null;
-      _url = "";
+      _idx = 0;
       _durationMs = 0;
-      _bufferedDurMs = 0;
-      _playing = false;
-      _destroyed = false;
       _prebuffered = false;
       _looping = false;
+      _firstPlay = true;
+      _eosWatchTimer = null;
       _playTimer = null;
-      _driftTimer = null;
-      _role = null;
-      _onLoop = null;
-      _playlist = [];
-      _playlistIdx = 0;
-      DRIFT_LOG_MS = 2e3;
     }
   });
 
@@ -864,10 +845,13 @@
   function _fetchPlaylistUrls() {
     return __async(this, null, function* () {
       try {
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), 3e3);
         const res = yield fetch(
           "http://192.168.1.17/api/v1/display/content?format=sync",
-          { signal: AbortSignal.timeout(3e3) }
+          { signal: controller.signal }
         );
+        clearTimeout(tid);
         if (res.ok) {
           const data = yield res.json();
           if (data == null ? void 0 : data.url) {
@@ -949,6 +933,24 @@
       };
       var _container2;
       var _syncStarted = false;
+      window.addEventListener("error", (e) => {
+        var _a;
+        const msg = `[App] UNCAUGHT ERROR: ${e == null ? void 0 : e.message} (${e == null ? void 0 : e.filename}:${e == null ? void 0 : e.lineno})`;
+        console.error(msg);
+        try {
+          (_a = window.__nexariLog) == null ? void 0 : _a.call(window, msg);
+        } catch (e2) {
+        }
+      });
+      window.addEventListener("unhandledrejection", (e) => {
+        var _a, _b, _c;
+        const msg = `[App] UNHANDLED REJECTION: ${(_b = (_a = e == null ? void 0 : e.reason) == null ? void 0 : _a.message) != null ? _b : e == null ? void 0 : e.reason}`;
+        console.error(msg);
+        try {
+          (_c = window.__nexariLog) == null ? void 0 : _c.call(window, msg);
+        } catch (e2) {
+        }
+      });
       window.addEventListener("load", () => __async(null, null, function* () {
         _container2 = document.getElementById("player-container");
         const statusEl = document.getElementById("status");
@@ -975,7 +977,10 @@
             }
           }
         });
-        initEngine(_container2);
+        initEngine(_container2).catch((e) => {
+          var _a;
+          return logger.error(`[App] initEngine failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+        });
         _startNodeRelay(setStatus);
         if (!_syncStarted) {
           _syncStarted = true;
@@ -1003,7 +1008,10 @@
               }
               const old = _container2.querySelector("video");
               if (old == null ? void 0 : old.parentNode) old.parentNode.removeChild(old);
-              initEngine(_container2);
+              initEngine(_container2).catch((e) => {
+                var _a;
+                return logger.error(`[App] restartEngine failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+              });
             },
             schedulePlay: (epochMs) => {
               if (overlay) overlay.style.display = "none";
