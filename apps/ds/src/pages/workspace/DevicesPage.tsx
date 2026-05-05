@@ -250,7 +250,7 @@ function VideowallGroupCard({
 
 function PairInstructions() {
   const [copied, setCopied] = useState(false);
-  const playerUrl = window.location.origin;
+  const playerUrl = `${window.location.origin}/tizen`;
 
   function copy() {
     navigator.clipboard.writeText(playerUrl).then(() => {
@@ -261,21 +261,6 @@ function PairInstructions() {
 
   return (
     <div className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-3">
-      <p className="text-xs font-semibold text-[var(--text)] uppercase tracking-wider">How to get the pairing code</p>
-      <ol className="space-y-1.5 text-sm text-[var(--text-muted)]">
-        <li className="flex gap-2">
-          <span className="shrink-0 w-5 h-5 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] text-[10px] font-bold flex items-center justify-center">1</span>
-          <span>Power on your Samsung display and launch the <span className="text-[var(--text)]">Nexari Player</span> app.</span>
-        </li>
-        <li className="flex gap-2">
-          <span className="shrink-0 w-5 h-5 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] text-[10px] font-bold flex items-center justify-center">2</span>
-          <span>If prompted, set the <span className="text-[var(--text)]">Player URL</span> on the display to the address below.</span>
-        </li>
-        <li className="flex gap-2">
-          <span className="shrink-0 w-5 h-5 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] text-[10px] font-bold flex items-center justify-center">3</span>
-          <span>A <span className="text-[var(--text)]">6-character pairing code</span> will appear on screen — enter it below.</span>
-        </li>
-      </ol>
       <div>
         <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">Player URL (Tizen / URL Launcher)</p>
         <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
