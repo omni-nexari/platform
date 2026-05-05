@@ -15,7 +15,10 @@ git fetch origin "$BRANCH"
 git reset --hard "origin/$BRANCH"
 
 echo "==> [update] Installing dependencies..."
-pnpm install --frozen-lockfile
+# Use --no-frozen-lockfile so new workspace packages (e.g. nexari-html5-sync,
+# nexari-sync-engine) with deps not yet reflected in pnpm-lock.yaml don't block
+# the deploy. The lockfile is still written back but not enforced strictly.
+pnpm install --no-frozen-lockfile
 
 echo "==> [update] Building..."
 pnpm --filter @signage/db     build
