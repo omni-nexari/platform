@@ -197,6 +197,8 @@ function VideowallGroupCard({
               deviceId={d.id}
               screenshotId={d.latestScreenshotId}
               latestFrameAt={d.latestFrameAt}
+              status={d.status}
+              powerState={d.powerState}
             />
             <div className="absolute bottom-0 left-0 right-0 rounded-b-lg px-1 py-0.5 text-[9px] text-white bg-black/50 truncate">
               {d.name}
