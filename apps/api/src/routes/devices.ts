@@ -418,9 +418,12 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
     const { duid, modelName, modelCode, serialNumber, firmwareVersion } = body.data;
 
-    // If this DUID (or serial as fallback) already has a live device token, auto-resume without re-pairing
+    // If this DUID (or serial as fallback) already has a live device token, auto-resume without re-pairing.
+    // NOTE: DUID lookup intentionally omits isNull(deletedAt) — a soft-deleted row still holds the unique
+    // DUID constraint. If we only search non-deleted rows we get null and then INSERT, which hits the
+    // unique constraint and returns a 500. We must find any row (deleted or not) and UPDATE it instead.
     const existingByDuid = duid
-      ? await db.query.devices.findFirst({ where: and(eq(devices.duid, duid), isNull(devices.deletedAt)) })
+      ? await db.query.devices.findFirst({ where: eq(devices.duid, duid) })
       : null;
     const existing = existingByDuid ?? (serialNumber
       ? await db.query.devices.findFirst({ where: and(eq(devices.serialNumber, serialNumber), isNull(devices.deletedAt)) })
@@ -450,6 +453,31 @@ export async function deviceRoutes(app: FastifyInstance) {
       });
     }
 
+    // Soft-deleted device with a valid token — restore it and auto-resume without re-pairing
+    if (existing?.orgId && existing.deviceToken && existing.deletedAt) {
+      await db
+        .update(devices)
+        .set({
+          duid: duid ?? existing.duid,
+          modelName: modelName ?? existing.modelName,
+          modelCode: modelCode ?? existing.modelCode,
+          serialNumber: serialNumber ?? existing.serialNumber,
+          firmwareVersion: firmwareVersion ?? existing.firmwareVersion,
+          ipAddress: req.ip ?? null,
+          lastSeen: new Date(),
+          updatedAt: new Date(),
+          deletedAt: null,
+          mdcNetworkStandby: null,
+        })
+        .where(eq(devices.id, existing.id));
+
+      return reply.status(200).send({
+        status: 'claimed',
+        deviceId: existing.id,
+        deviceToken: existing.deviceToken,
+      });
+    }
+
     let code = '';
     for (let i = 0; i < 5; i++) {
       const candidate = generatePairingCode();
@@ -464,7 +492,8 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     let device;
     if (existing) {
-      // Reuse the existing device row; refresh pairing code
+      // Reuse the existing device row; refresh pairing code.
+      // Also clear deletedAt in case this is a re-pair of a previously soft-deleted device.
       [device] = await db
         .update(devices)
         .set({
@@ -477,6 +506,7 @@ export async function deviceRoutes(app: FastifyInstance) {
           firmwareVersion: firmwareVersion ?? existing.firmwareVersion,
           ipAddress: req.ip ?? null,
           updatedAt: new Date(),
+          deletedAt: null,
         })
         .where(eq(devices.id, existing.id))
         .returning();

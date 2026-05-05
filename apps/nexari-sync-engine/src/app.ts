@@ -1,7 +1,7 @@
 /**
- * app.ts — Boot entry for Nexari Sync Engine (HTML5-only build)
+ * app.ts — Boot entry for Nexari Sync Engine (AVPlay build)
  *
- * Single engine: HTML5 <video> with playbackRate-based drift correction.
+ * Single engine: AVPlay with prepareAsync prebuffering + setSpeed drift correction.
  * BACK key exits.
  */
 import { initEngine, prepare, schedulePlayAt, getDuration, destroyEngine } from './engine.js';
@@ -16,12 +16,11 @@ const RELAY_IP   = '192.168.1.11';   // QBC — designated relay TV
 const RELAY_PORT = 9616;
 
 const CONFIG = {
-  PI_BASE:        `http://${RELAY_IP}:${RELAY_PORT}`,
-  // Logger still posts to the Pi while we stabilise.
-  LOG_BASE:       'http://192.168.1.17',
+  WS_URL:         `ws://${RELAY_IP}:${RELAY_PORT}`,
+  // Log relay: send logs to the on-TV Node relay (QBC:9616).
+  // The relay stores logs in memory; the dashboard queries it directly.
+  LOG_BASE:       `http://${RELAY_IP}:${RELAY_PORT}`,
   GROUP_ID:       'syncengine-001',
-  // Solo-leader friendly: leader proceeds as soon as it self-registers;
-  // followers that arrive later trigger a live resync.
   EXPECTED_PEERS: 1,
 };
 
@@ -39,7 +38,7 @@ window.addEventListener('load', async () => {
   const modeEl     = document.getElementById('engine-mode')!;
 
   const setStatus = (msg: string) => { statusEl.textContent = msg; };
-  modeEl.textContent = 'HTML5 <video>';
+  modeEl.textContent = 'AVPlay';
 
   setStatus('Detecting device…');
   const selfIp   = await _getSelfIp();
@@ -72,7 +71,7 @@ window.addEventListener('load', async () => {
     // sync starts polling/registering.
     await new Promise((r) => setTimeout(r, 2500));
     syncInit({
-      piBase:        CONFIG.PI_BASE,
+      wsUrl:         CONFIG.WS_URL,
       groupId:       CONFIG.GROUP_ID,
       deviceId,
       selfIp,
@@ -229,3 +228,5 @@ async function _makeDeviceId(selfIp: string): Promise<string> {
   }
   return id.startsWith(tag) ? id : tag + id;
 }
+
+

@@ -33,11 +33,14 @@
     Optional release notes stored with the player_releases record.
 
 .EXAMPLE
-    # Upload only:
+    # Build + deploy (default — always builds with ds.chiho.app API URL):
     .\tools\deploy-tizen.ps1 -PiHost 192.168.1.17
 
-    # Upload + publish release to DS portal:
+    # Build + deploy + publish release to DS portal:
     .\tools\deploy-tizen.ps1 -PiHost 192.168.1.17 -SuperadminEmail chiho.lee23@gmail.com -SuperadminPassword q1w2e3r4
+
+    # Upload existing WGT without rebuilding:
+    .\tools\deploy-tizen.ps1 -PiHost 192.168.1.17 -NoBuild
 #>
 param(
     [Parameter(Mandatory = $true)]
@@ -56,9 +59,9 @@ param(
     [ValidateSet("patch", "minor", "major", "")]
     [string]$BumpVersion = "",
 
-    # Run Tizen Studio CLI build + sign before uploading.
-    # Uses npm run build (production HTTPS API URL: ds.chiho.app).
-    [switch]$Build,
+    # Skip the Tizen CLI build step (use existing NexariPlayer.wgt as-is).
+    # By default this script always builds with npm run build (ds.chiho.app API URL).
+    [switch]$NoBuild,
 
     # Tizen Studio CLI path (tizen.bat)
     [string]$TizenCli = "C:\tizen-studio\tools\ide\bin\tizen.bat",
@@ -86,11 +89,11 @@ foreach ($cmd in @("ssh", "scp")) {
     }
 }
 
-# -- Auto-bump when building --------------------------------------------------
+# -- Auto-bump before prod build ---------------------------------------------
 # install-nexari2.ps1 bumps patch for dev; deploy-tizen bumps patch for prod.
 # This guarantees the prod WGT is always a higher version than the last dev
 # build so SSSP detects a change and downloads the prod WGT on reboot.
-if ($Build -and $BumpVersion -eq "") {
+if (-not $NoBuild -and $BumpVersion -eq "") {
     $BumpVersion = "patch"
     Write-Host "==> Auto-bumping patch version for prod build..." -ForegroundColor Cyan
 }
@@ -117,17 +120,16 @@ if ($BumpVersion -ne "") {
     [System.IO.File]::WriteAllText($configXmlPath, $cfgXml, [System.Text.UTF8Encoding]::new($false))
     Write-Host "  config.xml + package.json version set to $newVer" -ForegroundColor Green
 
-    if (-not $Build) {
+    if ($NoBuild) {
         Write-Host ""
         Write-Host "  Version bumped to $newVer." -ForegroundColor Yellow
-        Write-Host "  Rebuild the WGT in Tizen Studio, then re-run with -BumpVersion ''." -ForegroundColor Yellow
-        exit 0
+        Write-Host "  Skipping build (-NoBuild). Upload will use existing WGT." -ForegroundColor Yellow
     }
 }
 
-# -- Tizen CLI build (optional, via -Build switch) ----------------------------
-if ($Build) {
-    Write-Host "==> Building Tizen app with npm run build + Tizen CLI..." -ForegroundColor Cyan
+# -- Tizen CLI build (skipped only if -NoBuild is passed) --------------------
+if (-not $NoBuild) {
+    Write-Host "==> Building prod Tizen app (API: https://ds.chiho.app)..." -ForegroundColor Cyan
 
     if (-not (Test-Path $TizenCli)) {
         throw "Tizen CLI not found at: $TizenCli - install Tizen Studio or pass -TizenCli"
@@ -223,7 +225,7 @@ if (-not (Test-Path $WgtPath)) {
     Write-Host "ERROR: NexariPlayer.wgt not found at:" -ForegroundColor Red
     Write-Host "  $WgtPath" -ForegroundColor Red
     Write-Host ""
-    Write-Host "Pass -Build to build automatically, or build manually in Tizen Studio first." -ForegroundColor Yellow
+    Write-Host "Pass -NoBuild to skip the build and upload an existing WGT." -ForegroundColor Yellow
     exit 1
 }
 

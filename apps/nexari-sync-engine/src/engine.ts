@@ -1,406 +1,527 @@
 /**
- * engine.ts — HTML5 <video> engine for Nexari Sync Engine (single-engine build)
+ * engine.ts - AVPlay engine for Nexari Sync Engine
  *
- * Public API (consumed by app.ts and sync.ts):
- *   initEngine(container)            — create the <video> element
- *   prepare(url)                     — load + canplaythrough
- *   schedulePlayAt(epochMs)          — coarse setTimeout + 4ms spin → play()
- *   destroyEngine()                  — tear down
- *   getDuration()                    — ms
- *   isPlaying()                      — boolean
- *   getCurrentPosMs()                — current playhead ms (or null)
- *   nudgePhase(deltaMs)              — playbackRate rubber-band drift correction
+ * Single avplaystore player, reused each cycle:
+ *  - _playerA: ONE avplaystore slot, persistent across all clip transitions.
+ *    Never released mid-session; only at destroyEngine().
+ *  - On EOS: setVideoStillMode("true") to freeze last frame on screen
+ *            → stop() → open(nextUrl) → prepareAsync → play()+pause() at frame 0
+ *            → LOOP_READY (frozen last frame visible during ~700ms rebuffer)
+ *  - On LOOP_GO → _doPlay(): setVideoStillMode("false") → play() from frame 0
+ *    (still-frame releases and new clip begins in one step with no black gap)
+ *  - Fallback to webapis.avplay (global) if avplaystore unavailable;
+ *    no setVideoStillMode in that path (brief black screen during transition).
  *
- * Layout policy (matches AVPlay engine behaviour):
- *   - object-fit: contain  → portrait content fills portrait panel (QBC) and
- *     letterboxes on landscape panel (SBB) with black bars on the sides.
- *   - We rely on the OS-level panel orientation reported via window.screen
- *     (AVPlay engine used the same heuristic). No CSS rotation is needed.
+ * Role-based display:
+ *   leader (QBC portrait)    -> ROTATION_90 + LETTER_BOX
+ *   follower (SBB landscape) -> LETTER_BOX
  */
 import { logger } from './logger.js';
 
-let _video:         HTMLVideoElement | null = null;
-let _destroyed      = false;
-let _playing        = false;
-let _durationMs     = 0;
-let _playAtEpoch    = -1;
-let _playStartEpoch = -1;
-let _playTimer: any = null;
-let _lastDriftLog   = 0;
+declare const webapis: any;
 
-// Actual-rate probe: sample (currentTime, wallClock) each drift tick and
-// compute Δct/Δwall to see if the hardware decoder runs below 1×.
-let _prevProbeCt  = -1;   // seconds
-let _prevProbeWall = -1;  // ms
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
-// Startup re-anchor grace window (ms): allow large _playStartEpoch corrections
-// for this long after play() starts. Tizen 4 can take ~7s before the first
-// real frame, and the video may play a "catch-up" burst at >1× rate during
-// pipeline init. We keep the large-correction window open for the whole startup
-// period instead of using a one-shot flag that fires too early.
-const STARTUP_ANCHOR_GRACE_MS = 15000;
-let _playStartedAt = -1;   // wall clock ms when _doPlay() called play()
+type AvPlayer = {
+  open(url: string): void;
+  close(): void;
+  stop(): void;
+  play(): void;
+  pause(): void;
+  prepareAsync(onSuccess: () => void, onError: (err: any) => void): void;
+  setListener(l: object): void;
+  getCurrentTime(): number;
+  getDuration(): number;
+  getState(): string;
+  setDisplayRect(x: number, y: number, w: number, h: number): void;
+  setDisplayRotation(r: string): void;
+  setDisplayMethod(m: string): void;
+  setVideoStillMode(mode: string): void;
+};
 
-// playbackRate rubber-band state — see nudgePhase()
-let _rateTimer: any = null;
-const RATE_WINDOW_MS    = 2500;   // how long a correction is applied
-                                  // (longer than sync tick @1500ms so rate
-                                  // persists between successive nudges)
-const RATE_MAX_OFFSET   = 0.10;   // ±10% rate clamp — more aggressive since
-                                  // Tizen 4 only partially honours rate.
-const RATE_MIN_DELTA_MS = 4;      // ignore tiny nudges
+// ---------------------------------------------------------------------------
+// Module state
+// ---------------------------------------------------------------------------
 
-// ── Init ───────────────────────────────────────────────────────────────────────
+let _url         = '';
+let _durationMs  = 0;
+let _playing     = false;
+let _destroyed   = false;
+let _prebuffered = false;
+let _looping     = false;
 
-export function initEngine(container: HTMLElement): void {
-  _destroyed = false; _playing = false; _durationMs = 0;
-  _playAtEpoch = -1; _playStartEpoch = -1;
+let _playTimer:  any = null;
+let _driftTimer: any = null;
 
-  const portrait = window.screen.width < window.screen.height;
-  logger.info(`[HTML5] init — screen=${window.screen.width}x${window.screen.height} layout=${portrait ? 'portrait' : 'landscape'}`);
+let _role:  'leader' | 'follower' | null = null;
+let _onLoop: (() => void) | null = null;
 
-  _video = document.createElement('video');
-  // object-fit:contain → fill on matching aspect, letterbox otherwise.
-  _video.style.cssText =
-    'position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;'
-    + 'object-fit:contain;background:#000;';
-  _video.setAttribute('playsinline', '');
-  _video.setAttribute('webkit-playsinline', '');
-  _video.muted = true;            // autoplay-without-gesture compliance on Tizen
-  // Native looping. Avoids the Tizen 4 quirk where seeking near end-of-video
-  // (target ~= duration) lands at an arbitrary earlier position.
-  _video.loop = true;
-  container.appendChild(_video);
+let _playlist:    string[] = [];
+let _playlistIdx: number   = 0;
 
-  // 'ended' should not fire while loop=true, but log if firmware ignores it.
-  _video.addEventListener('ended', () => {
-    logger.warn('[HTML5] ended fired despite loop=true — forcing replay');
-    if (_video && !_destroyed) {
-      try { _video.currentTime = 0; _video.play(); } catch {}
-    }
-  });
+// avplaystore single-player state
+let _useAvplaystore = false;
+let _playerA: AvPlayer | null = null;  // persistent; never replaced mid-session
 
-  _video.addEventListener('error', () => {
-    logger.error(`[HTML5] video error: ${_video?.error?.message ?? 'unknown'} (code ${_video?.error?.code})`);
-  });
+const DRIFT_LOG_MS = 2000;
 
-  _video.addEventListener('timeupdate', () => {
-    if (_destroyed || !_playing || _playStartEpoch < 0 || _durationMs <= 0) return;
-    const now = Date.now();
-    if (now - _lastDriftLog < 2000) return;
-    _lastDriftLog = now;
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-    const v     = _video!;
-    const posMs = Math.round((v.currentTime ?? 0) * 1000);
-
-    // ── Actual decode rate probe ──────────────────────────────────────────
-    // Compute first so we can gate _reanchorClock on a stable playback rate.
-    let actualRate: number | null = null;
-    let actualRateStr = '';
-    const ct = v.currentTime ?? 0;
-    if (_prevProbeCt >= 0 && _prevProbeWall >= 0) {
-      const dtWall = (now - _prevProbeWall) / 1000;
-      let   dtCt   = ct - _prevProbeCt;
-      if (dtCt < -1) dtCt += _durationMs / 1000;
-      if (dtWall > 0.1) {
-        actualRate    = dtCt / dtWall;
-        actualRateStr = ` actualRate=${actualRate.toFixed(3)}`;
-      }
-    }
-    _prevProbeCt   = ct;
-    _prevProbeWall = now;
-
-    // Re-anchor the expected-clock only when the decoder is running at a
-    // steady 1× rate (not during Tizen 4 catch-up bursts where actualRate
-    // reaches 1.5×+). The burst lasts ~8-10s and corrupts _playStartEpoch
-    // with each corrective tick. Guard with two conditions:
-    //   1. actualRate must be in [0.85, 1.10] — burst runs at >1.2×
-    //   2. at least STARTUP_ANCHOR_GRACE_MS ms must have elapsed since play()
-    //      so that even a brief 1× reading during the burst doesn't slip through
-    const inGrace = _playStartedAt >= 0 && (now - _playStartedAt) < STARTUP_ANCHOR_GRACE_MS;
-    const rateOk  = actualRate === null || (actualRate >= 0.85 && actualRate <= 1.10);
-    if (!inGrace && rateOk) {
-      _reanchorClock();
-    }
-
-    const exp   = _expectedMs();
-    const drift = posMs - exp;
-
-    // ── Buffer fill probe ─────────────────────────────────────────────────
-    let bufStr = '';
-    try {
-      const buf = v.buffered;
-      if (buf && buf.length > 0) {
-        const end = Math.round(buf.end(buf.length - 1) * 1000);
-        bufStr = ` buf=0-${end}ms`;
-      } else {
-        bufStr = ' buf=empty';
-      }
-    } catch {}
-
-    logger.drift(
-      `[HTML5] pos=${posMs}ms exp=${Math.round(exp)}ms drift=${Math.round(drift)}ms`
-      + ` rate=${v.playbackRate.toFixed(3)}${actualRateStr}${bufStr}`,
-      drift,
-    );
-  });
-
-  logger.info('[HTML5] <video> engine initialised');
+function _getState(p: AvPlayer | null): string {
+  if (!p) return 'NONE';
+  try { return p.getState(); } catch { return 'NONE'; }
 }
 
-// ── Prepare ────────────────────────────────────────────────────────────────────
+function _avState(): string {
+  try { return webapis.avplay.getState() as string; } catch { return 'NONE'; }
+}
+
+function _setupDisplay(p?: AvPlayer | null): void {
+  if (p) {
+    try { p.setDisplayRect(0, 0, 1920, 1080); } catch {}
+    if (_role === 'leader') {
+      try { p.setDisplayRotation('PLAYER_DISPLAY_ROTATION_90'); } catch {}
+      try { p.setDisplayMethod('PLAYER_DISPLAY_MODE_LETTER_BOX'); } catch {}
+    } else {
+      try { p.setDisplayMethod('PLAYER_DISPLAY_MODE_LETTER_BOX'); } catch {}
+    }
+  } else {
+    try { webapis.avplay.setDisplayRect(0, 0, 1920, 1080); } catch {}
+    if (_role === 'leader') {
+      try { webapis.avplay.setDisplayRotation('PLAYER_DISPLAY_ROTATION_90'); } catch {}
+      try { webapis.avplay.setDisplayMethod('PLAYER_DISPLAY_MODE_LETTER_BOX'); } catch {}
+    } else {
+      try { webapis.avplay.setDisplayMethod('PLAYER_DISPLAY_MODE_LETTER_BOX'); } catch {}
+    }
+  }
+}
+
+function _setStillMode(on: boolean): void {
+  if (!_playerA) return;
+  try { _playerA.setVideoStillMode(on ? 'true' : 'false'); } catch {}
+}
+
+// ---------------------------------------------------------------------------
+// Listener factories
+// ---------------------------------------------------------------------------
+
+function _makeListenerA(): object {
+  let eosGuard = false;
+  return {
+    onbufferingstart() { logger.info('[AVPlay] A buffering start'); },
+    onbufferingprogress(pct: number) {
+      if (pct % 25 === 0) logger.info(`[AVPlay] A buffering ${pct}%`);
+    },
+    onbufferingcomplete() { logger.info('[AVPlay] A buffering complete'); },
+    oncurrentplaytime(_posMs: number) { /* no-op */ },
+    onstreamcompleted() {
+      if (eosGuard) return;
+      let cur = 0;
+      try { cur = _playerA ? _playerA.getCurrentTime() : 0; } catch {}
+      if (_destroyed || _durationMs <= 0 || cur < _durationMs - 600) {
+        logger.info(`[AVPlay] A spurious EOS pos=${cur}ms dur=${_durationMs}ms -- ignored`);
+        return;
+      }
+      eosGuard = true;
+      _playing = false;
+      logger.info(`[AVPlay] A EOS at ${cur}ms -- starting prebuffer`);
+      _prebufferForBarrier();
+    },
+    onerror(err: any) { logger.error(`[AVPlay] A error: ${JSON.stringify(err)}`); },
+    onevent(type: string, _data: string) { logger.info(`[AVPlay] A event type=${type}`); },
+  };
+}
+
+function _makeListenerSingle(): object {
+  return {
+    onbufferingstart() { logger.info('[AVPlay] buffering start'); },
+    onbufferingprogress(pct: number) {
+      if (pct % 25 === 0) logger.info(`[AVPlay] buffering ${pct}%`);
+    },
+    onbufferingcomplete() { logger.info('[AVPlay] buffering complete'); },
+    oncurrentplaytime(_posMs: number) { /* no-op */ },
+    onstreamcompleted() {
+      let cur = 0;
+      try { cur = webapis.avplay.getCurrentTime(); } catch {}
+      if (_destroyed || _durationMs <= 0 || cur < _durationMs - 600) {
+        logger.info(`[AVPlay] spurious EOS pos=${cur}ms dur=${_durationMs}ms -- ignored`);
+        return;
+      }
+      _playing = false;
+      logger.info(`[AVPlay] EOS at ${cur}ms -- starting prebuffer`);
+      _prebufferForBarrier();
+    },
+    onerror(err: any) { logger.error(`[AVPlay] error: ${JSON.stringify(err)}`); },
+    onevent(type: string, _data: string) { logger.info(`[AVPlay] event type=${type}`); },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Drift log + watchdog
+// ---------------------------------------------------------------------------
+
+function _startDriftLog(): void {
+  if (_driftTimer) return;
+  let frozenCount = 0;
+  _driftTimer = setInterval(() => {
+    if (_destroyed || !_playing) return;
+    try {
+      let pos: number; let st: string;
+      if (_useAvplaystore && _playerA) {
+        pos = _playerA.getCurrentTime();
+        st  = _getState(_playerA);
+      } else {
+        pos = webapis.avplay.getCurrentTime();
+        st  = _avState();
+      }
+      logger.info(`[AVPlay] pos=${pos}ms duration=${_durationMs}ms state=${st}`);
+      if (_durationMs > 0 && pos >= _durationMs - 200) {
+        frozenCount++;
+        if (frozenCount >= 2) {
+          frozenCount = 0;
+          logger.warn(`[AVPlay] watchdog: frozen at end pos=${pos}ms -- forcing prebuffer`);
+          _prebufferForBarrier();
+        }
+      } else { frozenCount = 0; }
+    } catch {}
+  }, DRIFT_LOG_MS);
+}
+
+function _stopDriftLog(): void {
+  if (_driftTimer) { clearInterval(_driftTimer); _driftTimer = null; }
+}
+
+// ---------------------------------------------------------------------------
+// Public config
+// ---------------------------------------------------------------------------
+
+export function setRole(role: 'leader' | 'follower'): void { _role = role; }
+export function setOnLoop(cb: () => void): void            { _onLoop = cb; }
+
+export function setPlaylist(urls: string[]): void {
+  if (urls.length === 0) return;
+  _playlist    = urls;
+  _playlistIdx = 0;
+  _url         = urls[0];
+  logger.info(`[AVPlay] playlist (${urls.length}): ${urls.map((u) => u.split('/').pop()).join(', ')}`);
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+
+export function initEngine(_container: HTMLElement): void {
+  _destroyed = false; _playing = false; _durationMs = 0;
+  _url = ''; _looping = false; _prebuffered = false;
+  clearTimeout(_playTimer); _stopDriftLog();
+
+  // Try to acquire a single persistent avplaystore player.
+  // We keep this one slot for the entire session (never release mid-play).
+  try {
+    if (typeof webapis !== 'undefined' && webapis.avplaystore) {
+      if (_playerA) {
+        // Re-init path: close existing slot cleanly
+        try {
+          const s = _getState(_playerA);
+          if (s === 'PLAYING' || s === 'PAUSED') _playerA.stop();
+          if (s !== 'NONE') _playerA.close();
+        } catch {}
+      } else {
+        _playerA = webapis.avplaystore.getPlayer() as AvPlayer;
+      }
+      _useAvplaystore = true;
+      logger.info('[AVPlay] avplaystore single-player mode');
+    } else {
+      throw new Error('avplaystore unavailable');
+    }
+  } catch {
+    _playerA = null;
+    _useAvplaystore = false;
+    logger.info('[AVPlay] webapis.avplay fallback mode');
+    try {
+      const s = _avState();
+      if (s === 'PLAYING' || s === 'PAUSED') webapis.avplay.stop();
+      if (s !== 'NONE') webapis.avplay.close();
+    } catch {}
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Prepare (first clip)
+// ---------------------------------------------------------------------------
 
 export function prepare(url: string): Promise<void> {
-  if (!_video || _destroyed) return Promise.reject(new Error('[HTML5] engine not initialised'));
-  _playing = false; _durationMs = 0;
+  _url = url; _durationMs = 0; _playing = false;
+  _prebuffered = false; _looping = false;
+  clearTimeout(_playTimer); _stopDriftLog();
+  if (_playlist.length === 0) { _playlist = [url]; _playlistIdx = 0; }
 
+  logger.info(`[AVPlay] prepare: ${url.split('/').pop()} avplaystore=${_useAvplaystore}`);
   return new Promise<void>((resolve, reject) => {
-    const v = _video!;
-    const cleanup = () => {
-      v.removeEventListener('canplaythrough', onReady);
-      v.removeEventListener('loadedmetadata', onMeta);
-      v.removeEventListener('error',          onErr);
-    };
-    const onMeta = () => {
-      _durationMs = Math.round((v.duration ?? 0) * 1000);
-      logger.info(`[HTML5] loadedmetadata — duration=${_durationMs}ms videoSize=${v.videoWidth}x${v.videoHeight}`);
-    };
-    const onReady = async () => {
-      cleanup();
-      if (_durationMs <= 0) _durationMs = Math.round((v.duration ?? 0) * 1000);
-      logger.info(`[HTML5] canplaythrough — duration=${_durationMs}ms`);
-
-      // ── Decoder primer ────────────────────────────────────────────────
-      // canplaythrough means "buffer is full enough" but on Tizen 4 the
-      // first real play() still pays a 1-9s pipeline-warmup tax. Fix it
-      // by actually starting playback for a few frames, then pausing and
-      // rewinding to 0. The next play() reuses the warm pipeline and
-      // starts within a frame, so READY now means "ready to play instantly".
-      try {
-        await _primeDecoder(v);
-        logger.info('[HTML5] decoder primed — ready to play instantly');
-      } catch (e: any) {
-        logger.warn(`[HTML5] decoder prime failed (continuing): ${e?.message}`);
-      }
-      resolve();
-    };
-    const onErr = () => {
-      cleanup();
-      reject(new Error(`[HTML5] load error: ${v.error?.message ?? 'unknown'}`));
-    };
-
-    v.addEventListener('loadedmetadata', onMeta);
-    v.addEventListener('canplaythrough', onReady);
-    v.addEventListener('error',          onErr);
-
-    v.src     = url;
-    v.preload = 'auto';
-    v.load();
-    logger.info(`[HTML5] loading: ${url}`);
+    if (_useAvplaystore && _playerA) {
+      _openAndPrepare(_playerA, url, _makeListenerA(), resolve, reject);
+    } else {
+      _prepareSingle(url, resolve, reject);
+    }
   });
+}
+
+function _openAndPrepare(
+  p: AvPlayer, url: string, listener: object,
+  resolve: () => void, reject: (e: Error) => void,
+): void {
+  try {
+    const s = _getState(p);
+    if (s === 'PLAYING' || s === 'PAUSED') p.stop();
+    if (s !== 'NONE') p.close();
+    p.open(url);
+  } catch (e: any) {
+    return reject(new Error(`avplaystore open failed: ${e?.message}`));
+  }
+  _setupDisplay(p);
+  p.setListener(listener);
+  p.prepareAsync(
+    () => {
+      if (_destroyed) return resolve();
+      _setupDisplay(p);
+      _durationMs = p.getDuration();
+      logger.info(`[AVPlay] A prepared -- duration=${_durationMs}ms`);
+      resolve();
+    },
+    (err: any) => {
+      logger.error(`[AVPlay] A prepareAsync failed: ${JSON.stringify(err)}`);
+      reject(new Error(String(err?.name ?? err)));
+    },
+  );
+}
+
+function _prepareSingle(url: string, resolve: () => void, reject: (e: Error) => void): void {
+  try {
+    const s = _avState();
+    if (s === 'PLAYING' || s === 'PAUSED') webapis.avplay.stop();
+    if (s !== 'NONE') webapis.avplay.close();
+    webapis.avplay.open(url);
+  } catch (e: any) { return reject(new Error(`AVPlay open failed: ${e?.message}`)); }
+  _setupDisplay();
+  webapis.avplay.setListener(_makeListenerSingle());
+  webapis.avplay.prepareAsync(
+    () => {
+      if (_destroyed) return resolve();
+      _setupDisplay();
+      _durationMs = webapis.avplay.getDuration();
+      logger.info(`[AVPlay] prepared -- duration=${_durationMs}ms`);
+      resolve();
+    },
+    (err: any) => {
+      logger.error(`[AVPlay] prepareAsync failed: ${JSON.stringify(err)}`);
+      reject(new Error(String(err?.name ?? err)));
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Barrier prebuffer
+// ---------------------------------------------------------------------------
+
+function _prebufferForBarrier(): void {
+  if (_destroyed || _looping) return;
+  _looping     = true;
+  _prebuffered = false;
+  _stopDriftLog();
+
+  if (_playlist.length > 1) {
+    _playlistIdx = (_playlistIdx + 1) % _playlist.length;
+    _url = _playlist[_playlistIdx];
+    logger.info(`[AVPlay] playlist -> [${_playlistIdx + 1}/${_playlist.length}] ${_url.split('/').pop()}`);
+  }
+
+  if (_useAvplaystore && _playerA) {
+    _prebufferAvplaystore(_url);
+  } else {
+    _prebufferGlobalAvplay(_url);
+  }
 }
 
 /**
- * Force the decoder to allocate buffers and decode the first frames so
- * subsequent play() is instant on Tizen 4 (whose firmware otherwise
- * pays a 5-9s warmup tax on the first real play).
- *
- * Strategy: muted play() for a fixed 250ms (long enough to render real
- * frames), then pause, then seek back to 0, then explicitly reset
- * playbackRate. The fixed duration avoids racing with the 'playing'
- * event which on Tizen 4 fires before any frames are actually decoded.
+ * Avplaystore single-player transition:
+ *  1. setVideoStillMode("true")  -> freeze last frame on screen
+ *  2. stop()                     -> player IDLE  (still frame held)
+ *  3. open(nextUrl)              -> reload same player slot with new URL
+ *  4. prepareAsync → play()+pause() -> frame 0 buffered, still frame still visible
+ *  5. LOOP_READY
  */
-function _primeDecoder(v: HTMLVideoElement): Promise<void> {
-  return new Promise<void>((resolve) => {
-    let settled = false;
-    const PRIME_PLAY_MS = 250;
-
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      try { v.pause(); } catch {}
-      // Seek back to 0 and wait for the seek to land before resolving
-      // so the real play() starts at frame 0.
-      const onSeeked = () => {
-        v.removeEventListener('seeked', onSeeked);
-        // Explicit rate reset — some firmwares retain stale rate state.
-        try { v.playbackRate = 1.0; } catch {}
-        resolve();
-      };
-      v.addEventListener('seeked', onSeeked);
-      try { v.currentTime = 0; } catch { resolve(); }
-      // Fallback in case 'seeked' never fires
-      setTimeout(() => { v.removeEventListener('seeked', onSeeked); resolve(); }, 1500);
-    };
-
-    // Hard timeout — never block READY indefinitely.
-    setTimeout(finish, 4000);
-
-    v.muted = true;
-    v.playbackRate = 1.0;
-    v.play()
-      .then(() => { setTimeout(finish, PRIME_PLAY_MS); })
-      .catch(() => finish());
-  });
+function _prebufferAvplaystore(nextUrl: string): void {
+  _setStillMode(true);
+  try { _playerA!.stop(); } catch {}
+  logger.info('[AVPlay] avplaystore prebuffer: still-freeze -> stop -> open -> prepareAsync');
+  try {
+    _playerA!.open(nextUrl);
+  } catch (e: any) {
+    _looping = false;
+    logger.error(`[AVPlay] A.open() failed: ${e?.message}`);
+    return;
+  }
+  _setupDisplay(_playerA);
+  _playerA!.setListener(_makeListenerA());
+  _playerA!.prepareAsync(
+    () => {
+      if (_destroyed) { _looping = false; return; }
+      _setupDisplay(_playerA);
+      _durationMs = _playerA!.getDuration();
+      try { _playerA!.play(); } catch {}
+      setTimeout(() => {
+        if (_destroyed) { _looping = false; return; }
+        try { _playerA!.pause(); } catch {}
+        _looping     = false;
+        _prebuffered = true;
+        logger.info('[AVPlay] avplaystore: prebuffered at frame 0 -- LOOP_READY');
+        if (_onLoop) _onLoop();
+      }, 100);
+    },
+    (err: any) => {
+      _looping = false;
+      logger.error(`[AVPlay] A prepareAsync failed in prebuffer: ${JSON.stringify(err)}`);
+    },
+  );
 }
 
-// ── Scheduled play ─────────────────────────────────────────────────────────────
+function _prebufferGlobalAvplay(nextUrl: string): void {
+  logger.info('[AVPlay] global avplay prebuffer: stop -> close -> open -> prepareAsync');
+  try { webapis.avplay.stop(); } catch {}
+  try { webapis.avplay.close(); } catch {}
+  setTimeout(() => {
+    if (_destroyed) { _looping = false; return; }
+    try {
+      webapis.avplay.open(nextUrl);
+      _setupDisplay();
+      webapis.avplay.setListener(_makeListenerSingle());
+      webapis.avplay.prepareAsync(
+        () => {
+          if (_destroyed) { _looping = false; return; }
+          _setupDisplay();
+          _durationMs = webapis.avplay.getDuration();
+          try { webapis.avplay.play(); } catch {}
+          setTimeout(() => {
+            if (_destroyed) { _looping = false; return; }
+            try { webapis.avplay.pause(); } catch {}
+            _looping     = false;
+            _prebuffered = true;
+            logger.info('[AVPlay] global: prebuffered at frame 0 -- LOOP_READY');
+            if (_onLoop) _onLoop();
+          }, 100);
+        },
+        (err: any) => {
+          _looping = false;
+          logger.error(`[AVPlay] global prebuffer failed: ${JSON.stringify(err)}`);
+        },
+      );
+    } catch (e: any) {
+      _looping = false;
+      logger.error(`[AVPlay] global prebuffer open failed: ${e?.message}`);
+    }
+  }, 50);
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled play
+// ---------------------------------------------------------------------------
 
 export function schedulePlayAt(epochMs: number): void {
   if (_destroyed) return;
-  _playAtEpoch = epochMs;
   clearTimeout(_playTimer);
-
   const wait = epochMs - Date.now();
-  logger.info(`[HTML5] schedulePlayAt epoch=${epochMs} T-${Math.round(Math.max(0, wait))}ms`);
-
+  logger.info(`[AVPlay] schedulePlayAt epoch=${epochMs} T-${Math.round(Math.max(0, wait))}ms`);
   if (wait <= 0) { _doPlay(); return; }
-
   _playTimer = setTimeout(() => {
     (function spin() {
       if (_destroyed) return;
-      if (Date.now() >= _playAtEpoch) { _doPlay(); return; }
+      if (Date.now() >= epochMs) { _doPlay(); return; }
       setTimeout(spin, 4);
     })();
   }, Math.max(0, wait - 60));
 }
 
 function _doPlay(): void {
-  if (_destroyed || _playing || !_video) return;
-  _video.currentTime = 0;
-  _video.playbackRate = 1.0;
-  _prevProbeCt   = -1;   // reset rate probe so first tick gets a clean baseline
-  _prevProbeWall = -1;
-  _video.play()
-    .then(() => {
-      _playing        = true;
-      _playStartEpoch = _playAtEpoch > 0 ? _playAtEpoch : Date.now();
-      _playStartedAt  = Date.now();   // start grace window for large re-anchors
-      logger.info(`[HTML5] play() — startEpoch=${_playStartEpoch}`);
-    })
-    .catch((e: any) => logger.error(`[HTML5] play() failed: ${e?.message}`));
+  _playTimer   = null;
+  if (_destroyed || _playing) return;
+  _prebuffered = false;
+  _playing     = true;
+
+  if (_useAvplaystore && _playerA) {
+    // Release still-frame freeze, then play from frame 0 (paused there by prebuffer).
+    _setStillMode(false);
+    try {
+      _playerA.play();
+      logger.info('[AVPlay] avplaystore play() -- synchronized start');
+    } catch (e: any) {
+      logger.error(`[AVPlay] avplaystore play() failed: ${e?.message}`);
+    }
+  } else {
+    try {
+      webapis.avplay.play();
+      logger.info('[AVPlay] global avplay play() -- synchronized start');
+    } catch (e: any) {
+      logger.error(`[AVPlay] play() failed: ${e?.message}`);
+    }
+  }
+  _startDriftLog();
 }
 
-// ── Loop ───────────────────────────────────────────────────────────────────────
-// (handled natively by `video.loop = true` set in initEngine)
+/**
+ * Legacy entry point kept for any direct callers in sync.ts.
+ * LOOP_GO now routes through schedulePlayAt -> _doPlay().
+ */
+export function playFromPrebuffer(): void {
+  if (_destroyed) return;
+  if (!_prebuffered) logger.warn('[AVPlay] playFromPrebuffer: not prebuffered');
+  _doPlay();
+}
 
-// ── Public accessors used by sync.ts ───────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Public accessors
+// ---------------------------------------------------------------------------
 
-export function getDuration():      number  { return _durationMs; }
-export function isPlaying():        boolean { return _playing; }
+export function getDuration(): number { return _durationMs; }
+
+export function isPlaying(): boolean {
+  if (_useAvplaystore && _playerA) return _playing && _getState(_playerA) === 'PLAYING';
+  return _playing && _avState() === 'PLAYING';
+}
 
 export function getCurrentPosMs(): number | null {
-  if (!_video || !_playing) return null;
-  return Math.round((_video.currentTime ?? 0) * 1000);
+  if (!_playing) return null;
+  try {
+    if (_useAvplaystore && _playerA) return _playerA.getCurrentTime();
+    return webapis.avplay.getCurrentTime();
+  } catch { return null; }
 }
 
-/**
- * Hard catch-up seek used by the follower when startup-skew leaves it
- * far enough behind/ahead of the leader that rate correction can't close
- * the gap in a reasonable time. Refuses to seek inside the loop-boundary
- * danger zone (Tizen 4 lands at the wrong position when the target is
- * within ~500ms of duration).
- *
- * Returns true if the seek was issued, false if it was refused.
- */
-export function hardSeekTo(posMs: number): boolean {
-  if (_destroyed || !_playing || !_video || _durationMs <= 0) return false;
-  const safe = 500;                       // avoid loop boundary on Tizen 4
-  const clamped = Math.max(safe, Math.min(_durationMs - safe, posMs));
-  if (Math.abs(clamped - posMs) > 1) {
-    logger.info(`[HTML5] hardSeekTo ${posMs}ms refused (in loop-boundary zone)`);
-    return false;
-  }
-  // Reset any pending rate correction — we're starting clean.
-  clearTimeout(_rateTimer);
-  _video.playbackRate = 1.0;
-  _video.currentTime  = clamped / 1000;
-  logger.info(`[HTML5] hardSeekTo ${clamped}ms`);
-  return true;
-}
-
-/**
- * Plan C live drift correction — playbackRate rubber-band.
- *
- * Sign convention (matches sync.ts): deltaMs > 0 means "I'm ahead of group, slow me down".
- * We map the desired ms shift to a rate offset over a fixed window:
- *
- *   rate = 1 - (deltaMs / RATE_WINDOW_MS)   clamped to ±RATE_MAX_OFFSET
- *
- * After RATE_WINDOW_MS the rate snaps back to 1.0. With sync.ts damping (0.5)
- * and per-tick cap (80ms), the worst-case rate is ~5%, which is inaudible
- * for music/voice on consumer TVs and visually invisible.
- */
-export function nudgePhase(deltaMs: number): void {
-  if (_destroyed || !_playing || !_video) return;
-  if (Math.abs(deltaMs) < RATE_MIN_DELTA_MS) return;
-
-  // Smooth playbackRate rubber-band only. We deliberately do NOT seek mid-stream:
-  // on Tizen 4 (SBB) seeks near the loop boundary land in unpredictable spots
-  // and ping-pong with the leader. Drift correction therefore happens gradually.
-  let rateOffset = -deltaMs / RATE_WINDOW_MS;
-  if (rateOffset >  RATE_MAX_OFFSET) rateOffset =  RATE_MAX_OFFSET;
-  if (rateOffset < -RATE_MAX_OFFSET) rateOffset = -RATE_MAX_OFFSET;
-  const newRate = Math.max(0.5, Math.min(2.0, 1 + rateOffset));
-
-  _video.playbackRate = newRate;
-  clearTimeout(_rateTimer);
-  _rateTimer = setTimeout(() => {
-    if (_video && !_destroyed) _video.playbackRate = 1.0;
-  }, RATE_WINDOW_MS);
-
-  logger.info(`[HTML5] nudge drift=${deltaMs}ms → rate=${newRate.toFixed(3)} for ${RATE_WINDOW_MS}ms`);
-}
-
-// ── Teardown ───────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Teardown
+// ---------------------------------------------------------------------------
 
 export function destroyEngine(): void {
-  _destroyed = true; _playing = false;
-  clearTimeout(_playTimer);
-  clearTimeout(_rateTimer);
-  if (_video) {
-    try { _video.pause(); } catch {}
-    _video.src = '';
-    try { _video.load(); } catch {}
-    if (_video.parentNode) _video.parentNode.removeChild(_video);
-    _video = null;
+  _destroyed = true; _playing = false; _prebuffered = false; _looping = false;
+  clearTimeout(_playTimer); _stopDriftLog();
+  if (_playerA) {
+    _setStillMode(false);
+    try {
+      const s = _getState(_playerA);
+      if (s === 'PLAYING' || s === 'PAUSED') _playerA.stop();
+      if (s !== 'NONE') _playerA.close();
+      webapis.avplaystore.releasePlayer(_playerA);
+    } catch {}
+    _playerA = null;
   }
-  logger.info('[HTML5] engine destroyed');
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-function _expectedMs(): number {
-  if (_playStartEpoch < 0 || _durationMs <= 0) return 0;
-  return ((Date.now() - _playStartEpoch) % _durationMs + _durationMs) % _durationMs;
-}
-
-/**
- * Re-anchor _playStartEpoch so exp tracks the actual decoder position.
- * Called once per drift tick. Without this, the initial play() latency
- * (difference between scheduled GO epoch and first real frame) accumulates
- * as a fixed offset that grows ~linearly with loops.
- *
- * We compute what _playStartEpoch SHOULD be given the video's current
- * position and wall clock, then replace only if the correction is large
- * enough to be meaningful (> 20ms) and not a loop-wrap artefact.
- */
-function _reanchorClock(): void {
-  if (!_video || _playStartEpoch < 0 || _durationMs <= 0) return;
-  const posMs  = Math.round((_video.currentTime ?? 0) * 1000);
-  if (posMs < 200) return;
-  const now    = Date.now();
-  const elapsed   = now - _playStartEpoch;
-  const loopN     = Math.floor(elapsed / _durationMs);
-  const corrected = now - (loopN * _durationMs + posMs);
-  const delta     = corrected - _playStartEpoch;
-  // Allow up to 1.5× duration for the first post-burst correction (Tizen 4
-  // decoder burst can bake in a full-loop offset). After that ±2s is enough.
-  const firstAnchor = _playStartedAt >= 0 && (now - _playStartedAt) < STARTUP_ANCHOR_GRACE_MS + 6000;
-  const maxDelta = firstAnchor ? (_durationMs * 1.5) : 2000;
-  if (Math.abs(delta) > 20 && Math.abs(delta) < maxDelta) {
-    const tag = Math.abs(delta) > 500 ? 'startup-anchor' : 're-anchor';
-    logger.info(`[HTML5] clock ${tag}: _playStartEpoch ${delta > 0 ? '+' : ''}${Math.round(delta)}ms → actualPos=${posMs}ms`);
-    _playStartEpoch = corrected;
-  }
+  try {
+    const s = _avState();
+    if (s === 'PLAYING' || s === 'PAUSED') webapis.avplay.stop();
+    if (s !== 'NONE') webapis.avplay.close();
+  } catch {}
+  _useAvplaystore = false;
+  logger.info('[AVPlay] engine destroyed');
 }

@@ -131,8 +131,6 @@ const Player = {
     _syncRateRestoreTimer: null,
     _pendingSyncNextItemAt: null,
     _pendingSyncNextItemIndex: -1,
-    _videowallSyncWatchdog: null, // clearTimeout handle for follower SYNC_PLAY watchdog
-    _pendingVideowallSyncPlay: null, // stored SYNC_PLAY cue when it arrives before onloadedmetadata
     // Samsung b2bapis.b2bsyncplay (native firmware SyncPlay) state.
     // Active when the current playlist is rendered via firmware-level sync
     // instead of the JS SyncEngine + HTML5 path. The native API auto-discovers
@@ -344,7 +342,7 @@ const Player = {
     },
     // Handle WebSocket messages
     handleWebSocketMessage(data) {
-        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v;
+        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u;
         try {
             const message = JSON.parse(data);
             const messageType = message.type || message.event;
@@ -401,8 +399,6 @@ const Player = {
                     // (not nested under .payload). Store the whole message as the manifest.
                     logger.info('Videowall init received:', message);
                     this._videowallManifest = message;
-                    // mode drives crop vs. full-screen. Default to 'videowall' for back-compat.
-                    this._videowallMode = (_a = message.mode) !== null && _a !== void 0 ? _a : 'videowall';
                     // Reuse the P2P SyncEngine for wall sync — feed it the peer/priority
                     // list from the videowall manifest.  groupId is the device group UUID
                     // (treated as an opaque string by the engine).
@@ -415,62 +411,9 @@ const Player = {
                         });
                     }
                     // Re-check content so any pending videowall content starts rendering
-                    // now that the manifest (crop geometry) is available.  Clear the
-                    // signature cache so the "Content unchanged" early-return is bypassed —
-                    // the crop transform must be applied even when the playlist hasn't changed.
-                    this.lastContentSignature = null;
+                    // now that the manifest (crop geometry) is available.
                     this.loadContent();
                     break;
-                case 'VIDEOWALL_CLEAR':
-                    // Portal published content outside of a videowall group — reset manifest
-                    // so the next content load renders normally without crop.
-                    logger.info('Videowall manifest cleared');
-                    this._videowallManifest = null;
-                    this._videowallMode = null;
-                    break;
-                case 'VIDEOWALL_SYNC_PLAY': {
-                    // API-relayed start cue broadcast by the leader to all group members.
-                    // Allows Tizen 4 followers whose local bridge XHR is unavailable to
-                    // receive the synchronized start time via their WS connection.
-                    const sp = message.payload || {};
-                    const spStartMs = Number(sp.syncedStartMs);
-                    if (isFinite(spStartMs) && spStartMs > 0) {
-                        logger.info('[Videowall] VIDEOWALL_SYNC_PLAY received via API WS: syncedStartMs=' + spStartMs);
-                        // Clear the watchdog — we got the real cue.
-                        if (this._videowallSyncWatchdog) {
-                            clearTimeout(this._videowallSyncWatchdog);
-                            this._videowallSyncWatchdog = null;
-                        }
-                        // If the video element is already metadata-ready AND no content switch is
-                        // in progress, dispatch immediately. Otherwise store the cue so
-                        // onloadedmetadata on the NEW video can consume it when ready.
-                        // Key race: cue can arrive while a new playlist is still downloading.
-                        // The old video has readyState >= 1 but we must NOT fire on it — the
-                        // cue is for the incoming content. Checking isDownloadingContent /
-                        // pendingPlaylist catches this case.
-                        const isContentSwitching = !!(this.isDownloadingContent || this.pendingPlaylist);
-                        const sv = this._activeSyncVideo;
-                        if (sv && sv.readyState >= 1 && !isContentSwitching) {
-                            this._pendingVideowallSyncPlay = null;
-                            this.handleSyncCommand({
-                                type: 'SYNC_PLAY',
-                                fromDeviceId: null,
-                                payload: { syncedStartMs: spStartMs, itemIndex: 0 },
-                                receivedAt: Date.now(),
-                            });
-                        }
-                        else {
-                            if (isContentSwitching) {
-                                logger.info('[Videowall] content switching — storing SYNC_PLAY cue for new content onloadedmetadata');
-                            }
-                            else {
-                                logger.info('[Videowall] video not yet ready — storing SYNC_PLAY cue for onloadedmetadata');
-                            }
-                            this._pendingVideowallSyncPlay = spStartMs;
-                        }
-                    }
-                    break;
-                }
                 case 'SESSION_CONFIG':
                     logger.info('SyncPlay session config received - refreshing content');
                     this.loadContent();
@@ -545,7 +488,7 @@ const Player = {
                     this.executeCommand({ type: 'SCREENSHOT_AUTO' });
                     break;
                 case 'start_live_capture': {
-                    const intervalMs = Math.max(1000, Number((_b = message.payload) === null || _b === void 0 ? void 0 : _b.intervalMs) || 1000);
+                    const intervalMs = Math.max(1000, Number((_a = message.payload) === null || _a === void 0 ? void 0 : _a.intervalMs) || 1000);
                     logger.info('start_live_capture received, intervalMs:', intervalMs);
                     // Stop any existing capture loop
                     if (this._liveInterval) {
@@ -616,9 +559,8 @@ const Player = {
                                                             const bytes = stream.readBytes(file.fileSize);
                                                             stream.close();
                                                             let binary = '';
-                                                            const _CHUNK = 8192;
-                                                            for (let i = 0; i < bytes.length; i += _CHUNK)
-                                                                binary += String.fromCharCode.apply(null, Array.prototype.slice.call(bytes, i, i + _CHUNK));
+                                                            for (let i = 0; i < bytes.length; i++)
+                                                                binary += String.fromCharCode(bytes[i]);
                                                             send(btoa(binary));
                                                         }
                                                         catch (e) {
@@ -633,9 +575,8 @@ const Player = {
                                                 try {
                                                     const bytes = fh.readData();
                                                     let binary = '';
-                                                    const _CHUNK = 8192;
-                                                    for (let i = 0; i < bytes.length; i += _CHUNK)
-                                                        binary += String.fromCharCode.apply(null, Array.prototype.slice.call(bytes, i, i + _CHUNK));
+                                                    for (let i = 0; i < bytes.length; i++)
+                                                        binary += String.fromCharCode(bytes[i]);
                                                     send(btoa(binary));
                                                 }
                                                 finally {
@@ -687,7 +628,7 @@ const Player = {
                     }
                     break;
                 case 'remote_key': {
-                    const keyName = ((_d = (_c = message.payload) === null || _c === void 0 ? void 0 : _c.key) !== null && _d !== void 0 ? _d : '');
+                    const keyName = ((_c = (_b = message.payload) === null || _b === void 0 ? void 0 : _b.key) !== null && _c !== void 0 ? _c : '');
                     logger.info('remote_key received:', keyName);
                     const xhr = new XMLHttpRequest();
                     xhr.open('POST', 'http://127.0.0.1:9615/remote-key', true);
@@ -802,7 +743,7 @@ const Player = {
                 case 'remote_status': {
                     // Call /status-full to aggregate status, serial, device-name, model, IP and remote-ctrl
                     // in a single round-trip (server.js performs the MDC commands sequentially).
-                    const rsRequestId = (_f = message.payload) === null || _f === void 0 ? void 0 : _f.requestId;
+                    const rsRequestId = (_d = message.payload) === null || _d === void 0 ? void 0 : _d.requestId;
                     const rsWs = this.wsConnection;
                     function sendMdcStatusResponse(payload) {
                         if (rsRequestId && rsWs && rsWs.readyState === WebSocket.OPEN) {
@@ -831,7 +772,7 @@ const Player = {
                     break;
                 }
                 case 'tizen_probe': {
-                    const tpRequestId = (_g = message.payload) === null || _g === void 0 ? void 0 : _g.requestId;
+                    const tpRequestId = (_f = message.payload) === null || _f === void 0 ? void 0 : _f.requestId;
                     const tpWs = this.wsConnection;
                     function sendTizenProbeResult(sections) {
                         if (tpRequestId && tpWs && tpWs.readyState === WebSocket.OPEN) {
@@ -925,7 +866,7 @@ const Player = {
                                 audioResult[ac] = Boolean(si['isSupportedAudioCodec'](ac));
                             }
                             catch (e) {
-                                audioResult[ac] = `Error: ${(_h = e === null || e === void 0 ? void 0 : e.message) !== null && _h !== void 0 ? _h : String(e)}`;
+                                audioResult[ac] = `Error: ${(_g = e === null || e === void 0 ? void 0 : e.message) !== null && _g !== void 0 ? _g : String(e)}`;
                             }
                         }
                         siEntries.push({ label: 'Audio codec support', value: audioResult });
@@ -936,7 +877,7 @@ const Player = {
                                 videoResult[vc] = Boolean(si['isSupportedVideoCodec'](vc));
                             }
                             catch (e) {
-                                videoResult[vc] = `Error: ${(_j = e === null || e === void 0 ? void 0 : e.message) !== null && _j !== void 0 ? _j : String(e)}`;
+                                videoResult[vc] = `Error: ${(_h = e === null || e === void 0 ? void 0 : e.message) !== null && _h !== void 0 ? _h : String(e)}`;
                             }
                         }
                         siEntries.push({ label: 'Video codec support', value: videoResult });
@@ -979,7 +920,7 @@ const Player = {
                                 srcOrient[stt] = sc['getSourceOrientation'](stt);
                             }
                             catch (e) {
-                                srcOrient[stt] = `Error: ${(_k = e === null || e === void 0 ? void 0 : e.message) !== null && _k !== void 0 ? _k : String(e)}`;
+                                srcOrient[stt] = `Error: ${(_j = e === null || e === void 0 ? void 0 : e.message) !== null && _j !== void 0 ? _j : String(e)}`;
                             }
                         }
                         scEntries.push({ label: 'Source orientations', value: srcOrient });
@@ -1063,7 +1004,7 @@ const Player = {
                             tzEntries.push({ label: 'Device uptime (seconds)', value: tzsiTyped['getDeviceUptime']() });
                         }
                         catch (e) {
-                            tzEntries.push({ label: 'Device uptime (seconds)', error: `${(_l = e === null || e === void 0 ? void 0 : e.name) !== null && _l !== void 0 ? _l : 'Error'}: ${(_m = e === null || e === void 0 ? void 0 : e.message) !== null && _m !== void 0 ? _m : String(e)}` });
+                            tzEntries.push({ label: 'Device uptime (seconds)', error: `${(_k = e === null || e === void 0 ? void 0 : e.name) !== null && _k !== void 0 ? _k : 'Error'}: ${(_l = e === null || e === void 0 ? void 0 : e.message) !== null && _l !== void 0 ? _l : String(e)}` });
                         }
                         const capabilityKeys = [
                             'http://tizen.org/feature/screen',
@@ -1078,7 +1019,7 @@ const Player = {
                                 capabilities[ck] = tzsiTyped['getCapability'](ck);
                             }
                             catch (e) {
-                                capabilities[ck] = `Error: ${(_o = e === null || e === void 0 ? void 0 : e.message) !== null && _o !== void 0 ? _o : String(e)}`;
+                                capabilities[ck] = `Error: ${(_m = e === null || e === void 0 ? void 0 : e.message) !== null && _m !== void 0 ? _m : String(e)}`;
                             }
                         }
                         tzEntries.push({ label: 'Capabilities', value: capabilities });
@@ -1271,11 +1212,11 @@ const Player = {
                                 case 'open': {
                                     const p = tcParams;
                                     const docinfo = {
-                                        docpath: (_p = p === null || p === void 0 ? void 0 : p.docpath) !== null && _p !== void 0 ? _p : '',
-                                        rectX: (_q = p === null || p === void 0 ? void 0 : p.rectX) !== null && _q !== void 0 ? _q : 0,
-                                        rectY: (_r = p === null || p === void 0 ? void 0 : p.rectY) !== null && _r !== void 0 ? _r : 0,
-                                        rectWidth: (_s = p === null || p === void 0 ? void 0 : p.rectWidth) !== null && _s !== void 0 ? _s : (window.innerWidth || 1920),
-                                        rectHeight: (_t = p === null || p === void 0 ? void 0 : p.rectHeight) !== null && _t !== void 0 ? _t : (window.innerHeight || 1080),
+                                        docpath: (_o = p === null || p === void 0 ? void 0 : p.docpath) !== null && _o !== void 0 ? _o : '',
+                                        rectX: (_p = p === null || p === void 0 ? void 0 : p.rectX) !== null && _p !== void 0 ? _p : 0,
+                                        rectY: (_q = p === null || p === void 0 ? void 0 : p.rectY) !== null && _q !== void 0 ? _q : 0,
+                                        rectWidth: (_r = p === null || p === void 0 ? void 0 : p.rectWidth) !== null && _r !== void 0 ? _r : (window.innerWidth || 1920),
+                                        rectHeight: (_s = p === null || p === void 0 ? void 0 : p.rectHeight) !== null && _s !== void 0 ? _s : (window.innerHeight || 1080),
                                     };
                                     adapter.open(docinfo, ok, err);
                                     break;
@@ -1348,7 +1289,7 @@ const Player = {
                     // â”€â”€ B2BControl API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     if (tcAction && tcAction.indexOf('b2b.') === 0) {
                         const rw3 = window;
-                        const b2bc = (_v = (_u = rw3['b2bapis']) === null || _u === void 0 ? void 0 : _u.b2bcontrol) !== null && _v !== void 0 ? _v : null;
+                        const b2bc = (_u = (_t = rw3['b2bapis']) === null || _t === void 0 ? void 0 : _t.b2bcontrol) !== null && _u !== void 0 ? _u : null;
                         if (!b2bc) {
                             sendTizenCommandResult(false, undefined, 'b2bapis.b2bcontrol not available on this device');
                             break;
@@ -2705,10 +2646,10 @@ const Player = {
     },
     // Render video content using Samsung AVPlay API for better performance
     renderVideo(container, content) {
-        // Videowall crop mode: CSS-crop the full-wall video to this panel's region.
-        // Guard on _videowallMode='videowall' so P2P-synced single-screen content
-        // (mode='syncplay') plays full-screen even though a manifest is in memory.
-        if (this._videowallManifest && this._videowallMode === 'videowall') {
+        // Videowall mode: CSS-crop the full-wall video to this panel's region.
+        // Guard on content.type so regular video items in a playlist aren't
+        // accidentally rendered in crop mode if a manifest is still in memory.
+        if (this._videowallManifest && content && content.type === 'VIDEOWALL') {
             this._renderVideowallContent(container, content);
             return;
         }
@@ -2786,87 +2727,10 @@ const Player = {
         // Register as the active sync target for drift correction.
         this._activeSyncVideo = video;
         video.onloadedmetadata = () => {
-            if (typeof SyncEngine !== 'undefined' && SyncEngine.isActive()) {
-                if (SyncEngine.getRole() === 'leader') {
-                    // Leader: broadcast a start cue 2.5s from now so all panels can begin together.
-                    // startGroupAt self-dispatches SYNC_PLAY locally so the leader also gates through
-                    // handleSyncCommand → waitForPreciseSyncedTime → play (no direct play() here).
-                    const startMs = this.getSyncedTime() + 2500;
-                    logger.info('[Videowall] leader broadcasting startGroupAt: syncedStartMs=' + startMs);
-                    SyncEngine.startGroupAt(startMs, 0);
-                    // Also relay via API WebSocket so Tizen 4 / legacy followers (whose bridge
-                    // XHR may fail) still receive the cue over their guaranteed WS connection.
-                    void this._relayVideowallSyncPlay(startMs);
-                }
-                else {
-                    // Follower: keep video paused and wait for SYNC_PLAY via bridge poll or API WS.
-                    // Explicitly pause — belt-and-suspenders for Tizen 4 which may autoplay despite autoplay=false.
-                    video.pause();
-                    // If SYNC_PLAY cue arrived before video was ready (e.g. slow download), apply it now.
-                    const pendingCue = this._pendingVideowallSyncPlay;
-                    if (pendingCue) {
-                        this._pendingVideowallSyncPlay = null;
-                        logger.info('[Videowall] follower video ready — applying stored SYNC_PLAY cue: syncedStartMs=' + pendingCue);
-                        this.handleSyncCommand({
-                            type: 'SYNC_PLAY',
-                            fromDeviceId: null,
-                            payload: { syncedStartMs: pendingCue, itemIndex: 0 },
-                            receivedAt: Date.now(),
-                        });
-                    }
-                    else {
-                        logger.info('[Videowall] follower video ready — awaiting SYNC_PLAY cue...');
-                        // Watchdog: if no cue arrives within 6s, play unsynced so the wall isn't stuck.
-                        if (this._videowallSyncWatchdog)
-                            clearTimeout(this._videowallSyncWatchdog);
-                        this._videowallSyncWatchdog = setTimeout(() => {
-                            this._videowallSyncWatchdog = null;
-                            const v = this._activeSyncVideo;
-                            logger.warn('[Videowall] watchdog fired — video.paused=' + (v ? v.paused : 'null'));
-                            if (v && v.paused) {
-                                logger.warn('[Videowall] SYNC_PLAY watchdog fired — playing unsynced after 6s timeout');
-                                v.play().catch((e) => logger.error('[Videowall] watchdog play() failed:', e));
-                            }
-                        }, 6000);
-                    }
-                }
-            }
-            else {
-                // No active SyncEngine — play immediately (standalone / fallback mode).
-                video.play().catch((err) => logger.error('[Videowall] play() failed:', err));
-            }
+            video.play().catch((err) => logger.error('[Videowall] play() failed:', err));
         };
         video.onerror = (err) => logger.error('[Videowall] video error:', err);
         container.appendChild(video);
-    },
-    // Relay a videowall SYNC_PLAY start cue via the API WebSocket so that
-    // Tizen 4 followers (whose local bridge XHR may be blocked) still receive
-    // the synchronized start time through their guaranteed WS connection.
-    _relayVideowallSyncPlay(syncedStartMs) {
-        return __awaiter(this, void 0, void 0, function* () {
-            const mf = this._videowallManifest;
-            if (!mf || !mf.deviceGroupId)
-                return;
-            const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
-            if (!token)
-                return;
-            try {
-                const resp = yield fetch(`${CONFIG.API_BASE}/devices/group-sync-play`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                    body: JSON.stringify({ groupId: mf.deviceGroupId, syncedStartMs }),
-                });
-                if (!resp.ok) {
-                    logger.warn('[Videowall] API sync-play relay failed: HTTP ' + resp.status);
-                }
-                else {
-                    logger.info('[Videowall] API sync-play relay OK (syncedStartMs=' + syncedStartMs + ')');
-                }
-            }
-            catch (e) {
-                logger.warn('[Videowall] API sync-play relay error:', e && e.message);
-            }
-        });
     },
     // Render video using Samsung AVPlay API
     renderVideoAVPlay(container, content) {
@@ -4311,13 +4175,6 @@ const Player = {
                     : (prev * 0.8 + best.offset * 0.2);
                 this.ntpOffset = Math.round(nextOffset);
                 this.lastNtpSync = Date.now();
-                // Keep the local bridge NTP-corrected so peer-NTP requests from followers
-                // return getSyncedTime() rather than raw Date.now() (prevents ~ntpOffset drift).
-                void fetch('http://localhost:9615/sync/ntp-offset', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ntpOffset: Math.round(nextOffset) }),
-                }).catch(() => { }); // best-effort; bridge may not be running
                 logger.info(`NTP sync complete: offset=${Math.round(nextOffset)}ms (raw=${Math.round(best.offset)}ms), bestRTT=${Math.round(best.rtt)}ms, samples=${samples.length}${delta > NTP_SNAP_THRESHOLD_MS ? ' [SNAPPED]' : ''}`);
             }
             catch (error) {
@@ -5956,11 +5813,6 @@ const Player = {
             clearTimeout(this._syncRateRestoreTimer);
             this._syncRateRestoreTimer = null;
         }
-        // Cancel any pending videowall sync watchdog.
-        if (this._videowallSyncWatchdog) {
-            clearTimeout(this._videowallSyncWatchdog);
-            this._videowallSyncWatchdog = null;
-        }
         // Stop seamless AVPlay if active
         if (this.seamlessPlaylistActive) {
             this.stopSeamlessAVPlay();
@@ -7127,24 +6979,6 @@ const Player = {
                     // Followers begin/resume playback at the same wall instant.
                     const v = this._activeSyncVideo;
                     if (v) {
-                        // Late-join: if the scheduled start time has already passed (e.g. slow
-                        // download on Tizen 4), seek to the correct position in the loop so
-                        // the follower is in sync with the leader rather than starting from 0.
-                        const elapsed = this.getSyncedTime() - startAt; // ms since leader started
-                        if (elapsed > 200) {
-                            const dur = v.duration; // seconds
-                            if (isFinite(dur) && dur > 0.5) {
-                                const seekTo = v.loop
-                                    ? (elapsed / 1000) % dur
-                                    : Math.min(elapsed / 1000, dur - 0.1);
-                                try {
-                                    v.currentTime = seekTo;
-                                }
-                                catch (_) { }
-                                logger.info('[Sync] late-join seek to ' + seekTo.toFixed(3) +
-                                    's (elapsed=' + Math.round(elapsed) + 'ms, loop=' + v.loop + ')');
-                            }
-                        }
                         try {
                             v.play().catch(() => { });
                         }
@@ -7339,9 +7173,8 @@ const Player = {
                                         const bytes = stream.readBytes(file.fileSize);
                                         stream.close();
                                         let binary = '';
-                                        const _CHUNK = 8192;
-                                        for (let i = 0; i < bytes.length; i += _CHUNK)
-                                            binary += String.fromCharCode.apply(null, Array.prototype.slice.call(bytes, i, i + _CHUNK));
+                                        for (let i = 0; i < bytes.length; i++)
+                                            binary += String.fromCharCode(bytes[i]);
                                         send(btoa(binary));
                                     }
                                     catch (e) {
@@ -7363,9 +7196,8 @@ const Player = {
                                 try {
                                     const bytes = fh.readData();
                                     let binary = '';
-                                    const _CHUNK = 8192;
-                                    for (let i = 0; i < bytes.length; i += _CHUNK)
-                                        binary += String.fromCharCode.apply(null, Array.prototype.slice.call(bytes, i, i + _CHUNK));
+                                    for (let i = 0; i < bytes.length; i++)
+                                        binary += String.fromCharCode(bytes[i]);
                                     send(btoa(binary));
                                 }
                                 finally {

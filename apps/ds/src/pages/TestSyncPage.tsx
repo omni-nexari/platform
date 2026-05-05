@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Activity, Radio, Trash2, Zap } from 'lucide-react';
+import { Activity, Copy, Radio, Trash2, Zap } from 'lucide-react';
 import {
   ActionButton,
   Badge,
@@ -18,6 +18,11 @@ import {
   SectionCardHeader,
 } from '../components/UiPrimitives.js';
 import { api } from '../lib/api.js';
+
+// The on-TV Node relay runs on QBC and stores peers + logs in memory.
+// Dashboard queries it directly — no Pi API dependency.
+const RELAY_URL = 'http://192.168.1.11:9616';
+const GROUP_ID  = 'syncengine-001';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Peer {
@@ -80,8 +85,10 @@ function LogPanel({ deviceId, label }: { deviceId: string; label: string }) {
 
   const { data, isError } = useQuery({
     queryKey: ['test-sync-logs', deviceId],
-    queryFn:  () => api.get<{ entries: LogEntry[] }>(`/test-sync/logs?deviceId=${deviceId}&limit=200`),
-    refetchInterval: 2000,
+    queryFn:  () =>
+      fetch(`${RELAY_URL}/logs?deviceId=${encodeURIComponent(deviceId)}&limit=200`)
+        .then((r) => r.json() as Promise<{ entries: LogEntry[] }>),
+    refetchInterval: 1000,
   });
 
   useEffect(() => {
@@ -89,12 +96,21 @@ function LogPanel({ deviceId, label }: { deviceId: string; label: string }) {
   }, [data]);
 
   const clearMutation = useMutation({
-    mutationFn: () => api.delete(`/test-sync/logs?deviceId=${deviceId}`),
+    mutationFn: () =>
+      fetch(`${RELAY_URL}/logs?deviceId=${encodeURIComponent(deviceId)}`, { method: 'DELETE' })
+        .then(() => {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['test-sync-logs', deviceId] }),
   });
 
   const entries: LogEntry[] = data?.entries ?? [];
   const metrics = parseSyncMetrics(entries);
+
+  function copyAll() {
+    const text = entries
+      .map((e) => `${new Date(e.ts).toLocaleTimeString()} [${e.level.toUpperCase()}] ${e.msg}`)
+      .join('\n');
+    void navigator.clipboard.writeText(text);
+  }
 
   return (
     <SectionCard>
@@ -105,13 +121,22 @@ function LogPanel({ deviceId, label }: { deviceId: string; label: string }) {
             <h2 className="text-base font-semibold text-[var(--text)]">{label}</h2>
             <Badge tone={isError ? 'danger' : 'neutral'}>{deviceId}</Badge>
           </div>
-          <ActionButton
-            tone="default"
-            onClick={() => clearMutation.mutate()}
-            disabled={clearMutation.isPending}
-          >
-            <Trash2 className="h-3.5 w-3.5 mr-1 inline" /> Clear
-          </ActionButton>
+          <div className="flex items-center gap-2">
+            <ActionButton
+              tone="default"
+              onClick={copyAll}
+              disabled={entries.length === 0}
+            >
+              <Copy className="h-3.5 w-3.5 mr-1 inline" /> Copy All
+            </ActionButton>
+            <ActionButton
+              tone="default"
+              onClick={() => clearMutation.mutate()}
+              disabled={clearMutation.isPending}
+            >
+              <Trash2 className="h-3.5 w-3.5 mr-1 inline" /> Clear
+            </ActionButton>
+          </div>
         </div>
         {/* Metrics summary row */}
         <div className="mt-2 flex flex-wrap gap-4 text-xs text-[var(--text-muted)]">
@@ -153,14 +178,27 @@ export default function TestSyncPage() {
   const [engineOverride, setEngineOverride] = useState<'mse' | 'wasm' | null>(null);
   const [overrideStatus, setOverrideStatus] = useState<string | null>(null);
 
-  // Poll registered peers
+  // Poll registered peers from relay (QBC:9616) — relay exposes live WS-connected devices
   const peersQuery = useQuery({
     queryKey: ['test-sync-peers'],
-    queryFn:  () => api.get<{ peers: Peer[] }>('/test-sync/peers?groupId=syncengine-001'),
-    refetchInterval: 5000,
+    queryFn:  () =>
+      fetch(`${RELAY_URL}/peers?groupId=${GROUP_ID}`)
+        .then((r) => r.json() as Promise<{ peers: Peer[] }>),
+    refetchInterval: 3000,
+  });
+
+  // Also poll /devices to find all Tizen IDs that have stored logs
+  // (covers the gap before WS registration completes).
+  const devicesQuery = useQuery({
+    queryKey: ['relay-devices'],
+    queryFn:  () =>
+      fetch(`${RELAY_URL}/devices`)
+        .then((r) => r.json() as Promise<{ devices: string[] }>),
+    refetchInterval: 3000,
   });
 
   const peers: Peer[] = peersQuery.data?.peers ?? [];
+  const allKnownDevices: string[] = devicesQuery.data?.devices ?? [];
   const connected     = peers.length >= 2;
 
   // Trigger SET_ENGINE via the leader's HTTP shortcut (Pi relays via Redis pubsub to leader)
@@ -253,17 +291,21 @@ export default function TestSyncPage() {
         </SectionCardBody>
       </SectionCard>
 
-      {/* Device log panels — use live peer deviceIds so they always match */}
+      {/* Device log panels — use live peer deviceIds, fall back to /devices list */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {peers.length === 0 ? (
-          <>
-            <LogPanel deviceId="sbb" label="SBB TV" />
-            <LogPanel deviceId="qbc" label="QBC TV" />
-          </>
-        ) : (
-          peers.slice(0, 2).map((p, i) => (
-            <LogPanel key={p.deviceId} deviceId={p.deviceId} label={`TV ${i + 1} (${p.role ?? 'peer'})`} />
+        {peers.length > 0 ? (
+          peers.slice(0, 4).map((p, i) => (
+            <LogPanel key={p.deviceId} deviceId={p.deviceId} label={`TV ${i + 1} — ${p.ip}`} />
           ))
+        ) : allKnownDevices.length > 0 ? (
+          allKnownDevices.slice(0, 4).map((id, i) => (
+            <LogPanel key={id} deviceId={id} label={`TV ${i + 1} — ${id.slice(0, 24)}`} />
+          ))
+        ) : (
+          <>
+            <LogPanel deviceId="placeholder-sbb" label="SBB TV (waiting…)" />
+            <LogPanel deviceId="placeholder-qbc" label="QBC TV (waiting…)" />
+          </>
         )}
       </div>
     </div>

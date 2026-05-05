@@ -47,6 +47,10 @@ module.exports = function startServer() {
   // logs[deviceId] = [ { deviceId, level, msg, ts, ... } ]
   var logs    = {};
 
+  // LOOP_READY barrier -- per-group map of deviceId -> true for devices that have
+  // finished prebuffering at frame 0. When all peers are ready, relay broadcasts LOOP_GO.
+  var loopReady = {};
+
   function readJson(req, cb) {
     var chunks = [];
     req.on('data', function(c) { chunks.push(c); });
@@ -213,6 +217,14 @@ module.exports = function startServer() {
       return send(res, 200, { deviceId: dev, entries: arr2.slice(-n) });
     }
 
+    // GET /devices — all deviceIds that have stored logs or active WS connections
+    if (req.method === 'GET' && path === '/devices') {
+      var logDevs   = Object.keys(logs);
+      var wsDevs    = wsClients.filter(function(c) { return c.deviceId; }).map(function(c) { return c.deviceId; });
+      var combined  = logDevs.concat(wsDevs).filter(function(v, i, a) { return a.indexOf(v) === i; });
+      return send(res, 200, { devices: combined, serverTimeMs: Date.now() });
+    }
+
     // DELETE /logs?deviceId=X ──────────────────────────────────────────────
     if (req.method === 'DELETE' && path === '/logs') {
       var dev2 = query.deviceId;
@@ -231,6 +243,231 @@ module.exports = function startServer() {
   server.listen(PORT, '0.0.0.0', function() {
     console.log('[nexari-sync-relay] listening on 0.0.0.0:' + PORT);
   });
+
+  // ── WebSocket relay (RFC 6455, no external deps) ─────────────────────────
+  var crypto = require('crypto');
+  var net    = require('net');
+
+  // wsClients: [{ socket, deviceId, groupId, buf }]
+  var wsClients = [];
+
+  var WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+
+  function wsHandshake(socket, key) {
+    var hash = crypto.createHash('sha1').update(key + WS_GUID).digest('base64');
+    socket.write(
+      'HTTP/1.1 101 Switching Protocols\r\n' +
+      'Upgrade: websocket\r\n' +
+      'Connection: Upgrade\r\n' +
+      'Sec-WebSocket-Accept: ' + hash + '\r\n\r\n'
+    );
+  }
+
+  // Encode a text frame (opcode 0x01).
+  function wsEncodeText(text) {
+    var payload = Buffer.from(text, 'utf8');
+    var len     = payload.length;
+    var header;
+    if (len < 126) {
+      header = Buffer.alloc(2);
+      header[0] = 0x81;
+      header[1] = len;
+    } else if (len < 65536) {
+      header = Buffer.alloc(4);
+      header[0] = 0x81; header[1] = 126;
+      header.writeUInt16BE(len, 2);
+    } else {
+      header = Buffer.alloc(10);
+      header[0] = 0x81; header[1] = 127;
+      header.writeUInt32BE(0, 2); header.writeUInt32BE(len, 6);
+    }
+    return Buffer.concat([header, payload]);
+  }
+
+  // Decode all complete frames from a buffer.
+  // Returns { frames: [string, ...], remaining: Buffer }.
+  function wsDecodeFrames(buf) {
+    var frames = [];
+    while (buf.length >= 2) {
+      var opcode  = buf[0] & 0x0f;
+      var masked  = !!(buf[1] & 0x80);
+      var lenByte = buf[1] & 0x7f;
+      var offset  = 2;
+      var payLen;
+
+      if (lenByte < 126) {
+        payLen = lenByte;
+      } else if (lenByte === 126) {
+        if (buf.length < 4) break;
+        payLen = buf.readUInt16BE(2);
+        offset = 4;
+      } else {
+        if (buf.length < 10) break;
+        payLen = buf.readUInt32BE(6); // ignore high word
+        offset = 10;
+      }
+
+      var maskBytes = 0;
+      if (masked) { maskBytes = 4; }
+      if (buf.length < offset + maskBytes + payLen) break;
+
+      var payload = buf.slice(offset + maskBytes, offset + maskBytes + payLen);
+      if (masked) {
+        var mask = buf.slice(offset, offset + 4);
+        for (var i = 0; i < payLen; i++) payload[i] ^= mask[i % 4];
+      }
+
+      if (opcode === 0x01 || opcode === 0x00) { // text or continuation
+        frames.push(payload.toString('utf8'));
+      } else if (opcode === 0x08) { // close
+        frames.push(null); // signal close
+      }
+      // ping/pong frames: ignore for now (browser sends none unmasked)
+      buf = buf.slice(offset + maskBytes + payLen);
+    }
+    return { frames: frames, remaining: buf };
+  }
+
+  function wsSend(socket, obj) {
+    try { socket.write(wsEncodeText(JSON.stringify(obj))); } catch (_) {}
+  }
+
+  function broadcastGroup(groupId, obj, excludeSocket) {
+    var frame = wsEncodeText(JSON.stringify(obj));
+    wsClients.forEach(function(c) {
+      if (c.groupId === groupId && c.socket !== excludeSocket) {
+        try { c.socket.write(frame); } catch (_) {}
+      }
+    });
+  }
+
+  function sendPeers(groupId) {
+    var groupClients = wsClients.filter(function(c) { return c.groupId === groupId; });
+    var peerList = groupClients.map(function(c) {
+      return { deviceId: c.deviceId, ip: c.ip || '', registeredAt: c.registeredAt };
+    });
+    groupClients.forEach(function(c) {
+      wsSend(c.socket, { type: 'PEERS', groupId: groupId, peers: peerList, serverTimeMs: Date.now() });
+    });
+  }
+
+  function handleWsMessage(client, text) {
+    var msg;
+    try { msg = JSON.parse(text); } catch (_) { return; }
+
+    if (msg.type === 'WS_REGISTER') {
+      client.deviceId = msg.deviceId || ('anon-' + Date.now());
+      client.groupId  = msg.groupId  || 'default';
+      client.ip       = msg.ip       || '';
+      client.registeredAt = Date.now();
+      console.log('[ws] REGISTER ' + client.deviceId + ' group=' + client.groupId);
+
+      // Sync into HTTP peers store so GET /peers returns WS-connected devices.
+      var gid = client.groupId;
+      if (!peers[gid]) peers[gid] = {};
+      peers[gid][client.deviceId] = {
+        deviceId: client.deviceId,
+        role: client.deviceId,
+        ip: client.ip,
+        sessionId: null,
+        registeredAt: client.registeredAt,
+      };
+
+      sendPeers(client.groupId);
+      return;
+    }
+
+    if (msg.type === 'PING') {
+      wsSend(client.socket, { type: 'PONG', t1: msg.t1, t2: Date.now() });
+      return;
+    }
+
+    // LOOP_READY barrier: collect devices that have prebuffered at frame 0.
+    // When all peers in the group are ready, broadcast LOOP_GO to everyone.
+    if (msg.type === 'LOOP_READY') {
+      var gid = msg.groupId || client.groupId;
+      if (!loopReady[gid]) loopReady[gid] = {};
+      loopReady[gid][msg.deviceId || client.deviceId] = true;
+      var readyCount   = Object.keys(loopReady[gid]).length;
+      var groupPeers   = wsClients.filter(function(c) { return c.groupId === gid && c.deviceId; });
+      var expectedCount = Math.max(groupPeers.length, 1);
+      console.log('[Relay] LOOP_READY ' + (msg.deviceId || client.deviceId) + ' (' + readyCount + '/' + expectedCount + ')');
+      if (readyCount >= expectedCount) {
+        loopReady[gid] = {};  // reset for next loop
+        var playAt = Date.now() + 400;
+        broadcastGroup(gid, { type: 'LOOP_GO', playAt: playAt }, null);
+        console.log('[Relay] LOOP_GO playAt=' + playAt + ' -> group ' + gid);
+      }
+      return;  // do NOT relay LOOP_READY to peers (it is handled server-side only)
+    }
+
+    // Broadcast everything else to the same group (include sender's deviceId as "from")
+    if (client.groupId) {
+      var relay = Object.assign({}, msg, { from: client.deviceId });
+      broadcastGroup(client.groupId, relay, client.socket);
+    }
+  }
+
+  function removeWsClient(socket) {
+    var before = wsClients.length;
+    var removed = wsClients.filter(function(c) { return c.socket === socket; });
+    wsClients = wsClients.filter(function(c) { return c.socket !== socket; });
+    if (wsClients.length < before) {
+      // Remove from HTTP peers store too
+      removed.forEach(function(c) {
+        if (c.deviceId && c.groupId && peers[c.groupId]) {
+          delete peers[c.groupId][c.deviceId];
+        }
+      });
+      console.log('[ws] client disconnected; remaining=' + wsClients.length);
+      var groups = {};
+      wsClients.forEach(function(c) { if (c.groupId) groups[c.groupId] = true; });
+      Object.keys(groups).forEach(sendPeers);
+    }
+  }
+
+  server.on('upgrade', function(req, socket, head) {
+    var key = req.headers['sec-websocket-key'];
+    if (!key) { socket.destroy(); return; }
+
+    wsHandshake(socket, key);
+
+    var client = { socket: socket, deviceId: '', groupId: '', ip: '', registeredAt: 0, buf: Buffer.alloc(0) };
+    wsClients.push(client);
+    console.log('[ws] new connection; total=' + wsClients.length);
+
+    // Prepend the head bytes that were already read by the HTTP server
+    if (head && head.length > 0) client.buf = head;
+
+    socket.on('data', function(data) {
+      client.buf = Buffer.concat([client.buf, data]);
+      var result = wsDecodeFrames(client.buf);
+      client.buf = result.remaining;
+      result.frames.forEach(function(frame) {
+        if (frame === null) { socket.destroy(); return; }
+        handleWsMessage(client, frame);
+      });
+    });
+
+    socket.on('close', function() { removeWsClient(socket); });
+    socket.on('error', function(e) {
+      console.log('[ws] socket error: ' + (e && e.message));
+      removeWsClient(socket);
+    });
+  });
+
+  // HEARTBEAT_PEERS broadcast every 5 s
+  setInterval(function() {
+    var groups = {};
+    wsClients.forEach(function(c) { if (c.groupId) groups[c.groupId] = true; });
+    Object.keys(groups).forEach(function(gid) {
+      var ids = wsClients.filter(function(c) { return c.groupId === gid; }).map(function(c) { return c.deviceId; });
+      var frame = wsEncodeText(JSON.stringify({ type: 'HEARTBEAT_PEERS', peers: ids }));
+      wsClients.filter(function(c) { return c.groupId === gid; }).forEach(function(c) {
+        try { c.socket.write(frame); } catch (_) {}
+      });
+    });
+  }, 5000);
 
   return 'nexari-sync-relay started on :' + PORT;
 };
