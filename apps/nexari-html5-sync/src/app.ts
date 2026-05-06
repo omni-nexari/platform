@@ -5,7 +5,7 @@
  * instead of AVPlay. Last-frame freeze is achieved by pausing the video
  * element after EOS (browser compositing holds last decoded frame).
  */
-import { initEngine, prepare, schedulePlayAt, getDuration, destroyEngine } from './engine.js';
+import { initEngine, prepare, schedulePlayAt, getDuration, destroyEngine, setWallCrop } from './engine.js';
 import { initLogger, logger } from './logger.js';
 import { init as syncInit, stop as syncStop } from './sync.js';
 
@@ -22,6 +22,27 @@ const CONFIG = {
   GROUP_ID:       'html5sync-001',
   EXPECTED_PEERS: 1,
 };
+
+// ── Video-wall config ─────────────────────────────────────────────────────────
+// 2×1 wall: QBC (left) | SBB (right).
+// Source content is 1920×1080. Each panel shows its 960×1080 half of the
+// source, stretched to fill the 1920×1080 panel.
+//
+// Canvas drawImage crop:
+//   colW = canvasW / cols = 1920 / 2 = 960
+//   col 0: srcX=0,   srcY=0, srcW=960, srcH=1080
+//   col 1: srcX=960, srcY=0, srcW=960, srcH=1080
+//   Both drawn to dst 1920×1080 — stretched to fill the panel.
+const WALL_DEVICES: Record<string, { col: number; row: number }> = {
+  'tizen7.0-mac-28af427a99db': { col: 0, row: 0 },  // QBC — left panel
+  'tizen4.0-mac-d49dc0aa111b': { col: 1, row: 0 },  // SBB — right panel
+};
+const WALL_CANVAS_W = 1920;   // source video native width
+const WALL_CANVAS_H = 1080;   // source video native height
+const WALL_COLS     = 2;
+const WALL_ROWS     = 1;
+const PANEL_W       = 1920;   // physical display width
+const PANEL_H       = 1080;   // physical display height
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -66,6 +87,21 @@ window.addEventListener('load', async () => {
     }
   });
 
+  // Wall crop MUST be set BEFORE initEngine so the engine creates a canvas (not video elements).
+  const wallPos = WALL_DEVICES[deviceId];
+  if (wallPos) {
+    const colW = WALL_CANVAS_W / WALL_COLS;   // 960
+    const rowH = WALL_CANVAS_H / WALL_ROWS;   // 1080
+    const srcX = wallPos.col * colW;           // 0 or 960
+    const srcY = wallPos.row * rowH;           // 0
+    const srcW = colW;                         // 960
+    const srcH = rowH;                         // 1080
+    logger.info(`[App] wall mode col=${wallPos.col} row=${wallPos.row} srcX=${srcX} srcY=${srcY} srcW=${srcW} srcH=${srcH} → canvas ${PANEL_W}×${PANEL_H}`);
+    setWallCrop(srcX, srcY, srcW, srcH, PANEL_W, PANEL_H);
+  } else {
+    logger.info(`[App] single-screen mode (no wall config for ${deviceId})`);
+  }
+
   initEngine(_container).catch(e => logger.error(`[App] initEngine failed: ${e?.message ?? e}`));
 
   // Start the on-device Node sidecar relay (Pi-less). Fire and forget;
@@ -95,8 +131,12 @@ window.addEventListener('load', async () => {
       restartEngine: () => {
         logger.info('[App] engine restart requested');
         try { destroyEngine(); } catch {}
-        const old = _container.querySelector('video');
-        if (old?.parentNode) old.parentNode.removeChild(old);
+        // Re-apply wall crop before initEngine so canvas is re-created.
+        if (wallPos) {
+          const colW = WALL_CANVAS_W / WALL_COLS;
+          const rowH = WALL_CANVAS_H / WALL_ROWS;
+          setWallCrop(wallPos.col * colW, wallPos.row * rowH, colW, rowH, PANEL_W, PANEL_H);
+        }
         initEngine(_container).catch(e => logger.error(`[App] restartEngine failed: ${e?.message ?? e}`));
       },
       schedulePlay: (epochMs) => {

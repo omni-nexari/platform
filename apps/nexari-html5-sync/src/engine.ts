@@ -1,14 +1,20 @@
 /**
  * engine.ts — A/B HTML5 <video> engine for multi-clip Nexari Sync
  *
- * Two persistent <video> elements:
- *   foreground (fg) — currently playing the active clip (z-index 2, opacity 1)
- *   background (bg) — hidden, paused at frame 0 of the *next* clip (z-index 1, opacity 0)
+ * Two persistent <video> elements (A and B):
+ *   foreground (fg) — currently playing the active clip
+ *   background (bg) — hidden, paused at frame 0 of the *next* clip
  *
- * Only the hidden+paused bg ever has its src reassigned. The fg's src is never
- * touched while it's visible/playing — that's what corrupts Tizen 4's hardware
- * overlay. On LOOP_GO we swap (show+play bg, pause fg), then preload the
- * clip-after-next onto the now-bg.
+ * Non-wall mode: fg is visible via CSS opacity/zIndex; bg hidden.
+ *
+ * Wall mode (CSS transforms don't crop Samsung Tizen 4 HW video planes):
+ *   Both <video> elements are detached from the DOM (display:none — no HW
+ *   plane activated). A single <canvas> is displayed fullscreen. A
+ *   requestAnimationFrame loop draws the active fg video with drawImage(),
+ *   applying the crop: drawImage(fgVideo, srcX, srcY, srcW, srcH, 0, 0, dstW, dstH).
+ *   For a 2×1 wall with 1920×1080 content:
+ *     col 0 (left):  srcX=0,   srcW=960  → stretched to 1920×1080
+ *     col 1 (right): srcX=960, srcW=960  → stretched to 1920×1080
  */
 import { logger } from './logger.js';
 type Role = 'leader' | 'follower';
@@ -30,6 +36,16 @@ let _firstPlay = true;
 let _eosWatchTimer: ReturnType<typeof setInterval> | null = null;
 let _playTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Wall-crop state — survives destroyEngine/initEngine cycles.
+// srcX/srcY/srcW/srcH = region to read from source video (pixels).
+// dstW/dstH = canvas (panel) size.
+let _wallCrop: { srcX: number; srcY: number; srcW: number; srcH: number; dstW: number; dstH: number } | null = null;
+
+// Canvas used in wall mode.
+let _canvas: HTMLCanvasElement | null = null;
+let _ctx: CanvasRenderingContext2D | null = null;
+let _rafId: number | null = null;
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -42,6 +58,28 @@ export function setPlaylist(urls: string[]): void {
   _log('[Engine] playlist set (' + urls.length + '): ' + urls.map(u => u.split('/').pop()).join(', '));
 }
 export function getPlaylistUrls(): string[] { return _playlist; }
+
+/**
+ * setWallCrop — configure canvas-based crop for video-wall mode.
+ *
+ * For a 2×1 wall with 1920×1080 source content and 1920×1080 panels:
+ *   colW = 1920 / 2 = 960
+ *   col 0 (left):  srcX=0,   srcY=0, srcW=960, srcH=1080
+ *   col 1 (right): srcX=960, srcY=0, srcW=960, srcH=1080
+ *   Both drawn to canvas at (0,0) → (1920,1080) — stretched to fill the panel.
+ *
+ * srcX/srcY/srcW/srcH describe the source region in the video's native pixels.
+ * dstW/dstH is the panel (canvas) size in pixels.
+ */
+export function setWallCrop(srcX: number, srcY: number, srcW: number, srcH: number, dstW: number, dstH: number): void {
+  _wallCrop = { srcX, srcY, srcW, srcH, dstW, dstH };
+  _log(`[Engine] wall crop set srcX=${srcX} srcY=${srcY} srcW=${srcW} srcH=${srcH} → canvas ${dstW}×${dstH}`);
+  // If canvas already exists (restart path), resize it.
+  if (_canvas) {
+    _canvas.width  = dstW;
+    _canvas.height = dstH;
+  }
+}
 
 export function isPlaying(): boolean {
   const v = _videos[_fg];
@@ -62,22 +100,39 @@ export function initEngine(container: HTMLElement): Promise<void> {
   for (let i = 0; i < 2; i++) {
     const v = document.createElement('video');
     v.id = 'nexari-player-' + (i === 0 ? 'A' : 'B');
-    v.style.cssText = [
-      'position:absolute', 'top:0', 'left:0', 'width:100%', 'height:100%',
-      'object-fit:contain', 'background:#000'
-    ].join(';');
-    v.style.zIndex  = i === 0 ? '2' : '1';
-    v.style.opacity = i === 0 ? '1' : '0';
+    // Keep videos out of the DOM entirely in wall mode (no HW plane).
+    // In non-wall mode, append them to the container and use CSS opacity.
+    if (!_wallCrop) {
+      v.style.cssText = [
+        'position:absolute', 'top:0', 'left:0', 'width:100%', 'height:100%',
+        'object-fit:contain', 'background:#000'
+      ].join(';');
+      v.style.zIndex  = i === 0 ? '2' : '1';
+      v.style.opacity = i === 0 ? '1' : '0';
+      container.appendChild(v);
+    }
     v.playsInline = true;
     v.autoplay    = false;
     v.muted       = false;
     v.loop        = false;
     v.preload     = 'auto';
-    container.appendChild(v);
     _videos.push(v);
   }
 
-  _log('[Engine] initialised (HTML5 A/B-swap, 2 video elements)');
+  if (_wallCrop) {
+    // Wall mode: create a fullscreen canvas. Videos stay off-DOM.
+    const { dstW, dstH } = _wallCrop;
+    _canvas = document.createElement('canvas');
+    _canvas.width  = dstW;
+    _canvas.height = dstH;
+    _canvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;background:#000;';
+    container.appendChild(_canvas);
+    _ctx = _canvas.getContext('2d');
+    _log(`[Engine] initialised (canvas wall mode, ${dstW}×${dstH})`);
+  } else {
+    _log('[Engine] initialised (HTML5 A/B-swap, 2 video elements)');
+  }
+
   return Promise.resolve();
 }
 
@@ -138,12 +193,16 @@ export function playFromPrebuffer(): void {
 
 export function destroyEngine(): void {
   _stopEosWatch();
+  _stopRaf();
   if (_playTimer !== null) { clearTimeout(_playTimer); _playTimer = null; }
   for (const v of _videos) {
     try { v.pause(); } catch {}
     if (v.parentNode) v.parentNode.removeChild(v);
   }
   _videos = [];
+  if (_canvas && _canvas.parentNode) _canvas.parentNode.removeChild(_canvas);
+  _canvas = null;
+  _ctx = null;
   _durationMs = 0;
   _prebuffered = false;
   _looping = false;
@@ -158,6 +217,28 @@ export function destroyEngine(): void {
 
 function _log(msg: string): void {
   logger.info(msg);
+}
+
+/** Start the canvas draw loop (wall mode only). */
+function _startRaf(): void {
+  if (!_wallCrop || !_ctx || _rafId !== null) return;
+  const { srcX, srcY, srcW, srcH, dstW, dstH } = _wallCrop;
+  const draw = () => {
+    const v = _videos[_fg];
+    if (v && v.readyState >= 2) {
+      _ctx!.drawImage(v, srcX, srcY, srcW, srcH, 0, 0, dstW, dstH);
+    }
+    _rafId = requestAnimationFrame(draw);
+  };
+  _rafId = requestAnimationFrame(draw);
+}
+
+/** Stop the canvas draw loop. */
+function _stopRaf(): void {
+  if (_rafId !== null) {
+    cancelAnimationFrame(_rafId);
+    _rafId = null;
+  }
 }
 
 function _fgLabel(): string { return _fg === 0 ? 'A' : 'B'; }
@@ -248,9 +329,12 @@ function _preloadNext(): Promise<void> {
 
   _log('[Engine] bg(' + _bgLabel() + ') preload: ' + nextUrl.split('/').pop());
 
-  // Make sure bg is hidden + paused before src reassignment.
-  bg.style.opacity = '0';
-  bg.style.zIndex  = '1';
+  // In CSS mode: ensure bg is hidden before reassigning src.
+  // In canvas mode: video is off-DOM, no CSS needed.
+  if (!_wallCrop) {
+    bg.style.opacity = '0';
+    bg.style.zIndex  = '1';
+  }
   try { bg.pause(); } catch {}
 
   const loadOrReuse = (bg.src === nextUrl) ? Promise.resolve() : _loadSrc(bg, nextUrl);
@@ -276,6 +360,7 @@ function _doPlayOrSwap(): void {
     _videos[_fg].play().then(() => {
       _log('[Engine] play() fg(' + _fgLabel() + ') OK');
       _durationMs = Math.round((_videos[_fg].duration || 0) * 1000);
+      if (_wallCrop) _startRaf();
       _startEosWatch();
     }).catch(e => _log('[Engine] play() failed: ' + e));
     return;
@@ -287,30 +372,36 @@ function _doPlayOrSwap(): void {
   const oldV  = _videos[oldFg];
   const newV  = _videos[newFg];
 
-  // Bring new in front; old goes behind. Start new BEFORE pausing old so the
-  // compositor briefly overlaps two frames (hides any single-slot decoder dip).
-  newV.style.zIndex  = '2';
-  newV.style.opacity = '1';
-  oldV.style.zIndex  = '1';
-
   newV.play().then(() => {
     _log('[Engine] swap: now playing fg(' + (newFg === 0 ? 'A' : 'B') + ') idx=' + ((_idx + 1) % _playlist.length));
-    oldV.style.opacity = '0';
-    try { oldV.pause(); } catch {}
-    _fg = newFg;
+    if (_wallCrop) {
+      // Canvas mode: flip the fg pointer; RAF loop starts drawing newV immediately.
+      // Pause old only after new is confirmed playing.
+      _fg = newFg;
+      try { oldV.pause(); } catch {}
+    } else {
+      // CSS mode: update visibility then flip pointer.
+      newV.style.zIndex  = '2';
+      newV.style.opacity = '1';
+      oldV.style.zIndex  = '1';
+      oldV.style.opacity = '0';
+      try { oldV.pause(); } catch {}
+      _fg = newFg;
+    }
     _idx = (_idx + 1) % _playlist.length;
     _durationMs = Math.round((newV.duration || 0) * 1000);
     _prebuffered = false;
     _looping = false;
     _startEosWatch();
-    // Preload clip-after-next onto the now-bg (the old fg).
     _preloadNext().catch((e) => _log('[Engine] preload-after-swap failed: ' + e));
   }).catch(e => {
     _log('[Engine] swap play() failed: ' + e);
-    oldV.style.zIndex  = '2';
-    oldV.style.opacity = '1';
-    newV.style.zIndex  = '1';
-    newV.style.opacity = '0';
+    if (!_wallCrop) {
+      oldV.style.zIndex  = '2';
+      oldV.style.opacity = '1';
+      newV.style.zIndex  = '1';
+      newV.style.opacity = '0';
+    }
   });
 }
 

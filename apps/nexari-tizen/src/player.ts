@@ -2491,6 +2491,11 @@ const Player = {
         }
         break;
       }
+
+      case 'CALENDAR': {
+        this.renderCalendar(container, content);
+        break;
+      }
         
       default:
         logger.warn('Unknown content type:', content.type);
@@ -2708,24 +2713,25 @@ const Player = {
     }
   },
 
-  // ── Videowall CSS-crop renderer ───────────────────────────────────────────
-  // All panels in the wall download the same full-resolution video and each
-  // clips to their assigned cell region using overflow:hidden + CSS translate.
+  // ── Videowall AVPlay setVideoRoi renderer (Tizen 6.0+ B2B/LFD) ─────────────
+  // All panels in the wall download the same full-canvas-resolution video.
+  // Each panel uses AVPlay setVideoRoi to crop its assigned sub-rectangle of
+  // the decoded frame — no DOM/CSS clipping, no HW overlay mismatch.
   // SyncEngine handles P2P drift correction so frames stay aligned.
   _renderVideowallContent(container, content) {
     const mf = this._videowallManifest;
     if (!mf || !mf.geometry || !mf.myCell) {
-      logger.warn('[Videowall] manifest incomplete — falling back to normal HTML5');
-      this.renderVideoHTML5(container, content);
+      logger.warn('[Videowall] manifest incomplete — falling back to normal AVPlay');
+      this.renderVideoAVPlay(container, content);
       return;
     }
 
-    const geo     = mf.geometry;         // { colWidths, rowHeights, canvasW, canvasH }
-    const myCell  = mf.myCell;           // { positionCol, positionRow, colSpan, rowSpan, ... }
+    const geo     = mf.geometry;   // { colWidths, rowHeights, canvasW, canvasH }
+    const myCell  = mf.myCell;     // { positionCol, positionRow, colSpan, rowSpan, ... }
     const col     = myCell.positionCol;
     const row     = myCell.positionRow;
-    const colSpan = myCell.colSpan  || 1;
-    const rowSpan = myCell.rowSpan  || 1;
+    const colSpan = myCell.colSpan || 1;
+    const rowSpan = myCell.rowSpan || 1;
 
     // Compute this cell's top-left offset and size on the virtual canvas.
     let offsetX = 0;
@@ -2740,44 +2746,32 @@ const Player = {
 
     const canvasW = geo.canvasW;
     const canvasH = geo.canvasH;
-    const panelW  = cellW  || 1920;
-    const panelH  = cellH  || 1080;
 
-    logger.info(`[Videowall] cell(${col},${row}) offset(${offsetX},${offsetY}) panel(${panelW}x${panelH}) canvas(${canvasW}x${canvasH})`);
+    logger.info(`[Videowall] cell(${col},${row}) offset(${offsetX},${offsetY}) cell(${cellW}x${cellH}) canvas(${canvasW}x${canvasH})`);
 
-    // ── Container: clips to panel size ──────────────────────────────────
-    container.style.position = 'relative';
-    container.style.width    = panelW + 'px';
-    container.style.height   = panelH + 'px';
-    container.style.overflow = 'hidden';
+    if (!canvasW || !canvasH) {
+      logger.warn('[Videowall] canvas dimensions zero — falling back to normal AVPlay');
+      this.renderVideoAVPlay(container, content);
+      return;
+    }
 
-    // ── Video: sized to full canvas, translated to show cell region ──────
-    const video = document.createElement('video');
-    video.src      = content.url;
-    video.autoplay = true;
-    video.loop     = content.loop  || false;
-    video.muted    = content.muted || false;
-    // Do NOT set playsInline — not a valid IDL attribute on Tizen 4 WebKit.
-
-    video.style.position  = 'absolute';
-    video.style.width     = canvasW + 'px';
-    video.style.height    = canvasH + 'px';
-    video.style.top       = '0';
-    video.style.left      = '0';
-    // Use transform for GPU-composited positioning (better perf on Tizen).
-    video.style.transform = `translate(${-offsetX}px, ${-offsetY}px)`;
-    // Prevent the browser from applying any internal letterbox/pillarbox.
-    video.style.objectFit = 'fill';
-
-    // Register as the active sync target for drift correction.
-    this._activeSyncVideo = video;
-
-    video.onloadedmetadata = () => {
-      video.play().catch((err) => logger.error('[Videowall] play() failed:', err));
+    // Store ROI ratios; consumed once inside renderVideoAVPlay's prepareAsync
+    // callback after the player reaches READY state.
+    this._pendingVideoRoi = {
+      xR: offsetX / canvasW,
+      yR: offsetY / canvasH,
+      wR: cellW   / canvasW,
+      hR: cellH   / canvasH,
     };
-    video.onerror = (err) => logger.error('[Videowall] video error:', err);
+    logger.info(
+      `[Videowall] ROI ratios x=${this._pendingVideoRoi.xR.toFixed(4)}` +
+      ` y=${this._pendingVideoRoi.yR.toFixed(4)}` +
+      ` w=${this._pendingVideoRoi.wR.toFixed(4)}` +
+      ` h=${this._pendingVideoRoi.hR.toFixed(4)}`,
+    );
 
-    container.appendChild(video);
+    // AVPlay renders fullscreen; setVideoRoi crops the source to our tile.
+    this.renderVideoAVPlay(container, content);
   },
 
   // Render video using Samsung AVPlay API
@@ -2882,7 +2876,26 @@ const Player = {
           } catch (rectErr) {
             logger.warn('AVPlay: setDisplayRect after prepare failed', rectErr);
           }
-          
+
+          // Apply videowall ROI crop when this is a wall tile.
+          // setVideoRoi is B2B/LFD only (Tizen 6.0+) and must be called after
+          // prepareAsync completes (player is in READY state).
+          if (this._pendingVideoRoi) {
+            try {
+              const roi = this._pendingVideoRoi;
+              this._pendingVideoRoi = null;
+              (webapis.avplay as any).setVideoRoi(roi.xR, roi.yR, roi.wR, roi.hR);
+              logger.info(
+                `[Videowall] setVideoRoi applied: x=${roi.xR.toFixed(4)}` +
+                ` y=${roi.yR.toFixed(4)}` +
+                ` w=${roi.wR.toFixed(4)}` +
+                ` h=${roi.hR.toFixed(4)}`,
+              );
+            } catch (roiErr) {
+              logger.warn('[Videowall] setVideoRoi failed (not B2B/LFD or Tizen <6):', roiErr);
+            }
+          }
+
           this.setAvPlayVisualMode(true);
           logger.debug('Enabled AVPlay visual mode');
           
@@ -4799,6 +4812,178 @@ const Player = {
     }
   },
 
+  // ── Calendar content ────────────────────────────────────────────────────
+  // Polls /content/{id}/calendar/events on a refresh interval and renders a
+  // simple list (or meeting-room layout) using server-filtered events.
+  async renderCalendar(container, content) {
+    const meta = this.parseContentMetadata(content);
+    const view = (meta.view as string) || 'week';
+    const timezone = (meta.timezone as string) || 'UTC';
+    const refreshSeconds = Math.max(15, Number(meta.refreshSeconds) || 60);
+    const theme = (meta.theme as { accentColor?: string; background?: 'light' | 'dark' }) || {};
+    const accent = theme.accentColor || '#4f46e5';
+    const isDark = theme.background === 'dark';
+    const roomMeta = (meta.roomMeta as { name?: string; capacity?: number; location?: string; bookingUrl?: string } | null);
+
+    const escapeHtml = (s: unknown) => this.escapeHtml(s);
+
+    type Ev = { id: string; title: string; start: string; end: string; allDay: boolean; location?: string | null; isPrivate: boolean };
+
+    // Cancel any previous timer attached to this container.
+    const calContainer = container as HTMLElement & {
+      _calendarReqId?: string;
+      _calendarTimer?: number;
+    };
+    if (calContainer._calendarTimer) {
+      clearInterval(calContainer._calendarTimer);
+      calContainer._calendarTimer = undefined;
+    }
+    const reqId = `cal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    calContainer._calendarReqId = reqId;
+
+    const formatTime = (iso: string) => {
+      try {
+        return new Date(iso).toLocaleString('en-US', {
+          hour: 'numeric', minute: '2-digit',
+          timeZone: timezone,
+        });
+      } catch { return iso; }
+    };
+    const formatDay = (iso: string) => {
+      try {
+        return new Date(iso).toLocaleString('en-US', {
+          weekday: 'short', month: 'short', day: 'numeric',
+          timeZone: timezone,
+        });
+      } catch { return iso; }
+    };
+
+    const buildShell = (body: string) => `
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;
+                  background:${isDark ? '#0f172a' : '#ffffff'};
+                  color:${isDark ? '#e2e8f0' : '#0f172a'};
+                  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+        <header style="padding:24px 32px;border-bottom:1px solid ${isDark ? '#1e293b' : '#e2e8f0'};
+                       display:flex;align-items:center;gap:16px;">
+          <div style="width:6px;align-self:stretch;background:${accent};border-radius:3px;"></div>
+          <div style="flex:1;min-width:0;">
+            <h1 style="margin:0;font-size:32px;font-weight:600;">${escapeHtml(content.name || 'Calendar')}</h1>
+            <p style="margin:4px 0 0;font-size:14px;opacity:0.7;">
+              ${roomMeta?.location ? escapeHtml(roomMeta.location) + ' · ' : ''}${escapeHtml(timezone)}
+            </p>
+          </div>
+          ${roomMeta?.capacity ? `<div style="font-size:14px;opacity:0.7;">Capacity ${roomMeta.capacity}</div>` : ''}
+        </header>
+        <div style="flex:1;overflow:hidden;padding:24px 32px;">${body}</div>
+      </div>`;
+
+    const renderError = (msg: string) => {
+      container.innerHTML = buildShell(`
+        <div style="display:flex;align-items:center;justify-content:center;height:100%;opacity:0.7;">
+          <p style="font-size:18px;">${escapeHtml(msg)}</p>
+        </div>`);
+    };
+
+    const renderEvents = (events: Ev[]) => {
+      if (view === 'meeting_room') {
+        const now = Date.now();
+        const upcoming = events.filter((e) => new Date(e.end).getTime() > now);
+        const current = upcoming.find((e) => new Date(e.start).getTime() <= now);
+        const next = upcoming.filter((e) => new Date(e.start).getTime() > now).slice(0, 5);
+        const statusColor = current ? '#dc2626' : '#16a34a';
+        const statusLabel = current ? 'Busy' : 'Available';
+        const detailLine = current
+          ? `Until ${formatTime(current.end)} · ${escapeHtml(current.title || 'Reserved')}`
+          : (next[0] ? `Free until ${formatTime(next[0].start)}` : 'Free for the rest of the day');
+
+        const list = next.map((e) => `
+          <li style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid ${isDark ? '#1e293b' : '#e2e8f0'};">
+            <span style="opacity:0.85;">${escapeHtml(e.title || 'Reserved')}</span>
+            <span style="opacity:0.6;">${escapeHtml(formatTime(e.start))} – ${escapeHtml(formatTime(e.end))}</span>
+          </li>`).join('');
+
+        container.innerHTML = buildShell(`
+          <div style="display:flex;flex-direction:column;gap:24px;height:100%;">
+            <div style="background:${statusColor};color:#fff;padding:24px 32px;border-radius:16px;">
+              <p style="margin:0;font-size:24px;font-weight:500;opacity:0.85;">
+                ${escapeHtml(roomMeta?.name || content.name || 'Meeting room')}
+              </p>
+              <p style="margin:8px 0 0;font-size:64px;font-weight:700;">${statusLabel}</p>
+              <p style="margin:8px 0 0;font-size:20px;opacity:0.9;">${detailLine}</p>
+            </div>
+            <div style="flex:1;min-height:0;overflow:hidden;">
+              <p style="margin:0 0 12px;font-size:14px;opacity:0.6;text-transform:uppercase;letter-spacing:1px;">Up next</p>
+              <ul style="list-style:none;margin:0;padding:0;">${list || '<li style="opacity:0.5;padding:12px 0;">Nothing else booked today</li>'}</ul>
+            </div>
+            ${roomMeta?.bookingUrl ? `<p style="margin:0;font-size:14px;opacity:0.6;">Book this room: ${escapeHtml(roomMeta.bookingUrl)}</p>` : ''}
+          </div>`);
+        return;
+      }
+
+      // Day / week / month → grouped list.
+      if (events.length === 0) {
+        container.innerHTML = buildShell(`
+          <div style="display:flex;align-items:center;justify-content:center;height:100%;opacity:0.6;">
+            <p style="font-size:24px;">No upcoming events</p>
+          </div>`);
+        return;
+      }
+      const groups = new Map<string, Ev[]>();
+      for (const e of events) {
+        const key = formatDay(e.start);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(e);
+      }
+      const html = Array.from(groups.entries()).map(([day, evs]) => `
+        <section style="margin-bottom:24px;">
+          <p style="margin:0 0 8px;font-size:14px;text-transform:uppercase;letter-spacing:1px;color:${accent};">${escapeHtml(day)}</p>
+          <ul style="list-style:none;margin:0;padding:0;">
+            ${evs.map((e) => `
+              <li style="display:flex;align-items:flex-start;gap:16px;padding:12px 0;border-bottom:1px solid ${isDark ? '#1e293b' : '#e2e8f0'};">
+                <div style="min-width:140px;font-variant-numeric:tabular-nums;opacity:0.75;">
+                  ${e.allDay ? 'All day' : `${escapeHtml(formatTime(e.start))} – ${escapeHtml(formatTime(e.end))}`}
+                </div>
+                <div style="flex:1;min-width:0;">
+                  <p style="margin:0;font-size:18px;font-weight:500;">${escapeHtml(e.title || '(no title)')}</p>
+                  ${e.location ? `<p style="margin:4px 0 0;font-size:14px;opacity:0.6;">${escapeHtml(e.location)}</p>` : ''}
+                </div>
+              </li>`).join('')}
+          </ul>
+        </section>`).join('');
+      container.innerHTML = buildShell(`<div style="height:100%;overflow-y:auto;">${html}</div>`);
+    };
+
+    const fetchAndRender = async () => {
+      if (calContainer._calendarReqId !== reqId) return;
+      const from = new Date();
+      from.setHours(0, 0, 0, 0);
+      const to = new Date(from);
+      const days = view === 'day' || view === 'meeting_room' ? 1 : view === 'month' ? 31 : 7;
+      to.setDate(to.getDate() + days);
+      try {
+        const res = await fetch(
+          `${CONFIG.API_BASE}/content/${encodeURIComponent(content.id)}/calendar/events`
+            + `?from=${encodeURIComponent(from.toISOString())}`
+            + `&to=${encodeURIComponent(to.toISOString())}`,
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = await res.json();
+        if (calContainer._calendarReqId !== reqId || !container.isConnected) return;
+        renderEvents((body.events || []) as Ev[]);
+      } catch (err) {
+        logger.warn('Calendar fetch failed:', err);
+        if (calContainer._calendarReqId === reqId && container.isConnected) {
+          renderError('Could not load calendar events');
+        }
+      }
+    };
+
+    // Render shell immediately with empty list, then fetch.
+    container.innerHTML = buildShell(`<div style="opacity:0.5;">Loading…</div>`);
+    void fetchAndRender();
+    calContainer._calendarTimer = window.setInterval(fetchAndRender, refreshSeconds * 1000);
+  },
+
 
   // Render HTML content
   renderHTML(container, content) {
@@ -5914,6 +6099,12 @@ const Player = {
             logger.warn('ZONE_LAYOUT playlist item: no zones in metadata, skipping');
             scheduleNext(1000);
           }
+          break;
+        }
+
+        case 'CALENDAR': {
+          this.renderCalendar(this.container, content);
+          scheduleNext(duration * 1000);
           break;
         }
           

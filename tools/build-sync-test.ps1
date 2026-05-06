@@ -140,7 +140,11 @@ function Install-SyncTestOnTV {
     }
     Start-Sleep -Seconds 2
 
-    Write-Host "--- Uninstall (if present) ---"
+    Write-Host "--- Uninstall NexariHtml5Sync (if present) ---"
+    & $tizen uninstall -s $tv -p "NxrHtmlSnc.NexariHtml5Sync" 2>&1 | Out-String | Write-Host
+    Start-Sleep -Seconds 3
+
+    Write-Host "--- Uninstall NexariSyncEngine (if present) ---"
     & $tizen uninstall -s $tv -p $appId 2>&1 | Out-String | Write-Host
     Start-Sleep -Seconds 3
 

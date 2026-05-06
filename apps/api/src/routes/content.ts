@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { db, contentItems, contentFolders, contentVersions, playlistItems, workspaceMembers, workspaces, orgStorageQuotas, users, scheduleSlots, devices } from '@signage/db';
+import { db, contentItems, contentFolders, contentVersions, playlistItems, workspaceMembers, workspaces, orgStorageQuotas, users, scheduleSlots, devices, calendarConnections } from '@signage/db';
 import { eq, and, isNull, isNotNull, desc, ilike, or, sql, getTableColumns, asc, inArray } from 'drizzle-orm';
 import { createReadStream, promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -19,6 +19,7 @@ import {
   processContentMedia,
 } from '../services/media-processing.js';
 import { getQueue, QUEUE_NAMES } from '../queues/index.js';
+import { listEventsForConnection } from '../services/calendar/index.js';
 import {
   CreateChannelGroupSchema,
   UpdateChannelGroupSchema,
@@ -545,6 +546,159 @@ export async function contentRoutes(app: FastifyInstance) {
     }).returning();
 
     return reply.status(201).send(item);
+  });
+
+  // ── POST /content/calendar ───────────────────────────────────────────────
+  app.post('/calendar', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as {
+      workspaceId?: string;
+      name?: string;
+      connectionId?: string;
+      view?: 'day' | 'week' | 'month' | 'meeting_room';
+      selectedCalendarIds?: string[];
+      keywordFilter?: string | null;
+      privacyMode?: 'titles' | 'busy_only';
+      timezone?: string;
+      theme?: Record<string, unknown>;
+      renderMode?: 'native' | 'image';
+      refreshSeconds?: number;
+      roomMeta?: { name?: string; capacity?: number; location?: string; bookingUrl?: string } | null;
+      duration?: number;
+    };
+
+    const wsId = body.workspaceId;
+    if (!wsId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (!body.name?.trim()) return reply.status(400).send({ error: 'name required' });
+    if (!body.connectionId) return reply.status(400).send({ error: 'connectionId required' });
+
+    const view = body.view ?? 'week';
+    if (!['day', 'week', 'month', 'meeting_room'].includes(view)) {
+      return reply.status(400).send({ error: 'Invalid view' });
+    }
+
+    const member = await checkWorkspaceAccess(wsId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+    const wsRowCal = await db.query.workspaces.findFirst({ where: eq(workspaces.id, wsId), columns: { settings: true } });
+    let wsSettingsCal: { approvalRequired?: boolean } = {};
+    try { wsSettingsCal = JSON.parse(wsRowCal?.settings ?? '{}'); } catch { /* ignore */ }
+    const initialApprovalStateCal = wsSettingsCal.approvalRequired && !APPROVE_ROLES.has(user.role) ? 'draft' : 'approved';
+
+    const metadata = JSON.stringify({
+      connectionId: body.connectionId,
+      view,
+      selectedCalendarIds: body.selectedCalendarIds ?? [],
+      keywordFilter: body.keywordFilter ?? null,
+      privacyMode: body.privacyMode ?? 'titles',
+      timezone: body.timezone ?? 'UTC',
+      theme: body.theme ?? {},
+      renderMode: body.renderMode ?? 'native',
+      refreshSeconds: body.refreshSeconds ?? 60,
+      roomMeta: body.roomMeta ?? null,
+    });
+
+    const [item] = await db.insert(contentItems).values({
+      workspaceId: wsId,
+      uploadedBy: user.sub,
+      type: 'calendar',
+      name: body.name.trim(),
+      duration: body.duration ?? 30,
+      status: 'ready',
+      approvalState: initialApprovalStateCal,
+      metadata,
+    }).returning();
+
+    return reply.status(201).send(item);
+  });
+
+  // ── PATCH /content/:id/calendar ─────────────────────────────────────────
+  app.patch('/:id/calendar', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const patch = req.body as Record<string, unknown>;
+
+    const item = await db.query.contentItems.findFirst({ where: eq(contentItems.id, id) });
+    if (!item) return reply.status(404).send({ error: 'Not found' });
+    if (item.type !== 'calendar') return reply.status(400).send({ error: 'Not a calendar content item' });
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+    let meta: Record<string, unknown> = {};
+    try { meta = JSON.parse(item.metadata ?? '{}'); } catch { /* ignore */ }
+    const allowed = [
+      'connectionId', 'view', 'selectedCalendarIds', 'keywordFilter', 'privacyMode',
+      'timezone', 'theme', 'renderMode', 'refreshSeconds', 'roomMeta',
+    ] as const;
+    for (const k of allowed) {
+      if (k in patch) meta[k] = patch[k as keyof typeof patch];
+    }
+
+    const updates: Record<string, unknown> = { metadata: JSON.stringify(meta) };
+    if (typeof patch['name'] === 'string' && (patch['name'] as string).trim()) {
+      updates['name'] = (patch['name'] as string).trim();
+    }
+    if (typeof patch['duration'] === 'number') updates['duration'] = patch['duration'];
+
+    const [updated] = await db.update(contentItems)
+      .set(updates as never)
+      .where(eq(contentItems.id, id))
+      .returning();
+    return reply.send(updated);
+  });
+
+  // ── GET /content/:id/calendar/events?from=&to= ──────────────────────────
+  app.get('/:id/calendar/events', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const q = req.query as { from?: string; to?: string };
+
+    const item = await db.query.contentItems.findFirst({ where: eq(contentItems.id, id) });
+    if (!item) return reply.status(404).send({ error: 'Not found' });
+    if (item.type !== 'calendar') return reply.status(400).send({ error: 'Not a calendar content item' });
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+
+    let meta: {
+      connectionId?: string;
+      selectedCalendarIds?: string[];
+      keywordFilter?: string | null;
+      privacyMode?: 'titles' | 'busy_only';
+    } = {};
+    try { meta = JSON.parse(item.metadata ?? '{}'); } catch { /* ignore */ }
+    if (!meta.connectionId) return reply.status(400).send({ error: 'No connection configured' });
+
+    const conn = await db.query.calendarConnections.findFirst({
+      where: and(eq(calendarConnections.id, meta.connectionId), isNull(calendarConnections.deletedAt)),
+    });
+    if (!conn) return reply.status(404).send({ error: 'Connection not found' });
+    if (conn.workspaceId !== item.workspaceId) return reply.status(403).send({ error: 'Connection mismatch' });
+
+    const fromD = q.from ? new Date(q.from) : new Date();
+    const toD = q.to ? new Date(q.to) : new Date(Date.now() + 7 * 86_400_000);
+    if (Number.isNaN(fromD.getTime()) || Number.isNaN(toD.getTime())) {
+      return reply.status(400).send({ error: 'Invalid from/to' });
+    }
+
+    try {
+      const events = await listEventsForConnection(conn, {
+        from: fromD, to: toD,
+        calendarIds: meta.selectedCalendarIds,
+        keyword: meta.keywordFilter ?? undefined,
+      });
+      const safe = (meta.privacyMode === 'busy_only')
+        ? events.map((e) => ({
+            ...e, title: 'Busy', location: null, description: null,
+            organizerEmail: null, organizerName: null, attendeeCount: null,
+          }))
+        : events;
+      return reply.send({ events: safe });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.status(502).send({ error: 'Provider error', detail: msg });
+    }
   });
 
   // ── POST /content/menu-board ──────────────────────────────────────────────

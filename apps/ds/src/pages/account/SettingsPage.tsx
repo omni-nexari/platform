@@ -47,6 +47,10 @@ import {
   Printer,
   Smartphone,
   Gift,
+  Plug,
+  CalendarRange,
+  Globe,
+  ExternalLink,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
@@ -151,7 +155,8 @@ type SectionId =
   | 'pos-tables'
   | 'pos-hardware'
   | 'pos-kiosk'
-  | 'pos-loyalty';
+  | 'pos-loyalty'
+  | 'integrations';
 
 const SECTIONS: {
   id: SectionId;
@@ -169,6 +174,7 @@ const SECTIONS: {
   { id: 'emergency',    label: 'Emergency Alert',  icon: AlertTriangle, group: 'Workspace' },
   { id: 'audit',        label: 'Audit Log',        icon: ClipboardList, group: 'Workspace' },
   { id: 'api-keys',     label: 'API Keys',         icon: Key,           group: 'Workspace' },
+  { id: 'integrations', label: 'Integrations',     icon: Plug,          group: 'Workspace' },
   { id: 'notifications',label: 'Notifications',    icon: Bell,          group: 'Preferences' },
   // POS sections — rendered conditionally when posEnabled
   { id: 'pos-restaurant', label: 'Restaurant',   icon: Store,           group: 'Point of Sale', posOnly: true },
@@ -188,6 +194,7 @@ const SECTION_LABELS: Record<SectionId, string> = {
   emergency:        'Emergency Alert',
   audit:            'Audit Log',
   'api-keys':       'API Keys',
+  integrations:     'Integrations',
   notifications:    'Notifications',
   'pos-restaurant': 'Restaurant',
   'pos-menu':       'Menu',
@@ -2387,6 +2394,416 @@ const NOTIF_EVENT_META: Record<string, { label: string; hint: string }> = {
   invitation_accepted: { label: 'Invitation accepted',             hint: 'Sent to the person who sent the invite' },
 };
 
+// ─── Integrations section ────────────────────────────────────────────────────
+
+interface CalendarConnection {
+  id: string;
+  workspaceId: string;
+  userId: string | null;
+  scope: 'workspace' | 'personal';
+  provider: 'google' | 'microsoft' | 'apple_caldav' | 'ics';
+  displayName: string;
+  accountEmail: string | null;
+  status: 'active' | 'error' | 'revoked';
+  lastSyncedAt: string | null;
+  lastErrorMessage: string | null;
+  createdAt: string;
+}
+
+const PROVIDER_LABEL: Record<CalendarConnection['provider'], string> = {
+  google: 'Google Calendar',
+  microsoft: 'Outlook / Microsoft 365',
+  apple_caldav: 'Apple iCloud (CalDAV)',
+  ics: 'ICS URL',
+};
+
+function parseApiError(err: unknown): string | null {
+  if (!err) return null;
+  const message = err instanceof Error ? err.message : String(err);
+  try {
+    const j = JSON.parse(message);
+    if (j && typeof j === 'object') {
+      return (j.detail as string) || (j.error as string) || null;
+    }
+  } catch { /* not JSON */ }
+  return message || null;
+}
+
+function IntegrationsSection({ selectedWsId }: { selectedWsId: string | null }) {
+  const qc = useQueryClient();
+  const user = useAuthStore((s) => s.user);
+  const isManager = !!user && ['prime_owner', 'owner', 'admin', 'a-manager'].includes(user.orgRole);
+  const [scope, setScope] = useState<'workspace' | 'personal'>('personal');
+  const [showApple, setShowApple] = useState(false);
+  const [showIcs, setShowIcs] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Surface OAuth result toast on return from callback redirect.
+  useEffect(() => {
+    const result = searchParams.get('oauth');
+    const provider = searchParams.get('provider');
+    const detail = searchParams.get('detail');
+    if (!result) return;
+    if (result === 'connected') {
+      toast.success(`${provider ?? 'Calendar'} connected`);
+    } else {
+      toast.error(`Connection failed${detail ? `: ${detail}` : ''}`);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('oauth');
+    next.delete('provider');
+    next.delete('detail');
+    setSearchParams(next, { replace: true });
+    qc.invalidateQueries({ queryKey: ['calendar-connections', selectedWsId] });
+  }, [searchParams, setSearchParams, qc, selectedWsId]);
+
+  const connectionsQuery = useQuery<CalendarConnection[]>({
+    queryKey: ['calendar-connections', selectedWsId],
+    enabled: !!selectedWsId,
+    queryFn: async () => {
+      const res = await api.get<CalendarConnection[]>(`/integrations/calendar/connections?workspaceId=${selectedWsId}`);
+      return res;
+    },
+  });
+
+  const startOAuth = async (provider: 'google' | 'microsoft') => {
+    if (!selectedWsId) return;
+    if (scope === 'workspace' && !isManager) {
+      toast.error('Manager role required for workspace-shared connections');
+      return;
+    }
+    try {
+      const res = await api.get<{ redirectUrl: string }>(
+        `/integrations/calendar/oauth/${provider}/start?workspaceId=${selectedWsId}&scope=${scope}`,
+      );
+      window.location.href = res.redirectUrl;
+    } catch (err: unknown) {
+      toast.error(parseApiError(err) ?? 'Could not start OAuth flow');
+    }
+  };
+
+  const disconnect = useMutation({
+    mutationFn: async (id: string) => api.delete(`/integrations/calendar/connections/${id}`),
+    onSuccess: () => {
+      toast.success('Disconnected');
+      qc.invalidateQueries({ queryKey: ['calendar-connections', selectedWsId] });
+    },
+    onError: (err: unknown) => toast.error(parseApiError(err) ?? 'Failed to disconnect'),
+  });
+
+  const sync = useMutation({
+    mutationFn: async (id: string) =>
+      api.post(`/integrations/calendar/connections/${id}/sync-calendars`),
+    onSuccess: () => {
+      toast.success('Calendars synced');
+      qc.invalidateQueries({ queryKey: ['calendar-connections', selectedWsId] });
+    },
+    onError: (err: unknown) => toast.error(parseApiError(err) ?? 'Sync failed'),
+  });
+
+  if (!selectedWsId) {
+    return <Callout tone="accent">Select a workspace to manage calendar connections.</Callout>;
+  }
+
+  const connections = connectionsQuery.data ?? [];
+
+  return (
+    <div className="space-y-6">
+      <Callout tone="accent">
+        Connect a calendar to display upcoming events on signage. We never store passwords;
+        OAuth tokens and CalDAV credentials are encrypted at rest.
+      </Callout>
+
+      <SectionCard>
+        <SectionCardHeader>
+          <h3 className="text-sm font-semibold"><Plug size={14} className="inline mr-1.5 mb-0.5" />New connection</h3>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <div className="flex items-center gap-3 mb-4">
+            <span className="text-xs text-[var(--text-muted)]">Scope:</span>
+            <div className="inline-flex rounded-lg border border-[var(--border)] overflow-hidden">
+              <button
+                onClick={() => setScope('personal')}
+                className={`px-3 py-1.5 text-xs ${scope === 'personal' ? 'bg-[var(--blue)] text-white' : 'text-[var(--text-muted)] hover:bg-[var(--surface)]'}`}
+              >
+                Just me
+              </button>
+              <button
+                onClick={() => setScope('workspace')}
+                disabled={!isManager}
+                title={!isManager ? 'Manager role required' : undefined}
+                className={`px-3 py-1.5 text-xs ${scope === 'workspace' ? 'bg-[var(--blue)] text-white' : 'text-[var(--text-muted)] hover:bg-[var(--surface)]'} disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                Whole workspace
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <ActionButton onClick={() => startOAuth('google')}>
+              <CalendarDays size={16} /> Connect Google
+            </ActionButton>
+            <ActionButton onClick={() => startOAuth('microsoft')}>
+              <CalendarRange size={16} /> Connect Outlook
+            </ActionButton>
+            <ActionButton onClick={() => setShowApple(true)}>
+              <CalendarDays size={16} /> Connect Apple iCloud
+            </ActionButton>
+            <ActionButton onClick={() => setShowIcs(true)}>
+              <Globe size={16} /> Add ICS URL
+            </ActionButton>
+          </div>
+        </SectionCardBody>
+      </SectionCard>
+
+      <SectionCard>
+        <SectionCardHeader>
+          <h3 className="text-sm font-semibold"><CalendarDays size={14} className="inline mr-1.5 mb-0.5" />Connected calendars</h3>
+        </SectionCardHeader>
+        <SectionCardBody>
+          {connectionsQuery.isLoading && <Skeleton className="h-16" />}
+          {!connectionsQuery.isLoading && connections.length === 0 && (
+            <p className="text-sm text-[var(--text-muted)]">No calendars connected yet.</p>
+          )}
+          <div className="space-y-2">
+            {connections.map((c) => (
+              <div
+                key={c.id}
+                className="flex items-center gap-3 p-3 rounded-lg border border-[var(--border)] bg-[var(--card)]"
+              >
+                <div className="w-8 h-8 rounded-md bg-[var(--surface)] flex items-center justify-center shrink-0">
+                  <CalendarDays size={16} className="text-[var(--text-muted)]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm font-medium text-[var(--text)] truncate">{c.displayName}</p>
+                    <Badge tone={c.scope === 'workspace' ? 'info' : 'neutral'}>
+                      {c.scope === 'workspace' ? 'Workspace' : 'Just you'}
+                    </Badge>
+                    <Badge tone={c.status === 'active' ? 'success' : c.status === 'error' ? 'danger' : 'neutral'}>
+                      {c.status}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-[var(--text-muted)] truncate">
+                    {PROVIDER_LABEL[c.provider]}
+                    {c.accountEmail ? ` · ${c.accountEmail}` : ''}
+                    {c.lastSyncedAt ? ` · synced ${new Date(c.lastSyncedAt).toLocaleString()}` : ''}
+                  </p>
+                  {c.lastErrorMessage && (
+                    <p className="text-xs text-[var(--red)] mt-1 truncate">{c.lastErrorMessage}</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => sync.mutate(c.id)}
+                  disabled={sync.isPending}
+                  className="p-1.5 rounded hover:bg-[var(--surface)] text-[var(--text-muted)]"
+                  title="Refresh calendar list"
+                >
+                  <RefreshCw size={14} className={sync.isPending ? 'animate-spin' : ''} />
+                </button>
+                <button
+                  onClick={() => {
+                    if (confirm(`Disconnect ${c.displayName}?`)) disconnect.mutate(c.id);
+                  }}
+                  className="p-1.5 rounded hover:bg-[var(--surface)] text-[var(--red)]"
+                  title="Disconnect"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </SectionCardBody>
+      </SectionCard>
+
+      {showApple && (
+        <AppleConnectModal
+          workspaceId={selectedWsId}
+          scope={scope}
+          onClose={() => setShowApple(false)}
+          onCreated={() => {
+            setShowApple(false);
+            qc.invalidateQueries({ queryKey: ['calendar-connections', selectedWsId] });
+          }}
+        />
+      )}
+      {showIcs && (
+        <IcsConnectModal
+          workspaceId={selectedWsId}
+          scope={scope}
+          onClose={() => setShowIcs(false)}
+          onCreated={() => {
+            setShowIcs(false);
+            qc.invalidateQueries({ queryKey: ['calendar-connections', selectedWsId] });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function AppleConnectModal({
+  workspaceId, scope, onClose, onCreated,
+}: {
+  workspaceId: string;
+  scope: 'workspace' | 'personal';
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [name, setName] = useState('My iCloud calendar');
+  const [appleId, setAppleId] = useState('');
+  const [appPassword, setAppPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!appleId.trim() || !appPassword.trim()) {
+      toast.error('Apple ID and app-specific password required');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.post('/integrations/calendar/connections/apple', {
+        workspaceId, scope, name: name.trim(),
+        appleId: appleId.trim(), appPassword: appPassword.trim(),
+      });
+      toast.success('Apple iCloud calendar connected');
+      onCreated();
+    } catch (err: unknown) {
+      toast.error(parseApiError(err) ?? 'Could not connect');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-[var(--text)]">Connect Apple iCloud</h3>
+          <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={18} /></button>
+        </div>
+        <Callout tone="accent">
+          Apple does not offer OAuth for calendars. Generate an{' '}
+          <a
+            href="https://appleid.apple.com/account/manage"
+            target="_blank"
+            rel="noreferrer"
+            className="underline inline-flex items-center gap-1"
+          >
+            app-specific password <ExternalLink size={11} />
+          </a>{' '}
+          and paste it below. The password is encrypted at rest.
+        </Callout>
+        <div className="space-y-3 mt-4">
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">Display name</label>
+            <input
+              value={name} onChange={(e) => setName(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">Apple ID (email)</label>
+            <input
+              value={appleId} onChange={(e) => setAppleId(e.target.value)}
+              type="email" autoComplete="off"
+              className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">App-specific password</label>
+            <div className="relative">
+              <input
+                value={appPassword} onChange={(e) => setAppPassword(e.target.value)}
+                type={showPw ? 'text' : 'password'} autoComplete="off"
+                className="w-full px-3 py-2 pr-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
+              />
+              <button
+                type="button" onClick={() => setShowPw((v) => !v)}
+                className="absolute inset-y-0 right-2 flex items-center text-[var(--text-muted)]"
+              >
+                {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-5">
+          <ActionButton onClick={onClose}>Cancel</ActionButton>
+          <ActionButton tone="primary" onClick={submit} disabled={busy}>{busy ? 'Connecting…' : 'Connect'}</ActionButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IcsConnectModal({
+  workspaceId, scope, onClose, onCreated,
+}: {
+  workspaceId: string;
+  scope: 'workspace' | 'personal';
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [name, setName] = useState('External calendar');
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!url.trim()) {
+      toast.error('ICS URL required');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.post('/integrations/calendar/connections/ics', {
+        workspaceId, scope, name: name.trim(), icsUrl: url.trim(),
+      });
+      toast.success('ICS calendar added');
+      onCreated();
+    } catch (err: unknown) {
+      toast.error(parseApiError(err) ?? 'Could not add');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-[var(--text)]">Add ICS URL</h3>
+          <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={18} /></button>
+        </div>
+        <Callout tone="accent">
+          Paste a public <code>.ics</code> or <code>webcal://</code> URL. Loopback and private network URLs are not allowed.
+        </Callout>
+        <div className="space-y-3 mt-4">
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">Display name</label>
+            <input
+              value={name} onChange={(e) => setName(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">ICS URL</label>
+            <input
+              value={url} onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://example.com/calendar.ics"
+              className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-5">
+          <ActionButton onClick={onClose}>Cancel</ActionButton>
+          <ActionButton tone="primary" onClick={submit} disabled={busy}>{busy ? 'Adding…' : 'Add'}</ActionButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NotificationsSection() {
   const qc = useQueryClient();
   const user = useAuthStore((s) => s.user);
@@ -3687,7 +4104,7 @@ export default function SettingsPage() {
   const groups = Array.from(new Set(visibleSections.map((s) => s.group)));
 
   const WORKSPACE_SECTIONS: SectionId[] = [
-    'workspace', 'tags', 'emergency', 'api-keys',
+    'workspace', 'tags', 'emergency', 'api-keys', 'integrations',
     'pos-restaurant', 'pos-menu', 'pos-tables', 'pos-hardware', 'pos-kiosk', 'pos-loyalty',
   ];
   const needsWorkspacePicker = WORKSPACE_SECTIONS.includes(activeSection);
@@ -3753,6 +4170,7 @@ export default function SettingsPage() {
           {activeSection === 'emergency'     && <EmergencySection workspaces={workspaces} selectedWsId={resolvedWsId} />}
           {activeSection === 'audit'         && <AuditSection />}
           {activeSection === 'api-keys'      && <ApiKeysSection selectedWsId={resolvedWsId} />}
+          {activeSection === 'integrations'   && <IntegrationsSection selectedWsId={resolvedWsId} />}
           {activeSection === 'notifications' && <NotificationsSection />}
           {activeSection === 'pos-restaurant' && <PosRestaurantSection wsId={resolvedWsId} />}
           {activeSection === 'pos-menu'       && <PosMenuSection wsId={resolvedWsId} />}

@@ -341,3 +341,51 @@ export function buildWallGeometry(
 
   return { gridCols, gridRows, canvasW, canvasH, colWidths, rowHeights, bezels: bezels ?? null };
 }
+
+// ── AVPlay setVideoRoi crop (Tizen 6.0+ B2B/LFD) ─────────────────────────────
+
+/**
+ * AVPlay setVideoRoi parameters — ratios in [0.0, 1.0] of source video
+ * dimensions.  Pass directly to `webapis.avplay.setVideoRoi(xR, yR, wR, hR)`.
+ *
+ * The source video must be encoded at full canvas resolution (canvasW × canvasH).
+ * setVideoRoi crops the decoded frame to the sub-rectangle that belongs to
+ * this panel, so the panel displays only its tile of the wall.
+ */
+export interface TileVideoRoi {
+  /** x offset ratio: offsetX / canvasW */
+  xR: number;
+  /** y offset ratio: offsetY / canvasH */
+  yR: number;
+  /** width ratio: cellW / canvasW */
+  wR: number;
+  /** height ratio: cellH / canvasH */
+  hR: number;
+}
+
+/**
+ * Compute AVPlay `setVideoRoi` parameters for a wall member.
+ *
+ * All returned values are in [0.0, 1.0] (ratios of source video dimensions).
+ * The sum `xR + wR` and `yR + hR` must not exceed 1.0; the math guarantees
+ * this as long as the member lies fully inside the canvas.
+ *
+ * @param member      The panel/member to render on.
+ * @param colWidths   Output of {@link computeColWidths}.
+ * @param rowHeights  Output of {@link computeRowHeights}.
+ */
+export function computeTileVideoRoi(
+  member: WallMember,
+  colWidths: number[],
+  rowHeights: number[],
+): TileVideoRoi {
+  const rect = computeCellRect(member, colWidths, rowHeights);
+  const { canvasW, canvasH } = computeCanvasSize(colWidths, rowHeights);
+
+  return {
+    xR: rect.x / canvasW,
+    yR: rect.y / canvasH,
+    wR: rect.w / canvasW,
+    hR: rect.h / canvasH,
+  };
+}

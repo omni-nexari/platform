@@ -4,7 +4,7 @@
  * Single engine: AVPlay with prepareAsync prebuffering + setSpeed drift correction.
  * BACK key exits.
  */
-import { initEngine, prepare, schedulePlayAt, getDuration, destroyEngine } from './engine.js';
+import { initEngine, prepare, schedulePlayAt, getDuration, destroyEngine, setWallCrop, setHtml5Wall } from './engine.js';
 import { initLogger, logger } from './logger.js';
 import { init as syncInit, stop as syncStop } from './sync.js';
 
@@ -23,6 +23,31 @@ const CONFIG = {
   GROUP_ID:       'syncengine-001',
   EXPECTED_PEERS: 1,
 };
+
+// ── Video-wall config ─────────────────────────────────────────────────────────
+// 2×1 wall: QBC (left) | SBB (right).
+// Source video is 1920×1080 — each panel shows half of the source frame
+// stretched to fullscreen.
+//
+// AVPlay approach: setVideoRoi(xRatio, yRatio, wRatio, hRatio) — source-region
+// crop. Display rect stays fullscreen 1920×1080. Each panel decodes the full
+// frame and the GPU scaler renders only its slice.
+//   col 0 (QBC, left):  ROI = (0,   0, 0.5, 1)
+//   col 1 (SBB, right): ROI = (0.5, 0, 0.5, 1)
+//
+// Note: setVideoRoi requires Tizen 6.0+ (B2B/LFD). On Tizen <6 (e.g. SBB
+// Tizen 4) the engine logs a warning and plays full-frame. SBB will need
+// the HTML5 CSS-transform wall path — a separate follow-on task.
+const WALL_DEVICES: Record<string, { col: number; row: number }> = {
+  'tizen7.0-mac-28af427a99db': { col: 0, row: 0 },  // QBC — left  (AVPlay setVideoRoi, Tizen 7)
+  'tizen4.0-mac-d49dc0aa111b': { col: 1, row: 0 },  // SBB — right (HTML5 CSS crop, Tizen 4)
+};
+const WALL_COLS = 2;
+const WALL_ROWS = 1;
+
+// Devices that use HTML5 <video> + CSS negative-offset crop instead of AVPlay setVideoRoi.
+// Needed for Tizen <6 where setVideoRoi is not available and displayRect rejects negative offsets.
+const HTML5_DEVICES = new Set(['tizen4.0-mac-d49dc0aa111b']);
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -56,6 +81,24 @@ window.addEventListener('load', async () => {
       try { (window as any).tizen?.application?.getCurrentApplication().exit(); } catch {}
     }
   });
+
+  // Apply video-wall crop config BEFORE initEngine so _useHtml5 and _wallRoi
+  // are set when the engine initialises. (initEngine branches on _useHtml5.)
+  const wallPos = WALL_DEVICES[deviceId];
+  if (wallPos) {
+    const wR = 1 / WALL_COLS;           // 0.5
+    const hR = 1 / WALL_ROWS;           // 1
+    const xR = wallPos.col * wR;        // 0 or 0.5
+    const yR = wallPos.row * hR;        // 0
+    logger.info(`[App] wall mode col=${wallPos.col} row=${wallPos.row} ROI=[${xR},${yR},${wR},${hR}]`);
+    setWallCrop(xR, yR, wR, hR);
+    if (HTML5_DEVICES.has(deviceId)) {
+      setHtml5Wall();
+      modeEl.textContent = 'HTML5';
+    }
+  } else {
+    logger.info(`[App] single-screen mode (no wall config for ${deviceId})`);
+  }
 
   initEngine(_container);
 

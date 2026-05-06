@@ -112,6 +112,14 @@
   function getPlaylistUrls() {
     return _playlist;
   }
+  function setWallCrop(srcX, srcY, srcW, srcH, dstW, dstH) {
+    _wallCrop = { srcX, srcY, srcW, srcH, dstW, dstH };
+    _log(`[Engine] wall crop set srcX=${srcX} srcY=${srcY} srcW=${srcW} srcH=${srcH} \u2192 canvas ${dstW}\xD7${dstH}`);
+    if (_canvas) {
+      _canvas.width = dstW;
+      _canvas.height = dstH;
+    }
+  }
   function isPlaying() {
     const v = _videos[_fg];
     return !!v && !v.paused && !v.ended && v.readyState >= 2;
@@ -129,26 +137,39 @@
     for (let i = 0; i < 2; i++) {
       const v = document.createElement("video");
       v.id = "nexari-player-" + (i === 0 ? "A" : "B");
-      v.style.cssText = [
-        "position:absolute",
-        "top:0",
-        "left:0",
-        "width:100%",
-        "height:100%",
-        "object-fit:contain",
-        "background:#000"
-      ].join(";");
-      v.style.zIndex = i === 0 ? "2" : "1";
-      v.style.opacity = i === 0 ? "1" : "0";
+      if (!_wallCrop) {
+        v.style.cssText = [
+          "position:absolute",
+          "top:0",
+          "left:0",
+          "width:100%",
+          "height:100%",
+          "object-fit:contain",
+          "background:#000"
+        ].join(";");
+        v.style.zIndex = i === 0 ? "2" : "1";
+        v.style.opacity = i === 0 ? "1" : "0";
+        container.appendChild(v);
+      }
       v.playsInline = true;
       v.autoplay = false;
       v.muted = false;
       v.loop = false;
       v.preload = "auto";
-      container.appendChild(v);
       _videos.push(v);
     }
-    _log("[Engine] initialised (HTML5 A/B-swap, 2 video elements)");
+    if (_wallCrop) {
+      const { dstW, dstH } = _wallCrop;
+      _canvas = document.createElement("canvas");
+      _canvas.width = dstW;
+      _canvas.height = dstH;
+      _canvas.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;background:#000;";
+      container.appendChild(_canvas);
+      _ctx = _canvas.getContext("2d");
+      _log(`[Engine] initialised (canvas wall mode, ${dstW}\xD7${dstH})`);
+    } else {
+      _log("[Engine] initialised (HTML5 A/B-swap, 2 video elements)");
+    }
     return Promise.resolve();
   }
   function prepare(url) {
@@ -190,6 +211,7 @@
   }
   function destroyEngine() {
     _stopEosWatch();
+    _stopRaf();
     if (_playTimer !== null) {
       clearTimeout(_playTimer);
       _playTimer = null;
@@ -202,6 +224,9 @@
       if (v.parentNode) v.parentNode.removeChild(v);
     }
     _videos = [];
+    if (_canvas && _canvas.parentNode) _canvas.parentNode.removeChild(_canvas);
+    _canvas = null;
+    _ctx = null;
     _durationMs = 0;
     _prebuffered = false;
     _looping = false;
@@ -211,6 +236,24 @@
   }
   function _log(msg) {
     logger.info(msg);
+  }
+  function _startRaf() {
+    if (!_wallCrop || !_ctx || _rafId !== null) return;
+    const { srcX, srcY, srcW, srcH, dstW, dstH } = _wallCrop;
+    const draw = () => {
+      const v = _videos[_fg];
+      if (v && v.readyState >= 2) {
+        _ctx.drawImage(v, srcX, srcY, srcW, srcH, 0, 0, dstW, dstH);
+      }
+      _rafId = requestAnimationFrame(draw);
+    };
+    _rafId = requestAnimationFrame(draw);
+  }
+  function _stopRaf() {
+    if (_rafId !== null) {
+      cancelAnimationFrame(_rafId);
+      _rafId = null;
+    }
   }
   function _fgLabel() {
     return _fg === 0 ? "A" : "B";
@@ -296,8 +339,10 @@
       return Promise.resolve();
     }
     _log("[Engine] bg(" + _bgLabel() + ") preload: " + nextUrl.split("/").pop());
-    bg.style.opacity = "0";
-    bg.style.zIndex = "1";
+    if (!_wallCrop) {
+      bg.style.opacity = "0";
+      bg.style.zIndex = "1";
+    }
     try {
       bg.pause();
     } catch (e) {
@@ -335,6 +380,7 @@
       _videos[_fg].play().then(() => {
         _log("[Engine] play() fg(" + _fgLabel() + ") OK");
         _durationMs = Math.round((_videos[_fg].duration || 0) * 1e3);
+        if (_wallCrop) _startRaf();
         _startEosWatch();
       }).catch((e) => _log("[Engine] play() failed: " + e));
       return;
@@ -343,17 +389,25 @@
     const newFg = 1 - _fg;
     const oldV = _videos[oldFg];
     const newV = _videos[newFg];
-    newV.style.zIndex = "2";
-    newV.style.opacity = "1";
-    oldV.style.zIndex = "1";
     newV.play().then(() => {
       _log("[Engine] swap: now playing fg(" + (newFg === 0 ? "A" : "B") + ") idx=" + (_idx + 1) % _playlist.length);
-      oldV.style.opacity = "0";
-      try {
-        oldV.pause();
-      } catch (e) {
+      if (_wallCrop) {
+        _fg = newFg;
+        try {
+          oldV.pause();
+        } catch (e) {
+        }
+      } else {
+        newV.style.zIndex = "2";
+        newV.style.opacity = "1";
+        oldV.style.zIndex = "1";
+        oldV.style.opacity = "0";
+        try {
+          oldV.pause();
+        } catch (e) {
+        }
+        _fg = newFg;
       }
-      _fg = newFg;
       _idx = (_idx + 1) % _playlist.length;
       _durationMs = Math.round((newV.duration || 0) * 1e3);
       _prebuffered = false;
@@ -362,10 +416,12 @@
       _preloadNext().catch((e) => _log("[Engine] preload-after-swap failed: " + e));
     }).catch((e) => {
       _log("[Engine] swap play() failed: " + e);
-      oldV.style.zIndex = "2";
-      oldV.style.opacity = "1";
-      newV.style.zIndex = "1";
-      newV.style.opacity = "0";
+      if (!_wallCrop) {
+        oldV.style.zIndex = "2";
+        oldV.style.opacity = "1";
+        newV.style.zIndex = "1";
+        newV.style.opacity = "0";
+      }
     });
   }
   function _startEosWatch() {
@@ -417,7 +473,7 @@
       if (_onLoop) _onLoop();
     });
   }
-  var _role, _playlist, _onLoop, _videos, _fg, _container, _idx, _durationMs, _prebuffered, _looping, _firstPlay, _eosWatchTimer, _playTimer;
+  var _role, _playlist, _onLoop, _videos, _fg, _container, _idx, _durationMs, _prebuffered, _looping, _firstPlay, _eosWatchTimer, _playTimer, _wallCrop, _canvas, _ctx, _rafId;
   var init_engine = __esm({
     "src/engine.ts"() {
       init_logger();
@@ -434,6 +490,10 @@
       _firstPlay = true;
       _eosWatchTimer = null;
       _playTimer = null;
+      _wallCrop = null;
+      _canvas = null;
+      _ctx = null;
+      _rafId = null;
     }
   });
 
@@ -931,6 +991,18 @@
         GROUP_ID: "html5sync-001",
         EXPECTED_PEERS: 1
       };
+      var WALL_DEVICES = {
+        "tizen7.0-mac-28af427a99db": { col: 0, row: 0 },
+        // QBC — left panel
+        "tizen4.0-mac-d49dc0aa111b": { col: 1, row: 0 }
+        // SBB — right panel
+      };
+      var WALL_CANVAS_W = 1920;
+      var WALL_CANVAS_H = 1080;
+      var WALL_COLS = 2;
+      var WALL_ROWS = 1;
+      var PANEL_W = 1920;
+      var PANEL_H = 1080;
       var _container2;
       var _syncStarted = false;
       window.addEventListener("error", (e) => {
@@ -977,6 +1049,19 @@
             }
           }
         });
+        const wallPos = WALL_DEVICES[deviceId];
+        if (wallPos) {
+          const colW = WALL_CANVAS_W / WALL_COLS;
+          const rowH = WALL_CANVAS_H / WALL_ROWS;
+          const srcX = wallPos.col * colW;
+          const srcY = wallPos.row * rowH;
+          const srcW = colW;
+          const srcH = rowH;
+          logger.info(`[App] wall mode col=${wallPos.col} row=${wallPos.row} srcX=${srcX} srcY=${srcY} srcW=${srcW} srcH=${srcH} \u2192 canvas ${PANEL_W}\xD7${PANEL_H}`);
+          setWallCrop(srcX, srcY, srcW, srcH, PANEL_W, PANEL_H);
+        } else {
+          logger.info(`[App] single-screen mode (no wall config for ${deviceId})`);
+        }
         initEngine(_container2).catch((e) => {
           var _a;
           return logger.error(`[App] initEngine failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
@@ -1006,8 +1091,11 @@
                 destroyEngine();
               } catch (e) {
               }
-              const old = _container2.querySelector("video");
-              if (old == null ? void 0 : old.parentNode) old.parentNode.removeChild(old);
+              if (wallPos) {
+                const colW = WALL_CANVAS_W / WALL_COLS;
+                const rowH = WALL_CANVAS_H / WALL_ROWS;
+                setWallCrop(wallPos.col * colW, wallPos.row * rowH, colW, rowH, PANEL_W, PANEL_H);
+              }
               initEngine(_container2).catch((e) => {
                 var _a;
                 return logger.error(`[App] restartEngine failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);

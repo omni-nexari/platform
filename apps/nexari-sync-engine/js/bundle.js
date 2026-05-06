@@ -114,6 +114,28 @@
     }
   }
   function _setupDisplay(p) {
+    if (_wallRoi) {
+      if (p) {
+        try {
+          p.setDisplayRect(0, 0, 1920, 1080);
+        } catch (e) {
+        }
+        try {
+          p.setDisplayMethod("PLAYER_DISPLAY_MODE_FULL_SCREEN");
+        } catch (e) {
+        }
+      } else {
+        try {
+          webapis.avplay.setDisplayRect(0, 0, 1920, 1080);
+        } catch (e) {
+        }
+        try {
+          webapis.avplay.setDisplayMethod("PLAYER_DISPLAY_MODE_FULL_SCREEN");
+        } catch (e) {
+        }
+      }
+      return;
+    }
     if (p) {
       try {
         p.setDisplayRect(0, 0, 1920, 1080);
@@ -156,11 +178,233 @@
       }
     }
   }
+  function _applyWallRoi(p) {
+    var _a, _b, _c, _d;
+    if (!_wallRoi) return;
+    const { xR, yR, wR, hR } = _wallRoi;
+    const target = p != null ? p : webapis.avplay;
+    if (target && typeof target.setVideoRoi === "function") {
+      try {
+        target.setVideoRoi(xR, yR, wR, hR);
+        logger.info(`[AVPlay] setVideoRoi(${xR}, ${yR}, ${wR}, ${hR}) applied`);
+        return;
+      } catch (e) {
+        logger.warn(`[AVPlay] setVideoRoi threw: ${(_b = (_a = e == null ? void 0 : e.name) != null ? _a : e == null ? void 0 : e.message) != null ? _b : e} \u2014 trying displayRect fallback`);
+      }
+    } else {
+      logger.info("[AVPlay] setVideoRoi unavailable (Tizen <6.0?) \u2014 trying displayRect fallback");
+    }
+    const outW = Math.round(1920 / wR);
+    const outH = Math.round(1080 / hR);
+    const offX = -Math.round(xR * outW);
+    const offY = -Math.round(yR * outH);
+    if (offX < 0 || offY < 0) {
+      logger.warn(`[AVPlay] displayRect fallback needs negative offset (${offX},${offY}) \u2014 Tizen <6 cannot crop col>0/row>0; playing full frame`);
+      return;
+    }
+    try {
+      if (p) {
+        p.setDisplayRect(offX, offY, outW, outH);
+        try {
+          p.setDisplayMethod("PLAYER_DISPLAY_MODE_FULL_SCREEN");
+        } catch (e) {
+        }
+      } else {
+        webapis.avplay.setDisplayRect(offX, offY, outW, outH);
+        try {
+          webapis.avplay.setDisplayMethod("PLAYER_DISPLAY_MODE_FULL_SCREEN");
+        } catch (e) {
+        }
+      }
+      logger.info(`[AVPlay] displayRect oversize fallback (${offX},${offY},${outW},${outH}) applied`);
+    } catch (e) {
+      logger.warn(`[AVPlay] displayRect fallback threw: ${(_d = (_c = e == null ? void 0 : e.name) != null ? _c : e == null ? void 0 : e.message) != null ? _d : e} \u2014 playing full frame`);
+    }
+  }
   function _setStillMode(on) {
     if (!_playerA) return;
     try {
       _playerA.setVideoStillMode(on ? "true" : "false");
     } catch (e) {
+    }
+  }
+  function _h5Cleanup() {
+    _h5StopEosWatch();
+    for (const v of _html5Videos) {
+      try {
+        v.pause();
+      } catch (e) {
+      }
+      if (v.parentNode) v.parentNode.removeChild(v);
+    }
+    _html5Videos = [];
+    _html5Fg = 0;
+    _html5FirstPlay = true;
+  }
+  function _h5StyleVideo(v, isFg) {
+    v.style.cssText = [
+      "position:absolute",
+      "top:0",
+      "left:0",
+      "background:#000"
+    ].join(";");
+    v.style.zIndex = isFg ? "2" : "1";
+    v.style.opacity = isFg ? "1" : "0";
+    v.playsInline = true;
+    v.autoplay = false;
+    v.muted = true;
+    v.loop = false;
+    v.preload = "auto";
+    if (_wallRoi) {
+      const { xR, yR, wR, hR } = _wallRoi;
+      const vw = Math.round(1920 / wR);
+      const vh = Math.round(1080 / hR);
+      const vl = -Math.round(xR * vw);
+      const vt = -Math.round(yR * vh);
+      v.style.width = vw + "px";
+      v.style.height = vh + "px";
+      v.style.transform = `translate(${vl}px,${vt}px)`;
+      v.style.objectFit = "fill";
+    } else {
+      v.style.width = "100%";
+      v.style.height = "100%";
+      v.style.objectFit = "contain";
+    }
+  }
+  function _h5EnsureVideos() {
+    if (_html5Videos.length === 2) return;
+    _h5Cleanup();
+    const host = _html5Container != null ? _html5Container : document.body;
+    for (let i = 0; i < 2; i++) {
+      const v = document.createElement("video");
+      v.id = "nexari-h5-" + (i === 0 ? "A" : "B");
+      _h5StyleVideo(v, i === 0);
+      host.appendChild(v);
+      _html5Videos.push(v);
+    }
+    _html5Fg = 0;
+    _html5FirstPlay = true;
+    if (_wallRoi) {
+      const { xR, yR, wR, hR } = _wallRoi;
+      const vw = Math.round(1920 / wR);
+      const vh = Math.round(1080 / hR);
+      const vl = -Math.round(xR * vw);
+      const vt = -Math.round(yR * vh);
+      logger.info(`[HTML5] A/B videos created \u2014 size=${vw}x${vh} offset=(${vl},${vt})`);
+    } else {
+      logger.info("[HTML5] A/B videos created \u2014 fullscreen");
+    }
+  }
+  function _h5LoadSrc(v, url) {
+    return new Promise((resolve, reject) => {
+      let done = false;
+      const cleanup = () => {
+        v.removeEventListener("canplay", onCanPlay);
+        v.removeEventListener("loadeddata", onCanPlay);
+        v.removeEventListener("error", onError);
+      };
+      const onCanPlay = () => {
+        if (done) return;
+        done = true;
+        cleanup();
+        resolve();
+      };
+      const onError = () => {
+        var _a, _b;
+        if (done) return;
+        done = true;
+        cleanup();
+        reject(new Error("video error code=" + ((_b = (_a = v.error) == null ? void 0 : _a.code) != null ? _b : "?") + " src=" + url));
+      };
+      v.addEventListener("canplay", onCanPlay);
+      v.addEventListener("loadeddata", onCanPlay);
+      v.addEventListener("error", onError);
+      try {
+        v.pause();
+      } catch (e) {
+      }
+      v.src = url;
+      v.load();
+      setTimeout(() => {
+        if (!done) {
+          logger.warn("[HTML5] _h5LoadSrc canplay timeout \u2014 forcing");
+          onCanPlay();
+        }
+      }, 8e3);
+    });
+  }
+  function _h5SeekToZero(v) {
+    return new Promise((resolve) => {
+      if (Math.abs(v.currentTime) < 0.05) {
+        resolve();
+        return;
+      }
+      let done = false;
+      const onSeeked = () => {
+        if (done) return;
+        done = true;
+        v.removeEventListener("seeked", onSeeked);
+        resolve();
+      };
+      v.addEventListener("seeked", onSeeked);
+      try {
+        v.pause();
+        v.currentTime = 0;
+      } catch (e) {
+        done = true;
+        v.removeEventListener("seeked", onSeeked);
+        resolve();
+        return;
+      }
+      setTimeout(() => {
+        if (!done) {
+          done = true;
+          v.removeEventListener("seeked", onSeeked);
+          resolve();
+        }
+      }, 800);
+    });
+  }
+  function _h5PreloadBg() {
+    if (_html5Videos.length < 2 || _playlist.length < 2) return Promise.resolve();
+    const bg = _html5Videos[1 - _html5Fg];
+    const nextIdx = (_playlistIdx + 1) % _playlist.length;
+    const nextUrl = _playlist[nextIdx];
+    if (bg.src === nextUrl && bg.readyState >= 2 && Math.abs(bg.currentTime) < 0.05) {
+      return Promise.resolve();
+    }
+    logger.info(`[HTML5] bg preload: ${nextUrl.split("/").pop()}`);
+    bg.style.opacity = "0";
+    bg.style.zIndex = "1";
+    try {
+      bg.pause();
+    } catch (e) {
+    }
+    const loadOrReuse = bg.src === nextUrl ? Promise.resolve() : _h5LoadSrc(bg, nextUrl);
+    return loadOrReuse.then(() => _h5SeekToZero(bg)).then(() => {
+      logger.info("[HTML5] bg prebuffered at frame 0");
+    });
+  }
+  function _h5StartEosWatch() {
+    _h5StopEosWatch();
+    _html5EosTimer = setInterval(() => {
+      if (_destroyed || _looping || _prebuffered) return;
+      const v = _html5Videos[_html5Fg];
+      if (!v) return;
+      const ct = v.currentTime, dur = v.duration;
+      if (!dur || !isFinite(dur)) return;
+      if ((dur - ct) * 1e3 < H5_EOS_LEAD_MS) {
+        logger.info("[HTML5] EOS approaching \u2014 arming next loop");
+        _h5StopEosWatch();
+        _playing = false;
+        _prebufferForBarrier();
+      }
+    }, 200);
+  }
+  function _h5StopEosWatch() {
+    if (_html5EosTimer != null) {
+      clearInterval(_html5EosTimer);
+      _html5EosTimer = null;
     }
   }
   function _makeListenerA() {
@@ -244,19 +488,25 @@
       try {
         let pos;
         let st;
-        if (_useAvplaystore && _playerA) {
+        if (_useHtml5) {
+          const v = _html5Videos[_html5Fg];
+          if (!v) return;
+          pos = Math.round(v.currentTime * 1e3);
+          st = v.paused ? "PAUSED" : "PLAYING";
+        } else if (_useAvplaystore && _playerA) {
           pos = _playerA.getCurrentTime();
           st = _getState(_playerA);
         } else {
           pos = webapis.avplay.getCurrentTime();
           st = _avState();
         }
-        logger.info(`[AVPlay] pos=${pos}ms duration=${_durationMs}ms state=${st}`);
+        logger.info(`[${_useHtml5 ? "HTML5" : "AVPlay"}] pos=${pos}ms duration=${_durationMs}ms state=${st}`);
         if (_durationMs > 0 && pos >= _durationMs - 200) {
           frozenCount++;
           if (frozenCount >= 2) {
             frozenCount = 0;
-            logger.warn(`[AVPlay] watchdog: frozen at end pos=${pos}ms -- forcing prebuffer`);
+            logger.warn(`[${_useHtml5 ? "HTML5" : "AVPlay"}] watchdog: frozen at end pos=${pos}ms -- forcing prebuffer`);
+            _playing = false;
             _prebufferForBarrier();
           }
         } else {
@@ -278,6 +528,14 @@
   function setOnLoop(cb) {
     _onLoop = cb;
   }
+  function setWallCrop(xRatio, yRatio, wRatio, hRatio) {
+    _wallRoi = { xR: xRatio, yR: yRatio, wR: wRatio, hR: hRatio };
+    logger.info(`[AVPlay] wall ROI set xR=${xRatio} yR=${yRatio} wR=${wRatio} hR=${hRatio}`);
+  }
+  function setHtml5Wall() {
+    _useHtml5 = true;
+    logger.info("[HTML5] HTML5 wall mode enabled");
+  }
   function setPlaylist(urls) {
     if (urls.length === 0) return;
     _playlist = urls;
@@ -285,7 +543,8 @@
     _url = urls[0];
     logger.info(`[AVPlay] playlist (${urls.length}): ${urls.map((u) => u.split("/").pop()).join(", ")}`);
   }
-  function initEngine(_container) {
+  function initEngine(container) {
+    var _a;
     _destroyed = false;
     _playing = false;
     _durationMs = 0;
@@ -294,6 +553,27 @@
     _prebuffered = false;
     clearTimeout(_playTimer);
     _stopDriftLog();
+    if (_useHtml5) {
+      _html5Container = container;
+      _h5Cleanup();
+      try {
+        const s = (() => {
+          try {
+            return webapis.avplay.getState();
+          } catch (e) {
+            return "NONE";
+          }
+        })();
+        if (s === "PLAYING" || s === "PAUSED") webapis.avplay.stop();
+        if (s !== "NONE") webapis.avplay.close();
+        logger.info(`[HTML5] init: pre-existing avplay state=${s} -- closed`);
+      } catch (e) {
+        logger.info(`[HTML5] init: avplay close skipped (${(_a = e == null ? void 0 : e.message) != null ? _a : e})`);
+      }
+      _h5EnsureVideos();
+      logger.info("[HTML5] initEngine \u2014 HTML5 A/B wall mode");
+      return;
+    }
     try {
       if (typeof webapis !== "undefined" && webapis.avplaystore) {
         if (_playerA) {
@@ -337,7 +617,9 @@
     }
     logger.info(`[AVPlay] prepare: ${url.split("/").pop()} avplaystore=${_useAvplaystore}`);
     return new Promise((resolve, reject) => {
-      if (_useAvplaystore && _playerA) {
+      if (_useHtml5) {
+        _prepareHtml5(url, resolve, reject);
+      } else if (_useAvplaystore && _playerA) {
         _openAndPrepare(_playerA, url, _makeListenerA(), resolve, reject);
       } else {
         _prepareSingle(url, resolve, reject);
@@ -359,6 +641,7 @@
       () => {
         if (_destroyed) return resolve();
         _setupDisplay(p);
+        _applyWallRoi(p);
         _durationMs = p.getDuration();
         logger.info(`[AVPlay] A prepared -- duration=${_durationMs}ms`);
         resolve();
@@ -385,6 +668,7 @@
       () => {
         if (_destroyed) return resolve();
         _setupDisplay();
+        _applyWallRoi();
         _durationMs = webapis.avplay.getDuration();
         logger.info(`[AVPlay] prepared -- duration=${_durationMs}ms`);
         resolve();
@@ -396,6 +680,28 @@
       }
     );
   }
+  function _prepareHtml5(url, resolve, reject) {
+    _h5EnsureVideos();
+    if (_playlist.length > 0) {
+      const found = _playlist.indexOf(url);
+      _playlistIdx = found >= 0 ? found : 0;
+    }
+    _html5FirstPlay = true;
+    const fg = _html5Videos[_html5Fg];
+    _h5LoadSrc(fg, url).then(() => _h5SeekToZero(fg)).then(() => {
+      if (_destroyed) return resolve();
+      _durationMs = Math.round((fg.duration || 0) * 1e3);
+      logger.info(`[HTML5] fg(${_html5Fg === 0 ? "A" : "B"}) prepared \u2014 duration=${_durationMs}ms`);
+      _h5PreloadBg().catch((e) => {
+        var _a;
+        return logger.warn(`[HTML5] bg preload error: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+      });
+      resolve();
+    }).catch((e) => {
+      var _a;
+      return reject(new Error(`HTML5 prepare failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`));
+    });
+  }
   function _prebufferForBarrier() {
     if (_destroyed || _looping) return;
     _looping = true;
@@ -406,7 +712,9 @@
       _url = _playlist[_playlistIdx];
       logger.info(`[AVPlay] playlist -> [${_playlistIdx + 1}/${_playlist.length}] ${_url.split("/").pop()}`);
     }
-    if (_useAvplaystore && _playerA) {
+    if (_useHtml5) {
+      _prebufferHtml5(_url);
+    } else if (_useAvplaystore && _playerA) {
       _prebufferAvplaystore(_url);
     } else {
       _prebufferGlobalAvplay(_url);
@@ -435,6 +743,7 @@
           return;
         }
         _setupDisplay(_playerA);
+        _applyWallRoi(_playerA);
         _durationMs = _playerA.getDuration();
         try {
           _playerA.play();
@@ -487,6 +796,7 @@
               return;
             }
             _setupDisplay();
+            _applyWallRoi();
             _durationMs = webapis.avplay.getDuration();
             try {
               webapis.avplay.play();
@@ -518,6 +828,42 @@
       }
     }, 50);
   }
+  function _prebufferHtml5(nextUrl) {
+    const bg = _html5Videos[1 - _html5Fg];
+    const ready = bg && bg.src === nextUrl && bg.readyState >= 2 && Math.abs(bg.currentTime) < 0.05;
+    const fire = () => {
+      if (_destroyed) {
+        _looping = false;
+        return;
+      }
+      _looping = false;
+      _prebuffered = true;
+      logger.info("[HTML5] bg prebuffered \u2014 LOOP_READY");
+      if (_onLoop) _onLoop();
+    };
+    if (ready) {
+      logger.info("[HTML5] bg already at frame 0 \u2014 firing LOOP_READY immediately");
+      fire();
+      return;
+    }
+    logger.info("[HTML5] bg not ready \u2014 loading now");
+    if (!bg) {
+      _looping = false;
+      return;
+    }
+    bg.style.opacity = "0";
+    bg.style.zIndex = "1";
+    try {
+      bg.pause();
+    } catch (e) {
+    }
+    const loadOrReuse = bg.src === nextUrl ? Promise.resolve() : _h5LoadSrc(bg, nextUrl);
+    loadOrReuse.then(() => _h5SeekToZero(bg)).then(fire).catch((e) => {
+      var _a;
+      logger.warn(`[HTML5] prebuffer load failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e} \u2014 firing LOOP_READY anyway to unblock barrier`);
+      fire();
+    });
+  }
   function schedulePlayAt(epochMs) {
     if (_destroyed) return;
     clearTimeout(_playTimer);
@@ -543,6 +889,77 @@
     if (_destroyed || _playing) return;
     _prebuffered = false;
     _playing = true;
+    if (_useHtml5) {
+      if (_html5Videos.length < 2) {
+        logger.error("[HTML5] _doPlay: videos not initialised");
+        return;
+      }
+      if (_html5FirstPlay) {
+        _html5FirstPlay = false;
+        const fg = _html5Videos[_html5Fg];
+        try {
+          fg.currentTime = 0;
+        } catch (e) {
+        }
+        const p2 = fg.play();
+        const ok = () => {
+          logger.info(`[HTML5] play() fg(${_html5Fg === 0 ? "A" : "B"}) \u2014 synchronized start`);
+          _durationMs = Math.round((fg.duration || 0) * 1e3);
+          _h5StartEosWatch();
+        };
+        if (p2 && typeof p2.then === "function") {
+          p2.then(ok).catch((e) => {
+            var _a;
+            return logger.error(`[HTML5] play() failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+          });
+        } else {
+          ok();
+        }
+        _startDriftLog();
+        return;
+      }
+      const oldFg = _html5Fg;
+      const newFg = 1 - _html5Fg;
+      const oldV = _html5Videos[oldFg];
+      const newV = _html5Videos[newFg];
+      newV.style.zIndex = "2";
+      newV.style.opacity = "1";
+      oldV.style.zIndex = "1";
+      try {
+        newV.currentTime = 0;
+      } catch (e) {
+      }
+      const p = newV.play();
+      const onSwapOk = () => {
+        oldV.style.opacity = "0";
+        try {
+          oldV.pause();
+        } catch (e) {
+        }
+        _html5Fg = newFg;
+        _durationMs = Math.round((newV.duration || 0) * 1e3);
+        logger.info(`[HTML5] swap \u2014 now playing fg(${newFg === 0 ? "A" : "B"}) idx=${_playlistIdx}`);
+        _h5StartEosWatch();
+        _h5PreloadBg().catch((e) => {
+          var _a;
+          return logger.warn(`[HTML5] post-swap preload failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+        });
+      };
+      if (p && typeof p.then === "function") {
+        p.then(onSwapOk).catch((e) => {
+          var _a;
+          logger.error(`[HTML5] swap play() failed: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+          oldV.style.zIndex = "2";
+          oldV.style.opacity = "1";
+          newV.style.zIndex = "1";
+          newV.style.opacity = "0";
+        });
+      } else {
+        onSwapOk();
+      }
+      _startDriftLog();
+      return;
+    }
     if (_useAvplaystore && _playerA) {
       _setStillMode(false);
       try {
@@ -565,11 +982,19 @@
     return _durationMs;
   }
   function isPlaying() {
+    if (_useHtml5) {
+      const v = _html5Videos[_html5Fg];
+      return _playing && v != null && !v.paused;
+    }
     if (_useAvplaystore && _playerA) return _playing && _getState(_playerA) === "PLAYING";
     return _playing && _avState() === "PLAYING";
   }
   function getCurrentPosMs() {
     if (!_playing) return null;
+    if (_useHtml5) {
+      const v = _html5Videos[_html5Fg];
+      return v ? Math.round(v.currentTime * 1e3) : null;
+    }
     try {
       if (_useAvplaystore && _playerA) return _playerA.getCurrentTime();
       return webapis.avplay.getCurrentTime();
@@ -584,6 +1009,11 @@
     _looping = false;
     clearTimeout(_playTimer);
     _stopDriftLog();
+    if (_useHtml5) {
+      _h5Cleanup();
+      logger.info("[HTML5] engine destroyed");
+      return;
+    }
     if (_playerA) {
       _setStillMode(false);
       try {
@@ -604,7 +1034,7 @@
     _useAvplaystore = false;
     logger.info("[AVPlay] engine destroyed");
   }
-  var _url, _durationMs, _playing, _destroyed, _prebuffered, _looping, _playTimer, _driftTimer, _role, _onLoop, _playlist, _playlistIdx, _useAvplaystore, _playerA, DRIFT_LOG_MS;
+  var _url, _durationMs, _playing, _destroyed, _prebuffered, _looping, _playTimer, _driftTimer, _role, _onLoop, _playlist, _playlistIdx, _useAvplaystore, _playerA, _wallRoi, _useHtml5, _html5Videos, _html5Fg, _html5FirstPlay, _html5EosTimer, _html5Container, DRIFT_LOG_MS, H5_EOS_LEAD_MS;
   var init_engine = __esm({
     "src/engine.ts"() {
       init_logger();
@@ -622,7 +1052,15 @@
       _playlistIdx = 0;
       _useAvplaystore = false;
       _playerA = null;
+      _wallRoi = null;
+      _useHtml5 = false;
+      _html5Videos = [];
+      _html5Fg = 0;
+      _html5FirstPlay = true;
+      _html5EosTimer = null;
+      _html5Container = null;
       DRIFT_LOG_MS = 2e3;
+      H5_EOS_LEAD_MS = 1e3;
     }
   });
 
@@ -1101,6 +1539,15 @@
         GROUP_ID: "syncengine-001",
         EXPECTED_PEERS: 1
       };
+      var WALL_DEVICES = {
+        "tizen7.0-mac-28af427a99db": { col: 0, row: 0 },
+        // QBC — left  (AVPlay setVideoRoi, Tizen 7)
+        "tizen4.0-mac-d49dc0aa111b": { col: 1, row: 0 }
+        // SBB — right (HTML5 CSS crop, Tizen 4)
+      };
+      var WALL_COLS = 2;
+      var WALL_ROWS = 1;
+      var HTML5_DEVICES = /* @__PURE__ */ new Set(["tizen4.0-mac-d49dc0aa111b"]);
       var _container;
       var _syncStarted = false;
       window.addEventListener("load", () => __async(null, null, function* () {
@@ -1129,6 +1576,21 @@
             }
           }
         });
+        const wallPos = WALL_DEVICES[deviceId];
+        if (wallPos) {
+          const wR = 1 / WALL_COLS;
+          const hR = 1 / WALL_ROWS;
+          const xR = wallPos.col * wR;
+          const yR = wallPos.row * hR;
+          logger.info(`[App] wall mode col=${wallPos.col} row=${wallPos.row} ROI=[${xR},${yR},${wR},${hR}]`);
+          setWallCrop(xR, yR, wR, hR);
+          if (HTML5_DEVICES.has(deviceId)) {
+            setHtml5Wall();
+            modeEl.textContent = "HTML5";
+          }
+        } else {
+          logger.info(`[App] single-screen mode (no wall config for ${deviceId})`);
+        }
         initEngine(_container);
         _startNodeRelay(setStatus);
         if (!_syncStarted) {

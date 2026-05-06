@@ -248,6 +248,76 @@ function VideowallGroupCard({
   );
 }
 
+function SyncGroupCard({
+  group,
+  devices,
+  onClick,
+}: {
+  group: DeviceGroupListItem;
+  devices: Device[];
+  onClick: () => void;
+}) {
+  const onlineCount = devices.filter((d) => d.status === 'online').length;
+  return (
+    <div
+      onClick={onClick}
+      className="rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-4 flex flex-col gap-3 cursor-pointer hover:border-[var(--blue)]/60 transition-colors"
+    >
+      {/* Mini preview grid — up to 4 thumbnails */}
+      <div className="grid grid-cols-2 gap-1">
+        {devices.slice(0, 4).map((d) => (
+          <div key={d.id} className="relative">
+            <DeviceScreenshot
+              deviceId={d.id}
+              screenshotId={d.latestScreenshotId}
+              latestFrameAt={d.latestFrameAt}
+              status={d.status}
+              powerState={d.powerState}
+            />
+            <div className="absolute bottom-0 left-0 right-0 rounded-b-lg px-1 py-0.5 text-[9px] text-white bg-black/50 truncate">
+              {d.name}
+            </div>
+          </div>
+        ))}
+        {devices.length > 4 && (
+          <div className="aspect-video rounded-lg bg-[var(--surface)] flex items-center justify-center text-xs text-[var(--text-muted)]">
+            +{devices.length - 4} more
+          </div>
+        )}
+      </div>
+
+      {/* Icon + name */}
+      <div className="flex items-start gap-2">
+        <div className="w-8 h-8 rounded-lg bg-purple-500/15 text-purple-400 flex items-center justify-center shrink-0">
+          <RotateCcw className="w-4 h-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-[var(--text)] truncate">{group.name}</p>
+          <p className="text-xs text-[var(--text-muted)]">{devices.length} device{devices.length !== 1 ? 's' : ''}</p>
+        </div>
+      </div>
+
+      {/* Badges */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge tone="neutral" className="text-purple-400 border-purple-500/30 bg-purple-500/10">Sync Group</Badge>
+        <Badge
+          tone={
+            onlineCount === devices.length
+              ? 'success'
+              : onlineCount > 0
+              ? 'warning'
+              : 'neutral'
+          }
+        >
+          {onlineCount}/{devices.length} online
+        </Badge>
+      </div>
+
+      <ChevronRight className="w-4 h-4 text-[var(--text-muted)] self-end" />
+    </div>
+  );
+}
+
 function PairInstructions() {
   const [copied, setCopied] = useState(false);
   const playerUrl = `${window.location.origin}/tizen`;
@@ -475,7 +545,7 @@ export default function DevicesPage() {
             const sectionDevices = filteredDevices.filter((d) => (d.type ?? 'signage') === key);
             if (sectionDevices.length === 0) return null;
 
-            // Split into videowall group cards + ungrouped individual cards
+            // Split into videowall group cards + sync group cards + ungrouped individual cards
             const groupedDeviceIds = new Set<string>();
             const videowallGroupsHere: Array<{ group: DeviceGroupListItem; members: Device[] }> = [];
             for (const g of groups) {
@@ -484,6 +554,14 @@ export default function DevicesPage() {
               if (members.length === 0) continue;
               members.forEach((d) => groupedDeviceIds.add(d.id));
               videowallGroupsHere.push({ group: g, members });
+            }
+            const syncGroupsHere: Array<{ group: DeviceGroupListItem; members: Device[] }> = [];
+            for (const g of groups) {
+              if (g.type !== 'sync') continue;
+              const members = sectionDevices.filter((d) => g.memberDeviceIds.includes(d.id));
+              if (members.length === 0) continue;
+              members.forEach((d) => groupedDeviceIds.add(d.id));
+              syncGroupsHere.push({ group: g, members });
             }
             const ungroupedDevices = sectionDevices.filter((d) => !groupedDeviceIds.has(d.id));
 
@@ -497,6 +575,14 @@ export default function DevicesPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {videowallGroupsHere.map(({ group, members }) => (
                     <VideowallGroupCard
+                      key={`group-${group.id}`}
+                      group={group}
+                      devices={members}
+                      onClick={() => navigate(`/workspaces/${wsId}/devices/groups/${group.id}`)}
+                    />
+                  ))}
+                  {syncGroupsHere.map(({ group, members }) => (
+                    <SyncGroupCard
                       key={`group-${group.id}`}
                       group={group}
                       devices={members}

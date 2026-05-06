@@ -6,7 +6,7 @@ import {
   Plus, Grid3X3, Grid2X2, List, Image, Video,
   Globe, Code2, FileText, Presentation, Clock, Trash2,
   MoreVertical, Film, AlertTriangle, Check, Paintbrush, Monitor,
-  LayoutGrid, ListVideo,
+  LayoutGrid, ListVideo, CalendarDays,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import UploadModal from '../../components/UploadModal.js';
@@ -64,7 +64,7 @@ interface ContentList {
 // ── Constants ─────────────────────────────────────────────────────────────────
 type FilterType = 'all' | ContentItem['type'];
 type ViewMode = 'grid-lg' | 'grid-sm' | 'list';
-type KnownContentType = 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout';
+type KnownContentType = 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout' | 'calendar';
 
 const TYPE_FILTERS: { id: FilterType; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -75,6 +75,7 @@ const TYPE_FILTERS: { id: FilterType; label: string }[] = [
   { id: 'pdf', label: 'PDF' },
   { id: 'presentation', label: 'PPTX' },
   { id: 'zone_layout', label: 'Zone Layout' },
+  { id: 'calendar', label: 'Calendar' },
 ];
 
 const TYPE_META: Record<KnownContentType, { label: string; color: string; icon: React.ReactNode }> = {
@@ -85,6 +86,7 @@ const TYPE_META: Record<KnownContentType, { label: string; color: string; icon: 
   presentation:{ label: 'PPTX',       color: 'bg-orange-500/80',   icon: <Presentation size={10} /> },
   web_url:     { label: 'Web URL',    color: 'bg-emerald-500/80',  icon: <Globe size={10} /> },
   zone_layout: { label: 'Zone Layout',color: 'bg-teal-500/80',     icon: <LayoutGrid size={10} /> },
+  calendar:    { label: 'Calendar',   color: 'bg-indigo-500/80',   icon: <CalendarDays size={10} /> },
 };
 
 const UNKNOWN_TYPE_META = {
@@ -246,6 +248,7 @@ function Thumb({ item, large = false }: { item: ContentItem; large?: boolean }) 
     if (item.type === 'presentation') return <Presentation size={28} className="text-orange-400" />;
     if (item.type === 'web_url') return <Globe size={28} className="text-emerald-400" />;
     if (item.type === 'zone_layout') return null; // handled by ZoneLayoutPreview
+    if (item.type === 'calendar') return <CalendarDays size={28} className="text-indigo-400" />;
     return <span className="text-slate-300">{iconMeta.icon}</span>;
   };
 
@@ -677,6 +680,14 @@ export default function ContentPage() {
           icon: <LayoutGrid size={18} />,
           iconClassName: 'bg-teal-500/15 text-teal-400',
           onClick: () => navigate(`/workspaces/${wsId}/zone-layout/new`),
+        },
+        {
+          id: 'calendar',
+          label: 'Calendar',
+          description: 'Show upcoming events or a meeting room',
+          icon: <CalendarDays size={18} />,
+          iconClassName: 'bg-indigo-500/15 text-indigo-400',
+          onClick: () => navigate(`/workspaces/${wsId}/calendar/new`),
         },
       ]
     : [];

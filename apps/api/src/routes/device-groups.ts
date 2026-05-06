@@ -159,6 +159,26 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
       (memberIdsByGroup[m.groupId] ??= []).push(m.deviceId);
     }
 
+    // Also populate memberDeviceIds for sync-type groups (members live in
+    // syncGroupMembers, linked via deviceGroups.syncGroupId).
+    const syncGroupIdToDgId: Record<string, string> = {};
+    for (const r of rows) {
+      if (r.type === 'sync' && r.syncGroupId) {
+        syncGroupIdToDgId[r.syncGroupId] = r.id;
+      }
+    }
+    const syncGroupIdList = Object.keys(syncGroupIdToDgId);
+    if (syncGroupIdList.length > 0) {
+      const syncMemberRows = await db
+        .select({ syncGroupId: syncGroupMembers.syncGroupId, deviceId: syncGroupMembers.deviceId })
+        .from(syncGroupMembers)
+        .where(inArray(syncGroupMembers.syncGroupId, syncGroupIdList));
+      for (const m of syncMemberRows) {
+        const dgId = syncGroupIdToDgId[m.syncGroupId];
+        if (dgId) (memberIdsByGroup[dgId] ??= []).push(m.deviceId);
+      }
+    }
+
     // Hydrate syncGroup info for sync-type rows so the list page can show
     // the linked playlist + numeric SyncPlay groupId without an extra round-trip.
     const hydrated = await Promise.all(

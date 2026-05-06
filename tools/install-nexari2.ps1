@@ -152,12 +152,13 @@ Write-Host "Updated sssp_config.xml: <ver>$appVer</ver>  <size>$wgtBytes</size>"
 # ============================================================
 Write-Host ""
 Write-Host "=== STEP 1c: Deploy WGT to Pi server ($pi) ==="
-$piTizenDir = "/var/signage/tizen"
+$piTizenDir = "/var/signage/tizen/test"
+ssh $pi "mkdir -p $piTizenDir" 2>&1 | Out-Null
 scp "$src\NexariPlayer.wgt" "${pi}:${piTizenDir}/NexariPlayer.wgt"
 if ($LASTEXITCODE -ne 0) { Write-Error "WGT SCP failed - check SSH access to $pi. Aborting."; exit 1 }
 scp "$src\sssp_config.xml" "${pi}:${piTizenDir}/sssp_config.xml"
 if ($LASTEXITCODE -ne 0) { Write-Error "sssp_config.xml SCP failed. Aborting."; exit 1 }
-Write-Host "Pi server updated: http://192.168.1.17/tizen/NexariPlayer.wgt"
+Write-Host "Pi server updated: http://192.168.1.17/tizen/test/NexariPlayer.wgt"
 
 # ============================================================
 # Helper function: connect, uninstall, install, launch one TV
@@ -179,7 +180,7 @@ function Install-NexariOnTV {
         Write-Host "WARNING: $label ($tv) is not reachable via SDB (likely not in developer mode)." -ForegroundColor Yellow
         Write-Host "Pi already has the latest build. To update the TV manually:" -ForegroundColor Yellow
         Write-Host "  1. On the TV: Settings > General > System Manager > URL Launcher Settings" -ForegroundColor Cyan
-        Write-Host "  2. Enter URL: http://192.168.1.17/tizen/sssp_config.xml" -ForegroundColor Cyan
+        Write-Host "  2. Enter URL: http://192.168.1.17/tizen/test/sssp_config.xml" -ForegroundColor Cyan
         Write-Host "  3. The TV will detect the new version and install it automatically." -ForegroundColor Cyan
         return
     }

@@ -151,7 +151,7 @@ function Install-Html5SyncOnTV {
     }
     Start-Sleep -Seconds 2
 
-    Write-Host "--- Uninstall NexariSyncEngine (same package, must remove first) ---"
+    Write-Host "--- Uninstall NexariSyncEngine (if present) ---"
     & $tizen uninstall -s $tv -p "fmDBbBnvJM.NexariSyncEngine" 2>&1 | Out-String | Write-Host
     Start-Sleep -Seconds 3
 
