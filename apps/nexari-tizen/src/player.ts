@@ -2493,7 +2493,7 @@ const Player = {
       }
 
       case 'CALENDAR': {
-        this.renderCalendar(container, content);
+        void this.renderCalendar(container, content);
         break;
       }
         
@@ -4961,10 +4961,12 @@ const Player = {
       const days = view === 'day' || view === 'meeting_room' ? 1 : view === 'month' ? 31 : 7;
       to.setDate(to.getDate() + days);
       try {
+        const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
         const res = await fetch(
-          `${CONFIG.API_BASE}/content/${encodeURIComponent(content.id)}/calendar/events`
+          `${CONFIG.API_BASE}/devices/device/content/${encodeURIComponent(content.id)}/calendar/events`
             + `?from=${encodeURIComponent(from.toISOString())}`
-            + `&to=${encodeURIComponent(to.toISOString())}`,
+            + `&to=${encodeURIComponent(to.toISOString())}`
+            + (token ? `&token=${encodeURIComponent(token)}` : ''),
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const body = await res.json();
@@ -6103,7 +6105,7 @@ const Player = {
         }
 
         case 'CALENDAR': {
-          this.renderCalendar(this.container, content);
+          void this.renderCalendar(this.container, content);
           scheduleNext(duration * 1000);
           break;
         }

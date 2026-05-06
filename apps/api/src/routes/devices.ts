@@ -4,7 +4,7 @@ import { createReadStream, existsSync, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import AdmZip from 'adm-zip';
-import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents, deviceGroupMembers, deviceGroups } from '@signage/db';
+import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents, deviceGroupMembers, deviceGroups, calendarConnections } from '@signage/db';
 import { eq, and, isNull, desc, asc, inArray, sql, ilike, gte, lte, lt } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -1924,6 +1924,51 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     reply.header('Content-Length', String(fileSize));
     return reply.send(createReadStream(absPath));
+  });
+
+  // ── GET /devices/device/content/:id/calendar/events ─ device-auth calendar events ──
+  app.get('/device/content/:id/calendar/events', async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+    const { id } = req.params as { id: string };
+    const q = req.query as { from?: string; to?: string; token?: string };
+
+    const item = await db.query.contentItems.findFirst({ where: eq(contentItems.id, id) });
+    if (!item) return reply.status(404).send({ error: 'Not found' });
+    if (item.type !== 'calendar') return reply.status(400).send({ error: 'Not a calendar content item' });
+    if (item.workspaceId !== auth.workspaceId) return reply.status(403).send({ error: 'Forbidden' });
+
+    let meta: { connectionId?: string; selectedCalendarIds?: string[]; keywordFilter?: string | null; privacyMode?: 'titles' | 'busy_only' } = {};
+    try { meta = JSON.parse(item.metadata ?? '{}'); } catch { /* ignore */ }
+    if (!meta.connectionId) return reply.status(400).send({ error: 'No connection configured' });
+
+    const conn = await db.query.calendarConnections.findFirst({
+      where: and(eq(calendarConnections.id, meta.connectionId), isNull(calendarConnections.deletedAt)),
+    });
+    if (!conn) return reply.status(404).send({ error: 'Connection not found' });
+    if (conn.workspaceId !== item.workspaceId) return reply.status(403).send({ error: 'Connection mismatch' });
+
+    const fromD = q.from ? new Date(q.from) : new Date();
+    const toD = q.to ? new Date(q.to) : new Date(Date.now() + 7 * 86_400_000);
+    if (Number.isNaN(fromD.getTime()) || Number.isNaN(toD.getTime())) {
+      return reply.status(400).send({ error: 'Invalid from/to' });
+    }
+
+    const { listEventsForConnection } = await import('../services/calendar/index.js');
+    try {
+      const events = await listEventsForConnection(conn, {
+        from: fromD, to: toD,
+        ...(meta.selectedCalendarIds ? { calendarIds: meta.selectedCalendarIds } : {}),
+        ...(meta.keywordFilter ? { keyword: meta.keywordFilter } : {}),
+      });
+      const safe = (meta.privacyMode === 'busy_only')
+        ? events.map((e) => ({ ...e, title: 'Busy', location: null, description: null, organizerEmail: null, organizerName: null, attendeeCount: null }))
+        : events;
+      return reply.send({ events: safe });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.status(502).send({ error: 'Provider error', detail: msg });
+    }
   });
 
   // ── GET /devices/device/content/:id/html5/:token/* ─ serve extracted HTML5 package ──

@@ -1,6 +1,6 @@
 {
   "name": "nexari-tizen",
-  "version": "1.0.41",
+  "version": "1.0.42",
   "description": "Nexari Signage — Samsung Smart TV unified player (Tizen 4+, replaces tizen + tizen-sbb)",
   "scripts": {
     "build": "cross-env API_BASE=https://ds.chiho.app/api/v1 WS_URL=wss://ds.chiho.app node scripts/generate-build-info.cjs && tsc",
