@@ -4953,6 +4953,8 @@ const Player = {
       container.innerHTML = buildShell(`<div style="height:100%;overflow-y:auto;">${html}</div>`);
     };
 
+    const cacheKey = `cal_events_${content.id}`;
+
     const fetchAndRender = async () => {
       if (calContainer._calendarReqId !== reqId) return;
       const from = new Date();
@@ -4971,12 +4973,29 @@ const Player = {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const body = await res.json();
         if (calContainer._calendarReqId !== reqId || !container.isConnected) return;
+        // Persist for offline use — keep only today's window to avoid stale multi-day data.
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify({ events: body.events || [], cachedAt: Date.now() }));
+        } catch { /* localStorage full — ignore */ }
         renderEvents((body.events || []) as Ev[]);
       } catch (err) {
-        logger.warn('Calendar fetch failed:', err);
-        if (calContainer._calendarReqId === reqId && container.isConnected) {
-          renderError('Could not load calendar events');
-        }
+        logger.warn('Calendar fetch failed, using cached data:', err);
+        if (calContainer._calendarReqId !== reqId || !container.isConnected) return;
+        try {
+          const cached = localStorage.getItem(cacheKey);
+          if (cached) {
+            const { events, cachedAt } = JSON.parse(cached) as { events: Ev[]; cachedAt: number };
+            const ageMin = Math.round((Date.now() - cachedAt) / 60_000);
+            renderEvents(events);
+            // Overlay a small stale-data badge so staff know the data may be old.
+            const badge = document.createElement('div');
+            badge.style.cssText = 'position:absolute;bottom:8px;right:12px;font-size:12px;opacity:0.5;pointer-events:none;';
+            badge.textContent = `Cached · ${ageMin}m ago`;
+            container.appendChild(badge);
+            return;
+          }
+        } catch { /* ignore */ }
+        renderError('No calendar data available');
       }
     };
 
@@ -5382,8 +5401,13 @@ const Player = {
       return;
     }
 
-    // Filter out items without URLs
-    const playableItems = playlist.items.filter(item => item.content.url);
+    // Content types that don't use a static URL (they fetch/render data themselves)
+    const urlNotRequired = new Set(['CALENDAR', 'DATASYNC', 'ZONE_LAYOUT', 'MENU_BOARD']);
+
+    // Filter out items without URLs, but keep types that don't need one
+    const playableItems = playlist.items.filter(
+      item => item.content.url || urlNotRequired.has(item.content.type),
+    );
     
     if (playableItems.length === 0) {
       logger.warn('Playlist has no playable items (all missing URLs)');
@@ -6105,7 +6129,7 @@ const Player = {
         }
 
         case 'CALENDAR': {
-          void this.renderCalendar(this.container, content);
+          void this.renderCalendar(container, content);
           scheduleNext(duration * 1000);
           break;
         }

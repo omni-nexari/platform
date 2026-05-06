@@ -2472,7 +2472,7 @@ const Player = {
                 break;
             }
             case 'CALENDAR': {
-                this.renderCalendar(container, content);
+                void this.renderCalendar(container, content);
                 break;
             }
             default:
@@ -4820,6 +4820,7 @@ const Player = {
         </section>`).join('');
                 container.innerHTML = buildShell(`<div style="height:100%;overflow-y:auto;">${html}</div>`);
             };
+            const cacheKey = `cal_events_${content.id}`;
             const fetchAndRender = () => __awaiter(this, void 0, void 0, function* () {
                 if (calContainer._calendarReqId !== reqId)
                     return;
@@ -4829,21 +4830,43 @@ const Player = {
                 const days = view === 'day' || view === 'meeting_room' ? 1 : view === 'month' ? 31 : 7;
                 to.setDate(to.getDate() + days);
                 try {
-                    const res = yield fetch(`${CONFIG.API_BASE}/content/${encodeURIComponent(content.id)}/calendar/events`
+                    const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
+                    const res = yield fetch(`${CONFIG.API_BASE}/devices/device/content/${encodeURIComponent(content.id)}/calendar/events`
                         + `?from=${encodeURIComponent(from.toISOString())}`
-                        + `&to=${encodeURIComponent(to.toISOString())}`);
+                        + `&to=${encodeURIComponent(to.toISOString())}`
+                        + (token ? `&token=${encodeURIComponent(token)}` : ''));
                     if (!res.ok)
                         throw new Error(`HTTP ${res.status}`);
                     const body = yield res.json();
                     if (calContainer._calendarReqId !== reqId || !container.isConnected)
                         return;
+                    // Persist for offline use — keep only today's window to avoid stale multi-day data.
+                    try {
+                        localStorage.setItem(cacheKey, JSON.stringify({ events: body.events || [], cachedAt: Date.now() }));
+                    }
+                    catch ( /* localStorage full — ignore */_a) { /* localStorage full — ignore */ }
                     renderEvents((body.events || []));
                 }
                 catch (err) {
-                    logger.warn('Calendar fetch failed:', err);
-                    if (calContainer._calendarReqId === reqId && container.isConnected) {
-                        renderError('Could not load calendar events');
+                    logger.warn('Calendar fetch failed, using cached data:', err);
+                    if (calContainer._calendarReqId !== reqId || !container.isConnected)
+                        return;
+                    try {
+                        const cached = localStorage.getItem(cacheKey);
+                        if (cached) {
+                            const { events, cachedAt } = JSON.parse(cached);
+                            const ageMin = Math.round((Date.now() - cachedAt) / 60000);
+                            renderEvents(events);
+                            // Overlay a small stale-data badge so staff know the data may be old.
+                            const badge = document.createElement('div');
+                            badge.style.cssText = 'position:absolute;bottom:8px;right:12px;font-size:12px;opacity:0.5;pointer-events:none;';
+                            badge.textContent = `Cached · ${ageMin}m ago`;
+                            container.appendChild(badge);
+                            return;
+                        }
                     }
+                    catch ( /* ignore */_b) { /* ignore */ }
+                    renderError('No calendar data available');
                 }
             });
             // Render shell immediately with empty list, then fetch.
@@ -5239,8 +5262,10 @@ const Player = {
             this.showIdleScreen();
             return;
         }
-        // Filter out items without URLs
-        const playableItems = playlist.items.filter(item => item.content.url);
+        // Content types that don't use a static URL (they fetch/render data themselves)
+        const urlNotRequired = new Set(['CALENDAR', 'DATASYNC', 'ZONE_LAYOUT', 'MENU_BOARD']);
+        // Filter out items without URLs, but keep types that don't need one
+        const playableItems = playlist.items.filter(item => item.content.url || urlNotRequired.has(item.content.type));
         if (playableItems.length === 0) {
             logger.warn('Playlist has no playable items (all missing URLs)');
             this.showIdleScreen();
@@ -5966,7 +5991,7 @@ const Player = {
                     break;
                 }
                 case 'CALENDAR': {
-                    this.renderCalendar(this.container, content);
+                    void this.renderCalendar(container, content);
                     scheduleNext(duration * 1000);
                     break;
                 }
