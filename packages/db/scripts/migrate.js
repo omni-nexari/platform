@@ -31,7 +31,8 @@ const db = drizzle(client);
 
 function assertJournalTracksNewestMigrations(migrationsFolder) {
   const journalPath = resolve(migrationsFolder, 'meta/_journal.json');
-  const journal = JSON.parse(readFileSync(journalPath, 'utf8'));
+  const journalRaw = readFileSync(journalPath, 'utf8').replace(/^\uFEFF/, '');
+  const journal = JSON.parse(journalRaw);
   const entries = Array.isArray(journal.entries) ? journal.entries : [];
   const trackedTags = new Set(entries.map((entry) => entry.tag));
   const highestTrackedIndex = entries.reduce((highest, entry) => {
