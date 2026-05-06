@@ -10,7 +10,7 @@
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -81,6 +81,19 @@ function assertJournalTracksNewestMigrations(migrationsFolder) {
 
 try {
   const migrationsFolder = resolve(__dirname, '../migrations');
+
+  // Strip UTF-8 BOM from all meta JSON files in-place so drizzle-orm's own
+  // JSON.parse calls (readMigrationFiles) don't choke on files produced by
+  // drizzle-kit on Windows with the BOM encoding setting enabled.
+  const metaDir = resolve(migrationsFolder, 'meta');
+  for (const name of readdirSync(metaDir).filter((n) => n.endsWith('.json'))) {
+    const filePath = resolve(metaDir, name);
+    const raw = readFileSync(filePath, 'utf8');
+    if (raw.codePointAt(0) === 0xFEFF) {
+      writeFileSync(filePath, raw.slice(1), 'utf8');
+    }
+  }
+
   assertJournalTracksNewestMigrations(migrationsFolder);
   await migrate(db, {
     migrationsFolder,
