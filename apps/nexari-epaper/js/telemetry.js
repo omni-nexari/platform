@@ -135,9 +135,13 @@ window.Telemetry = {
       if (typeof webapis !== 'undefined' && webapis.epaper &&
           typeof webapis.epaper.getBatteryLevel === 'function') {
         var bl = webapis.epaper.getBatteryLevel();
+        logger.info('[Telemetry] getBatteryLevel raw:', bl, '(type:', typeof bl + ')');
         if (bl != null && !isNaN(bl)) batteryPct = Math.round(Number(bl));
+        else logger.info('[Telemetry] getBatteryLevel returned null/NaN — panel may be mains-powered or API unsupported');
+      } else {
+        logger.info('[Telemetry] getBatteryLevel not available on this firmware');
       }
-    } catch (e) { logger.debug('[Telemetry] getBatteryLevel failed:', e && e.message); }
+    } catch (e) { logger.info('[Telemetry] getBatteryLevel threw:', e && e.message); }
 
     var info = {
       duid: duid,
@@ -186,6 +190,7 @@ window.Telemetry = {
       firmwareVersion: info.firmwareVersion,
       realModel: info.realModel,
       panelType: info.panelType,
+      batteryPct: info.batteryPct,
     }));
 
     return info;

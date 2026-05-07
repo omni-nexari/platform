@@ -200,8 +200,7 @@ interface Device {
     screenRefreshTime?: { hour: number; minute: number } | null;
     ledMode?: 'ON' | 'OFF' | 'AUTO';
     batteryWarningIcon?: boolean;
-    minSwapRateSec?: number;
-  } | null;
+    } | null;
 }
 
 interface DeviceLogEntry {

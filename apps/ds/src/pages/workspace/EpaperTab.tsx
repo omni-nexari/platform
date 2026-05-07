@@ -21,7 +21,6 @@ const DEFAULT_SETTINGS: EpaperSettings = {
   screenRefreshTime: { hour: 2, minute: 0 },
   ledMode: 'AUTO',
   batteryWarningIcon: true,
-  minSwapRateSec: 15,
 };
 
 // Three operator-friendly presets per the locked option list.
@@ -32,7 +31,7 @@ const PRESETS: Record<string, { label: string; description: string; settings: Ep
     settings: {
       networkStandby: 'ON', autoSleep: 'NEVER',
       screenRefreshTime: { hour: 2, minute: 0 }, ledMode: 'AUTO',
-      batteryWarningIcon: true, minSwapRateSec: 15,
+      batteryWarningIcon: true,
     },
   },
   'battery-balanced': {
@@ -41,7 +40,7 @@ const PRESETS: Record<string, { label: string; description: string; settings: Ep
     settings: {
       networkStandby: 'ON', autoSleep: '01:00',
       screenRefreshTime: { hour: 2, minute: 0 }, ledMode: 'AUTO',
-      batteryWarningIcon: true, minSwapRateSec: 30,
+      batteryWarningIcon: true,
     },
   },
   'battery-saver': {
@@ -50,7 +49,7 @@ const PRESETS: Record<string, { label: string; description: string; settings: Ep
     settings: {
       networkStandby: 'OFF', autoSleep: '00:15',
       screenRefreshTime: { hour: 3, minute: 0 }, ledMode: 'OFF',
-      batteryWarningIcon: true, minSwapRateSec: 60,
+      batteryWarningIcon: true,
     },
   },
 };
@@ -61,7 +60,6 @@ export interface EpaperSettings {
   screenRefreshTime?: { hour: number; minute: number } | null;
   ledMode?: 'ON' | 'OFF' | 'AUTO';
   batteryWarningIcon?: boolean;
-  minSwapRateSec?: number;
 }
 
 export interface EpaperDeviceFields {
@@ -299,24 +297,6 @@ export default function EpaperTab({ device }: { device: EpaperDeviceFields }) {
             checked={!!draft.batteryWarningIcon}
             onChange={() => setDraft({ ...draft, batteryWarningIcon: !draft.batteryWarningIcon })}
           />
-
-          <div>
-            <label className="text-xs text-[var(--text-muted)] block mb-1">
-              Minimum swap rate (seconds between image changes)
-            </label>
-            <input
-              type="number"
-              min={15}
-              max={3600}
-              className="bg-[var(--surface-raised)] border border-[var(--border)] rounded px-2 py-1.5 text-sm w-32"
-              value={draft.minSwapRateSec ?? 15}
-              onChange={(e) => {
-                const v = Math.max(15, Math.min(3600, parseInt(e.target.value, 10) || 15));
-                setDraft({ ...draft, minSwapRateSec: v });
-              }}
-            />
-            <span className="text-xs text-[var(--text-muted)] ml-2">Min 15s — panel hardware refresh limit.</span>
-          </div>
 
           <div className="flex items-center gap-2 pt-2 border-t border-[var(--border)]">
             <ActionButton
