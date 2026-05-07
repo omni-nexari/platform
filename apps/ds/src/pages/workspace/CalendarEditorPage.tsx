@@ -8,7 +8,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   ArrowLeft, ArrowRight, Save, CalendarDays, CalendarRange,
-  Calendar, MapPin, Filter, Lock, Palette, Clock,
+  Calendar, MapPin, Filter, Lock, Palette, Clock, Settings2,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { ActionButton, Skeleton, Badge, Callout, SectionCard, SectionCardHeader, SectionCardBody } from '../../components/UiPrimitives.js';
@@ -50,11 +50,14 @@ interface CalendarEvent {
   allDay: boolean;
   isPrivate: boolean;
   status?: string;
+  attendeeCount?: number;
 }
 
 type View = 'day' | 'week' | 'month' | 'meeting_room';
-type RenderMode = 'native' | 'image';
 type Privacy = 'titles' | 'busy_only';
+type ClockStyle = 'digital-12' | 'digital-24' | 'analog' | 'none';
+type HeaderStyle = 'full' | 'compact' | 'none';
+type FontStyle = 'sans' | 'mono' | 'rounded';
 
 interface Form {
   name: string;
@@ -64,7 +67,6 @@ interface Form {
   keywordFilter: string;
   privacyMode: Privacy;
   timezone: string;
-  renderMode: RenderMode;
   refreshSeconds: number;
   duration: number;
   roomMeta: {
@@ -76,6 +78,13 @@ interface Form {
   theme: {
     accentColor: string;
     background: 'light' | 'dark';
+    clockStyle: ClockStyle;
+    headerStyle: HeaderStyle;
+    fontStyle: FontStyle;
+    showCurrentTimeLine: boolean;
+    showWeekNumbers: boolean;
+    showLocation: boolean;
+    showAttendeeCount: boolean;
   };
 }
 
@@ -87,11 +96,20 @@ const DEFAULTS: Form = {
   keywordFilter: '',
   privacyMode: 'titles',
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-  renderMode: 'native',
   refreshSeconds: 60,
   duration: 30,
   roomMeta: { name: '', capacity: '', location: '', bookingUrl: '' },
-  theme: { accentColor: '#4f46e5', background: 'light' },
+  theme: {
+    accentColor: '#4f46e5',
+    background: 'light',
+    clockStyle: 'digital-24',
+    headerStyle: 'full',
+    fontStyle: 'sans',
+    showCurrentTimeLine: true,
+    showWeekNumbers: false,
+    showLocation: true,
+    showAttendeeCount: false,
+  },
 };
 
 const COMMON_TIMEZONES = [
@@ -101,6 +119,120 @@ const COMMON_TIMEZONES = [
   'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Singapore', 'Asia/Kolkata', 'Asia/Dubai',
   'Australia/Sydney',
 ];
+
+// ── CalendarPreview ──────────────────────────────────────────────────────────
+function CalendarPreview({
+  form, events, loading, error,
+}: {
+  form: Form;
+  events: CalendarEvent[];
+  loading: boolean;
+  error: string | null;
+}) {
+  const isDark = form.theme.background === 'dark';
+  const bg    = isDark ? '#111827' : '#ffffff';
+  const card  = isDark ? '#1f2937' : '#f9fafb';
+  const text  = isDark ? '#f3f4f6' : '#111827';
+  const muted = isDark ? '#9ca3af' : '#6b7280';
+  const border= isDark ? '#374151' : '#e5e7eb';
+  const accent = form.theme.accentColor;
+
+  const fontFamily =
+    form.theme.fontStyle === 'mono'    ? 'monospace' :
+    form.theme.fontStyle === 'rounded' ? 'ui-rounded, system-ui, sans-serif' :
+                                         'system-ui, sans-serif';
+
+  const now = new Date();
+  const timeLabel = form.theme.clockStyle === 'digital-24'
+    ? now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+    : form.theme.clockStyle === 'digital-12'
+    ? now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })
+    : form.theme.clockStyle === 'analog'
+    ? '◷'
+    : null;
+
+  const dateLabel = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+
+  const upcoming = events.slice(0, 8);
+
+  return (
+    <div
+      className="min-h-[340px] p-4 space-y-3 transition-colors duration-200"
+      style={{ background: bg, fontFamily }}
+    >
+      {/* Header */}
+      {form.theme.headerStyle !== 'none' && (
+        <div className="flex items-start justify-between">
+          <div>
+            {form.theme.headerStyle === 'full' && (
+              <p className="text-xs font-medium" style={{ color: muted }}>{dateLabel}</p>
+            )}
+            <p className="text-lg font-bold leading-tight" style={{ color: text }}>
+              {form.theme.headerStyle === 'compact' ? now.toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'Upcoming events'}
+            </p>
+          </div>
+          {timeLabel && (
+            <div
+              className="text-xl font-bold tabular-nums px-2 py-1 rounded-lg"
+              style={{ color: accent, background: `${accent}18` }}
+            >
+              {timeLabel}
+            </div>
+          )}
+        </div>
+      )}
+      {!form.theme.headerStyle || form.theme.headerStyle === 'none' && timeLabel && (
+        <div className="flex justify-end">
+          <div className="text-xl font-bold tabular-nums px-2 py-1 rounded-lg" style={{ color: accent, background: `${accent}18` }}>
+            {timeLabel}
+          </div>
+        </div>
+      )}
+
+      {/* Body */}
+      {loading && (
+        <div className="space-y-2">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-12 rounded-lg animate-pulse" style={{ background: card }} />
+          ))}
+        </div>
+      )}
+      {error && (
+        <div className="rounded-lg p-3 text-xs" style={{ background: '#fef2f2', color: '#dc2626' }}>
+          {error}
+        </div>
+      )}
+      {!loading && !error && upcoming.length === 0 && (
+        <div className="text-sm text-center py-8" style={{ color: muted }}>No upcoming events</div>
+      )}
+      {!loading && !error && upcoming.map((ev) => {
+        const start = new Date(ev.start);
+        const end   = new Date(ev.end);
+        const title = form.privacyMode === 'busy_only' ? 'Busy' : (ev.title || '(no title)');
+        const timeStr = ev.allDay
+          ? 'All day'
+          : `${start.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} – ${end.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+        return (
+          <div
+            key={ev.id}
+            className="flex items-stretch gap-2 rounded-lg p-2.5"
+            style={{ background: card, border: `1px solid ${border}` }}
+          >
+            <div className="w-1 rounded-full shrink-0" style={{ background: accent }} />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold truncate" style={{ color: text }}>{title}</p>
+              <p className="text-xs truncate" style={{ color: muted }}>
+                {timeStr}
+                {form.theme.showLocation && ev.location && form.privacyMode === 'titles' ? ` · ${ev.location}` : ''}
+                {form.theme.showAttendeeCount && typeof ev.attendeeCount === 'number' ? ` · ${ev.attendeeCount} attendees` : ''}
+              </p>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function CalendarEditorPage() {
   const { wsId, id } = useParams<{ wsId: string; id: string }>();
@@ -133,7 +265,6 @@ export default function CalendarEditorPage() {
         keywordFilter: (meta as any).keywordFilter ?? '',
         privacyMode: ((meta as any).privacyMode as Privacy) ?? f.privacyMode,
         timezone: (meta as any).timezone ?? f.timezone,
-        renderMode: ((meta as any).renderMode as RenderMode) ?? f.renderMode,
         refreshSeconds: (meta as any).refreshSeconds ?? f.refreshSeconds,
         roomMeta: { ...f.roomMeta, ...((meta as any).roomMeta ?? {}) } as Form['roomMeta'],
         theme: { ...f.theme, ...((meta as any).theme ?? {}) } as Form['theme'],
@@ -180,7 +311,6 @@ export default function CalendarEditorPage() {
         keywordFilter: form.keywordFilter.trim() || null,
         privacyMode: form.privacyMode,
         timezone: form.timezone,
-        renderMode: form.renderMode,
         refreshSeconds: form.refreshSeconds,
         duration: form.duration,
         roomMeta: form.view === 'meeting_room' ? {
@@ -209,8 +339,8 @@ export default function CalendarEditorPage() {
     },
   });
 
-  const totalSteps = 5;
-  const stepNames = ['Source', 'View', 'Timezone', 'Render', 'Style'];
+  const totalSteps = 4;
+  const stepNames = ['Source', 'View', 'Settings', 'Style'];
 
   function patch<K extends keyof Form>(k: K, v: Form[K]) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -438,139 +568,211 @@ export default function CalendarEditorPage() {
             </SectionCard>
           )}
 
-          {/* Step 2 — Timezone */}
+          {/* Step 2 — Settings (timezone + refresh + duration) */}
           {step === 2 && (
             <SectionCard>
               <SectionCardHeader>
-                <h3 className="text-sm font-semibold"><Clock size={14} className="inline mr-1.5 mb-0.5" />Timezone</h3>
+                <h3 className="text-sm font-semibold"><Settings2 size={14} className="inline mr-1.5 mb-0.5" />Settings</h3>
               </SectionCardHeader>
               <SectionCardBody>
-                <select
-                  value={form.timezone}
-                  onChange={(e) => patch('timezone', e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
-                >
-                  {!COMMON_TIMEZONES.includes(form.timezone) && <option value={form.timezone}>{form.timezone}</option>}
-                  {COMMON_TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
-                </select>
-                <p className="text-xs text-[var(--text-muted)] mt-2">
-                  Pick the building's local time. The player converts each event into this timezone for display.
-                </p>
-              </SectionCardBody>
-            </SectionCard>
-          )}
-
-          {/* Step 3 — Render mode */}
-          {step === 3 && (
-            <SectionCard>
-              <SectionCardHeader>
-                <h3 className="text-sm font-semibold"><Calendar size={14} className="inline mr-1.5 mb-0.5" />Render mode</h3>
-              </SectionCardHeader>
-              <SectionCardBody>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    onClick={() => patch('renderMode', 'native')}
-                    className={`p-4 rounded-lg border text-left ${form.renderMode === 'native' ? 'border-[var(--blue)] bg-[var(--blue)]/10' : 'border-[var(--border)] hover:bg-[var(--surface)]'}`}
-                  >
-                    <p className="text-sm font-medium text-[var(--text)]">Native</p>
-                    <p className="text-xs text-[var(--text-muted)]">Player renders HTML/Canvas locally — best on Tizen / Pi.</p>
-                  </button>
-                  <button
-                    onClick={() => patch('renderMode', 'image')}
-                    className={`p-4 rounded-lg border text-left ${form.renderMode === 'image' ? 'border-[var(--blue)] bg-[var(--blue)]/10' : 'border-[var(--border)] hover:bg-[var(--surface)]'}`}
-                  >
-                    <p className="text-sm font-medium text-[var(--text)]">Image</p>
-                    <p className="text-xs text-[var(--text-muted)]">Server pre-renders a PNG — useful for low-powered displays.</p>
-                  </button>
-                </div>
-                <div className="mt-4 grid grid-cols-2 gap-3">
+                <div className="space-y-5">
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-[var(--text-muted)] mb-1">Refresh (sec)</label>
-                    <input
-                      type="number" min="15" max="3600"
-                      value={form.refreshSeconds}
-                      onChange={(e) => patch('refreshSeconds', Math.max(15, Number(e.target.value) || 60))}
+                    <label className="block text-xs font-semibold uppercase text-[var(--text-muted)] mb-1 flex items-center gap-1">
+                      <Clock size={12} /> Timezone
+                    </label>
+                    <select
+                      value={form.timezone}
+                      onChange={(e) => patch('timezone', e.target.value)}
                       className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
-                    />
+                    >
+                      {!COMMON_TIMEZONES.includes(form.timezone) && <option value={form.timezone}>{form.timezone}</option>}
+                      {COMMON_TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+                    </select>
+                    <p className="text-xs text-[var(--text-muted)] mt-1">
+                      Pick the building's local time. The player converts each event into this timezone for display.
+                    </p>
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold uppercase text-[var(--text-muted)] mb-1">Slot duration (sec)</label>
-                    <input
-                      type="number" min="5" max="3600"
-                      value={form.duration}
-                      onChange={(e) => patch('duration', Math.max(5, Number(e.target.value) || 30))}
-                      className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
-                    />
-                  </div>
-                </div>
-              </SectionCardBody>
-            </SectionCard>
-          )}
-
-          {/* Step 4 — Style + preview */}
-          {step === 4 && (
-            <SectionCard>
-              <SectionCardHeader>
-                <h3 className="text-sm font-semibold"><Palette size={14} className="inline mr-1.5 mb-0.5" />Style & preview</h3>
-              </SectionCardHeader>
-              <SectionCardBody>
-                <div className="grid grid-cols-2 gap-3 mb-5">
-                  <div>
-                    <label className="block text-xs font-semibold uppercase text-[var(--text-muted)] mb-1">Accent color</label>
-                    <input
-                      type="color" value={form.theme.accentColor}
-                      onChange={(e) => patch('theme', { ...form.theme, accentColor: e.target.value })}
-                      className="w-full h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold uppercase text-[var(--text-muted)] mb-1">Background</label>
-                    <div className="inline-flex rounded-lg border border-[var(--border)] overflow-hidden">
-                      <button onClick={() => patch('theme', { ...form.theme, background: 'light' })} className={`px-3 py-1.5 text-xs ${form.theme.background === 'light' ? 'bg-[var(--blue)] text-white' : 'text-[var(--text-muted)]'}`}>Light</button>
-                      <button onClick={() => patch('theme', { ...form.theme, background: 'dark' })} className={`px-3 py-1.5 text-xs ${form.theme.background === 'dark' ? 'bg-[var(--blue)] text-white' : 'text-[var(--text-muted)]'}`}>Dark</button>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold uppercase text-[var(--text-muted)] mb-1">Refresh interval (sec)</label>
+                      <input
+                        type="number" min="15" max="3600"
+                        value={form.refreshSeconds}
+                        onChange={(e) => patch('refreshSeconds', Math.max(15, Number(e.target.value) || 60))}
+                        className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
+                      />
+                      <p className="text-xs text-[var(--text-muted)] mt-1">How often the player fetches new events.</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold uppercase text-[var(--text-muted)] mb-1">Slot duration (sec)</label>
+                      <input
+                        type="number" min="5" max="3600"
+                        value={form.duration}
+                        onChange={(e) => patch('duration', Math.max(5, Number(e.target.value) || 30))}
+                        className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
+                      />
+                      <p className="text-xs text-[var(--text-muted)] mt-1">How long this item plays in a playlist.</p>
                     </div>
                   </div>
                 </div>
-
-                <p className="text-xs font-semibold uppercase text-[var(--text-muted)] mb-2">Next 7 days</p>
-                {previewQuery.isLoading && <Skeleton className="h-32" />}
-                {previewQuery.isError && (
-                  <Callout tone="danger">
-                    Could not load events: {(previewQuery.error as any)?.response?.data?.detail ?? 'Unknown error'}
-                  </Callout>
-                )}
-                {previewQuery.data && (
-                  <div className="rounded-lg border border-[var(--border)] divide-y divide-[var(--border)]">
-                    {previewQuery.data.events.length === 0 && (
-                      <div className="p-4 text-sm text-[var(--text-muted)]">No upcoming events in the next 7 days.</div>
-                    )}
-                    {previewQuery.data.events.slice(0, 12).map((e) => {
-                      const start = new Date(e.start);
-                      const end = new Date(e.end);
-                      return (
-                        <div key={e.id} className="flex items-start gap-3 p-3">
-                          <div
-                            className="w-1 self-stretch rounded-full"
-                            style={{ background: form.theme.accentColor }}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-[var(--text)] truncate">
-                              {form.privacyMode === 'busy_only' ? 'Busy' : (e.title || '(no title)')}
-                            </p>
-                            <p className="text-xs text-[var(--text-muted)]">
-                              {e.allDay
-                                ? 'All day'
-                                : `${start.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} – ${end.toLocaleString([], { hour: 'numeric', minute: '2-digit' })}`}
-                              {e.location && form.privacyMode === 'titles' ? ` · ${e.location}` : ''}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
               </SectionCardBody>
             </SectionCard>
+          )}
+
+          {/* Step 3 — Style + preview */}
+          {step === 3 && (
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+              {/* Controls */}
+              <div className="space-y-4">
+                <SectionCard>
+                  <SectionCardHeader>
+                    <h3 className="text-sm font-semibold"><Palette size={14} className="inline mr-1.5 mb-0.5" />Colours</h3>
+                  </SectionCardHeader>
+                  <SectionCardBody>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold uppercase text-[var(--text-muted)] mb-1">Accent colour</label>
+                        <input
+                          type="color" value={form.theme.accentColor}
+                          onChange={(e) => patch('theme', { ...form.theme, accentColor: e.target.value })}
+                          className="w-full h-10 rounded-lg border border-[var(--border)] cursor-pointer"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase text-[var(--text-muted)] mb-1">Background</label>
+                        <div className="inline-flex rounded-lg border border-[var(--border)] overflow-hidden">
+                          <button onClick={() => patch('theme', { ...form.theme, background: 'light' })} className={`px-3 py-1.5 text-xs ${form.theme.background === 'light' ? 'bg-[var(--blue)] text-white' : 'text-[var(--text-muted)] hover:bg-[var(--surface)]'}`}>Light</button>
+                          <button onClick={() => patch('theme', { ...form.theme, background: 'dark' })} className={`px-3 py-1.5 text-xs ${form.theme.background === 'dark' ? 'bg-[var(--blue)] text-white' : 'text-[var(--text-muted)] hover:bg-[var(--surface)]'}`}>Dark</button>
+                        </div>
+                      </div>
+                    </div>
+                  </SectionCardBody>
+                </SectionCard>
+
+                <SectionCard>
+                  <SectionCardHeader>
+                    <h3 className="text-sm font-semibold"><Clock size={14} className="inline mr-1.5 mb-0.5" />Clock style</h3>
+                  </SectionCardHeader>
+                  <SectionCardBody>
+                    <div className="grid grid-cols-2 gap-2">
+                      {([
+                        { id: 'digital-24', label: 'Digital 24h', sub: '14:35' },
+                        { id: 'digital-12', label: 'Digital 12h', sub: '2:35 PM' },
+                        { id: 'analog',     label: 'Analog',      sub: '◷' },
+                        { id: 'none',       label: 'Hidden',      sub: '—' },
+                      ] as { id: ClockStyle; label: string; sub: string }[]).map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => patch('theme', { ...form.theme, clockStyle: c.id })}
+                          className={`flex flex-col items-center gap-0.5 p-3 rounded-lg border text-center transition-colors ${form.theme.clockStyle === c.id ? 'border-[var(--blue)] bg-[var(--blue)]/10' : 'border-[var(--border)] hover:bg-[var(--surface)]'}`}
+                        >
+                          <span className="text-xs font-medium text-[var(--text)]">{c.label}</span>
+                          <span className="text-[10px] text-[var(--text-muted)]">{c.sub}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </SectionCardBody>
+                </SectionCard>
+
+                <SectionCard>
+                  <SectionCardHeader>
+                    <h3 className="text-sm font-semibold"><CalendarDays size={14} className="inline mr-1.5 mb-0.5" />Header style</h3>
+                  </SectionCardHeader>
+                  <SectionCardBody>
+                    <div className="grid grid-cols-3 gap-2">
+                      {([
+                        { id: 'full',    label: 'Full',    sub: 'Day names + date' },
+                        { id: 'compact', label: 'Compact', sub: 'Abbreviated' },
+                        { id: 'none',    label: 'Hidden',  sub: 'No header' },
+                      ] as { id: HeaderStyle; label: string; sub: string }[]).map((h) => (
+                        <button
+                          key={h.id}
+                          onClick={() => patch('theme', { ...form.theme, headerStyle: h.id })}
+                          className={`flex flex-col items-center gap-0.5 p-3 rounded-lg border text-center transition-colors ${form.theme.headerStyle === h.id ? 'border-[var(--blue)] bg-[var(--blue)]/10' : 'border-[var(--border)] hover:bg-[var(--surface)]'}`}
+                        >
+                          <span className="text-xs font-medium text-[var(--text)]">{h.label}</span>
+                          <span className="text-[10px] text-[var(--text-muted)]">{h.sub}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </SectionCardBody>
+                </SectionCard>
+
+                <SectionCard>
+                  <SectionCardHeader>
+                    <h3 className="text-sm font-semibold">Font style</h3>
+                  </SectionCardHeader>
+                  <SectionCardBody>
+                    <div className="grid grid-cols-3 gap-2">
+                      {([
+                        { id: 'sans',    label: 'Sans-serif', sample: 'Aa' },
+                        { id: 'mono',    label: 'Monospace',  sample: 'Aa' },
+                        { id: 'rounded', label: 'Rounded',    sample: 'Aa' },
+                      ] as { id: FontStyle; label: string; sample: string }[]).map((f) => (
+                        <button
+                          key={f.id}
+                          onClick={() => patch('theme', { ...form.theme, fontStyle: f.id })}
+                          className={`flex flex-col items-center gap-0.5 p-3 rounded-lg border text-center transition-colors ${form.theme.fontStyle === f.id ? 'border-[var(--blue)] bg-[var(--blue)]/10' : 'border-[var(--border)] hover:bg-[var(--surface)]'}`}
+                        >
+                          <span
+                            className="text-base font-bold text-[var(--text)]"
+                            style={{ fontFamily: f.id === 'mono' ? 'monospace' : f.id === 'rounded' ? 'ui-rounded, system-ui' : 'sans-serif' }}
+                          >{f.sample}</span>
+                          <span className="text-[10px] text-[var(--text-muted)]">{f.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </SectionCardBody>
+                </SectionCard>
+
+                <SectionCard>
+                  <SectionCardHeader>
+                    <h3 className="text-sm font-semibold">Display options</h3>
+                  </SectionCardHeader>
+                  <SectionCardBody>
+                    <div className="space-y-2">
+                      {([
+                        { key: 'showCurrentTimeLine', label: 'Current-time red line', desc: 'Shows where "now" is in day/week view' },
+                        { key: 'showWeekNumbers',     label: 'Week numbers',           desc: 'Show ISO week number in month view' },
+                        { key: 'showLocation',        label: 'Event location',         desc: 'Show location text on each event' },
+                        { key: 'showAttendeeCount',   label: 'Attendee count',         desc: 'Show how many attendees' },
+                      ] as { key: keyof typeof form.theme; label: string; desc: string }[]).map((opt) => (
+                        <label key={opt.key} className="flex items-start gap-3 p-2 rounded hover:bg-[var(--surface)] cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={!!form.theme[opt.key]}
+                            onChange={(e) => patch('theme', { ...form.theme, [opt.key]: e.target.checked })}
+                            className="mt-0.5"
+                          />
+                          <div>
+                            <p className="text-sm font-medium text-[var(--text)]">{opt.label}</p>
+                            <p className="text-xs text-[var(--text-muted)]">{opt.desc}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </SectionCardBody>
+                </SectionCard>
+              </div>
+
+              {/* Live preview */}
+              <div className="sticky top-6">
+                <SectionCard>
+                  <SectionCardHeader>
+                    <h3 className="text-sm font-semibold">Preview</h3>
+                    <span className="text-xs text-[var(--text-muted)]">Upcoming events</span>
+                  </SectionCardHeader>
+                  <SectionCardBody className="p-0 overflow-hidden rounded-b-xl">
+                    <CalendarPreview
+                      form={form}
+                      events={previewQuery.data?.events ?? []}
+                      loading={previewQuery.isLoading}
+                      error={previewQuery.isError ? ((previewQuery.error as any)?.response?.data?.detail ?? 'Could not load events') : null}
+                    />
+                  </SectionCardBody>
+                </SectionCard>
+              </div>
+            </div>
           )}
         </div>
       </div>

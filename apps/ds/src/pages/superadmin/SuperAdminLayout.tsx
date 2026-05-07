@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
-import { Building2, BarChart2, Activity, Bell, LogOut, Layers, LayoutDashboard, Menu, X, ScrollText, Tv } from 'lucide-react';
+import { Building2, BarChart2, Activity, Bell, LogOut, Layers, LayoutDashboard, Menu, X, ScrollText, Tv, ServerCog } from 'lucide-react';
 import { saApi, useSAStore } from '../../lib/superadmin-auth.js';
 import PortalNotificationTray from '../../components/PortalNotificationTray.js';
 
@@ -9,6 +9,7 @@ const NAV = [
   { to: '/superadmin/companies', icon: Layers, label: 'Resellers', end: false as const },
   { to: '/superadmin/orgs', icon: Building2, label: 'Client Organizations', end: false as const },
   { to: '/superadmin/system', icon: Activity, label: 'System Health', end: false as const },
+  { to: '/superadmin/monitoring', icon: ServerCog, label: 'Infrastructure', end: false as const },
   { to: '/superadmin/analytics', icon: BarChart2, label: 'Analytics', end: false as const },
   { to: '/superadmin/player-releases', icon: Tv, label: 'Player Releases', end: false as const },
   { to: '/superadmin/logs', icon: ScrollText, label: 'Logs', end: false as const },

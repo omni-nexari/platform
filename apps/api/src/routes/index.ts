@@ -28,6 +28,7 @@ import { webhooksRoutes } from './webhooks.js';
 import { sensorsRoutes } from './sensors.js';
 import { testSyncRoutes } from './test-sync.js';
 import { integrationsRoutes } from './integrations.js';
+import { monitoringRoutes } from './monitoring.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoute);
@@ -59,5 +60,6 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(sensorsRoutes, { prefix: '/sensors' });
   await app.register(testSyncRoutes, { prefix: '/test-sync' });
   await app.register(integrationsRoutes, { prefix: '/integrations' });
+  await app.register(monitoringRoutes, { prefix: '/monitoring' });
 }
 

@@ -188,6 +188,9 @@ const Player = {
   // peers via the shared 16-bit groupID and aligns frames in firmware.
   _nativeSyncActive: false as boolean,
   _nativeSyncGroupId: null as number | null,
+  // Videowall Phase 2 (wall-engine + wall-sync subsystem)
+  _videowallCurrentUrl: null as string | null,
+  _wallRelayStarted: false as boolean,
 
 
   // Initialize player
@@ -460,7 +463,7 @@ const Player = {
           // (not nested under .payload). Store the whole message as the manifest.
           logger.info('Videowall init received:', message);
           this._videowallManifest = message;
-          // Reuse the P2P SyncEngine for wall sync � feed it the peer/priority
+          // Reuse the P2P SyncEngine for wall sync – feed it the peer/priority
           // list from the videowall manifest.  groupId is the device group UUID
           // (treated as an opaque string by the engine).
           if (typeof SyncEngine !== 'undefined' && message.geometry) {
@@ -470,6 +473,45 @@ const Player = {
               leaderPriority: message.leaderPriority,
               peers: message.peers,
             });
+          }
+          // Phase 2: configure WallEngine ROI + start WallSync
+          if (message.geometry && message.myCell) {
+            const geo = message.geometry;
+            const mc  = message.myCell;
+            const col = mc.positionCol; const row = mc.positionRow;
+            const colSpan = mc.colSpan || 1; const rowSpan = mc.rowSpan || 1;
+            let offsetX = 0;
+            for (let c = 0; c < col; c++) offsetX += (geo.colWidths[c] || 0);
+            let offsetY = 0;
+            for (let r = 0; r < row; r++) offsetY += (geo.rowHeights[r] || 0);
+            let cellW = 0;
+            for (let c = col; c < col + colSpan; c++) cellW += (geo.colWidths[c] || 0);
+            let cellH = 0;
+            for (let r = row; r < row + rowSpan; r++) cellH += (geo.rowHeights[r] || 0);
+            if (geo.canvasW && geo.canvasH && typeof WallEngine !== 'undefined') {
+              WallEngine.setWallCrop(
+                offsetX / geo.canvasW, offsetY / geo.canvasH,
+                cellW   / geo.canvasW, cellH   / geo.canvasH,
+              );
+              WallEngine.initEngine();
+            }
+            if (typeof WallSync !== 'undefined' && !WallSync.isRunning()
+                && message.leaderPriority && message.peers) {
+              const leaderDeviceId = message.leaderPriority[0];
+              const leaderPeer = message.peers.find((p: any) => p.deviceId === leaderDeviceId);
+              const relayIp = leaderPeer && leaderPeer.lastKnownIp;
+              if (relayIp) {
+                this._startWallNodeRelay();
+                WallSync.init({
+                  wsUrl:         `ws://${relayIp}:9616`,
+                  groupId:       message.deviceGroupId,
+                  deviceId:      this.deviceId,
+                  expectedPeers: message.peers.length,
+                  onStatus:      (msg: string) => logger.info('[WallSync] ' + msg),
+                  getContentUrl: () => this._videowallCurrentUrl || null,
+                });
+              }
+            }
           }
           // Re-check content so any pending videowall content starts rendering
           // now that the manifest (crop geometry) is available.
@@ -1676,6 +1718,38 @@ const Player = {
     setTimeout(() => begin('timeout'), 600);
   },
 
+  // Start the on-TV Node relay (b2bcontrol.startNodeServer → js/logic.js on :9616).
+  // Safe to call multiple times — guarded by _wallRelayStarted flag.
+  _startWallNodeRelay() {
+    if (this._wallRelayStarted) return;
+    this._wallRelayStarted = true;
+    const b2b = (window as any).b2bapis && (window as any).b2bapis.b2bcontrol;
+    if (!b2b || typeof b2b.startNodeServer !== 'function') {
+      logger.warn('[WallRelay] b2bcontrol.startNodeServer unavailable — relay not started');
+      return;
+    }
+    let pv = '6.0';
+    try {
+      pv = (window as any).tizen?.systeminfo?.getCapability(
+        'http://tizen.org/feature/platform.version',
+      ) || pv;
+    } catch {}
+    const stub = pv.startsWith('4.') ? '../lib/server2018.js.signed'
+               : pv.startsWith('5.') ? '../lib/server2019.js.signed'
+               :                       '../lib/server2022.js.signed';
+    logger.info(`[WallRelay] starting ${stub}`);
+    try {
+      b2b.startNodeServer(
+        stub,
+        'nexari-wall-relay',
+        () => logger.info('[WallRelay] running on :9616'),
+        (e: any) => logger.warn('[WallRelay] start failed: ' + (e && e.message ? e.message : e)),
+      );
+    } catch (e: any) {
+      logger.warn('[WallRelay] startNodeServer threw: ' + (e && e.message ? e.message : e));
+    }
+  },
+
   // Internal: invoke startSyncPlay() for the full panel rect. The 5th arg
   // (sample uses 5 for full-screen, 7 for rotated) is mirrored from the
   // Samsung b2bsync sample.
@@ -2691,6 +2765,16 @@ const Player = {
 
   // Render video content using Samsung AVPlay API for better performance
   renderVideo(container, content) {
+    // Clean up wall subsystem when switching away from VIDEOWALL content
+    if (!content || content.type !== 'VIDEOWALL') {
+      if (typeof WallSync !== 'undefined' && WallSync.isRunning()) {
+        try { WallSync.stop(); } catch {}
+      }
+      if (typeof WallEngine !== 'undefined' && WallEngine.isInitialised()) {
+        try { WallEngine.destroyEngine(); } catch {}
+      }
+      this._videowallCurrentUrl = null;
+    }
     // Videowall mode: CSS-crop the full-wall video to this panel's region.
     // Guard on content.type so regular video items in a playlist aren't
     // accidentally rendered in crop mode if a manifest is still in memory.
@@ -2770,8 +2854,17 @@ const Player = {
       ` h=${this._pendingVideoRoi.hR.toFixed(4)}`,
     );
 
-    // AVPlay renders fullscreen; setVideoRoi crops the source to our tile.
-    this.renderVideoAVPlay(container, content);
+    // Phase 2: if WallSync is running, hand the URL to the sync engine
+    // (it will call WallEngine.prepare + schedule play via LOAD_URL/GO).
+    // Otherwise fall back to Phase 1 direct AVPlay rendering.
+    this._videowallCurrentUrl = content.url;
+    if (typeof WallSync !== 'undefined' && WallSync.isRunning()) {
+      container.innerHTML = '';
+      WallSync.handleNewContent(content.url);
+    } else {
+      // Phase 1 fallback: direct AVPlay with setVideoRoi via _pendingVideoRoi
+      this.renderVideoAVPlay(container, content);
+    }
   },
 
   // Render video using Samsung AVPlay API

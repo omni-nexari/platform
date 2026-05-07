@@ -12,6 +12,7 @@ import SuperAdminLayout from './pages/superadmin/SuperAdminLayout.js';
 import OrgsListPage from './pages/superadmin/OrgsListPage.js';
 import OrgDetailPage from './pages/superadmin/OrgDetailPage.js';
 import SystemHealthPage from './pages/superadmin/SystemHealthPage.js';
+import InfraMonitoringPage from './pages/superadmin/InfraMonitoringPage.js';
 import ManagementCompaniesListPage from './pages/superadmin/ManagementCompaniesListPage.js';
 import ManagementCompanyDetailPage from './pages/superadmin/ManagementCompanyDetailPage.js';
 import PlatformOwnerDashboardPage from './pages/superadmin/PlatformOwnerDashboardPage.js';
@@ -263,6 +264,7 @@ export default function App() {
         <Route path="companies" element={<ManagementCompaniesListPage />} />
         <Route path="companies/:id" element={<ManagementCompanyDetailPage />} />
         <Route path="system" element={<SystemHealthPage />} />
+        <Route path="monitoring" element={<InfraMonitoringPage />} />
         <Route path="analytics" element={<PlatformAnalyticsPage />} />
         <Route path="notifications" element={<PlatformNotificationsPage />} />
         <Route path="logs" element={<PlatformLogsPage />} />

@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Activity, Cpu, HardDrive, Server, RefreshCw, Database, Wifi, FolderKanban, Download } from 'lucide-react';
+import { Activity, HardDrive, Server, RefreshCw, Database, Wifi, FolderKanban, Download } from 'lucide-react';
 import { buildApiUrl } from '../../lib/api.js';
 import { saApi } from '../../lib/superadmin-auth.js';
 import { useSAStore } from '../../lib/superadmin-auth.js';
@@ -15,21 +15,6 @@ interface SystemHealth {
     uptime: number;
     nodeVersion: string;
     pid: number;
-  };
-  os: {
-    hostname: string;
-    platform: string;
-    arch: string;
-    release: string;
-    totalMem: number;
-    freeMem: number;
-    usedMem: number;
-    cpuUsagePercent: number;
-    loadAvg1: number;
-    loadAvg5: number;
-    loadAvg15: number;
-    uptime: number;
-    cpus: number;
   };
   db: {
     totalOrgs: number;
@@ -279,21 +264,6 @@ export default function SystemHealthPage() {
             <SectionCard>
               <SectionCardHeader>
                 <h2 className="text-base font-semibold flex items-center gap-2">
-                  <Server size={16} /> Host Machine
-                </h2>
-              </SectionCardHeader>
-              <SectionCardBody>
-                <MetricRow label="Hostname" value={data.os.hostname} />
-                <MetricRow label="Platform" value={`${data.os.platform} (${data.os.arch})`} />
-                <MetricRow label="OS release" value={data.os.release} />
-                <MetricRow label="OS uptime" value={formatUptime(data.os.uptime)} />
-                <MetricRow label="CPU cores" value={data.os.cpus} />
-              </SectionCardBody>
-            </SectionCard>
-
-            <SectionCard>
-              <SectionCardHeader>
-                <h2 className="text-base font-semibold flex items-center gap-2">
                   <Wifi size={16} /> Service Connectivity
                 </h2>
               </SectionCardHeader>
@@ -335,36 +305,18 @@ export default function SystemHealthPage() {
             </SectionCard>
           </div>
 
-          {/* Memory usage bars */}
-          <SectionCard>
-            <SectionCardHeader>
-              <h2 className="text-base font-semibold flex items-center gap-2">
-                <HardDrive size={16} /> Memory
-              </h2>
-            </SectionCardHeader>
-            <SectionCardBody>
-              <UsageBar used={data.os.usedMem} total={data.os.totalMem} label="System RAM" />
-              <UsageBar used={data.process.heapUsed} total={data.process.heapTotal} label="Node.js Heap" />
-              <MetricRow label="Process RSS" value={formatBytes(data.process.rss)} />
-              <MetricRow label="External memory" value={formatBytes(data.process.external)} />
-            </SectionCardBody>
-          </SectionCard>
-
-          {/* OS metrics */}
+          {/* Process memory */}
           <div className="grid gap-6 lg:grid-cols-2">
             <SectionCard>
               <SectionCardHeader>
                 <h2 className="text-base font-semibold flex items-center gap-2">
-                  <Cpu size={16} /> CPU &amp; OS
+                  <HardDrive size={16} /> Process Memory
                 </h2>
               </SectionCardHeader>
               <SectionCardBody>
-                <MetricRow label="CPU usage" value={`${data.os.cpuUsagePercent.toFixed(1)}%`} />
-                <MetricRow label="Load avg (1m)" value={data.os.loadAvg1.toFixed(2)} />
-                <MetricRow label="Load avg (5m)" value={data.os.loadAvg5.toFixed(2)} />
-                <MetricRow label="Load avg (15m)" value={data.os.loadAvg15.toFixed(2)} />
-                <MetricRow label="System RAM used" value={formatBytes(data.os.usedMem)} />
-                <MetricRow label="System RAM free" value={formatBytes(data.os.freeMem)} />
+                <UsageBar used={data.process.heapUsed} total={data.process.heapTotal} label="Node.js Heap" />
+                <MetricRow label="Process RSS" value={formatBytes(data.process.rss)} />
+                <MetricRow label="External memory" value={formatBytes(data.process.external)} />
               </SectionCardBody>
             </SectionCard>
 

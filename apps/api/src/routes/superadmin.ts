@@ -29,7 +29,6 @@ import { randomBytes } from 'node:crypto';
 import type { Dirent } from 'node:fs';
 import { createWriteStream } from 'node:fs';
 import * as fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import {
   CreateManagementCompanySchema,
@@ -77,30 +76,6 @@ function parseConnectionLabel(value: string | undefined): { host: string | null;
   } catch {
     return { host: null, database: null };
   }
-}
-
-function getCpuSnapshot() {
-  const cpus = os.cpus();
-  let idle = 0;
-  let total = 0;
-
-  for (const cpu of cpus) {
-    idle += cpu.times.idle;
-    total += cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.idle + cpu.times.irq;
-  }
-
-  return { idle, total };
-}
-
-async function sampleCpuUsagePercent(delayMs = 125): Promise<number> {
-  const start = getCpuSnapshot();
-  await new Promise((resolve) => setTimeout(resolve, delayMs));
-  const end = getCpuSnapshot();
-
-  const idleDelta = end.idle - start.idle;
-  const totalDelta = end.total - start.total;
-  if (totalDelta <= 0) return 0;
-  return Math.max(0, Math.min(100, ((totalDelta - idleDelta) / totalDelta) * 100));
 }
 
 async function getDirectorySize(absPath: string): Promise<number> {
@@ -1161,10 +1136,6 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
   async function buildSystemHealthPayload() {
       const mem = process.memoryUsage();
-      const load = os.loadavg();
-      const cpuUsagePercent = await sampleCpuUsagePercent();
-      const totalMem = os.totalmem();
-      const freeMem = os.freemem();
       const resolvedStorageRoot = path.resolve(STORAGE_ROOT);
       const { path: storageStatsPath, exact: storagePathExists } = await findExistingPath(resolvedStorageRoot);
       const storageStats = await fs.statfs(storageStatsPath);
@@ -1382,21 +1353,6 @@ export async function superAdminRoutes(app: FastifyInstance) {
           uptime: process.uptime(),
           nodeVersion: process.version,
           pid: process.pid,
-        },
-        os: {
-          hostname: os.hostname(),
-          platform: os.platform(),
-          arch: os.arch(),
-          release: os.release(),
-          totalMem,
-          freeMem,
-          usedMem: totalMem - freeMem,
-          cpuUsagePercent,
-          loadAvg1: load[0],
-          loadAvg5: load[1],
-          loadAvg15: load[2],
-          uptime: os.uptime(),
-          cpus: os.cpus().length,
         },
         db: {
           totalOrgs: Number(orgsRow?.total ?? 0),
