@@ -1,10 +1,18 @@
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { FastifyInstance } from 'fastify';
+
+const execAsync = promisify(exec);
 
 const MONITORING_BASE_URL = process.env['MONITORING_BASE_URL'] ?? 'http://192.168.1.17:8080';
 const MONITORING_USERNAME = process.env['MONITORING_USERNAME'] ?? '';
 const MONITORING_PASSWORD = process.env['MONITORING_PASSWORD'] ?? '';
 const CROWDSEC_BASE_URL = process.env['CROWDSEC_BASE_URL'] ?? 'http://127.0.0.1:8090';
 const CROWDSEC_API_KEY = process.env['CROWDSEC_API_KEY'] ?? '';
+const MQTT_HOST = process.env['MQTT_HOST'] ?? '127.0.0.1';
+const MQTT_PORT = process.env['MQTT_PORT'] ?? '1883';
+const MQTT_USERNAME = process.env['MQTT_USERNAME'] ?? '';
+const MQTT_PASSWORD = process.env['MQTT_PASSWORD'] ?? '';
 
 function monitoringBasicAuthHeader(): string {
   return `Basic ${Buffer.from(`${MONITORING_USERNAME}:${MONITORING_PASSWORD}`).toString('base64')}`;
@@ -159,6 +167,40 @@ export async function monitoringRoutes(app: FastifyInstance) {
         return reply.send(data ?? []);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'CrowdSec unavailable';
+        return reply.status(502).send({ error: message });
+      }
+    },
+  );
+
+  // ── GET /monitoring/mqtt ────────────────────────────────────────────────────
+  // Reads Mosquitto $SYS stats via mosquitto_sub (Netdata has no MQTT module)
+  app.get(
+    '/mqtt',
+    { onRequest: [app.authenticatePlatformOwner] },
+    async (_req, reply) => {
+      try {
+        const topics = [
+          '$SYS/broker/clients/connected',
+          '$SYS/broker/messages/received',
+          '$SYS/broker/messages/sent',
+          '$SYS/broker/subscriptions/count',
+        ];
+        const topicArgs = topics.map((t) => `-t '${t}'`).join(' ');
+        const authArgs = MQTT_USERNAME ? `-u '${MQTT_USERNAME}' -P '${MQTT_PASSWORD}'` : '';
+        const cmd = `mosquitto_sub -h '${MQTT_HOST}' -p ${MQTT_PORT} ${authArgs} -v ${topicArgs} -C ${topics.length} -W 12`;
+        const { stdout } = await execAsync(cmd, { timeout: 14_000 });
+        const stats: Record<string, number> = {};
+        for (const line of stdout.trim().split('\n')) {
+          const space = line.lastIndexOf(' ');
+          if (space === -1) continue;
+          const topic = line.slice(0, space);
+          const val = parseFloat(line.slice(space + 1));
+          const key = topic.split('/').pop() ?? topic;
+          if (!Number.isNaN(val)) stats[key] = val;
+        }
+        return reply.send(stats);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'MQTT unavailable';
         return reply.status(502).send({ error: message });
       }
     },

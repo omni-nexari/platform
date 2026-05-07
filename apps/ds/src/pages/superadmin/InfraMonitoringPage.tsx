@@ -18,6 +18,13 @@ interface NetdataPoint {
   data: number[][];
 }
 
+interface MqttStats {
+  connected?: number;
+  received?: number;
+  sent?: number;
+  count?: number;
+}
+
 interface GoAccessReport {
   visitors?: { data: Array<{ hits: { count: number }; visitors: { count: number } }> };
   requests?: { data: Array<{ data: string; hits: { count: number; percent: number }; bytes: { count: number } }> };
@@ -127,9 +134,6 @@ const CHARTS = [
   'nginx_local.connections',
   'nginx_local.connections_statuses',
   'nginx_local.requests',
-  'mqtt_local.clients_connected',
-  'mqtt_local.messages_received',
-  'mqtt_local.messages_sent',
   'postgres_local.connections_state',
   'redis_local.clients',
   'redis_local.commands',
@@ -149,6 +153,12 @@ export default function InfraMonitoringPage() {
       {
         queryKey: ['infra-traffic'],
         queryFn: () => saApi.get<GoAccessReport>('/monitoring/traffic'),
+        refetchInterval: 60_000,
+        retry: false,
+      },
+      {
+        queryKey: ['infra-mqtt'],
+        queryFn: () => saApi.get<MqttStats>('/monitoring/mqtt'),
         refetchInterval: 60_000,
         retry: false,
       },
@@ -185,10 +195,12 @@ export default function InfraMonitoringPage() {
 
   const offset = CHARTS.length;
   const traffic = results[offset]?.data as GoAccessReport | undefined;
-  const ssl = results[offset + 1]?.data as SslStatus | undefined;
-  const backup = results[offset + 2]?.data as BackupStatus | undefined;
-  const crowdsec = results[offset + 3]?.data as CrowdSecDecision[] | null | undefined;
-  const alarms = results[offset + 4]?.data as NetdataAlarms | undefined;
+  const mqtt = results[offset + 1]?.data as MqttStats | undefined;
+  const mqttLoading = results[offset + 1]?.isLoading ?? false;
+  const ssl = results[offset + 2]?.data as SslStatus | undefined;
+  const backup = results[offset + 3]?.data as BackupStatus | undefined;
+  const crowdsec = results[offset + 4]?.data as CrowdSecDecision[] | null | undefined;
+  const alarms = results[offset + 5]?.data as NetdataAlarms | undefined;
 
   const anyLoading = results.some((r) => r.isLoading);
   const lastUpdated = results[0]?.dataUpdatedAt;
@@ -208,10 +220,6 @@ export default function InfraMonitoringPage() {
   const nginxActive = extractFirstValue(nd('nginx_local.connections'), 'active') ?? 0;
   const nginxStatuses = nd('nginx_local.connections_statuses');
   const nginxReqSec = sumValues(nd('nginx_local.requests'));
-
-  const mqttClients = sumValues(nd('mqtt_local.clients_connected'));
-  const mqttIn = sumValues(nd('mqtt_local.messages_received'));
-  const mqttOut = sumValues(nd('mqtt_local.messages_sent'));
 
   const pgConnections = sumValues(nd('postgres_local.connections_state'));
   const redisClients = sumValues(nd('redis_local.clients'));
@@ -490,13 +498,16 @@ export default function InfraMonitoringPage() {
             </h2>
           </SectionCardHeader>
           <SectionCardBody>
-            {ndLoading('mqtt_local.clients_connected') ? (
+            {mqttLoading ? (
               <Skeleton className="h-20 rounded" />
             ) : (
               <>
-                <MetricRow label="Connected clients" value={Math.round(mqttClients)} />
-                <MetricRow label="Messages in/sec" value={Math.abs(mqttIn).toFixed(1)} />
-                <MetricRow label="Messages out/sec" value={Math.abs(mqttOut).toFixed(1)} />
+                <MetricRow label="Connected clients" value={mqtt?.connected ?? '—'} />
+                <MetricRow label="Messages received" value={mqtt?.received ?? '—'} />
+                <MetricRow label="Messages sent" value={mqtt?.sent ?? '—'} />
+                {mqtt?.count !== undefined && (
+                  <MetricRow label="Subscriptions" value={mqtt.count} />
+                )}
               </>
             )}
           </SectionCardBody>
