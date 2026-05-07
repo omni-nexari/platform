@@ -1466,10 +1466,10 @@ function TagUsageModalInline({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4" onClick={onClose}>
       <div
         className="w-full max-w-md rounded-2xl border shadow-2xl overflow-hidden"
-        style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}
+        style={{ background: 'var(--modal-bg)', borderColor: 'var(--card-border)' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
@@ -2710,8 +2710,8 @@ function AppleConnectModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4" onClick={onClose}>
+      <div className="bg-[var(--modal-bg)] rounded-2xl border border-[var(--card-border)] shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-[var(--text)]">Connect Apple iCloud</h3>
           <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={18} /></button>
@@ -2802,8 +2802,8 @@ function IcsConnectModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4" onClick={onClose}>
+      <div className="bg-[var(--modal-bg)] rounded-2xl border border-[var(--card-border)] shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-[var(--text)]">Add ICS URL</h3>
           <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text)]"><X size={18} /></button>

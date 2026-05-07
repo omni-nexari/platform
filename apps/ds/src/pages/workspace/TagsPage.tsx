@@ -145,10 +145,10 @@ function TagUsageModal({
   const totalUsage = tag.usage.device + tag.usage.content + tag.usage.playlist + tag.usage.schedule;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4" onClick={onClose}>
       <div
         className="w-full max-w-md rounded-2xl border shadow-2xl overflow-hidden"
-        style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}
+        style={{ background: 'var(--modal-bg)', borderColor: 'var(--card-border)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
