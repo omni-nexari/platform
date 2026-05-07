@@ -74,6 +74,13 @@ export const PairRequestSchema = z.object({
   modelCode: z.string().nullish(),
   serialNumber: z.string().nullish(),
   firmwareVersion: z.string().nullish(),
+  // ── E-paper extras (optional, sent only by nexari-epaper) ────────────────
+  kind: z.enum(['tv', 'epaper']).nullish(),
+  platform: z.string().nullish(), // 'tizen' | 'tizen-epaper' | 'tizen-sbb' | ...
+  panelW: z.number().int().positive().nullish(),
+  panelH: z.number().int().positive().nullish(),
+  orientation: z.enum(['landscape', 'portrait']).nullish(),
+  epaperApiVersion: z.string().nullish(),
 });
 export type PairRequestInput = z.infer<typeof PairRequestSchema>;
 
@@ -182,6 +189,11 @@ export const HeartbeatSchema = z.object({
   nextContentId: z.string().uuid().nullable().optional(),
   nextStartsAt: z.string().datetime().nullable().optional(),
   tvName: z.string().optional(),
+  // E-paper specific (Tizen 8 panels) — all optional so TVs can ignore them.
+  kind: z.enum(['tv', 'epaper']).optional(),
+  batteryPct: z.number().int().min(0).max(100).nullable().optional(),
+  panelW: z.number().int().positive().optional(),
+  panelH: z.number().int().positive().optional(),
 });
 export type HeartbeatPayload = z.infer<typeof HeartbeatSchema>;
 

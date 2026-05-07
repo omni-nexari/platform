@@ -33,6 +33,7 @@ import {
   getLatestFrame,
 } from '../services/ws.js';
 import { notifyDeviceStatusChange } from '../services/notifications.js';
+import { ensureEpaperVariant, type EpaperFitMode } from '../services/epaper-variants.js';
 
 /** 6-char uppercase code avoiding confusable chars (0,O,I,1) */
 function generatePairingCode(): string {
@@ -417,6 +418,13 @@ export async function deviceRoutes(app: FastifyInstance) {
     const body = PairRequestSchema.safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
     const { duid, modelName, modelCode, serialNumber, firmwareVersion } = body.data;
+    // E-paper extras — optional. Persist only when sent so existing TV pair flow is unaffected.
+    const epaperKind = body.data.kind ?? null;
+    const epaperPlatform = body.data.platform ?? null;
+    const epaperPanelW = body.data.panelW ?? null;
+    const epaperPanelH = body.data.panelH ?? null;
+    const epaperOrientation = body.data.orientation ?? null;
+    const epaperApiVersion = body.data.epaperApiVersion ?? null;
 
     // If this DUID (or serial as fallback) already has a live device token, auto-resume without re-pairing.
     // NOTE: DUID lookup intentionally omits isNull(deletedAt) — a soft-deleted row still holds the unique
@@ -443,6 +451,12 @@ export async function deviceRoutes(app: FastifyInstance) {
           lastSeen: new Date(),
           updatedAt: new Date(),
           mdcNetworkStandby: null,
+          ...(epaperKind ? { kind: epaperKind } : {}),
+          ...(epaperPlatform ? { platform: epaperPlatform } : {}),
+          ...(epaperPanelW ? { panelW: epaperPanelW } : {}),
+          ...(epaperPanelH ? { panelH: epaperPanelH } : {}),
+          ...(epaperOrientation ? { panelOrientation: epaperOrientation } : {}),
+          ...(epaperApiVersion ? { epaperApiVersion: epaperApiVersion } : {}),
         })
         .where(eq(devices.id, existing.id));
 
@@ -468,6 +482,12 @@ export async function deviceRoutes(app: FastifyInstance) {
           updatedAt: new Date(),
           deletedAt: null,
           mdcNetworkStandby: null,
+          ...(epaperKind ? { kind: epaperKind } : {}),
+          ...(epaperPlatform ? { platform: epaperPlatform } : {}),
+          ...(epaperPanelW ? { panelW: epaperPanelW } : {}),
+          ...(epaperPanelH ? { panelH: epaperPanelH } : {}),
+          ...(epaperOrientation ? { panelOrientation: epaperOrientation } : {}),
+          ...(epaperApiVersion ? { epaperApiVersion: epaperApiVersion } : {}),
         })
         .where(eq(devices.id, existing.id));
 
@@ -507,6 +527,12 @@ export async function deviceRoutes(app: FastifyInstance) {
           ipAddress: req.ip ?? null,
           updatedAt: new Date(),
           deletedAt: null,
+          ...(epaperKind ? { kind: epaperKind } : {}),
+          ...(epaperPlatform ? { platform: epaperPlatform } : {}),
+          ...(epaperPanelW ? { panelW: epaperPanelW } : {}),
+          ...(epaperPanelH ? { panelH: epaperPanelH } : {}),
+          ...(epaperOrientation ? { panelOrientation: epaperOrientation } : {}),
+          ...(epaperApiVersion ? { epaperApiVersion: epaperApiVersion } : {}),
         })
         .where(eq(devices.id, existing.id))
         .returning();
@@ -523,6 +549,12 @@ export async function deviceRoutes(app: FastifyInstance) {
           serialNumber: serialNumber ?? null,
           firmwareVersion: firmwareVersion ?? null,
           ipAddress: req.ip ?? null,
+          kind: epaperKind ?? 'tv',
+          ...(epaperPlatform ? { platform: epaperPlatform } : {}),
+          panelW: epaperPanelW ?? null,
+          panelH: epaperPanelH ?? null,
+          panelOrientation: epaperOrientation ?? null,
+          epaperApiVersion: epaperApiVersion ?? null,
         })
         .returning();
     }
@@ -1017,9 +1049,15 @@ export async function deviceRoutes(app: FastifyInstance) {
     const refreshedDeviceIds: string[] = [];
     for (const device of targetDevices) {
       if (!isDeviceOnline(device.id)) continue;
-      sendCommand(device.id, { type: 'refresh_schedule' });
-      // Clear any stale videowall manifest so the device reverts to normal rendering
-      sendCommand(device.id, { type: 'VIDEOWALL_CLEAR' });
+      if (device.kind === 'epaper') {
+        // E-paper: distinct event so the renderer can react without bundling
+        // TV-only side-effects (videowall clear, etc.).
+        sendCommand(device.id, { type: 'epaper_playlist_changed' });
+      } else {
+        sendCommand(device.id, { type: 'refresh_schedule' });
+        // Clear any stale videowall manifest so the device reverts to normal rendering
+        sendCommand(device.id, { type: 'VIDEOWALL_CLEAR' });
+      }
       refreshedDeviceIds.push(device.id);
     }
 
@@ -1309,6 +1347,127 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
 
     return reply.send({ sent: true, command: cmd.command });
+  });
+
+  // ── E-PAPER ADMIN ENDPOINTS ─────────────────────────────────────────────
+  // Helper: load + auth-check an e-paper device. Returns null and writes an
+  // error response if the caller is not allowed or the device is not e-paper.
+  async function loadEpaperDevice(reqAny: { params: unknown; user: unknown }, replyAny: { status: (n: number) => { send: (b: unknown) => unknown } }): Promise<{ id: string; orgId: string | null; kind: string; epaperSettings: unknown } | null> {
+    const user = reqAny.user as AuthUser;
+    const { id } = reqAny.params as { id: string };
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) { replyAny.status(404).send({ error: 'Not found' }); return null; }
+    if (device.kind !== 'epaper') { replyAny.status(400).send({ error: 'Device is not an e-paper panel' }); return null; }
+    return device as never;
+  }
+
+  // ── POST /devices/:id/epaper/wake ─ wake panel out of sleep ─────────────
+  app.post('/:id/epaper/wake', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const device = await loadEpaperDevice(req as never, reply as never);
+    if (!device) return;
+    const sent = sendCommand(device.id, { type: 'epaper_wake_now' });
+    await writeAuditLog({
+      orgId: user.orgId, actorId: user.sub, action: 'DEVICE_COMMAND_SENT',
+      entityType: 'device', entityId: device.id, meta: { command: 'epaper_wake_now', sent },
+      ipAddress: req.ip,
+    });
+    return reply.send({ sent });
+  });
+
+  // ── POST /devices/:id/epaper/refresh-now ─ force full panel defrag ─────
+  app.post('/:id/epaper/refresh-now', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const device = await loadEpaperDevice(req as never, reply as never);
+    if (!device) return;
+    const sent = sendCommand(device.id, { type: 'epaper_refresh_now' });
+    await writeAuditLog({
+      orgId: user.orgId, actorId: user.sub, action: 'DEVICE_COMMAND_SENT',
+      entityType: 'device', entityId: device.id, meta: { command: 'epaper_refresh_now', sent },
+      ipAddress: req.ip,
+    });
+    return reply.send({ sent });
+  });
+
+  // ── POST /devices/:id/epaper/sleep ─ force the panel to sleep now ───────
+  app.post('/:id/epaper/sleep', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const device = await loadEpaperDevice(req as never, reply as never);
+    if (!device) return;
+    const sent = sendCommand(device.id, { type: 'epaper_force_sleep' });
+    await writeAuditLog({
+      orgId: user.orgId, actorId: user.sub, action: 'DEVICE_COMMAND_SENT',
+      entityType: 'device', entityId: device.id, meta: { command: 'epaper_force_sleep', sent },
+      ipAddress: req.ip,
+    });
+    return reply.send({ sent });
+  });
+
+  // ── PATCH /devices/:id/epaper/settings ─ update + push e-paper policy ──
+  // Body: same shape as the epaper_settings_changed payload. Persisted to
+  // devices.epaper_settings (jsonb) and pushed via WS if device is online.
+  const EpaperSettingsSchema = z.object({
+    networkStandby: z.enum(['ON', 'OFF']).optional(),
+    autoSleep: z.string().optional(),
+    screenRefreshTime: z.object({ hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59) }).nullable().optional(),
+    ledMode: z.enum(['ON', 'OFF', 'AUTO']).optional(),
+    batteryWarningIcon: z.boolean().optional(),
+    minSwapRateSec: z.number().int().min(15).max(3600).optional(),
+  });
+  app.patch('/:id/epaper/settings', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const device = await loadEpaperDevice(req as never, reply as never);
+    if (!device) return;
+    const parsed = EpaperSettingsSchema.safeParse(req.body);
+    if (!parsed.success) return reply.status(400).send({ error: parsed.error.flatten() });
+
+    const merged = Object.assign({}, (device.epaperSettings as Record<string, unknown> | null) ?? {}, parsed.data);
+    await db.update(devices).set({ epaperSettings: merged, updatedAt: new Date() }).where(eq(devices.id, device.id));
+
+    // Strip undefineds for the WS push (exactOptionalPropertyTypes).
+    const payload: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(parsed.data)) {
+      if (v !== undefined) payload[k] = v;
+    }
+    const sent = sendCommand(device.id, { type: 'epaper_settings_changed', payload: payload as never });
+    await writeAuditLog({
+      orgId: user.orgId, actorId: user.sub, action: 'DEVICE_SETTINGS_UPDATED',
+      entityType: 'device', entityId: device.id, meta: { kind: 'epaper', sent, fields: Object.keys(parsed.data) },
+      ipAddress: req.ip,
+    });
+    return reply.send({ ok: true, sent, settings: merged });
+  });
+
+  // ── GET /devices/device/epaper/policy ─ device-auth, returns merged policy ─
+  // The e-paper client calls this on boot (and after epaper_settings_changed).
+  // Returns the device-specific epaper_settings merged onto sensible defaults.
+  app.get('/device/epaper/policy', async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, auth.deviceId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Device not found' });
+    if (device.kind !== 'epaper') return reply.status(400).send({ error: 'Not an e-paper device' });
+
+    // Push-first defaults — match defaultConfig in apps/nexari-epaper/js/config.js
+    const defaults = {
+      networkStandby: 'ON',
+      autoSleep: 'NEVER',
+      screenRefreshTime: { hour: 2, minute: 0 },
+      ledMode: 'AUTO',
+      batteryWarningIcon: true,
+      minSwapRateSec: 15,
+    };
+    const settings = Object.assign({}, defaults, (device.epaperSettings as Record<string, unknown> | null) ?? {});
+    return reply.send({
+      panelW: device.panelW,
+      panelH: device.panelH,
+      orientation: device.panelOrientation,
+      settings,
+    });
   });
 
   // ── GET /ws/device ─ WebSocket endpoint for Tizen devices ──────────────────
@@ -1930,7 +2089,130 @@ export async function deviceRoutes(app: FastifyInstance) {
     return reply.send(createReadStream(absPath));
   });
 
-  // ── GET /devices/device/content/:id/calendar/events ─ device-auth calendar events ──
+  // ── GET /devices/device/content/:id/epaper.jpg ─ pre-rendered variant for e-paper ──
+  // Streams a JPEG resized exactly to the requesting device's panel
+  // (panel_w × panel_h, oriented per panel_orientation). The image is
+  // cached on disk at signage_uploads/epaper/<deviceId>/<contentId>-WxH-<mode>.jpg
+  // and re-used on subsequent requests.
+  app.get('/device/content/:id/epaper.jpg', async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+
+    const { id } = req.params as { id: string };
+    const q = req.query as { mode?: string };
+    const mode: EpaperFitMode = q.mode === 'cover' || q.mode === 'pad' ? q.mode : 'contain';
+
+    const [device, item] = await Promise.all([
+      db.query.devices.findFirst({
+        where: and(eq(devices.id, auth.deviceId), isNull(devices.deletedAt)),
+      }),
+      db.query.contentItems.findFirst({
+        where: and(
+          eq(contentItems.id, id),
+          eq(contentItems.workspaceId, auth.workspaceId),
+          isNull(contentItems.deletedAt),
+        ),
+      }),
+    ]);
+
+    if (!device) return reply.status(404).send({ error: 'Device not found' });
+    if (!device.panelW || !device.panelH) {
+      return reply.status(400).send({ error: 'Device panel size not registered' });
+    }
+    if (!item) return reply.status(404).send({ error: 'Content not found' });
+
+    // Honour the panel's actual physical orientation. If portrait, swap dims.
+    const isPortrait = device.panelOrientation === 'portrait';
+    const panelW = isPortrait ? Math.min(device.panelW, device.panelH) : Math.max(device.panelW, device.panelH);
+    const panelH = isPortrait ? Math.max(device.panelW, device.panelH) : Math.min(device.panelW, device.panelH);
+
+    // ── Calendar content ── render an SVG agenda → JPEG variant ─────────
+    if (item.type === 'calendar') {
+      try {
+        let meta: { connectionId?: string; selectedCalendarIds?: string[]; keywordFilter?: string | null; privacyMode?: 'titles' | 'busy_only'; lookaheadHours?: number } = {};
+        try { meta = JSON.parse(item.metadata ?? '{}'); } catch { /* ignore */ }
+        if (!meta.connectionId) return reply.status(400).send({ error: 'Calendar has no connection configured' });
+
+        const conn = await db.query.calendarConnections.findFirst({
+          where: and(eq(calendarConnections.id, meta.connectionId), isNull(calendarConnections.deletedAt)),
+        });
+        if (!conn || conn.workspaceId !== item.workspaceId) {
+          return reply.status(404).send({ error: 'Calendar connection not found' });
+        }
+
+        const lookaheadHours = Math.max(1, Math.min(168, meta.lookaheadHours ?? 48));
+        const fromD = new Date();
+        const toD = new Date(Date.now() + lookaheadHours * 3_600_000);
+
+        const { listEventsForConnection } = await import('../services/calendar/index.js');
+        const events = await listEventsForConnection(conn, {
+          from: fromD, to: toD,
+          ...(meta.selectedCalendarIds ? { calendarIds: meta.selectedCalendarIds } : {}),
+          ...(meta.keywordFilter ? { keyword: meta.keywordFilter } : {}),
+        });
+        const safe = (meta.privacyMode === 'busy_only')
+          ? events.map((e) => ({ ...e, title: 'Busy', location: null, description: null, organizerEmail: null, organizerName: null, attendeeCount: null }))
+          : events;
+
+        const { ensureCalendarVariant } = await import('../services/epaper-calendar.js');
+        const variant = await ensureCalendarVariant({
+          deviceId: device.id,
+          contentId: item.id,
+          panelW,
+          panelH,
+          events: safe,
+          title: item.name || 'Calendar',
+        });
+
+        const stat = await fsPromises.stat(variant.absPath);
+        reply.header('Content-Type', 'image/jpeg');
+        reply.header('Content-Length', String(stat.size));
+        // Calendars change as events do; keep a short cache so the device
+        // re-fetches on its next slot tick.
+        reply.header('Cache-Control', 'private, max-age=300');
+        reply.header('X-Epaper-Variant-Generated', variant.generated ? '1' : '0');
+        reply.header('X-Epaper-Variant-Hash', variant.hash);
+        reply.header('Accept-Ranges', 'bytes');
+        return reply.send(createReadStream(variant.absPath));
+      } catch (err) {
+        req.log.error({ err, contentId: id, deviceId: device.id }, '[epaper] calendar variant render failed');
+        return reply.status(502).send({ error: 'Calendar render failed' });
+      }
+    }
+
+    // ── Image content ── pre-rendered JPEG variant ──────────────────────
+    if (item.type !== 'image' || !item.filePath) {
+      return reply.status(415).send({
+        error: 'E-paper variants not supported for this content type',
+        type: item.type,
+      });
+    }
+
+    let variant;
+    try {
+      variant = await ensureEpaperVariant({
+        deviceId: device.id,
+        contentId: item.id,
+        srcRelPath: item.filePath,
+        panelW,
+        panelH,
+        mode,
+      });
+    } catch (err) {
+      req.log.error({ err, contentId: id, deviceId: device.id }, '[epaper] variant render failed');
+      return reply.status(500).send({ error: 'Variant render failed' });
+    }
+
+    const stat = await fsPromises.stat(variant.absPath);
+    reply.header('Content-Type', 'image/jpeg');
+    reply.header('Content-Length', String(stat.size));
+    reply.header('Cache-Control', 'private, max-age=86400');
+    reply.header('X-Epaper-Variant-Generated', variant.generated ? '1' : '0');
+    reply.header('Accept-Ranges', 'bytes');
+    return reply.send(createReadStream(variant.absPath));
+  });
+
+
   app.get('/device/content/:id/calendar/events', async (req, reply) => {
     const auth = authenticateDevice(req as never, reply as never);
     if (!auth) return;

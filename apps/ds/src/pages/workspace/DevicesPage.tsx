@@ -124,6 +124,7 @@ interface Device {
   powerState: 'on' | 'off' | 'standby' | null;
   type: 'signage' | 'kiosk' | 'kitchen';
   platform: string;
+  kind?: 'tv' | 'epaper' | null;
   manufacturer: string | null;
   modelName: string | null;
   assignedTags?: AssignedTag[];
@@ -647,6 +648,9 @@ export default function DevicesPage() {
                         <StatusBadge status={device.status} />
                         {device.platform && device.platform !== 'tizen' && (
                           <Badge tone="neutral">{device.platform}</Badge>
+                        )}
+                        {device.kind === 'epaper' && (
+                          <Badge tone="info">E-Paper</Badge>
                         )}
                       </div>
 

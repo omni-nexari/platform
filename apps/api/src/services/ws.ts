@@ -134,7 +134,30 @@ export type WsCommand =
   // per content item and pushes diff'd event lists to every subscribed device.
   // See services/calendar-broker.ts for the fan-out logic.
   | { type: 'calendar_events'; payload: { contentId: string; events: unknown[]; updatedAt: string } }
-  | { type: 'calendar_unavailable'; payload: { contentId: string; error: string } };
+  | { type: 'calendar_unavailable'; payload: { contentId: string; error: string } }
+  // ── E-Paper specific ───────────────────────────────────────────────────────
+  // Push when admin changes the active playlist/schedule for an e-paper device.
+  // Same semantics as `refresh_schedule` but kept distinct so the e-paper
+  // client can prioritise it over generic refreshes.
+  | { type: 'epaper_playlist_changed' }
+  // Wake the panel from sleep ahead of its scheduled wake time.
+  | { type: 'epaper_wake_now' }
+  // Force a full panel refresh (defrag the eink) at the next idle moment.
+  | { type: 'epaper_refresh_now' }
+  // Push updated power/refresh policy. Client applies via webapis.epaper.
+  | {
+      type: 'epaper_settings_changed';
+      payload: {
+        networkStandby?: 'ON' | 'OFF';
+        autoSleep?: 'NEVER' | string; // 'HH:MM' or 'NEVER'
+        screenRefreshTime?: { hour: number; minute: number } | null;
+        ledMode?: 'ON' | 'OFF' | 'AUTO';
+        batteryWarningIcon?: boolean;
+        minSwapRateSec?: number;
+      };
+    }
+  // Force the panel to sleep now (admin override).
+  | { type: 'epaper_force_sleep' };
 
 const connections = new Map<string, Conn>();
 const deviceLogs = new Map<string, DeviceConsoleLogEntry[]>();
@@ -465,6 +488,7 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
         ...(hb.irLock != null ? { irLock: hb.irLock } : {}),
         ...(hb.buttonLock != null ? { buttonLock: hb.buttonLock } : {}),
         ...('tvName' in hb && hb.tvName ? { name: hb.tvName } : {}),
+        ...('batteryPct' in hb && hb.batteryPct != null ? { batteryPct: hb.batteryPct } : {}),
         updatedAt: new Date(),
       })
       .where(eq(devices.id, deviceId));

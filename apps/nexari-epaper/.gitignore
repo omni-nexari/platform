@@ -1,0 +1,9 @@
+node_modules/
+.sign/
+.settings/
+.project
+.tproject
+.manifest.tmp
+*.wgt
+author-signature.xml
+signature1.xml

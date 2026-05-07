@@ -51,6 +51,21 @@ export const devices = pgTable('devices', {
   wifiSsid: text('wifi_ssid'),
   wifiStrength: integer('wifi_strength'),
 
+  // ── E-Paper specific (kind='epaper') ───────────────────────────────────────
+  // Distinguishes Samsung e-paper signage from regular TV/SBB displays.
+  // Image-only renderer; uses webapis.epaper power/refresh APIs and a push-first
+  // power profile (network standby always ON).
+  kind: text('kind').notNull().default('tv'), // 'tv' | 'epaper'
+  panelW: integer('panel_w'),
+  panelH: integer('panel_h'),
+  panelOrientation: text('panel_orientation'), // 'landscape' | 'portrait' — runtime-detected
+  batteryPct: integer('battery_pct'),
+  lastWakeReason: text('last_wake_reason'), // 'scheduled' | 'push' | 'user' | 'boot' | 'unknown'
+  nextWakeAt: timestamp('next_wake_at', { withTimezone: true }),
+  epaperApiVersion: text('epaper_api_version'),
+  /** Per-device e-paper preferences. See migration 0055 for shape. */
+  epaperSettings: jsonb('epaper_settings'),
+
   // ── Display state ──────────────────────────────────────────────────────────
   screenOrientation: text('screen_orientation'), // landscape | portrait
   powerState: text('power_state'), // on | off | standby — null until MDC reports

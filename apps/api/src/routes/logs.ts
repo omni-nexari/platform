@@ -6,7 +6,7 @@ import { logBus } from '../services/log-bus.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
-const VALID_SOURCES = ['api', 'ds', 'tizen', 'tizen-sbb'] as const;
+const VALID_SOURCES = ['api', 'ds', 'tizen', 'tizen-sbb', 'epaper'] as const;
 const VALID_LEVELS  = ['debug', 'info', 'warn', 'error'] as const;
 const LEVEL_ORDER   = { debug: 0, info: 1, warn: 2, error: 3 } as const;
 
@@ -46,6 +46,7 @@ export async function logsRoutes(app: FastifyInstance) {
    * Accepts a batch of log entries from:
    *  - Authenticated browser users (DS) → source = 'ds'
    *  - Paired Tizen / Tizen-SBB devices → source = 'tizen' | 'tizen-sbb'
+   *  - E-paper devices (Tizen 8 e-paper panels) → source = 'epaper'
    *
    * Auth: device JWT (type === 'device')  OR  user session cookie/Bearer.
    */
@@ -74,7 +75,7 @@ export async function logsRoutes(app: FastifyInstance) {
       resolvedDeviceId = payload.sub;
       resolvedOrgId    = payload.orgId;
       const src = (req.body as { source?: string })?.source ?? payload.source;
-      resolvedSource = (src === 'tizen-sbb' ? 'tizen-sbb' : 'tizen') as typeof VALID_SOURCES[number];
+      resolvedSource = (src === 'tizen-sbb' ? 'tizen-sbb' : src === 'epaper' ? 'epaper' : 'tizen') as typeof VALID_SOURCES[number];
     } else {
       // User session: validate via cookie / user JWT
       try {
@@ -126,7 +127,7 @@ export async function logsRoutes(app: FastifyInstance) {
    *  - Management company admin (authenticateManagementCompanyAdmin) → only their orgs' logs
    *
    * Query params:
-   *   source        filter by source ('api' | 'ds' | 'tizen' | 'tizen-sbb')
+   *   source        filter by source ('api' | 'ds' | 'tizen' | 'tizen-sbb' | 'epaper')
    *   min_level     minimum severity ('debug' | 'info' | 'warn' | 'error')
    *   org_id        filter to a specific org  (platform owner only)
    *   device_id     filter to a specific device

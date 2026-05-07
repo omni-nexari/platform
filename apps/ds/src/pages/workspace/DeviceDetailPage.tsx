@@ -57,6 +57,7 @@ import {
 } from 'lucide-react';
 import { formatDistanceToNow } from '../utils/time.js';
 import WorkspaceTagPicker from '../../components/WorkspaceTagPicker.js';
+import EpaperTab from './EpaperTab.js';
 
 import {
   ActionButton,
@@ -182,6 +183,23 @@ interface Device {
     id: string;
     type: 'content' | 'playlist' | 'schedule';
     name: string;
+  } | null;
+  // ── E-Paper ──────────────────────────────────────────────
+  kind?: 'tv' | 'epaper' | null;
+  panelW?: number | null;
+  panelH?: number | null;
+  panelOrientation?: 'landscape' | 'portrait' | null;
+  batteryPct?: number | null;
+  lastWakeReason?: string | null;
+  nextWakeAt?: string | null;
+  epaperApiVersion?: string | null;
+  epaperSettings?: {
+    networkStandby?: 'ON' | 'OFF';
+    autoSleep?: string;
+    screenRefreshTime?: { hour: number; minute: number } | null;
+    ledMode?: 'ON' | 'OFF' | 'AUTO';
+    batteryWarningIcon?: boolean;
+    minSwapRateSec?: number;
   } | null;
 }
 
@@ -872,7 +890,7 @@ export function DeviceDetailContent({
   wsId: string | undefined;
   embedded?: boolean;
 }) {
-  type DeviceTabId = 'info' | 'power' | 'network' | 'settings' | 'timers' | 'tags' | 'update' | 'logs' | 'kiosk-config' | 'order-filter';
+  type DeviceTabId = 'info' | 'power' | 'network' | 'settings' | 'timers' | 'tags' | 'update' | 'logs' | 'kiosk-config' | 'order-filter' | 'epaper';
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user, bootstrapped } = useAuthStore();
@@ -1432,16 +1450,18 @@ export function DeviceDetailContent({
       {(() => {
         const deviceType = device.type ?? 'signage';
         const isTizen = (device.platform ?? 'tizen') === 'tizen';
+        const isEpaper = device.kind === 'epaper';
         const TABS: Array<{ id: DeviceTabId; label: string }> = [
           { id: 'info',         label: 'Info' },
-          ...(deviceType !== 'kitchen' && isTizen ? [{ id: 'power' as DeviceTabId, label: 'Power / Control' }] : []),
+          ...(isEpaper ? [{ id: 'epaper' as DeviceTabId, label: 'E-Paper' }] : []),
+          ...(!isEpaper && deviceType !== 'kitchen' && isTizen ? [{ id: 'power' as DeviceTabId, label: 'Power / Control' }] : []),
           { id: 'network',      label: 'Network' },
           { id: 'settings',     label: 'Settings' },
-          ...(deviceType !== 'kitchen' ? [{ id: 'timers' as DeviceTabId, label: 'Timers' }] : []),
+          ...(!isEpaper && deviceType !== 'kitchen' ? [{ id: 'timers' as DeviceTabId, label: 'Timers' }] : []),
           ...(deviceType === 'kiosk'   ? [{ id: 'kiosk-config' as DeviceTabId, label: 'Kiosk Config' }] : []),
           ...(deviceType === 'kitchen' ? [{ id: 'order-filter' as DeviceTabId, label: 'Order Filter' }] : []),
           { id: 'tags',         label: 'Tags' },
-          ...(deviceType === 'signage' ? [{ id: 'update' as DeviceTabId, label: 'Update' }] : []),
+          ...(!isEpaper && deviceType === 'signage' ? [{ id: 'update' as DeviceTabId, label: 'Update' }] : []),
           { id: 'logs',         label: 'Logs' },
         ];
         return (
@@ -2747,6 +2767,11 @@ export function DeviceDetailContent({
             </SectionCardBody>
           </SectionCard>
         </div>
+      )}
+
+      {/* ── E-Paper tab ─────────────────────────────────────────────────── */}
+      {activeTab === 'epaper' && (
+        <EpaperTab device={device as never} />
       )}
 
       {/* ── Tags tab ────────────────────────────────────────────────────── */}

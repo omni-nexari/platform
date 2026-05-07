@@ -386,6 +386,13 @@
                         "when":  1774125000000,
                         "tag":  "0054_calendar_integrations",
                         "breakpoints":  true
+                    },
+                    {
+                        "idx":  55,
+                        "version":  "7",
+                        "when":  1778400000000,
+                        "tag":  "0055_epaper_devices",
+                        "breakpoints":  true
                     }
                 ]
 }

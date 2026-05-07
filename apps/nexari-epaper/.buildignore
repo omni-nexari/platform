@@ -1,0 +1,16 @@
+node_modules
+src
+scripts
+.git
+.settings
+.project
+.tproject
+.sign
+.manifest.tmp
+package.json
+package-lock.json
+tsconfig.json
+.gitignore
+.buildignore
+.jshintrc
+*.wgt

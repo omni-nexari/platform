@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://nexari.app/tizen/NexariEPaper" version="0.1.0" viewmodes="maximized">
+    <access origin="*" subdomains="true"></access>
+    <tizen:allow-navigation>*</tizen:allow-navigation>
+    <tizen:application id="nxrEPaper01.NexariEPaper" package="nxrEPaper01" required_version="4.0"/>
+    <content src="index.html"/>
+    <tizen:content-security-policy>default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; img-src * data: blob:; frame-src *; style-src * 'unsafe-inline';</tizen:content-security-policy>
+    <description>Nexari Signage — Samsung E-Paper player (Tizen 8)</description>
+    <icon src="icon.png"/>
+    <!-- E-Paper: required to install on e-paper panels. App will NOT install without this. -->
+    <tizen:metadata key="http://samsung.com/tv/metadata/application/epaper.support" value="true"/>
+    <!-- Network standby ON — must be true so the device stays reachable for push commands. -->
+    <tizen:metadata key="http://samsung.com/tv/metadata/use.network" value="true"/>
+    <tizen:metadata key="http://samsung.com/tv/metadata/prelaunch.support" value="true"/>
+    <tizen:metadata key="http://tizen.org/metadata/app_ui_type/base_screen_resolution" value="extensive"/>
+    <name>Nexari E-Paper</name>
+    <!-- Core network + storage privileges -->
+    <tizen:privilege name="http://tizen.org/privilege/internet"/>
+    <tizen:privilege name="http://tizen.org/privilege/filesystem.read"/>
+    <tizen:privilege name="http://tizen.org/privilege/filesystem.write"/>
+    <tizen:privilege name="http://tizen.org/privilege/download"/>
+    <tizen:privilege name="http://tizen.org/privilege/network.get"/>
+    <tizen:privilege name="http://developer.samsung.com/privilege/network.public"/>
+    <!-- E-Paper control (webapis.epaper.*) — requires systemcontrol per Samsung docs -->
+    <tizen:privilege name="http://developer.samsung.com/privilege/systemcontrol"/>
+    <!-- Device identity + product info -->
+    <tizen:privilege name="http://developer.samsung.com/privilege/productinfo"/>
+    <tizen:privilege name="http://developer.samsung.com/privilege/tvinfo"/>
+    <!-- Power / alarm / sleep scheduling -->
+    <tizen:privilege name="http://tizen.org/privilege/power"/>
+    <tizen:privilege name="http://tizen.org/privilege/alarm"/>
+    <tizen:privilege name="http://developer.samsung.com/privilege/devicetimer"/>
+    <!-- App lifecycle -->
+    <tizen:privilege name="http://tizen.org/privilege/application.launch"/>
+    <tizen:privilege name="http://tizen.org/privilege/system"/>
+    <tizen:privilege name="http://tizen.org/privilege/notification"/>
+    <tizen:profile name="tv-samsung"/>
+    <tizen:setting screen-orientation="auto-rotation" context-menu="disable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>
+</widget>

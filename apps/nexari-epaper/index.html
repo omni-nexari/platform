@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexari E-Paper</title>
+    <!-- Early error banner: catches any JS crash before logger is ready -->
+    <script>
+    (function() {
+      function showErr(msg) {
+        var show = function() {
+          var b = document.getElementById('_jserr');
+          if (!b) {
+            b = document.createElement('div');
+            b.id = '_jserr';
+            b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#000;color:#fff;padding:10px 16px;font:13px monospace;word-break:break-all;white-space:pre-line;max-height:35vh;overflow-y:auto;border-bottom:2px solid #000;';
+            (document.body || document.documentElement).appendChild(b);
+          }
+          b.textContent += msg + '\n';
+        };
+        if (document.body) show(); else document.addEventListener('DOMContentLoaded', show);
+      }
+      window.onerror = function(msg, src, line) {
+        showErr('[JS ERROR] ' + msg + '\n  ' + src + ':' + line);
+        return false;
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        var r = e.reason;
+        showErr('[REJECTION] ' + (r && r.message ? r.message : String(r)));
+      });
+    })();
+    </script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Pairing Screen -->
+    <div id="pairing-screen" class="screen">
+        <div class="pairing-container">
+            <div class="logo">
+                <img src="logo.png" alt="Nexari" onerror="this.style.display='none'" />
+            </div>
+            <h1>Nexari E-Paper</h1>
+            <div class="pairing-code-container">
+                <p class="pairing-label">Enter this code in your dashboard:</p>
+                <div id="pairing-code" class="pairing-code">------</div>
+                <div id="pairing-status" class="pairing-status">Generating code...</div>
+            </div>
+            <div class="device-info">
+                <div id="device-model" class="info-item">Model: Detecting...</div>
+                <div id="device-ip" class="info-item">IP: Connecting...</div>
+                <div id="device-serial" class="info-item">Serial: Detecting...</div>
+                <div id="device-panel" class="info-item">Panel: Detecting...</div>
+                <div id="device-epaper" class="info-item">E-Paper API: Detecting...</div>
+            </div>
+
+            <!-- Connection Settings (collapsible) -->
+            <div class="conn-settings-wrap">
+                <button id="conn-settings-toggle" class="conn-settings-toggle" onclick="PairingSettings.toggle()">
+                    &#9881; Connection settings <span id="conn-settings-arrow">&#9660;</span>
+                </button>
+                <div id="conn-settings-panel" class="conn-settings-panel hidden">
+                    <p class="conn-settings-hint">
+                        Enter the <strong>backend server</strong> address the device should connect to.
+                    </p>
+                    <div class="conn-field">
+                        <label for="input-api-base">CMS / API Base URL</label>
+                        <input id="input-api-base" type="url" spellcheck="false"
+                               placeholder="http://192.168.1.10:3000" />
+                    </div>
+                    <div class="conn-field">
+                        <label for="input-ws-url">WebSocket URL</label>
+                        <input id="input-ws-url" type="url" spellcheck="false"
+                               placeholder="ws://192.168.1.10:3000" />
+                    </div>
+                    <div class="conn-actions">
+                        <button class="conn-btn conn-btn-apply" onclick="PairingSettings.apply()">Save &amp; Reconnect</button>
+                        <button class="conn-btn conn-btn-reset" onclick="PairingSettings.reset()">Reset to Default</button>
+                    </div>
+                    <div id="conn-settings-msg" class="conn-settings-msg"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Player Screen — full-bleed image only (e-paper) -->
+    <div id="player-screen" class="screen hidden">
+        <img id="content-image" alt="" />
+        <div id="status-bar" class="status-bar">
+            <span id="device-name">E-Paper</span>
+            <span id="connection-status">●</span>
+        </div>
+    </div>
+
+    <!-- Error Screen -->
+    <div id="error-screen" class="screen hidden">
+        <div class="error-container">
+            <div class="error-icon">!</div>
+            <h2 id="error-title">Connection Error</h2>
+            <p id="error-message">Unable to connect to server</p>
+            <button id="retry-button" class="retry-button">Retry</button>
+        </div>
+    </div>
+
+    <!-- Scripts (load order matters — config first, then api/telemetry/pairing/app) -->
+    <!-- webapis.js: Samsung TEP library required for webapis.epaper.* — must load before any module that calls it -->
+    <script type="text/javascript" src="$WEBAPIS/webapis/webapis.js"></script>
+    <script src="js/build-info.js"></script>
+    <script src="js/config.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/telemetry.js"></script>
+    <script src="js/epaper-power.js"></script>
+    <script src="js/epaper-cache.js"></script>
+    <script src="js/epaper-renderer.js"></script>
+    <script src="js/epaper-ws.js"></script>
+    <script src="js/pairing.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
