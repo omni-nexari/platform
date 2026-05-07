@@ -120,7 +120,10 @@ export async function fetchMicrosoftCalendars(
       headers: { Authorization: `Bearer ${t}` },
     });
   }
-  if (!res.ok) throw new Error(`Graph /me/calendars failed: ${res.status}`);
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    throw new Error(`Graph /me/calendars failed: ${res.status} ${errBody.slice(0, 400)}`);
+  }
   const json = await res.json() as { value?: Array<{
     id: string; name: string; hexColor?: string; isDefaultCalendar?: boolean; owner?: { name?: string; address?: string };
   }> };

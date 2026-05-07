@@ -54,10 +54,11 @@ export async function ensureAccessToken(
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
+    const msg = `Token refresh failed: ${res.status} ${text.slice(0, 300)}`;
     await db.update(calendarConnections)
-      .set({ status: 'error', lastErrorMessage: `Token refresh failed: ${res.status} ${text.slice(0, 200)}`, updatedAt: new Date() })
+      .set({ status: 'error', lastErrorMessage: msg, updatedAt: new Date() })
       .where(eq(calendarConnections.id, conn.id));
-    throw new Error(`OAuth token refresh failed (${res.status})`);
+    throw new Error(msg);
   }
   const json = await res.json() as {
     access_token: string;
