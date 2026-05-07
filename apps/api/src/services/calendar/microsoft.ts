@@ -40,7 +40,6 @@ export const MS_SCOPES = [
   'offline_access',
   'User.Read',
   'Calendars.Read',
-  'Place.Read.All',
 ].join(' ');
 
 export function buildAuthUrl(state: string): string {
