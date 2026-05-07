@@ -86,7 +86,7 @@ function fmtTime(iso: string, allDay: boolean): string {
 }
 
 // Bump this when the SVG layout changes to invalidate stale cached variants.
-const LAYOUT_VERSION = '2';
+const LAYOUT_VERSION = '3';
 
 function hashEvents(events: CalendarEvent[], dayBucket: string, panelW: number, panelH: number, title: string): string {
   const h = crypto.createHash('sha1');
@@ -154,18 +154,24 @@ export function renderCalendarSvg(opts: {
 }): string {
   const { panelW, panelH, title, events, now } = opts;
 
-  // Scale paddings & font sizes from panel size.
-  const pad = Math.round(Math.min(panelW, panelH) * 0.04);
-  const headerSize = Math.round(Math.min(panelW, panelH) * 0.05);
+  // Scale paddings & font sizes from the SHORT edge (width for portrait, height for landscape).
+  const shortEdge = Math.min(panelW, panelH);
+  const pad = Math.round(shortEdge * 0.04);
+  const headerSize = Math.round(shortEdge * 0.05);
   const dateSize = Math.round(headerSize * 0.55);
-  const dayHeadingSize = Math.round(Math.min(panelW, panelH) * 0.038);
-  const eventTitleSize = Math.round(Math.min(panelW, panelH) * 0.034);
+  const dayHeadingSize = Math.round(shortEdge * 0.038);
+  const eventTitleSize = Math.round(shortEdge * 0.034);
   const eventSubSize = Math.round(eventTitleSize * 0.78);
-  // Time font is slightly smaller than title — makes time subordinate visually.
+  // Time font slightly smaller than title so it reads as subordinate metadata.
   const timeFont = Math.round(eventTitleSize * 0.82);
-  // Column width derived from font metrics: max time string "12:00p–12:00a" ≈ 12 chars.
-  // Using 0.62 as character width factor (digits/colons are narrower than average).
-  const timeColW = Math.round(timeFont * 12 * 0.62) + pad;
+  // Time column: reserve space for "12:00pm–12:00am" (16 chars, 0.62 avg width factor)
+  // plus a half-pad gap. Use 28% of content width as a floor for large panels.
+  const contentW = panelW - 2 * pad;
+  const timeColWByFont = Math.round(timeFont * 16 * 0.62);
+  const timeColWByPct  = Math.round(contentW * 0.28);
+  const timeColW = Math.max(timeColWByFont, timeColWByPct) + Math.round(pad * 0.5);
+  const titleX = pad + timeColW;
+  const titleColW = panelW - titleX - pad;
   const ruleStroke = Math.max(2, Math.round(panelH * 0.0025));
 
   const rows = buildRows(events, now);
@@ -177,8 +183,8 @@ export function renderCalendarSvg(opts: {
   const bodyBottom = panelH - pad;
 
   const titleMaxChars = Math.floor(panelW / (headerSize * 0.5));
-  const eventTitleMaxChars = Math.floor((panelW - timeColW - pad * 2) / (eventTitleSize * 0.5));
-  const subMaxChars = Math.floor((panelW - timeColW - pad * 2) / (eventSubSize * 0.5));
+  const eventTitleMaxChars = Math.floor(titleColW / (eventTitleSize * 0.5));
+  const subMaxChars = Math.floor(titleColW / (eventSubSize * 0.5));
 
   // Lay rows out vertically until we run out of space.
   const lineH = Math.round(eventTitleSize * 1.35);
@@ -200,6 +206,9 @@ export function renderCalendarSvg(opts: {
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${panelW}" height="${panelH}" viewBox="0 0 ${panelW} ${panelH}">`);
   parts.push(`<rect width="100%" height="100%" fill="#ffffff"/>`);
   parts.push(`<style>text{font-family:'DejaVu Sans','Liberation Sans','Helvetica','Arial',sans-serif;fill:#000000;}</style>`);
+  // Clip paths: hard column boundaries so text can never bleed into the adjacent column.
+  parts.push(`<clipPath id="cpTime"><rect x="${pad}" y="0" width="${timeColW}" height="${panelH}"/></clipPath>`);
+  parts.push(`<clipPath id="cpTitle"><rect x="${titleX}" y="0" width="${titleColW}" height="${panelH}"/></clipPath>`);
 
   // Header
   parts.push(`<text x="${pad}" y="${headerY}" font-size="${headerSize}" font-weight="700">${esc(trunc(title, titleMaxChars))}</text>`);
@@ -215,11 +224,11 @@ export function renderCalendarSvg(opts: {
       parts.push(`<text x="${panelW / 2}" y="${r.y + lineH}" text-anchor="middle" font-size="${eventTitleSize}" fill="#666666">${esc(r.text)}</text>`);
     } else {
       const tx = r.time ?? '';
-      const titleX = pad + timeColW;
-      parts.push(`<text x="${pad}" y="${r.y + eventTitleSize}" font-size="${timeFont}" fill="#555555">${esc(trunc(tx, 13))}</text>`);
-      parts.push(`<text x="${titleX}" y="${r.y + eventTitleSize}" font-size="${eventTitleSize}" font-weight="600">${esc(trunc(r.text, eventTitleMaxChars))}</text>`);
+      const timeMaxChars = Math.floor(timeColW / (timeFont * 0.58));
+      parts.push(`<text x="${pad}" y="${r.y + eventTitleSize}" font-size="${timeFont}" fill="#555555" clip-path="url(#cpTime)">${esc(trunc(tx, timeMaxChars))}</text>`);
+      parts.push(`<text x="${titleX}" y="${r.y + eventTitleSize}" font-size="${eventTitleSize}" font-weight="600" clip-path="url(#cpTitle)">${esc(trunc(r.text, eventTitleMaxChars))}</text>`);
       if (r.sub) {
-        parts.push(`<text x="${titleX}" y="${r.y + eventTitleSize + Math.round(eventSubSize * 1.25)}" font-size="${eventSubSize}" fill="#555555">${esc(trunc(r.sub, subMaxChars))}</text>`);
+        parts.push(`<text x="${titleX}" y="${r.y + eventTitleSize + Math.round(eventSubSize * 1.25)}" font-size="${eventSubSize}" fill="#555555" clip-path="url(#cpTitle)">${esc(trunc(r.sub, subMaxChars))}</text>`);
       }
     }
   }
