@@ -2106,10 +2106,13 @@ export async function deviceRoutes(app: FastifyInstance) {
       db.query.devices.findFirst({
         where: and(eq(devices.id, auth.deviceId), isNull(devices.deletedAt)),
       }),
+      // Load by ID only — workspaceId filter is intentionally omitted here because
+      // the schedule endpoint serves publishedContentId without a workspace constraint,
+      // creating a mismatch when a device's published content lives in a different
+      // workspace than the JWT's workspaceId.  We enforce org-level access below.
       db.query.contentItems.findFirst({
         where: and(
           eq(contentItems.id, id),
-          eq(contentItems.workspaceId, auth.workspaceId),
           isNull(contentItems.deletedAt),
         ),
       }),
@@ -2120,6 +2123,14 @@ export async function deviceRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'Device panel size not registered' });
     }
     if (!item) return reply.status(404).send({ error: 'Content not found' });
+
+    // Org-level access check: content's workspace must belong to the device's org.
+    const contentWorkspace = await db.query.workspaces.findFirst({
+      where: eq(workspaces.id, item.workspaceId ?? ''),
+    });
+    if (!contentWorkspace || contentWorkspace.orgId !== auth.orgId) {
+      return reply.status(403).send({ error: 'Content access denied' });
+    }
 
     // Honour the panel's actual physical orientation. If portrait, swap dims.
     const isPortrait = device.panelOrientation === 'portrait';

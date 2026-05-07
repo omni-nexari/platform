@@ -1,3 +1,6 @@
+# install-nexari2.ps1 — DEV build (API: http://192.168.1.17) + deploy to TVs.
+# For PROD builds (API: https://ds.chiho.app) use deploy-tizen.ps1 instead.
+
 $src        = "C:\Users\chiho\Projects\Platform\apps\nexari-tizen"
 $tizen      = "C:\tizen-studio\tools\ide\bin\tizen.bat"
 $sdb        = "C:\tizen-studio\tools\sdb.exe"

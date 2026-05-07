@@ -131,6 +131,23 @@ window.EpaperPower = {
     try { webapis.epaper.cancelScheduleWakeupTime(id); } catch (e) { logger.warn('[EpaperPower] cancelScheduleWakeupTime failed:', e && e.message); }
   },
 
+  // Higher-level helper: schedule a wakeup `intervalSec` seconds from now.
+  // Cancels the previous timer (persisted in localStorage) first.
+  // cb(timerId, nextDate) is called on success.
+  scheduleNextWakeup(intervalSec, cb) {
+    var sec = intervalSec || (CONFIG && CONFIG.WAKE_INTERVAL_SEC) || 300;
+    // Cancel previously scheduled timer so we never accumulate stale timers.
+    var prevId = null;
+    try { prevId = JSON.parse(localStorage.getItem('_epaperWakeTimerId')); } catch (_) {}
+    if (prevId != null) this.cancelWakeup(prevId);
+
+    var next = new Date(Date.now() + sec * 1000);
+    var id = this.scheduleWakeup(next);
+    try { localStorage.setItem('_epaperWakeTimerId', JSON.stringify(id)); } catch (_) {}
+    if (cb) cb(id, next);
+    return id;
+  },
+
   // Did we wake from a scheduled timer?
   wakeReason() {
     if (!this.isAvailable()) return 'unknown';

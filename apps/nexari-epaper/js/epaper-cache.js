@@ -1,26 +1,29 @@
-// Nexari E-Paper — On-device image cache.
+﻿// Nexari E-Paper â€” On-device image cache.
 //
 // Two-tier cache for pre-rendered e-paper variant JPEGs:
-//   1. In-memory: contentId → { blobUrl, size, lastUsed }
-//   2. Persistent: tizen.filesystem under wgt-private/epaper-cache/images/<contentId>.jpg
-//                  with manifest at wgt-private/epaper-cache/manifest.json
+//   1. In-memory:  contentId â†’ { blobUrl, size, lastUsed }
+//   2. Persistent: Samsung Tizen synchronous filesystem API under
+//      InternalFlash/epaper/content/<contentId>.jpg  (persists across app reinstalls)
+//      Falls back to wgt-private/epaper/content/ if InternalFlash is unavailable.
+//      Manifest at {base}/epaper/manifest.json.
 //
-// Persistent layer is best-effort. If the Tizen filesystem APIs are missing
-// (e.g. running in a desktop browser for testing) the cache silently falls
-// back to memory-only and re-fetches across reloads. Manifest enforces an
-// LRU cap of MAX_FILES files / MAX_BYTES total.
+// Download: fetch() â†’ arrayBuffer() â†’ tizen.filesystem.openFile('w').writeBytes(Uint8Array)
+// Read:     tizen.filesystem.openFile('r').readBlob()  â†’ URL.createObjectURL(blob)
+// (Uses the Samsung synchronous filesystem API, same pattern as the official e-paper sample.)
 
 window.EpaperCache = (function() {
   'use strict';
 
-  var CACHE_DIR = 'wgt-private';
-  var SUBDIR = 'epaper-cache';
-  var IMAGES_SUBDIR = 'images';
-  var MANIFEST_NAME = 'manifest.json';
   var MAX_FILES = 100;
   var MAX_BYTES = (CONFIG && CONFIG.MAX_CACHE_SIZE) || (500 * 1024 * 1024);
 
-  // In-memory map: contentId → { blobUrl, size, lastUsed, source: 'mem'|'disk'|'net' }
+  // Resolved on first use by detectBase()
+  var BASE_FS = null;  // 'InternalFlash' or 'wgt-private'
+
+  // Resolved on first use by detectBase()
+  var BASE_FS = null;  // 'InternalFlash' or 'wgt-private'
+
+  // In-memory map: contentId â†’ { blobUrl, size, lastUsed, source: 'mem'|'disk'|'net' }
   var mem = new Map();
 
   // Manifest: { entries: { [contentId]: { size, lastUsed, fileName } } }
@@ -29,144 +32,137 @@ window.EpaperCache = (function() {
   var manifestDirty = false;
 
   function fsAvailable() {
-    return typeof tizen !== 'undefined' && tizen.filesystem && typeof tizen.filesystem.openFile === 'function';
+    return typeof tizen !== 'undefined' && tizen.filesystem &&
+      typeof tizen.filesystem.openFile === 'function';
   }
 
-  // ── Filesystem helpers ──────────────────────────────────────────────────
-  // All paths are POSIX-style; tizen.filesystem accepts virtual roots.
-
-  function openFile(path, mode) {
-    return new Promise(function(resolve, reject) {
-      try {
-        tizen.filesystem.openFile(path, function(handle) { resolve(handle); }, function(err) { reject(err); }, mode);
-      } catch (e) { reject(e); }
-    });
+  // â”€â”€ Base storage detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Try InternalFlash first â€” it persists across app reinstalls and has more
+  // space. Falls back to wgt-private (cleared on reinstall) if unavailable.
+  function detectBase() {
+    if (BASE_FS !== null) return;
+    if (!fsAvailable()) { BASE_FS = 'wgt-private'; return; }
+    try {
+      var storage = tizen.filesystem.getStorage('InternalFlash');
+      if (storage && storage.state === 'MOUNTED') {
+        BASE_FS = 'InternalFlash';
+        logger.info('[EpaperCache] storage: InternalFlash');
+        return;
+      }
+    } catch (_) {}
+    BASE_FS = 'wgt-private';
+    logger.info('[EpaperCache] storage: wgt-private (InternalFlash unavailable)');
   }
 
-  function createDirectory(path) {
-    return new Promise(function(resolve) {
-      try {
-        tizen.filesystem.createDirectory(path, 'a', function() { resolve(true); }, function() { resolve(false); });
-      } catch (_) { resolve(false); }
-    });
+  function contentDir() { detectBase(); return BASE_FS + '/epaper/content'; }
+  function manifestPath() { detectBase(); return BASE_FS + '/epaper/manifest.json'; }
+
+  function fileNameFor(contentId) {
+    return contentId.replace(/[^a-zA-Z0-9_-]/g, '_') + '.jpg';
+  }
+  function diskPathFor(contentId) { return contentDir() + '/' + fileNameFor(contentId); }
+
+  // â”€â”€ Synchronous Tizen filesystem helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Uses the Samsung synchronous filesystem API (same as the official e-paper
+  // sample). Wrapped in Promise for composability with the async call sites.
+
+  function ensureDirsSync() {
+    if (!fsAvailable()) return;
+    try {
+      detectBase();
+      var tfs = tizen.filesystem;
+      var base = BASE_FS + '/epaper';
+      if (!tfs.pathExists(base)) tfs.createDirectory(base, true);
+      var cd = base + '/content';
+      if (!tfs.pathExists(cd)) tfs.createDirectory(cd, true);
+    } catch (e) {
+      logger.warn('[EpaperCache] ensureDirs error:', e && e.message);
+    }
   }
 
-  function deleteFile(path) {
-    return new Promise(function(resolve) {
-      try {
-        tizen.filesystem.deleteFile(path, function() { resolve(true); }, function() { resolve(false); });
-      } catch (_) { resolve(false); }
-    });
+  function readManifestSync() {
+    if (!fsAvailable()) return null;
+    try {
+      var mp = manifestPath();
+      if (!tizen.filesystem.pathExists(mp)) return null;
+      var fh = tizen.filesystem.openFile(mp, 'r');
+      var text = fh.readString();
+      fh.close();
+      return JSON.parse(text || '{}');
+    } catch (e) {
+      logger.warn('[EpaperCache] readManifest error:', e && e.message);
+      return null;
+    }
   }
 
-  function listDirectory(path) {
-    return new Promise(function(resolve) {
-      try {
-        tizen.filesystem.listDirectory(path, function(list) { resolve(list || []); }, function() { resolve([]); });
-      } catch (_) { resolve([]); }
-    });
-  }
-
-  function readManifest() {
-    return openFile(CACHE_DIR + '/' + SUBDIR + '/' + MANIFEST_NAME, 'r')
-      .then(function(handle) {
-        return new Promise(function(resolve) {
-          try {
-            handle.readString(function(text) {
-              try { resolve(JSON.parse(text || '{}')); } catch (_) { resolve(null); }
-              try { handle.close(); } catch (_) {}
-            }, function() { resolve(null); try { handle.close(); } catch (_) {} });
-          } catch (_) { resolve(null); }
-        });
-      })
-      .catch(function() { return null; });
-  }
-
-  function writeManifest() {
-    if (!fsAvailable()) return Promise.resolve(false);
-    var path = CACHE_DIR + '/' + SUBDIR + '/' + MANIFEST_NAME;
-    return deleteFile(path).then(function() {
-      return openFile(path, 'w');
-    }).then(function(handle) {
-      return new Promise(function(resolve) {
-        try {
-          handle.writeString(JSON.stringify(manifest), function() {
-            try { handle.close(); } catch (_) {}
-            manifestDirty = false;
-            resolve(true);
-          }, function() { try { handle.close(); } catch (_) {} resolve(false); });
-        } catch (_) { resolve(false); }
-      });
-    }).catch(function() { return false; });
-  }
-
-  function ensureDirs() {
-    if (!fsAvailable()) return Promise.resolve(false);
-    return createDirectory(CACHE_DIR + '/' + SUBDIR)
-      .then(function() { return createDirectory(CACHE_DIR + '/' + SUBDIR + '/' + IMAGES_SUBDIR); });
+  function writeManifestSync() {
+    if (!fsAvailable()) return;
+    try {
+      var mp = manifestPath();
+      try { tizen.filesystem.deleteFile(mp); } catch (_) {}
+      var fh = tizen.filesystem.openFile(mp, 'w');
+      fh.writeString(JSON.stringify(manifest));
+      fh.flush();
+      fh.close();
+      manifestDirty = false;
+    } catch (e) {
+      logger.warn('[EpaperCache] writeManifest error:', e && e.message);
+    }
   }
 
   function ensureManifest() {
     if (manifestLoaded) return Promise.resolve();
     manifestLoaded = true;
-    if (!fsAvailable()) return Promise.resolve();
-    return ensureDirs().then(function() {
-      return readManifest();
-    }).then(function(m) {
+    return new Promise(function(resolve) {
+      ensureDirsSync();
+      var m = readManifestSync();
       if (m && m.entries) manifest = m;
       else manifest = { entries: {} };
+      resolve();
     });
   }
 
-  function fileNameFor(contentId) {
-    return contentId.replace(/[^a-zA-Z0-9_-]/g, '_') + '.jpg';
-  }
-
-  function diskPathFor(contentId) {
-    return CACHE_DIR + '/' + SUBDIR + '/' + IMAGES_SUBDIR + '/' + fileNameFor(contentId);
-  }
-
-  // Read a cached file into a Blob URL (returns null if not present / fails).
+  // â”€â”€ Disk read â€” openFile('r') â†’ readBlob() â†’ createObjectURL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   function readDisk(contentId) {
-    if (!fsAvailable()) return Promise.resolve(null);
-    return openFile(diskPathFor(contentId), 'r')
-      .then(function(handle) {
-        return new Promise(function(resolve) {
-          try {
-            handle.readBlob(function(blob) {
-              try { handle.close(); } catch (_) {}
-              try { resolve(URL.createObjectURL(blob)); } catch (_) { resolve(null); }
-            }, function() { try { handle.close(); } catch (_) {} resolve(null); });
-          } catch (_) { resolve(null); }
-        });
-      })
-      .catch(function() { return null; });
+    return new Promise(function(resolve) {
+      if (!fsAvailable()) { resolve(null); return; }
+      try {
+        var path = diskPathFor(contentId);
+        if (!tizen.filesystem.pathExists(path)) { resolve(null); return; }
+        var fh = tizen.filesystem.openFile(path, 'r');
+        var blob = fh.readBlob();
+        fh.close();
+        resolve(blob ? URL.createObjectURL(blob) : null);
+      } catch (e) {
+        logger.warn('[EpaperCache] readDisk error:', e && e.message);
+        resolve(null);
+      }
+    });
   }
 
-  // Write a Blob to disk + update manifest entry.
-  function writeDisk(contentId, blob) {
-    if (!fsAvailable()) return Promise.resolve(false);
-    var path = diskPathFor(contentId);
-    return ensureDirs().then(function() {
-      return deleteFile(path);
-    }).then(function() {
-      return openFile(path, 'w');
-    }).then(function(handle) {
-      return new Promise(function(resolve) {
-        try {
-          handle.writeBlob(blob, function() {
-            try { handle.close(); } catch (_) {}
-            manifest.entries[contentId] = {
-              size: blob.size,
-              lastUsed: Date.now(),
-              fileName: fileNameFor(contentId),
-            };
-            manifestDirty = true;
-            resolve(true);
-          }, function() { try { handle.close(); } catch (_) {} resolve(false); });
-        } catch (_) { resolve(false); }
-      });
-    }).catch(function() { return false; });
+  // â”€â”€ Disk write â€” openFile('w') â†’ writeBytes(Uint8Array) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  function writeAsset(contentId, arrayBuffer) {
+    return new Promise(function(resolve) {
+      if (!fsAvailable()) { resolve(false); return; }
+      try {
+        ensureDirsSync();
+        var path = diskPathFor(contentId);
+        try { tizen.filesystem.deleteFile(path); } catch (_) {}
+        var fh = tizen.filesystem.openFile(path, 'w');
+        fh.writeBytes(new Uint8Array(arrayBuffer));
+        fh.flush();
+        fh.close();
+        resolve(true);
+      } catch (e) {
+        logger.warn('[EpaperCache] writeAsset error:', e && e.message);
+        resolve(false);
+      }
+    });
+  }
+
+  function deleteFileSync(path) {
+    if (!fsAvailable()) return;
+    try { tizen.filesystem.deleteFile(path); } catch (_) {}
   }
 
   function totalBytes() {
@@ -179,40 +175,68 @@ window.EpaperCache = (function() {
   function evictIfNeeded() {
     var ids = Object.keys(manifest.entries);
     if (ids.length <= MAX_FILES && totalBytes() <= MAX_BYTES) return Promise.resolve();
-    // Sort by lastUsed asc → oldest first
-    ids.sort(function(a, b) { return (manifest.entries[a].lastUsed || 0) - (manifest.entries[b].lastUsed || 0); });
-    var removals = [];
-    while (ids.length > 0 && (Object.keys(manifest.entries).length > MAX_FILES || totalBytes() > MAX_BYTES)) {
+    ids.sort(function(a, b) {
+      return (manifest.entries[a].lastUsed || 0) - (manifest.entries[b].lastUsed || 0);
+    });
+    while (ids.length > 0 &&
+      (Object.keys(manifest.entries).length > MAX_FILES || totalBytes() > MAX_BYTES)) {
       var victim = ids.shift();
       var entry = manifest.entries[victim];
       delete manifest.entries[victim];
       manifestDirty = true;
-      removals.push(deleteFile(CACHE_DIR + '/' + SUBDIR + '/' + IMAGES_SUBDIR + '/' + entry.fileName));
-      // Clear from memory too
+      deleteFileSync(contentDir() + '/' + entry.fileName);
       var mEntry = mem.get(victim);
       if (mEntry && mEntry.blobUrl) {
         try { URL.revokeObjectURL(mEntry.blobUrl); } catch (_) {}
         mem.delete(victim);
       }
     }
-    return Promise.all(removals).then(function() {});
+    return Promise.resolve();
   }
 
-  // ── Public API ──────────────────────────────────────────────────────────
+  // â”€â”€ Download: fetch â†’ arrayBuffer â†’ writeBytes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Single download path â€” no tizen.download needed for content images.
+  // tizen.download is reserved for OTA .wgt packages (EpaperUpdater).
+  function downloadAsset(url, contentId, token, noPersist) {
+    return fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
+      .then(function(res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.arrayBuffer();
+      })
+      .then(function(data) {
+        // Create blob URL for immediate rendering
+        var blob = new Blob([data], { type: 'image/jpeg' });
+        var blobUrl = URL.createObjectURL(blob);
+        mem.set(contentId, { blobUrl: blobUrl, size: data.byteLength, lastUsed: Date.now(), source: 'net' });
+        if (!noPersist && fsAvailable()) {
+          // Write to disk in background â€” do not block rendering
+          writeAsset(contentId, data).then(function(ok) {
+            if (!ok) return;
+            manifest.entries[contentId] = {
+              size: data.byteLength,
+              lastUsed: Date.now(),
+              fileName: fileNameFor(contentId),
+            };
+            manifestDirty = true;
+            evictIfNeeded().then(function() { if (manifestDirty) writeManifestSync(); });
+          });
+        }
+        return blobUrl;
+      });
+  }
+
+  // â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   return {
     /**
      * Resolve a content ID to a usable image URL (Blob URL preferred).
-     * Order: in-memory → on-disk → network (epaper.jpg endpoint).
-     * Caches the network result to disk for next reload.
+     * Order: in-memory â†’ on-disk (InternalFlash/wgt-private) â†’ fetch from server.
+     * Downloaded images are persisted to {base}/epaper/content/<id>.jpg.
      */
     getOrFetch: function(contentId, opts) {
       opts = opts || {};
       var token = opts.token || (typeof localStorage !== 'undefined' && localStorage.getItem('deviceToken')) || '';
       var mode = opts.mode || 'contain';
-      // For volatile content (calendars), the caller passes noPersist:true
-      // so we don't promote the result to disk and pollute the LRU. We still
-      // keep it in memory for the duration of the swap.
       var noPersist = !!opts.noPersist;
 
       // 1. In-memory
@@ -223,21 +247,23 @@ window.EpaperCache = (function() {
       }
 
       return ensureManifest().then(function() {
-        // 2. On-disk
+        // 2. On-disk (from a previous wake cycle)
         if (!noPersist && manifest.entries[contentId]) {
           return readDisk(contentId).then(function(blobUrl) {
             if (blobUrl) {
-              mem.set(contentId, { blobUrl: blobUrl, size: manifest.entries[contentId].size || 0, lastUsed: Date.now(), source: 'disk' });
+              mem.set(contentId, {
+                blobUrl: blobUrl,
+                size: manifest.entries[contentId].size || 0,
+                lastUsed: Date.now(),
+                source: 'disk',
+              });
               manifest.entries[contentId].lastUsed = Date.now();
               manifestDirty = true;
               return blobUrl;
             }
-            // Disk miss despite manifest entry → fall through
+            // Disk miss despite manifest entry â€” fall through
             delete manifest.entries[contentId];
             manifestDirty = true;
-            return null;
-          }).then(function(blobUrl) {
-            if (blobUrl) return blobUrl;
             return null;
           });
         }
@@ -245,27 +271,17 @@ window.EpaperCache = (function() {
       }).then(function(diskBlobUrl) {
         if (diskBlobUrl) return diskBlobUrl;
 
-        // 3. Network
-        var url = CONFIG.API_BASE + '/devices/device/content/' + encodeURIComponent(contentId) + '/epaper.jpg?mode=' + encodeURIComponent(mode);
-        return fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
-          .then(function(res) {
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            return res.blob();
-          })
-          .then(function(blob) {
-            var blobUrl = URL.createObjectURL(blob);
-            mem.set(contentId, { blobUrl: blobUrl, size: blob.size, lastUsed: Date.now(), source: 'net' });
-            if (noPersist) return blobUrl;
-            // Persist asynchronously — don't block render
-            writeDisk(contentId, blob).then(function() { return evictIfNeeded(); }).then(function() {
-              if (manifestDirty) writeManifest();
-            });
-            return blobUrl;
-          });
+        // 3. Download from server
+        var url = CONFIG.API_BASE + '/devices/device/content/' + encodeURIComponent(contentId) +
+          '/epaper.jpg?mode=' + encodeURIComponent(mode);
+        return downloadAsset(url, contentId, token, noPersist).then(function(blobUrl) {
+          if (!blobUrl) throw new Error('download returned null');
+          return blobUrl;
+        });
       });
     },
 
-    /** Pre-fetch a list of content IDs in the background (Phase 1 lookahead). */
+    /** Pre-fetch a list of content IDs in the background (lookahead for next items). */
     prefetch: function(contentIds, opts) {
       var self = this;
       var i = 0;
@@ -277,7 +293,7 @@ window.EpaperCache = (function() {
       return next();
     },
 
-    /** Drop a single content ID from caches (e.g. content was deleted). */
+    /** Drop a single content ID from both caches (e.g. content was deleted server-side). */
     invalidate: function(contentId) {
       var hit = mem.get(contentId);
       if (hit && hit.blobUrl) {
@@ -288,13 +304,12 @@ window.EpaperCache = (function() {
         var entry = manifest.entries[contentId];
         delete manifest.entries[contentId];
         manifestDirty = true;
-        deleteFile(CACHE_DIR + '/' + SUBDIR + '/' + IMAGES_SUBDIR + '/' + entry.fileName).then(function() {
-          if (manifestDirty) writeManifest();
-        });
+        deleteFileSync(contentDir() + '/' + entry.fileName);
+        if (manifestDirty) writeManifestSync();
       }
     },
 
-    /** Clear everything (e.g. on unpair or panel resize). */
+    /** Clear everything (e.g. on unpair or panel resize change). */
     clear: function() {
       mem.forEach(function(entry) {
         if (entry.blobUrl) { try { URL.revokeObjectURL(entry.blobUrl); } catch (_) {} }
@@ -303,9 +318,9 @@ window.EpaperCache = (function() {
       var ids = Object.keys(manifest.entries);
       manifest = { entries: {} };
       manifestDirty = true;
-      return Promise.all(ids.map(function(id) {
-        return deleteFile(CACHE_DIR + '/' + SUBDIR + '/' + IMAGES_SUBDIR + '/' + fileNameFor(id));
-      })).then(function() { return writeManifest(); });
+      ids.forEach(function(id) { deleteFileSync(contentDir() + '/' + fileNameFor(id)); });
+      writeManifestSync();
+      return Promise.resolve();
     },
 
     stats: function() {
@@ -313,6 +328,7 @@ window.EpaperCache = (function() {
         memEntries: mem.size,
         diskEntries: Object.keys(manifest.entries).length,
         diskBytes: totalBytes(),
+        diskBase: BASE_FS || '(not yet resolved)',
         diskAvailable: fsAvailable(),
       };
     },

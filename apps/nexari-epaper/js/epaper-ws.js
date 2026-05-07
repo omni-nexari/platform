@@ -106,6 +106,17 @@ window.EpaperWS = (function() {
         }
         break;
 
+      case 'app_update':
+      case 'APP_UPDATE':
+        if (window.EpaperUpdater && typeof EpaperUpdater.handle === 'function') {
+          EpaperUpdater.handle(msg.payload || {}, function(type, data) {
+            send(Object.assign({ type: type, deviceId: state.deviceId }, data || {}));
+          });
+        } else {
+          logger.warn('[WS] EpaperUpdater not loaded');
+        }
+        break;
+
       // Generic commands the e-paper player still respects:
       case 'reboot':
         try { tizen.application.getCurrentApplication().exit(); } catch (_) { location.reload(); }
@@ -121,10 +132,13 @@ window.EpaperWS = (function() {
     }
   }
 
-  function sendHeartbeat() {
+  async function sendHeartbeat() {
     if (!state.socket || state.socket.readyState !== 1) return;
     try {
-      var info = (window.Telemetry && Telemetry.getSystemInfo) ? Telemetry.getSystemInfo() : {};
+      var info = {};
+      if (window.Telemetry && typeof Telemetry.getSystemInfo === 'function') {
+        try { info = await Telemetry.getSystemInfo(); } catch (_) {}
+      }
       send({
         type: 'heartbeat',
         payload: {
@@ -139,6 +153,10 @@ window.EpaperWS = (function() {
           batteryPct: info.batteryPct != null ? info.batteryPct : null,
         },
       });
+      // Dispatch extended telemetry: network_info + heartbeat extras (mirrors nexari-tizen)
+      if (window.API && typeof API.sendTelemetry === 'function') {
+        API.sendTelemetry(state.deviceId, info).catch(function() {});
+      }
     } catch (e) {
       logger.warn('[WS] heartbeat failed: ' + (e && e.message));
     }
@@ -228,7 +246,10 @@ window.EpaperWS = (function() {
       }, 5000);
     },
 
-    isOpen: function() { return state.socket && state.socket.readyState === 1; },
+    /** Send a raw message object — used by API.sendTelemetry() */
+    push: function(msg) { return send(msg); },
+
+    isOpen: function() { return !!(state.socket && state.socket.readyState === 1); },
 
     stop: function() {
       state.closed = true;

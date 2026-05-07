@@ -1,20 +1,17 @@
 // Nexari E-Paper — Image renderer / playback loop.
 //
 // Responsibilities:
-//  - Periodically fetch the device schedule (or react to a WS push in Phase 2)
-//  - Resolve the *currently active* slot to a flat list of image content items
-//  - Cycle through the items, swapping #content-image on each tick
-//  - Enforce CONFIG.EPAPER_MIN_SWAP_RATE_SEC (default 15s) — the panel can't
-//    physically refresh faster than this.
-//  - After each swap, ask the panel to do a partial refresh via
+//  - Periodically call API.getCurrentContent() (schedule + published-target
+//    override resolution — same priority chain as nexari-tizen).
+//  - Filter the returned playlist to image/calendar items only.
+//  - Cycle through the items, swapping #content-image on each tick.
+//  - Enforce CONFIG.EPAPER_MIN_SWAP_RATE_SEC (default 15s).
+//  - After each swap, ask the panel for a partial refresh via
 //    webapis.epaper.screenRefreshNow().
-//  - Skip content the panel can't render. Images are streamed directly;
-//    calendars are pre-rasterised by the server to a panel-sized JPEG via
-//    /device/content/:id/epaper.jpg. Video / HTML5 / web URLs are skipped.
 //  - Pre-fetch the next 1-2 items to keep tick latency low.
 //
-// All scheduling math mirrors apps/nexari-tizen so the same admin schedules
-// produce the same active slot on both kinds of devices.
+// Content-type support: IMAGE and CALENDAR only.
+// Video / HTML5 / web URL / channel-group items are silently skipped.
 
 window.EpaperRenderer = (function() {
   'use strict';
@@ -27,9 +24,9 @@ window.EpaperRenderer = (function() {
     currentItems: [],        // image content items to cycle through
     currentIndex: 0,
     swapTimer: null,         // setTimeout id for next swap
-    pollTimer: null,         // setInterval id for schedule poll
     lastSwapAt: 0,
     started: false,
+    onFirstRender: null,     // called once after first image is shown (triggers sleep cycle)
   };
 
   function imgEl() { return document.getElementById('content-image'); }
@@ -37,73 +34,24 @@ window.EpaperRenderer = (function() {
   function isRenderable(content) {
     if (!content) return false;
     var t = String(content.type || '').toLowerCase();
-    // Images are streamed directly; calendars are server-rasterised to an
-    // e-paper JPEG via the same /epaper.jpg endpoint.
+    // Images are immutable per contentId — served from the cache.
+    // Calendars are server-rasterised on every request via /epaper.jpg.
     return t === 'image' || t === 'calendar';
   }
 
-  // Mirrors api.js _resolveScheduledPlaylist on nexari-tizen but image-only.
-  function resolveActiveSlot(schedules, defaultPlaylist) {
-    var now = new Date();
-    var dayOfWeek = now.getDay();
-    var currentMinutes = now.getHours() * 60 + now.getMinutes();
-
-    var fallback = null;
-    for (var i = 0; i < (schedules || []).length; i++) {
-      var schedule = schedules[i];
-      if (!schedule || !schedule.isActive) continue;
-      for (var j = 0; j < (schedule.slots || []).length; j++) {
-        var slot = schedule.slots[j];
-        var slotDays = slot.daysOfWeek || slot.dayOfWeek;
-        if (slotDays && Array.isArray(slotDays) && slotDays.length > 0 && slotDays.indexOf(dayOfWeek) === -1) continue;
-
-        if (slot.startTime && slot.endTime) {
-          var s = slot.startTime.split(':').map(Number);
-          var e = slot.endTime.split(':').map(Number);
-          var startMin = s[0] * 60 + (s[1] || 0);
-          var endMin = e[0] * 60 + (e[1] || 0);
-          if (currentMinutes < startMin || currentMinutes >= endMin) continue;
-        }
-
-        if (slot.playlist || slot.content) {
-          return { schedule: schedule, slot: slot };
-        }
-      }
-    }
-
-    if (defaultPlaylist) return { schedule: null, slot: { playlist: defaultPlaylist } };
-    return fallback;
-  }
-
-  function flattenSlotImages(slot) {
-    if (!slot) return [];
-    var items = [];
-    if (slot.playlist && Array.isArray(slot.playlist.items)) {
-      for (var i = 0; i < slot.playlist.items.length; i++) {
-        var it = slot.playlist.items[i];
-        if (isRenderable(it.content)) items.push(it.content);
-      }
-    } else if (slot.content && isRenderable(slot.content)) {
-      items.push(slot.content);
-    }
-    return items;
-  }
-
-  function slotKey(active) {
-    if (!active || !active.slot) return 'none';
-    var s = active.slot;
-    return [
-      s.id || 'inline',
-      s.playlistId || (s.playlist && s.playlist.id) || '',
-      s.contentId || (s.content && s.content.id) || '',
-      s.startTime || '',
-      s.endTime || '',
-    ].join('|');
+  // Build a stable change-detection key from the resolved playlist.
+  // Changes when: playlist id changes, or item content ids change.
+  function playlistKey(playlist) {
+    if (!playlist) return 'none';
+    var ids = (playlist.items || [])
+      .filter(function(it) { return it.content && isRenderable(it.content); })
+      .map(function(it) { return it.contentId || (it.content && it.content.id) || ''; })
+      .join(',');
+    return (playlist.id || playlist.playlistName || '') + '|' + ids;
   }
 
   function clearTimers() {
     if (state.swapTimer) { clearTimeout(state.swapTimer); state.swapTimer = null; }
-    if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
   }
 
   function showError(msg) {
@@ -158,6 +106,13 @@ window.EpaperRenderer = (function() {
         };
         probe.src = blobUrl;
 
+        // Fire the first-render callback (used by app.js to trigger sleep scheduling)
+        if (state.onFirstRender) {
+          var cb = state.onFirstRender;
+          state.onFirstRender = null;
+          try { cb(); } catch (_) {}
+        }
+
         // Pre-fetch the next 1-2 items in the background
         var lookahead = [];
         for (var k = 1; k <= 2; k++) {
@@ -189,20 +144,20 @@ window.EpaperRenderer = (function() {
     }, swapInSec * 1000);
   }
 
-  function applySchedule(payload) {
-    var schedules = (payload && payload.schedules) || [];
-    var defaultPlaylist = (payload && payload.defaultPlaylist) || null;
-    var active = resolveActiveSlot(schedules, defaultPlaylist);
-    var newKey = slotKey(active);
+  // Apply a resolved playlist (from API.getCurrentContent) to the render cycle.
+  // Restarts cycling only when the playlist content actually changes.
+  function applyPlaylist(playlist) {
+    var newKey = playlistKey(playlist);
     if (newKey === state.currentSlotKey) {
-      // Same slot — keep cycling current items
-      logger.debug('[Renderer] schedule unchanged');
+      logger.debug('[Renderer] playlist unchanged');
       return;
     }
     state.currentSlotKey = newKey;
-    var items = active ? flattenSlotImages(active.slot) : [];
+    var items = playlist
+      ? (playlist.items || []).map(function(it) { return it.content; }).filter(isRenderable)
+      : [];
     if (items.length === 0) {
-      logger.info('[Renderer] no image content for current slot');
+      logger.info('[Renderer] no renderable content for current slot');
       var img = imgEl();
       if (img) { img.removeAttribute('src'); img.alt = 'No content'; }
       state.currentItems = [];
@@ -212,33 +167,40 @@ window.EpaperRenderer = (function() {
     }
     state.currentItems = items;
     state.currentIndex = 0;
-    logger.info('[Renderer] active slot has ' + items.length + ' image(s)');
+    logger.info('[Renderer] "' + (playlist.playlistName || '') + '" — ' + items.length + ' image(s)');
     swapToIndex(0).then(scheduleNextSwap);
   }
 
+  // Poll the server for the currently active content.
+  // Uses API.getCurrentContent() which mirrors the nexari-tizen priority chain:
+  // publishedContent > publishedPlaylist > publishedSchedule > schedule > defaultPlaylist.
   function pollSchedule() {
-    return API.getSchedule(state.deviceToken)
-      .then(function(payload) { applySchedule(payload); })
+    return API.getCurrentContent(state.deviceId, state.deviceToken)
+      .then(function(playlist) { applyPlaylist(playlist); })
       .catch(function(err) {
-        logger.warn('[Renderer] schedule poll failed: ' + (err && err.message));
+        logger.warn('[Renderer] content poll failed: ' + (err && err.message));
       });
   }
 
   return {
-    /** Start the renderer for a paired device. Idempotent. */
-    start: function(device) {
+    /**
+     * Start the renderer for a paired device. Idempotent.
+     * @param {object} device
+     * @param {Function} [onFirstRender]  Called once after the first image is displayed.
+     *   Used by app.js to trigger the sleep-wake scheduling.
+     */
+    start: function(device, onFirstRender) {
       if (state.started) return;
       state.started = true;
       state.deviceId = device.id;
       state.deviceToken = device.deviceToken || (typeof localStorage !== 'undefined' && localStorage.getItem('deviceToken')) || null;
       state.workspaceId = device.workspaceId || (typeof localStorage !== 'undefined' && localStorage.getItem('workspaceId')) || null;
+      state.onFirstRender = onFirstRender || null;
       logger.info('[Renderer] start');
 
-      // Initial fetch then periodic poll. WS push (Phase 2) will replace the
-      // poll cadence with event-driven updates but keep this as a fallback.
+      // Single fetch on each wake cycle. WS push handles content changes
+      // during the awake window (no setInterval poll needed).
       pollSchedule();
-      var pollMs = (CONFIG && CONFIG.CONTENT_REFRESH_INTERVAL) || 60000;
-      state.pollTimer = setInterval(pollSchedule, pollMs);
     },
 
     /** Force re-fetch of the schedule (e.g. WS playlist_changed event). */
@@ -246,12 +208,13 @@ window.EpaperRenderer = (function() {
       return pollSchedule();
     },
 
-    /** Clear cycle and stop polling. Used on unpair. */
+    /** Clear cycle. Used on unpair. */
     stop: function() {
       clearTimers();
       state.started = false;
       state.currentItems = [];
       state.currentSlotKey = null;
+      state.onFirstRender = null;
     },
 
     _state: state, // for debugging via console

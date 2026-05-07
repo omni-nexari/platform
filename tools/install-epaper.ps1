@@ -1,6 +1,11 @@
+# install-epaper.ps1 — DEV build (API: http://192.168.1.17) + deploy to panel.
+# For PROD builds (API: https://ds.chiho.app) use deploy-epaper.ps1 instead.
+
 $src        = "C:\Users\chiho\Projects\Platform\apps\nexari-epaper"
 $tizen      = "C:\tizen-studio\tools\ide\bin\tizen.bat"
-$appId      = "nxrEPaper01.NexariEPaper"
+$sdb        = "C:\tizen-studio\tools\sdb.exe"
+$appId      = "U1izu2M7CQ.NexariEPaper"
+$panel      = "192.168.1.100:26101"  # e-paper panel
 $pi         = "chiho@192.168.1.17"
 $tmp        = "$env:TEMP\nexari-epaper-build"
 
@@ -156,6 +161,64 @@ if ($LASTEXITCODE -ne 0) { Write-Error "WGT SCP failed - check SSH access to $pi
 scp "$src\sssp_config.xml" "${pi}:${piTizenDir}/sssp_config.xml"
 if ($LASTEXITCODE -ne 0) { Write-Error "sssp_config.xml SCP failed. Aborting."; exit 1 }
 
+# ============================================================
+# Helper: connect via SDB, uninstall old app, install + run
+# Uses the already-built NexariEPaper.wgt in $src.
+# Author cert (distributor=0) + NADO.p12 dist cert (distributor=1)
+# are embedded in the WGT signature applied above by --sign $signProfile.
+# ============================================================
+function Install-EpaperOnPanel {
+    param([string]$tv, [string]$label)
+
+    Write-Host ""
+    Write-Host "======================================================"
+    Write-Host "  TARGET: $label ($tv)"
+    Write-Host "======================================================"
+
+    # SDB CONNECT
+    Write-Host ""
+    Write-Host "--- SDB Connect ---"
+    $connectOut = & $sdb connect $tv 2>&1 | Out-String
+    Write-Host $connectOut
+    if ($connectOut -notmatch "connected to|already connected") {
+        Write-Host "WARNING: $label ($tv) is not reachable via SDB." -ForegroundColor Yellow
+        Write-Host "Make sure the panel is on and developer mode is enabled." -ForegroundColor Yellow
+        Write-Host "You can still install via SSSP URL Launcher:" -ForegroundColor Yellow
+        Write-Host "  http://192.168.1.17/tizen/epaper/sssp_config.xml" -ForegroundColor Cyan
+        return
+    }
+    Start-Sleep -Seconds 2
+
+    # UNINSTALL old versions
+    Write-Host ""
+    Write-Host "--- Uninstall ---"
+    foreach ($pkg in @($appId, "nxrEPaper01.NexariEPaper", "EpHzVnXrQp.NexariEpaper")) {
+        Write-Host "Removing $pkg ..."
+        & $tizen uninstall -s $tv -p $pkg 2>&1 | Out-String | Write-Host
+    }
+    Start-Sleep -Seconds 3
+
+    # INSTALL
+    Write-Host ""
+    Write-Host "--- Install ---"
+    & $tizen install -s $tv -n NexariEPaper.wgt -- $src 2>&1
+
+    # LAUNCH
+    Write-Host ""
+    Write-Host "--- Launch ---"
+    Start-Sleep -Seconds 2
+    & $tizen run -s $tv -p $appId 2>&1 | Out-String | Write-Host
+}
+
+# ============================================================
+# STEP 4: INSTALL ON E-PAPER PANEL VIA SDB (optional)
+# ============================================================
+Write-Host ""
+$installChoice = Read-Host "Install on panel via SDB? [Y]es / [N]o (Pi SSSP URL install)"
+if ($installChoice.Trim().ToUpper() -eq "Y") {
+    Install-EpaperOnPanel -tv $panel -label "E-Paper Panel"
+}
+
 Write-Host ""
 Write-Host "=== All done. ===" -ForegroundColor Green
 Write-Host ""
@@ -163,7 +226,5 @@ Write-Host "Pi server updated: http://192.168.1.17/tizen/epaper/NexariEPaper.wgt
 Write-Host "App ID:            $appId" -ForegroundColor Cyan
 Write-Host "Version:           $appVer" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "To install on an e-paper panel:" -ForegroundColor Yellow
-Write-Host "  1. On the panel: Settings > General > System Manager > URL Launcher Settings" -ForegroundColor Yellow
-Write-Host "  2. Set URL to:  http://192.168.1.17/tizen/epaper/sssp_config.xml" -ForegroundColor Yellow
-Write-Host "  3. Reboot the panel — SSSP will detect the new version and install it." -ForegroundColor Yellow
+Write-Host "SSSP URL Launcher install (panel reboot triggers auto-update):" -ForegroundColor Yellow
+Write-Host "  http://192.168.1.17/tizen/epaper/sssp_config.xml" -ForegroundColor Cyan

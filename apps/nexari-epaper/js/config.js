@@ -9,15 +9,21 @@ const defaultConfig = {
   HEARTBEAT_INTERVAL: 60000,            // 60s — e-paper trades latency for battery
   TELEMETRY_INTERVAL: 5 * 60 * 1000,    // 5 min full telemetry
   PAIRING_CHECK_INTERVAL: 5000,         // 5s pairing status poll
-  CONTENT_REFRESH_INTERVAL: 60000,      // 60s playlist freshness check (only used if WS is down)
+  CONTENT_REFRESH_INTERVAL: 60000,      // fallback poll if WS is down
 
   CACHE_VERSION: '1.0.0',
-  MAX_CACHE_SIZE: 500 * 1024 * 1024,    // 500MB image cache cap (Phase 1 will use)
+  MAX_CACHE_SIZE: 500 * 1024 * 1024,    // 500MB image cache cap
 
-  // E-Paper specific defaults — also stored per-device in epaper_settings_json
-  EPAPER_DEFAULT_REFRESH_TIME: { hour: 2, minute: 0 },  // daily full panel refresh @ 02:00
-  EPAPER_DEFAULT_AUTO_SLEEP: 'NEVER',                   // push-first → no auto-sleep by default
-  EPAPER_MIN_SWAP_RATE_SEC: 15,                         // hard floor — panel can't refresh faster
+  // Sleep / wake cycle
+  WAKE_INTERVAL_SEC: 300,              // 5 min between scheduled wakeups
+  SLEEP_DELAY_MS: 60000,               // 60s awake after content is shown
+  PANEL_STABILISE_MS: 0,               // post-boot stabilise delay (0 = push-first, no wait)
+  DEBUG_NO_SLEEP: false,               // set true (or localStorage DEBUG_NO_SLEEP=true) to stay awake
+
+  // E-Paper specific defaults
+  EPAPER_DEFAULT_REFRESH_TIME: { hour: 2, minute: 0 },
+  EPAPER_DEFAULT_AUTO_SLEEP: 'NEVER',
+  EPAPER_MIN_SWAP_RATE_SEC: 15,
 
   DEBUG: false,
   REMOTE_LOG_ENABLED: true,

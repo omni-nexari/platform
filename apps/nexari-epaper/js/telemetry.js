@@ -54,34 +54,69 @@ window.Telemetry = {
     var wifi = await this.getPropertyAsync('WIFI_NETWORK');
     var ethernet = await this.getPropertyAsync('ETHERNET_NETWORK');
 
-    var duid = null, model = null, serialNumber = null, firmwareVersion = null, realModel = null;
+    var duid = null, model = null, realModel = null, serialNumber = null, firmwareVersion = null;
     try {
       if (typeof webapis !== 'undefined' && webapis.productinfo) {
         if (typeof webapis.productinfo.getDuid === 'function') duid = webapis.productinfo.getDuid();
         if (typeof webapis.productinfo.getModel === 'function') model = webapis.productinfo.getModel();
         if (typeof webapis.productinfo.getRealModel === 'function') realModel = webapis.productinfo.getRealModel();
-        if (typeof webapis.productinfo.getFirmware === 'function') firmwareVersion = webapis.productinfo.getFirmware();
+        if (typeof webapis.productinfo.getFirmware === 'function') {
+          try { firmwareVersion = webapis.productinfo.getFirmware(); } catch (e) {}
+        }
         if (typeof webapis.productinfo.getSerialNumber === 'function') {
           try { serialNumber = webapis.productinfo.getSerialNumber(); } catch (e) {}
         }
       }
     } catch (e) {}
 
-    try {
-      if (!serialNumber && typeof webapis !== 'undefined' && webapis.systemcontrol &&
-          typeof webapis.systemcontrol.getSerialNumber === 'function') {
-        serialNumber = webapis.systemcontrol.getSerialNumber();
-      }
-    } catch (e) {}
+    if (!serialNumber) {
+      try {
+        if (typeof webapis !== 'undefined' && webapis.systemcontrol &&
+            typeof webapis.systemcontrol.getSerialNumber === 'function') {
+          serialNumber = webapis.systemcontrol.getSerialNumber();
+        }
+      } catch (e) {}
+    }
+
+    // ── webapis.network (Samsung Network API) ────────────────────────────
+    // Provides MAC address and active connection type (WIFI / ETHERNET / DISCONNECTED).
+    // Probe once — if getActiveConnectionType() throws, the API is not ready on this firmware.
+    var networkApi = (typeof webapis !== 'undefined') ? webapis.network : null;
+    var networkApiReady = false;
+    if (networkApi) {
+      try { networkApi.getActiveConnectionType(); networkApiReady = true; }
+      catch (e) { logger.debug('[Telemetry] webapis.network not ready (code ' + (e && e.code) + ')'); }
+    }
+    var safeNet = function(method) {
+      if (!networkApiReady) return null;
+      try { if (typeof networkApi[method] === 'function') return networkApi[method](); } catch (e) {}
+      return null;
+    };
+
+    // MAC address: Samsung API first (most reliable), then tizen.systeminfo fallbacks
+    var macAddress = safeNet('getMac') || safeNet('getEthernetMac')
+      || (wifi && (wifi.macAddress || wifi.mac))
+      || (ethernet && (ethernet.macAddress || ethernet.mac))
+      || (network && (network.macAddress || network.mac))
+      || null;
+
+    // Connection type: Samsung API gives a numeric code, map to readable string
+    var connTypeMap = { 0: 'DISCONNECTED', 1: 'WIFI', 2: 'ETHERNET', 3: 'OTHER' };
+    var connTypeRaw = safeNet('getActiveConnectionType');
+    var networkType = connTypeRaw !== null
+      ? (connTypeMap[connTypeRaw] || String(connTypeRaw))
+      : ((network && network.networkType) || null);
+
+    // IP, SSID — prefer Samsung API, fall back to tizen.systeminfo
+    var ipAddress = safeNet('getIp')
+      || (wifi && wifi.ipAddress)
+      || (ethernet && ethernet.ipAddress)
+      || null;
+    var wifiSsid = safeNet('getWiFiSsid') || (wifi && wifi.ssid) || null;
+    var wifiStrength = (wifi && wifi.signalStrength) || null;
 
     var panel = this.detectPanel();
     var epaperApiVersion = this.getEpaperApiVersion();
-
-    var ipAddress = (wifi && wifi.ipAddress) || (ethernet && ethernet.ipAddress) || null;
-    var macAddress = (wifi && wifi.macAddress) || (ethernet && ethernet.macAddress) || null;
-    var networkType = (network && network.networkType) || null;
-    var wifiSsid = (wifi && wifi.ssid) || null;
-    var wifiStrength = (wifi && wifi.signalStrength) || null;
 
     var info = {
       duid: duid,
