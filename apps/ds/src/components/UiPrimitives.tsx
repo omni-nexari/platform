@@ -300,8 +300,8 @@ export function InlineActionButton({
   );
 }
 
-export function SectionCard({ className, children, style }: { className?: string; children: ReactNode; style?: CSSProperties }) {
-  return <section className={joinClasses('ui-section-card', className)} style={style}>{children}</section>;
+export function SectionCard({ className, children, style, onClick }: { className?: string; children: ReactNode; style?: CSSProperties; onClick?: () => void }) {
+  return <section className={joinClasses('ui-section-card', className)} style={style} onClick={onClick}>{children}</section>;
 }
 
 export function SectionCardHeader({ className, children }: { className?: string; children: ReactNode }) {

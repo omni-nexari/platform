@@ -180,25 +180,82 @@ export async function monitoringRoutes(app: FastifyInstance) {
     async (_req, reply) => {
       try {
         const topics = [
+          // Clients
           '$SYS/broker/clients/connected',
+          '$SYS/broker/clients/total',
+          '$SYS/broker/clients/active',
+          // Messages
           '$SYS/broker/messages/received',
           '$SYS/broker/messages/sent',
+          '$SYS/broker/messages/stored',
+          '$SYS/broker/store/messages/count',
+          // Subscriptions
           '$SYS/broker/subscriptions/count',
+          // Load 1min
+          '$SYS/broker/load/messages/received/1min',
+          '$SYS/broker/load/messages/sent/1min',
+          '$SYS/broker/load/bytes/received/1min',
+          '$SYS/broker/load/bytes/sent/1min',
+          '$SYS/broker/load/connections/1min',
+          // Load 5min
+          '$SYS/broker/load/messages/received/5min',
+          '$SYS/broker/load/messages/sent/5min',
+          '$SYS/broker/load/bytes/received/5min',
+          '$SYS/broker/load/bytes/sent/5min',
+          // Broker meta
+          '$SYS/broker/version',
+          '$SYS/broker/uptime',
         ];
         const topicArgs = topics.map((t) => `-t '${t}'`).join(' ');
         const authArgs = MQTT_USERNAME ? `-u '${MQTT_USERNAME}' -P '${MQTT_PASSWORD}'` : '';
         const cmd = `mosquitto_sub -h '${MQTT_HOST}' -p ${MQTT_PORT} ${authArgs} -v ${topicArgs} -C ${topics.length} -W 12`;
         const { stdout } = await execAsync(cmd, { timeout: 14_000 });
-        const stats: Record<string, number> = {};
+
+        // Parse all lines into a nested object keyed by topic path segments
+        const raw: Record<string, string> = {};
         for (const line of stdout.trim().split('\n')) {
-          const space = line.lastIndexOf(' ');
+          const space = line.indexOf(' ');
           if (space === -1) continue;
-          const topic = line.slice(0, space);
-          const val = parseFloat(line.slice(space + 1));
-          const key = topic.split('/').pop() ?? topic;
-          if (!Number.isNaN(val)) stats[key] = val;
+          raw[line.slice(0, space)] = line.slice(space + 1);
         }
-        return reply.send(stats);
+        const num = (t: string) => parseFloat(raw[t] ?? '') || 0;
+        const str = (t: string) => raw[t] ?? null;
+
+        return reply.send({
+          broker: {
+            version: str('$SYS/broker/version'),
+            uptimeSeconds: num('$SYS/broker/uptime'),
+          },
+          clients: {
+            connected: num('$SYS/broker/clients/connected'),
+            active: num('$SYS/broker/clients/active'),
+            total: num('$SYS/broker/clients/total'),
+          },
+          messages: {
+            received: num('$SYS/broker/messages/received'),
+            sent: num('$SYS/broker/messages/sent'),
+            stored: num('$SYS/broker/messages/stored'),
+            storeCount: num('$SYS/broker/store/messages/count'),
+          },
+          subscriptions: {
+            count: num('$SYS/broker/subscriptions/count'),
+          },
+          load: {
+            msgs: {
+              received1m: num('$SYS/broker/load/messages/received/1min'),
+              received5m: num('$SYS/broker/load/messages/received/5min'),
+              sent1m: num('$SYS/broker/load/messages/sent/1min'),
+              sent5m: num('$SYS/broker/load/messages/sent/5min'),
+            },
+            bytes: {
+              received1m: num('$SYS/broker/load/bytes/received/1min'),
+              received5m: num('$SYS/broker/load/bytes/received/5min'),
+              sent1m: num('$SYS/broker/load/bytes/sent/1min'),
+              sent5m: num('$SYS/broker/load/bytes/sent/5min'),
+            },
+            connections1m: num('$SYS/broker/load/connections/1min'),
+          },
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'MQTT unavailable';
         return reply.status(502).send({ error: message });

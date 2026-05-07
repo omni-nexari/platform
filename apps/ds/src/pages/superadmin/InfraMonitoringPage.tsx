@@ -1,9 +1,13 @@
+import { useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { RefreshCw, Server, ShieldAlert, Wifi, HardDrive, Database, Radio, Globe, Lock } from 'lucide-react';
 import { saApi } from '../../lib/superadmin-auth.js';
 import {
   Badge,
   EmptyState,
+  Modal,
+  ModalBody,
+  ModalHeader,
   PageHeader,
   SectionCard,
   SectionCardBody,
@@ -19,10 +23,15 @@ interface NetdataPoint {
 }
 
 interface MqttStats {
-  connected?: number;
-  received?: number;
-  sent?: number;
-  count?: number;
+  broker?: { version: string | null; uptimeSeconds: number };
+  clients?: { connected: number; active: number; total: number };
+  messages?: { received: number; sent: number; stored: number; storeCount: number };
+  subscriptions?: { count: number };
+  load?: {
+    msgs: { received1m: number; received5m: number; sent1m: number; sent5m: number };
+    bytes: { received1m: number; received5m: number; sent1m: number; sent5m: number };
+    connections1m: number;
+  };
 }
 
 interface GoAccessReport {
@@ -108,6 +117,16 @@ function sslTone(days: number | null): 'success' | 'warning' | 'danger' | 'neutr
   return 'danger';
 }
 
+function formatUptime(seconds: number): string {
+  if (!seconds) return '—';
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
 function MetricRow({ label, value }: { label: string; value: string | number }) {
   return (
     <div
@@ -142,6 +161,7 @@ const CHARTS = [
 type ChartId = (typeof CHARTS)[number];
 
 export default function InfraMonitoringPage() {
+  const [mqttOpen, setMqttOpen] = useState(false);
   const results = useQueries({
     queries: [
       ...CHARTS.map((chart) => ({
@@ -491,23 +511,25 @@ export default function InfraMonitoringPage() {
 
       {/* ── MQTT & Databases ──────────────────────────────────────────────────── */}
       <div className="grid gap-6 lg:grid-cols-3">
-        <SectionCard>
+        <SectionCard
+          className="cursor-pointer hover:ring-2 hover:ring-[var(--accent)] transition-shadow"
+          onClick={() => setMqttOpen(true)}
+        >
           <SectionCardHeader>
             <h2 className="text-base font-semibold flex items-center gap-2">
               <Radio size={16} /> MQTT
             </h2>
+            <span className="text-xs text-[var(--text-muted)]">click for details</span>
           </SectionCardHeader>
           <SectionCardBody>
             {mqttLoading ? (
               <Skeleton className="h-20 rounded" />
             ) : (
               <>
-                <MetricRow label="Connected clients" value={mqtt?.connected ?? '—'} />
-                <MetricRow label="Messages received" value={mqtt?.received ?? '—'} />
-                <MetricRow label="Messages sent" value={mqtt?.sent ?? '—'} />
-                {mqtt?.count !== undefined && (
-                  <MetricRow label="Subscriptions" value={mqtt.count} />
-                )}
+                <MetricRow label="Connected clients" value={mqtt?.clients?.connected ?? '—'} />
+                <MetricRow label="Messages received" value={mqtt?.messages?.received ?? '—'} />
+                <MetricRow label="Messages sent" value={mqtt?.messages?.sent ?? '—'} />
+                <MetricRow label="Subscriptions" value={mqtt?.subscriptions?.count ?? '—'} />
               </>
             )}
           </SectionCardBody>
@@ -595,6 +617,98 @@ export default function InfraMonitoringPage() {
           )}
         </SectionCardBody>
       </SectionCard>
+
+      {/* ── MQTT Detail Modal ─────────────────────────────────────────────────── */}
+      {mqttOpen && (
+        <Modal open={mqttOpen} onClose={() => setMqttOpen(false)} size="md">
+          <ModalHeader title="MQTT Broker Details" icon={<Radio size={18} />} onClose={() => setMqttOpen(false)} />
+          <ModalBody>
+            {mqttLoading ? (
+              <Skeleton className="h-48 rounded" />
+            ) : !mqtt ? (
+              <p className="text-sm text-[var(--text-muted)]">No data available</p>
+            ) : (
+              <div className="space-y-5">
+                {/* Broker info */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-2">Broker</p>
+                  <div className="rounded border divide-y" style={{ borderColor: 'var(--card-border)' }}>
+                    <MetricRow label="Version" value={mqtt.broker?.version ?? '—'} />
+                    <MetricRow label="Uptime" value={formatUptime(mqtt.broker?.uptimeSeconds ?? 0)} />
+                  </div>
+                </div>
+
+                {/* Clients */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-2">Clients</p>
+                  <div className="rounded border divide-y" style={{ borderColor: 'var(--card-border)' }}>
+                    <MetricRow label="Connected" value={mqtt.clients?.connected ?? 0} />
+                    <MetricRow label="Active" value={mqtt.clients?.active ?? 0} />
+                    <MetricRow label="Total (ever)" value={mqtt.clients?.total ?? 0} />
+                  </div>
+                </div>
+
+                {/* Messages */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-2">Messages (cumulative)</p>
+                  <div className="rounded border divide-y" style={{ borderColor: 'var(--card-border)' }}>
+                    <MetricRow label="Received" value={mqtt.messages?.received ?? 0} />
+                    <MetricRow label="Sent" value={mqtt.messages?.sent ?? 0} />
+                    <MetricRow label="Stored (retained)" value={mqtt.messages?.stored ?? 0} />
+                  </div>
+                </div>
+
+                {/* Subscriptions */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-2">Subscriptions</p>
+                  <div className="rounded border divide-y" style={{ borderColor: 'var(--card-border)' }}>
+                    <MetricRow label="Active subscriptions" value={mqtt.subscriptions?.count ?? 0} />
+                    <MetricRow label="New connections/min (1m avg)" value={(mqtt.load?.connections1m ?? 0).toFixed(2)} />
+                  </div>
+                </div>
+
+                {/* Load */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-2">Load averages</p>
+                  <div className="rounded border overflow-hidden" style={{ borderColor: 'var(--card-border)' }}>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-xs text-[var(--text-muted)] border-b" style={{ borderColor: 'var(--card-border)' }}>
+                          <th className="text-left py-2 px-3 font-medium">Metric</th>
+                          <th className="text-right py-2 px-3 font-medium">1 min</th>
+                          <th className="text-right py-2 px-3 font-medium">5 min</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="border-b" style={{ borderColor: 'var(--card-border)' }}>
+                          <td className="py-2 px-3 text-[var(--text-muted)]">Msgs received/s</td>
+                          <td className="py-2 px-3 text-right font-mono">{(mqtt.load?.msgs.received1m ?? 0).toFixed(2)}</td>
+                          <td className="py-2 px-3 text-right font-mono">{(mqtt.load?.msgs.received5m ?? 0).toFixed(2)}</td>
+                        </tr>
+                        <tr className="border-b" style={{ borderColor: 'var(--card-border)' }}>
+                          <td className="py-2 px-3 text-[var(--text-muted)]">Msgs sent/s</td>
+                          <td className="py-2 px-3 text-right font-mono">{(mqtt.load?.msgs.sent1m ?? 0).toFixed(2)}</td>
+                          <td className="py-2 px-3 text-right font-mono">{(mqtt.load?.msgs.sent5m ?? 0).toFixed(2)}</td>
+                        </tr>
+                        <tr className="border-b" style={{ borderColor: 'var(--card-border)' }}>
+                          <td className="py-2 px-3 text-[var(--text-muted)]">Bytes received/s</td>
+                          <td className="py-2 px-3 text-right font-mono">{(mqtt.load?.bytes.received1m ?? 0).toFixed(1)}</td>
+                          <td className="py-2 px-3 text-right font-mono">{(mqtt.load?.bytes.received5m ?? 0).toFixed(1)}</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 px-3 text-[var(--text-muted)]">Bytes sent/s</td>
+                          <td className="py-2 px-3 text-right font-mono">{(mqtt.load?.bytes.sent1m ?? 0).toFixed(1)}</td>
+                          <td className="py-2 px-3 text-right font-mono">{(mqtt.load?.bytes.sent5m ?? 0).toFixed(1)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+          </ModalBody>
+        </Modal>
+      )}
     </div>
   );
 }
