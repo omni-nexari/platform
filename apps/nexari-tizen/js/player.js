@@ -5489,10 +5489,27 @@ const Player = {
                     catch ( /**/_a) { /**/ }
                 }
             };
-            // Loading placeholder
-            container.innerHTML = `<div style="position:absolute;top:0;right:0;bottom:0;left:0;background:${bg};display:flex;
-      align-items:center;justify-content:center;color:${textMuted};
-      font-family:-apple-system,sans-serif;font-size:18px;">Loading�</div>`;
+            // First-paint: prefer last-known events from localStorage so we render
+            // the previous frame instantly instead of flashing a "Loading..." placeholder.
+            // The fresh fetchAndRender() / WS push that follows will replace it the
+            // moment new data arrives (and dedupe via maybeRender's signature check).
+            let paintedFromCache = false;
+            try {
+                const cached = localStorage.getItem(cacheKey);
+                if (cached) {
+                    const { events } = JSON.parse(cached);
+                    if (Array.isArray(events) && events.length >= 0) {
+                        maybeRender(events);
+                        paintedFromCache = true;
+                    }
+                }
+            }
+            catch ( /* ignore cache errors */_b) { /* ignore cache errors */ }
+            if (!paintedFromCache) {
+                container.innerHTML = `<div style="position:absolute;top:0;right:0;bottom:0;left:0;background:${bg};display:flex;
+        align-items:center;justify-content:center;color:${textMuted};
+        font-family:-apple-system,sans-serif;font-size:18px;">Loading�</div>`;
+            }
             void fetchAndRender();
             // Polling fallback — only fires if the WS push isn't active for any reason
             // (socket dropped, server restart, etc.). When WS is healthy this is a no-op.
@@ -6362,10 +6379,17 @@ const Player = {
             const canReuseDocument = isDocumentContent &&
                 this.documentActive &&
                 this.documentItemKey === itemKey;
+            // Calendar items keep an internal poll/WS-push lifecycle on the
+            // container; tearing the DOM every playlist cycle would force a fresh
+            // "Loading..." flash and re-subscribe. Reuse the existing mount when
+            // the same calendar item loops.
+            const canReuseCalendar = content.type === 'CALENDAR' &&
+                this.lastRenderedItemKey === itemKey &&
+                container._calendarReqId !== undefined;
             if (!canReuseDocument && this.documentActive) {
                 this.closeDocument();
             }
-            if (!canReuseImage && !canReuseDocument) {
+            if (!canReuseImage && !canReuseDocument && !canReuseCalendar) {
                 container.innerHTML = '';
             }
             container._menuBoardRequestId = undefined;
@@ -6620,7 +6644,13 @@ const Player = {
                     break;
                 }
                 case 'CALENDAR': {
-                    void this.renderCalendar(container, content);
+                    if (!canReuseCalendar) {
+                        void this.renderCalendar(container, content);
+                        this.lastRenderedItemKey = itemKey;
+                    }
+                    else {
+                        logger.debug('Skipping calendar re-render, same item already mounted');
+                    }
                     scheduleNext(duration * 1000);
                     break;
                 }
