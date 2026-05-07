@@ -122,14 +122,15 @@ function StatusPill({ ok, label }: { ok: boolean; label: string }) {
 const CHARTS = [
   'system.cpu',
   'system.ram',
-  'disk_space._',
+  'disk_space./',
   'net.eth0',
-  'nginx_local.connections_state',
-  'nginx_local.requests_total',
+  'nginx_local.connections',
+  'nginx_local.connections_statuses',
+  'nginx_local.requests',
   'mqtt_local.clients_connected',
   'mqtt_local.messages_received',
   'mqtt_local.messages_sent',
-  'postgres_local.connections',
+  'postgres_local.connections_state',
   'redis_local.clients',
   'redis_local.commands',
 ] as const;
@@ -197,22 +198,22 @@ export default function InfraMonitoringPage() {
   const ramUsed = extractFirstValue(ramData, 'used') ?? 0;
   const ramFree = extractFirstValue(ramData, 'free') ?? 0;
   const ramTotal = ramUsed + ramFree + (extractFirstValue(ramData, 'cached') ?? 0) + (extractFirstValue(ramData, 'buffers') ?? 0);
-  const diskData = nd('disk_space._');
+  const diskData = nd('disk_space./');
   const diskUsed = extractFirstValue(diskData, 'used') ?? 0;
   const diskAvail = extractFirstValue(diskData, 'avail') ?? 0;
   const diskTotal = diskUsed + diskAvail;
   const netIn = extractFirstValue(nd('net.eth0'), 'received') ?? 0;
   const netOut = extractFirstValue(nd('net.eth0'), 'sent') ?? 0;
 
-  const nginxConnections = nd('nginx_local.connections_state');
-  const nginxActive = extractFirstValue(nginxConnections, 'active') ?? 0;
-  const nginxReqSec = sumValues(nd('nginx_local.requests_total'));
+  const nginxActive = extractFirstValue(nd('nginx_local.connections'), 'active') ?? 0;
+  const nginxStatuses = nd('nginx_local.connections_statuses');
+  const nginxReqSec = sumValues(nd('nginx_local.requests'));
 
   const mqttClients = sumValues(nd('mqtt_local.clients_connected'));
   const mqttIn = sumValues(nd('mqtt_local.messages_received'));
   const mqttOut = sumValues(nd('mqtt_local.messages_sent'));
 
-  const pgConnections = sumValues(nd('postgres_local.connections'));
+  const pgConnections = sumValues(nd('postgres_local.connections_state'));
   const redisClients = sumValues(nd('redis_local.clients'));
   const redisCmds = sumValues(nd('redis_local.commands'));
 
@@ -399,22 +400,22 @@ export default function InfraMonitoringPage() {
             </h2>
           </SectionCardHeader>
           <SectionCardBody>
-            {ndLoading('nginx_local.connections_state') ? (
+            {ndLoading('nginx_local.connections') ? (
               <Skeleton className="h-24 rounded" />
             ) : (
               <>
                 <MetricRow label="Active connections" value={Math.round(nginxActive)} />
                 <MetricRow
                   label="Reading"
-                  value={Math.round(extractFirstValue(nginxConnections, 'reading') ?? 0)}
+                  value={Math.round(extractFirstValue(nginxStatuses, 'reading') ?? 0)}
                 />
                 <MetricRow
                   label="Writing"
-                  value={Math.round(extractFirstValue(nginxConnections, 'writing') ?? 0)}
+                  value={Math.round(extractFirstValue(nginxStatuses, 'writing') ?? 0)}
                 />
                 <MetricRow
-                  label="Waiting"
-                  value={Math.round(extractFirstValue(nginxConnections, 'waiting') ?? 0)}
+                  label="Idle"
+                  value={Math.round(extractFirstValue(nginxStatuses, 'idle') ?? 0)}
                 />
                 <MetricRow label="Requests/sec" value={Math.abs(nginxReqSec).toFixed(1)} />
               </>
@@ -508,7 +509,7 @@ export default function InfraMonitoringPage() {
             </h2>
           </SectionCardHeader>
           <SectionCardBody>
-            {ndLoading('postgres_local.connections') ? (
+            {ndLoading('postgres_local.connections_state') ? (
               <Skeleton className="h-20 rounded" />
             ) : (
               <MetricRow label="Connections" value={Math.round(pgConnections)} />
