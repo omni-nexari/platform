@@ -57,9 +57,9 @@ const Player = {
     _lastClockSyncAt: 0, // Timestamp of last set_clock; rate-limited to once per 24h
     _liveCaptureActive: false, // live-view capture running
     _liveCaptureIntervalMs: 1000, // requested cadence
-    _liveCaptureBusy: false, // captureScreen in progress â€” prevents overlapping calls
-    _liveInterval: undefined, // setTimeout handle (NOT setInterval â€” Samsung captureScreen cannot overlap)
-    // â”€â”€ IPTV channel group runtime state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    _liveCaptureBusy: false, // captureScreen in progress — prevents overlapping calls
+    _liveInterval: undefined, // setTimeout handle (NOT setInterval — Samsung captureScreen cannot overlap)
+    // ── IPTV channel group runtime state ───────────────────────────────────
     currentChannelGroup: null,
     _channelDigitBuffer: '',
     _channelDigitTimer: null,
@@ -72,7 +72,7 @@ const Player = {
     _iptvWatchdogTimer: null,
     _iptvLastTime: -1,
     _iptvStallCount: 0,
-    // Tune debounce â€” coalesces rapid CH+/CH- mashing
+    // Tune debounce — coalesces rapid CH+/CH- mashing
     _tuneSeq: 0,
     _pendingTuneTimer: null,
     IPTV_MAX_RECONNECTS: 5,
@@ -85,10 +85,10 @@ const Player = {
     // Falls back to FHD until detection completes.
     _panelWidth: 1920,
     _panelHeight: 1080,
-    // Physical panel resolution (in real device pixels) — used for the
+    // Physical panel resolution (in real device pixels) � used for the
     // b2bapis.b2bsyncplay startSyncPlay() rect, which is interpreted in
-    // physical pixels (NOT AVPlay's fixed 1920×1080 logical space). On a
-    // 4K signage panel this is 3840×2160; on an FHD panel 1920×1080.
+    // physical pixels (NOT AVPlay's fixed 1920�1080 logical space). On a
+    // 4K signage panel this is 3840�2160; on an FHD panel 1920�1080.
     // Populated asynchronously at init() from tizen.systeminfo DISPLAY.
     _physicalPanelWidth: 0,
     _physicalPanelHeight: 0,
@@ -102,10 +102,10 @@ const Player = {
     _zoneContainers: [],
     _zoneTimers: [],
     _zoneAVPlayers: [],
-    _zoneAVPlayerMap: {}, // zone.id â†’ avplaystore player
+    _zoneAVPlayerMap: {}, // zone.id → avplaystore player
     _zoneSyncEnabled: false, // true when any zone has syncGroup set
     _zoneDocumentActive: false, // webapis.document is single-instance
-    // Serialise VideoMixer prepare() calls across zones â€” Samsung TV rejects
+    // Serialise VideoMixer prepare() calls across zones — Samsung TV rejects
     // concurrent prepare() with PLAYER_ERROR_NOT_SUPPORTED_FILE.
     _videoMixerQueue: Promise.resolve(),
     // Intra-device zone sync: gather all zones' play() calls and fire together
@@ -159,13 +159,13 @@ const Player = {
                 logger.setDevice(this.deviceId);
             }
             logger.info('Initializing player for device:', this.deviceName);
-            // Samsung AVPlay setDisplayRect() always uses a fixed 1920×1080 coordinate space,
+            // Samsung AVPlay setDisplayRect() always uses a fixed 1920�1080 coordinate space,
             // per the official Samsung API docs: "The 4 parameters specify the left side, top,
             // window width, and window height based on a 1920 x 1080 resolution screen,
             // regardless of the actual application resolution."
-            // Previously this was set to 3840×2160 (native panel pixels) which caused video to
-            // render only in the top-left quadrant (1/4 of the screen) because the rect was 4×
-            // larger than the 1920×1080 coordinate space. Do NOT use native panel pixels here.
+            // Previously this was set to 3840�2160 (native panel pixels) which caused video to
+            // render only in the top-left quadrant (1/4 of the screen) because the rect was 4�
+            // larger than the 1920�1080 coordinate space. Do NOT use native panel pixels here.
             // On commercial signage panels window.innerWidth reports 1920 even on UHD,
             this._panelWidth = 1920;
             this._panelHeight = 1080;
@@ -176,7 +176,7 @@ const Player = {
             yield new Promise((resolve) => {
                 var _a;
                 const timer = setTimeout(() => {
-                    logger.warn('[Panel] DISPLAY query timed out — using screen.* fallback');
+                    logger.warn('[Panel] DISPLAY query timed out � using screen.* fallback');
                     resolve();
                 }, 1000);
                 try {
@@ -252,7 +252,7 @@ const Player = {
                 logger.warn('SyncEngine init failed:', (e === null || e === void 0 ? void 0 : e.message) || e);
             }
             // Defensive: clear any leftover firmware SyncPlay state from a previous
-            // app launch — the firmware retains the last registered onChange and
+            // app launch � the firmware retains the last registered onChange and
             // playlist across reloads, which makes startSyncPlay() throw
             // "Can't register callback" on the next call.
             try {
@@ -281,7 +281,7 @@ const Player = {
             // Setup refresh interval
             this.startContentRefresh();
             this.startLogStream();
-            // Phase 2 MDC setup â€” apply initial display settings, persist MDC ID to DB
+            // Phase 2 MDC setup — apply initial display settings, persist MDC ID to DB
             setTimeout(() => { this.runPostPairingMdcSetup(); }, 5000);
             logger.info('Player initialized successfully');
         });
@@ -399,7 +399,7 @@ const Player = {
                     // (not nested under .payload). Store the whole message as the manifest.
                     logger.info('Videowall init received:', message);
                     this._videowallManifest = message;
-                    // Reuse the P2P SyncEngine for wall sync — feed it the peer/priority
+                    // Reuse the P2P SyncEngine for wall sync � feed it the peer/priority
                     // list from the videowall manifest.  groupId is the device group UUID
                     // (treated as an opaque string by the engine).
                     if (typeof SyncEngine !== 'undefined' && message.geometry) {
@@ -450,7 +450,7 @@ const Player = {
                         logger.warn('AppUpdater module not loaded');
                     }
                     break;
-                // â”€â”€ Our API WS commands (snake_case from server â†’ ws.ts) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Our API WS commands (snake_case from server → ws.ts) ──────────────
                 case 'refresh_schedule':
                     logger.info('refresh_schedule received - reloading content');
                     this.loadContent();
@@ -498,7 +498,7 @@ const Player = {
                     this._liveCaptureActive = true;
                     this._liveCaptureIntervalMs = intervalMs;
                     this._liveCaptureBusy = false;
-                    // Use setTimeout chaining (NOT setInterval) â€” Samsung captureScreen cannot handle
+                    // Use setTimeout chaining (NOT setInterval) — Samsung captureScreen cannot handle
                     // concurrent calls; each capture must complete before the next is scheduled.
                     const self = this;
                     const scheduleNext = (delayMs) => {
@@ -589,11 +589,11 @@ const Player = {
                                         }
                                         catch (e) {
                                             logger.warn('[LiveCapture] filesystem failed:', e);
-                                            canvasFallback(); // b2b captured but read failed â€” send canvas frame
+                                            canvasFallback(); // b2b captured but read failed — send canvas frame
                                         }
                                     }, (e) => {
                                         logger.warn('[LiveCapture] captureScreen error:', e);
-                                        canvasFallback(); // b2b error callback â€” send canvas frame instead of nothing
+                                        canvasFallback(); // b2b error callback — send canvas frame instead of nothing
                                     });
                                     return;
                                 }
@@ -601,7 +601,7 @@ const Player = {
                             catch (e) {
                                 logger.warn('[LiveCapture] b2b threw:', e);
                             }
-                            // b2b API unavailable â€” canvas fallback (captures DOM/2D content, not HW-decoded video)
+                            // b2b API unavailable — canvas fallback (captures DOM/2D content, not HW-decoded video)
                             canvasFallback();
                         }, delayMs);
                     };
@@ -659,10 +659,10 @@ const Player = {
                     // Rate-limit: ignore if a sync completed within the last 30s
                     const msSinceSync = this.lastNtpSync ? Date.now() - this.lastNtpSync : Infinity;
                     if (msSinceSync < 30000) {
-                        logger.debug(`ntp_resync ignored â€” last sync was ${Math.round(msSinceSync / 1000)}s ago`);
+                        logger.debug(`ntp_resync ignored — last sync was ${Math.round(msSinceSync / 1000)}s ago`);
                         break;
                     }
-                    logger.info('ntp_resync received from server â€” syncing now');
+                    logger.info('ntp_resync received from server — syncing now');
                     void this.syncTimeWithServer();
                     break;
                 }
@@ -709,7 +709,7 @@ const Player = {
                         const xhr = new XMLHttpRequest();
                         xhr.open('POST', 'http://127.0.0.1:9615/mdc-control', true);
                         xhr.setRequestHeader('Content-Type', 'application/json');
-                        // mdc_id_scan and mdc_conn_type_fix scan up to 10 IDs Ã— 500ms each = ~5s;
+                        // mdc_id_scan and mdc_conn_type_fix scan up to 10 IDs × 500ms each = ~5s;
                         // give a generous budget so the XHR never races the scan to timeout.
                         xhr.timeout = (action === 'mdc_id_scan' || action === 'mdc_conn_type_fix') ? 15000 : 10000;
                         xhr.onload = function () {
@@ -752,7 +752,7 @@ const Player = {
                     }
                     const rsXhr = new XMLHttpRequest();
                     rsXhr.open('GET', 'http://127.0.0.1:9615/status-full', true);
-                    rsXhr.timeout = 20000; // sequential MDC calls can take ~3s each Ã— 6
+                    rsXhr.timeout = 20000; // sequential MDC calls can take ~3s each × 6
                     rsXhr.onload = function () {
                         try {
                             const res = JSON.parse(rsXhr.responseText);
@@ -786,7 +786,7 @@ const Player = {
                         catch (e) {
                             const err = e;
                             const base = (err === null || err === void 0 ? void 0 : err.name) && (err === null || err === void 0 ? void 0 : err.message) ? `${err.name}: ${err.message}` : String(e);
-                            const hint = (err === null || err === void 0 ? void 0 : err.name) === 'SecurityError' ? ' (partner certificate required or device not in developer mode â€” may also be LFD-only method)' : '';
+                            const hint = (err === null || err === void 0 ? void 0 : err.name) === 'SecurityError' ? ' (partner certificate required or device not in developer mode — may also be LFD-only method)' : '';
                             return { error: base + hint };
                         }
                     }
@@ -911,7 +911,7 @@ const Player = {
                                 scEntries.push(Object.assign({ label }, r));
                         }
                         if (scEntries.length === 1) {
-                            scEntries.push({ label: 'Partner APIs', error: 'All SystemControl partner methods returned SecurityError â€” partner certificate required' });
+                            scEntries.push({ label: 'Partner APIs', error: 'All SystemControl partner methods returned SecurityError — partner certificate required' });
                         }
                         const srcTypes = ['HDMI1', 'HDMI2', 'HDMI3', 'DP', 'MAGICINFO', 'INTERNAL_USB', 'URL_LAUNCHER'];
                         const srcOrient = {};
@@ -926,9 +926,9 @@ const Player = {
                         scEntries.push({ label: 'Source orientations', value: srcOrient });
                     }
                     sections['systemControl'] = scEntries;
-                    // Timer â€” tizen.time (standard, no partner privilege) + webapis.timer (partner-only, best-effort)
+                    // Timer — tizen.time (standard, no partner privilege) + webapis.timer (partner-only, best-effort)
                     const tmEntries = [];
-                    // tizen.time: standard Tizen Time API â€” always available without partner privilege
+                    // tizen.time: standard Tizen Time API — always available without partner privilege
                     const tztime = (typeof tizen !== 'undefined' && tizen.time);
                     if (!tztime) {
                         tmEntries.push({ label: 'tizen.time', error: 'tizen.time not available on this runtime' });
@@ -940,10 +940,10 @@ const Player = {
                         tmEntries.push(Object.assign({ label: 'Time format' }, tpSafe(() => tztime['getTimeFormat']())));
                         tmEntries.push(Object.assign({ label: 'Available timezones (count)' }, tpSafe(() => { const z = tztime['getAvailableTimezones'](); return `${z.length} zones`; })));
                     }
-                    // webapis.timer: Samsung partner-only API â€” requires Samsung partner privilege (SecurityError if not whitelisted)
+                    // webapis.timer: Samsung partner-only API — requires Samsung partner privilege (SecurityError if not whitelisted)
                     const tm = webapis === null || webapis === void 0 ? void 0 : webapis['timer'];
                     if (!tm) {
-                        tmEntries.push({ label: 'webapis.timer', error: 'Not available â€” Samsung partner privilege required' });
+                        tmEntries.push({ label: 'webapis.timer', error: 'Not available — Samsung partner privilege required' });
                     }
                     else {
                         tmEntries.push(Object.assign({ label: 'Plugin version' }, tpSafe(() => tm['getVersion']())));
@@ -956,21 +956,21 @@ const Player = {
                     const rpEntries = [];
                     const rp = webapis === null || webapis === void 0 ? void 0 : webapis['remotepower'];
                     if (!rp) {
-                        rpEntries.push({ label: 'webapis.remotepower', error: 'Not available â€” Samsung partner privilege required' });
+                        rpEntries.push({ label: 'webapis.remotepower', error: 'Not available — Samsung partner privilege required' });
                     }
                     else {
                         rpEntries.push(Object.assign({ label: 'Plugin version' }, tpSafe(() => rp['getVersion']())));
-                        // getRemoteConfiguration â€” LFD only. Controls whether remote power is enabled.
+                        // getRemoteConfiguration — LFD only. Controls whether remote power is enabled.
                         rpEntries.push(Object.assign({ label: 'Remote Configuration ON/OFF (getRemoteConfiguration) [LFD]' }, tpSafe(() => rp['getRemoteConfiguration']())));
                         // getPowerState / getVirtualStandbyMode
                         rpEntries.push(Object.assign({ label: 'Power state (getPowerState)' }, tpSafe(() => rp['getPowerState']())));
                         rpEntries.push(Object.assign({ label: 'Virtual standby mode (getVirtualStandbyMode)' }, tpSafe(() => rp['getVirtualStandbyMode']())));
                     }
                     sections['remotePower'] = rpEntries;
-                    // Custom App Info (webapis.systemcontrol â€” already available from sc above)
+                    // Custom App Info (webapis.systemcontrol — already available from sc above)
                     const caEntries = [];
                     if (!sc) {
-                        caEntries.push({ label: 'webapis.systemcontrol', error: 'Not available â€” Samsung partner privilege required' });
+                        caEntries.push({ label: 'webapis.systemcontrol', error: 'Not available — Samsung partner privilege required' });
                     }
                     else {
                         caEntries.push(Object.assign({ label: 'Custom app info (getCustomAppInfo)' }, tpSafe(() => tpJson(sc['getCustomAppInfo']()))));
@@ -1072,7 +1072,7 @@ const Player = {
                         catch (e) {
                             const err = e;
                             const base = (err === null || err === void 0 ? void 0 : err.name) && (err === null || err === void 0 ? void 0 : err.message) ? `${err.name}: ${err.message}` : String(e);
-                            const hint = (err === null || err === void 0 ? void 0 : err.name) === 'SecurityError' ? ' (partner certificate required or device not in developer mode â€” may also be LFD-only method)' : '';
+                            const hint = (err === null || err === void 0 ? void 0 : err.name) === 'SecurityError' ? ' (partner certificate required or device not in developer mode — may also be LFD-only method)' : '';
                             return { ok: false, error: base + hint };
                         }
                     }
@@ -1082,7 +1082,7 @@ const Player = {
                         sendTizenCommandResult(false, undefined, 'Missing action');
                         break;
                     }
-                    // â”€â”€ Remote Power â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    // ── Remote Power ──────────────────────────────────────────────────
                     if (tcAction === 'remotepower.setRemoteConfiguration') {
                         // LFD-only: enables (ON) or disables (OFF) remote power control
                         const rp2 = webapis2 === null || webapis2 === void 0 ? void 0 : webapis2['remotepower'];
@@ -1101,7 +1101,7 @@ const Player = {
                             sendTizenCommandResult(false, undefined, 'webapis.remotepower not available');
                             break;
                         }
-                        // Send result first â€” powerOn may cut the connection before a response could be sent
+                        // Send result first — powerOn may cut the connection before a response could be sent
                         sendTizenCommandResult(true, 'Power on command sent');
                         setTimeout(() => { try {
                             rp2['powerOn']();
@@ -1116,7 +1116,7 @@ const Player = {
                             sendTizenCommandResult(false, undefined, 'webapis.remotepower not available');
                             break;
                         }
-                        // Send result first â€” powerOff kills the WebSocket connection immediately
+                        // Send result first — powerOff kills the WebSocket connection immediately
                         sendTizenCommandResult(true, 'Power off command sent');
                         setTimeout(() => { try {
                             rp2['powerOff']();
@@ -1124,7 +1124,7 @@ const Player = {
                         catch (_e) { /* best effort */ } }, 100);
                         break;
                     }
-                    // â”€â”€ Timer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    // ── Timer ─────────────────────────────────────────────────────────
                     if (tcAction === 'timer.setNTP') {
                         const tm2 = webapis2 === null || webapis2 === void 0 ? void 0 : webapis2['timer'];
                         if (!tm2) {
@@ -1157,7 +1157,7 @@ const Player = {
                         sendTizenCommandResult(r.ok, r.ok ? r.value : undefined, !r.ok ? r.error : undefined);
                         break;
                     }
-                    // â”€â”€ System Control (Custom App Info) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    // ── System Control (Custom App Info) ──────────────────────────────
                     if (tcAction === 'systemcontrol.setCustomAppInfo') {
                         const sc2 = webapis2 === null || webapis2 === void 0 ? void 0 : webapis2['systemcontrol'];
                         if (!sc2) {
@@ -1188,7 +1188,7 @@ const Player = {
                         sendTizenCommandResult(r.ok, r.ok ? r.value : undefined, !r.ok ? r.error : undefined);
                         break;
                     }
-                    // â”€â”€ Document API â€” routes through unified adapter (B2BDoc on Tizen 4, webapis.document on 6.5+) â”€â”€
+                    // ── Document API — routes through unified adapter (B2BDoc on Tizen 4, webapis.document on 6.5+) ──
                     if (tcAction && tcAction.indexOf('document.') === 0) {
                         const adapter = this._getDocControlAdapter();
                         const op = tcAction.slice('document.'.length);
@@ -1286,7 +1286,7 @@ const Player = {
                         }
                         break;
                     }
-                    // â”€â”€ B2BControl API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    // ── B2BControl API ─────────────────────────────────────────────────────
                     if (tcAction && tcAction.indexOf('b2b.') === 0) {
                         const rw3 = window;
                         const b2bc = (_u = (_t = rw3['b2bapis']) === null || _t === void 0 ? void 0 : _t.b2bcontrol) !== null && _u !== void 0 ? _u : null;
@@ -1304,7 +1304,7 @@ const Player = {
                         };
                         try {
                             switch (tcAction) {
-                                // â”€â”€ Power â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                                // ── Power ────────────────────────────────────────────────────────
                                 case 'b2b.setPower': {
                                     const on = tcParams === 'on' || tcParams === true || tcParams === 'ON';
                                     const methods = on
@@ -1336,7 +1336,7 @@ const Player = {
                                         sendTizenCommandResult(false, undefined, 'No getPower method found on this device');
                                     break;
                                 }
-                                // â”€â”€ Input Source â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                                // ── Input Source ─────────────────────────────────────────────────
                                 case 'b2b.setInputSource': {
                                     if (typeof b2bc.setInputSource === 'function') {
                                         b2bc.setInputSource(tcParams, () => b2bOk(`Input set to ${tcParams}`), b2bErr);
@@ -1355,7 +1355,7 @@ const Player = {
                                     }
                                     break;
                                 }
-                                // â”€â”€ Volume â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                                // ── Volume ───────────────────────────────────────────────────────
                                 case 'b2b.setVolume': {
                                     const vol = typeof tcParams === 'number' ? Math.max(0, Math.min(100, tcParams)) : 30;
                                     if (typeof b2bc.setVolume === 'function') {
@@ -1386,7 +1386,7 @@ const Player = {
                                     }
                                     break;
                                 }
-                                // â”€â”€ Brightness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                                // ── Brightness ───────────────────────────────────────────────────
                                 case 'b2b.setBrightness': {
                                     const lum = typeof tcParams === 'number' ? Math.max(0, Math.min(100, tcParams)) : 70;
                                     const lumMethod = ['setDisplayBrightness', 'setBrightness'].find(n => typeof b2bc[n] === 'function');
@@ -1408,7 +1408,7 @@ const Player = {
                                     }
                                     break;
                                 }
-                                // â”€â”€ Device Info â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                                // ── Device Info ──────────────────────────────────────────────────
                                 case 'b2b.getDeviceInfo': {
                                     if (typeof b2bc.getDeviceInfo === 'function') {
                                         b2bc.getDeviceInfo((val) => b2bOk(val), b2bErr);
@@ -1418,11 +1418,11 @@ const Player = {
                                     }
                                     break;
                                 }
-                                // â”€â”€ Reboot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                                // ── Reboot ───────────────────────────────────────────────────────
                                 case 'b2b.reboot': {
                                     const rebootMethod = ['reboot', 'rebootDevice', 'setSystemReboot'].find(n => typeof b2bc[n] === 'function');
                                     if (rebootMethod) {
-                                        // Send response first â€” reboot will cut the WebSocket connection
+                                        // Send response first — reboot will cut the WebSocket connection
                                         sendTizenCommandResult(true, `Reboot initiated via b2bcontrol.${rebootMethod}`);
                                         setTimeout(() => { try {
                                             b2bc[rebootMethod]();
@@ -1434,7 +1434,7 @@ const Player = {
                                     }
                                     break;
                                 }
-                                // â”€â”€ App Control â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                                // ── App Control ──────────────────────────────────────────────────
                                 case 'b2b.launchApp': {
                                     if (typeof b2bc.launchApp === 'function') {
                                         b2bc.launchApp(tcParams, () => b2bOk(`App launched: ${tcParams}`), b2bErr);
@@ -1462,7 +1462,7 @@ const Player = {
                                     }
                                     break;
                                 }
-                                // â”€â”€ OSD & Kiosk Controls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                                // ── OSD & Kiosk Controls ─────────────────────────────────────────
                                 case 'b2b.setOsdDisplay.show':
                                 case 'b2b.setOsdDisplay.hide': {
                                     const show = tcAction === 'b2b.setOsdDisplay.show';
@@ -1528,7 +1528,7 @@ const Player = {
     },
     // Start heartbeat
     startHeartbeat() {
-        // Heartbeat is sent via WebSocket only â€” no HTTP call
+        // Heartbeat is sent via WebSocket only — no HTTP call
         this.heartbeatInterval = setInterval(() => {
             this.sendWebSocketHeartbeat();
         }, CONFIG.HEARTBEAT_INTERVAL);
@@ -1562,7 +1562,7 @@ const Player = {
             height: 1080,
         };
     },
-    // ── Samsung native SyncPlay (b2bapis.b2bsyncplay) ────────────────────────
+    // -- Samsung native SyncPlay (b2bapis.b2bsyncplay) ------------------------
     // Returns the b2bsyncplay module if the firmware exposes it, else null.
     // Privilege http://developer.samsung.com/privilege/b2bsyncplay must be
     // declared in config.xml (already present). Tested on Tizen 4 SBB and
@@ -1583,7 +1583,7 @@ const Player = {
     },
     // Render a sync-group playlist via Samsung firmware SyncPlay. All TVs that
     // share the same numeric groupID and call startSyncPlay() with the same
-    // playlist play in lockstep — firmware handles peer discovery, clock
+    // playlist play in lockstep � firmware handles peer discovery, clock
     // alignment, and frame correction. Audio is left at firmware default
     // (multi-room audio sync is out of scope for this build).
     renderPlaylistNativeSync(playableItems, groupId, container) {
@@ -1613,7 +1613,7 @@ const Player = {
                 continue;
             // b2bsyncplay requires a `file://` URI (per Samsung b2bsync sample).
             // content-manager normally returns one already, but defensively prepend
-            // the scheme if missing — without it the firmware silently drops the
+            // the scheme if missing � without it the firmware silently drops the
             // makeSyncPlayList call (no success / no error callback fires).
             if (typeof url === 'string' && !url.startsWith('file://')) {
                 url = 'file://' + (url.startsWith('/') ? url : ('/' + url));
@@ -1622,7 +1622,7 @@ const Player = {
             syncPlayContents.push({ path: url, duration: dur });
         }
         if (syncPlayContents.length === 0) {
-            logger.warn('[NativeSync] No items with usable file:// URLs — aborting');
+            logger.warn('[NativeSync] No items with usable file:// URLs � aborting');
             this.showIdleScreen();
             return;
         }
@@ -1646,7 +1646,7 @@ const Player = {
                     this._startNativeSyncPlay(api, groupId);
                 }, (err) => {
                     logger.warn('[NativeSync] makeSyncPlayList failed: ' +
-                        (err && (err.message || err.name)) + ' — reverting visual mode');
+                        (err && (err.message || err.name)) + ' � reverting visual mode');
                     this._nativeSyncActive = false;
                     this._nativeSyncGroupId = null;
                     this.setAvPlayVisualMode(false);
@@ -1660,7 +1660,7 @@ const Player = {
             }
         };
         // Defensive cleanup: only clearSyncPlayList (resets playlist data).
-        // DO NOT call stopSyncPlay() here — it is queued by the firmware and
+        // DO NOT call stopSyncPlay() here � it is queued by the firmware and
         // can fire *after* the new startSyncPlay() session begins, killing it.
         // stopSyncPlay() is reserved for explicit teardown in stopNativeSyncPlay().
         let started = false;
@@ -1668,7 +1668,7 @@ const Player = {
             if (started)
                 return;
             started = true;
-            logger.info('[NativeSync] begin (' + reason + ') → calling makeSyncPlayList');
+            logger.info('[NativeSync] begin (' + reason + ') ? calling makeSyncPlayList');
             startNativeSync();
         };
         try {
@@ -1703,38 +1703,38 @@ const Player = {
             }
             catch (_) { }
         };
-        // ── Rect & rotation ─────────────────────────────────────────────────
+        // -- Rect & rotation -------------------------------------------------
         // b2bsyncplay's startSyncPlay() rect uses PHYSICAL panel pixel
-        // coordinates, NOT AVPlay's fixed 1920×1080 logical space.
+        // coordinates, NOT AVPlay's fixed 1920�1080 logical space.
         //
         // Evidence: with (0,0,1920,1080) the video fills only the top-left
-        // physical quarter of a 3840×2160 UHD panel, appearing as a 960×540
+        // physical quarter of a 3840�2160 UHD panel, appearing as a 960�540
         // region that ends at the logical centre (960,540). Passing the full
         // physical resolution (0,0,3840,2160) is required for full-screen.
         //
         // Source of rect:
-        //   1. _physicalPanelWidth/Height — queried at init via
+        //   1. _physicalPanelWidth/Height � queried at init via
         //      tizen.systeminfo DISPLAY.resolutionWidth/Height (physical px).
-        //   2. window.screen.width * window.devicePixelRatio — DPR-scaled.
-        //   3. Hard-coded 3840×2160 UHD fallback.
+        //   2. window.screen.width * window.devicePixelRatio � DPR-scaled.
+        //   3. Hard-coded 3840�2160 UHD fallback.
         //
         // Rotation arg is for firmware content rotation on top of panel
         // orientation; we always pass "OFF" and let the CMS supply pre-rotated
         // assets for portrait layouts.
         // b2bsyncplay uses a CENTER-ORIGIN coordinate system in logical CSS
-        // pixels (same space as window.innerWidth/innerHeight = 1920×1080).
+        // pixels (same space as window.innerWidth/innerHeight = 1920�1080).
         //
         // Evidence:
-        //   (0, 0, 1920, 1080) → video appears at screen (960,540), size 960×540
-        //     because posX=0 → screen_x = 0+960 = 960, width 1920 clipped at 1920 → 960px wide
-        //   (0, 0, 3840, 2160) → BLACK: rect starts at center (960,540) and extends
-        //     3840px right → entirely off the 1920-wide screen
+        //   (0, 0, 1920, 1080) ? video appears at screen (960,540), size 960�540
+        //     because posX=0 ? screen_x = 0+960 = 960, width 1920 clipped at 1920 ? 960px wide
+        //   (0, 0, 3840, 2160) ? BLACK: rect starts at center (960,540) and extends
+        //     3840px right ? entirely off the 1920-wide screen
         //
         // For full-screen: origin must be at top-left (0,0) of screen, so
         //   posX = -(vpW/2), posY = -(vpH/2), width = vpW, height = vpH
         //
-        // dforum sample (0,0,960,540) = 480×540-sized rect starting at (960,540)
-        //   — a deliberate demo sub-rect, not a full-screen call.
+        // dforum sample (0,0,960,540) = 480�540-sized rect starting at (960,540)
+        //   � a deliberate demo sub-rect, not a full-screen call.
         const rotation = 'OFF';
         try {
             logger.info('[NativeSync] startSyncPlay rect=0,0,1920,1080 groupID=' + groupId);
@@ -1817,7 +1817,7 @@ const Player = {
                 resources = yield Telemetry.getResourcesQuick();
             }
             catch (e) {
-                // Non-fatal â€” heartbeat still sends without resource data
+                // Non-fatal — heartbeat still sends without resource data
             }
             const payload = {
                 clockDriftMs: readiness.driftMs,
@@ -1894,7 +1894,7 @@ const Player = {
     },
     // Start command polling
     startCommandPolling() {
-        // Commands arrive via WebSocket â€” HTTP polling is disabled
+        // Commands arrive via WebSocket — HTTP polling is disabled
         logger.debug('Command polling disabled; commands arrive via WebSocket');
     },
     // Start content refresh
@@ -1915,7 +1915,7 @@ const Player = {
             const batch = (window.LogBuffer && window.LogBuffer.drain(100)) || [];
             if (!batch.length)
                 return;
-            // Group by real level; line text is "timestamp message" onlyâ€”
+            // Group by real level; line text is "timestamp message" only—
             // buildLogText on the dashboard already prepends [LEVEL].
             const byLevel = { debug: [], info: [], warn: [], error: [] };
             for (const e of batch) {
@@ -1960,14 +1960,14 @@ const Player = {
             }
         }, CONFIG.HEARTBEAT_INTERVAL || 30000);
     },
-    // â”€â”€ MDC helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── MDC helpers ───────────────────────────────────────────────────────────
     // XHR to local server.js MDC bridge, returns a Promise
     sendLocalMdcXhr(action, payload = {}) {
         return new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
             xhr.open('POST', 'http://127.0.0.1:9615/mdc-control', true);
             xhr.setRequestHeader('Content-Type', 'application/json');
-            // Scan actions probe up to 10 IDs Ã— 500ms each â‰ˆ 5s; give a generous budget.
+            // Scan actions probe up to 10 IDs × 500ms each ≈ 5s; give a generous budget.
             xhr.timeout = (action === 'mdc_id_scan' || action === 'mdc_conn_type_fix') ? 15000 : 8000;
             xhr.onload = function () {
                 try {
@@ -1982,7 +1982,7 @@ const Player = {
             xhr.send(JSON.stringify(Object.assign({ action }, payload)));
         });
     },
-    // Phase 1: run at startup (app.js), before pairing â€” no WS/deviceId needed
+    // Phase 1: run at startup (app.js), before pairing — no WS/deviceId needed
     runStartupMdcSetup() {
         logger.info('[mdc-startup] Phase 1: conn type, ID scan, network standby...');
         const self = this;
@@ -2005,7 +2005,7 @@ const Player = {
             .then((r) => { logger.info('[mdc-startup] network standby ON:', r.ok); })
             .catch(() => { });
     },
-    // Phase 2: run after pairing + WS connected â€” persists MDC ID, sets display state
+    // Phase 2: run after pairing + WS connected — persists MDC ID, sets display state
     // Commands are run sequentially (not concurrently) so Samsung MDC firmware never
     // sees more than one TCP connection at a time on port 1515.
     runPostPairingMdcSetup() {
@@ -2020,7 +2020,7 @@ const Player = {
             ws.send(JSON.stringify({ type: 'mdc_id_persist', payload: { mdcId: self._scannedMdcId } }));
             logger.info('[mdc-startup] mdc_id_persist sent, mdcId=', self._scannedMdcId);
         }
-        // Build sequential command list â€” one MDC TCP connection at a time
+        // Build sequential command list — one MDC TCP connection at a time
         const phase2Commands = [
             ['network_standby_set', { value: 1 }],
             ['standby_set', { value: 0 }],
@@ -2044,12 +2044,12 @@ const Player = {
         }
         runNext(0);
     },
-    // Phase 3 (every 30s): get MDC status â†’ send mdc_heartbeat WS message
+    // Phase 3 (every 30s): get MDC status → send mdc_heartbeat WS message
     sendMdcHeartbeat() {
         if (!this._mdcStartupDone)
             return; // Wait until Phase 1 ID scan completes
         if (this._mdcHeartbeatInFlight)
-            return; // Never overlap â€” Samsung firmware allows only one MDC TCP conn
+            return; // Never overlap — Samsung firmware allows only one MDC TCP conn
         if (this._mdcPhase2InFlight > 0)
             return; // Wait for Phase 2 sequential commands to complete
         const now = Date.now();
@@ -2075,14 +2075,14 @@ const Player = {
             .catch(() => { })
             .then(() => { this._mdcHeartbeatInFlight = false; });
     },
-    // Phase 4 (every 5min): run all MDC GETs â†’ send mdc_poll WS message
+    // Phase 4 (every 5min): run all MDC GETs → send mdc_poll WS message
     runMdcPoll() {
         const ws = this.wsConnection;
         if (!ws || ws.readyState !== WebSocket.OPEN)
             return;
-        // Sync panel HW RTC to device (web) time every poll â€” fire-and-forget
+        // Sync panel HW RTC to device (web) time every poll — fire-and-forget
         // Rate-limited to once per 24h. _lastClockSyncAt=0 ensures it fires on first boot.
-        // Frequent clock adjustments via MDC interrupt b2bsyncplay — do not lower this interval.
+        // Frequent clock adjustments via MDC interrupt b2bsyncplay � do not lower this interval.
         const CLOCK_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
         if (this._clockSupported && (Date.now() - this._lastClockSyncAt > CLOCK_SYNC_INTERVAL_MS)) {
             this._lastClockSyncAt = Date.now();
@@ -2111,7 +2111,7 @@ const Player = {
         const results = {};
         const self = this;
         // Build flat sequence: 9 GET actions + 7 on_timer_get slots
-        // Run SEQUENTIALLY â€” Samsung MDC firmware allows only one TCP connection
+        // Run SEQUENTIALLY — Samsung MDC firmware allows only one TCP connection
         // at a time on port 1515; the server-side queue serialises them, but
         // concurrent XHRs can time-out while waiting in that queue.
         const sequence = [
@@ -2121,7 +2121,7 @@ const Player = {
         function runNext(idx) {
             var _a, _b, _c, _d, _f;
             if (idx >= sequence.length) {
-                // All done â€” build and send mdc_poll
+                // All done — build and send mdc_poll
                 if (ws.readyState !== WebSocket.OPEN)
                     return;
                 const p = {};
@@ -2175,7 +2175,7 @@ const Player = {
                         logger.info('[mdc-poll] get_clock not supported on this model');
                     }
                 }
-                // Check if any on_timer_get NAKed â€” disable all slots permanently
+                // Check if any on_timer_get NAKed — disable all slots permanently
                 if (self._onTimerSupported) {
                     const anyTimerNak = TIMER_SLOTS.some(s => { var _a; return ((_a = results[`timer_${s}`]) === null || _a === void 0 ? void 0 : _a.supported) === false; });
                     if (anyTimerNak) {
@@ -2340,7 +2340,7 @@ const Player = {
                         newSignature === this.lastContentSignature &&
                         this.currentContent &&
                         !isPlaying) {
-                        logger.warn('Same signature but not playing — forcing re-render from currentContent');
+                        logger.warn('Same signature but not playing � forcing re-render from currentContent');
                         this.cancelCurrentPlayback();
                         if (this._zoneMode)
                             this.stopZoneMode();
@@ -2530,7 +2530,7 @@ const Player = {
                 container.appendChild(img);
                 return;
             }
-            // Remote URLs â€” use img tag directly
+            // Remote URLs — use img tag directly
             img.src = content.url;
             img.onerror = (error) => {
                 logger.error('Image failed to load:', content.url, error);
@@ -2546,7 +2546,7 @@ const Player = {
     showImageError(container, content) {
         container.innerHTML = `
       <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: white; background: #333; flex-direction: column;">
-        <div style="font-size: 48px; margin-bottom: 20px;">Ã¢Å¡Â Ã¯Â¸Â</div>
+        <div style="font-size: 48px; margin-bottom: 20px;">âš ï¸</div>
         <div style="font-size: 24px;">Image Load Error</div>
         <div style="font-size: 14px; margin-top: 10px; opacity: 0.7;">${content.name}</div>
       </div>
@@ -2672,15 +2672,15 @@ const Player = {
             this.renderVideoHTML5(container, content);
         }
     },
-    // ── Videowall AVPlay setVideoRoi renderer (Tizen 6.0+ B2B/LFD) ─────────────
+    // -- Videowall AVPlay setVideoRoi renderer (Tizen 6.0+ B2B/LFD) -------------
     // All panels in the wall download the same full-canvas-resolution video.
     // Each panel uses AVPlay setVideoRoi to crop its assigned sub-rectangle of
-    // the decoded frame — no DOM/CSS clipping, no HW overlay mismatch.
+    // the decoded frame � no DOM/CSS clipping, no HW overlay mismatch.
     // SyncEngine handles P2P drift correction so frames stay aligned.
     _renderVideowallContent(container, content) {
         const mf = this._videowallManifest;
         if (!mf || !mf.geometry || !mf.myCell) {
-            logger.warn('[Videowall] manifest incomplete — falling back to normal AVPlay');
+            logger.warn('[Videowall] manifest incomplete � falling back to normal AVPlay');
             this.renderVideoAVPlay(container, content);
             return;
         }
@@ -2707,7 +2707,7 @@ const Player = {
         const canvasH = geo.canvasH;
         logger.info(`[Videowall] cell(${col},${row}) offset(${offsetX},${offsetY}) cell(${cellW}x${cellH}) canvas(${canvasW}x${canvasH})`);
         if (!canvasW || !canvasH) {
-            logger.warn('[Videowall] canvas dimensions zero — falling back to normal AVPlay');
+            logger.warn('[Videowall] canvas dimensions zero � falling back to normal AVPlay');
             this.renderVideoAVPlay(container, content);
             return;
         }
@@ -2748,7 +2748,7 @@ const Player = {
             this.applyAvPlayProfile(content);
             // 2. Set display rect SECOND (Samsung samples do this before setListener)
             // Samsung docs claim setDisplayRect uses a fixed 1920x1080 coordinate space, but on
-            // commercial signage panels the rect maps to native panel pixels â€” passing 1920x1080
+            // commercial signage panels the rect maps to native panel pixels — passing 1920x1080
             // on a 4K panel renders in the top-left quadrant. Use the cached panel resolution
             // detected at init via tizen.systeminfo / productinfo.
             const viewportWidth = this._panelWidth;
@@ -2889,7 +2889,7 @@ const Player = {
         logger.warn('AVPlay unavailable; falling back to HTML5 video for IPTV');
         this.renderVideoHTML5(container, content);
     },
-    // â”€â”€ Channel group (IPTV bundle) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Channel group (IPTV bundle) ──────────────────────────────────────────
     // A channel group is a content item of type CHANNEL_GROUP whose metadata
     // carries an ordered list of `channels`. The player keeps the active
     // channel on `Player.currentChannelGroup` and re-uses `renderIptvAVPlay`
@@ -2904,7 +2904,7 @@ const Player = {
         }
         // Sort by channel number for deterministic CH+/CH- iteration.
         channels.sort((a, b) => (a.number || 0) - (b.number || 0));
-        // Resolve starting channel: persisted last-played â†’ author default â†’ first.
+        // Resolve starting channel: persisted last-played → author default → first.
         const lastKey = `iptv:lastChannel:${content.id}`;
         let startNumber = null;
         try {
@@ -2962,7 +2962,7 @@ const Player = {
         }
         this._clearIptvReconnect();
         this._stopIptvWatchdog();
-        // Debounce 250ms â€” coalesces rapid CH+/CH- presses into one AVPlay open.
+        // Debounce 250ms — coalesces rapid CH+/CH- presses into one AVPlay open.
         const seq = ++this._tuneSeq;
         this._pendingTuneTimer = setTimeout(() => {
             this._pendingTuneTimer = null;
@@ -3114,7 +3114,7 @@ const Player = {
     },
     _showChannelBanner(channel) {
         const el = this._ensureChannelBannerEl();
-        const num = String(channel.number || '').padStart(2, '0');
+        const num = (String(channel.number || '').length < 2 ? '0' : '') + String(channel.number || '');
         el.innerHTML = `
       <div style="font-size:14px;opacity:0.7;letter-spacing:0.06em;text-transform:uppercase;">Channel</div>
       <div style="display:flex;align-items:baseline;gap:14px;margin-top:4px;">
@@ -3137,7 +3137,8 @@ const Player = {
     },
     _showChannelBuffer(buffer) {
         const el = this._ensureChannelBannerEl();
-        const padded = (buffer || '').padEnd(2, '-');
+        const b = (buffer || '');
+        const padded = b.length >= 2 ? b : b + '--'.slice(b.length);
         el.innerHTML = `
       <div style="font-size:14px;opacity:0.7;letter-spacing:0.06em;text-transform:uppercase;">Tune</div>
       <div style="font-size:42px;font-weight:700;line-height:1;margin-top:4px;letter-spacing:0.08em;">${this._escapeHtml(padded)}</div>
@@ -3156,8 +3157,8 @@ const Player = {
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
         }[ch]));
     },
-    // â”€â”€ IPTV resilience helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // Show / hide a non-blocking overlay used for "Reconnectingâ€¦" / "No signal".
+    // ── IPTV resilience helpers ─────────────────────────────────────────────
+    // Show / hide a non-blocking overlay used for "Reconnecting…" / "No signal".
     _showIptvOverlay(message) {
         let el = this._iptvOverlayEl;
         if (!el) {
@@ -3219,7 +3220,7 @@ const Player = {
         }
         if (attempt > this.IPTV_MAX_RECONNECTS) {
             logger.warn('IPTV: max reconnects reached; skipping to next channel');
-            this._showIptvOverlay('No signal â€” skipping channel');
+            this._showIptvOverlay('No signal — skipping channel');
             this._iptvReconnectCount = 0;
             this._iptvReconnectTimer = setTimeout(() => {
                 this._iptvReconnectTimer = null;
@@ -3232,7 +3233,7 @@ const Player = {
             return;
         }
         const delay = this.IPTV_RECONNECT_BASE_MS * attempt;
-        this._showIptvOverlay(`Reconnectingâ€¦ (${attempt}/${this.IPTV_MAX_RECONNECTS})`);
+        this._showIptvOverlay(`Reconnecting… (${attempt}/${this.IPTV_MAX_RECONNECTS})`);
         logger.warn(`IPTV: scheduling reconnect attempt ${attempt} in ${delay}ms (reason: ${reason})`);
         this._iptvReconnectTimer = setTimeout(() => {
             this._iptvReconnectTimer = null;
@@ -3247,7 +3248,7 @@ const Player = {
             }
         }, delay);
     },
-    /** Periodic stall watchdog. 2 consecutive ticks with no playhead progress â†’ reconnect. */
+    /** Periodic stall watchdog. 2 consecutive ticks with no playhead progress → reconnect. */
     _startIptvWatchdog(isUdp) {
         this._stopIptvWatchdog();
         this._iptvLastTime = -1;
@@ -3258,7 +3259,7 @@ const Player = {
             try {
                 const state = (_b = (_a = webapis.avplay) === null || _a === void 0 ? void 0 : _a.getState) === null || _b === void 0 ? void 0 : _b.call(_a);
                 const time = (_d = (_c = webapis.avplay) === null || _c === void 0 ? void 0 : _c.getCurrentTime) === null || _d === void 0 ? void 0 : _d.call(_c);
-                // Bitrate telemetry â€” best-effort, ignore failures.
+                // Bitrate telemetry — best-effort, ignore failures.
                 try {
                     const bw = (_g = (_f = webapis.avplay) === null || _f === void 0 ? void 0 : _f.getStreamingProperty) === null || _g === void 0 ? void 0 : _g.call(_f, 'CURRENT_BANDWIDTH');
                     if (bw && typeof Telemetry !== 'undefined' && Telemetry.updateIptvStats) {
@@ -3334,7 +3335,7 @@ const Player = {
             // Apply profile after open (more reliable on some firmwares)
             this.applyAvPlayProfile(content);
             // 2. Set display rect SECOND (Samsung samples do this before setListener)
-            // Use cached panel resolution â€” see comment in renderVideoAVPlay above.
+            // Use cached panel resolution — see comment in renderVideoAVPlay above.
             const viewportWidth = this._panelWidth;
             const viewportHeight = this._panelHeight;
             webapis.avplay.setDisplayRect(0, 0, viewportWidth, viewportHeight);
@@ -3588,7 +3589,7 @@ const Player = {
                 }
             }
             else if (isRtsp) {
-                logger.debug('IPTV: RTSP stream â€” using AVPlay defaults');
+                logger.debug('IPTV: RTSP stream — using AVPlay defaults');
             }
             webapis.avplay.prepareAsync(() => {
                 try {
@@ -3611,7 +3612,7 @@ const Player = {
                     }
                     webapis.avplay.play();
                     logger.info('IPTV playback started');
-                    // Successful start â€” clear any prior reconnect cycle and start the
+                    // Successful start — clear any prior reconnect cycle and start the
                     // periodic stall watchdog (UDP=3s tick, others=5s tick).
                     this._clearIptvReconnect();
                     this._hideIptvOverlay();
@@ -3756,7 +3757,7 @@ const Player = {
             logger.error('No current player available');
             return;
         }
-        // Use cached panel resolution for AVPlay setDisplayRect â€” see renderVideoAVPlay comment.
+        // Use cached panel resolution for AVPlay setDisplayRect — see renderVideoAVPlay comment.
         const viewportWidth = this._panelWidth;
         const viewportHeight = this._panelHeight;
         try {
@@ -3773,7 +3774,7 @@ const Player = {
             catch (err) {
                 logger.debug('[Seamless] Player cleanup (expected):', err.message);
             }
-            // Samsung sequence: open Ã¢â€ â€™ setDisplayRect Ã¢â€ â€™ setListener Ã¢â€ â€™ prepare Ã¢â€ â€™ play
+            // Samsung sequence: open â†’ setDisplayRect â†’ setListener â†’ prepare â†’ play
             current.open(content.url);
             current.setDisplayRect(0, 0, viewportWidth, viewportHeight);
             current.setListener({
@@ -3837,7 +3838,7 @@ const Player = {
             logger.error('No current player available');
             return;
         }
-        // Use cached panel resolution for AVPlay setDisplayRect â€” see renderVideoAVPlay comment.
+        // Use cached panel resolution for AVPlay setDisplayRect — see renderVideoAVPlay comment.
         const viewportWidth = this._panelWidth;
         const viewportHeight = this._panelHeight;
         // Track if seamless transition will happen
@@ -4028,7 +4029,7 @@ const Player = {
             logger.warn('No next player available for preparation');
             return;
         }
-        // Use cached panel resolution for AVPlay setDisplayRect â€” see renderVideoAVPlay comment.
+        // Use cached panel resolution for AVPlay setDisplayRect — see renderVideoAVPlay comment.
         const viewportWidth = this._panelWidth;
         const viewportHeight = this._panelHeight;
         try {
@@ -4178,7 +4179,7 @@ const Player = {
                 const prev = Number(this.ntpOffset);
                 const isFirst = !Number.isFinite(prev) || !this.lastNtpSync;
                 const delta = isFirst ? 0 : Math.abs(best.offset - prev);
-                // Snap immediately when drift exceeds Â±50ms â€” don't smooth it away
+                // Snap immediately when drift exceeds ±50ms — don't smooth it away
                 // For tiny adjustments (< 50ms) use gentle smoothing to avoid jitter
                 const NTP_SNAP_THRESHOLD_MS = 50;
                 const nextOffset = (isFirst || delta > NTP_SNAP_THRESHOLD_MS)
@@ -4200,7 +4201,7 @@ const Player = {
     startNtpSync() {
         // Only fire immediately if init() hasn't just completed a sync.
         // init() awaits syncTimeWithServer() before calling startNtpSync(), so
-        // lastNtpSync will already be set Ã¢â‚¬â€ avoid hammering the server twice on startup.
+        // lastNtpSync will already be set â€” avoid hammering the server twice on startup.
         const msSinceLastSync = this.lastNtpSync ? Date.now() - this.lastNtpSync : Infinity;
         if (msSinceLastSync > 10000) {
             this.syncTimeWithServer();
@@ -4686,9 +4687,9 @@ const Player = {
             }
         });
     },
-    // ── Calendar content ────────────────────────────────────────────────────
+    // -- Calendar content ----------------------------------------------------
     // Polls /content/{id}/calendar/events on a refresh interval and renders a
-    // simple list (or meeting-room layout) using server-filtered events.
+    // Google/Outlook-style calendar grid (day, week, month, meeting_room views).
     renderCalendar(container, content) {
         return __awaiter(this, void 0, void 0, function* () {
             const meta = this.parseContentMetadata(content);
@@ -4696,130 +4697,427 @@ const Player = {
             const timezone = meta.timezone || 'UTC';
             const refreshSeconds = Math.max(15, Number(meta.refreshSeconds) || 60);
             const theme = meta.theme || {};
-            const accent = theme.accentColor || '#4f46e5';
+            const accent = theme.accentColor || '#1a73e8';
             const isDark = theme.background === 'dark';
             const roomMeta = meta.roomMeta;
+            const bg = isDark ? '#1e1e2e' : '#ffffff';
+            const surface = isDark ? '#2a2a3e' : '#f8f9fa';
+            const border = isDark ? '#3a3a50' : '#e0e0e0';
+            const text = isDark ? '#e2e8f0' : '#202124';
+            const textMuted = isDark ? '#94a3b8' : '#70757a';
             const escapeHtml = (s) => this.escapeHtml(s);
-            // Cancel any previous timer attached to this container.
             const calContainer = container;
             if (calContainer._calendarTimer) {
                 clearInterval(calContainer._calendarTimer);
                 calContainer._calendarTimer = undefined;
             }
+            if (calContainer._clockTimer) {
+                clearInterval(calContainer._clockTimer);
+                calContainer._clockTimer = undefined;
+            }
             const reqId = `cal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
             calContainer._calendarReqId = reqId;
-            const formatTime = (iso) => {
-                try {
-                    return new Date(iso).toLocaleString('en-US', {
-                        hour: 'numeric', minute: '2-digit',
-                        timeZone: timezone,
-                    });
-                }
-                catch (_a) {
-                    return iso;
-                }
+            // -- helpers ----------------------------------------------------------------
+            const toLocal = (iso) => new Date(new Date(iso).toLocaleString('en-US', { timeZone: timezone }));
+            const pad2 = (n) => (n < 10 ? '0' : '') + n;
+            const fmtTime = (d) => {
+                let h = d.getHours();
+                const m = d.getMinutes();
+                const ampm = h >= 12 ? 'PM' : 'AM';
+                h = h % 12 || 12;
+                return m === 0 ? `${h} ${ampm}` : `${h}:${pad2(m)} ${ampm}`;
             };
-            const formatDay = (iso) => {
-                try {
-                    return new Date(iso).toLocaleString('en-US', {
-                        weekday: 'short', month: 'short', day: 'numeric',
-                        timeZone: timezone,
-                    });
-                }
-                catch (_a) {
-                    return iso;
-                }
+            const fmtTimeFull = (d) => {
+                let h = d.getHours();
+                const m = d.getMinutes();
+                const ampm = h >= 12 ? 'PM' : 'AM';
+                h = h % 12 || 12;
+                return `${h}:${pad2(m)} ${ampm}`;
             };
-            const buildShell = (body) => `
-      <div style="position:absolute;inset:0;display:flex;flex-direction:column;
-                  background:${isDark ? '#0f172a' : '#ffffff'};
-                  color:${isDark ? '#e2e8f0' : '#0f172a'};
-                  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-        <header style="padding:24px 32px;border-bottom:1px solid ${isDark ? '#1e293b' : '#e2e8f0'};
-                       display:flex;align-items:center;gap:16px;">
-          <div style="width:6px;align-self:stretch;background:${accent};border-radius:3px;"></div>
+            const fmtDate = (d) => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+            const isoDate = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+            const getNow = () => new Date(new Date().toLocaleString('en-US', { timeZone: timezone }));
+            const HOUR_PX = 64; // pixels per hour in time-grid views
+            // -- event colour palette (cycle through like Google Calendar) -------------
+            const PALETTE = ['#1a73e8', '#0f9d58', '#e67c00', '#8430ce', '#d50000', '#0097a7', '#616161', '#e91e63'];
+            const evColor = (ev, idx) => PALETTE[idx % PALETTE.length];
+            // -- shared header (title + date nav area + clock) -------------------------
+            const buildHeader = (dateLabel) => {
+                const now = getNow();
+                const timeStr = fmtTimeFull(now);
+                const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                return `
+        <header style="flex-shrink:0;display:flex;align-items:center;padding:16px 24px;
+                        background:${bg};border-bottom:1px solid ${border};gap:16px;">
+          <div style="width:4px;min-height:40px;background:${accent};border-radius:2px;flex-shrink:0;"></div>
           <div style="flex:1;min-width:0;">
-            <h1 style="margin:0;font-size:32px;font-weight:600;">${escapeHtml(content.name || 'Calendar')}</h1>
-            <p style="margin:4px 0 0;font-size:14px;opacity:0.7;">
-              ${(roomMeta === null || roomMeta === void 0 ? void 0 : roomMeta.location) ? escapeHtml(roomMeta.location) + ' · ' : ''}${escapeHtml(timezone)}
-            </p>
+            <div style="font-size:13px;color:${textMuted};font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">
+              ${escapeHtml(content.name || 'Calendar')}
+            </div>
+            <div style="font-size:20px;font-weight:600;color:${text};margin-top:2px;">${escapeHtml(dateLabel)}</div>
           </div>
-          ${(roomMeta === null || roomMeta === void 0 ? void 0 : roomMeta.capacity) ? `<div style="font-size:14px;opacity:0.7;">Capacity ${roomMeta.capacity}</div>` : ''}
-        </header>
-        <div style="flex:1;overflow:hidden;padding:24px 32px;">${body}</div>
-      </div>`;
-            const renderError = (msg) => {
-                container.innerHTML = buildShell(`
-        <div style="display:flex;align-items:center;justify-content:center;height:100%;opacity:0.7;">
-          <p style="font-size:18px;">${escapeHtml(msg)}</p>
-        </div>`);
+          <div style="text-align:right;flex-shrink:0;">
+            <div id="cal-clock" style="font-size:28px;font-weight:700;color:${accent};letter-spacing:-0.5px;">${escapeHtml(timeStr)}</div>
+            <div style="font-size:13px;color:${textMuted};margin-top:2px;">${escapeHtml(dateStr)}</div>
+          </div>
+        </header>`;
             };
+            // -- start live clock -------------------------------------------------------
+            const startClock = () => {
+                if (calContainer._clockTimer)
+                    clearInterval(calContainer._clockTimer);
+                calContainer._clockTimer = window.setInterval(() => {
+                    if (calContainer._calendarReqId !== reqId) {
+                        clearInterval(calContainer._clockTimer);
+                        return;
+                    }
+                    const el = container.querySelector('#cal-clock');
+                    if (el)
+                        el.textContent = fmtTimeFull(getNow());
+                    // Update current-time indicator position
+                    const now = getNow();
+                    const minOfDay = now.getHours() * 60 + now.getMinutes();
+                    const pct = (minOfDay / (24 * 60)) * 100;
+                    const indicator = container.querySelector('#cal-now-line');
+                    if (indicator)
+                        indicator.style.top = `${pct}%`;
+                    const dot = container.querySelector('#cal-now-dot');
+                    if (dot)
+                        dot.style.top = `calc(${pct}% - 5px)`;
+                }, 30000);
+            };
+            // -- time-grid left gutter (hours 0�23) -------------------------------------
+            const buildTimeGutter = () => {
+                let rows = '';
+                for (let h = 0; h < 24; h++) {
+                    const label = h === 0 ? '' : (h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`);
+                    rows += `<div style="height:${HOUR_PX}px;box-sizing:border-box;padding-right:8px;text-align:right;
+                              font-size:11px;color:${textMuted};position:relative;top:-7px;">${escapeHtml(label)}</div>`;
+                }
+                return `<div style="width:52px;flex-shrink:0;border-right:1px solid ${border};overflow:hidden;">${rows}</div>`;
+            };
+            // -- hour lines background --------------------------------------------------
+            const buildHourLines = () => {
+                let lines = '';
+                for (let h = 0; h < 24; h++) {
+                    lines += `<div style="position:absolute;left:0;right:0;top:${h * HOUR_PX}px;
+                               border-top:1px solid ${border};pointer-events:none;"></div>`;
+                }
+                return lines;
+            };
+            // -- current-time indicator ------------------------------------------------
+            const buildNowIndicator = (now) => {
+                const minOfDay = now.getHours() * 60 + now.getMinutes();
+                const pct = (minOfDay / (24 * 60)) * 100;
+                return `
+        <div id="cal-now-dot" style="position:absolute;left:-5px;width:10px;height:10px;
+              border-radius:50%;background:${accent};z-index:10;top:calc(${pct}% - 5px);"></div>
+        <div id="cal-now-line" style="position:absolute;left:0;right:0;top:${pct}%;
+              border-top:2px solid ${accent};z-index:9;"></div>`;
+            };
+            // -- place events in a single day column ------------------------------------
+            const buildDayEvents = (dayEvs, colWidth = '100%', colLeft = '0%') => {
+                return dayEvs.map((ev, i) => {
+                    if (ev.allDay)
+                        return '';
+                    const s = toLocal(ev.start);
+                    const e2 = toLocal(ev.end);
+                    const startMin = s.getHours() * 60 + s.getMinutes();
+                    const endMin = Math.min(e2.getHours() * 60 + e2.getMinutes(), 24 * 60);
+                    const durMin = Math.max(endMin - startMin, 30);
+                    const top = (startMin / 60) * HOUR_PX;
+                    const height = Math.max((durMin / 60) * HOUR_PX, 22);
+                    const color = evColor(ev, i);
+                    const showLoc = height > 44 && ev.location;
+                    return `
+          <div style="position:absolute;left:calc(${colLeft} + 2px);width:calc(${colWidth} - 4px);
+                       top:${top}px;height:${height}px;background:${color};border-radius:4px;
+                       padding:3px 6px;box-sizing:border-box;overflow:hidden;z-index:5;cursor:default;">
+            <div style="font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+              ${escapeHtml(ev.title || '(no title)')}
+            </div>
+            <div style="font-size:11px;color:rgba(255,255,255,0.85);white-space:nowrap;overflow:hidden;">
+              ${fmtTimeFull(s)} � ${fmtTimeFull(e2)}
+            </div>
+            ${showLoc ? `<div style="font-size:10px;color:rgba(255,255,255,0.75);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(ev.location)}</div>` : ''}
+          </div>`;
+                }).join('');
+            };
+            // -- ALL-DAY strip ----------------------------------------------------------
+            const buildAllDayStrip = (allDayEvs, cols) => {
+                if (allDayEvs.length === 0)
+                    return '';
+                const colW = 100 / cols.length;
+                const chips = allDayEvs.map((ev, i) => {
+                    const s = toLocal(ev.start);
+                    const colIdx = cols.findIndex((d) => isoDate(d) === isoDate(s));
+                    if (colIdx < 0)
+                        return '';
+                    return `<div style="position:absolute;left:calc(${colIdx * colW}% + 2px);width:calc(${colW}% - 4px);
+                             top:${i * 22}px;height:20px;background:${evColor(ev, i)};border-radius:3px;
+                             padding:2px 6px;font-size:11px;color:#fff;font-weight:600;
+                             white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                  ${escapeHtml(ev.title || '(all day)')}
+                </div>`;
+                }).join('');
+                const height = allDayEvs.length * 22 + 4;
+                return `
+        <div style="display:flex;flex-shrink:0;border-bottom:1px solid ${border};">
+          <div style="width:52px;flex-shrink:0;font-size:11px;color:${textMuted};padding:4px 8px 4px 0;text-align:right;border-right:1px solid ${border};">all-day</div>
+          <div style="flex:1;position:relative;height:${height}px;">${chips}</div>
+        </div>`;
+            };
+            // ---------------------------------------------------------------------------
+            // VIEW RENDERERS
+            // ---------------------------------------------------------------------------
+            const renderDayView = (events) => {
+                const now = getNow();
+                const dateLabel = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+                const today = isoDate(now);
+                const dayEvs = events.filter((e) => isoDate(toLocal(e.start)) === today);
+                const allDayEvs = dayEvs.filter((e) => e.allDay);
+                const timedEvs = dayEvs.filter((e) => !e.allDay);
+                const scrollTop = Math.max(0, (now.getHours() - 1) * HOUR_PX);
+                container.innerHTML = `
+        <div style="position:absolute;top:0;right:0;bottom:0;left:0;display:flex;flex-direction:column;
+                     background:${bg};color:${text};
+                     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:hidden;">
+          ${buildHeader(dateLabel)}
+          ${buildAllDayStrip(allDayEvs, [now])}
+          <div style="flex:1;display:flex;overflow:hidden;">
+            ${buildTimeGutter()}
+            <div id="cal-scroll" style="flex:1;overflow-y:auto;position:relative;">
+              <div style="position:relative;height:${24 * HOUR_PX}px;">
+                ${buildHourLines()}
+                ${buildNowIndicator(now)}
+                ${buildDayEvents(timedEvs)}
+              </div>
+            </div>
+          </div>
+        </div>`;
+                const scroll = container.querySelector('#cal-scroll');
+                if (scroll)
+                    scroll.scrollTop = scrollTop;
+                startClock();
+            };
+            const renderWeekView = (events, numDays) => {
+                const now = getNow();
+                const startOfWeek = new Date(now);
+                // For 5-day: start Monday; for 7-day: start Sunday
+                const dow = now.getDay();
+                const offset = numDays === 5 ? (dow === 0 ? -6 : 1 - dow) : -dow;
+                startOfWeek.setDate(now.getDate() + offset);
+                startOfWeek.setHours(0, 0, 0, 0);
+                const days = Array.from({ length: numDays }, (_, i) => {
+                    const d = new Date(startOfWeek);
+                    d.setDate(d.getDate() + i);
+                    return d;
+                });
+                const rangeLabel = `${days[0].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} � ${days[numDays - 1].toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+                const colW = 100 / numDays;
+                const allDayEvs = events.filter((e) => e.allDay);
+                const timedEvs = events.filter((e) => !e.allDay);
+                // day column headers
+                const dayHeaders = days.map((d) => {
+                    const isToday = isoDate(d) === isoDate(now);
+                    const num = d.getDate();
+                    return `
+          <div style="flex:1;text-align:center;padding:6px 4px;border-right:1px solid ${border};">
+            <div style="font-size:11px;font-weight:500;color:${textMuted};text-transform:uppercase;">
+              ${d.toLocaleDateString('en-US', { weekday: 'short' })}
+            </div>
+            <div style="width:30px;height:30px;margin:4px auto 0;border-radius:50%;
+                         display:flex;align-items:center;justify-content:center;
+                         background:${isToday ? accent : 'transparent'};
+                         color:${isToday ? '#fff' : text};font-size:16px;font-weight:${isToday ? 700 : 400};">
+              ${num}
+            </div>
+          </div>`;
+                }).join('');
+                // timed events per day column
+                const dayEventCols = days.map((d) => {
+                    const key = isoDate(d);
+                    const evs = timedEvs.filter((e) => isoDate(toLocal(e.start)) === key);
+                    return `<div style="position:absolute;left:${days.indexOf(d) * colW}%;width:${colW}%;top:0;bottom:0;">
+          ${buildDayEvents(evs)}
+        </div>`;
+                }).join('');
+                const scrollTop = Math.max(0, (now.getHours() - 1) * HOUR_PX);
+                container.innerHTML = `
+        <div style="position:absolute;top:0;right:0;bottom:0;left:0;display:flex;flex-direction:column;
+                     background:${bg};color:${text};
+                     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:hidden;">
+          ${buildHeader(rangeLabel)}
+          <div style="display:flex;border-bottom:1px solid ${border};flex-shrink:0;">
+            <div style="width:52px;flex-shrink:0;border-right:1px solid ${border};"></div>
+            ${dayHeaders}
+          </div>
+          ${buildAllDayStrip(allDayEvs, days)}
+          <div style="flex:1;display:flex;overflow:hidden;">
+            ${buildTimeGutter()}
+            <div id="cal-scroll" style="flex:1;overflow-y:auto;position:relative;">
+              <div style="position:relative;height:${24 * HOUR_PX}px;">
+                ${buildHourLines()}
+                ${days.some((d) => isoDate(d) === isoDate(now)) ? buildNowIndicator(now) : ''}
+                ${dayEventCols}
+                ${ /* vertical day separators */days.slice(1).map((d, i) => `<div style="position:absolute;left:${(i + 1) * colW}%;top:0;bottom:0;border-left:1px solid ${border};pointer-events:none;"></div>`).join('')}
+              </div>
+            </div>
+          </div>
+        </div>`;
+                const scroll = container.querySelector('#cal-scroll');
+                if (scroll)
+                    scroll.scrollTop = scrollTop;
+                startClock();
+            };
+            const renderMonthView = (events) => {
+                const now = getNow();
+                const monthLabel = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+                const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+                const startDow = firstDay.getDay(); // 0=Sun
+                const totalDays = lastDay.getDate();
+                const cells = [
+                    ...Array(startDow).fill(null),
+                    ...Array.from({ length: totalDays }, (_, i) => new Date(now.getFullYear(), now.getMonth(), i + 1)),
+                ];
+                while (cells.length % 7 !== 0)
+                    cells.push(null);
+                const weeks = [];
+                for (let i = 0; i < cells.length; i += 7)
+                    weeks.push(cells.slice(i, i + 7));
+                const DAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                const todayIso = isoDate(now);
+                const numWeeks = weeks.length;
+                const cellH = `calc((100% - 32px) / ${numWeeks})`; // 32px = header row height
+                const headerRow = `<div style="display:flex;flex-shrink:0;border-bottom:2px solid ${border};">` +
+                    DAY_HEADERS.map((d) => `<div style="flex:1;text-align:center;font-size:11px;font-weight:600;color:${textMuted};
+                        padding:8px 0;text-transform:uppercase;">${d}</div>`).join('') + '</div>';
+                const weekRows = weeks.map((week) => `<div style="display:flex;flex:1;min-height:0;">` +
+                    week.map((day) => {
+                        if (!day)
+                            return `<div style="flex:1;border:1px solid ${border};background:${surface};"></div>`;
+                        const dayIso = isoDate(day);
+                        const isToday = dayIso === todayIso;
+                        const dayEvs = events.filter((e) => isoDate(toLocal(e.start)) === dayIso).slice(0, 3);
+                        const chips = dayEvs.map((ev, i) => `
+            <div style="margin:1px 4px;padding:1px 5px;border-radius:3px;font-size:11px;
+                         background:${evColor(ev, i)};color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+              ${ev.allDay ? '' : `<span style="opacity:0.85;">${fmtTimeFull(toLocal(ev.start))} </span>`}${escapeHtml(ev.title || '(no title)')}
+            </div>`).join('');
+                        return `
+            <div style="flex:1;border:1px solid ${border};padding:4px 0;box-sizing:border-box;overflow:hidden;
+                         background:${isToday ? (isDark ? 'rgba(26,115,232,0.12)' : 'rgba(26,115,232,0.06)') : bg};">
+              <div style="text-align:center;margin-bottom:2px;">
+                <span style="display:inline-block;width:24px;height:24px;line-height:24px;border-radius:50%;
+                              text-align:center;font-size:13px;
+                              background:${isToday ? accent : 'transparent'};
+                              color:${isToday ? '#fff' : text};font-weight:${isToday ? 700 : 400};">
+                  ${day.getDate()}
+                </span>
+              </div>
+              ${chips}
+            </div>`;
+                    }).join('') + '</div>').join('');
+                container.innerHTML = `
+        <div style="position:absolute;top:0;right:0;bottom:0;left:0;display:flex;flex-direction:column;
+                     background:${bg};color:${text};
+                     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:hidden;">
+          ${buildHeader(monthLabel)}
+          <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+            ${headerRow}
+            ${weekRows}
+          </div>
+        </div>`;
+                startClock();
+            };
+            const renderMeetingRoom = (events) => {
+                const now = getNow();
+                const upcoming = events.filter((e) => new Date(e.end).getTime() > Date.now());
+                const current = upcoming.find((e) => new Date(e.start).getTime() <= Date.now());
+                const next = upcoming.filter((e) => new Date(e.start).getTime() > Date.now()).slice(0, 4);
+                const isBusy = !!current;
+                const statusBg = isBusy ? '#d93025' : '#1e8e3e';
+                const detailLine = current
+                    ? `Until ${fmtTimeFull(toLocal(current.end))} � ${escapeHtml(current.title || 'Reserved')}`
+                    : (next[0] ? `Free until ${fmtTimeFull(toLocal(next[0].start))}` : 'Free for the rest of the day');
+                const nextList = next.map((e) => `
+        <div style="display:flex;justify-content:space-between;align-items:center;
+                     padding:14px 0;border-bottom:1px solid ${border};">
+          <div>
+            <div style="font-size:18px;font-weight:500;color:${text};">${escapeHtml(e.title || 'Reserved')}</div>
+            ${e.location ? `<div style="font-size:13px;color:${textMuted};">${escapeHtml(e.location)}</div>` : ''}
+          </div>
+          <div style="font-size:15px;color:${textMuted};white-space:nowrap;margin-left:16px;">
+            ${fmtTimeFull(toLocal(e.start))} � ${fmtTimeFull(toLocal(e.end))}
+          </div>
+        </div>`).join('');
+                container.innerHTML = `
+        <div style="position:absolute;top:0;right:0;bottom:0;left:0;display:flex;flex-direction:column;
+                     background:${bg};color:${text};
+                     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:hidden;">
+          <div style="background:${statusBg};padding:32px 40px;flex-shrink:0;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+              <div>
+                <div style="font-size:18px;color:rgba(255,255,255,0.8);font-weight:500;">
+                  ${escapeHtml((roomMeta === null || roomMeta === void 0 ? void 0 : roomMeta.name) || content.name || 'Meeting Room')}
+                  ${(roomMeta === null || roomMeta === void 0 ? void 0 : roomMeta.capacity) ? `<span style="font-size:14px;margin-left:12px;opacity:0.7;">� ${roomMeta.capacity} people</span>` : ''}
+                </div>
+                <div style="font-size:72px;font-weight:700;color:#fff;line-height:1;margin:8px 0;">
+                  ${isBusy ? 'In Use' : 'Available'}
+                </div>
+                <div style="font-size:20px;color:rgba(255,255,255,0.85);">${detailLine}</div>
+              </div>
+              <div style="text-align:right;">
+                <div id="cal-clock" style="font-size:44px;font-weight:700;color:#fff;letter-spacing:-1px;">
+                  ${fmtTimeFull(now)}
+                </div>
+                <div style="font-size:15px;color:rgba(255,255,255,0.75);margin-top:4px;">
+                  ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style="flex:1;padding:24px 40px;overflow:hidden;">
+            <div style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:${textMuted};margin-bottom:8px;font-weight:600;">Upcoming</div>
+            ${nextList || `<div style="color:${textMuted};font-size:18px;margin-top:16px;">No more meetings today</div>`}
+          </div>
+          ${(roomMeta === null || roomMeta === void 0 ? void 0 : roomMeta.bookingUrl) ? `<div style="padding:12px 40px;border-top:1px solid ${border};font-size:13px;color:${textMuted};">Book: ${escapeHtml(roomMeta.bookingUrl)}</div>` : ''}
+        </div>`;
+                startClock();
+            };
+            // -- dispatch to view -------------------------------------------------------
             const renderEvents = (events) => {
+                if (calContainer._calendarReqId !== reqId || !container.isConnected)
+                    return;
                 if (view === 'meeting_room') {
-                    const now = Date.now();
-                    const upcoming = events.filter((e) => new Date(e.end).getTime() > now);
-                    const current = upcoming.find((e) => new Date(e.start).getTime() <= now);
-                    const next = upcoming.filter((e) => new Date(e.start).getTime() > now).slice(0, 5);
-                    const statusColor = current ? '#dc2626' : '#16a34a';
-                    const statusLabel = current ? 'Busy' : 'Available';
-                    const detailLine = current
-                        ? `Until ${formatTime(current.end)} · ${escapeHtml(current.title || 'Reserved')}`
-                        : (next[0] ? `Free until ${formatTime(next[0].start)}` : 'Free for the rest of the day');
-                    const list = next.map((e) => `
-          <li style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid ${isDark ? '#1e293b' : '#e2e8f0'};">
-            <span style="opacity:0.85;">${escapeHtml(e.title || 'Reserved')}</span>
-            <span style="opacity:0.6;">${escapeHtml(formatTime(e.start))} – ${escapeHtml(formatTime(e.end))}</span>
-          </li>`).join('');
-                    container.innerHTML = buildShell(`
-          <div style="display:flex;flex-direction:column;gap:24px;height:100%;">
-            <div style="background:${statusColor};color:#fff;padding:24px 32px;border-radius:16px;">
-              <p style="margin:0;font-size:24px;font-weight:500;opacity:0.85;">
-                ${escapeHtml((roomMeta === null || roomMeta === void 0 ? void 0 : roomMeta.name) || content.name || 'Meeting room')}
-              </p>
-              <p style="margin:8px 0 0;font-size:64px;font-weight:700;">${statusLabel}</p>
-              <p style="margin:8px 0 0;font-size:20px;opacity:0.9;">${detailLine}</p>
-            </div>
-            <div style="flex:1;min-height:0;overflow:hidden;">
-              <p style="margin:0 0 12px;font-size:14px;opacity:0.6;text-transform:uppercase;letter-spacing:1px;">Up next</p>
-              <ul style="list-style:none;margin:0;padding:0;">${list || '<li style="opacity:0.5;padding:12px 0;">Nothing else booked today</li>'}</ul>
-            </div>
-            ${(roomMeta === null || roomMeta === void 0 ? void 0 : roomMeta.bookingUrl) ? `<p style="margin:0;font-size:14px;opacity:0.6;">Book this room: ${escapeHtml(roomMeta.bookingUrl)}</p>` : ''}
-          </div>`);
+                    renderMeetingRoom(events);
                     return;
                 }
-                // Day / week / month → grouped list.
-                if (events.length === 0) {
-                    container.innerHTML = buildShell(`
-          <div style="display:flex;align-items:center;justify-content:center;height:100%;opacity:0.6;">
-            <p style="font-size:24px;">No upcoming events</p>
-          </div>`);
+                if (view === 'day') {
+                    renderDayView(events);
                     return;
                 }
-                const groups = new Map();
-                for (const e of events) {
-                    const key = formatDay(e.start);
-                    if (!groups.has(key))
-                        groups.set(key, []);
-                    groups.get(key).push(e);
+                if (view === 'month') {
+                    renderMonthView(events);
+                    return;
                 }
-                const html = Array.from(groups.entries()).map(([day, evs]) => `
-        <section style="margin-bottom:24px;">
-          <p style="margin:0 0 8px;font-size:14px;text-transform:uppercase;letter-spacing:1px;color:${accent};">${escapeHtml(day)}</p>
-          <ul style="list-style:none;margin:0;padding:0;">
-            ${evs.map((e) => `
-              <li style="display:flex;align-items:flex-start;gap:16px;padding:12px 0;border-bottom:1px solid ${isDark ? '#1e293b' : '#e2e8f0'};">
-                <div style="min-width:140px;font-variant-numeric:tabular-nums;opacity:0.75;">
-                  ${e.allDay ? 'All day' : `${escapeHtml(formatTime(e.start))} – ${escapeHtml(formatTime(e.end))}`}
-                </div>
-                <div style="flex:1;min-width:0;">
-                  <p style="margin:0;font-size:18px;font-weight:500;">${escapeHtml(e.title || '(no title)')}</p>
-                  ${e.location ? `<p style="margin:4px 0 0;font-size:14px;opacity:0.6;">${escapeHtml(e.location)}</p>` : ''}
-                </div>
-              </li>`).join('')}
-          </ul>
-        </section>`).join('');
-                container.innerHTML = buildShell(`<div style="height:100%;overflow-y:auto;">${html}</div>`);
+                // week / workweek
+                renderWeekView(events, view === 'workweek' ? 5 : 7);
             };
+            const renderError = (msg) => {
+                container.innerHTML = `
+        <div style="position:absolute;top:0;right:0;bottom:0;left:0;display:flex;flex-direction:column;
+                     background:${bg};color:${text};
+                     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+          ${buildHeader('')}
+          <div style="flex:1;display:flex;align-items:center;justify-content:center;opacity:0.6;">
+            <p style="font-size:20px;">${escapeHtml(msg)}</p>
+          </div>
+        </div>`;
+                startClock();
+            };
+            // -- fetch ------------------------------------------------------------------
             const cacheKey = `cal_events_${content.id}`;
             const fetchAndRender = () => __awaiter(this, void 0, void 0, function* () {
                 if (calContainer._calendarReqId !== reqId)
@@ -4840,11 +5138,10 @@ const Player = {
                     const body = yield res.json();
                     if (calContainer._calendarReqId !== reqId || !container.isConnected)
                         return;
-                    // Persist for offline use — keep only today's window to avoid stale multi-day data.
                     try {
                         localStorage.setItem(cacheKey, JSON.stringify({ events: body.events || [], cachedAt: Date.now() }));
                     }
-                    catch ( /* localStorage full — ignore */_a) { /* localStorage full — ignore */ }
+                    catch ( /**/_a) { /**/ }
                     renderEvents((body.events || []));
                 }
                 catch (err) {
@@ -4855,24 +5152,24 @@ const Player = {
                         const cached = localStorage.getItem(cacheKey);
                         if (cached) {
                             const { events, cachedAt } = JSON.parse(cached);
-                            const ageMin = Math.round((Date.now() - cachedAt) / 60000);
                             renderEvents(events);
-                            // Overlay a small stale-data badge so staff know the data may be old.
                             const badge = document.createElement('div');
-                            badge.style.cssText = 'position:absolute;bottom:8px;right:12px;font-size:12px;opacity:0.5;pointer-events:none;';
-                            badge.textContent = `Cached · ${ageMin}m ago`;
+                            badge.style.cssText = 'position:absolute;bottom:8px;right:12px;font-size:11px;opacity:0.4;pointer-events:none;z-index:100;';
+                            badge.textContent = `Cached � ${Math.round((Date.now() - cachedAt) / 60000)}m ago`;
                             container.appendChild(badge);
                             return;
                         }
                     }
-                    catch ( /* ignore */_b) { /* ignore */ }
+                    catch ( /**/_b) { /**/ }
                     renderError('No calendar data available');
                 }
             });
-            // Render shell immediately with empty list, then fetch.
-            container.innerHTML = buildShell(`<div style="opacity:0.5;">Loading…</div>`);
+            // Loading placeholder
+            container.innerHTML = `<div style="position:absolute;top:0;right:0;bottom:0;left:0;background:${bg};display:flex;
+      align-items:center;justify-content:center;color:${textMuted};
+      font-family:-apple-system,sans-serif;font-size:18px;">Loading�</div>`;
             void fetchAndRender();
-            calContainer._calendarTimer = window.setInterval(fetchAndRender, refreshSeconds * 1000);
+            calContainer._calendarTimer = window.setInterval(() => { void fetchAndRender(); }, refreshSeconds * 1000);
         });
     },
     // Render HTML content
@@ -4920,7 +5217,7 @@ const Player = {
     // Render DataSync live transport schedule
     renderDataSync(container, content) {
         if (typeof DataSyncRenderer === 'undefined') {
-            logger.warn('DataSyncRenderer not loaded Ã¢â‚¬â€œ ensure js/modules/datasync-renderer.js is included');
+            logger.warn('DataSyncRenderer not loaded â€“ ensure js/modules/datasync-renderer.js is included');
             this.showIdleScreen();
             return;
         }
@@ -4951,8 +5248,8 @@ const Player = {
     // PDF.js renderer (single backend across Tizen 4/5/6.5+).
     // Office documents are expected to be pre-converted to PDF on the server.
     // Handles both:
-    //   pdfjs v1.x (global: window.PDFJS, Tizen 4 â€” pdf-legacy.min.js)
-    //   pdfjs v2.x (global: window.pdfjsLib, Tizen 5+ â€” pdf.min.js)
+    //   pdfjs v1.x (global: window.PDFJS, Tizen 4 — pdf-legacy.min.js)
+    //   pdfjs v2.x (global: window.pdfjsLib, Tizen 5+ — pdf.min.js)
     _renderDocumentPdfJs(container, content) {
         var _a;
         this.documentBackend = 'pdfjs';
@@ -4964,7 +5261,7 @@ const Player = {
         const lib = pdfLib || pdfLibV1;
         const isV1 = !pdfLib && !!pdfLibV1;
         if (!lib) {
-            logger.error('pdfjsLib not loaded â€” cannot render PDF:', content.name);
+            logger.error('pdfjsLib not loaded — cannot render PDF:', content.name);
             container.innerHTML = `
         <div style="display:flex;align-items:center;justify-content:center;height:100%;color:white;background:#333;flex-direction:column;">
           <div style="font-size:24px;">PDF Viewer Not Available</div>
@@ -5039,7 +5336,7 @@ const Player = {
                 return;
             advanceInProgress = true;
             try {
-                // Swap in the pre-rendered canvas immediately â€” no waiting, no black flash
+                // Swap in the pre-rendered canvas immediately — no waiting, no black flash
                 if (nextCanvas) {
                     if (activeCanvas && activeCanvas.parentNode === container) {
                         container.replaceChild(nextCanvas, activeCanvas);
@@ -5125,10 +5422,10 @@ const Player = {
                 showError('XHR exception: ' + ((e === null || e === void 0 ? void 0 : e.message) || e));
             }
         };
-        // Primary: tizen.filesystem API â€” reads from wgt-private/content/<uuid>.pdf as Uint8Array.
+        // Primary: tizen.filesystem API — reads from wgt-private/content/<uuid>.pdf as Uint8Array.
         // This is the correct Tizen-native way; virtual root paths like "wgt-private/content/file"
         // are NOT valid URL schemes and cannot be used with XHR.
-        // Tizen 4 (legacy) has NO openFile() â€” must use resolve() + openStream() + readBytes().
+        // Tizen 4 (legacy) has NO openFile() — must use resolve() + openStream() + readBytes().
         const platform = window.Platform;
         const tzFs = (_a = window.tizen) === null || _a === void 0 ? void 0 : _a.filesystem;
         const tzfsPath = fileName ? `wgt-private/content/${fileName}` : '';
@@ -5157,25 +5454,25 @@ const Player = {
                                     stream.close();
                                 }
                                 catch (_) { }
-                                logger.warn('legacy readBytes failed:', (e === null || e === void 0 ? void 0 : e.message) || e, 'â€” trying XHR fallback');
+                                logger.warn('legacy readBytes failed:', (e === null || e === void 0 ? void 0 : e.message) || e, '— trying XHR fallback');
                                 loadViaXhr(localUrl);
                             }
                         }, (err) => {
-                            logger.warn('legacy openStream error:', (err === null || err === void 0 ? void 0 : err.message) || err, 'â€” trying XHR fallback');
+                            logger.warn('legacy openStream error:', (err === null || err === void 0 ? void 0 : err.message) || err, '— trying XHR fallback');
                             loadViaXhr(localUrl);
                         }, 'ISO-8859-1');
                     }
                     catch (e) {
-                        logger.warn('legacy openStream exception:', (e === null || e === void 0 ? void 0 : e.message) || e, 'â€” trying XHR fallback');
+                        logger.warn('legacy openStream exception:', (e === null || e === void 0 ? void 0 : e.message) || e, '— trying XHR fallback');
                         loadViaXhr(localUrl);
                     }
                 }, (err) => {
-                    logger.warn('legacy filesystem.resolve error:', (err === null || err === void 0 ? void 0 : err.message) || err, 'â€” trying XHR fallback');
+                    logger.warn('legacy filesystem.resolve error:', (err === null || err === void 0 ? void 0 : err.message) || err, '— trying XHR fallback');
                     loadViaXhr(localUrl);
                 }, 'r');
             }
             catch (e) {
-                logger.warn('legacy filesystem.resolve exception:', (e === null || e === void 0 ? void 0 : e.message) || e, 'â€” trying XHR fallback');
+                logger.warn('legacy filesystem.resolve exception:', (e === null || e === void 0 ? void 0 : e.message) || e, '— trying XHR fallback');
                 loadViaXhr(localUrl);
             }
         };
@@ -5199,12 +5496,12 @@ const Player = {
                         fileHandle.close();
                     }
                     catch (_) { }
-                    logger.warn('tizen.filesystem read error:', (err === null || err === void 0 ? void 0 : err.message) || err, 'â€” trying XHR fallback');
+                    logger.warn('tizen.filesystem read error:', (err === null || err === void 0 ? void 0 : err.message) || err, '— trying XHR fallback');
                     loadViaXhr(localUrl);
                 });
             }
             catch (e) {
-                logger.warn('tizen.filesystem open error:', (e === null || e === void 0 ? void 0 : e.message) || e, 'â€” trying XHR fallback');
+                logger.warn('tizen.filesystem open error:', (e === null || e === void 0 ? void 0 : e.message) || e, '— trying XHR fallback');
                 loadViaXhr(localUrl);
             }
         }
@@ -5212,7 +5509,7 @@ const Player = {
             loadViaXhr(localUrl);
         }
     },
-    // Document control adapter — PDF.js is the only backend now.
+    // Document control adapter � PDF.js is the only backend now.
     // Most navigation operations are not exposed because PDF.js is rendered via
     // a self-managed setInterval auto-flip; tizen_command document.* calls return
     // NotSupportedError so the portal can show a friendly message.
@@ -5296,7 +5593,7 @@ const Player = {
         if (this._syncMode) {
             logger.info('[Sync] Playlist belongs to sync group ' + syncGroupId);
             // Prefer Samsung firmware-level SyncPlay (b2bapis.b2bsyncplay) when
-            // available — it does frame-accurate alignment without JS-side leader
+            // available � it does frame-accurate alignment without JS-side leader
             // election, peer NTP, or HTTP messaging. Falls back to the JS engine
             // path below when the API is missing or the groupID is invalid.
             const nativeGroupId = (syncPlayInfo && Number.isInteger(syncPlayInfo.groupID)) ? syncPlayInfo.groupID : null;
@@ -5307,7 +5604,7 @@ const Player = {
                 return;
             }
             logger.info('[Sync] b2bsyncplay unavailable (api=' + !!nativeApi +
-                ' groupID=' + nativeGroupId + ') — falling back to HTML5 + JS SyncEngine');
+                ' groupID=' + nativeGroupId + ') � falling back to HTML5 + JS SyncEngine');
             // Seed the SyncEngine with a manifest derived from the schedule
             // payload so leader election, peer NTP, and heartbeats can run even
             // before the server pushes a SYNC_GROUP_INIT.
@@ -5373,7 +5670,7 @@ const Player = {
         const controller = { cancelled: false };
         this.currentPlaylistController = controller;
         container.innerHTML = ''; // Clear container - AVPlay renders to hardware layer
-        // Use cached panel resolution for AVPlay setDisplayRect â€” see renderVideoAVPlay comment.
+        // Use cached panel resolution for AVPlay setDisplayRect — see renderVideoAVPlay comment.
         const viewportWidth = this._panelWidth;
         const viewportHeight = this._panelHeight;
         const wrapIndex = (index) => {
@@ -5632,7 +5929,7 @@ const Player = {
                     this.stopSeamlessAVPlay();
                 }
                 catch (_) { }
-                // Fallback: continue from the next item (donÃ¢â‚¬â„¢t restart at item 1).
+                // Fallback: continue from the next item (donâ€™t restart at item 1).
                 this.renderPlaylistStandard(playableItems, container, nextIndex);
             });
         };
@@ -6008,7 +6305,7 @@ const Player = {
             this.currentPlaylistController.cancelled = true;
             this.currentPlaylistController = null;
         }
-        // Tear down any firmware SyncPlay session — idempotent / no-op if not
+        // Tear down any firmware SyncPlay session � idempotent / no-op if not
         // active. Must come before AVPlay close so the video plane is released.
         if (this._nativeSyncActive) {
             this.stopNativeSyncPlay();
@@ -6030,7 +6327,7 @@ const Player = {
         }
         this.currentVideoEndedCallback = null;
         this.lastRenderedItemKey = null;
-        // NOTE: do NOT call closeDocument() here â€” it resets documentActive and kills
+        // NOTE: do NOT call closeDocument() here — it resets documentActive and kills
         // the PDF page interval on every loop tick. closeDocument() is called inside
         // renderDocument() when a new document starts, and the canvas isConnected guard
         // cleans up if the container is replaced by non-PDF content.
@@ -6185,7 +6482,7 @@ const Player = {
                 break;
             }
             case 'POWER_OFF':
-                // Use MDC standby_set via Node bridge (LFD 6.5 â€” no hospitality/virtualStandby)
+                // Use MDC standby_set via Node bridge (LFD 6.5 — no hospitality/virtualStandby)
                 this.sendLocalMdcXhr('standby_set', { value: 1 })
                     .then(() => logger.info('[cmd] MDC standby_set 1 (power off)'))
                     .catch(() => {
@@ -6201,7 +6498,7 @@ const Player = {
                         logger.info('Uploading log burst:', batch.length);
                         const ws = this.wsConnection;
                         if (ws && ws.readyState === WebSocket.OPEN) {
-                            // Group by real level; line text is "timestamp message" onlyâ€”
+                            // Group by real level; line text is "timestamp message" only—
                             // buildLogText on the dashboard already prepends [LEVEL].
                             const byLevel = { debug: [], info: [], warn: [], error: [] };
                             for (const e of batch) {
@@ -6281,11 +6578,11 @@ const Player = {
                 this.takeScreenshot();
                 break;
             case 'SCREENSHOT_AUTO':
-                // Server-initiated on-connect shot â€” stored in-memory only, no disk write
+                // Server-initiated on-connect shot — stored in-memory only, no disk write
                 this.takeScreenshotWithTrigger('content_change');
                 break;
             case 'SET_SCREENSHOT_INTERVAL': {
-                // API sends { minutes: N } â€” set up a periodic takeScreenshot loop on the device.
+                // API sends { minutes: N } — set up a periodic takeScreenshot loop on the device.
                 // Clears any existing timer first.
                 if (this._screenshotIntervalHandle) {
                     clearInterval(this._screenshotIntervalHandle);
@@ -6376,14 +6673,14 @@ const Player = {
                 logger.info('SYNC_PLAY command received (SyncPlay removed from player; ignored)');
                 break;
             case 'SET_ZONES':
-                // Zone layout is now a content type â€” ignore legacy SET_ZONES push from server
+                // Zone layout is now a content type — ignore legacy SET_ZONES push from server
                 logger.info('[zones] SET_ZONES ignored (zones are now content items)');
                 break;
             default:
                 logger.warn('Unknown command:', command);
         }
     },
-    // â”€â”€ Zone mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Zone mode ──────────────────────────────────────────────────────────────
     _zoneErrorCounts: {},
     activateZoneMode(zones) {
         this.stopZoneMode();
@@ -6408,10 +6705,10 @@ const Player = {
         // them are prepared, regardless of download/prepare timing differences.
         this._zoneSyncExpectedCount = activeZones.filter((z) => !!z.syncGroup).length;
         if (this._zoneSyncEnabled) {
-            logger.info(`[Zones] Sync mode enabled â€” HTML5 path with synchronized start/loop (expecting ${this._zoneSyncExpectedCount})`);
+            logger.info(`[Zones] Sync mode enabled — HTML5 path with synchronized start/loop (expecting ${this._zoneSyncExpectedCount})`);
         }
         else {
-            logger.info(`[Zones] No sync groups â€” using HTML5 <video> for all zones`);
+            logger.info(`[Zones] No sync groups — using HTML5 <video> for all zones`);
         }
         const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
         activeZones.forEach((zone, index) => {
@@ -6481,7 +6778,7 @@ const Player = {
     _enqueueZoneSync(playFn) {
         this._zoneSyncReadyQueue.push(playFn);
         // Count-based flush: once all expected sync zones have prepared and enqueued,
-        // start them ALL immediately. This works regardless of download/prepare timing â€”
+        // start them ALL immediately. This works regardless of download/prepare timing —
         // Zone 0 might prepare 2s before Zone 2, but we wait until Zone 2 is also ready.
         if (this._zoneSyncExpectedCount > 0 &&
             this._zoneSyncReadyQueue.length >= this._zoneSyncExpectedCount) {
@@ -6598,10 +6895,10 @@ const Player = {
             return;
         // At each zone item transition, check whether new content has been published.
         // This is the zone-mode equivalent of the playlist controller calling
-        // trySwapToPendingContent() between items — without this, a pending playlist
+        // trySwapToPendingContent() between items � without this, a pending playlist
         // set while zones are running would never be applied.
         if (this.pendingPlaylist) {
-            logger.info(`[Zone ${zoneIndex}] Pending content ready — swapping at zone item boundary`);
+            logger.info(`[Zone ${zoneIndex}] Pending content ready � swapping at zone item boundary`);
             this.trySwapToPendingContent(true);
             return;
         }
@@ -6683,7 +6980,7 @@ const Player = {
             this._zoneTimers.push(t);
         }
         else {
-            // Unsupported type â€” advance
+            // Unsupported type — advance
             const t = setTimeout(() => {
                 if (this._zoneMode && container.parentNode) {
                     this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex);
@@ -6696,14 +6993,14 @@ const Player = {
         const url = content.url || content.fileUrl || '';
         const httpUrl = content.originalUrl || content.fileUrl || url;
         const isLocalFile = url.startsWith('file://');
-        // Prefer local file:// (already downloaded by ContentManager) â€” no HTTP streaming.
+        // Prefer local file:// (already downloaded by ContentManager) — no HTTP streaming.
         const videoUrl = isLocalFile ? url : httpUrl;
         if (!videoUrl) {
             const t = setTimeout(() => this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex), durationMs);
             this._zoneTimers.push(t);
             return;
         }
-        // VideoMixer (avplaystore) compositing does not work on Tizen 4.0/SSSP6 â€”
+        // VideoMixer (avplaystore) compositing does not work on Tizen 4.0/SSSP6 —
         // both planes render full-screen, ignoring SET_MIXEDFRAME rect.
         // Use HTML5 <video> in CSS-positioned zone containers which works reliably.
         const useSyncAvPlay = false;
@@ -6714,7 +7011,7 @@ const Player = {
             this._playZoneVideoHTML5(zone, container, content, items, itemIndex, durationMs, token, zoneIndex, videoUrl, isLocalFile, httpUrl);
         }
     },
-    // â”€â”€ HTML5 <video> path â€” sync-aware, works on all displays â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── HTML5 <video> path — sync-aware, works on all displays ────────────────
     _playZoneVideoHTML5(zone, container, content, items, itemIndex, durationMs, token, zoneIndex, videoUrl, isLocalFile, httpUrl) {
         let advanced = false;
         const advanceOnce = () => {
@@ -6740,7 +7037,7 @@ const Player = {
         video.setAttribute('playsinline', '');
         if (zoneIndex > 0)
             video.muted = true;
-        // Only use native loop when there is no sync partner â€” otherwise we manage
+        // Only use native loop when there is no sync partner — otherwise we manage
         // re-looping manually so all zones restart in the same JS tick.
         if (isSingleVideoLoop && !useSyncLoop)
             video.loop = true;
@@ -6759,7 +7056,7 @@ const Player = {
                 video.style.transformOrigin = 'top left';
                 video.style.transform = `scale(${(cw / vw).toFixed(6)}, ${(ch / vh).toFixed(6)})`;
                 video.style.objectFit = 'fill';
-                logger.info(`[Zone ${zoneIndex}] Fill stretch applied: ${vw}x${vh} â†’ ${cw}x${ch}`);
+                logger.info(`[Zone ${zoneIndex}] Fill stretch applied: ${vw}x${vh} → ${cw}x${ch}`);
             };
             video.addEventListener('loadedmetadata', applyStretch);
             // Re-apply if first attempt fired before container was laid out.
@@ -6777,7 +7074,7 @@ const Player = {
             }
             if (isSingleVideoLoop) {
                 if (useSyncLoop) {
-                    // Synchronized re-loop â€” same queue/flush pattern as AVPlay path
+                    // Synchronized re-loop — same queue/flush pattern as AVPlay path
                     const fn = () => {
                         video.currentTime = 0;
                         video.play().catch(() => { advanceOnce(); });
@@ -6869,7 +7166,7 @@ const Player = {
             this._zoneTimers.push(t);
         }
     },
-    // â”€â”€ AVPlay VideoMixer path â€” sync enabled, hardware-decoded local files â”€â”€â”€â”€
+    // ── AVPlay VideoMixer path — sync enabled, hardware-decoded local files ────
     _playZoneVideoAVPlay(zone, container, content, items, itemIndex, durationMs, token, zoneIndex, videoUrl, isLocalFile, httpUrl) {
         let advanced = false;
         const advanceOnce = () => {
@@ -6901,7 +7198,7 @@ const Player = {
         container.innerHTML = '';
         const rect = zone.rect || { x: 0, y: 0, width: 1920, height: 1080 };
         logger.info(`[Zone ${zoneIndex}] AVPlay VideoMixer open: ${videoUrl} [${isLocalFile ? 'local' : 'http'}] rect=${rect.x},${rect.y} ${rect.width}x${rect.height} syncGroup=${zone.syncGroup}`);
-        // Serialize VideoMixer prepare() calls â€” Samsung rejects concurrent prepare().
+        // Serialize VideoMixer prepare() calls — Samsung rejects concurrent prepare().
         this._videoMixerQueue = this._videoMixerQueue.then(() => {
             if (!this._zoneMode)
                 return;
@@ -6909,7 +7206,7 @@ const Player = {
                 try {
                     const playerId = `zone_${zoneIndex}_${Date.now()}`;
                     const avp = window.webapis.avplaystore.getPlayer(playerId);
-                    // open() first, then USE_VIDEOMIXER â€” Samsung requires this order
+                    // open() first, then USE_VIDEOMIXER — Samsung requires this order
                     avp.open(videoUrl);
                     avp.setStreamingProperty('USE_VIDEOMIXER', 'TRUE');
                     avp.setListener({
@@ -7042,7 +7339,7 @@ const Player = {
         }
     },
     // Render PDF into zone container using PDF.js canvas rendering.
-    // DOM-based â€” renders on top of AVPlay VideoMixer hardware layer.
+    // DOM-based — renders on top of AVPlay VideoMixer hardware layer.
     _playZonePdf(zone, container, content, items, itemIndex, durationMs, token, zoneIndex) {
         const url = content.url || content.fileUrl || '';
         if (!url) {
@@ -7052,7 +7349,7 @@ const Player = {
         }
         const pdfLib = window.pdfjsLib || window.PDFJS;
         if (!pdfLib) {
-            logger.warn(`[Zone ${zoneIndex}] pdfjs unavailable â€” cannot render PDF in zone`);
+            logger.warn(`[Zone ${zoneIndex}] pdfjs unavailable — cannot render PDF in zone`);
             const t = setTimeout(() => this._playZoneItems(zone, container, items, itemIndex + 1, token, zoneIndex), durationMs);
             this._zoneTimers.push(t);
             return;
@@ -7089,7 +7386,7 @@ const Player = {
                 const lib = pdfLibV2 || pdfLibV1;
                 const isV1 = !pdfLibV2 && !!pdfLibV1;
                 if (!lib) {
-                    logger.warn(`[Zone ${zoneIndex}] pdfjsLib not loaded â€” cannot render PDF`);
+                    logger.warn(`[Zone ${zoneIndex}] pdfjsLib not loaded — cannot render PDF`);
                     advanceOnce();
                     return;
                 }
@@ -7148,7 +7445,7 @@ const Player = {
                         void renderPage(currentPage);
                     }, pageDurationMs);
                 }
-                // For single-item zones: cycle pages forever via setInterval â€” no fallback timer.
+                // For single-item zones: cycle pages forever via setInterval — no fallback timer.
                 // For multi-item zones: advance to the next item after total duration.
                 const isSingleLoop = items.length === 1;
                 if (!isSingleLoop) {
@@ -7175,7 +7472,7 @@ const Player = {
             case 'SYNC_PLAY': {
                 const startAt = Number(payload.syncedStartMs);
                 if (!isFinite(startAt) || startAt <= 0) {
-                    logger.info('[Sync] SYNC_PLAY without syncedStartMs — noop');
+                    logger.info('[Sync] SYNC_PLAY without syncedStartMs � noop');
                     return;
                 }
                 const remaining = startAt - this.getSyncedTime();
@@ -7231,7 +7528,7 @@ const Player = {
                         try {
                             v.currentTime = targetMs / 1000;
                             v.playbackRate = 1.0;
-                            logger.info('[Sync] ADJUST snap → currentTime=' + (targetMs / 1000).toFixed(3) +
+                            logger.info('[Sync] ADJUST snap ? currentTime=' + (targetMs / 1000).toFixed(3) +
                                 's (drift=' + payload.driftMs + 'ms)');
                         }
                         catch (e) {
@@ -7244,7 +7541,7 @@ const Player = {
                     if (isFinite(rate) && rate > 0.5 && rate < 2.0) {
                         try {
                             v.playbackRate = rate;
-                            logger.debug && logger.debug('[Sync] ADJUST nudge → playbackRate=' + rate +
+                            logger.debug && logger.debug('[Sync] ADJUST nudge ? playbackRate=' + rate +
                                 ' (drift=' + payload.driftMs + 'ms)');
                         }
                         catch (e) {
@@ -7328,7 +7625,7 @@ const Player = {
     },
     // Schedule a throttled content_change capture ~3s after a per-item transition
     // so the device-card thumbnail reflects whatever is currently on screen.
-    // Rate-limited to at most one capture per 10s (matches PROJECT_PLAN §3.1).
+    // Rate-limited to at most one capture per 10s (matches PROJECT_PLAN �3.1).
     _thumbnailOnItemStart() {
         const now = Date.now();
         const lastAt = this._lastThumbAt || 0;
@@ -7373,7 +7670,7 @@ const Player = {
                         const normalizedPath = String(filePath || '').replace(/^file:\/\//, '');
                         const platform = window.Platform;
                         if (platform && platform.isLegacy) {
-                            // Tizen 4: filesystem.openFile does not exist — use resolve + openStream
+                            // Tizen 4: filesystem.openFile does not exist � use resolve + openStream
                             tizen.filesystem.resolve(normalizedPath, (file) => {
                                 file.openStream('r', (stream) => {
                                     try {

@@ -20,9 +20,9 @@ import type {
   NormalizedCalendar,
 } from './index.js';
 
-function tenant() { return process.env['MICROSOFT_OAUTH_TENANT'] ?? 'common'; }
-function clientId() { return process.env['MICROSOFT_OAUTH_CLIENT_ID'] ?? ''; }
-function clientSecret() { return process.env['MICROSOFT_OAUTH_CLIENT_SECRET'] ?? ''; }
+function tenant() { return process.env['MICROSOFT_OAUTH_TENANT'] ?? process.env['MICROSOFT_TENANT_ID'] ?? 'common'; }
+function clientId() { return process.env['MICROSOFT_OAUTH_CLIENT_ID'] ?? process.env['MICROSOFT_CLIENT_ID'] ?? ''; }
+function clientSecret() { return process.env['MICROSOFT_OAUTH_CLIENT_SECRET'] ?? process.env['MICROSOFT_CLIENT_SECRET'] ?? ''; }
 
 function authEndpoint() {
   return `https://login.microsoftonline.com/${tenant()}/oauth2/v2.0/authorize`;
