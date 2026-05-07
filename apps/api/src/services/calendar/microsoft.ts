@@ -177,7 +177,6 @@ export async function fetchMicrosoftEvents(
       startDateTime: range.from.toISOString(),
       endDateTime: range.to.toISOString(),
       $top: '250',
-      $orderby: 'start/dateTime',
     });
     const res = await fetch(`${GRAPH}${path}?${params.toString()}`, {
       headers: {
@@ -187,7 +186,8 @@ export async function fetchMicrosoftEvents(
     });
     if (!res.ok) {
       if (res.status === 403 || res.status === 404) continue;
-      throw new Error(`Graph calendarView failed: ${res.status}`);
+      const errBody = await res.text().catch(() => '');
+      throw new Error(`Graph calendarView failed: ${res.status} ${errBody.slice(0, 300)}`);
     }
     const json = await res.json() as { value?: any[] };
     for (const ev of (json.value ?? [])) {
