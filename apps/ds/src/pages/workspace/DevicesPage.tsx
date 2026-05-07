@@ -9,7 +9,7 @@ import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
 
 type PairFormInput = Omit<ClaimDeviceInput, 'workspaceId'>;
-import { Grid2x2, Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon, Copy, CheckCheck } from 'lucide-react';
+import { Grid2x2, Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon, Copy, CheckCheck, Battery } from 'lucide-react';
 
 // Shows the device thumbnail using the DB-backed screenshot record.
 // Re-renders automatically when the device list poll returns a new latestScreenshotId.
@@ -125,6 +125,7 @@ interface Device {
   type: 'signage' | 'kiosk' | 'kitchen';
   platform: string;
   kind?: 'tv' | 'epaper' | null;
+  batteryPct?: number | null;
   manufacturer: string | null;
   modelName: string | null;
   assignedTags?: AssignedTag[];
@@ -651,6 +652,11 @@ export default function DevicesPage() {
                         )}
                         {device.kind === 'epaper' && (
                           <Badge tone="info">E-Paper</Badge>
+                        )}
+                        {device.kind === 'epaper' && device.batteryPct != null && (
+                          <Badge tone={device.batteryPct > 50 ? 'success' : device.batteryPct > 20 ? 'warning' : 'danger'}>
+                            <Battery className="w-3 h-3" />{device.batteryPct}%
+                          </Badge>
                         )}
                       </div>
 

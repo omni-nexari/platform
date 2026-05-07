@@ -118,6 +118,16 @@ window.Telemetry = {
     var panel = this.detectPanel();
     var epaperApiVersion = this.getEpaperApiVersion();
 
+    // Battery level — webapis.epaper.getBatteryLevel() returns 0-100 integer.
+    var batteryPct = null;
+    try {
+      if (typeof webapis !== 'undefined' && webapis.epaper &&
+          typeof webapis.epaper.getBatteryLevel === 'function') {
+        var bl = webapis.epaper.getBatteryLevel();
+        if (bl != null && !isNaN(bl)) batteryPct = Math.round(Number(bl));
+      }
+    } catch (e) { logger.debug('[Telemetry] getBatteryLevel failed:', e && e.message); }
+
     var info = {
       duid: duid,
       model: model || (build && build.model) || 'Unknown',
@@ -136,9 +146,11 @@ window.Telemetry = {
       panelW: panel.panelW,
       panelH: panel.panelH,
       orientation: panel.orientation,
+      resolution: panel.panelW + 'x' + panel.panelH,
       panelType: panel.modelClass + ' ' + panel.panelW + 'x' + panel.panelH + ' (' + panel.orientation + ')',
       modelClass: panel.modelClass,
       epaperApiVersion: epaperApiVersion,
+      batteryPct: batteryPct,
       capabilities: {
         epaper: !!epaperApiVersion,
         avplay: false,

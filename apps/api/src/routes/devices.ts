@@ -2119,10 +2119,27 @@ export async function deviceRoutes(app: FastifyInstance) {
     ]);
 
     if (!device) return reply.status(404).send({ error: 'Device not found' });
-    if (!device.panelW || !device.panelH) {
+    if (!item) return reply.status(404).send({ error: 'Content not found' });
+
+    // Fall back to known panel defaults when panel_w/panel_h are not yet stored
+    // (migration 0055 not yet applied, or device registered before e-paper support).
+    // EM13DX = 1600×1200 (4:3), EM32DX = 2560×1440 (16:9).
+    const PANEL_DEFAULTS: Record<string, { w: number; h: number }> = {
+      'epaper-13': { w: 1600, h: 1200 },
+      'epaper-32': { w: 2560, h: 1440 },
+    };
+    function resolvedPanelDims(dev: typeof device): { panelW: number; panelH: number } | null {
+      if (dev.panelW && dev.panelH) return { panelW: dev.panelW, panelH: dev.panelH };
+      // Try to infer from modelName (e.g. "EM13DX" → epaper-13, "EM32DX" → epaper-32)
+      const mn = (dev.modelName ?? '').toUpperCase();
+      if (mn.startsWith('EM13')) return { panelW: 1600, panelH: 1200 };
+      if (mn.startsWith('EM32')) return { panelW: 2560, panelH: 1440 };
+      return null;
+    }
+    const dims = resolvedPanelDims(device);
+    if (!dims) {
       return reply.status(400).send({ error: 'Device panel size not registered' });
     }
-    if (!item) return reply.status(404).send({ error: 'Content not found' });
 
     // Org-level access check: content's workspace must belong to the device's org.
     const contentWorkspace = await db.query.workspaces.findFirst({
@@ -2134,8 +2151,8 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     // Honour the panel's actual physical orientation. If portrait, swap dims.
     const isPortrait = device.panelOrientation === 'portrait';
-    const panelW = isPortrait ? Math.min(device.panelW, device.panelH) : Math.max(device.panelW, device.panelH);
-    const panelH = isPortrait ? Math.max(device.panelW, device.panelH) : Math.min(device.panelW, device.panelH);
+    const panelW = isPortrait ? Math.min(dims.panelW, dims.panelH) : Math.max(dims.panelW, dims.panelH);
+    const panelH = isPortrait ? Math.max(dims.panelW, dims.panelH) : Math.min(dims.panelW, dims.panelH);
 
     // ── Calendar content ── render an SVG agenda → JPEG variant ─────────
     if (item.type === 'calendar') {

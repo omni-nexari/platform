@@ -142,7 +142,7 @@ window.EpaperWS = (function() {
       send({
         type: 'heartbeat',
         payload: {
-          playerVersion: (window.__BUILD_INFO__ && window.__BUILD_INFO__.version) || null,
+          playerVersion: (window.PLAYER_BUILD_INFO && window.PLAYER_BUILD_INFO.version) || null,
           firmwareVersion: info.firmwareVersion || null,
           timezone: info.timezone || null,
           resolution: info.resolution || null,

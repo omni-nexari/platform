@@ -54,6 +54,7 @@ import {
   Activity,
   Sun,
   KeyRound,
+  Battery,
 } from 'lucide-react';
 import { formatDistanceToNow } from '../utils/time.js';
 import WorkspaceTagPicker from '../../components/WorkspaceTagPicker.js';
@@ -1520,6 +1521,13 @@ export function DeviceDetailContent({
             <InfoRow icon={Cpu}         label="Software version"  value={device.firmwareVersion ?? observedSystemInfo?.firmwareVersion} />
             <InfoRow icon={Cpu}         label="Player version"    value={device.playerVersion ? `v${device.playerVersion}` : null} />
             <InfoRow icon={Monitor}     label="Resolution"        value={resolvedResolution} />
+            {device.kind === 'epaper' && (
+              <InfoRow icon={Battery} label="Battery" value={
+                device.batteryPct != null
+                  ? `${device.batteryPct}%`
+                  : null
+              } />
+            )}
             {hasHeartbeat && (
               <InfoRow icon={Clock} label="Device time" value={
                 <LiveDeviceClock driftMs={deviceTimeDriftMs ?? 0} timezone={deviceTimeZone} />

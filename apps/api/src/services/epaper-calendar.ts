@@ -80,13 +80,17 @@ function fmtTime(iso: string, allDay: boolean): string {
   const d = new Date(iso);
   const h = d.getHours();
   const mm = String(d.getMinutes()).padStart(2, '0');
-  const period = h >= 12 ? 'pm' : 'am';
+  const period = h >= 12 ? 'p' : 'a';
   const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${h12}:${mm}${period}`;
 }
 
+// Bump this when the SVG layout changes to invalidate stale cached variants.
+const LAYOUT_VERSION = '2';
+
 function hashEvents(events: CalendarEvent[], dayBucket: string, panelW: number, panelH: number, title: string): string {
   const h = crypto.createHash('sha1');
+  h.update(LAYOUT_VERSION); h.update('|');
   h.update(dayBucket); h.update('|');
   h.update(`${panelW}x${panelH}`); h.update('|');
   h.update(title); h.update('|');
@@ -157,7 +161,11 @@ export function renderCalendarSvg(opts: {
   const dayHeadingSize = Math.round(Math.min(panelW, panelH) * 0.038);
   const eventTitleSize = Math.round(Math.min(panelW, panelH) * 0.034);
   const eventSubSize = Math.round(eventTitleSize * 0.78);
-  const timeColW = Math.round(panelW * 0.20);
+  // Time font is slightly smaller than title — makes time subordinate visually.
+  const timeFont = Math.round(eventTitleSize * 0.82);
+  // Column width derived from font metrics: max time string "12:00p–12:00a" ≈ 12 chars.
+  // Using 0.62 as character width factor (digits/colons are narrower than average).
+  const timeColW = Math.round(timeFont * 12 * 0.62) + pad;
   const ruleStroke = Math.max(2, Math.round(panelH * 0.0025));
 
   const rows = buildRows(events, now);
@@ -208,8 +216,8 @@ export function renderCalendarSvg(opts: {
     } else {
       const tx = r.time ?? '';
       const titleX = pad + timeColW;
-      parts.push(`<text x="${pad}" y="${r.y + eventTitleSize}" font-size="${eventTitleSize}" font-weight="600">${esc(trunc(tx, 14))}</text>`);
-      parts.push(`<text x="${titleX}" y="${r.y + eventTitleSize}" font-size="${eventTitleSize}">${esc(trunc(r.text, eventTitleMaxChars))}</text>`);
+      parts.push(`<text x="${pad}" y="${r.y + eventTitleSize}" font-size="${timeFont}" fill="#555555">${esc(trunc(tx, 13))}</text>`);
+      parts.push(`<text x="${titleX}" y="${r.y + eventTitleSize}" font-size="${eventTitleSize}" font-weight="600">${esc(trunc(r.text, eventTitleMaxChars))}</text>`);
       if (r.sub) {
         parts.push(`<text x="${titleX}" y="${r.y + eventTitleSize + Math.round(eventSubSize * 1.25)}" font-size="${eventSubSize}" fill="#555555">${esc(trunc(r.sub, subMaxChars))}</text>`);
       }
