@@ -223,8 +223,8 @@ window.API = {
         });
       }
 
-      var buildInfo = window.__BUILD_INFO__;
-      var playerVersion = (buildInfo && (buildInfo.version + ' ' + buildInfo.buildId)) || undefined;
+      var buildInfo = window.PLAYER_BUILD_INFO;
+      var playerVersion = (buildInfo && buildInfo.version) || undefined;
       ws.push({
         type: 'heartbeat',
         payload: {

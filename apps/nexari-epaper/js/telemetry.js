@@ -79,8 +79,9 @@ window.Telemetry = {
     }
 
     // ── webapis.network (Samsung Network API) ────────────────────────────
-    // Provides MAC address and active connection type (WIFI / ETHERNET / DISCONNECTED).
-    // Probe once — if getActiveConnectionType() throws, the API is not ready on this firmware.
+    // On some Tizen firmware getActiveConnectionType() throws before the stack is
+    // fully initialised, but getMac() / getIp() still work.  Try each call
+    // individually so a failure on one doesn't block the others.
     var networkApi = (typeof webapis !== 'undefined') ? webapis.network : null;
     var networkApiReady = false;
     if (networkApi) {
@@ -88,12 +89,13 @@ window.Telemetry = {
       catch (e) { logger.debug('[Telemetry] webapis.network not ready (code ' + (e && e.code) + ')'); }
     }
     var safeNet = function(method) {
-      if (!networkApiReady) return null;
-      try { if (typeof networkApi[method] === 'function') return networkApi[method](); } catch (e) {}
+      if (!networkApi) return null;
+      try { if (typeof networkApi[method] === 'function') return networkApi[method]() || null; } catch (e) {}
       return null;
     };
 
-    // MAC address: Samsung API first (most reliable), then tizen.systeminfo fallbacks
+    // MAC address: call getMac()/getEthernetMac() unconditionally (don't gate on
+    // networkApiReady) then fall back to tizen.systeminfo property values.
     var macAddress = safeNet('getMac') || safeNet('getEthernetMac')
       || (wifi && (wifi.macAddress || wifi.mac))
       || (ethernet && (ethernet.macAddress || ethernet.mac))
@@ -102,7 +104,7 @@ window.Telemetry = {
 
     // Connection type: Samsung API gives a numeric code, map to readable string
     var connTypeMap = { 0: 'DISCONNECTED', 1: 'WIFI', 2: 'ETHERNET', 3: 'OTHER' };
-    var connTypeRaw = safeNet('getActiveConnectionType');
+    var connTypeRaw = networkApiReady ? safeNet('getActiveConnectionType') : null;
     var networkType = connTypeRaw !== null
       ? (connTypeMap[connTypeRaw] || String(connTypeRaw))
       : ((network && network.networkType) || null);
@@ -114,6 +116,15 @@ window.Telemetry = {
       || null;
     var wifiSsid = safeNet('getWiFiSsid') || (wifi && wifi.ssid) || null;
     var wifiStrength = (wifi && wifi.signalStrength) || null;
+
+    // Timezone — Tizen reports an IANA string (e.g. "America/New_York")
+    var timezone = null;
+    try {
+      if (typeof tizen !== 'undefined' && tizen.time &&
+          typeof tizen.time.getLocalTimezone === 'function') {
+        timezone = tizen.time.getLocalTimezone();
+      }
+    } catch (e) { logger.debug('[Telemetry] getLocalTimezone failed:', e && e.message); }
 
     var panel = this.detectPanel();
     var epaperApiVersion = this.getEpaperApiVersion();
@@ -151,6 +162,7 @@ window.Telemetry = {
       modelClass: panel.modelClass,
       epaperApiVersion: epaperApiVersion,
       batteryPct: batteryPct,
+      timezone: timezone,
       capabilities: {
         epaper: !!epaperApiVersion,
         avplay: false,
@@ -161,6 +173,21 @@ window.Telemetry = {
 
     this._systemInfoCache = info;
     this._systemInfoFetchedAt = now;
+
+    // Log a parseable summary so DeviceDetailPage can show observed values
+    // even before the first DB heartbeat round-trip completes.
+    logger.info('System info collected: ' + JSON.stringify({
+      macAddress: info.macAddress,
+      resolution: info.resolution,
+      ipAddress: info.ipAddress,
+      networkType: info.networkType,
+      wifiSsid: info.wifiSsid,
+      timezone: info.timezone,
+      firmwareVersion: info.firmwareVersion,
+      realModel: info.realModel,
+      panelType: info.panelType,
+    }));
+
     return info;
   },
 
