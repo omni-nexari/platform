@@ -98,21 +98,28 @@ export async function exchangeCode(code: string): Promise<{
   };
 }
 
-async function token(conn: CalendarConnectionRow): Promise<string> {
+async function token(conn: CalendarConnectionRow, force = false): Promise<string> {
   return ensureAccessToken(conn, {
     tokenEndpoint: tokenEndpoint(),
     clientId: clientId(),
     clientSecret: clientSecret(),
-  });
+  }, { force });
 }
 
 export async function fetchMicrosoftCalendars(
   conn: CalendarConnectionRow,
 ): Promise<NormalizedCalendar[]> {
-  const t = await token(conn);
-  const res = await fetch(`${GRAPH}/me/calendars?$top=200`, {
+  let t = await token(conn);
+  let res = await fetch(`${GRAPH}/me/calendars?$top=200`, {
     headers: { Authorization: `Bearer ${t}` },
   });
+  // On 401, force-refresh the token and retry once
+  if (res.status === 401) {
+    t = await token(conn, true);
+    res = await fetch(`${GRAPH}/me/calendars?$top=200`, {
+      headers: { Authorization: `Bearer ${t}` },
+    });
+  }
   if (!res.ok) throw new Error(`Graph /me/calendars failed: ${res.status}`);
   const json = await res.json() as { value?: Array<{
     id: string; name: string; hexColor?: string; isDefaultCalendar?: boolean; owner?: { name?: string; address?: string };
@@ -158,7 +165,7 @@ export async function fetchMicrosoftEvents(
   conn: CalendarConnectionRow,
   range: FetchEventsRange,
 ): Promise<CalendarEvent[]> {
-  const t = await token(conn);
+  let t = await token(conn);
   const calendarIds = range.calendarIds && range.calendarIds.length
     ? range.calendarIds
     : ['primary'];
@@ -178,12 +185,22 @@ export async function fetchMicrosoftEvents(
       endDateTime: range.to.toISOString(),
       $top: '250',
     });
-    const res = await fetch(`${GRAPH}${path}?${params.toString()}`, {
+    let res = await fetch(`${GRAPH}${path}?${params.toString()}`, {
       headers: {
         Authorization: `Bearer ${t}`,
         Prefer: 'outlook.timezone="UTC"',
       },
     });
+    // On 401, force-refresh the token and retry once
+    if (res.status === 401) {
+      t = await token(conn, true);
+      res = await fetch(`${GRAPH}${path}?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${t}`,
+          Prefer: 'outlook.timezone="UTC"',
+        },
+      });
+    }
     if (!res.ok) {
       if (res.status === 403 || res.status === 404) continue;
       const errBody = await res.text().catch(() => '');

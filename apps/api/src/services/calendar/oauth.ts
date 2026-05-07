@@ -21,18 +21,21 @@ export interface OAuthProviderConfig {
  * Ensures the connection has a non-expired access token.  Returns the
  * decrypted access token, refreshing if needed.  Persists the new token back
  * to the DB on refresh.
+ *
+ * Pass `force: true` to bypass the expiry check and always refresh.
  */
 export async function ensureAccessToken(
   conn: ConnRow,
   cfg: OAuthProviderConfig,
+  opts?: { force?: boolean },
 ): Promise<string> {
   const access = decryptSecret(conn.accessToken);
   const refresh = decryptSecret(conn.refreshToken);
   const exp = conn.tokenExpiresAt ? conn.tokenExpiresAt.getTime() : 0;
   const now = Date.now();
 
-  // 60s safety window
-  if (access && exp > now + 60_000) return access;
+  // 60s safety window (skip if force-refresh requested)
+  if (!opts?.force && access && exp > now + 60_000) return access;
   if (!refresh) {
     if (!access) throw new Error('No access or refresh token on connection');
     return access; // best effort
