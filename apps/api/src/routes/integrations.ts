@@ -224,11 +224,13 @@ export async function integrationsRoutes(app: FastifyInstance) {
     const member = await checkWorkspaceAccess(workspaceId, user.sub);
     if (!member) return reply.status(403).send({ error: 'Forbidden' });
 
+    const popup = (req.query as Record<string, string>)['popup'] === '1';
     const stateToken = signState({
       workspaceId,
       scope: desiredScope,
       userId: user.sub,
       provider,
+      popup,
       n: crypto.randomBytes(8).toString('base64url'),
       ts: Date.now(),
     });
@@ -254,6 +256,7 @@ export async function integrationsRoutes(app: FastifyInstance) {
     };
 
     if (error || !code || !state) {
+      // We can't read popup from state yet — fall back to page redirect on early errors.
       return reply.redirect(finishUrl('error', error ?? 'Missing code/state'));
     }
     const payload = verifyState<{
@@ -261,10 +264,24 @@ export async function integrationsRoutes(app: FastifyInstance) {
       scope: 'workspace' | 'personal';
       userId: string;
       provider: string;
+      popup?: boolean;
     }>(state);
     if (!payload || payload.provider !== provider) {
       return reply.redirect(finishUrl('error', 'State verification failed'));
     }
+
+    const isPopup = !!payload.popup;
+    const finish = (status: 'connected' | 'error', detail?: string) => {
+      if (isPopup) {
+        const dsOrigin = new URL(dsBase).origin;
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><script>
+          try { window.opener.postMessage(${JSON.stringify(JSON.stringify({ type: 'oauth_callback', oauth: status, provider, detail: detail ?? '' }))}, ${JSON.stringify(dsOrigin)}); } catch(e){}
+          window.close();
+        <\/script></body></html>`;
+        return reply.type('text/html').send(html);
+      }
+      return reply.redirect(finishUrl(status, detail));
+    };
 
     try {
       let exchanged: { accessToken: string; refreshToken?: string | undefined; expiresIn: number; email?: string | undefined };
@@ -273,7 +290,7 @@ export async function integrationsRoutes(app: FastifyInstance) {
       } else if (provider === 'microsoft') {
         exchanged = await msExchange(code);
       } else {
-        return reply.redirect(finishUrl('error', 'Unsupported provider'));
+        return finish('error', 'Unsupported provider');
       }
 
       const [conn] = await db.insert(calendarConnections).values({
@@ -296,10 +313,10 @@ export async function integrationsRoutes(app: FastifyInstance) {
           console.warn('[oauth callback] initial calendar sync failed', e);
         }
       }
-      return reply.redirect(finishUrl('connected'));
+      return finish('connected');
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return reply.redirect(finishUrl('error', msg));
+      return finish('error', msg);
     }
   });
 

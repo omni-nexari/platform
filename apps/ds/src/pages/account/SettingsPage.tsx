@@ -2436,6 +2436,7 @@ function IntegrationsSection({ selectedWsId }: { selectedWsId: string | null }) 
   const [scope, setScope] = useState<'workspace' | 'personal'>('personal');
   const [showApple, setShowApple] = useState(false);
   const [showIcs, setShowIcs] = useState(false);
+  const [disconnectTarget, setDisconnectTarget] = useState<{ id: string; name: string } | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Surface OAuth result toast on return from callback redirect.
@@ -2474,9 +2475,30 @@ function IntegrationsSection({ selectedWsId }: { selectedWsId: string | null }) 
     }
     try {
       const res = await api.get<{ redirectUrl: string }>(
-        `/integrations/calendar/oauth/${provider}/start?workspaceId=${selectedWsId}&scope=${scope}`,
+        `/integrations/calendar/oauth/${provider}/start?workspaceId=${selectedWsId}&scope=${scope}&popup=1`,
       );
-      window.location.href = res.redirectUrl;
+      const popup = window.open(res.redirectUrl, 'oauth_popup', 'width=600,height=700,left=200,top=100');
+      if (!popup) {
+        // Fallback: blocked popups → navigate current page
+        window.location.href = res.redirectUrl;
+        return;
+      }
+      const handler = (e: MessageEvent) => {
+        if (e.origin !== window.location.origin) return;
+        try {
+          const data = typeof e.data === 'string' ? JSON.parse(e.data) as Record<string, unknown> : e.data as Record<string, unknown>;
+          if (data['type'] !== 'oauth_callback') return;
+        } catch { return; }
+        window.removeEventListener('message', handler);
+        const data = typeof e.data === 'string' ? JSON.parse(e.data) as Record<string, string> : e.data as Record<string, string>;
+        if (data['oauth'] === 'connected') {
+          toast.success(`${data['provider'] === 'microsoft' ? 'Outlook' : 'Google'} calendar connected`);
+          qc.invalidateQueries({ queryKey: ['calendar-connections', selectedWsId] });
+        } else {
+          toast.error(data['detail'] ? `Connection failed: ${data['detail']}` : 'Connection failed');
+        }
+      };
+      window.addEventListener('message', handler);
     } catch (err: unknown) {
       toast.error(parseApiError(err) ?? 'Could not start OAuth flow');
     }
@@ -2602,9 +2624,7 @@ function IntegrationsSection({ selectedWsId }: { selectedWsId: string | null }) 
                   <RefreshCw size={14} className={sync.isPending ? 'animate-spin' : ''} />
                 </button>
                 <button
-                  onClick={() => {
-                    if (confirm(`Disconnect ${c.displayName}?`)) disconnect.mutate(c.id);
-                  }}
+                  onClick={() => setDisconnectTarget({ id: c.id, name: c.displayName })}
                   className="p-1.5 rounded hover:bg-[var(--surface)] text-[var(--red)]"
                   title="Disconnect"
                 >
@@ -2638,6 +2658,19 @@ function IntegrationsSection({ selectedWsId }: { selectedWsId: string | null }) 
           }}
         />
       )}
+      <ConfirmDialog
+        open={disconnectTarget !== null}
+        title={`Disconnect "${disconnectTarget?.name}"?`}
+        message="The connection will be removed. Any signage using this calendar will stop showing events."
+        confirmLabel="Disconnect"
+        variant="danger"
+        isConfirming={disconnect.isPending}
+        onConfirm={() => {
+          if (disconnectTarget) disconnect.mutate(disconnectTarget.id);
+          setDisconnectTarget(null);
+        }}
+        onClose={() => setDisconnectTarget(null)}
+      />
     </div>
   );
 }
