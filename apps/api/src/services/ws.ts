@@ -129,7 +129,12 @@ export type WsCommand =
   | { type: 'tizen_command'; payload: { requestId: string; action: string; params?: unknown } }
   | { type: 'ntp_resync' }
   | { type: 'switch_playlist'; payload: { playlistId: string | null } }
-  | { type: 'switch_content'; payload: { contentId: string | null } };
+  | { type: 'switch_content'; payload: { contentId: string | null } }
+  // Calendar live-push: server polls upstream (Graph / Google / CalDAV) once
+  // per content item and pushes diff'd event lists to every subscribed device.
+  // See services/calendar-broker.ts for the fan-out logic.
+  | { type: 'calendar_events'; payload: { contentId: string; events: unknown[]; updatedAt: string } }
+  | { type: 'calendar_unavailable'; payload: { contentId: string; error: string } };
 
 const connections = new Map<string, Conn>();
 const deviceLogs = new Map<string, DeviceConsoleLogEntry[]>();
@@ -805,6 +810,20 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     } catch (err) {
       console.warn('[ws] sync_heartbeat persist failed', { deviceId, err: (err as Error)?.message });
     }
+    return;
+  }
+
+  // ── calendar_subscribe / calendar_unsubscribe ─────────────────────────────
+  // Device opts in/out of server-pushed calendar updates for one content item.
+  // The actual fan-out lives in services/calendar-broker.ts.
+  if (msg.type === 'calendar_subscribe') {
+    const broker = await import('./calendar-broker.js');
+    void broker.subscribe(deviceId, msg.payload.contentId);
+    return;
+  }
+  if (msg.type === 'calendar_unsubscribe') {
+    const broker = await import('./calendar-broker.js');
+    broker.unsubscribe(deviceId, msg.payload.contentId);
     return;
   }
 

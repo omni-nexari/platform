@@ -563,7 +563,7 @@ export async function contentRoutes(app: FastifyInstance) {
       theme?: Record<string, unknown>;
       renderMode?: 'native' | 'image';
       refreshSeconds?: number;
-      roomMeta?: { name?: string; capacity?: number; location?: string; bookingUrl?: string } | null;
+      roomMeta?: { name?: string; capacity?: number; location?: string; bookingUrl?: string; backgroundUrl?: string; logoUrl?: string } | null;
       duration?: number;
     };
 
@@ -646,6 +646,15 @@ export async function contentRoutes(app: FastifyInstance) {
       .set(updates as never)
       .where(eq(contentItems.id, id))
       .returning();
+
+    // Invalidate the live-push broker so any devices currently subscribed to
+    // this calendar receive the new metadata (view / privacy / filters /
+    // calendar selection) on the next push instead of waiting a full poll.
+    try {
+      const broker = await import('../services/calendar-broker.js');
+      broker.invalidate(id);
+    } catch { /* broker not loaded — ignore */ }
+
     return reply.send(updated);
   });
 

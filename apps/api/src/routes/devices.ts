@@ -1500,6 +1500,10 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     socket.on('close', async () => {
       unregisterDevice(deviceId);
+      try {
+        const broker = await import('../services/calendar-broker.js');
+        broker.unsubscribeDevice(deviceId);
+      } catch { /* broker import failed — ignore */ }
       await db
         .update(devices)
         .set({ status: 'offline', updatedAt: new Date() })

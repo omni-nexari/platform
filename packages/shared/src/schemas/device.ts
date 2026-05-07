@@ -358,6 +358,18 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
       lanIp: z.string().optional(),
     }),
   }),
+  // Calendar push: device asks the server to start streaming live updates for
+  // the given calendar content item. The server replies asynchronously with
+  // `calendar_events` WS commands (see WsCommand union). Devices send
+  // `calendar_unsubscribe` when the calendar leaves the screen.
+  z.object({
+    type: z.literal('calendar_subscribe'),
+    payload: z.object({ contentId: z.string().uuid() }),
+  }),
+  z.object({
+    type: z.literal('calendar_unsubscribe'),
+    payload: z.object({ contentId: z.string().uuid() }),
+  }),
 ]);
 export type DeviceMessage = z.infer<typeof DeviceMessageSchema>;
 

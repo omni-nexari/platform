@@ -74,6 +74,8 @@ interface Form {
     capacity: string;
     location: string;
     bookingUrl: string;
+    backgroundUrl: string;
+    logoUrl: string;
   };
   theme: {
     accentColor: string;
@@ -98,7 +100,7 @@ const DEFAULTS: Form = {
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
   refreshSeconds: 60,
   duration: 30,
-  roomMeta: { name: '', capacity: '', location: '', bookingUrl: '' },
+  roomMeta: { name: '', capacity: '', location: '', bookingUrl: '', backgroundUrl: '', logoUrl: '' },
   theme: {
     accentColor: '#4f46e5',
     background: 'light',
@@ -318,6 +320,8 @@ export default function CalendarEditorPage() {
           capacity: form.roomMeta.capacity ? Number(form.roomMeta.capacity) : null,
           location: form.roomMeta.location.trim() || null,
           bookingUrl: form.roomMeta.bookingUrl.trim() || null,
+          backgroundUrl: form.roomMeta.backgroundUrl.trim() || null,
+          logoUrl: form.roomMeta.logoUrl.trim() || null,
         } : null,
         theme: form.theme,
       };
@@ -530,8 +534,17 @@ export default function CalendarEditorPage() {
                         placeholder="Booking URL (optional)" value={form.roomMeta.bookingUrl}
                         onChange={(e) => patch('roomMeta', { ...form.roomMeta, bookingUrl: e.target.value })} />
                     </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <input className="px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] font-mono"
+                        placeholder="Logo image URL (optional)" value={form.roomMeta.logoUrl}
+                        onChange={(e) => patch('roomMeta', { ...form.roomMeta, logoUrl: e.target.value })} />
+                      <input className="px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] font-mono"
+                        placeholder="Background image URL (optional)" value={form.roomMeta.backgroundUrl}
+                        onChange={(e) => patch('roomMeta', { ...form.roomMeta, backgroundUrl: e.target.value })} />
+                    </div>
                     <p className="text-xs text-[var(--text-muted)]">
-                      The booking URL becomes a QR code on the player so guests can scan to book the room.
+                      Bookable: when a Booking URL is set, the action buttons on the player become tappable and open the URL on touch displays.
+                      Background image is shown faded behind the meeting list (light or dark theme).
                     </p>
                   </div>
                 )}

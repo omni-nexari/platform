@@ -192,6 +192,11 @@ const Player = {
   _videowallCurrentUrl: null as string | null,
   _wallRelayStarted: false as boolean,
 
+  // Live calendar push handlers, keyed by contentId. Populated by
+  // renderCalendar when it subscribes; cleared on unsubscribe / teardown.
+  // The WS dispatcher routes incoming `calendar_events` here.
+  _calendarPushHandlers: new Map<string, (events: unknown[]) => void>(),
+
 
   // Initialize player
   async init(device: Device): Promise<void> {
@@ -568,6 +573,22 @@ const Player = {
           logger.info('refresh_schedule received - reloading content');
           this.loadContent();
           break;
+        case 'calendar_events': {
+          const p = (message as { payload?: { contentId?: string; events?: unknown[] } }).payload;
+          const cid = p?.contentId;
+          const handler = cid ? this._calendarPushHandlers.get(cid) : undefined;
+          if (handler && Array.isArray(p?.events)) {
+            try { handler(p!.events as never[]); }
+            catch (e) { logger.warn('calendar_events handler threw', e); }
+          }
+          break;
+        }
+        case 'calendar_unavailable': {
+          const p = (message as { payload?: { contentId?: string; error?: string } }).payload;
+          logger.warn('calendar_unavailable for', p?.contentId, p?.error);
+          // Player keeps the last good frame on screen; no UI change.
+          break;
+        }
         case 'reboot':
           logger.info('reboot command received');
           this.executeCommand({ type: 'REBOOT' });
@@ -4916,7 +4937,7 @@ const Player = {
     const theme = (meta.theme as { accentColor?: string; background?: 'light' | 'dark' }) || {};
     const accent = theme.accentColor || '#1a73e8';
     const isDark = theme.background === 'dark';
-    const roomMeta = (meta.roomMeta as { name?: string; capacity?: number; location?: string; bookingUrl?: string } | null);
+    const roomMeta = (meta.roomMeta as { name?: string; capacity?: number; location?: string; bookingUrl?: string; backgroundUrl?: string; logoUrl?: string } | null);
 
     const bg        = isDark ? '#1e1e2e' : '#ffffff';
     const surface   = isDark ? '#2a2a3e' : '#f8f9fa';
@@ -4928,9 +4949,15 @@ const Player = {
 
     type Ev = { id: string; title: string; start: string; end: string; allDay: boolean; location?: string | null; isPrivate: boolean };
 
-    const calContainer = container as HTMLElement & { _calendarReqId?: string; _calendarTimer?: number; _clockTimer?: number };
+    const calContainer = container as HTMLElement & {
+      _calendarReqId?: string;
+      _calendarTimer?: number;
+      _clockTimer?: number;
+      _calendarUnsub?: () => void;
+    };
     if (calContainer._calendarTimer) { clearInterval(calContainer._calendarTimer); calContainer._calendarTimer = undefined; }
     if (calContainer._clockTimer)    { clearInterval(calContainer._clockTimer);    calContainer._clockTimer    = undefined; }
+    if (calContainer._calendarUnsub) { try { calContainer._calendarUnsub(); } catch { /**/ } calContainer._calendarUnsub = undefined; }
 
     const reqId = `cal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     calContainer._calendarReqId = reqId;
@@ -5257,59 +5284,167 @@ const Player = {
 
     const renderMeetingRoom = (events: Ev[]) => {
       const now = getNow();
-      const upcoming = events.filter((e) => new Date(e.end).getTime() > Date.now());
-      const current  = upcoming.find((e) => new Date(e.start).getTime() <= Date.now());
-      const next     = upcoming.filter((e) => new Date(e.start).getTime() > Date.now()).slice(0, 4);
-      const isBusy   = !!current;
-      const statusBg = isBusy ? '#d93025' : '#1e8e3e';
-      const detailLine = current
-        ? `Until ${fmtTimeFull(toLocal(current.end))} � ${escapeHtml(current.title || 'Reserved')}`
-        : (next[0] ? `Free until ${fmtTimeFull(toLocal(next[0].start))}` : 'Free for the rest of the day');
+      const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay   = new Date(startOfDay); endOfDay.setDate(endOfDay.getDate() + 1);
+      const today = events
+        .filter((e) => new Date(e.end).getTime() > startOfDay.getTime()
+                    && new Date(e.start).getTime() < endOfDay.getTime())
+        .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
 
-      const nextList = next.map((e) => `
-        <div style="display:flex;justify-content:space-between;align-items:center;
-                     padding:14px 0;border-bottom:1px solid ${border};">
-          <div>
-            <div style="font-size:18px;font-weight:500;color:${text};">${escapeHtml(e.title||'Reserved')}</div>
-            ${e.location ? `<div style="font-size:13px;color:${textMuted};">${escapeHtml(e.location)}</div>` : ''}
+      const currentEv = today.find((e) =>
+        new Date(e.start).getTime() <= Date.now()
+        && new Date(e.end).getTime() > Date.now());
+      const nextEv = today.find((e) => new Date(e.start).getTime() > Date.now());
+      const isBusy = !!currentEv;
+
+      const railColor       = isBusy ? '#d93025' : '#34a853';
+      const accentLineColor = isBusy ? '#e8602c' : '#a3c739';
+
+      const portrait    = window.innerHeight > window.innerWidth;
+      const roomName    = roomMeta?.name || content.name || 'Meeting Room';
+      const capacity    = roomMeta?.capacity ?? null;
+      const bookingUrl  = roomMeta?.bookingUrl || '';
+      const logoUrl     = roomMeta?.logoUrl || '';
+      const backgroundUrl = roomMeta?.backgroundUrl || '';
+
+      const fmtRange = (e: Ev) => {
+        const s = toLocal(e.start), en = toLocal(e.end);
+        return `${pad2(s.getHours())}:${pad2(s.getMinutes())} - ${pad2(en.getHours())}:${pad2(en.getMinutes())}`;
+      };
+      const organizer = (e: Ev) => {
+        const evx = e as unknown as { organizerName?: string | null; organizerEmail?: string | null };
+        return evx.organizerName || evx.organizerEmail || '';
+      };
+
+      const meetingsHtml = today.length === 0
+        ? `<div style="display:flex;align-items:center;justify-content:center;height:100%;
+                       color:${textMuted};font-size:26px;letter-spacing:2px;text-transform:uppercase;
+                       text-align:center;padding:40px;">
+             No meetings scheduled for today
+           </div>`
+        : today.map((e) => {
+            const isCurrent = e === currentEv;
+            return `
+              <div style="display:flex;gap:24px;padding:18px 28px;align-items:baseline;
+                           border-bottom:1px solid ${border};
+                           ${isCurrent ? `background:${railColor}1a;` : ''}">
+                <div style="font-variant-numeric:tabular-nums;font-size:22px;font-weight:600;
+                             color:${text};white-space:nowrap;min-width:175px;">
+                  ${escapeHtml(fmtRange(e))}
+                </div>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:22px;font-weight:600;color:${text};line-height:1.25;">
+                    ${escapeHtml(e.title || 'Reserved')}
+                  </div>
+                  ${organizer(e) ? `
+                    <div style="font-size:15px;color:${textMuted};margin-top:2px;">
+                      (${escapeHtml(organizer(e))})
+                    </div>` : ''}
+                </div>
+                ${isCurrent ? `
+                  <div style="background:${railColor};color:#fff;padding:4px 10px;border-radius:4px;
+                               font-size:11px;text-transform:uppercase;letter-spacing:1px;
+                               align-self:center;flex-shrink:0;">Now</div>` : ''}
+              </div>`;
+          }).join('');
+
+      const tappable = !!bookingUrl;
+      const buttons: { label: string; enabled: boolean }[] = [
+        { label: 'Book',        enabled: !isBusy && tappable },
+        { label: 'Accept',      enabled: !!currentEv && tappable },
+        { label: 'Prolong',     enabled: !!currentEv && tappable },
+        { label: 'End meeting', enabled: !!currentEv && tappable },
+      ];
+
+      const buttonsHtml = buttons.map((b, i) => `
+        <button data-mr-action="${i}" ${!b.enabled ? 'disabled' : ''}
+                style="display:block;width:100%;text-align:left;padding:14px 18px;margin-bottom:10px;
+                        background:${b.enabled ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.06)'};
+                        color:${b.enabled ? '#fff' : 'rgba(255,255,255,0.35)'};
+                        border:1px solid rgba(255,255,255,0.28);border-radius:8px;
+                        font-size:15px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;
+                        cursor:${b.enabled ? 'pointer' : 'not-allowed'};font-family:inherit;">
+          ${escapeHtml(b.label)}
+        </button>`).join('');
+
+      const header = `
+        <div style="display:flex;align-items:center;gap:18px;padding:18px 32px;
+                     background:${isDark ? '#2a2e3e' : '#f1f3f5'};
+                     border-bottom:3px solid ${accentLineColor};flex-shrink:0;">
+          ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt=""
+                            style="height:46px;max-width:140px;object-fit:contain;flex-shrink:0;" />` : ''}
+          <div style="font-size:32px;font-weight:700;color:${text};letter-spacing:2px;
+                       text-transform:uppercase;">
+            ${escapeHtml(roomName)}
           </div>
-          <div style="font-size:15px;color:${textMuted};white-space:nowrap;margin-left:16px;">
-            ${fmtTimeFull(toLocal(e.start))} � ${fmtTimeFull(toLocal(e.end))}
+          ${roomMeta?.location ? `
+            <div style="font-size:14px;color:${textMuted};margin-left:12px;">
+              ${escapeHtml(roomMeta.location)}
+            </div>` : ''}
+        </div>`;
+
+      const statusLine = currentEv
+        ? `Until ${escapeHtml(fmtTimeFull(toLocal(currentEv.end)))}`
+        : (nextEv ? `Free until ${escapeHtml(fmtTimeFull(toLocal(nextEv.start)))}` : 'Free for the rest of the day');
+
+      const rail = `
+        <div style="background:${railColor};color:#fff;display:flex;flex-direction:column;
+                     padding:24px 22px;${portrait ? 'flex-shrink:0;' : 'width:300px;flex-shrink:0;'}">
+          <div id="cal-clock" style="font-size:48px;font-weight:700;letter-spacing:-1px;line-height:1;">
+            ${fmtTimeFull(now)}
           </div>
-        </div>`).join('');
+          <div style="font-size:16px;opacity:0.9;margin-top:4px;">
+            ${now.getFullYear()}.${pad2(now.getMonth() + 1)}.${pad2(now.getDate())}
+          </div>
+          <div style="font-size:20px;font-weight:700;margin-top:18px;letter-spacing:1px;">
+            ${isBusy ? 'IN USE' : 'AVAILABLE'}
+          </div>
+          <div style="font-size:13px;opacity:0.92;margin-top:4px;">${statusLine}</div>
+          ${capacity ? `
+            <div style="margin-top:24px;">
+              <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;
+                           opacity:0.85;margin-bottom:6px;">Room capacity</div>
+              <div style="display:inline-block;background:rgba(255,255,255,0.18);
+                           border:1px solid rgba(255,255,255,0.32);
+                           padding:8px 16px;border-radius:6px;font-size:24px;font-weight:700;">
+                ${capacity}
+              </div>
+            </div>` : ''}
+          <div style="margin-top:auto;padding-top:24px;">
+            ${buttonsHtml}
+          </div>
+        </div>`;
+
+      const body = `
+        <div style="flex:1;position:relative;overflow:hidden;
+                     ${backgroundUrl ? `background-image:url(${JSON.stringify(backgroundUrl)});background-size:cover;background-position:center;` : ''}">
+          ${backgroundUrl ? `<div style="position:absolute;inset:0;background:${isDark ? 'rgba(30,30,46,0.78)' : 'rgba(255,255,255,0.78)'};"></div>` : ''}
+          <div style="position:relative;height:100%;overflow-y:auto;">
+            ${meetingsHtml}
+          </div>
+        </div>`;
 
       container.innerHTML = `
         <div style="position:absolute;top:0;right:0;bottom:0;left:0;display:flex;flex-direction:column;
                      background:${bg};color:${text};
                      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:hidden;">
-          <div style="background:${statusBg};padding:32px 40px;flex-shrink:0;">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-              <div>
-                <div style="font-size:18px;color:rgba(255,255,255,0.8);font-weight:500;">
-                  ${escapeHtml(roomMeta?.name || content.name || 'Meeting Room')}
-                  ${roomMeta?.capacity ? `<span style="font-size:14px;margin-left:12px;opacity:0.7;">� ${roomMeta.capacity} people</span>` : ''}
-                </div>
-                <div style="font-size:72px;font-weight:700;color:#fff;line-height:1;margin:8px 0;">
-                  ${isBusy ? 'In Use' : 'Available'}
-                </div>
-                <div style="font-size:20px;color:rgba(255,255,255,0.85);">${detailLine}</div>
-              </div>
-              <div style="text-align:right;">
-                <div id="cal-clock" style="font-size:44px;font-weight:700;color:#fff;letter-spacing:-1px;">
-                  ${fmtTimeFull(now)}
-                </div>
-                <div style="font-size:15px;color:rgba(255,255,255,0.75);margin-top:4px;">
-                  ${now.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' })}
-                </div>
-              </div>
-            </div>
+          ${header}
+          <div style="flex:1;display:flex;flex-direction:${portrait ? 'column' : 'row'};overflow:hidden;">
+            ${body}
+            ${rail}
           </div>
-          <div style="flex:1;padding:24px 40px;overflow:hidden;">
-            <div style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:${textMuted};margin-bottom:8px;font-weight:600;">Upcoming</div>
-            ${nextList || `<div style="color:${textMuted};font-size:18px;margin-top:16px;">No more meetings today</div>`}
-          </div>
-          ${roomMeta?.bookingUrl ? `<div style="padding:12px 40px;border-top:1px solid ${border};font-size:13px;color:${textMuted};">Book: ${escapeHtml(roomMeta.bookingUrl)}</div>` : ''}
         </div>`;
+
+      if (tappable) {
+        const btns = container.querySelectorAll('[data-mr-action]') as NodeListOf<HTMLButtonElement>;
+        btns.forEach((btn) => {
+          btn.addEventListener('click', () => {
+            if (btn.disabled) return;
+            try { window.open(bookingUrl, '_blank', 'noopener'); } catch { /**/ }
+          });
+        });
+      }
+
       startClock();
     };
 
@@ -5339,6 +5474,36 @@ const Player = {
     // -- fetch ------------------------------------------------------------------
     const cacheKey = `cal_events_${content.id}`;
 
+    // Signature of the last successfully-rendered event set, used to skip
+    // re-rendering when nothing has actually changed (avoids the visual flash
+    // every refresh and preserves scroll position).
+    let lastSig = '';
+    let lastBoundaryRender = 0;
+    const eventsSignature = (evs: Ev[]) =>
+      evs.map((e) => `${e.id}|${e.start}|${e.end}|${e.title}|${e.location ?? ''}`).join('\n');
+    // For meeting-room view we still must re-render when a meeting starts or
+    // ends (busy/free rail + "Now" highlight change), even if the event list
+    // is byte-identical.
+    const boundaryCrossed = (evs: Ev[], sinceMs: number) => {
+      const nowMs = Date.now();
+      for (const e of evs) {
+        const s  = new Date(e.start).getTime();
+        const en = new Date(e.end).getTime();
+        if ((s  > sinceMs && s  <= nowMs) || (en > sinceMs && en <= nowMs)) return true;
+      }
+      return false;
+    };
+    const maybeRender = (evs: Ev[]) => {
+      if (calContainer._calendarReqId !== reqId || !container.isConnected) return;
+      const sig = eventsSignature(evs);
+      const needBoundary = view === 'meeting_room' && lastBoundaryRender > 0
+        && boundaryCrossed(evs, lastBoundaryRender);
+      if (lastSig !== '' && sig === lastSig && !needBoundary) return; // no-op
+      lastSig = sig;
+      lastBoundaryRender = Date.now();
+      renderEvents(evs);
+    };
+
     const fetchAndRender = async () => {
       if (calContainer._calendarReqId !== reqId) return;
       const from = new Date(); from.setHours(0,0,0,0);
@@ -5357,15 +5522,17 @@ const Player = {
         const body = await res.json();
         if (calContainer._calendarReqId !== reqId || !container.isConnected) return;
         try { localStorage.setItem(cacheKey, JSON.stringify({ events: body.events || [], cachedAt: Date.now() })); } catch { /**/ }
-        renderEvents((body.events || []) as Ev[]);
+        maybeRender((body.events || []) as Ev[]);
       } catch (err) {
         logger.warn('Calendar fetch failed, using cached data:', err);
         if (calContainer._calendarReqId !== reqId || !container.isConnected) return;
+        // On a transient fetch error, do NOT wipe what's already on screen.
+        if (lastSig) return;
         try {
           const cached = localStorage.getItem(cacheKey);
           if (cached) {
             const { events, cachedAt } = JSON.parse(cached) as { events: Ev[]; cachedAt: number };
-            renderEvents(events as Ev[]);
+            maybeRender(events as Ev[]);
             const badge = document.createElement('div');
             badge.style.cssText = 'position:absolute;bottom:8px;right:12px;font-size:11px;opacity:0.4;pointer-events:none;z-index:100;';
             badge.textContent = `Cached � ${Math.round((Date.now()-cachedAt)/60_000)}m ago`;
@@ -5377,12 +5544,65 @@ const Player = {
       }
     };
 
+    // -- WS push subscription ---------------------------------------------------
+    // Server polls upstream once per content item and pushes diff'd updates.
+    // The HTTP path above is kept as a fallback (first paint, WS offline).
+    const pushHandler = (rawEvents: unknown[]) => {
+      if (calContainer._calendarReqId !== reqId || !container.isConnected) return;
+      const evs = (rawEvents as Ev[]) || [];
+      try { localStorage.setItem(cacheKey, JSON.stringify({ events: evs, cachedAt: Date.now() })); } catch { /**/ }
+      maybeRender(evs);
+    };
+    this._calendarPushHandlers.set(content.id, pushHandler);
+
+    const trySubscribe = () => {
+      const ws = this.wsConnection;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ type: 'calendar_subscribe', payload: { contentId: content.id } }));
+          return true;
+        } catch (e) { logger.warn('calendar_subscribe send failed', e); }
+      }
+      return false;
+    };
+    let subscribed = trySubscribe();
+    // If WS isn't open yet (page just mounted), retry briefly until it is.
+    let subRetryTimer: number | undefined;
+    if (!subscribed) {
+      subRetryTimer = window.setInterval(() => {
+        if (calContainer._calendarReqId !== reqId) {
+          if (subRetryTimer) clearInterval(subRetryTimer);
+          return;
+        }
+        if (trySubscribe()) {
+          subscribed = true;
+          if (subRetryTimer) clearInterval(subRetryTimer);
+          subRetryTimer = undefined;
+        }
+      }, 2000);
+    }
+
+    calContainer._calendarUnsub = () => {
+      this._calendarPushHandlers.delete(content.id);
+      if (subRetryTimer) { clearInterval(subRetryTimer); subRetryTimer = undefined; }
+      const ws = this.wsConnection;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ type: 'calendar_unsubscribe', payload: { contentId: content.id } })); } catch { /**/ }
+      }
+    };
+
     // Loading placeholder
     container.innerHTML = `<div style="position:absolute;top:0;right:0;bottom:0;left:0;background:${bg};display:flex;
       align-items:center;justify-content:center;color:${textMuted};
       font-family:-apple-system,sans-serif;font-size:18px;">Loading�</div>`;
     void fetchAndRender();
-    calContainer._calendarTimer = window.setInterval(() => { void fetchAndRender(); }, refreshSeconds * 1_000);
+    // Polling fallback — only fires if the WS push isn't active for any reason
+    // (socket dropped, server restart, etc.). When WS is healthy this is a no-op.
+    calContainer._calendarTimer = window.setInterval(() => {
+      const ws = this.wsConnection;
+      const wsOk = !!ws && ws.readyState === WebSocket.OPEN && subscribed;
+      if (!wsOk) void fetchAndRender();
+    }, refreshSeconds * 1_000);
   },
 
 
