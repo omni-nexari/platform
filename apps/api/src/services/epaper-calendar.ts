@@ -2,7 +2,7 @@
  * E-paper calendar rasteriser.
  *
  * Renders a calendar agenda view to a panel-sized JPEG using SVG (rendered via
- * sharp/librsvg). E-paper panels are monochrome/greyscale so we use a high
+ * sharp/librsvg). Supports colour e-paper panels — no grayscale conversion.
  * contrast b&w layout with no animations.
  *
  * Output cache path:
@@ -267,7 +267,6 @@ export async function ensureCalendarVariant(spec: CalendarVariantSpec): Promise<
   });
 
   await sharp(Buffer.from(svg, 'utf8'))
-    .grayscale()
     .jpeg({ quality: 85, mozjpeg: true, chromaSubsampling: '4:4:4' })
     .toFile(absPath);
 

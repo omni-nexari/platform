@@ -53,8 +53,8 @@ export function epaperVariantRelPath(spec: Omit<EpaperVariantSpec, 'srcRelPath'>
  *  - `contain` — letterbox onto white background, preserving aspect ratio.
  *  - `pad`     — alias of contain but with grey background for visibility on white panels.
  *
- * Always emits a baseline JPEG (8-bit, no chroma subsampling boost) optimised
- * for greyscale e-paper displays.
+ * Always emits a baseline JPEG (8-bit) optimised for e-paper displays.
+ * Supports both greyscale and colour panels (no forced grayscale conversion).
  */
 export async function fitToEpaper(
   srcAbs: string,
@@ -79,7 +79,6 @@ export async function fitToEpaper(
   }
 
   await pipeline
-    .grayscale() // e-paper panels are monochrome / greyscale
     .jpeg({ quality: 85, mozjpeg: true, chromaSubsampling: '4:4:4' })
     .toFile(destAbs);
 }

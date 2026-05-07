@@ -33,55 +33,13 @@ window.EpaperApp = {
       const img = document.getElementById('content-image');
       if (img) img.alt = 'Loading content…';
 
-      // Determine how we woke up
-      var reason = (window.EpaperPower && EpaperPower.isAvailable())
-        ? EpaperPower.wakeReason()   // 'scheduled' | 'boot' | 'unknown'
-        : 'unknown';
-      var debugNoSleep = (CONFIG && CONFIG.DEBUG_NO_SLEEP) ||
-        (typeof localStorage !== 'undefined' && localStorage.getItem('DEBUG_NO_SLEEP') === 'true');
-      var sleepDelayMs = (CONFIG && CONFIG.SLEEP_DELAY_MS) || 60000;
+      logger.info('[EpaperApp] fetching content...');
 
-      logger.info('[EpaperApp] wake reason:', reason, debugNoSleep ? '(DEBUG_NO_SLEEP)' : '');
-
-      if (reason === 'boot' && !debugNoSleep) {
-        // Manual power-on: device is already showing the frozen e-ink image.
-        // Just reschedule the next polling wake and sleep quickly.
-        // No need to re-render — the panel holds its image without power.
-        logger.info('[EpaperApp] manual boot — rescheduling wake, sleeping in', sleepDelayMs / 1000, 's');
-        if (window.EpaperPower) {
-          EpaperPower.scheduleNextWakeup(null, function(id, next) {
-            logger.info('[EpaperApp] next wake scheduled:', next.toISOString(), 'id=', id);
-          });
-        }
-        // Open WS briefly so server can push urgent commands (content_update, force_sleep)
-        if (window.EpaperWS) {
-          try { EpaperWS.start(device); } catch (e) { logger.warn('[EpaperApp] WS start failed:', e && e.message); }
-        }
-        setTimeout(function() {
-          if (window.EpaperPower && EpaperPower.isAvailable()) EpaperPower.goToSleep();
-        }, sleepDelayMs);
-        return;
-      }
-
-      // Scheduled wake (or DEBUG_NO_SLEEP) — fetch and render content.
-      // After the first image is on screen, schedule the next wakeup then sleep.
+      // Fetch and display content — same priority chain as nexari-tizen:
+      // publishedContent > publishedPlaylist > publishedSchedule > schedule > defaultPlaylist.
       if (window.EpaperRenderer) {
         try {
-          EpaperRenderer.start(device, function onFirstRender() {
-            if (window.EpaperPower) {
-              EpaperPower.scheduleNextWakeup(null, function(id, next) {
-                logger.info('[EpaperApp] next wake scheduled:', next.toISOString(), 'id=', id);
-              });
-            }
-            if (!debugNoSleep) {
-              logger.info('[EpaperApp] sleeping in', sleepDelayMs / 1000, 's');
-              setTimeout(function() {
-                if (window.EpaperPower && EpaperPower.isAvailable()) EpaperPower.goToSleep();
-              }, sleepDelayMs);
-            } else {
-              logger.info('[EpaperApp] DEBUG_NO_SLEEP — staying awake');
-            }
-          });
+          EpaperRenderer.start(device);
         } catch (e) { logger.error('[EpaperApp] Renderer start failed:', e && e.message); }
       }
 

@@ -43,8 +43,8 @@ window.EpaperCache = (function() {
     if (BASE_FS !== null) return;
     if (!fsAvailable()) { BASE_FS = 'wgt-private'; return; }
     try {
-      var storage = tizen.filesystem.getStorage('InternalFlash');
-      if (storage && storage.state === 'MOUNTED') {
+      // getStorage() is async/callback-based — use pathExists() which is synchronous.
+      if (tizen.filesystem.pathExists('InternalFlash')) {
         BASE_FS = 'InternalFlash';
         logger.info('[EpaperCache] storage: InternalFlash');
         return;
@@ -122,7 +122,7 @@ window.EpaperCache = (function() {
     });
   }
 
-  // â”€â”€ Disk read â€” openFile('r') â†’ readBlob() â†’ createObjectURL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Disk read ── openFile('r') → readData() → Uint8Array → blob URL ──────
   function readDisk(contentId) {
     return new Promise(function(resolve) {
       if (!fsAvailable()) { resolve(null); return; }
@@ -130,9 +130,11 @@ window.EpaperCache = (function() {
         var path = diskPathFor(contentId);
         if (!tizen.filesystem.pathExists(path)) { resolve(null); return; }
         var fh = tizen.filesystem.openFile(path, 'r');
-        var blob = fh.readBlob();
+        var data = fh.readData();
         fh.close();
-        resolve(blob ? URL.createObjectURL(blob) : null);
+        if (!data || !data.length) { resolve(null); return; }
+        var blob = new Blob([data], { type: 'image/jpeg' });
+        resolve(URL.createObjectURL(blob));
       } catch (e) {
         logger.warn('[EpaperCache] readDisk error:', e && e.message);
         resolve(null);
@@ -140,7 +142,7 @@ window.EpaperCache = (function() {
     });
   }
 
-  // â”€â”€ Disk write â€” openFile('w') â†’ writeBytes(Uint8Array) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Disk write ── openFile('w') → writeData(Uint8Array) ──────────────────
   function writeAsset(contentId, arrayBuffer) {
     return new Promise(function(resolve) {
       if (!fsAvailable()) { resolve(false); return; }
@@ -149,9 +151,8 @@ window.EpaperCache = (function() {
         var path = diskPathFor(contentId);
         try { tizen.filesystem.deleteFile(path); } catch (_) {}
         var fh = tizen.filesystem.openFile(path, 'w');
-        fh.writeBytes(new Uint8Array(arrayBuffer));
-        fh.flush();
-        fh.close();
+        fh.writeData(new Uint8Array(arrayBuffer));
+        fh.close(); // close() flushes and commits
         resolve(true);
       } catch (e) {
         logger.warn('[EpaperCache] writeAsset error:', e && e.message);

@@ -26,7 +26,6 @@ window.EpaperRenderer = (function() {
     swapTimer: null,         // setTimeout id for next swap
     lastSwapAt: 0,
     started: false,
-    onFirstRender: null,     // called once after first image is shown (triggers sleep cycle)
   };
 
   function imgEl() { return document.getElementById('content-image'); }
@@ -106,13 +105,6 @@ window.EpaperRenderer = (function() {
         };
         probe.src = blobUrl;
 
-        // Fire the first-render callback (used by app.js to trigger sleep scheduling)
-        if (state.onFirstRender) {
-          var cb = state.onFirstRender;
-          state.onFirstRender = null;
-          try { cb(); } catch (_) {}
-        }
-
         // Pre-fetch the next 1-2 items in the background
         var lookahead = [];
         for (var k = 1; k <= 2; k++) {
@@ -183,19 +175,13 @@ window.EpaperRenderer = (function() {
   }
 
   return {
-    /**
-     * Start the renderer for a paired device. Idempotent.
-     * @param {object} device
-     * @param {Function} [onFirstRender]  Called once after the first image is displayed.
-     *   Used by app.js to trigger the sleep-wake scheduling.
-     */
-    start: function(device, onFirstRender) {
+    /** Start the renderer for a paired device. Idempotent. */
+    start: function(device) {
       if (state.started) return;
       state.started = true;
       state.deviceId = device.id;
       state.deviceToken = device.deviceToken || (typeof localStorage !== 'undefined' && localStorage.getItem('deviceToken')) || null;
       state.workspaceId = device.workspaceId || (typeof localStorage !== 'undefined' && localStorage.getItem('workspaceId')) || null;
-      state.onFirstRender = onFirstRender || null;
       logger.info('[Renderer] start');
 
       // Single fetch on each wake cycle. WS push handles content changes
@@ -214,7 +200,6 @@ window.EpaperRenderer = (function() {
       state.started = false;
       state.currentItems = [];
       state.currentSlotKey = null;
-      state.onFirstRender = null;
     },
 
     _state: state, // for debugging via console
