@@ -313,6 +313,20 @@ const Player = {
                 void Telemetry.send(this.deviceId).catch((error) => {
                     logger.warn('Initial WebSocket telemetry failed:', error);
                 });
+                // Re-subscribe any active calendar content items. The server drops
+                // subscriptions on socket close, so we must re-send on every reconnect.
+                if (this._calendarPushHandlers.size > 0) {
+                    const ws = this.wsConnection;
+                    for (const contentId of this._calendarPushHandlers.keys()) {
+                        try {
+                            ws.send(JSON.stringify({ type: 'calendar_subscribe', payload: { contentId } }));
+                            logger.info('Re-subscribed calendar after WS reconnect:', contentId);
+                        }
+                        catch (e) {
+                            logger.warn('calendar re-subscribe failed', contentId, e);
+                        }
+                    }
+                }
                 // Take a screenshot shortly after connect to populate the device card thumbnail,
                 // but ONLY if content is already playing (loaded from cache). If nothing is playing
                 // yet, _thumbnailOnItemStart will fire once the first item renders.
@@ -5194,32 +5208,32 @@ const Player = {
                 };
                 const meetingsHtml = today.length === 0
                     ? `<div style="display:flex;align-items:center;justify-content:center;height:100%;
-                       color:${textMuted};font-size:26px;letter-spacing:2px;text-transform:uppercase;
+                       color:${textMuted};font-size:36px;letter-spacing:2px;text-transform:uppercase;
                        text-align:center;padding:40px;">
              No meetings scheduled for today
            </div>`
                     : today.map((e) => {
                         const isCurrent = e === currentEv;
                         return `
-              <div style="display:flex;gap:24px;padding:18px 28px;align-items:baseline;
+              <div style="display:flex;gap:28px;padding:24px 36px;align-items:baseline;
                            border-bottom:1px solid ${border};
                            ${isCurrent ? `background:${railColor}1a;` : ''}">
-                <div style="font-variant-numeric:tabular-nums;font-size:22px;font-weight:600;
-                             color:${text};white-space:nowrap;min-width:175px;">
+                <div style="font-variant-numeric:tabular-nums;font-size:30px;font-weight:600;
+                             color:${text};white-space:nowrap;min-width:220px;">
                   ${escapeHtml(fmtRange(e))}
                 </div>
                 <div style="flex:1;min-width:0;">
-                  <div style="font-size:22px;font-weight:600;color:${text};line-height:1.25;">
+                  <div style="font-size:30px;font-weight:600;color:${text};line-height:1.25;">
                     ${escapeHtml(e.title || 'Reserved')}
                   </div>
                   ${organizer(e) ? `
-                    <div style="font-size:15px;color:${textMuted};margin-top:2px;">
+                    <div style="font-size:20px;color:${textMuted};margin-top:4px;">
                       (${escapeHtml(organizer(e))})
                     </div>` : ''}
                 </div>
                 ${isCurrent ? `
-                  <div style="background:${railColor};color:#fff;padding:4px 10px;border-radius:4px;
-                               font-size:11px;text-transform:uppercase;letter-spacing:1px;
+                  <div style="background:${railColor};color:#fff;padding:6px 14px;border-radius:4px;
+                               font-size:16px;text-transform:uppercase;letter-spacing:1px;
                                align-self:center;flex-shrink:0;">Now</div>` : ''}
               </div>`;
                     }).join('');
@@ -5232,11 +5246,11 @@ const Player = {
                 ];
                 const buttonsHtml = buttons.map((b, i) => `
         <button data-mr-action="${i}" ${!b.enabled ? 'disabled' : ''}
-                style="display:block;width:100%;text-align:left;padding:14px 18px;margin-bottom:10px;
+                style="display:block;width:100%;text-align:left;padding:18px 22px;margin-bottom:12px;
                         background:${b.enabled ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.06)'};
                         color:${b.enabled ? '#fff' : 'rgba(255,255,255,0.35)'};
                         border:1px solid rgba(255,255,255,0.28);border-radius:8px;
-                        font-size:15px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;
+                        font-size:20px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;
                         cursor:${b.enabled ? 'pointer' : 'not-allowed'};font-family:inherit;">
           ${escapeHtml(b.label)}
         </button>`).join('');
@@ -5245,13 +5259,13 @@ const Player = {
                      background:${isDark ? '#2a2e3e' : '#f1f3f5'};
                      border-bottom:3px solid ${accentLineColor};flex-shrink:0;">
           ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt=""
-                            style="height:46px;max-width:140px;object-fit:contain;flex-shrink:0;" />` : ''}
-          <div style="font-size:32px;font-weight:700;color:${text};letter-spacing:2px;
+                            style="height:64px;max-width:180px;object-fit:contain;flex-shrink:0;" />` : ''}
+          <div style="font-size:52px;font-weight:700;color:${text};letter-spacing:2px;
                        text-transform:uppercase;">
             ${escapeHtml(roomName)}
           </div>
           ${(roomMeta === null || roomMeta === void 0 ? void 0 : roomMeta.location) ? `
-            <div style="font-size:14px;color:${textMuted};margin-left:12px;">
+            <div style="font-size:22px;color:${textMuted};margin-left:16px;">
               ${escapeHtml(roomMeta.location)}
             </div>` : ''}
         </div>`;
@@ -5260,24 +5274,24 @@ const Player = {
                     : (nextEv ? `Free until ${escapeHtml(fmtTimeFull(toLocal(nextEv.start)))}` : 'Free for the rest of the day');
                 const rail = `
         <div style="background:${railColor};color:#fff;display:flex;flex-direction:column;
-                     padding:24px 22px;${portrait ? 'flex-shrink:0;' : 'width:300px;flex-shrink:0;'}">
-          <div id="cal-clock" style="font-size:48px;font-weight:700;letter-spacing:-1px;line-height:1;">
+                     padding:28px 26px;${portrait ? 'flex-shrink:0;' : 'width:360px;flex-shrink:0;'}">
+          <div id="cal-clock" style="font-size:64px;font-weight:700;letter-spacing:-1px;line-height:1;">
             ${fmtTimeFull(now)}
           </div>
-          <div style="font-size:16px;opacity:0.9;margin-top:4px;">
+          <div style="font-size:22px;opacity:0.9;margin-top:6px;">
             ${now.getFullYear()}.${pad2(now.getMonth() + 1)}.${pad2(now.getDate())}
           </div>
-          <div style="font-size:20px;font-weight:700;margin-top:18px;letter-spacing:1px;">
+          <div style="font-size:28px;font-weight:700;margin-top:22px;letter-spacing:1px;">
             ${isBusy ? 'IN USE' : 'AVAILABLE'}
           </div>
-          <div style="font-size:13px;opacity:0.92;margin-top:4px;">${statusLine}</div>
+          <div style="font-size:18px;opacity:0.92;margin-top:6px;">${statusLine}</div>
           ${capacity ? `
             <div style="margin-top:24px;">
-              <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;
-                           opacity:0.85;margin-bottom:6px;">Room capacity</div>
+              <div style="font-size:15px;letter-spacing:2px;text-transform:uppercase;
+                           opacity:0.85;margin-bottom:8px;">Room capacity</div>
               <div style="display:inline-block;background:rgba(255,255,255,0.18);
                            border:1px solid rgba(255,255,255,0.32);
-                           padding:8px 16px;border-radius:6px;font-size:24px;font-weight:700;">
+                           padding:10px 20px;border-radius:6px;font-size:32px;font-weight:700;">
                 ${capacity}
               </div>
             </div>` : ''}
@@ -5293,6 +5307,19 @@ const Player = {
             ${meetingsHtml}
           </div>
         </div>`;
+                // Edge overlay: pulsing red when in a meeting, solid green when free/empty
+                const edgeOverlay = isBusy
+                    ? `<style>
+            @keyframes mr-pulse {
+              0%,100% { opacity:0.18; }
+              50%      { opacity:0.72; }
+            }
+          </style>
+          <div style="pointer-events:none;position:absolute;inset:0;z-index:999;
+                       box-shadow:inset 0 0 0 12px #d93025;
+                       animation:mr-pulse 1.6s ease-in-out infinite;"></div>`
+                    : `<div style="pointer-events:none;position:absolute;inset:0;z-index:999;
+                        box-shadow:inset 0 0 0 12px #34a853;"></div>`;
                 container.innerHTML = `
         <div style="position:absolute;top:0;right:0;bottom:0;left:0;display:flex;flex-direction:column;
                      background:${bg};color:${text};
@@ -5302,6 +5329,7 @@ const Player = {
             ${body}
             ${rail}
           </div>
+          ${edgeOverlay}
         </div>`;
                 if (tappable) {
                     const btns = container.querySelectorAll('[data-mr-action]');
@@ -5519,6 +5547,35 @@ const Player = {
                 if (!wsOk)
                     void fetchAndRender();
             }, refreshSeconds * 1000);
+            // Midnight rollover — re-fetch even if WS data hasn't changed, so the day
+            // window advances to the new date. Reschedules itself each time.
+            const scheduleMidnight = () => {
+                if (calContainer._calendarReqId !== reqId)
+                    return;
+                const now2 = new Date();
+                const nextMidnight = new Date(now2);
+                nextMidnight.setDate(nextMidnight.getDate() + 1);
+                nextMidnight.setHours(0, 0, 5, 0); // 5 s past midnight
+                const msUntil = nextMidnight.getTime() - now2.getTime();
+                const t = window.setTimeout(() => {
+                    if (calContainer._calendarReqId !== reqId)
+                        return;
+                    lastSig = ''; // force re-render even if event list is identical
+                    void fetchAndRender();
+                    scheduleMidnight();
+                }, msUntil);
+                // Store so teardown can clear it
+                calContainer['_midnightTimer'] = t;
+            };
+            scheduleMidnight();
+            // Patch teardown to also cancel midnight timer
+            const origUnsub = calContainer._calendarUnsub;
+            calContainer._calendarUnsub = () => {
+                origUnsub();
+                const mt = calContainer['_midnightTimer'];
+                if (typeof mt === 'number')
+                    window.clearTimeout(mt);
+            };
         });
     },
     // Render HTML content

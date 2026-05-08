@@ -47,6 +47,7 @@ param(
     [string]$PiHost,
 
     [string]$User = "chiho",
+    [int]$SshPort = 5551,
 
     [string]$SuperadminEmail = "",
     [string]$SuperadminPassword = "",
@@ -81,6 +82,7 @@ $WgtPath   = Join-Path $TizenDir "NexariPlayer.wgt"
 $SsspPath  = Join-Path $TizenDir "sssp_config.xml"
 $RemoteDir = "/var/signage/tizen"
 $SshTarget = "$User@$PiHost"
+$sshPortArgs = @("-p", $SshPort)
 
 # -- Require ssh / scp ---------------------------------------------------------
 foreach ($cmd in @("ssh", "scp")) {
@@ -246,17 +248,17 @@ finally {
 
 # -- Ensure remote directory exists -------------------------------------------
 Write-Host "==> Ensuring $RemoteDir exists on $SshTarget..." -ForegroundColor Cyan
-ssh $SshTarget "sudo mkdir -p '$RemoteDir' && sudo chown '${User}:${User}' '$RemoteDir'"
+ssh @sshPortArgs $SshTarget "sudo mkdir -p '$RemoteDir' && sudo chown '${User}:${User}' '$RemoteDir'"
 if ($LASTEXITCODE -ne 0) { throw "Failed to create remote directory" }
 
 # -- Upload -------------------------------------------------------------------
 Write-Host "==> Uploading NexariPlayer.wgt and sssp_config.xml..." -ForegroundColor Cyan
-scp "$WgtPath" "$SsspPath" "${SshTarget}:${RemoteDir}/"
+scp -P $SshPort "$WgtPath" "$SsspPath" "${SshTarget}:${RemoteDir}/"
 if ($LASTEXITCODE -ne 0) { throw "SCP upload failed" }
 
 # -- Verify -------------------------------------------------------------------
 Write-Host "==> Verifying files on Pi..." -ForegroundColor Cyan
-ssh $SshTarget "ls -lh '$RemoteDir/'"
+ssh @sshPortArgs $SshTarget "ls -lh '$RemoteDir/'"
 if ($LASTEXITCODE -ne 0) { throw "Remote verification failed" }
 
 # -- Publish release to DS API (optional) -------------------------------------

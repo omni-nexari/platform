@@ -38,6 +38,7 @@
 param(
     [string]$PiHost       = "192.168.1.17",
     [string]$User         = "chiho",
+    [int]$SshPort         = 5551,
     [string]$PanelHost    = "192.168.1.100:26101",
 
     [string]$SuperadminEmail    = "",
@@ -181,11 +182,11 @@ Write-Host "==> sssp_config.xml: <ver>$appVer</ver>  <size>$wgtBytes</size>" -Fo
 # -- Upload to Pi --------------------------------------------------------------
 Write-Host ""
 Write-Host "==> Uploading to $SshTarget:$RemoteDir ..." -ForegroundColor Cyan
-ssh $SshTarget "sudo mkdir -p '$RemoteDir' && sudo chown '${User}:${User}' '$RemoteDir'"
+ssh -p $SshPort $SshTarget "sudo mkdir -p '$RemoteDir' && sudo chown '${User}:${User}' '$RemoteDir'"
 if ($LASTEXITCODE -ne 0) { throw "Failed to create remote directory" }
-scp $WgtPath $SsspPath "${SshTarget}:${RemoteDir}/"
+scp -P $SshPort $WgtPath $SsspPath "${SshTarget}:${RemoteDir}/"
 if ($LASTEXITCODE -ne 0) { throw "SCP upload failed" }
-ssh $SshTarget "ls -lh '$RemoteDir/'"
+ssh -p $SshPort $SshTarget "ls -lh '$RemoteDir/'"
 
 # -- Optional SDB install ------------------------------------------------------
 function Install-EpaperOnPanel {

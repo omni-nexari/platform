@@ -7,6 +7,7 @@ $sdb        = "C:\tizen-studio\tools\sdb.exe"
 $appId      = "U1izu2M7CQ.NexariEPaper"
 $panel      = "192.168.1.100:26101"  # e-paper panel
 $pi         = "chiho@192.168.1.17"
+$piPort     = 5551
 $tmp        = "$env:TEMP\nexari-epaper-build"
 
 # --- Production signing profile ---
@@ -155,10 +156,10 @@ Write-Host "Updated sssp_config.xml: <ver>$appVer</ver>  <size>$wgtBytes</size>"
 Write-Host ""
 Write-Host "=== STEP 3: Deploy WGT to Pi server ($pi) ==="
 $piTizenDir = "/var/signage/tizen/epaper"
-ssh $pi "mkdir -p $piTizenDir" 2>&1 | Out-Null
-scp "$src\NexariEPaper.wgt" "${pi}:${piTizenDir}/NexariEPaper.wgt"
+ssh -p $piPort $pi "mkdir -p $piTizenDir" 2>&1 | Out-Null
+scp -P $piPort "$src\NexariEPaper.wgt" "${pi}:${piTizenDir}/NexariEPaper.wgt"
 if ($LASTEXITCODE -ne 0) { Write-Error "WGT SCP failed - check SSH access to $pi. Aborting."; exit 1 }
-scp "$src\sssp_config.xml" "${pi}:${piTizenDir}/sssp_config.xml"
+scp -P $piPort "$src\sssp_config.xml" "${pi}:${piTizenDir}/sssp_config.xml"
 if ($LASTEXITCODE -ne 0) { Write-Error "sssp_config.xml SCP failed. Aborting."; exit 1 }
 
 # ============================================================

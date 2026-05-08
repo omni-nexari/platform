@@ -4,6 +4,7 @@ $sdb   = "C:\tizen-studio\tools\sdb.exe"
 $tv    = "192.168.1.11:26101"
 $appId = "fmDBbBnvJM.NexariTizen"
 $pi    = "chiho@192.168.1.17"
+$piPort = 5551
 $tmp   = "$env:TEMP\nexari-tizen-build"
 
 # --- 1. BUILD ---
@@ -73,9 +74,9 @@ Write-Host "Updated sssp_config.xml <size> to $wgtBytes bytes"
 Write-Host ""
 Write-Host "=== STEP 1c: Deploy WGT to Pi server ($pi) ==="
 $piTizenDir = "/var/signage/tizen"
-scp "$src\NexariPlayer.wgt" "${pi}:${piTizenDir}/NexariPlayer.wgt"
+scp -P $piPort "$src\NexariPlayer.wgt" "${pi}:${piTizenDir}/NexariPlayer.wgt"
 if ($LASTEXITCODE -ne 0) { Write-Warning "WGT SCP failed - check SSH access to $pi" }
-scp "$src\sssp_config.xml" "${pi}:${piTizenDir}/sssp_config.xml"
+scp -P $piPort "$src\sssp_config.xml" "${pi}:${piTizenDir}/sssp_config.xml"
 if ($LASTEXITCODE -ne 0) { Write-Warning "sssp_config.xml SCP failed" }
 Write-Host "Pi server updated: http://192.168.1.17/tizen/NexariPlayer.wgt"
 

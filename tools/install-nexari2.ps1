@@ -8,6 +8,7 @@ $tvQBC      = "192.168.1.11:26101"
 $tvSBB      = "192.168.1.39:26101"
 $appId      = "fmDBbBnvJM.NexariTizen"
 $pi         = "chiho@192.168.1.17"
+$piPort     = 5551
 $tmp        = "$env:TEMP\nexari-tizen-build"
 
 # --- Production signing profile ---
@@ -156,10 +157,10 @@ Write-Host "Updated sssp_config.xml: <ver>$appVer</ver>  <size>$wgtBytes</size>"
 Write-Host ""
 Write-Host "=== STEP 1c: Deploy WGT to Pi server ($pi) ==="
 $piTizenDir = "/var/signage/tizen/test"
-ssh $pi "mkdir -p $piTizenDir" 2>&1 | Out-Null
-scp "$src\NexariPlayer.wgt" "${pi}:${piTizenDir}/NexariPlayer.wgt"
+ssh -p $piPort $pi "mkdir -p $piTizenDir" 2>&1 | Out-Null
+scp -P $piPort "$src\NexariPlayer.wgt" "${pi}:${piTizenDir}/NexariPlayer.wgt"
 if ($LASTEXITCODE -ne 0) { Write-Error "WGT SCP failed - check SSH access to $pi. Aborting."; exit 1 }
-scp "$src\sssp_config.xml" "${pi}:${piTizenDir}/sssp_config.xml"
+scp -P $piPort "$src\sssp_config.xml" "${pi}:${piTizenDir}/sssp_config.xml"
 if ($LASTEXITCODE -ne 0) { Write-Error "sssp_config.xml SCP failed. Aborting."; exit 1 }
 Write-Host "Pi server updated: http://192.168.1.17/tizen/test/NexariPlayer.wgt"
 

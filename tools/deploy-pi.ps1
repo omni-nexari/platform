@@ -3,6 +3,7 @@ param(
     [string]$PiHost,
 
     [string]$User = "chiho",
+    [int]$SshPort = 5551,
     [string]$RemoteDir = "/opt/signage",
 
     # GitHub HTTPS access
@@ -30,11 +31,12 @@ function Require-Command {
 Require-Command "ssh"
 
 $sshTarget = "$User@$PiHost"
+$sshPortArgs = @("-p", $SshPort)
 
 # ── Write .netrc on Pi for passwordless HTTPS clone ───────────────────────────
 Write-Host "Configuring git credentials on $sshTarget ..." -ForegroundColor Cyan
 $setupCreds = "printf 'machine github.com\nlogin $GitUsername\npassword $GitToken\n' > ~/.netrc && chmod 600 ~/.netrc"
-ssh $sshTarget $setupCreds
+ssh @sshPortArgs $sshTarget $setupCreds
 if ($LASTEXITCODE -ne 0) { throw "Failed to write .netrc on remote host" }
 
 if ($RunBootstrap) {
@@ -42,18 +44,18 @@ if ($RunBootstrap) {
     # Bootstrap requires the repo to already be present; upload a minimal copy first via git archive
     $archiveCmd = "git archive --format=tar HEAD"
     $extractCmd = "sudo mkdir -p '$RemoteDir' && sudo chown $User`:$User '$RemoteDir' && tar -xf - -C '$RemoteDir'"
-    cmd /c "$archiveCmd | ssh $sshTarget `"$extractCmd`""
+    cmd /c "$archiveCmd | ssh -p $SshPort $sshTarget `"$extractCmd`""
     if ($LASTEXITCODE -ne 0) { throw "Archive upload failed" }
     # Strip Windows CRLF line endings from shell scripts before executing
-    ssh $sshTarget "find '$RemoteDir/infra' -name '*.sh' -exec sed -i 's/\r//' {} \;"
-    ssh $sshTarget "cd '$RemoteDir' && sudo GIT_REPO='$GitRepo' GIT_USERNAME='$GitUsername' GIT_TOKEN='$GitToken' BRANCH='$Branch' APP_DIR='$RemoteDir' APP_USER='$User' bash infra/pi/bootstrap.sh"
+    ssh @sshPortArgs $sshTarget "find '$RemoteDir/infra' -name '*.sh' -exec sed -i 's/\r//' {} \;"
+    ssh @sshPortArgs $sshTarget "cd '$RemoteDir' && sudo GIT_REPO='$GitRepo' GIT_USERNAME='$GitUsername' GIT_TOKEN='$GitToken' BRANCH='$Branch' APP_DIR='$RemoteDir' APP_USER='$User' bash infra/pi/bootstrap.sh"
     if ($LASTEXITCODE -ne 0) { throw "Bootstrap failed" }
 }
 
 # ── Run update.sh on remote ───────────────────────────────────────────────────
 Write-Host "Running update on $sshTarget ..." -ForegroundColor Green
 $envStr = "APP_DIR='$RemoteDir' BRANCH='$Branch'"
-ssh $sshTarget "$envStr bash $RemoteDir/infra/pi/update.sh"
+ssh @sshPortArgs $sshTarget "$envStr bash $RemoteDir/infra/pi/update.sh"
 if ($LASTEXITCODE -ne 0) { throw "Update failed" }
 
 Write-Host ""
