@@ -114,23 +114,32 @@ async function pollAndPush(contentId: string): Promise<void> {
     const safe = applyPrivacy(events, ctx.meta.privacyMode);
     const sig = eventsSignature(safe);
 
+    const wasInBackoff = (errorStreak.get(contentId) ?? 0) > 0;
     errorStreak.delete(contentId);
     lastOkAt.set(contentId, Date.now());
 
-    if (sig === lastSigs.get(contentId)) return; // unchanged → no push
+    if (sig === lastSigs.get(contentId)) {
+      // Unchanged — if we were in backoff, restore normal poll rate now
+      if (wasInBackoff) rescheduleTimer(contentId, ctx.meta.refreshSeconds);
+      return;
+    }
     lastSigs.set(contentId, sig);
 
     const updatedAt = new Date().toISOString();
+    console.log(`[calendar-broker] push ${events.length} events → ${subs.size} device(s) for content ${contentId}`);
     for (const deviceId of subs) {
       sendCommand(deviceId, {
         type: 'calendar_events',
         payload: { contentId, events: safe as unknown[], updatedAt },
       });
     }
+    // Restore normal poll rate after recovering from backoff
+    if (wasInBackoff) rescheduleTimer(contentId, ctx.meta.refreshSeconds);
   } catch (err) {
     const next = (errorStreak.get(contentId) ?? 0) + 1;
     errorStreak.set(contentId, next);
     const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[calendar-broker] poll error for ${contentId} (streak=${next}): ${msg}`);
     // Only notify devices on the first failure of a streak; subsequent silent.
     if (next === 1) {
       for (const deviceId of subs) {

@@ -143,95 +143,106 @@ window.EpaperCalendar = (function () {
       if (new Date(e.start).getTime() <= now.getTime() && new Date(e.end).getTime() > now.getTime()) { currentEv = e; }
       if (!nextEv && new Date(e.start).getTime() > now.getTime()) { nextEv = e; }
     }
-    var isBusy     = !!currentEv;
-    var railColor  = isBusy ? '#d93025' : '#34a853';
-    var roomName   = (roomMeta.name || content.name || 'Meeting Room');
+
+    var isBusy          = !!currentEv;
+    var railColor       = isBusy ? '#d93025' : '#34a853';
+    var accentLineColor = isBusy ? '#e8602c' : '#a3c739';
+    var roomName        = roomMeta.name || content.name || 'Meeting Room';
+    var logoUrl         = roomMeta.logoUrl || '';
+    var backgroundUrl   = roomMeta.backgroundUrl || '';
+    var capacity        = roomMeta.capacity != null ? roomMeta.capacity : null;
+    var isPortrait      = window.innerHeight > window.innerWidth;
 
     var fmtRange = function (ev) {
       var s = toLocal(ev.start, tz), en = toLocal(ev.end, tz);
-      return pad2(s.getHours()) + ':' + pad2(s.getMinutes()) + ' \u2013 ' + pad2(en.getHours()) + ':' + pad2(en.getMinutes());
+      return pad2(s.getHours()) + ':' + pad2(s.getMinutes()) + ' - ' + pad2(en.getHours()) + ':' + pad2(en.getMinutes());
+    };
+    var organizer = function (ev) {
+      return ev.organizerName || ev.organizerEmail || '';
     };
 
     var statusLine = currentEv
       ? ('Until ' + fmtTime(toLocal(currentEv.end, tz)))
       : (nextEv ? 'Free until ' + fmtTime(toLocal(nextEv.start, tz)) : 'Free for the rest of the day');
 
+    // Date string — static, only changes at midnight (which triggers a full re-render)
+    var dateStr = now.getFullYear() + '.' + pad2(now.getMonth() + 1) + '.' + pad2(now.getDate());
+
+    // ── meetings list (identical to QBC) ─────────────────────────────────────
     var meetingsHtml = today.length === 0
-      ? '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:' + muted + ';font-size:28px;text-align:center;padding:40px;">No meetings scheduled for today</div>'
+      ? '<div style="display:flex;align-items:center;justify-content:center;height:100%;' +
+        'color:' + muted + ';font-size:36px;letter-spacing:2px;text-transform:uppercase;' +
+        'text-align:center;padding:40px;">No meetings scheduled for today</div>'
       : today.map(function (ev) {
           var isCurrent = ev === currentEv;
-          var org = ev.organizerName || ev.organizerEmail || '';
-          return '<div style="display:flex;gap:20px;padding:16px 24px;align-items:baseline;border-bottom:1px solid ' + border + ';' +
+          var org = organizer(ev);
+          return '<div style="display:flex;gap:28px;padding:24px 36px;align-items:baseline;' +
+                 'border-bottom:1px solid ' + border + ';' +
                  (isCurrent ? 'background:' + railColor + '1a;' : '') + '">' +
-                   '<div style="font-size:20px;font-weight:600;color:' + text + ';white-space:nowrap;min-width:160px;">' + esc(fmtRange(ev)) + '</div>' +
+                   '<div style="font-variant-numeric:tabular-nums;font-size:30px;font-weight:600;' +
+                   'color:' + text + ';white-space:nowrap;min-width:220px;">' + esc(fmtRange(ev)) + '</div>' +
                    '<div style="flex:1;min-width:0;">' +
-                     '<div style="font-size:20px;font-weight:600;color:' + text + ';">' + esc(ev.title || 'Reserved') + '</div>' +
-                     (org ? '<div style="font-size:14px;color:' + muted + ';margin-top:2px;">(' + esc(org) + ')</div>' : '') +
+                     '<div style="font-size:30px;font-weight:600;color:' + text + ';line-height:1.25;">' + esc(ev.title || 'Reserved') + '</div>' +
+                     (org ? '<div style="font-size:20px;color:' + muted + ';margin-top:4px;">(' + esc(org) + ')</div>' : '') +
                    '</div>' +
-                   (isCurrent ? '<div style="background:' + railColor + ';color:#fff;padding:4px 10px;border-radius:4px;font-size:11px;font-weight:700;align-self:center;flex-shrink:0;">Now</div>' : '') +
+                   (isCurrent ? '<div style="background:' + railColor + ';color:#fff;padding:6px 14px;border-radius:4px;' +
+                   'font-size:16px;text-transform:uppercase;letter-spacing:1px;align-self:center;flex-shrink:0;">Now</div>' : '') +
                  '</div>';
         }).join('');
 
-    // Portrait layout: status band at top, meetings list below.
-    // Landscape layout: meetings list left, status column (260px) right.
-    var isPortrait = window.innerHeight > window.innerWidth;
+    // ── header (identical to QBC) ─────────────────────────────────────────────
+    var header =
+      '<div style="display:flex;align-items:center;gap:18px;padding:18px 32px;' +
+      'background:' + (isDark ? '#2a2e3e' : '#f1f3f5') + ';' +
+      'border-bottom:3px solid ' + accentLineColor + ';flex-shrink:0;">' +
+        (logoUrl ? '<img src="' + esc(logoUrl) + '" alt="" style="height:64px;max-width:180px;object-fit:contain;flex-shrink:0;" />' : '') +
+        '<div style="font-size:52px;font-weight:700;color:' + text + ';letter-spacing:2px;text-transform:uppercase;">' + esc(roomName) + '</div>' +
+        (roomMeta.location ? '<div style="font-size:22px;color:' + muted + ';margin-left:16px;">' + esc(roomMeta.location) + '</div>' : '') +
+      '</div>';
 
-    var statusBlock;
-    if (isPortrait) {
-      // Full-width horizontal status band for portrait displays (e-paper)
-      statusBlock =
-        '<div style="background:' + railColor + ';color:#fff;flex-shrink:0;display:flex;' +
-        'align-items:center;padding:24px 40px;">' +
-          '<div>' +
-            '<div style="font-size:38px;font-weight:700;letter-spacing:1px;">' + (isBusy ? 'IN USE' : 'AVAILABLE') + '</div>' +
-            '<div style="font-size:26px;opacity:0.9;margin-top:6px;">' + esc(statusLine) + '</div>' +
-          '</div>' +
-        '</div>';
-    } else {
-      // Side column for landscape displays (TV/QBC)
-      statusBlock =
-        '<div style="background:' + railColor + ';color:#fff;width:300px;flex-shrink:0;' +
-        'display:flex;flex-direction:column;justify-content:center;padding:28px 24px;">' +
-          '<div style="font-size:24px;font-weight:700;letter-spacing:1px;">' + (isBusy ? 'IN USE' : 'AVAILABLE') + '</div>' +
-          '<div style="font-size:17px;opacity:0.9;margin-top:6px;">' + esc(statusLine) + '</div>' +
-        '</div>';
-    }
+    // ── rail / status panel (QBC minus clock — no setInterval updates) ────────
+    // Clock removed entirely: no #cal-clock, no startClock() — prevents screen refresh.
+    // Date line is static (changes only at midnight → full re-render anyway).
+    var rail =
+      '<div style="background:' + railColor + ';color:#fff;display:flex;flex-direction:column;' +
+      'padding:28px 26px;' + (isPortrait ? 'flex-shrink:0;' : 'width:360px;flex-shrink:0;') + '">' +
+        '<div style="font-size:22px;opacity:0.9;margin-top:0;">' + dateStr + '</div>' +
+        '<div style="font-size:28px;font-weight:700;margin-top:22px;letter-spacing:1px;">' + (isBusy ? 'IN USE' : 'AVAILABLE') + '</div>' +
+        '<div style="font-size:18px;opacity:0.92;margin-top:6px;">' + esc(statusLine) + '</div>' +
+        (capacity != null
+          ? '<div style="margin-top:24px;">' +
+              '<div style="font-size:15px;letter-spacing:2px;text-transform:uppercase;opacity:0.85;margin-bottom:8px;">Room capacity</div>' +
+              '<div style="display:inline-block;background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.32);' +
+              'padding:10px 20px;border-radius:6px;font-size:32px;font-weight:700;">' + esc(String(capacity)) + '</div>' +
+            '</div>'
+          : '') +
+      '</div>';
 
-    var meetingsFontSize = isPortrait ? '32px' : '26px';
-    var meetingsOrgSize  = isPortrait ? '24px' : '18px';
-    var meetingsPadding  = isPortrait ? '22px 40px' : '18px 28px';
-    var timeMinWidth     = isPortrait ? '240px' : '200px';
+    // ── body: meetings list with optional background ──────────────────────────
+    var body =
+      '<div style="flex:1;position:relative;overflow:hidden;' +
+      (backgroundUrl ? 'background-image:url(' + JSON.stringify(backgroundUrl) + ');background-size:cover;background-position:center;' : '') + '">' +
+        (backgroundUrl ? '<div style="position:absolute;inset:0;background:' + (isDark ? 'rgba(30,30,46,0.78)' : 'rgba(255,255,255,0.78)') + ';"></div>' : '') +
+        '<div style="position:relative;height:100%;overflow-y:auto;">' + meetingsHtml + '</div>' +
+      '</div>';
 
-    meetingsHtml = today.length === 0
-      ? '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:' + muted + ';font-size:' + meetingsFontSize + ';text-align:center;padding:40px;">No meetings scheduled for today</div>'
-      : today.map(function (ev) {
-          var isCurrent = ev === currentEv;
-          var org = ev.organizerName || ev.organizerEmail || '';
-          return '<div style="display:flex;gap:20px;padding:' + meetingsPadding + ';align-items:baseline;border-bottom:1px solid ' + border + ';' +
-                 (isCurrent ? 'background:' + railColor + '1a;' : '') + '">' +
-                   '<div style="font-size:' + meetingsFontSize + ';font-weight:600;color:' + text + ';white-space:nowrap;min-width:' + timeMinWidth + ';">' + esc(fmtRange(ev)) + '</div>' +
-                   '<div style="flex:1;min-width:0;">' +
-                     '<div style="font-size:' + meetingsFontSize + ';font-weight:600;color:' + text + ';">' + esc(ev.title || 'Reserved') + '</div>' +
-                     (org ? '<div style="font-size:' + meetingsOrgSize + ';color:' + muted + ';margin-top:2px;">(' + esc(org) + ')</div>' : '') +
-                   '</div>' +
-                   (isCurrent ? '<div style="background:' + railColor + ';color:#fff;padding:4px 10px;border-radius:4px;font-size:' + meetingsOrgSize + ';font-weight:700;align-self:center;flex-shrink:0;">Now</div>' : '') +
-                 '</div>';
-        }).join('');
+    // ── edge overlay: static (no animation — e-paper avoids constant redraws) ─
+    var edgeOverlay =
+      '<div style="pointer-events:none;position:absolute;inset:0;z-index:999;' +
+      'box-shadow:inset 0 0 0 12px ' + railColor + ';"></div>';
 
     container.innerHTML =
-      '<div style="position:absolute;inset:0;display:flex;flex-direction:column;background:' + bg + ';color:' + text + ';' +
+      '<div style="position:absolute;top:0;right:0;bottom:0;left:0;display:flex;flex-direction:column;' +
+      'background:' + bg + ';color:' + text + ';' +
       'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;overflow:hidden;">' +
-        // Header: room name
-        '<div style="display:flex;align-items:center;gap:16px;padding:20px 36px;' +
-             'background:' + (isDark ? '#2a2e3e' : '#f1f3f5') + ';border-bottom:4px solid ' + railColor + ';flex-shrink:0;">' +
-          '<div style="font-size:' + (isPortrait ? '42px' : '36px') + ';font-weight:700;color:' + text + ';letter-spacing:1px;text-transform:uppercase;">' + esc(roomName) + '</div>' +
-          (roomMeta.location ? '<div style="font-size:' + (isPortrait ? '24px' : '20px') + ';color:' + muted + ';">' + esc(roomMeta.location) + '</div>' : '') +
+        header +
+        // Portrait: meetings on top, rail (status) at bottom — same as QBC portrait
+        // Landscape: meetings left (flex:1), rail right (360px) — same as QBC landscape
+        '<div style="flex:1;display:flex;flex-direction:' + (isPortrait ? 'column' : 'row') + ';overflow:hidden;">' +
+          body +
+          rail +
         '</div>' +
-        // Portrait: status band then meetings; Landscape: meetings + side column
-        (isPortrait
-          ? statusBlock + '<div style="flex:1;overflow-y:auto;">' + meetingsHtml + '</div>'
-          : '<div style="flex:1;display:flex;overflow:hidden;"><div style="flex:1;overflow-y:auto;">' + meetingsHtml + '</div>' + statusBlock + '</div>'
-        ) +
+        edgeOverlay +
       '</div>';
   }
 

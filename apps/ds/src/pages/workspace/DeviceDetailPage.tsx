@@ -2033,7 +2033,7 @@ export function DeviceDetailContent({
           </SectionCard>
 
           {/* ── Network Configuration ───────────────────────────────────── */}
-          {isOnline && (
+          {!isEpaper && isOnline && (
           <SectionCard>
             <SectionCardHeader>
               <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
@@ -2222,7 +2222,7 @@ export function DeviceDetailContent({
       <SectionCard>
         <SectionCardHeader>
           <h2 className="text-sm font-semibold text-[var(--text)]">Settings</h2>
-          {device.mdcLastPoll && (
+          {device.mdcLastPoll && !isEpaper && (
             <span className="text-xs text-[var(--text-muted)]">MDC polled {formatDistanceToNow(device.mdcLastPoll)}</span>
           )}
         </SectionCardHeader>
@@ -2253,6 +2253,7 @@ export function DeviceDetailContent({
             </div>
 
             {/* ── Display Settings (MDC) ───────────────────────────────── */}
+            {!isEpaper && (
             <div className="sm:col-span-2 space-y-5">
 
               {/* 2×2 toggle grid */}
@@ -2404,6 +2405,7 @@ export function DeviceDetailContent({
               )}
 
             </div>
+            )} {/* !isEpaper — MDC Display Settings */}
 
             <div className="sm:col-span-2 flex justify-end">
               <ActionButton type="submit" disabled={!isDirty || isSubmitting || updateDevice.isPending}

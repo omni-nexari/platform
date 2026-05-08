@@ -365,6 +365,17 @@ const Player = {
         void Telemetry.send(this.deviceId).catch((error: unknown) => {
           logger.warn('Initial WebSocket telemetry failed:', error);
         });
+        // Re-subscribe any active calendar content items. The server drops
+        // subscriptions on socket close, so we must re-send on every reconnect.
+        if (this._calendarPushHandlers.size > 0) {
+          const ws = this.wsConnection!;
+          for (const contentId of this._calendarPushHandlers.keys()) {
+            try {
+              ws.send(JSON.stringify({ type: 'calendar_subscribe', payload: { contentId } }));
+              logger.info('Re-subscribed calendar after WS reconnect:', contentId);
+            } catch (e) { logger.warn('calendar re-subscribe failed', contentId, e); }
+          }
+        }
         // Take a screenshot shortly after connect to populate the device card thumbnail,
         // but ONLY if content is already playing (loaded from cache). If nothing is playing
         // yet, _thumbnailOnItemStart will fire once the first item renders.

@@ -138,6 +138,73 @@ window.EpaperWS = (function() {
         if (logger && typeof logger._flush === 'function') logger._flush();
         break;
 
+      case 'screenshot': {
+        // Capture the current on-screen content as JPEG via canvas and send back.
+        // For image content: draws #content-image directly.
+        // For calendar (DOM) content: uses SVG foreignObject rasterisation.
+        // Falls back gracefully if either method fails.
+        (function captureAndSend() {
+          var w = window.innerWidth  || screen.width  || 1200;
+          var h = window.innerHeight || screen.height || 1600;
+          try {
+            var canvas = document.createElement('canvas');
+            canvas.width  = w;
+            canvas.height = h;
+            var ctx = canvas.getContext('2d');
+            // White background (e-paper default)
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, w, h);
+
+            var imgEl = document.getElementById('content-image');
+            if (imgEl && !imgEl.hidden && imgEl.naturalWidth > 0) {
+              // Direct image content — safe to draw if same-origin
+              try { ctx.drawImage(imgEl, 0, 0, w, h); } catch (_) {}
+              var b64 = canvas.toDataURL('image/jpeg', 0.85).replace(/^data:[^;]+;base64,/, '');
+              send({ type: 'screenshot_data', payload: { dataBase64: b64, trigger: 'manual', contentId: null } });
+              logger.info('[WS] screenshot sent (image mode, ' + b64.length + ' chars)');
+              return;
+            }
+
+            // Calendar/DOM content — serialise to SVG foreignObject, rasterise via Image
+            var calEl = document.getElementById('content-calendar');
+            var srcEl = calEl && calEl.firstElementChild ? calEl : document.body;
+            var xml = new XMLSerializer().serializeToString(srcEl);
+            // Encode XML chars that would break the SVG data URI
+            xml = xml.replace(/&(?!amp;|lt;|gt;|quot;|apos;)/g, '&amp;');
+            var svgSrc = [
+              '<svg xmlns="http://www.w3.org/2000/svg" width="', w, '" height="', h, '">',
+              '<foreignObject width="100%" height="100%">',
+              '<div xmlns="http://www.w3.org/1999/xhtml">',
+              xml,
+              '</div></foreignObject></svg>',
+            ].join('');
+            var blob = new Blob([svgSrc], { type: 'image/svg+xml;charset=utf-8' });
+            var url  = URL.createObjectURL(blob);
+            var img  = new Image();
+            img.onload = function() {
+              try {
+                ctx.drawImage(img, 0, 0, w, h);
+                URL.revokeObjectURL(url);
+                var b64 = canvas.toDataURL('image/jpeg', 0.85).replace(/^data:[^;]+;base64,/, '');
+                send({ type: 'screenshot_data', payload: { dataBase64: b64, trigger: 'manual', contentId: null } });
+                logger.info('[WS] screenshot sent (DOM mode, ' + b64.length + ' chars)');
+              } catch (e) {
+                URL.revokeObjectURL(url);
+                logger.warn('[WS] screenshot canvas draw failed: ' + (e && e.message));
+              }
+            };
+            img.onerror = function() {
+              URL.revokeObjectURL(url);
+              logger.warn('[WS] screenshot SVG image load failed');
+            };
+            img.src = url;
+          } catch (e) {
+            logger.warn('[WS] screenshot capture failed: ' + (e && e.message));
+          }
+        })();
+        break;
+      }
+
       default:
         // Ignore TV-specific commands silently
         logger.debug('[WS] ignored type=' + t);
