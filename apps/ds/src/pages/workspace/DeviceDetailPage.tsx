@@ -1333,6 +1333,7 @@ export function DeviceDetailContent({
 
   const { device, screenshots, latestHeartbeat: hb } = data;
   const isOnline    = device.status === 'online';
+  const isEpaper    = device.kind === 'epaper';
   const cmdDisabled = !isOnline || cmdMutation.isPending;
   const fallbackNowPlaying = device.publishedTarget?.name ?? null;
   const fallbackNowPlayingType = device.publishedTarget?.type ?? null;
@@ -1450,7 +1451,6 @@ export function DeviceDetailContent({
       {(() => {
         const deviceType = device.type ?? 'signage';
         const isTizen = (device.platform ?? 'tizen') === 'tizen';
-        const isEpaper = device.kind === 'epaper';
         const TABS: Array<{ id: DeviceTabId; label: string }> = [
           { id: 'info',         label: 'Info' },
           ...(isEpaper ? [{ id: 'epaper' as DeviceTabId, label: 'E-Paper' }] : []),
