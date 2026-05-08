@@ -82,9 +82,11 @@
         </div>
     </div>
 
-    <!-- Player Screen — full-bleed image only (e-paper) -->
+    <!-- Player Screen — full-bleed image / HTML calendar / HTML5 iframe -->
     <div id="player-screen" class="screen hidden">
         <img id="content-image" alt="" />
+        <div id="content-calendar"></div>
+        <iframe id="content-frame" title="HTML5 content" allowfullscreen></iframe>
         <div id="status-bar" class="status-bar">
             <span id="device-name">E-Paper</span>
             <span id="connection-status">●</span>
@@ -110,6 +112,7 @@
     <script src="js/telemetry.js"></script>
     <script src="js/epaper-power.js"></script>
     <script src="js/epaper-cache.js"></script>
+    <script src="js/epaper-calendar.js"></script>
     <script src="js/epaper-renderer.js"></script>
     <script src="js/epaper-ws.js"></script>
     <script src="js/epaper-updater.js"></script>

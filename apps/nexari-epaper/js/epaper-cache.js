@@ -199,14 +199,18 @@ window.EpaperCache = (function() {
   // Single download path â€” no tizen.download needed for content images.
   // tizen.download is reserved for OTA .wgt packages (EpaperUpdater).
   function downloadAsset(url, contentId, token, noPersist) {
+    var responseMime = 'image/jpeg';
     return fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
       .then(function(res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
+        responseMime = res.headers.get('content-type') || 'image/jpeg';
+        // Strip charset / parameters — Blob only needs the media type
+        responseMime = responseMime.split(';')[0].trim();
         return res.arrayBuffer();
       })
       .then(function(data) {
         // Create blob URL for immediate rendering
-        var blob = new Blob([data], { type: 'image/jpeg' });
+        var blob = new Blob([data], { type: responseMime });
         var blobUrl = URL.createObjectURL(blob);
         mem.set(contentId, { blobUrl: blobUrl, size: data.byteLength, lastUsed: Date.now(), source: 'net' });
         if (!noPersist && fsAvailable()) {
@@ -272,9 +276,14 @@ window.EpaperCache = (function() {
       }).then(function(diskBlobUrl) {
         if (diskBlobUrl) return diskBlobUrl;
 
-        // 3. Download from server
-        var url = CONFIG.API_BASE + '/devices/device/content/' + encodeURIComponent(contentId) +
-          '/epaper.jpg?mode=' + encodeURIComponent(mode);
+        // 3. Download from server.
+        // Calendars need server-side SVG rasterisation → use /epaper.jpg.
+        // Regular images: fetch the original file directly — the <img> tag +
+        // object-fit:contain scales it natively, no server resize needed.
+        var isCalendar = opts.isCalendar || false;
+        var url = isCalendar
+          ? CONFIG.API_BASE + '/devices/device/content/' + encodeURIComponent(contentId) + '/epaper.jpg?mode=' + encodeURIComponent(mode)
+          : CONFIG.API_BASE + '/devices/device/content/' + encodeURIComponent(contentId) + '/file';
         return downloadAsset(url, contentId, token, noPersist).then(function(blobUrl) {
           if (!blobUrl) throw new Error('download returned null');
           return blobUrl;

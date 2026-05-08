@@ -28,14 +28,36 @@ window.EpaperRenderer = (function() {
     started: false,
   };
 
-  function imgEl() { return document.getElementById('content-image'); }
+  function imgEl()  { return document.getElementById('content-image'); }
+  function calEl()  { return document.getElementById('content-calendar'); }
+  function frameEl(){ return document.getElementById('content-frame'); }
+
+  // Show exactly one content element; hide the others + clean up the calendar
+  // renderer so timers don't keep running while a different content is visible.
+  function showContentElement(type) {
+    var img   = imgEl();
+    var cal   = calEl();
+    var frame = frameEl();
+    if (img)   img.style.display   = (type === 'image')    ? '' : 'none';
+    if (cal)   cal.style.display   = (type === 'calendar') ? 'block' : 'none';
+    if (frame) frame.style.display = (type === 'html5')    ? 'block' : 'none';
+    // Destroy the calendar renderer when it goes off-screen
+    if (type !== 'calendar' && cal && window.EpaperCalendar) {
+      try { EpaperCalendar.destroy(cal); } catch (e) {}
+    }
+    // Clear iframe src when it goes off-screen to stop network activity
+    if (type !== 'html5' && frame) {
+      try { frame.src = 'about:blank'; } catch (e) {}
+    }
+  }
 
   function isRenderable(content) {
     if (!content) return false;
     var t = String(content.type || '').toLowerCase();
-    // Images are immutable per contentId — served from the cache.
-    // Calendars are server-rasterised on every request via /epaper.jpg.
-    return t === 'image' || t === 'calendar';
+    // image: served directly from the file endpoint (no server processing).
+    // calendar: events fetched as JSON and rendered as HTML by EpaperCalendar.
+    // html5: HTML5 package served via /html5/:token/* and loaded in an iframe.
+    return t === 'image' || t === 'calendar' || t === 'html5';
   }
 
   // Build a stable change-detection key from the resolved playlist.
@@ -72,18 +94,49 @@ window.EpaperRenderer = (function() {
     var items = state.currentItems;
     if (!items || items.length === 0) return Promise.resolve();
     var content = items[idx % items.length];
+    var t = String((content && content.type) || '').toLowerCase();
 
-    // Calendar variants change as events do; bypass the persistent cache so
-    // we always pull a fresh server-rasterised JPEG for calendars. Images are
-    // immutable per contentId, so the LRU cache is the right answer for them.
-    var isCalendar = content && String(content.type || '').toLowerCase() === 'calendar';
-    var fetchPromise;
-    if (isCalendar) {
-      try { EpaperCache.invalidate(content.id); } catch (_) {}
-      fetchPromise = EpaperCache.getOrFetch(content.id, { token: state.deviceToken, mode: 'contain', noPersist: true });
-    } else {
-      fetchPromise = EpaperCache.getOrFetch(content.id, { token: state.deviceToken, mode: 'contain' });
+    // ── HTML5 package: load in iframe ────────────────────────────────────────
+    if (t === 'html5') {
+      return new Promise(function (resolve) {
+        var frame = frameEl();
+        if (!frame) { resolve(); return; }
+        showContentElement('html5');
+        var token = state.deviceToken || '';
+        var url = CONFIG.API_BASE + '/devices/device/content/' + encodeURIComponent(content.id) +
+                  '/html5/' + encodeURIComponent(token) + '/index.html';
+        frame.src = url;
+        state.lastSwapAt = Date.now();
+        resolve();
+        // Request partial e-paper refresh after brief load delay
+        setTimeout(function () {
+          if (window.EpaperPower && EpaperPower.isAvailable()) {
+            try { EpaperPower.refreshNow(); } catch (e) {}
+          }
+        }, 2000);
+      });
     }
+
+    // ── Calendar: render events as HTML in the DOM ───────────────────────────
+    if (t === 'calendar') {
+      return new Promise(function (resolve) {
+        var cal = calEl();
+        if (!cal) { resolve(); return; }
+        showContentElement('calendar');
+        if (window.EpaperCalendar) {
+          EpaperCalendar.render(cal, content, state.deviceToken || '');
+        }
+        state.lastSwapAt = Date.now();
+        resolve();
+        if (window.EpaperPower && EpaperPower.isAvailable()) {
+          try { EpaperPower.refreshNow(); } catch (e) {}
+        }
+      });
+    }
+
+    // ── Image: download file and display via <img> ────────────────────────────
+    showContentElement('image');
+    var fetchPromise = EpaperCache.getOrFetch(content.id, { token: state.deviceToken });
 
     return fetchPromise
       .then(function(blobUrl) {
@@ -111,7 +164,7 @@ window.EpaperRenderer = (function() {
           var nextIdx = (idx + k) % items.length;
           if (items[nextIdx] && items[nextIdx].id !== content.id) lookahead.push(items[nextIdx].id);
         }
-        if (lookahead.length > 0) EpaperCache.prefetch(lookahead, { token: state.deviceToken, mode: 'contain' });
+        if (lookahead.length > 0) EpaperCache.prefetch(lookahead, { token: state.deviceToken });
       })
       .catch(function(err) {
         logger.warn('[Renderer] fetch failed for ' + content.id + ': ' + (err && err.message));
@@ -150,6 +203,7 @@ window.EpaperRenderer = (function() {
       : [];
     if (items.length === 0) {
       logger.info('[Renderer] no renderable content for current slot');
+      showContentElement('image'); // hide calendar/frame, show blank img
       var img = imgEl();
       if (img) { img.removeAttribute('src'); img.alt = 'No content'; }
       state.currentItems = [];
