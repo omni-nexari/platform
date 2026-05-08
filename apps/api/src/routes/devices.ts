@@ -2123,7 +2123,7 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     // Fall back to known panel defaults when panel_w/panel_h are not yet stored
     // (migration 0055 not yet applied, or device registered before e-paper support).
-    // EM13DX = 1600×1200 (4:3), EM32DX = 2560×1440 (16:9).
+    // EM13DX1 = 1600×1200 (4:3), EM32DX2 = 2560×1440 (16:9).
     const resolvedPanelDims = (d: NonNullable<typeof device>): { panelW: number; panelH: number } | null => {
       if (d.panelW && d.panelH) return { panelW: d.panelW, panelH: d.panelH };
       const mn = (d.modelName ?? '').toUpperCase();
