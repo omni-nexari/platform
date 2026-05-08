@@ -181,7 +181,7 @@ Write-Host "==> sssp_config.xml: <ver>$appVer</ver>  <size>$wgtBytes</size>" -Fo
 
 # -- Upload to Pi --------------------------------------------------------------
 Write-Host ""
-Write-Host "==> Uploading to $SshTarget:$RemoteDir ..." -ForegroundColor Cyan
+Write-Host "==> Uploading to ${SshTarget}:${RemoteDir} ..." -ForegroundColor Cyan
 ssh -p $SshPort $SshTarget "sudo mkdir -p '$RemoteDir' && sudo chown '${User}:${User}' '$RemoteDir'"
 if ($LASTEXITCODE -ne 0) { throw "Failed to create remote directory" }
 scp -P $SshPort $WgtPath $SsspPath "${SshTarget}:${RemoteDir}/"
