@@ -157,7 +157,7 @@ window.EpaperCalendar = (function () {
       : (nextEv ? 'Free until ' + fmtTime(toLocal(nextEv.start, tz)) : 'Free for the rest of the day');
 
     var meetingsHtml = today.length === 0
-      ? '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:' + muted + ';font-size:22px;text-align:center;padding:40px;">No meetings scheduled for today</div>'
+      ? '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:' + muted + ';font-size:28px;text-align:center;padding:40px;">No meetings scheduled for today</div>'
       : today.map(function (ev) {
           var isCurrent = ev === currentEv;
           var org = ev.organizerName || ev.organizerEmail || '';
@@ -172,39 +172,72 @@ window.EpaperCalendar = (function () {
                  '</div>';
         }).join('');
 
+    // Portrait layout: status band at top, meetings list below.
+    // Landscape layout: meetings list left, status column (260px) right.
+    var isPortrait = window.innerHeight > window.innerWidth;
+
+    var statusBlock;
+    if (isPortrait) {
+      // Full-width horizontal status band for portrait displays (e-paper)
+      statusBlock =
+        '<div style="background:' + railColor + ';color:#fff;flex-shrink:0;display:flex;' +
+        'align-items:center;padding:24px 40px;">' +
+          '<div>' +
+            '<div style="font-size:38px;font-weight:700;letter-spacing:1px;">' + (isBusy ? 'IN USE' : 'AVAILABLE') + '</div>' +
+            '<div style="font-size:26px;opacity:0.9;margin-top:6px;">' + esc(statusLine) + '</div>' +
+          '</div>' +
+        '</div>';
+    } else {
+      // Side column for landscape displays (TV/QBC)
+      statusBlock =
+        '<div style="background:' + railColor + ';color:#fff;width:300px;flex-shrink:0;' +
+        'display:flex;flex-direction:column;justify-content:center;padding:28px 24px;">' +
+          '<div style="font-size:24px;font-weight:700;letter-spacing:1px;">' + (isBusy ? 'IN USE' : 'AVAILABLE') + '</div>' +
+          '<div style="font-size:17px;opacity:0.9;margin-top:6px;">' + esc(statusLine) + '</div>' +
+        '</div>';
+    }
+
+    var meetingsFontSize = isPortrait ? '32px' : '26px';
+    var meetingsOrgSize  = isPortrait ? '24px' : '18px';
+    var meetingsPadding  = isPortrait ? '22px 40px' : '18px 28px';
+    var timeMinWidth     = isPortrait ? '240px' : '200px';
+
+    meetingsHtml = today.length === 0
+      ? '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:' + muted + ';font-size:' + meetingsFontSize + ';text-align:center;padding:40px;">No meetings scheduled for today</div>'
+      : today.map(function (ev) {
+          var isCurrent = ev === currentEv;
+          var org = ev.organizerName || ev.organizerEmail || '';
+          return '<div style="display:flex;gap:20px;padding:' + meetingsPadding + ';align-items:baseline;border-bottom:1px solid ' + border + ';' +
+                 (isCurrent ? 'background:' + railColor + '1a;' : '') + '">' +
+                   '<div style="font-size:' + meetingsFontSize + ';font-weight:600;color:' + text + ';white-space:nowrap;min-width:' + timeMinWidth + ';">' + esc(fmtRange(ev)) + '</div>' +
+                   '<div style="flex:1;min-width:0;">' +
+                     '<div style="font-size:' + meetingsFontSize + ';font-weight:600;color:' + text + ';">' + esc(ev.title || 'Reserved') + '</div>' +
+                     (org ? '<div style="font-size:' + meetingsOrgSize + ';color:' + muted + ';margin-top:2px;">(' + esc(org) + ')</div>' : '') +
+                   '</div>' +
+                   (isCurrent ? '<div style="background:' + railColor + ';color:#fff;padding:4px 10px;border-radius:4px;font-size:' + meetingsOrgSize + ';font-weight:700;align-self:center;flex-shrink:0;">Now</div>' : '') +
+                 '</div>';
+        }).join('');
+
     container.innerHTML =
       '<div style="position:absolute;inset:0;display:flex;flex-direction:column;background:' + bg + ';color:' + text + ';' +
       'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;overflow:hidden;">' +
-        '<div style="display:flex;align-items:center;gap:16px;padding:16px 28px;' +
-             'background:' + (isDark ? '#2a2e3e' : '#f1f3f5') + ';border-bottom:3px solid ' + railColor + ';flex-shrink:0;">' +
-          '<div style="font-size:28px;font-weight:700;color:' + text + ';letter-spacing:1px;text-transform:uppercase;">' + esc(roomName) + '</div>' +
-          (roomMeta.location ? '<div style="font-size:14px;color:' + muted + ';">' + esc(roomMeta.location) + '</div>' : '') +
+        // Header: room name
+        '<div style="display:flex;align-items:center;gap:16px;padding:20px 36px;' +
+             'background:' + (isDark ? '#2a2e3e' : '#f1f3f5') + ';border-bottom:4px solid ' + railColor + ';flex-shrink:0;">' +
+          '<div style="font-size:' + (isPortrait ? '42px' : '36px') + ';font-weight:700;color:' + text + ';letter-spacing:1px;text-transform:uppercase;">' + esc(roomName) + '</div>' +
+          (roomMeta.location ? '<div style="font-size:' + (isPortrait ? '24px' : '20px') + ';color:' + muted + ';">' + esc(roomMeta.location) + '</div>' : '') +
         '</div>' +
-        '<div style="flex:1;display:flex;overflow:hidden;">' +
-          '<div style="flex:1;overflow-y:auto;">' + meetingsHtml + '</div>' +
-          '<div style="background:' + railColor + ';color:#fff;width:260px;flex-shrink:0;display:flex;flex-direction:column;padding:24px 20px;">' +
-            '<div id="cal-clock" style="font-size:44px;font-weight:700;letter-spacing:-1px;line-height:1;">' + esc(fmtTime(now)) + '</div>' +
-            '<div style="font-size:14px;opacity:0.9;margin-top:4px;">' + esc(now.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })) + '</div>' +
-            '<div style="font-size:18px;font-weight:700;margin-top:16px;letter-spacing:1px;">' + (isBusy ? 'IN USE' : 'AVAILABLE') + '</div>' +
-            '<div style="font-size:13px;opacity:0.9;margin-top:4px;">' + esc(statusLine) + '</div>' +
-          '</div>' +
-        '</div>' +
+        // Portrait: status band then meetings; Landscape: meetings + side column
+        (isPortrait
+          ? statusBlock + '<div style="flex:1;overflow-y:auto;">' + meetingsHtml + '</div>'
+          : '<div style="flex:1;display:flex;overflow:hidden;"><div style="flex:1;overflow-y:auto;">' + meetingsHtml + '</div>' + statusBlock + '</div>'
+        ) +
       '</div>';
   }
 
   // ── instance tracking ───────────────────────────────────────────────────────
   // keyed by content.id so multiple calendars could coexist (playlist cycling)
   var _instances = {};
-  var _clockTimers = {};
-
-  function startClock(container) {
-    var key = container.id || '_cal';
-    if (_clockTimers[key]) clearInterval(_clockTimers[key]);
-    _clockTimers[key] = setInterval(function () {
-      var el = container.querySelector('#cal-clock');
-      if (el) el.textContent = fmtTime(new Date());
-    }, 30000);
-  }
 
   // ── public API ──────────────────────────────────────────────────────────────
 
@@ -219,17 +252,15 @@ window.EpaperCalendar = (function () {
     try { meta = JSON.parse(content.metadata || '{}'); } catch (e) {}
     var view          = meta.view || 'agenda';
     var tz            = meta.timezone || 'UTC';
-    var refreshSec    = Math.max(15, Number(meta.refreshSeconds) || 60);
     var lookaheadDays = (view === 'day' || view === 'meeting_room') ? 1 : (view === 'month' ? 31 : 7);
 
-    var inst = { id: id, timer: null, lastSig: '', container: container };
+    var inst = { id: id, midnightTimer: null, lastSig: '', container: container, content: content };
     _instances[id] = inst;
 
     var doRender = function (evs) {
       if (_instances[id] !== inst) return;
       if (view === 'meeting_room') {
         renderMeetingRoom(container, evs, content, meta, tz);
-        startClock(container); // meeting room has a live clock widget
       } else {
         renderAgenda(container, evs, content, meta, tz);
         // agenda view has no clock — no timer needed
@@ -260,9 +291,6 @@ window.EpaperCalendar = (function () {
           if (sig !== inst.lastSig) {
             inst.lastSig = sig;
             doRender(evs);
-          } else {
-            // Even if events haven't changed, refresh "now" indicators
-            startClock(container);
           }
         })
         .catch(function (err) {
@@ -290,20 +318,74 @@ window.EpaperCalendar = (function () {
     } catch (e) {}
 
     doFetch();
-    inst.timer = setInterval(doFetch, refreshSec * 1000);
+
+    // Subscribe for server-pushed updates via WS (server pushes calendar_events
+    // whenever the calendar connection syncs new events — no polling needed).
+    if (window.EpaperWS && EpaperWS.isOpen()) {
+      EpaperWS.push({ type: 'calendar_subscribe', payload: { contentId: id } });
+    }
+
+    // Schedule a re-fetch at the next local midnight so the date range rolls
+    // over to the next day automatically. No periodic polling — this is the
+    // only timer, keeping the e-paper battery draw minimal.
+    function scheduleMidnightRefresh() {
+      if (_instances[id] !== inst) return;
+      var now = new Date();
+      var msUntilMidnight = (new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)).getTime() - now.getTime();
+      inst.midnightTimer = setTimeout(function() {
+        if (_instances[id] !== inst) return;
+        logger.info('[EpaperCalendar] midnight refresh for ' + id);
+        doFetch();
+        scheduleMidnightRefresh(); // reschedule for the next midnight
+      }, msUntilMidnight + 5000); // +5s buffer past midnight
+    }
+    scheduleMidnightRefresh();
   }
 
   function destroy(container) {
     Object.keys(_instances).forEach(function (id) {
       if (_instances[id].container === container) {
-        if (_instances[id].timer) clearInterval(_instances[id].timer);
+        if (_instances[id].midnightTimer) clearTimeout(_instances[id].midnightTimer);
+        // Unsubscribe from server-pushed calendar events for this content
+        if (window.EpaperWS && EpaperWS.isOpen()) {
+          EpaperWS.push({ type: 'calendar_unsubscribe', payload: { contentId: id } });
+        }
         delete _instances[id];
       }
     });
-    var key = container.id || '_cal';
-    if (_clockTimers[key]) { clearInterval(_clockTimers[key]); delete _clockTimers[key]; }
     container.innerHTML = '';
   }
 
-  return { render: render, destroy: destroy };
+  // Called by EpaperWS when the server pushes calendar_events for a content id.
+  // Re-renders only if the event set has actually changed (signature check).
+  function pushUpdate(contentId, events) {
+    var inst = _instances[contentId];
+    if (!inst) return; // calendar not currently rendered — ignore
+    var sig = eventsSignature(events);
+    try { localStorage.setItem('cal_events_' + contentId, JSON.stringify({ events: events, cachedAt: Date.now() })); } catch (e) {}
+    if (sig === inst.lastSig) return; // no change
+    inst.lastSig = sig;
+    logger.info('[EpaperCalendar] WS push re-render for ' + contentId + ' (' + events.length + ' events)');
+    var meta = {};
+    try { meta = JSON.parse((inst.content && inst.content.metadata) || '{}'); } catch (e) {}
+    var view = meta.view || 'agenda';
+    var tz   = meta.timezone || 'UTC';
+    if (view === 'meeting_room') {
+      renderMeetingRoom(inst.container, events, inst.content || { id: contentId, name: '' }, meta, tz);
+    } else {
+      renderAgenda(inst.container, events, inst.content || { id: contentId, name: '' }, meta, tz);
+    }
+  }
+
+  // Re-send calendar_subscribe for all active instances.
+  // Called by EpaperWS.onopen so subscriptions survive WS reconnects.
+  function resubscribeAll() {
+    if (!window.EpaperWS || !EpaperWS.isOpen()) return;
+    Object.keys(_instances).forEach(function (id) {
+      EpaperWS.push({ type: 'calendar_subscribe', payload: { contentId: id } });
+      logger.info('[EpaperCalendar] re-subscribed ' + id + ' after WS reconnect');
+    });
+  }
+
+  return { render: render, destroy: destroy, pushUpdate: pushUpdate, resubscribeAll: resubscribeAll };
 }());

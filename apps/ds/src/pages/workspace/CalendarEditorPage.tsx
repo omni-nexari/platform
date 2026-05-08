@@ -581,7 +581,7 @@ export default function CalendarEditorPage() {
             </SectionCard>
           )}
 
-          {/* Step 2 — Settings (timezone + refresh + duration) */}
+          {/* Step 2 — Settings (timezone + refresh) */}
           {step === 2 && (
             <SectionCard>
               <SectionCardHeader>
@@ -605,27 +605,15 @@ export default function CalendarEditorPage() {
                       Pick the building's local time. The player converts each event into this timezone for display.
                     </p>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold uppercase text-[var(--text-muted)] mb-1">Refresh interval (sec)</label>
-                      <input
-                        type="number" min="15" max="3600"
-                        value={form.refreshSeconds}
-                        onChange={(e) => patch('refreshSeconds', Math.max(15, Number(e.target.value) || 60))}
-                        className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
-                      />
-                      <p className="text-xs text-[var(--text-muted)] mt-1">How often the player fetches new events.</p>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold uppercase text-[var(--text-muted)] mb-1">Slot duration (sec)</label>
-                      <input
-                        type="number" min="5" max="3600"
-                        value={form.duration}
-                        onChange={(e) => patch('duration', Math.max(5, Number(e.target.value) || 30))}
-                        className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
-                      />
-                      <p className="text-xs text-[var(--text-muted)] mt-1">How long this item plays in a playlist.</p>
-                    </div>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase text-[var(--text-muted)] mb-1">Refresh interval (sec)</label>
+                    <input
+                      type="number" min="15" max="3600"
+                      value={form.refreshSeconds}
+                      onChange={(e) => patch('refreshSeconds', Math.max(15, Number(e.target.value) || 60))}
+                      className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
+                    />
+                    <p className="text-xs text-[var(--text-muted)] mt-1">How often the server checks for new events and pushes changes to the display.</p>
                   </div>
                 </div>
               </SectionCardBody>

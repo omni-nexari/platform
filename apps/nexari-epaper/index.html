@@ -2,7 +2,24 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Viewport: dynamically set to the portrait short-edge width so the CSS
+         viewport matches the physical panel size regardless of model.
+         Samsung e-paper firmware may report device-width as the landscape long
+         edge even when the panel is portrait-mounted; this script corrects it.
+           EM13DX  13" → short edge 1200  (portrait = 1200×1600)
+           32" EPD     → short edge 1440  (portrait = 1440×2560) -->
+    <meta name="viewport" content="width=1200, initial-scale=1.0" id="meta-viewport">
+    <script>
+    (function() {
+      var sw = window.screen ? window.screen.width  : 0;
+      var sh = window.screen ? window.screen.height : 0;
+      if (sw > 0 && sh > 0) {
+        var portraitW = Math.min(sw, sh); // short edge = portrait logical width
+        var el = document.getElementById('meta-viewport');
+        if (el) el.content = 'width=' + portraitW + ', initial-scale=1.0';
+      }
+    })();
+    </script>
     <title>Nexari E-Paper</title>
     <!-- Early error banner: catches any JS crash before logger is ready -->
     <script>

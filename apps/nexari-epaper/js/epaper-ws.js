@@ -80,6 +80,18 @@ window.EpaperWS = (function() {
         if (window.EpaperRenderer) EpaperRenderer.refreshNow();
         break;
 
+      // Server pushing fresh calendar events (via calendar-broker):
+      case 'calendar_events':
+        if (window.EpaperCalendar && msg.payload && msg.payload.contentId) {
+          logger.info('[WS] calendar_events push for ' + msg.payload.contentId);
+          EpaperCalendar.pushUpdate(msg.payload.contentId, msg.payload.events || []);
+        }
+        break;
+
+      case 'calendar_unavailable':
+        logger.warn('[WS] calendar unavailable: contentId=' + (msg.payload && msg.payload.contentId) + ' — ' + (msg.payload && msg.payload.error));
+        break;
+
       case 'epaper_wake_now':
         // Wake is implicit — if WS message arrived we're awake. Just nudge
         // the renderer to re-pull schedule in case anything changed.
@@ -179,6 +191,11 @@ window.EpaperWS = (function() {
     state.socket.onopen = function() {
       logger.info('[WS] open');
       sendHeartbeat();
+      // Re-subscribe to any calendar content currently on screen
+      // (WS subscription is lost on reconnect)
+      if (window.EpaperCalendar) {
+        EpaperCalendar.resubscribeAll();
+      }
     };
     state.socket.onmessage = function(ev) { handleMessage(ev.data); };
     state.socket.onerror = function(ev) {
