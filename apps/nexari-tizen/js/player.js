@@ -5384,6 +5384,7 @@ const Player = {
             // every refresh and preserves scroll position).
             let lastSig = '';
             let lastBoundaryRender = 0;
+            let lastKnownEvents = [];
             const eventsSignature = (evs) => evs.map((e) => { var _a; return `${e.id}|${e.start}|${e.end}|${e.title}|${(_a = e.location) !== null && _a !== void 0 ? _a : ''}`; }).join('\n');
             // For meeting-room view we still must re-render when a meeting starts or
             // ends (busy/free rail + "Now" highlight change), even if the event list
@@ -5401,6 +5402,7 @@ const Player = {
             const maybeRender = (evs) => {
                 if (calContainer._calendarReqId !== reqId || !container.isConnected)
                     return;
+                lastKnownEvents = evs;
                 const sig = eventsSignature(evs);
                 const needBoundary = view === 'meeting_room' && lastBoundaryRender > 0
                     && boundaryCrossed(evs, lastBoundaryRender);
@@ -5461,9 +5463,11 @@ const Player = {
             // -- WS push subscription ---------------------------------------------------
             // Server polls upstream once per content item and pushes diff'd updates.
             // The HTTP path above is kept as a fallback (first paint, WS offline).
+            let lastPushReceivedAt = 0; // ms timestamp of last calendar_events push from server
             const pushHandler = (rawEvents) => {
                 if (calContainer._calendarReqId !== reqId || !container.isConnected)
                     return;
+                lastPushReceivedAt = Date.now();
                 const evs = rawEvents || [];
                 try {
                     localStorage.setItem(cacheKey, JSON.stringify({ events: evs, cachedAt: Date.now() }));
@@ -5539,14 +5543,41 @@ const Player = {
         font-family:-apple-system,sans-serif;font-size:18px;">Loading�</div>`;
             }
             void fetchAndRender();
-            // Polling fallback — only fires if the WS push isn't active for any reason
-            // (socket dropped, server restart, etc.). When WS is healthy this is a no-op.
+            // Polling fallback — fires when:
+            //   a) WS socket is not open or subscribe message was never sent, OR
+            //   b) WS is open and subscribe was sent, but no push has arrived in the
+            //      last 2× refresh interval — meaning the server silently dropped the
+            //      subscription (old API build, schema mismatch, etc.).
             calContainer._calendarTimer = window.setInterval(() => {
                 const ws = this.wsConnection;
-                const wsOk = !!ws && ws.readyState === WebSocket.OPEN && subscribed;
+                const wsOpen = !!ws && ws.readyState === WebSocket.OPEN;
+                const pushStale = lastPushReceivedAt > 0
+                    ? Date.now() - lastPushReceivedAt > refreshSeconds * 2 * 1000
+                    : Date.now() - calContainer['_mountedAt'] > refreshSeconds * 2 * 1000;
+                const wsOk = wsOpen && subscribed && !pushStale;
                 if (!wsOk)
                     void fetchAndRender();
             }, refreshSeconds * 1000);
+            // Record mount time so the stale-push check has a reference before first push arrives
+            calContainer['_mountedAt'] = Date.now();
+            // Boundary timer — re-evaluates the current event list every 30 s so that
+            // meeting start/end transitions (IN USE ↔ AVAILABLE, red ↔ green) update
+            // the display even when the WS broker sees no data change and stays silent.
+            // We do NOT clear lastSig — maybeRender's own boundaryCrossed check decides
+            // whether a re-render is needed, so there is no flash when nothing changed.
+            if (view === 'meeting_room') {
+                const boundaryTimer = window.setInterval(() => {
+                    if (calContainer._calendarReqId !== reqId) {
+                        clearInterval(boundaryTimer);
+                        return;
+                    }
+                    if (lastKnownEvents.length === 0 && lastSig === '')
+                        return;
+                    maybeRender(lastKnownEvents);
+                }, 30000);
+                const origUnsub2 = calContainer._calendarUnsub;
+                calContainer._calendarUnsub = () => { origUnsub2(); clearInterval(boundaryTimer); };
+            }
             // Midnight rollover — re-fetch even if WS data hasn't changed, so the day
             // window advances to the new date. Reschedules itself each time.
             const scheduleMidnight = () => {

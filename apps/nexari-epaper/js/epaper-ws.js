@@ -138,13 +138,14 @@ window.EpaperWS = (function() {
         if (logger && typeof logger._flush === 'function') logger._flush();
         break;
 
-      case 'screenshot': {
+      case 'screenshot':
+      case 'screenshot_auto': {
         // Capture current screen. Primary path: SVG foreignObject rasterisation via
         // data URI (avoids blob URL issues on Tizen WebView).
         // Fallback: plain canvas with version + timestamp (always works, confirms pipeline).
         // NOTE: Chromium-based Tizen WebView taints the canvas for any SVG containing
         // <foreignObject>, so toDataURL() may throw SecurityError — caught and falls back.
-        logger.info('[WS] screenshot received');
+        logger.info('[WS] screenshot received (type=' + t + ')');
 
         (function captureAndSend() {
           var w = window.innerWidth  || screen.width  || 1200;

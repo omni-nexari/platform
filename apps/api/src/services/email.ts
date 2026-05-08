@@ -1,16 +1,11 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
-const transporter = nodemailer.createTransport({
-  host: process.env['SMTP_HOST'] ?? 'smtp.gmail.com',
-  port: Number(process.env['SMTP_PORT'] ?? '587'),
-  secure: false, // STARTTLS on port 587
-  auth: {
-    user: process.env['SMTP_USER'] ?? '',
-    pass: process.env['SMTP_PASS'] ?? '',
-  },
-});
+const resend = new Resend(process.env['RESEND_API_KEY']);
 
-const FROM = `"OmniHub Signage" <${process.env['SMTP_FROM'] ?? process.env['SMTP_USER'] ?? 'noreply@signage.local'}>`;
+// admin@mail.chiho.app — platform-level: superadmin invites, reseller onboarding
+const FROM_ADMIN = `"OmniHub Signage" <${process.env['RESEND_FROM_ADMIN'] ?? 'admin@mail.chiho.app'}>`;
+// mail@mail.chiho.app — user-level: org member invites, password reset
+const FROM_MAIL = `"OmniHub Signage" <${process.env['RESEND_FROM_MAIL'] ?? 'mail@mail.chiho.app'}>`;
 const APP_URL = (process.env['APP_URL'] ?? 'https://ds.chiho.app').replace(/\/+$/, '');
 
 function absoluteUrl(url: string | null | undefined): string | null {
@@ -176,13 +171,18 @@ export async function sendInviteEmail(
       : `You've been invited to ${displayOrgName} (role: ${ctx.orgRole})${ctx.workspaceName ? `, workspace: ${ctx.workspaceName}` : ''}.\n\nAccept: ${link}\n\nExpires in 7 days.`;
   }
 
-  await transporter.sendMail({
-    from: FROM,
-    to,
+  const from =
+    ctx.inviteType === 'management_company_admin' || ctx.inviteType === 'client_org_owner'
+      ? FROM_ADMIN
+      : FROM_MAIL;
+  const { error } = await resend.emails.send({
+    from,
+    to: [to],
     subject,
     html: card(subject, bodyHtml, { text: 'Accept Invitation', href: link }, ctx.branding),
     text: bodyText,
   });
+  if (error) throw new Error(error.message);
 }
 
 // ── Password reset email ─────────────────────────────────────────────────────
@@ -192,9 +192,9 @@ export async function sendPasswordResetEmail(
   resetToken: string,
 ): Promise<void> {
   const link = `${APP_URL}/reset-password/${encodeURIComponent(resetToken)}`;
-  await transporter.sendMail({
-    from: FROM,
-    to,
+  const { error } = await resend.emails.send({
+    from: FROM_MAIL,
+    to: [to],
     subject: 'Reset your OmniHub Signage password',
     html: card(
       'Reset your password',
@@ -206,6 +206,7 @@ export async function sendPasswordResetEmail(
     ),
     text: `Reset your OmniHub Signage password:\n${link}\n\nExpires in 1 hour.`,
   });
+  if (error) throw new Error(error.message);
 }
 
 export async function sendResellerOnboardingConfirmationEmail(
@@ -241,9 +242,9 @@ export async function sendResellerOnboardingConfirmationEmail(
 
   const bodyText = `${greeting}\n\nYour reseller account for ${ctx.companyName} is ready.\n\nReseller portal: ${ctx.resellerPortalLink}\nClient dashboard: ${ctx.dashboardLink}\n\nUse the same email and password you just created to sign in to both.`;
 
-  await transporter.sendMail({
-    from: FROM,
-    to,
+  const { error } = await resend.emails.send({
+    from: FROM_ADMIN,
+    to: [to],
     subject: `${ctx.companyName} is ready on OmniHub Signage`,
     html: card(
       'Your reseller setup is complete',
@@ -253,4 +254,5 @@ export async function sendResellerOnboardingConfirmationEmail(
     ),
     text: bodyText,
   });
+  if (error) throw new Error(error.message);
 }

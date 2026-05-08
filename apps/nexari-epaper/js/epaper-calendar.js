@@ -265,11 +265,13 @@ window.EpaperCalendar = (function () {
     var tz            = meta.timezone || 'UTC';
     var lookaheadDays = (view === 'day' || view === 'meeting_room') ? 1 : (view === 'month' ? 31 : 7);
 
-    var inst = { id: id, midnightTimer: null, lastSig: '', container: container, content: content };
+    var inst = { id: id, midnightTimer: null, boundaryTimer: null, lastSig: '', lastKnownEvents: [], lastBoundaryRender: 0, container: container, content: content };
     _instances[id] = inst;
 
     var doRender = function (evs) {
       if (_instances[id] !== inst) return;
+      inst.lastKnownEvents = evs;
+      inst.lastBoundaryRender = Date.now();
       if (view === 'meeting_room') {
         renderMeetingRoom(container, evs, content, meta, tz);
       } else {
@@ -351,12 +353,34 @@ window.EpaperCalendar = (function () {
       }, msUntilMidnight + 5000); // +5s buffer past midnight
     }
     scheduleMidnightRefresh();
+
+    // Boundary timer — checks every 30 s whether a meeting has started or ended
+    // since the last render. Fixes the case where the WS broker sees no data
+    // change (same event list) but the busy/free state has flipped at meeting end.
+    if (view === 'meeting_room') {
+      inst.boundaryTimer = setInterval(function () {
+        if (_instances[id] !== inst) { clearInterval(inst.boundaryTimer); return; }
+        if (!inst.lastKnownEvents.length && !inst.lastSig) return;
+        var sinceMs = inst.lastBoundaryRender;
+        var nowMs   = Date.now();
+        var crossed = inst.lastKnownEvents.some(function (e) {
+          var s  = new Date(e.start).getTime();
+          var en = new Date(e.end).getTime();
+          return (s > sinceMs && s <= nowMs) || (en > sinceMs && en <= nowMs);
+        });
+        if (crossed) {
+          inst.lastSig = ''; // allow re-render
+          doRender(inst.lastKnownEvents);
+        }
+      }, 30000);
+    }
   }
 
   function destroy(container) {
     Object.keys(_instances).forEach(function (id) {
       if (_instances[id].container === container) {
         if (_instances[id].midnightTimer) clearTimeout(_instances[id].midnightTimer);
+        if (_instances[id].boundaryTimer) clearInterval(_instances[id].boundaryTimer);
         // Unsubscribe from server-pushed calendar events for this content
         if (window.EpaperWS && EpaperWS.isOpen()) {
           EpaperWS.push({ type: 'calendar_unsubscribe', payload: { contentId: id } });
@@ -376,6 +400,8 @@ window.EpaperCalendar = (function () {
     try { localStorage.setItem('cal_events_' + contentId, JSON.stringify({ events: events, cachedAt: Date.now() })); } catch (e) {}
     if (sig === inst.lastSig) return; // no change
     inst.lastSig = sig;
+    inst.lastKnownEvents = events;
+    inst.lastBoundaryRender = Date.now();
     logger.info('[EpaperCalendar] WS push re-render for ' + contentId + ' (' + events.length + ' events)');
     var meta = {};
     try { meta = JSON.parse((inst.content && inst.content.metadata) || '{}'); } catch (e) {}

@@ -1,9 +1,0 @@
-/**
- * To excecute an external JS.
- * */
-//Sample Server!
-var nodeJSServer = require('../js/logic.js');
-
-console.log(nodeJSServer());
-
-//UEP330xc98b6a40f6237d53ba97947fd94860ea55300a0d9d75933575c27669ef6197e9a1e85a52181b0c2437fcfed096ab2a36019c02b10f3ceeafb3d4c5523d69e843d29816592c152c3a35237ebac9a88742d883a98582f7d86bd92f3c90688ba9e8f3cd10c80c9948260aa69689b774d58aa661aae10e277ada76a5941ffbefced8AAABAg==:UEP
