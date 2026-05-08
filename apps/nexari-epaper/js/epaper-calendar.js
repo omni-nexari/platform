@@ -66,13 +66,13 @@ window.EpaperCalendar = (function () {
       .filter(function (e) { return new Date(e.end).getTime() > now.getTime(); })
       .sort(function (a, b) { return new Date(a.start).getTime() - new Date(b.start).getTime(); });
 
-    var timeStr = fmtTime(now);
-    var dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    // Header: calendar name on left, full date (no clock) on right
+    var dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 
     var rows = '';
     if (upcoming.length === 0) {
       rows = '<div style="flex:1;display:flex;align-items:center;justify-content:center;opacity:0.5;">' +
-             '<p style="font-size:24px;">No upcoming events</p></div>';
+             '<p style="font-size:36px;">No upcoming events</p></div>';
     } else {
       var lastDay = '';
       for (var i = 0; i < upcoming.length; i++) {
@@ -83,22 +83,22 @@ window.EpaperCalendar = (function () {
         if (day !== lastDay) {
           lastDay = day;
           var dayLabel = s.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-          rows += '<div style="padding:12px 24px 4px;font-size:13px;font-weight:600;color:' + muted + ';' +
-                  'text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid ' + border + ';' +
+          rows += '<div style="padding:20px 40px 10px;font-size:22px;font-weight:700;color:' + muted + ';' +
+                  'text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid ' + border + ';' +
                   'background:' + surf + ';">' + esc(dayLabel) + '</div>';
         }
         var color = PALETTE[i % PALETTE.length];
         var isNow = new Date(ev.start).getTime() <= now.getTime() && new Date(ev.end).getTime() > now.getTime();
         var timeRange = ev.allDay ? 'All day' : (fmtTime(s) + ' \u2013 ' + fmtTime(en));
-        rows += '<div style="display:flex;gap:16px;padding:14px 24px;border-bottom:1px solid ' + border + ';' +
+        rows += '<div style="display:flex;gap:24px;padding:24px 40px;border-bottom:1px solid ' + border + ';' +
                 'background:' + (isNow ? (isDark ? 'rgba(26,115,232,0.15)' : 'rgba(26,115,232,0.06)') : bg) + ';">' +
-                  '<div style="width:4px;min-height:36px;border-radius:2px;background:' + color + ';flex-shrink:0;margin-top:2px;"></div>' +
+                  '<div style="width:6px;min-height:48px;border-radius:3px;background:' + color + ';flex-shrink:0;margin-top:4px;"></div>' +
                   '<div style="flex:1;min-width:0;">' +
-                    '<div style="font-size:18px;font-weight:600;color:' + text + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(ev.title || '(no title)') + '</div>' +
-                    '<div style="font-size:14px;color:' + muted + ';margin-top:2px;">' + esc(timeRange) + '</div>' +
-                    (ev.location ? '<div style="font-size:13px;color:' + muted + ';margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">@ ' + esc(ev.location) + '</div>' : '') +
+                    '<div style="font-size:32px;font-weight:700;color:' + text + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(ev.title || '(no title)') + '</div>' +
+                    '<div style="font-size:22px;color:' + muted + ';margin-top:6px;">' + esc(timeRange) + '</div>' +
+                    (ev.location ? '<div style="font-size:20px;color:' + muted + ';margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">@ ' + esc(ev.location) + '</div>' : '') +
                   '</div>' +
-                  (isNow ? '<div style="align-self:center;background:' + accent + ';color:#fff;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:700;flex-shrink:0;">NOW</div>' : '') +
+                  (isNow ? '<div style="align-self:center;background:' + accent + ';color:#fff;padding:6px 18px;border-radius:6px;font-size:18px;font-weight:700;flex-shrink:0;">NOW</div>' : '') +
                 '</div>';
       }
     }
@@ -106,19 +106,16 @@ window.EpaperCalendar = (function () {
     container.innerHTML =
       '<div style="position:absolute;inset:0;display:flex;flex-direction:column;background:' + bg + ';color:' + text + ';' +
       'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;overflow:hidden;">' +
-        '<header style="display:flex;align-items:center;padding:16px 24px;border-bottom:1px solid ' + border + ';gap:16px;flex-shrink:0;">' +
-          '<div style="width:4px;min-height:44px;background:' + accent + ';border-radius:2px;flex-shrink:0;"></div>' +
+        '<header style="display:flex;align-items:center;padding:24px 40px;border-bottom:2px solid ' + border + ';gap:20px;flex-shrink:0;">' +
+          '<div style="width:6px;min-height:56px;background:' + accent + ';border-radius:3px;flex-shrink:0;"></div>' +
           '<div style="flex:1;min-width:0;">' +
-            '<div style="font-size:13px;color:' + muted + ';font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">' + esc(content.name || 'Calendar') + '</div>' +
-            '<div style="font-size:20px;font-weight:600;color:' + text + ';margin-top:2px;">Upcoming events</div>' +
-          '</div>' +
-          '<div style="text-align:right;flex-shrink:0;">' +
-            '<div id="cal-clock" style="font-size:28px;font-weight:700;color:' + accent + ';letter-spacing:-0.5px;">' + esc(timeStr) + '</div>' +
-            '<div style="font-size:13px;color:' + muted + ';margin-top:2px;">' + esc(dateStr) + '</div>' +
+            '<div style="font-size:24px;font-weight:700;color:' + text + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(content.name || 'Calendar') + '</div>' +
+            '<div style="font-size:20px;color:' + muted + ';margin-top:4px;">' + esc(dateStr) + '</div>' +
           '</div>' +
         '</header>' +
         '<div style="flex:1;overflow-y:auto;">' + rows + '</div>' +
       '</div>';
+    // No clock timer for agenda view — no clock element to update
   }
 
   function renderMeetingRoom(container, events, content, meta, tz) {
@@ -232,14 +229,18 @@ window.EpaperCalendar = (function () {
       if (_instances[id] !== inst) return;
       if (view === 'meeting_room') {
         renderMeetingRoom(container, evs, content, meta, tz);
+        startClock(container); // meeting room has a live clock widget
       } else {
         renderAgenda(container, evs, content, meta, tz);
+        // agenda view has no clock — no timer needed
       }
-      startClock(container);
     };
 
     var doFetch = function () {
       if (_instances[id] !== inst) return;
+      // Use the same date range as the QBC/SBB Tizen player:
+      // from = midnight today (local), to = midnight today + lookaheadDays.
+      // This ensures e-paper and TV players show identical event sets.
       var from = new Date(); from.setHours(0, 0, 0, 0);
       var to   = new Date(from); to.setDate(to.getDate() + lookaheadDays);
       var url  = CONFIG.API_BASE + '/devices/device/content/' + encodeURIComponent(id) +

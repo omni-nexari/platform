@@ -190,7 +190,8 @@ window.API = {
     };
   },
 
-  // E-paper only needs id/name/type/duration — images are fetched via /epaper.jpg.
+  // Normalize a raw DB content row for the e-paper renderer.
+  // metadata is preserved so calendar renderer gets timezone/view/theme.
   _normalizeContent(content) {
     return {
       id: content.id,
@@ -198,6 +199,7 @@ window.API = {
       type: (content.type || '').toUpperCase(),
       mimeType: content.mimeType || null,
       duration: content.duration || 60,
+      metadata: content.metadata || '{}',
     };
   },
 

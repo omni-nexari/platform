@@ -213,7 +213,8 @@ window.EpaperRenderer = (function() {
     }
     state.currentItems = items;
     state.currentIndex = 0;
-    logger.info('[Renderer] "' + (playlist.playlistName || '') + '" — ' + items.length + ' image(s)');
+    var typeLabel = items.map(function(it) { return String(it.type || '').toLowerCase(); }).join(', ');
+    logger.info('[Renderer] "' + (playlist.playlistName || '') + '" — ' + items.length + ' item(s) [' + typeLabel + ']');
     swapToIndex(0).then(scheduleNextSwap);
   }
 
