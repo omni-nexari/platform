@@ -442,6 +442,30 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     return;
   }
 
+  // Handle calendar subscribe/unsubscribe before schema parsing so it works
+  // even if the shared package dist is stale on the server.
+  if (
+    typeof raw === 'object' && raw !== null && 'type' in raw &&
+    typeof (raw as { type?: unknown }).type === 'string'
+  ) {
+    const rawType = (raw as { type: string; payload?: { contentId?: unknown } }).type;
+    if (rawType === 'calendar_subscribe' || rawType === 'calendar_unsubscribe') {
+      const contentId = (raw as { payload?: { contentId?: unknown } }).payload?.contentId;
+      if (typeof contentId === 'string' && contentId.length > 0) {
+        console.info(`[ws] ${rawType} from ${deviceId} for content ${contentId}`);
+        const broker = await import('./calendar-broker.js');
+        if (rawType === 'calendar_subscribe') {
+          void broker.subscribe(deviceId, contentId);
+        } else {
+          broker.unsubscribe(deviceId, contentId);
+        }
+      } else {
+        console.warn(`[ws] ${rawType} from ${deviceId} missing contentId`, raw);
+      }
+      return;
+    }
+  }
+
   const parsed = DeviceMessageSchema.safeParse(raw);
   if (!parsed.success) {
     if (
@@ -459,6 +483,14 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
       (raw as { type?: unknown }).type === 'mdc_control_response'
     ) {
       console.warn('[ws] mdc_control_response parse failed', parsed.error.issues, raw);
+    }
+    // Log unexpected parse failures to aid debugging
+    if (
+      typeof raw === 'object' && raw !== null && 'type' in raw &&
+      typeof (raw as { type?: unknown }).type === 'string' &&
+      !['screenshot_data', 'mdc_control_response'].includes((raw as { type: string }).type)
+    ) {
+      console.warn('[ws] unknown message parse failed', { deviceId, type: (raw as { type: string }).type });
     }
     return;
   }
@@ -834,20 +866,6 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     } catch (err) {
       console.warn('[ws] sync_heartbeat persist failed', { deviceId, err: (err as Error)?.message });
     }
-    return;
-  }
-
-  // ── calendar_subscribe / calendar_unsubscribe ─────────────────────────────
-  // Device opts in/out of server-pushed calendar updates for one content item.
-  // The actual fan-out lives in services/calendar-broker.ts.
-  if (msg.type === 'calendar_subscribe') {
-    const broker = await import('./calendar-broker.js');
-    void broker.subscribe(deviceId, msg.payload.contentId);
-    return;
-  }
-  if (msg.type === 'calendar_unsubscribe') {
-    const broker = await import('./calendar-broker.js');
-    broker.unsubscribe(deviceId, msg.payload.contentId);
     return;
   }
 
