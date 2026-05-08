@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import {
   ArrowLeft, ArrowRight, Save, CalendarDays, CalendarRange,
   Calendar, MapPin, Filter, Lock, Palette, Clock, Settings2,
+  Link2, Image as ImageIcon, Sparkles,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { ActionButton, Skeleton, Badge, Callout, SectionCard, SectionCardHeader, SectionCardBody } from '../../components/UiPrimitives.js';
@@ -121,6 +122,202 @@ const COMMON_TIMEZONES = [
   'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Singapore', 'Asia/Kolkata', 'Asia/Dubai',
   'Australia/Sydney',
 ];
+
+function validateUrl(val: string): string | null {
+  const v = val.trim();
+  if (!v) return null;
+  try {
+    const u = new URL(v);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return 'URL must start with https:// or http://';
+    return null;
+  } catch {
+    return 'Enter a valid URL (e.g. https://example.com/image.png)';
+  }
+}
+
+// ── MeetingRoomPreview ───────────────────────────────────────────────────────
+function MeetingRoomPreview({
+  form, events, loading, error,
+}: {
+  form: Form;
+  events: CalendarEvent[];
+  loading: boolean;
+  error: string | null;
+}) {
+  const isDark    = form.theme.background === 'dark';
+  const bg        = isDark ? '#0f1117' : '#f1f3f5';
+  const headerBg  = isDark ? '#1e1e2e' : '#e8eaed';
+  const text      = isDark ? '#f3f4f6' : '#111827';
+  const textMuted = isDark ? '#9ca3af' : '#6b7280';
+  const borderCol = isDark ? '#374151' : '#d1d5db';
+  const fontFamily =
+    form.theme.fontStyle === 'mono'    ? 'monospace' :
+    form.theme.fontStyle === 'rounded' ? 'ui-rounded, system-ui, sans-serif' :
+                                         'system-ui, sans-serif';
+
+  function fmtT(d: Date) {
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+
+  const now = new Date();
+  const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay   = new Date(startOfDay); endOfDay.setDate(endOfDay.getDate() + 1);
+
+  const today = events
+    .filter((e) => new Date(e.end).getTime() > startOfDay.getTime()
+                && new Date(e.start).getTime() < endOfDay.getTime())
+    .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+
+  const currentEv = today.find((e) =>
+    new Date(e.start).getTime() <= now.getTime() && new Date(e.end).getTime() > now.getTime()
+  );
+  const nextEv = today.find((e) => new Date(e.start).getTime() > now.getTime());
+  const isBusy = !!currentEv;
+
+  const msToNextStart  = nextEv    ? new Date(nextEv.start).getTime()    - now.getTime() : Infinity;
+  const msToCurrentEnd = currentEv ? new Date(currentEv.end).getTime()   - now.getTime() : Infinity;
+  const isAmberSoon    = !isBusy && isFinite(msToNextStart)  && msToNextStart  < 15 * 60 * 1000;
+  const isAmberEnding  =  isBusy && isFinite(msToCurrentEnd) && msToCurrentEnd < 15 * 60 * 1000;
+
+  const railColor  = (isBusy && !isAmberEnding) ? '#d93025'
+                   : (isBusy &&  isAmberEnding)  ? '#f59e0b'
+                   : isAmberSoon                 ? '#f59e0b'
+                   :                               '#34a853';
+  const statusText = isBusy
+    ? (isAmberEnding ? 'ENDING SOON' : 'IN USE')
+    : (isAmberSoon   ? 'STARTING SOON' : 'AVAILABLE');
+  const statusLine = currentEv
+    ? `Until ${fmtT(new Date(currentEv.end))}`
+    : nextEv
+    ? `Free until ${fmtT(new Date(nextEv.start))}`
+    : 'Free for the rest of the day';
+
+  const roomName = form.roomMeta.name || 'Meeting Room';
+  const logoUrl  = form.roomMeta.logoUrl.trim();
+  const bgUrl    = form.roomMeta.backgroundUrl.trim();
+  const capacity = form.roomMeta.capacity ? Number(form.roomMeta.capacity) : null;
+
+  const timeLabel =
+    form.theme.clockStyle === 'none'       ? null :
+    form.theme.clockStyle === 'digital-12' ? now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }) :
+                                             now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+
+  const fmtRange = (ev: CalendarEvent) =>
+    ev.allDay ? 'All day' : `${fmtT(new Date(ev.start))} \u2013 ${fmtT(new Date(ev.end))}`;
+
+  return (
+    <div style={{ background: bg, fontFamily, position: 'relative', overflow: 'hidden', minHeight: 280, display: 'flex', flexDirection: 'column', userSelect: 'none' }}>
+      <style>{`@keyframes mrp-pulse{0%,100%{opacity:.15}50%{opacity:.6}}`}</style>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: headerBg, borderBottom: `3px solid ${form.theme.accentColor}`, flexShrink: 0 }}>
+        {logoUrl && (
+          <img src={logoUrl} alt="" style={{ height: 22, maxWidth: 70, objectFit: 'contain', flexShrink: 0 }}
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+        )}
+        <span style={{ fontSize: 16, fontWeight: 700, color: text, letterSpacing: 1, textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {roomName}
+        </span>
+        {form.roomMeta.location && (
+          <span style={{ fontSize: 10, color: textMuted, marginLeft: 4, flexShrink: 0 }}>{form.roomMeta.location}</span>
+        )}
+      </div>
+
+      {/* Body: meeting list + status rail */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
+        {/* Meeting list */}
+        <div style={{
+          flex: 1, position: 'relative', overflow: 'hidden',
+          ...(bgUrl ? { backgroundImage: `url(${JSON.stringify(bgUrl)})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}),
+        }}>
+          {bgUrl && <div style={{ position: 'absolute', inset: 0, background: isDark ? 'rgba(15,17,23,0.80)' : 'rgba(255,255,255,0.80)' }} />}
+          <div style={{ position: 'relative' }}>
+            {loading && [1, 2, 3].map((i) => (
+              <div key={i} style={{ margin: '6px 10px', height: 28, borderRadius: 5, background: isDark ? '#374151' : '#e5e7eb', opacity: 0.5 }} />
+            ))}
+            {!loading && today.length === 0 && (
+              <div style={{ color: textMuted, fontSize: 11, textAlign: 'center', padding: '24px 12px', letterSpacing: 1, textTransform: 'uppercase' }}>
+                No meetings scheduled today
+              </div>
+            )}
+            {!loading && today.map((ev) => {
+              const isCurr = ev === currentEv;
+              const title  = form.privacyMode === 'busy_only' ? 'Busy' : (ev.title || 'Reserved');
+              return (
+                <div key={ev.id} style={{
+                  display: 'flex', gap: 10, padding: '6px 12px', alignItems: 'baseline',
+                  borderBottom: `1px solid ${borderCol}`,
+                  background: isCurr ? `${railColor}1a` : 'transparent',
+                }}>
+                  <span style={{ fontSize: 10, fontWeight: 600, color: textMuted, whiteSpace: 'nowrap', minWidth: 90, fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtRange(ev)}
+                  </span>
+                  <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {title}
+                  </span>
+                  {isCurr && (
+                    <span style={{ background: railColor, color: '#fff', padding: '1px 6px', borderRadius: 3, fontSize: 8, textTransform: 'uppercase', letterSpacing: 0.5, flexShrink: 0 }}>
+                      Now
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        {/* Status rail */}
+        <div style={{ background: railColor, color: '#fff', display: 'flex', flexDirection: 'column', padding: '10px 12px', width: 118, flexShrink: 0 }}>
+          {timeLabel && (
+            <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: -0.5, lineHeight: 1 }}>{timeLabel}</div>
+          )}
+          <div style={{ fontSize: 8, opacity: 0.88, marginTop: timeLabel ? 3 : 0 }}>
+            {now.toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })}
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 700, marginTop: 10, letterSpacing: 0.5 }}>{statusText}</div>
+          <div style={{ fontSize: 9, opacity: 0.88, marginTop: 3, lineHeight: 1.4 }}>{statusLine}</div>
+          {capacity !== null && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 7, letterSpacing: 1, textTransform: 'uppercase', opacity: 0.75, marginBottom: 3 }}>Capacity</div>
+              <div style={{ display: 'inline-block', background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.3)', padding: '2px 8px', borderRadius: 4, fontSize: 15, fontWeight: 700 }}>
+                {capacity}
+              </div>
+            </div>
+          )}
+          <div style={{ marginTop: 'auto', paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {(['Book', 'Accept', 'End meeting'] as const).map((label, i) => {
+              const enabled = !!form.roomMeta.bookingUrl && (i === 0 ? !isBusy : isBusy);
+              return (
+                <div key={label} style={{
+                  padding: '4px 6px', borderRadius: 3,
+                  background: enabled ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.25)',
+                  fontSize: 8, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5,
+                  color: enabled ? '#fff' : 'rgba(255,255,255,0.3)',
+                }}>
+                  {label}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Edge overlay */}
+      <div
+        aria-hidden="true"
+        style={{
+          pointerEvents: 'none', position: 'absolute', inset: 0, zIndex: 10,
+          boxShadow: `inset 0 0 0 5px ${railColor}`,
+          animation: isBusy ? 'mrp-pulse 1.6s ease-in-out infinite' : undefined,
+        }}
+      />
+      {error && (
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 20 }}>
+          <div style={{ background: '#fef2f2', color: '#dc2626', padding: '8px 14px', borderRadius: 8, fontSize: 11, maxWidth: '80%', textAlign: 'center' }}>{error}</div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── CalendarPreview ──────────────────────────────────────────────────────────
 function CalendarPreview({
@@ -243,6 +440,7 @@ export default function CalendarEditorPage() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<Form>(DEFAULTS);
   const [saving, setSaving] = useState(false);
+  const [urlErrors, setUrlErrors] = useState<Record<string, string | null>>({});
 
   const itemQuery = useQuery<ContentItem>({
     queryKey: ['content-item', id],
@@ -285,6 +483,14 @@ export default function CalendarEditorPage() {
     enabled: !!form.connectionId,
     queryFn: () => api.get(`/integrations/calendar/connections/${form.connectionId}/calendars`),
   });
+
+  const autofillSource = useMemo(() => {
+    if (form.view !== 'meeting_room') return null;
+    const roomCals = (calendarsQuery.data ?? []).filter(
+      (rc) => rc.kind === 'room' && form.selectedCalendarIds.includes(rc.externalCalendarId)
+    );
+    return roomCals[0] ?? null;
+  }, [form.view, form.selectedCalendarIds, calendarsQuery.data]);
 
   const previewQuery = useQuery<{ events: CalendarEvent[] }>({
     queryKey: ['calendar-preview', form.connectionId, form.selectedCalendarIds.join(','), form.keywordFilter],
@@ -518,34 +724,105 @@ export default function CalendarEditorPage() {
                 </div>
 
                 {form.view === 'meeting_room' && (
-                  <div className="mt-5 space-y-3">
-                    <p className="text-xs font-semibold uppercase text-[var(--text-muted)]">Room metadata</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <input className="px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
-                        placeholder="Room name" value={form.roomMeta.name}
-                        onChange={(e) => patch('roomMeta', { ...form.roomMeta, name: e.target.value })} />
-                      <input type="number" min="0" className="px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
-                        placeholder="Capacity" value={form.roomMeta.capacity}
-                        onChange={(e) => patch('roomMeta', { ...form.roomMeta, capacity: e.target.value })} />
-                      <input className="px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
-                        placeholder="Location / floor" value={form.roomMeta.location}
-                        onChange={(e) => patch('roomMeta', { ...form.roomMeta, location: e.target.value })} />
-                      <input className="px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
-                        placeholder="Booking URL (optional)" value={form.roomMeta.bookingUrl}
-                        onChange={(e) => patch('roomMeta', { ...form.roomMeta, bookingUrl: e.target.value })} />
+                  <div className="mt-5 space-y-5">
+                    {/* Autofill from room calendar */}
+                    {autofillSource && (
+                      <Callout tone="accent">
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <span className="text-xs">Room calendar <strong>{autofillSource.name}</strong> selected — populate room details from it?</span>
+                          <ActionButton onClick={() => patch('roomMeta', {
+                            ...form.roomMeta,
+                            name: autofillSource!.name || form.roomMeta.name,
+                            capacity: autofillSource!.capacity != null ? String(autofillSource!.capacity) : form.roomMeta.capacity,
+                            location: autofillSource!.locationLabel || form.roomMeta.location,
+                          })}>
+                            <Sparkles size={12} /> Autofill
+                          </ActionButton>
+                        </div>
+                      </Callout>
+                    )}
+
+                    {/* Identity */}
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-[var(--text-muted)] mb-2 flex items-center gap-1">
+                        <MapPin size={11} /> Identity
+                      </p>
+                      <div className="grid grid-cols-3 gap-3">
+                        <input className="col-span-2 px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
+                          placeholder="Room name" value={form.roomMeta.name}
+                          onChange={(e) => patch('roomMeta', { ...form.roomMeta, name: e.target.value })} />
+                        <input type="number" min="1" max="9999"
+                          className="px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
+                          placeholder="Capacity" value={form.roomMeta.capacity}
+                          onChange={(e) => patch('roomMeta', { ...form.roomMeta, capacity: e.target.value })} />
+                        <input className="col-span-3 px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)]"
+                          placeholder="Location / floor (e.g. Floor 2, Building A)" value={form.roomMeta.location}
+                          onChange={(e) => patch('roomMeta', { ...form.roomMeta, location: e.target.value })} />
+                      </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <input className="px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] font-mono"
-                        placeholder="Logo image URL (optional)" value={form.roomMeta.logoUrl}
-                        onChange={(e) => patch('roomMeta', { ...form.roomMeta, logoUrl: e.target.value })} />
-                      <input className="px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] font-mono"
-                        placeholder="Background image URL (optional)" value={form.roomMeta.backgroundUrl}
-                        onChange={(e) => patch('roomMeta', { ...form.roomMeta, backgroundUrl: e.target.value })} />
+
+                    {/* Booking */}
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-[var(--text-muted)] mb-2 flex items-center gap-1">
+                        <Link2 size={11} /> Booking URL
+                      </p>
+                      <input
+                        className={`w-full px-3 py-2 rounded-lg border bg-[var(--surface)] text-sm text-[var(--text)] font-mono ${
+                          urlErrors.bookingUrl ? 'border-red-400' : 'border-[var(--border)]'
+                        }`}
+                        placeholder="https://calendar.app.google/… (optional)"
+                        value={form.roomMeta.bookingUrl}
+                        onChange={(e) => patch('roomMeta', { ...form.roomMeta, bookingUrl: e.target.value })}
+                        onBlur={(e) => setUrlErrors((prev) => ({ ...prev, bookingUrl: validateUrl(e.target.value) }))} />
+                      {urlErrors.bookingUrl && <p className="text-xs text-red-500 mt-1">{urlErrors.bookingUrl}</p>}
+                      <p className="text-xs text-[var(--text-muted)] mt-1">
+                        When set, Book / Accept / End buttons on the player become tappable and open this URL on touch displays.
+                      </p>
                     </div>
-                    <p className="text-xs text-[var(--text-muted)]">
-                      Bookable: when a Booking URL is set, the action buttons on the player become tappable and open the URL on touch displays.
-                      Background image is shown faded behind the meeting list (light or dark theme).
-                    </p>
+
+                    {/* Media */}
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-[var(--text-muted)] mb-2 flex items-center gap-1">
+                        <ImageIcon size={11} /> Media
+                      </p>
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-xs text-[var(--text-muted)] mb-1">Logo image URL</label>
+                          <input
+                            className={`w-full px-3 py-2 rounded-lg border bg-[var(--surface)] text-sm text-[var(--text)] font-mono ${
+                              urlErrors.logoUrl ? 'border-red-400' : 'border-[var(--border)]'
+                            }`}
+                            placeholder="https://… (optional, shown in room header)"
+                            value={form.roomMeta.logoUrl}
+                            onChange={(e) => patch('roomMeta', { ...form.roomMeta, logoUrl: e.target.value })}
+                            onBlur={(e) => setUrlErrors((prev) => ({ ...prev, logoUrl: validateUrl(e.target.value) }))} />
+                          {urlErrors.logoUrl && <p className="text-xs text-red-500 mt-1">{urlErrors.logoUrl}</p>}
+                          {form.roomMeta.logoUrl && !urlErrors.logoUrl && (
+                            <div className="mt-2 flex items-center gap-2 p-2 rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+                              <img src={form.roomMeta.logoUrl} alt="logo preview" className="h-8 max-w-[120px] object-contain"
+                                onError={(e) => { const p = (e.currentTarget as HTMLImageElement).parentElement; if (p) p.style.display = 'none'; }} />
+                              <span className="text-xs text-[var(--text-muted)]">Logo preview</span>
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <label className="block text-xs text-[var(--text-muted)] mb-1">Background image URL</label>
+                          <input
+                            className={`w-full px-3 py-2 rounded-lg border bg-[var(--surface)] text-sm text-[var(--text)] font-mono ${
+                              urlErrors.backgroundUrl ? 'border-red-400' : 'border-[var(--border)]'
+                            }`}
+                            placeholder="https://… (optional, shown faded behind meeting list)"
+                            value={form.roomMeta.backgroundUrl}
+                            onChange={(e) => patch('roomMeta', { ...form.roomMeta, backgroundUrl: e.target.value })}
+                            onBlur={(e) => setUrlErrors((prev) => ({ ...prev, backgroundUrl: validateUrl(e.target.value) }))} />
+                          {urlErrors.backgroundUrl && <p className="text-xs text-red-500 mt-1">{urlErrors.backgroundUrl}</p>}
+                          {form.roomMeta.backgroundUrl && !urlErrors.backgroundUrl && (
+                            <div className="mt-2 h-16 rounded-lg border border-[var(--border)] overflow-hidden"
+                              style={{ backgroundImage: `url(${JSON.stringify(form.roomMeta.backgroundUrl)})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -761,15 +1038,26 @@ export default function CalendarEditorPage() {
                 <SectionCard>
                   <SectionCardHeader>
                     <h3 className="text-sm font-semibold">Preview</h3>
-                    <span className="text-xs text-[var(--text-muted)]">Upcoming events</span>
+                    <span className="text-xs text-[var(--text-muted)]">
+                      {form.view === 'meeting_room' ? 'Meeting room display' : 'Upcoming events'}
+                    </span>
                   </SectionCardHeader>
                   <SectionCardBody className="p-0 overflow-hidden rounded-b-xl">
-                    <CalendarPreview
-                      form={form}
-                      events={previewQuery.data?.events ?? []}
-                      loading={previewQuery.isLoading}
-                      error={previewQuery.isError ? ((previewQuery.error as any)?.response?.data?.detail ?? 'Could not load events') : null}
-                    />
+                    {form.view === 'meeting_room' ? (
+                      <MeetingRoomPreview
+                        form={form}
+                        events={previewQuery.data?.events ?? []}
+                        loading={previewQuery.isLoading}
+                        error={previewQuery.isError ? ((previewQuery.error as any)?.response?.data?.detail ?? 'Could not load events') : null}
+                      />
+                    ) : (
+                      <CalendarPreview
+                        form={form}
+                        events={previewQuery.data?.events ?? []}
+                        loading={previewQuery.isLoading}
+                        error={previewQuery.isError ? ((previewQuery.error as any)?.response?.data?.detail ?? 'Could not load events') : null}
+                      />
+                    )}
                   </SectionCardBody>
                 </SectionCard>
               </div>

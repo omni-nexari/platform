@@ -27,10 +27,10 @@ window.Telemetry = {
     var longEdge = Math.max(w, h);
     var shortEdge = Math.min(w, h);
     var orientation = (w >= h) ? 'landscape' : 'portrait';
-    // Classify model by long edge (32"=2560, 13"=1600). Tolerate ±50px for OSD/scaling.
+    // Classify model by resolution. EM32DX2 = 2560×1440 (16:9), EM13DX1 = 1600×1200 (4:3). Tolerate ±80px for OSD/scaling.
     var model = 'unknown';
-    if (Math.abs(longEdge - 2560) <= 80 && Math.abs(shortEdge - 1440) <= 80) model = 'epaper-32';
-    else if (Math.abs(longEdge - 1600) <= 80 && Math.abs(shortEdge - 1200) <= 80) model = 'epaper-13';
+    if (Math.abs(longEdge - 2560) <= 80 && Math.abs(shortEdge - 1440) <= 80) model = 'EM32DX2';
+    else if (Math.abs(longEdge - 1600) <= 80 && Math.abs(shortEdge - 1200) <= 80) model = 'EM13DX1';
     return { panelW: w, panelH: h, orientation: orientation, modelClass: model };
   },
 

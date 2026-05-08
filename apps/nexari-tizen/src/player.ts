@@ -4945,7 +4945,14 @@ const Player = {
     const view = (meta.view as string) || 'week';
     const timezone = (meta.timezone as string) || 'UTC';
     const refreshSeconds = Math.max(15, Number(meta.refreshSeconds) || 60);
-    const theme = (meta.theme as { accentColor?: string; background?: 'light' | 'dark' }) || {};
+    const theme = (meta.theme as {
+      accentColor?: string;
+      background?: 'light' | 'dark';
+      clockStyle?: 'digital-12' | 'digital-24' | 'analog' | 'none';
+      fontStyle?: 'sans' | 'mono' | 'rounded';
+      showAttendeeCount?: boolean;
+      showLocation?: boolean;
+    }) || {};
     const accent = theme.accentColor || '#1a73e8';
     const isDark = theme.background === 'dark';
     const roomMeta = (meta.roomMeta as { name?: string; capacity?: number; location?: string; bookingUrl?: string; backgroundUrl?: string; logoUrl?: string } | null);
@@ -4958,7 +4965,14 @@ const Player = {
 
     const escapeHtml = (s: unknown) => this.escapeHtml(s);
 
-    type Ev = { id: string; title: string; start: string; end: string; allDay: boolean; location?: string | null; isPrivate: boolean };
+    type Ev = {
+      id: string; title: string; start: string; end: string; allDay: boolean;
+      location?: string | null; isPrivate: boolean;
+      status?: string;           // confirmed | tentative | cancelled
+      attendeeCount?: number | null;
+      organizerName?: string | null;
+      organizerEmail?: string | null;
+    };
 
     const calContainer = container as HTMLElement & {
       _calendarReqId?: string;
@@ -4983,6 +4997,13 @@ const Player = {
       return m === 0 ? `${h} ${ampm}` : `${h}:${pad2(m)} ${ampm}`;
     };
     const fmtTimeFull = (d: Date) => {
+      let h = d.getHours(); const m = d.getMinutes(); const ampm = h >= 12 ? 'PM' : 'AM';
+      h = h % 12 || 12;
+      return `${h}:${pad2(m)} ${ampm}`;
+    };
+    const clockStyle = theme.clockStyle ?? 'digital-12';
+    const fmtClockTime = (d: Date) => {
+      if (clockStyle === 'digital-24') return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
       let h = d.getHours(); const m = d.getMinutes(); const ampm = h >= 12 ? 'PM' : 'AM';
       h = h % 12 || 12;
       return `${h}:${pad2(m)} ${ampm}`;
@@ -5025,7 +5046,7 @@ const Player = {
       calContainer._clockTimer = window.setInterval(() => {
         if (calContainer._calendarReqId !== reqId) { clearInterval(calContainer._clockTimer!); return; }
         const el = container.querySelector('#cal-clock') as HTMLElement | null;
-        if (el) el.textContent = fmtTimeFull(getNow());
+        if (el) el.textContent = clockStyle === 'none' ? '' : fmtClockTime(getNow());
         // Update current-time indicator position
         const now = getNow();
         const minOfDay = now.getHours() * 60 + now.getMinutes();
@@ -5308,8 +5329,16 @@ const Player = {
       const nextEv = today.find((e) => new Date(e.start).getTime() > Date.now());
       const isBusy = !!currentEv;
 
-      const railColor       = isBusy ? '#d93025' : '#34a853';
-      const accentLineColor = isBusy ? '#e8602c' : '#a3c739';
+      // Amber state: within 15 min of current meeting ending or next meeting starting
+      const msToCurrentEnd = currentEv ? new Date(currentEv.end).getTime()   - Date.now() : Infinity;
+      const msToNextStart  = nextEv    ? new Date(nextEv.start).getTime()    - Date.now() : Infinity;
+      const isAmberEnding  = isBusy  && msToCurrentEnd < 15 * 60 * 1000;
+      const isAmberSoon    = !isBusy && isFinite(msToNextStart) && msToNextStart < 15 * 60 * 1000;
+
+      const railColor = (isBusy && !isAmberEnding) ? '#d93025'
+                      : (isBusy &&  isAmberEnding)  ? '#f59e0b'
+                      : isAmberSoon                 ? '#f59e0b'
+                      :                               '#34a853';
 
       const portrait    = window.innerHeight > window.innerWidth;
       const roomName    = roomMeta?.name || content.name || 'Meeting Room';
@@ -5317,40 +5346,80 @@ const Player = {
       const bookingUrl  = roomMeta?.bookingUrl || '';
       const logoUrl     = roomMeta?.logoUrl || '';
       const backgroundUrl = roomMeta?.backgroundUrl || '';
+      const showLoc  = theme.showLocation     !== false;
+      const showAtt  = !!theme.showAttendeeCount;
 
       const fmtRange = (e: Ev) => {
         const s = toLocal(e.start), en = toLocal(e.end);
-        return `${pad2(s.getHours())}:${pad2(s.getMinutes())} - ${pad2(en.getHours())}:${pad2(en.getMinutes())}`;
+        return `${fmtClockTime(s)} \u2013 ${fmtClockTime(en)}`;
       };
-      const organizer = (e: Ev) => {
-        const evx = e as unknown as { organizerName?: string | null; organizerEmail?: string | null };
-        return evx.organizerName || evx.organizerEmail || '';
+      const fmtCountdown = (ms: number) => {
+        const mins = Math.ceil(ms / 60000);
+        return mins < 60 ? `${mins} min` : `${Math.floor(mins / 60)}h ${pad2(mins % 60)}m`;
       };
 
-      const meetingsHtml = today.length === 0
+      // All-day events shown as a compact strip above timed events
+      const allDayEvents = today.filter((e) => e.allDay);
+      const timedEvents  = today.filter((e) => !e.allDay);
+
+      const allDayHtml = allDayEvents.length === 0 ? '' : `
+        <div style="display:flex;flex-wrap:wrap;gap:8px;padding:12px 36px;
+                     border-bottom:1px solid ${border};background:${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'}">
+          ${allDayEvents.map((e) => {
+            const isCancelled = e.status === 'cancelled';
+            const isTentative = e.status === 'tentative';
+            const title = e.isPrivate ? 'Busy' : (e.title || 'Reserved');
+            return `<div style="display:inline-flex;align-items:center;gap:6px;
+                                 padding:4px 14px;border-radius:20px;
+                                 background:${accent}22;border:1px solid ${accent}44;
+                                 font-size:18px;color:${isCancelled ? textMuted : text};
+                                 ${isCancelled ? 'text-decoration:line-through;opacity:0.55;' : ''}">
+              <span>&#9656;</span>
+              <span>${escapeHtml(title)}</span>
+              ${isTentative ? `<span style="font-size:14px;background:#f59e0b;color:#fff;padding:1px 6px;border-radius:3px;">?</span>` : ''}
+            </div>`;
+          }).join('')}
+        </div>`;
+
+      const meetingsHtml = timedEvents.length === 0 && allDayEvents.length === 0
         ? `<div style="display:flex;align-items:center;justify-content:center;height:100%;
                        color:${textMuted};font-size:36px;letter-spacing:2px;text-transform:uppercase;
                        text-align:center;padding:40px;">
              No meetings scheduled for today
            </div>`
-        : today.map((e) => {
-            const isCurrent = e === currentEv;
+        : timedEvents.map((e) => {
+            const isCurrent    = e === currentEv;
+            const isCancelled  = e.status === 'cancelled';
+            const isTentative  = e.status === 'tentative';
+            const title = e.isPrivate ? 'Busy' : (e.title || 'Reserved');
+            const organizer = e.organizerName || e.organizerEmail || '';
             return `
-              <div style="display:flex;gap:28px;padding:24px 36px;align-items:baseline;
+              <div style="display:flex;gap:28px;padding:22px 36px;align-items:baseline;
                            border-bottom:1px solid ${border};
+                           opacity:${isCancelled ? '0.45' : '1'};
                            ${isCurrent ? `background:${railColor}1a;` : ''}">
-                <div style="font-variant-numeric:tabular-nums;font-size:30px;font-weight:600;
-                             color:${text};white-space:nowrap;min-width:220px;">
+                <div style="font-variant-numeric:tabular-nums;font-size:28px;font-weight:600;
+                             color:${text};white-space:nowrap;min-width:210px;">
                   ${escapeHtml(fmtRange(e))}
                 </div>
                 <div style="flex:1;min-width:0;">
-                  <div style="font-size:30px;font-weight:600;color:${text};line-height:1.25;">
-                    ${escapeHtml(e.title || 'Reserved')}
+                  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                    <span style="font-size:30px;font-weight:600;color:${text};line-height:1.25;
+                                  ${isCancelled ? 'text-decoration:line-through;' : ''}">
+                      ${escapeHtml(title)}
+                    </span>
+                    ${isTentative ? `<span style="background:#f59e0b;color:#fff;padding:3px 10px;
+                                              border-radius:4px;font-size:15px;font-weight:700;
+                                              letter-spacing:0.5px;">TENTATIVE</span>` : ''}
+                    ${isCancelled ? `<span style="background:#6b7280;color:#fff;padding:3px 10px;
+                                              border-radius:4px;font-size:15px;font-weight:700;
+                                              letter-spacing:0.5px;">CANCELLED</span>` : ''}
                   </div>
-                  ${organizer(e) ? `
-                    <div style="font-size:20px;color:${textMuted};margin-top:4px;">
-                      (${escapeHtml(organizer(e))})
-                    </div>` : ''}
+                  <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:4px;">
+                    ${organizer && !e.isPrivate ? `<span style="font-size:19px;color:${textMuted};">${escapeHtml(organizer)}</span>` : ''}
+                    ${showLoc && e.location && !e.isPrivate ? `<span style="font-size:19px;color:${textMuted};">&#128205; ${escapeHtml(e.location)}</span>` : ''}
+                    ${showAtt && typeof e.attendeeCount === 'number' ? `<span style="font-size:19px;color:${textMuted};">&#128101; ${e.attendeeCount}</span>` : ''}
+                  </div>
                 </div>
                 ${isCurrent ? `
                   <div style="background:${railColor};color:#fff;padding:6px 14px;border-radius:4px;
@@ -5381,34 +5450,44 @@ const Player = {
       const header = `
         <div style="display:flex;align-items:center;gap:18px;padding:18px 32px;
                      background:${isDark ? '#2a2e3e' : '#f1f3f5'};
-                     border-bottom:3px solid ${accentLineColor};flex-shrink:0;">
+                     border-bottom:3px solid ${railColor};flex-shrink:0;">
           ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt=""
                             style="height:64px;max-width:180px;object-fit:contain;flex-shrink:0;" />` : ''}
           <div style="font-size:52px;font-weight:700;color:${text};letter-spacing:2px;
-                       text-transform:uppercase;">
+                       text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
             ${escapeHtml(roomName)}
           </div>
           ${roomMeta?.location ? `
-            <div style="font-size:22px;color:${textMuted};margin-left:16px;">
+            <div style="font-size:22px;color:${textMuted};margin-left:16px;flex-shrink:0;">
               ${escapeHtml(roomMeta.location)}
             </div>` : ''}
         </div>`;
 
+      // Smart countdown / status line
+      const statusText = isBusy
+        ? (isAmberEnding ? 'ENDING SOON' : 'IN USE')
+        : (isAmberSoon   ? 'STARTING SOON' : 'AVAILABLE');
       const statusLine = currentEv
-        ? `Until ${escapeHtml(fmtTimeFull(toLocal(currentEv.end)))}`
-        : (nextEv ? `Free until ${escapeHtml(fmtTimeFull(toLocal(nextEv.start)))}` : 'Free for the rest of the day');
+        ? (isAmberEnding
+            ? `Ends in ${escapeHtml(fmtCountdown(msToCurrentEnd))}`
+            : `Until ${escapeHtml(fmtClockTime(toLocal(currentEv.end)))}`)
+        : nextEv
+        ? (isAmberSoon
+            ? `Starts in ${escapeHtml(fmtCountdown(msToNextStart))}`
+            : `Free until ${escapeHtml(fmtClockTime(toLocal(nextEv.start)))}`)
+        : 'Free for the rest of the day';
 
       const rail = `
         <div style="background:${railColor};color:#fff;display:flex;flex-direction:column;
                      padding:28px 26px;${portrait ? 'flex-shrink:0;' : 'width:360px;flex-shrink:0;'}">
           <div id="cal-clock" style="font-size:64px;font-weight:700;letter-spacing:-1px;line-height:1;">
-            ${fmtTimeFull(now)}
+            ${clockStyle === 'none' ? '' : fmtClockTime(now)}
           </div>
           <div style="font-size:22px;opacity:0.9;margin-top:6px;">
             ${now.getFullYear()}.${pad2(now.getMonth() + 1)}.${pad2(now.getDate())}
           </div>
           <div style="font-size:28px;font-weight:700;margin-top:22px;letter-spacing:1px;">
-            ${isBusy ? 'IN USE' : 'AVAILABLE'}
+            ${statusText}
           </div>
           <div style="font-size:18px;opacity:0.92;margin-top:6px;">${statusLine}</div>
           ${capacity ? `
@@ -5431,12 +5510,14 @@ const Player = {
                      ${backgroundUrl ? `background-image:url(${JSON.stringify(backgroundUrl)});background-size:cover;background-position:center;` : ''}">
           ${backgroundUrl ? `<div style="position:absolute;inset:0;background:${isDark ? 'rgba(30,30,46,0.78)' : 'rgba(255,255,255,0.78)'};"></div>` : ''}
           <div style="position:relative;height:100%;overflow-y:auto;">
+            ${allDayHtml}
             ${meetingsHtml}
           </div>
         </div>`;
 
-      // Edge overlay: pulsing red when in a meeting, solid green when free/empty
-      const edgeOverlay = isBusy
+      // Edge overlay: amber/red pulsing when in a meeting or starting soon, solid green when free
+      const edgeColor = railColor;
+      const edgeOverlay = (isBusy || isAmberSoon)
         ? `<style>
             @keyframes mr-pulse {
               0%,100% { opacity:0.18; }
@@ -5444,10 +5525,10 @@ const Player = {
             }
           </style>
           <div style="pointer-events:none;position:absolute;inset:0;z-index:999;
-                       box-shadow:inset 0 0 0 12px #d93025;
+                       box-shadow:inset 0 0 0 12px ${edgeColor};
                        animation:mr-pulse 1.6s ease-in-out infinite;"></div>`
         : `<div style="pointer-events:none;position:absolute;inset:0;z-index:999;
-                        box-shadow:inset 0 0 0 12px #34a853;"></div>`;
+                        box-shadow:inset 0 0 0 12px ${edgeColor};"></div>`;
 
       container.innerHTML = `
         <div style="position:absolute;top:0;right:0;bottom:0;left:0;display:flex;flex-direction:column;
