@@ -371,7 +371,7 @@ function TimezoneCombobox({ value, onChange }: { value: string; onChange: (v: st
 
 // Fetches the latest in-memory screenshot frame for a device card / detail view.
 // Silently shows a placeholder if no frame is available yet (404).
-function LatestScreenshotFrame({ deviceId, portrait, kind, className }: { deviceId: string; portrait?: boolean; kind?: string | null | undefined; className?: string }) {
+function LatestScreenshotFrame({ deviceId, portrait, className }: { deviceId: string; portrait?: boolean; className?: string }) {
   const [src, setSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -398,13 +398,9 @@ function LatestScreenshotFrame({ deviceId, portrait, kind, className }: { device
     <div className={`w-full aspect-video rounded-xl border border-[var(--border)] bg-[var(--surface)] flex items-center justify-center overflow-hidden ${className ?? ''}`}>
       {src
         ? portrait
-          ? kind !== 'epaper'
-            ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0 relative">
-                <img src={src} alt="Latest screenshot" style={{ position: 'absolute', top: '50%', left: '50%', width: '177.78%', height: '56.25%', transform: 'translate(-50%, -50%) rotate(90deg)', objectFit: 'cover' }} />
-              </div>
-            : <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
-                <img src={src} alt="Latest screenshot" className="w-full h-full object-contain" />
-              </div>
+          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
+              <img src={src} alt="Latest screenshot" className="w-full h-full object-contain" />
+            </div>
           : <img src={src} alt="Latest screenshot" className="w-full h-full object-contain" />
         : <div className="flex flex-col items-center gap-2 text-[var(--text-muted)]">
             <Monitor className="w-8 h-8 opacity-30" />
@@ -3067,14 +3063,13 @@ export function DeviceDetailContent({
               </div>
 
               {/* Latest in-memory frame */}
-              {deviceId && <LatestScreenshotFrame deviceId={deviceId} portrait={isPortrait(device.resolution)} kind={device.kind} />}
+              {deviceId && <LatestScreenshotFrame deviceId={deviceId} portrait={isPortrait(device.resolution)} />}
 
               {/* Screenshot gallery — hidden by default */}
               {screenshotsOpen && screenshots.length > 0 && (
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {screenshots.map((s) => {
                     const portrait = isPortrait(device.resolution);
-                    const needsRotate = portrait && device.kind !== 'epaper';
                     return (
                       <div
                         key={s.id}
@@ -3083,13 +3078,7 @@ export function DeviceDetailContent({
                         <img
                           src={`/api/devices/${device.id}/screenshots/${s.id}`}
                           alt={`Screenshot ${s.takenAt}`}
-                          className={needsRotate || portrait ? undefined : 'w-full h-full object-contain'}
-                          style={needsRotate ? {
-                            position: 'absolute', top: '50%', left: '50%',
-                            width: '177.78%', height: '56.25%',
-                            transform: 'translate(-50%, -50%) rotate(90deg)',
-                            objectFit: 'cover',
-                          } : portrait ? { width: '100%', height: '100%', objectFit: 'contain' } : undefined}
+                          className="w-full h-full object-contain"
                           loading="lazy"
                           onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                         />

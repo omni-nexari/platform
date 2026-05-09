@@ -359,6 +359,14 @@ export default function LogViewer({
   const handleLoad     = () => { void fetchLogs(); };
   const handleLoadMore = () => { if (nextCursor) void fetchLogs(nextCursor); };
 
+  // Auto-reload when filters change (only if logs were already loaded)
+  const loadedRef = useRef(false);
+  useEffect(() => { loadedRef.current = loaded; }, [loaded]);
+  useEffect(() => {
+    if (loadedRef.current && !tailing) void fetchLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, minLevel, orgId, deviceId]);
+
   // ── Live tail ────────────────────────────────────────────────────────────
 
   const stopTail = useCallback(() => {
@@ -510,6 +518,7 @@ export default function LogViewer({
                 onChange={(e) => setMinLevel(e.target.value)}
                 className="rounded-lg border border-[var(--card-border)] bg-[var(--bg)] px-2 py-1.5 text-sm"
               >
+                <option value="">All levels</option>
                 <option value="debug">Debug+</option>
                 <option value="info">Info+</option>
                 <option value="warn">Warn+</option>
