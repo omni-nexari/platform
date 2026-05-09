@@ -244,6 +244,7 @@ export default function WorkspaceDashboardPage() {
                     offline: { label: 'Offline', mediaTone: '' },
                     unclaimed: { label: 'Unclaimed', mediaTone: 'ui-media-badge-warning' },
                     error: { label: 'Error', mediaTone: 'ui-media-badge-danger' },
+                    sleeping: { label: 'Sleeping', mediaTone: '' },
                   } as const;
 
                   const currentStatusMeta = statusMeta[device.status] ?? statusMeta.offline;
