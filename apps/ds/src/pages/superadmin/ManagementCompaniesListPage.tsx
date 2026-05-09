@@ -25,6 +25,8 @@ interface CompanyRow {
   id: string;
   name: string;
   slug: string;
+  plan: string;
+  allowedModules: string;
   billingEmail: string | null;
   suspendedAt: string | null;
   deletedAt: string | null;
@@ -38,11 +40,31 @@ function getResellerPortalPath(slug: string): string | null {
   return `/m/${slug}/login`;
 }
 
+const PLAN_TONES = {
+  starter: 'neutral',
+  pro: 'accent',
+  enterprise: 'success',
+} as const;
+
+const MODULE_TONES = {
+  signage: 'neutral',
+  pos: 'accent',
+  both: 'success',
+} as const;
+
+const MODULE_LABELS: Record<string, string> = {
+  signage: 'CMS Only',
+  pos: 'POS Only',
+  both: 'CMS + POS',
+};
+
 export default function ManagementCompaniesListPage() {
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [search, setSearch] = useState('');
   const [companyToDelete, setCompanyToDelete] = useState<CompanyRow | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<'starter' | 'pro' | 'enterprise'>('starter');
+  const [selectedModules, setSelectedModules] = useState<'signage' | 'pos' | 'both'>('signage');
 
   const { data: companies = [], isLoading } = useQuery({
     queryKey: ['sa-companies'],
@@ -66,6 +88,8 @@ export default function ManagementCompaniesListPage() {
       toast.success('Reseller created and invite sent');
       void qc.invalidateQueries({ queryKey: ['sa-companies'] });
       reset();
+      setSelectedPlan('starter');
+      setSelectedModules('signage');
       setShowCreate(false);
     },
     onError: (err) => {
@@ -177,6 +201,13 @@ export default function ManagementCompaniesListPage() {
 
                   <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
                     <div>
+                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Plan &amp; Modules</p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        <Badge tone={PLAN_TONES[company.plan as keyof typeof PLAN_TONES] ?? 'neutral'} className="capitalize">{company.plan}</Badge>
+                        <Badge tone={MODULE_TONES[company.allowedModules as keyof typeof MODULE_TONES] ?? 'neutral'}>{MODULE_LABELS[company.allowedModules] ?? company.allowedModules}</Badge>
+                      </div>
+                    </div>
+                    <div>
                       <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Admins</p>
                       <p className="mt-1 tabular-nums text-[var(--text)]">{company.adminCount}</p>
                     </div>
@@ -237,6 +268,7 @@ export default function ManagementCompaniesListPage() {
                 <thead>
                   <tr>
                     <th>Reseller</th>
+                    <th>Plan &amp; Modules</th>
                     <th>
                       <span className="flex items-center gap-1">
                         <Users size={13} /> Admins
@@ -276,6 +308,12 @@ export default function ManagementCompaniesListPage() {
                         ) : (
                           <p className="mt-1 text-xs text-[var(--text-muted)]">Portal link appears after first-time setup</p>
                         )}
+                      </td>
+                      <td>
+                        <div className="flex flex-wrap gap-1">
+                          <Badge tone={PLAN_TONES[company.plan as keyof typeof PLAN_TONES] ?? 'neutral'} className="capitalize">{company.plan}</Badge>
+                          <Badge tone={MODULE_TONES[company.allowedModules as keyof typeof MODULE_TONES] ?? 'neutral'}>{MODULE_LABELS[company.allowedModules] ?? company.allowedModules}</Badge>
+                        </div>
                       </td>
                       <td className="tabular-nums">{company.adminCount}</td>
                       <td className="tabular-nums">{company.orgCount}</td>
@@ -334,48 +372,105 @@ export default function ManagementCompaniesListPage() {
 
       {/* Create company modal */}
       {showCreate && (
-        <Modal onClose={() => setShowCreate(false)} size="sm">
+        <Modal onClose={() => { setShowCreate(false); reset(); setSelectedPlan('starter'); setSelectedModules('signage'); }} size="md">
           <ModalHeader
-            title="New Reseller"
-            subtitle="An invite will be sent to the initial admin immediately."
-            onClose={() => setShowCreate(false)}
+            title="New Reseller (SI)"
+            subtitle="Set up the SI account and send the first admin their invitation."
+            onClose={() => { setShowCreate(false); reset(); setSelectedPlan('starter'); setSelectedModules('signage'); }}
           />
           <ModalBody>
             <form
               id="create-company-form"
-              onSubmit={handleSubmit((d) => createCompany.mutate(d))}
-              className="space-y-4"
+              onSubmit={handleSubmit((d) => createCompany.mutate({ ...d, plan: selectedPlan, allowedModules: selectedModules }))}
+              className="space-y-5"
             >
-              <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wide">Initial Admin</p>
-
+              {/* ── Section 1: Company ── */}
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Company</p>
               <div>
-                <label className="block text-sm font-medium mb-1">Admin name</label>
+                <label className="block text-sm font-medium mb-1">SI / Reseller name</label>
                 <input
-                  {...register('initialAdminName')}
-                  placeholder="Alice Johnson"
+                  {...register('companyName')}
+                  placeholder="Acme Media Solutions"
                   className="input w-full"
                 />
-                {errors.initialAdminName && <p className="text-xs text-[var(--danger)] mt-1">{errors.initialAdminName.message}</p>}
+                {errors.companyName && <p className="text-xs text-[var(--danger)] mt-1">{errors.companyName.message}</p>}
+              </div>
+
+              {/* ── Section 2: Initial Admin ── */}
+              <div className="border-t pt-4" style={{ borderColor: 'var(--card-border)' }}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-3">Initial Admin</p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Admin name</label>
+                    <input
+                      {...register('initialAdminName')}
+                      placeholder="Alice Johnson"
+                      className="input w-full"
+                    />
+                    {errors.initialAdminName && <p className="text-xs text-[var(--danger)] mt-1">{errors.initialAdminName.message}</p>}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Admin email</label>
+                    <input
+                      {...register('initialAdminEmail')}
+                      type="email"
+                      placeholder="alice@acme.com"
+                      className="input w-full"
+                    />
+                    {errors.initialAdminEmail && <p className="text-xs text-[var(--danger)] mt-1">{errors.initialAdminEmail.message}</p>}
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Section 3: Plan & Modules ── */}
+              <div className="border-t pt-4" style={{ borderColor: 'var(--card-border)' }}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-3">Subscription Plan</p>
+                <div className="flex flex-wrap gap-2">
+                  {(['starter', 'pro', 'enterprise'] as const).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setSelectedPlan(p)}
+                      className={selectedPlan === p ? 'btn-primary text-sm px-4 py-2' : 'workspace-page-action text-sm px-4 py-2'}
+                    >
+                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">Admin email</label>
-                <input
-                  {...register('initialAdminEmail')}
-                  type="email"
-                  placeholder="alice@acme.com"
-                  className="input w-full"
-                />
-                {errors.initialAdminEmail && <p className="text-xs text-[var(--danger)] mt-1">{errors.initialAdminEmail.message}</p>}
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-3">Active Modules</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    { value: 'signage', label: 'CMS Only', sub: 'Signage & content' },
+                    { value: 'pos',     label: 'POS Only',  sub: 'Point of sale' },
+                    { value: 'both',    label: 'CMS + POS', sub: 'Full platform' },
+                  ] as const).map((m) => (
+                    <button
+                      key={m.value}
+                      type="button"
+                      onClick={() => setSelectedModules(m.value)}
+                      className="text-left rounded-xl border p-3 transition-colors"
+                      style={{
+                        background: selectedModules === m.value ? 'rgba(58,123,255,0.12)' : 'var(--card)',
+                        borderColor: selectedModules === m.value ? 'var(--blue)' : 'var(--card-border)',
+                      }}
+                    >
+                      <div className="font-semibold text-sm">{m.label}</div>
+                      <div className="text-xs text-[var(--text-muted)] mt-0.5">{m.sub}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <p className="text-xs text-[var(--text-muted)]">
-                The invited admin will set the reseller name, portal address, billing email, and logo during first-time setup.
+                The invited admin will set the portal address, billing email, and logo during first-time setup.
               </p>
             </form>
           </ModalBody>
           <ModalFooter>
-            <ModalSecondaryButton type="button" onClick={() => setShowCreate(false)} className="flex-1">
+            <ModalSecondaryButton type="button" onClick={() => { setShowCreate(false); reset(); setSelectedPlan('starter'); setSelectedModules('signage'); }} className="flex-1">
               Cancel
             </ModalSecondaryButton>
             <ModalPrimaryButton
@@ -384,7 +479,7 @@ export default function ManagementCompaniesListPage() {
               disabled={createCompany.isPending}
               className="flex-1"
             >
-              {createCompany.isPending ? 'Creating…' : 'Create Reseller & Send Invite'}
+              {createCompany.isPending ? 'Creating…' : 'Create & Send Invite'}
             </ModalPrimaryButton>
           </ModalFooter>
         </Modal>

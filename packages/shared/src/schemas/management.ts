@@ -15,6 +15,8 @@ export const ManagementCompanySchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
   slug: z.string(),
+  plan: z.enum(['starter', 'pro', 'enterprise']).default('starter'),
+  allowedModules: z.enum(['signage', 'pos', 'both']).default('signage'),
   billingEmail: z.string().email().nullable(),
   logoUrl: z.string().nullable().optional(),
   portalTitle: z.string().nullable().optional(),
@@ -56,9 +58,13 @@ export const ManagementCompanyBrandingSchema = z.object({
 export type ManagementCompanyBrandingInput = z.infer<typeof ManagementCompanyBrandingSchema>;
 
 export const CreateManagementCompanySchema = z.object({
+  /** The SI/reseller company name — set by the superadmin at creation time */
+  companyName: z.string().min(2, 'Company name is required').max(120),
   /** email of the first admin to invite immediately after creation */
   initialAdminEmail: z.string().email(),
   initialAdminName: z.string().min(1).max(120),
+  plan: z.enum(['starter', 'pro', 'enterprise']).default('starter'),
+  allowedModules: z.enum(['signage', 'pos', 'both']).default('signage'),
 });
 export type CreateManagementCompanyInput = z.infer<typeof CreateManagementCompanySchema>;
 

@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { ChevronDown, ChevronUp, CircleHelp, ExternalLink, Plus, Mail } from 'lucide-react';
+import { ChevronDown, ChevronUp, CircleHelp, ExternalLink, Plus, Mail, Settings2, Pencil } from 'lucide-react';
 import { InviteManagementCompanyAdminSchema } from '@signage/shared';
 import type { InviteManagementCompanyAdminInput } from '@signage/shared';
 import { saApi } from '../../lib/superadmin-auth.js';
@@ -60,6 +60,8 @@ interface CompanyDetail {
   id: string;
   name: string;
   slug: string;
+  plan: string;
+  allowedModules: string;
   billingEmail: string | null;
   logoUrl: string | null;
   portalTitle: string | null;
@@ -104,6 +106,30 @@ const ROLE_TONES = {
   billing: 'neutral',
 } as const;
 
+const PLAN_TONES = {
+  starter: 'neutral',
+  pro: 'accent',
+  enterprise: 'success',
+} as const;
+
+const MODULE_TONES = {
+  signage: 'neutral',
+  pos: 'accent',
+  both: 'success',
+} as const;
+
+const MODULE_OPTIONS = [
+  { value: 'signage' as const, label: 'CMS Only',  sub: 'Signage & content management' },
+  { value: 'pos'     as const, label: 'POS Only',  sub: 'Point of sale & kiosk' },
+  { value: 'both'    as const, label: 'CMS + POS', sub: 'Full platform access' },
+];
+
+const MODULE_LABELS: Record<string, string> = {
+  signage: 'CMS Only',
+  pos: 'POS Only',
+  both: 'CMS + POS',
+};
+
 export default function ManagementCompanyDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -111,6 +137,10 @@ export default function ManagementCompanyDetailPage() {
   const [showInvite, setShowInvite] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [showBrandingOptions, setShowBrandingOptions] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<'starter' | 'pro' | 'enterprise' | null>(null);
+  const [selectedModules, setSelectedModules] = useState<'signage' | 'pos' | 'both' | null>(null);
+  const [nameInput, setNameInput] = useState('');
+  const [editingName, setEditingName] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['sa-company-admins', id],
@@ -198,6 +228,20 @@ export default function ManagementCompanyDetailPage() {
       void qc.invalidateQueries({ queryKey: ['sa-company-detail', id] });
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to save branding'),
+  });
+
+  const patchCompany = useMutation({
+    mutationFn: (payload: { name?: string; plan?: string; allowedModules?: string }) =>
+      saApi.patch(`/superadmin/management-companies/${id}`, payload),
+    onSuccess: () => {
+      toast.success('Updated');
+      setSelectedPlan(null);
+      setSelectedModules(null);
+      setEditingName(false);
+      void qc.invalidateQueries({ queryKey: ['sa-company-detail', id] });
+      void qc.invalidateQueries({ queryKey: ['sa-companies'] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Update failed'),
   });
 
   const uploadBrandAsset = useMutation({
@@ -325,6 +369,133 @@ export default function ManagementCompanyDetailPage() {
           </SectionCardBody>
         </SectionCard>
       ) : null}
+
+      {/* ── Company Details (name) ── */}
+      {company && (
+        <SectionCard>
+          <SectionCardHeader>
+            <h2 className="text-base font-semibold">Company Details</h2>
+          </SectionCardHeader>
+          <SectionCardBody>
+            {editingName ? (
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="flex-1">
+                  <label className="block text-xs text-[var(--text-muted)] mb-1">Reseller / SI name</label>
+                  <input
+                    value={nameInput}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    className="input w-full"
+                    placeholder={company.name}
+                    autoFocus
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      const trimmed = nameInput.trim();
+                      if (trimmed.length >= 2) patchCompany.mutate({ name: trimmed });
+                    }}
+                    disabled={nameInput.trim().length < 2 || patchCompany.isPending}
+                    className="btn-primary whitespace-nowrap"
+                  >
+                    {patchCompany.isPending ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    onClick={() => { setEditingName(false); setNameInput(''); }}
+                    className="workspace-page-action"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                <p className="text-base font-semibold">{company.name}</p>
+                <button
+                  onClick={() => { setNameInput(company.name); setEditingName(true); }}
+                  className="inline-flex items-center gap-1 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+                >
+                  <Pencil size={13} /> Edit
+                </button>
+              </div>
+            )}
+          </SectionCardBody>
+        </SectionCard>
+      )}
+
+      {/* ── Plan & Allowed Modules ── */}
+      {company && (() => {
+        const currentPlan = company.plan as 'starter' | 'pro' | 'enterprise';
+        const currentModules = company.allowedModules as 'signage' | 'pos' | 'both';
+        const activePlan = selectedPlan ?? currentPlan;
+        const activeModules = selectedModules ?? currentModules;
+        const planDirty = selectedPlan !== null && selectedPlan !== currentPlan;
+        const modulesDirty = selectedModules !== null && selectedModules !== currentModules;
+        return (
+          <SectionCard>
+            <SectionCardHeader>
+              <h2 className="text-base font-semibold flex items-center gap-2">
+                <Settings2 size={16} /> Plan &amp; Allowed Modules
+              </h2>
+            </SectionCardHeader>
+            <SectionCardBody className="space-y-6">
+              <div>
+                <p className="text-sm font-medium mb-3">Subscription plan</p>
+                <div className="flex flex-wrap gap-2">
+                  {(['starter', 'pro', 'enterprise'] as const).map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setSelectedPlan(p)}
+                      className={activePlan === p ? 'btn-primary text-sm px-4 py-2' : 'workspace-page-action text-sm px-4 py-2'}
+                    >
+                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-sm font-medium mb-3">Active modules</p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  {MODULE_OPTIONS.map((m) => (
+                    <button
+                      key={m.value}
+                      onClick={() => setSelectedModules(m.value)}
+                      className="text-left rounded-xl border p-4 transition-colors"
+                      style={{
+                        background: activeModules === m.value ? 'rgba(58,123,255,0.12)' : 'var(--card)',
+                        borderColor: activeModules === m.value ? 'var(--blue)' : 'var(--card-border)',
+                      }}
+                    >
+                      <div className="font-semibold text-sm mb-1">{m.label}</div>
+                      <div className="text-xs text-[var(--text-muted)]">{m.sub}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {(planDirty || modulesDirty) && (
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    onClick={() => patchCompany.mutate({
+                      ...(planDirty    ? { plan: activePlan }         : {}),
+                      ...(modulesDirty ? { allowedModules: activeModules } : {}),
+                    })}
+                    disabled={patchCompany.isPending}
+                    className="btn-primary"
+                  >
+                    {patchCompany.isPending ? 'Saving…' : 'Save Changes'}
+                  </button>
+                  <button
+                    onClick={() => { setSelectedPlan(null); setSelectedModules(null); }}
+                    className="workspace-page-action"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </SectionCardBody>
+          </SectionCard>
+        );
+      })()}
 
       {company && (
         <SectionCard>

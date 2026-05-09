@@ -393,6 +393,13 @@
                         "when":  1778400000000,
                         "tag":  "0055_epaper_devices",
                         "breakpoints":  true
+                    },
+                    {
+                        "idx":  56,
+                        "version":  "7",
+                        "when":  1778401800000,
+                        "tag":  "0056_si_plan_modules",
+                        "breakpoints":  true
                     }
                 ]
 }

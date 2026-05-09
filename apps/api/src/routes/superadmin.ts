@@ -1630,13 +1630,19 @@ export async function superAdminRoutes(app: FastifyInstance) {
       if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
       const caller = req.user as PlatformAdminCaller;
-      const { initialAdminEmail, initialAdminName } = body.data;
+      const { companyName, initialAdminEmail, initialAdminName, plan, allowedModules } = body.data;
 
-      // Company name & slug filled in by the admin during onboarding
+      // Slug is set by the admin during first-time onboarding; name is known immediately
       const tempSlug = `pending-${randomToken(4)}`;
       const [company] = await db
         .insert(managementCompanies)
-        .values({ name: '(pending setup)', slug: tempSlug, createdByOwnerId: caller.sub })
+        .values({
+          name: companyName,
+          slug: tempSlug,
+          plan: plan ?? 'starter',
+          allowedModules: allowedModules ?? 'signage',
+          createdByOwnerId: caller.sub,
+        })
         .returning();
       if (!company) return reply.status(500).send({ error: 'Failed to create management company' });
 
@@ -1655,7 +1661,9 @@ export async function superAdminRoutes(app: FastifyInstance) {
           recipientName: initialAdminName,
           orgRole: 'owner',
           inviteType: 'management_company_admin',
-          companyName: 'your company portal',
+          companyName,
+          plan: plan ?? 'starter',
+          allowedModules: allowedModules ?? 'signage',
           branding: {
             portalTitle: company.portalTitle ?? null,
             logoUrl: company.logoUrl ?? null,
@@ -1673,7 +1681,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
         action: 'MANAGEMENT_COMPANY_CREATED',
         entityType: 'management_company',
         entityId: company.id,
-        meta: { adminEmail: initialAdminEmail },
+        meta: { adminEmail: initialAdminEmail, companyName, plan: plan ?? 'starter', allowedModules: allowedModules ?? 'signage' },
         ipAddress: req.ip,
       });
 
@@ -1731,6 +1739,8 @@ export async function superAdminRoutes(app: FastifyInstance) {
           name: z.string().min(2).max(120).optional(),
           billingEmail: z.string().email().nullable().optional(),
           suspended: z.boolean().optional(),
+          plan: z.enum(['starter', 'pro', 'enterprise']).optional(),
+          allowedModules: z.enum(['signage', 'pos', 'both']).optional(),
         })
         .safeParse(req.body);
       if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
@@ -1753,6 +1763,8 @@ export async function superAdminRoutes(app: FastifyInstance) {
           name: body.data.name ?? company.name,
           billingEmail:
             body.data.billingEmail !== undefined ? body.data.billingEmail : company.billingEmail,
+          plan: body.data.plan ?? company.plan,
+          allowedModules: body.data.allowedModules ?? company.allowedModules,
           suspendedAt: newSuspendedAt,
           updatedAt: new Date(),
         })
