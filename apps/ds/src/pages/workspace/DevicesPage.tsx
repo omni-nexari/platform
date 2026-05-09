@@ -26,7 +26,9 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
   status: Device['status'];
   powerState: Device['powerState'];
   resolution?: string | null;
-  kind?: string | null | undefined;(false);
+  kind?: string | null | undefined;
+}) {
+  const [errored, setErrored] = useState(false);
   // Reset error state whenever a fresh screenshot id or frame timestamp arrives.
   useEffect(() => { setErrored(false); }, [screenshotId, latestFrameAt]);
 
