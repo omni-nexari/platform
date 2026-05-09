@@ -1,7 +1,23 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import legacy from '@vitejs/plugin-legacy';
+
+// Stamps nonce="VITE_NONCE" onto every <script> tag in the built index.html.
+// nginx replaces VITE_NONCE with $request_id at serve time (sub_filter),
+// and the CSP header uses 'nonce-$request_id' instead of 'unsafe-inline'.
+function cspNoncePlugin(): Plugin {
+  return {
+    name: 'csp-nonce',
+    apply: 'build',
+    transformIndexHtml: {
+      order: 'post', // run after legacy plugin has injected its inline detection script
+      handler(html) {
+        return html.replace(/<script(?=[>\s])/g, '<script nonce="VITE_NONCE"');
+      },
+    },
+  };
+}
 
 const proxyConfig = {
   '/api': {
@@ -21,6 +37,7 @@ export default defineConfig({
     legacy({
       targets: ['chrome >= 56', 'safari >= 10'],
     }),
+    cspNoncePlugin(),
   ],
   server: {
     host: true,
