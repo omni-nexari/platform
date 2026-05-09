@@ -63,7 +63,7 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
                 key={`${screenshotId}-${latestFrameAt ?? 0}`}
                 src={src}
                 alt="Latest screenshot"
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain"
                 onError={() => setErrored(true)}
               />
             </div>
@@ -102,7 +102,7 @@ function LiveViewInCard({ deviceId, onStop, resolution }: { deviceId: string; on
       {imgSrc
         ? portrait
           ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
-              <img src={imgSrc} alt="Live" className="w-full h-full object-cover" />
+              <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
             </div>
           : <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
         : <div className="flex flex-col items-center gap-2 text-white/40">

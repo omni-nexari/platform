@@ -103,25 +103,65 @@ const attemptedThumbnailRegenerationIds = new Set<string>();
 const missingThumbnailSourceIds = new Set<string>();
 
 // ── Calendar Card Preview ─────────────────────────────────────────────────────
+interface CalCardEvent {
+  id: string; title: string; start: string; end: string;
+  allDay: boolean; isPrivate: boolean; status?: string; location?: string | null;
+}
+
 function CalendarCardPreview({ item, large = false }: { item: ContentItem; large?: boolean }) {
   const size = large ? 'h-40' : 'h-28';
   let meta: Record<string, unknown> = {};
   try { meta = JSON.parse(item.metadata ?? '{}'); } catch { /* ignore */ }
 
-  const view    = (meta.view as string) || 'week';
-  const isDark  = (meta.theme as Record<string, unknown>)?.background === 'dark';
-  const accent  = ((meta.theme as Record<string, unknown>)?.accentColor as string) || '#4f46e5';
-  const rmeta   = (meta.roomMeta as Record<string, unknown>) || {};
-  const roomName = (rmeta.name as string) || item.name || 'Meeting Room';
-  const bg      = isDark ? '#1e1e2e' : '#f8fafc';
-  const surf    = isDark ? '#2a2a3e' : '#ffffff';
-  const textC   = isDark ? '#e2e8f0' : '#1e293b';
-  const mutedC  = isDark ? '#64748b' : '#94a3b8';
-  const bordC   = isDark ? '#3a3a50' : '#e2e8f0';
-  const today   = new Date();
+  const view      = (meta.view as string) || 'week';
+  const tz        = (meta.timezone as string) || undefined;
+  const isDark    = (meta.theme as Record<string, unknown>)?.background === 'dark';
+  const accent    = ((meta.theme as Record<string, unknown>)?.accentColor as string) || '#4f46e5';
+  const rmeta     = (meta.roomMeta as Record<string, unknown>) || {};
+  const roomName  = (rmeta.name as string) || item.name || 'Meeting Room';
+  const bg        = isDark ? '#1e1e2e' : '#f8fafc';
+  const surf      = isDark ? '#2a2a3e' : '#ffffff';
+  const textC     = isDark ? '#e2e8f0' : '#1e293b';
+  const mutedC    = isDark ? '#64748b' : '#94a3b8';
+  const bordC     = isDark ? '#3a3a50' : '#e2e8f0';
+  const today     = new Date();
   const dayLetters = ['S','M','T','W','T','F','S'];
 
+  // Time window for the query, keyed by view type
+  const from = new Date(today); from.setHours(0, 0, 0, 0);
+  if (view === 'week') from.setDate(today.getDate() - today.getDay());
+  else if (view === 'month') from.setDate(1);
+  const to = new Date(from);
+  if (view === 'meeting_room' || view === 'day') {
+    to.setDate(to.getDate() + 1);
+  } else if (view === 'week') {
+    to.setDate(to.getDate() + 7);
+  } else { // month
+    to.setMonth(to.getMonth() + 1); to.setDate(0); to.setHours(23, 59, 59, 999);
+  }
+
+  const evQ = useQuery<{ events: CalCardEvent[] }>({
+    queryKey: ['cal-card', item.id, view, from.toDateString()],
+    enabled: !!(meta.connectionId),
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => {
+      const p = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
+      return api.get(`/content/${item.id}/calendar/events?${p}`);
+    },
+  });
+
+  const events: CalCardEvent[] = evQ.data?.events ?? [];
+  const fmt = (iso: string) =>
+    new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz });
+
   if (view === 'meeting_room') {
+    const currentEvent = events.find(e => !e.allDay && new Date(e.start) <= today && new Date(e.end) > today);
+    const upcoming = events.filter(e => !e.allDay && new Date(e.start) > today);
+    const shown = currentEvent ? [currentEvent, ...upcoming].slice(0, 2) : upcoming.slice(0, 2);
+    const isBusy = !!currentEvent;
+    const railColor = isBusy ? '#dc2626' : accent;
+    const statusLabel = isBusy ? 'IN USE' : 'AVAILABLE';
+    const nowTime = today.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz });
     return (
       <div className={`ui-media-frame w-full ${size} relative rounded-t-[0.95rem] overflow-hidden`}
         style={{ background: bg, fontFamily: 'system-ui,sans-serif' }}>
@@ -131,21 +171,30 @@ function CalendarCardPreview({ item, large = false }: { item: ContentItem; large
             <div style={{ fontSize: 7, color: mutedC, marginTop: 1 }}>Today &middot; {today.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
           </div>
           <div style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {([['9:00', '10:00', 'Team Standup'], ['11:00', '12:00', 'Design Review']] as [string, string, string][]).map(([s, e, t]) => (
-              <div key={t} style={{ display: 'flex', gap: 4, alignItems: 'flex-start' }}>
+            {evQ.isLoading && <div style={{ fontSize: 7, color: mutedC }}>Loading…</div>}
+            {!evQ.isLoading && shown.length === 0 && (
+              <div style={{ fontSize: 7, color: mutedC, fontStyle: 'italic' }}>No events today</div>
+            )}
+            {shown.map(e => (
+              <div key={e.id} style={{ display: 'flex', gap: 4, alignItems: 'flex-start' }}>
                 <div style={{ width: 2, height: 16, borderRadius: 1, background: accent, flexShrink: 0, marginTop: 1 }} />
-                <div>
-                  <div style={{ fontSize: 7.5, fontWeight: 600, color: textC, whiteSpace: 'nowrap' }}>{t}</div>
-                  <div style={{ fontSize: 6.5, color: mutedC }}>{s}&ndash;{e}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 7.5, fontWeight: 600, color: textC, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 90 }}>
+                    {e.isPrivate ? 'Private' : e.title}
+                  </div>
+                  <div style={{ fontSize: 6.5, color: mutedC }}>{fmt(e.start)}&ndash;{fmt(e.end)}</div>
                 </div>
               </div>
             ))}
           </div>
         </div>
-        <div className="absolute top-0 right-0 bottom-0" style={{ width: 80, background: accent, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
-          <div style={{ fontSize: 8, fontWeight: 700, color: '#fff', letterSpacing: 1 }}>AVAILABLE</div>
-          <div style={{ width: 24, height: 1, background: 'rgba(255,255,255,0.4)' }} />
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>12:00</div>
+        <div className="absolute top-0 right-0 bottom-0" style={{ width: 80, background: railColor, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+          <div style={{ fontSize: 8, fontWeight: 700, color: '#fff', letterSpacing: 1 }}>{statusLabel}</div>
+          {isBusy && currentEvent && (
+            <div style={{ fontSize: 6, color: 'rgba(255,255,255,0.8)', textAlign: 'center', padding: '0 4px' }}>until {fmt(currentEvent.end)}</div>
+          )}
+          <div style={{ width: 24, height: 1, background: 'rgba(255,255,255,0.4)', margin: '2px 0' }} />
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{nowTime}</div>
         </div>
       </div>
     );
@@ -160,6 +209,18 @@ function CalendarCardPreview({ item, large = false }: { item: ContentItem; large
     ];
     while (cells.length % 7 !== 0) cells.push(null);
     const weeks = Array.from({ length: cells.length / 7 }, (_, i) => cells.slice(i * 7, i * 7 + 7));
+
+    // Group real events by day-of-month
+    const byDay = new Map<number, CalCardEvent[]>();
+    for (const e of events) {
+      const d = new Date(e.start);
+      if (d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear()) {
+        const day = d.getDate();
+        if (!byDay.has(day)) byDay.set(day, []);
+        byDay.get(day)!.push(e);
+      }
+    }
+
     return (
       <div className={`ui-media-frame w-full ${size} relative rounded-t-[0.95rem] overflow-hidden`}
         style={{ background: bg, fontFamily: 'system-ui,sans-serif', padding: '6px 8px 4px', display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -170,14 +231,17 @@ function CalendarCardPreview({ item, large = false }: { item: ContentItem; large
           <div key={wi} style={{ display: 'flex', flex: 1, gap: 1 }}>
             {w.map((d, di) => {
               const isToday = d === today.getDate();
+              const dayEvs  = d != null ? (byDay.get(d) ?? []) : [];
               return (
-                <div key={di} style={{ flex: 1, borderRadius: 2, background: d ? surf : 'transparent', border: `1px solid ${d ? bordC : 'transparent'}`, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '1px 0' }}>
+                <div key={di} style={{ flex: 1, borderRadius: 2, background: d ? surf : 'transparent', border: `1px solid ${d ? bordC : 'transparent'}`, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '1px 0', overflow: 'hidden' }}>
                   {d != null && (
-                    <span style={{ fontSize: 6.5, fontWeight: isToday ? 700 : 400, color: isToday ? '#fff' : textC, background: isToday ? accent : 'transparent', borderRadius: '50%', width: 10, height: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <span style={{ fontSize: 6.5, fontWeight: isToday ? 700 : 400, color: isToday ? '#fff' : textC, background: isToday ? accent : 'transparent', borderRadius: '50%', width: 10, height: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       {d}
                     </span>
                   )}
-                  {d != null && d % 5 === 1 && <div style={{ width: '80%', height: 3, borderRadius: 1, background: accent, marginTop: 1, opacity: 0.7 }} />}
+                  {dayEvs.slice(0, 2).map(e => (
+                    <div key={e.id} style={{ width: '90%', height: 3, borderRadius: 1, background: accent, marginTop: 1, opacity: 0.8 }} />
+                  ))}
                 </div>
               );
             })}
@@ -187,15 +251,25 @@ function CalendarCardPreview({ item, large = false }: { item: ContentItem; large
     );
   }
 
-  // day / week — time grid
-  const numCols   = view === 'day' ? 1 : 7;
-  const colDates  = view === 'day'
+  // day / week — time grid (9am–2pm window)
+  const GRID_START = 9;
+  const GRID_END   = 14;
+  const numCols    = view === 'day' ? 1 : 7;
+  const colDates   = view === 'day'
     ? [today]
     : Array.from({ length: 7 }, (_, i) => { const d = new Date(today); d.setDate(today.getDate() - today.getDay() + i); return d; });
+
+  const toDecHour = (iso: string) => { const d = new Date(iso); return d.getHours() + d.getMinutes() / 60; };
+
+  // Bucket events into their day column
+  const evByCol: CalCardEvent[][] = colDates.map(cd =>
+    events.filter(e => !e.allDay && new Date(e.start).toDateString() === cd.toDateString()),
+  );
 
   return (
     <div className={`ui-media-frame w-full ${size} relative rounded-t-[0.95rem] overflow-hidden`}
       style={{ background: bg, fontFamily: 'system-ui,sans-serif', display: 'flex', flexDirection: 'column' }}>
+      {/* Day header row */}
       <div style={{ display: 'flex', borderBottom: `1px solid ${bordC}`, flexShrink: 0 }}>
         <div style={{ width: 18, flexShrink: 0, borderRight: `1px solid ${bordC}` }} />
         {colDates.map((d, i) => {
@@ -214,6 +288,7 @@ function CalendarCardPreview({ item, large = false }: { item: ContentItem; large
           );
         })}
       </div>
+      {/* Time grid body */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         <div style={{ width: 18, flexShrink: 0, borderRight: `1px solid ${bordC}` }}>
           {['9','10','11','12','1'].map((h, i) => (
@@ -221,18 +296,34 @@ function CalendarCardPreview({ item, large = false }: { item: ContentItem; large
           ))}
         </div>
         <div style={{ flex: 1, position: 'relative' }}>
+          {/* Hour lines */}
           {[0,1,2,3,4].map(h => (
             <div key={h} style={{ position: 'absolute', left: 0, right: 0, top: `${h * 20}%`, borderTop: `1px solid ${bordC}` }} />
           ))}
-          <div style={{
-            position: 'absolute',
-            left: `${(1 / numCols) * 100 * 0.05}%`,
-            width: `${(1 / numCols) * 100 * 0.9}%`,
-            top: '10%', height: '28%',
-            background: accent, borderRadius: 2, padding: '1px 3px', overflow: 'hidden',
-          }}>
-            <div style={{ fontSize: 5.5, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Team Standup</div>
-          </div>
+          {/* Real event blocks */}
+          {colDates.map((_, ci) =>
+            (evByCol[ci] ?? []).map(e => {
+              const startH = Math.max(toDecHour(e.start), GRID_START);
+              const endH   = Math.min(toDecHour(e.end),   GRID_END);
+              if (startH >= GRID_END || endH <= GRID_START) return null;
+              const top    = (startH - GRID_START) / (GRID_END - GRID_START) * 100;
+              const height = Math.max((endH - startH) / (GRID_END - GRID_START) * 100, 6);
+              const colW   = 1 / numCols;
+              return (
+                <div key={e.id} style={{
+                  position: 'absolute',
+                  left: `${(ci * colW + colW * 0.05) * 100}%`,
+                  width: `${colW * 0.9 * 100}%`,
+                  top: `${top}%`, height: `${height}%`,
+                  background: accent, borderRadius: 2, padding: '1px 2px', overflow: 'hidden',
+                }}>
+                  <div style={{ fontSize: 5.5, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {e.isPrivate ? 'Private' : e.title}
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
     </div>
