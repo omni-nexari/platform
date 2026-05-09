@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { db, syncPlaylists, syncPlaylistItems, contentItems, workspaces, workspaceMembers } from '@signage/db';
-import { eq, and, isNull, desc, inArray } from 'drizzle-orm';
+import { eq, and, isNull, desc, inArray, asc } from 'drizzle-orm';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -29,7 +29,45 @@ export async function syncPlaylistRoutes(app: FastifyInstance) {
       orderBy: [desc(syncPlaylists.updatedAt)],
     });
 
-    return reply.send(rows);
+    // Enrich each playlist with item count, total duration, and preview content IDs
+    const ids = rows.map((r) => r.id);
+    const previewMap: Record<string, string[]> = {};
+    const itemCountMap: Record<string, number> = {};
+    const durationMap: Record<string, number> = {};
+
+    if (ids.length > 0) {
+      const allItems = await db
+        .select({
+          syncPlaylistId: syncPlaylistItems.syncPlaylistId,
+          contentId: syncPlaylistItems.contentId,
+          durationSeconds: syncPlaylistItems.durationSeconds,
+          sortOrder: syncPlaylistItems.sortOrder,
+          contentDuration: contentItems.duration,
+        })
+        .from(syncPlaylistItems)
+        .leftJoin(contentItems, and(eq(syncPlaylistItems.contentId, contentItems.id), isNull(contentItems.deletedAt)))
+        .where(inArray(syncPlaylistItems.syncPlaylistId, ids))
+        .orderBy(asc(syncPlaylistItems.sortOrder));
+
+      for (const item of allItems) {
+        const pid = item.syncPlaylistId;
+        if (!previewMap[pid]) { previewMap[pid] = []; itemCountMap[pid] = 0; durationMap[pid] = 0; }
+        itemCountMap[pid]! += 1;
+        // duration: item override > content default > fallback 10s
+        const dur = item.durationSeconds ?? item.contentDuration ?? 10;
+        durationMap[pid]! += dur;
+        if (item.contentId && previewMap[pid]!.length < 4) {
+          previewMap[pid]!.push(item.contentId);
+        }
+      }
+    }
+
+    return reply.send(rows.map((row) => ({
+      ...row,
+      itemCount: itemCountMap[row.id] ?? 0,
+      totalDuration: durationMap[row.id] ?? 0,
+      previewContentIds: previewMap[row.id] ?? [],
+    })));
   });
 
   // ── GET /sync-playlists/:id ───────────────────────────────────────────────

@@ -33,6 +33,10 @@ pnpm db:migrate
 echo "==> [update] Restarting service..."
 sudo systemctl restart signage-api
 
+echo "==> [update] Updating nginx config..."
+sudo cp "$APP_DIR/infra/nginx/signage.conf" /etc/nginx/sites-available/signage
+sudo nginx -t && sudo systemctl reload nginx
+
 # ── Tizen assets directory ────────────────────────────────────────────────────
 # /var/signage/tizen/ is created by bootstrap.sh, but guard here in case this
 # script is run on a fresh clone without a full bootstrap.

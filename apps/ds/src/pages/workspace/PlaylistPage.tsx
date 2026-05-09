@@ -46,6 +46,9 @@ interface Playlist {
 interface SyncPlaylist {
   id: string;
   name: string;
+  itemCount: number;
+  totalDuration: number;
+  previewContentIds: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -247,14 +250,55 @@ function SyncPlaylistCard({ sp, onEdit, onDelete, onPublish }: {
       onKeyDown={(e) => e.key === 'Enter' && onEdit()}
       className="ui-entity-card relative flex flex-col cursor-pointer group"
     >
-      <div className="ui-media-frame aspect-video flex items-center justify-center">
-        <Layers2 size={28} className="text-[var(--text-muted)]" />
+      {/* Thumbnail */}
+      <div className="ui-media-frame aspect-video">
+        {sp.previewContentIds.length > 0 ? (
+          <div className="absolute inset-0 flex items-center justify-center bg-[var(--surface-raised)]">
+            <div className="flex items-center">
+              {sp.previewContentIds.slice(0, 4).map((cid, idx) => (
+                <div
+                  key={cid}
+                  className="relative shrink-0 h-16 w-[72px] rounded-lg overflow-hidden border-2 border-[var(--card)] shadow-md"
+                  style={{ marginLeft: idx === 0 ? 0 : -18, zIndex: idx }}
+                >
+                  <AuthImg
+                    itemId={cid}
+                    className="w-full h-full object-cover"
+                    fallback={<div className="w-full h-full flex items-center justify-center bg-[var(--surface)]"><Layers2 size={16} className="text-[var(--text-muted)]" /></div>}
+                  />
+                </div>
+              ))}
+              {sp.itemCount > 4 && (
+                <div
+                  className="shrink-0 h-16 w-[42px] rounded-lg flex items-center justify-center bg-[var(--surface)] border-2 border-[var(--card)] shadow-md text-xs font-semibold text-[var(--text-muted)]"
+                  style={{ marginLeft: -18, zIndex: 4 }}
+                >
+                  +{sp.itemCount - 4}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <Layers2 size={28} className="text-[var(--text-muted)]" />
+          </div>
+        )}
+
+        {/* Sync badge */}
         <span
           className="ui-media-badge absolute top-2 left-2 z-20"
           style={{ background: 'rgba(168,85,247,0.85)', color: 'white' }}
         >
           Sync
         </span>
+
+        {/* Duration overlay */}
+        {sp.totalDuration > 0 && (
+          <span className="ui-media-badge absolute bottom-2 right-2 z-20">
+            {formatDuration(sp.totalDuration)}
+          </span>
+        )}
+
         {hovered && (
           <div className="ui-media-hover-overlay">
             <div className="ui-media-hover-play">
@@ -270,8 +314,15 @@ function SyncPlaylistCard({ sp, onEdit, onDelete, onPublish }: {
         </p>
         <div className="ui-entity-card-meta mt-1">
           <span className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
-            <Clock size={10} /> Updated {new Date(sp.updatedAt).toLocaleDateString()}
+            <Layers2 size={10} />
+            {sp.itemCount} {sp.itemCount === 1 ? 'item' : 'items'}
           </span>
+          {sp.totalDuration > 0 && (
+            <span className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+              <Clock size={10} />
+              {formatDuration(sp.totalDuration)}
+            </span>
+          )}
         </div>
       </div>
 
