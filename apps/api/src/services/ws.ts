@@ -509,7 +509,7 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     await db
       .update(devices)
       .set({
-        status: 'online',
+        status: hb.powerState === 'sleeping' ? 'sleeping' : 'online',
         lastSeen: new Date(),
         ...(hb.playerVersion != null ? { playerVersion: hb.playerVersion } : {}),
         ...(hb.firmwareVersion != null ? { firmwareVersion: hb.firmwareVersion } : {}),
@@ -521,6 +521,8 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
         ...(hb.buttonLock != null ? { buttonLock: hb.buttonLock } : {}),
         ...('tvName' in hb && hb.tvName ? { name: hb.tvName } : {}),
         ...('batteryPct' in hb && hb.batteryPct != null ? { batteryPct: hb.batteryPct } : {}),
+        ...('nextWakeAt' in hb && hb.nextWakeAt != null ? { nextWakeAt: new Date(hb.nextWakeAt) } : {}),
+        ...('lastWakeReason' in hb && hb.lastWakeReason != null ? { lastWakeReason: hb.lastWakeReason } : {}),
         updatedAt: new Date(),
       })
       .where(eq(devices.id, deviceId));
@@ -707,7 +709,27 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
       contentId: contentId ?? null,
       trigger: trigger ?? null,
     });
-    return;
+
+    // Also overwrite thumbnail.jpg for manual screenshots so /screenshot/latest
+    // survives server restarts (in-memory store is cleared on restart, and
+    // thumbnail.jpg is the only disk-based fallback for the latest frame).
+    (async () => {
+      try {
+        const thumbKey = `${deviceId}/thumbnail.jpg`;
+        await writeFile(join(STORAGE_ROOT, thumbKey), buf);
+        const existingThumb = await db.query.deviceScreenshots.findFirst({
+          where: and(eq(deviceScreenshots.deviceId, deviceId), eq(deviceScreenshots.trigger, 'thumbnail')),
+          columns: { id: true },
+        });
+        if (existingThumb) {
+          await db.update(deviceScreenshots)
+            .set({ storageKey: thumbKey, takenAt: new Date() })
+            .where(eq(deviceScreenshots.id, existingThumb.id));
+        } else {
+          await db.insert(deviceScreenshots).values({ deviceId, storageKey: thumbKey, trigger: 'thumbnail' });
+        }
+      } catch { /* best-effort */ }
+    })();
   }
 
   // ── play_log ───────────────────────────────────────────────────────────────

@@ -66,9 +66,20 @@ function hasRecentDeviceActivity(lastSeen: Date | string | null | undefined): bo
   return Date.now() - seenAt <= DEVICE_RECENT_ACTIVITY_MS;
 }
 
-function resolveReportedDeviceStatus(device: { id: string; status: string | null; lastSeen?: Date | string | null }): string | null {
+function resolveReportedDeviceStatus(device: {
+  id: string;
+  status: string | null;
+  lastSeen?: Date | string | null;
+  powerState?: string | null;
+  nextWakeAt?: Date | string | null;
+}): string | null {
   if (isDeviceOnline(device.id) || hasRecentDeviceActivity(device.lastSeen)) {
     return 'online';
+  }
+  // Device pre-notified the server that it is sleeping and provided a future wake time.
+  if (device.powerState === 'sleeping' && device.nextWakeAt) {
+    const wakeAt = device.nextWakeAt instanceof Date ? device.nextWakeAt : new Date(String(device.nextWakeAt));
+    if (!isNaN(wakeAt.getTime()) && wakeAt > new Date()) return 'sleeping';
   }
   return device.status === 'online' ? 'offline' : device.status;
 }

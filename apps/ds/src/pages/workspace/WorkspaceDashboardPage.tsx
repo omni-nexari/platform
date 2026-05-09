@@ -29,7 +29,7 @@ import {
 interface Device {
   id: string;
   name: string;
-  status: 'unclaimed' | 'online' | 'offline' | 'error';
+  status: 'unclaimed' | 'online' | 'offline' | 'error' | 'sleeping';
   powerState: 'on' | 'off' | 'standby' | null;
   assignedTags?: AssignedTag[];
   lastSeen: string | null;
@@ -54,6 +54,7 @@ function StatusBadge({ status }: { status: Device['status'] }) {
     offline: { label: 'Offline', tone: 'neutral', mediaTone: '' },
     unclaimed: { label: 'Unclaimed', tone: 'warning', mediaTone: 'ui-media-badge-warning' },
     error: { label: 'Error', tone: 'danger', mediaTone: 'ui-media-badge-danger' },
+    sleeping: { label: 'Sleeping', tone: 'neutral', mediaTone: '' },
   } as const;
   const s = map[status] ?? map.offline;
   return <Badge tone={s.tone}>{s.label}</Badge>;

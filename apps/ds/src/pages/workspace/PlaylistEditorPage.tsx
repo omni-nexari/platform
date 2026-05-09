@@ -583,10 +583,11 @@ export default function PlaylistEditorPage() {
             }
             navigate(`/workspaces/${wsId!}/playlist`);
           }}
-          className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+          className="flex items-center gap-1.5 text-sm font-medium text-[var(--text-muted)] hover:text-[var(--text)] transition-colors shrink-0"
           title="Back to playlists"
         >
-          <ArrowLeft size={18} />
+          <ArrowLeft size={20} />
+          <span>Playlists</span>
         </button>
 
         <h1 className="text-base font-bold text-[var(--text)] truncate flex-1">

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Battery, RefreshCw, Power, Sun, Wifi, Zap, Clock, AlertTriangle } from 'lucide-react';
+import { Battery, RefreshCw, Power, Sun, Wifi, Zap, Clock, AlertTriangle, Moon } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import {
   ActionButton,
@@ -64,7 +64,7 @@ export interface EpaperSettings {
 
 export interface EpaperDeviceFields {
   id: string;
-  status: 'unclaimed' | 'online' | 'offline' | 'error';
+  status: 'unclaimed' | 'online' | 'offline' | 'error' | 'sleeping';
   panelW?: number | null;
   panelH?: number | null;
   panelOrientation?: 'landscape' | 'portrait' | null;
@@ -92,6 +92,7 @@ function formatRefreshTime(rt: { hour: number; minute: number } | null | undefin
 export default function EpaperTab({ device }: { device: EpaperDeviceFields }) {
   const queryClient = useQueryClient();
   const isOnline = device.status === 'online';
+  const isSleeping = device.status === 'sleeping';
   const persisted = device.epaperSettings ?? null;
 
   // Local form state — initialised from persisted, falls back to defaults.
@@ -145,7 +146,12 @@ export default function EpaperTab({ device }: { device: EpaperDeviceFields }) {
 
   return (
     <div className="space-y-6">
-      {!isOnline && (
+      {isSleeping && (
+        <Callout tone="accent" icon={<Moon size={16} />}>
+          Panel is sleeping.{device.nextWakeAt ? ` Wakes up ${formatDistanceToNow(device.nextWakeAt)}.` : ''} Quick actions will resume when it reconnects.
+        </Callout>
+      )}
+      {!isOnline && !isSleeping && (
         <Callout tone="warning" icon={<AlertTriangle size={16} />}>
           Device is offline. Quick actions and live settings push will be queued until it reconnects.
         </Callout>

@@ -141,7 +141,7 @@ window.EpaperWS = (function() {
 
       case 'screenshot':
       case 'screenshot_auto': {
-        captureAndSend('manual');
+        captureAndSend(t === 'screenshot_auto' ? 'auto' : 'manual');
         break;
       }
 
@@ -221,7 +221,15 @@ window.EpaperWS = (function() {
           imgContentEl.naturalWidth > 0 &&
           imgContentEl.style.display !== 'none') {
         try {
-          ctx.drawImage(imgContentEl, 0, 0, w, h);
+          // Draw with letterboxing (object-contain): preserve aspect ratio, centre on black
+          var iw = imgContentEl.naturalWidth;
+          var ih = imgContentEl.naturalHeight;
+          var scale = Math.min(w / iw, h / ih);
+          var dw = iw * scale;
+          var dh = ih * scale;
+          var dx = (w - dw) / 2;
+          var dy = (h - dh) / 2;
+          ctx.drawImage(imgContentEl, dx, dy, dw, dh);
           var imgB64 = canvas.toDataURL('image/jpeg', 0.85).replace(/^data:[^;]+;base64,/, '');
           send({ type: 'screenshot_data', payload: { dataBase64: imgB64, trigger: trig, contentId: null } });
           logger.info('[WS] screenshot sent from image element (' + imgB64.length + ' chars)');
@@ -278,32 +286,47 @@ window.EpaperWS = (function() {
       sendFallback('Capture error');
     }
   }
+
+  function sendHeartbeat() {
     if (!state.socket || state.socket.readyState !== 1) return;
-    try {
-      var info = {};
-      if (window.Telemetry && typeof Telemetry.getSystemInfo === 'function') {
-        try { info = await Telemetry.getSystemInfo(); } catch (_) {}
+
+    function doSend(info) {
+      info = info || {};
+      try {
+        send({
+          type: 'heartbeat',
+          payload: {
+            playerVersion: (window.PLAYER_BUILD_INFO && window.PLAYER_BUILD_INFO.version) || null,
+            firmwareVersion: info.firmwareVersion || null,
+            timezone: info.timezone || null,
+            resolution: info.resolution || null,
+            powerState: 'on',
+            kind: 'epaper',
+            panelW: info.panelW || null,
+            panelH: info.panelH || null,
+            batteryPct: info.batteryPct != null ? info.batteryPct : null,
+          },
+        });
+        // Dispatch extended telemetry: network_info + heartbeat extras (mirrors nexari-tizen)
+        if (window.API && typeof API.sendTelemetry === 'function') {
+          API.sendTelemetry(state.deviceId, info).catch(function() {});
+        }
+      } catch (e) {
+        logger.warn('[WS] heartbeat failed: ' + (e && e.message));
       }
-      send({
-        type: 'heartbeat',
-        payload: {
-          playerVersion: (window.PLAYER_BUILD_INFO && window.PLAYER_BUILD_INFO.version) || null,
-          firmwareVersion: info.firmwareVersion || null,
-          timezone: info.timezone || null,
-          resolution: info.resolution || null,
-          powerState: 'on',
-          kind: 'epaper',
-          panelW: info.panelW || null,
-          panelH: info.panelH || null,
-          batteryPct: info.batteryPct != null ? info.batteryPct : null,
-        },
-      });
-      // Dispatch extended telemetry: network_info + heartbeat extras (mirrors nexari-tizen)
-      if (window.API && typeof API.sendTelemetry === 'function') {
-        API.sendTelemetry(state.deviceId, info).catch(function() {});
-      }
-    } catch (e) {
-      logger.warn('[WS] heartbeat failed: ' + (e && e.message));
+    }
+
+    if (window.Telemetry && typeof Telemetry.getSystemInfo === 'function') {
+      try {
+        var p = Telemetry.getSystemInfo();
+        if (p && typeof p.then === 'function') {
+          p.then(function(info) { doSend(info); }).catch(function() { doSend({}); });
+        } else {
+          doSend(p || {});
+        }
+      } catch (_) { doSend({}); }
+    } else {
+      doSend({});
     }
   }
 

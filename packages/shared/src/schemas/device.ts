@@ -175,7 +175,7 @@ export const HeartbeatSchema = z.object({
   firmwareVersion: z.string().optional(),
   timezone: z.string().optional(),
   resolution: z.string().optional(),
-  powerState: z.enum(['on', 'off', 'standby']).optional(),
+  powerState: z.enum(['on', 'off', 'standby', 'sleeping']).optional(),
   clockDriftMs: z.number().int().optional(),
   irLock: z.boolean().optional(),
   buttonLock: z.boolean().optional(),
@@ -194,6 +194,9 @@ export const HeartbeatSchema = z.object({
   batteryPct: z.number().int().min(0).max(100).nullable().optional(),
   panelW: z.number().int().positive().optional(),
   panelH: z.number().int().positive().optional(),
+  // E-paper sleep cycle fields.
+  nextWakeAt: z.string().datetime().nullable().optional(),
+  lastWakeReason: z.string().nullable().optional(),
 });
 export type HeartbeatPayload = z.infer<typeof HeartbeatSchema>;
 

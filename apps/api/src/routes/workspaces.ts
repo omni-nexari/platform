@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { db, workspaces, workspaceMembers, users, devices, contentItems, playlists, schedules } from '@signage/db';
+import { db, workspaces, workspaceMembers, users, devices, contentItems, playlists, syncPlaylists, schedules } from '@signage/db';
 import { eq, and, isNull, isNotNull, count, sql } from 'drizzle-orm';
 import { CreateWorkspaceSchema, AddWorkspaceMemberSchema } from '@signage/shared';
 import { writeAuditLog } from '../services/audit.js';
@@ -314,7 +314,12 @@ export async function workspaceRoutes(app: FastifyInstance) {
       .from(playlists)
       .where(and(eq(playlists.workspaceId, id), isNull(playlists.deletedAt)));
 
-    const playlistTotal = Number(playlistRows[0]?.total ?? 0);
+    const syncPlaylistRows = await db
+      .select({ total: count() })
+      .from(syncPlaylists)
+      .where(and(eq(syncPlaylists.workspaceId, id), isNull(syncPlaylists.deletedAt)));
+
+    const playlistTotal = Number(playlistRows[0]?.total ?? 0) + Number(syncPlaylistRows[0]?.total ?? 0);
     const playlistActive = Number(playlistRows[0]?.active ?? 0);
 
     const scheduleRows = await db

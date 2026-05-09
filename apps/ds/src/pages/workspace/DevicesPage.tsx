@@ -9,7 +9,7 @@ import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
 
 type PairFormInput = Omit<ClaimDeviceInput, 'workspaceId'>;
-import { Grid2x2, Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon, Copy, CheckCheck, Battery, Play, CalendarDays, Image } from 'lucide-react';
+import { Grid2x2, Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon, Copy, CheckCheck, Battery, Play, CalendarDays, Image, Moon } from 'lucide-react';
 
 // Shows the device thumbnail using the DB-backed screenshot record.
 // Re-renders automatically when the device list poll returns a new latestScreenshotId.
@@ -39,8 +39,8 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
   const needsRotate = portrait && kind !== 'epaper';
 
   if (isOffline || isPoweredOff) {
-    const label = isPoweredOff && !isOffline ? 'Powered Off' : status === 'offline' ? 'Offline' : status === 'error' ? 'Error' : 'Unclaimed';
-    const Icon = isPoweredOff && !isOffline ? Monitor : WifiOff;
+    const label = isPoweredOff && !isOffline ? 'Powered Off' : status === 'sleeping' ? 'Sleeping' : status === 'offline' ? 'Offline' : status === 'error' ? 'Error' : 'Unclaimed';
+    const Icon = isPoweredOff && !isOffline ? Monitor : status === 'sleeping' ? Moon : WifiOff;
     return (
       <div className="w-full aspect-video rounded-lg border border-[var(--card-border)] flex flex-col items-center justify-center gap-2 bg-[var(--surface)] overflow-hidden">
         <Icon className="w-6 h-6 text-[var(--text-muted)] opacity-40" />
@@ -181,7 +181,7 @@ import {
 interface Device {
   id: string;
   name: string;
-  status: 'unclaimed' | 'online' | 'offline' | 'error';
+  status: 'unclaimed' | 'online' | 'offline' | 'error' | 'sleeping';
   powerState: 'on' | 'off' | 'standby' | null;
   type: 'signage' | 'kiosk' | 'kitchen';
   platform: string;
@@ -212,6 +212,7 @@ function StatusBadge({ status }: { status: Device['status'] }) {
     offline: { label: 'Offline', tone: 'neutral' },
     unclaimed: { label: 'Unclaimed', tone: 'warning' },
     error: { label: 'Error', tone: 'danger' },
+    sleeping: { label: 'Sleeping', tone: 'neutral' },
   } as const;
   const s = map[status] ?? map.offline;
   return <Badge tone={s.tone}>{s.label}</Badge>;

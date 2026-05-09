@@ -617,11 +617,11 @@ export default function AppLayout() {
               <>
                 <button
                   onClick={() => navigate('/dashboard')}
-                  className="hover:text-[var(--text)] transition-colors"
+                  className="flex items-center gap-1 hover:text-[var(--text)] transition-colors text-sm font-medium"
                 >
-                  <ChevronDown className="w-3 h-3 rotate-90" />
+                  <ChevronDown className="w-4 h-4 rotate-90" />
+                  <span>{currentWs.name}</span>
                 </button>
-                <span className="font-medium text-[var(--text)]">{currentWs.name}</span>
               </>
             )}
           </div>

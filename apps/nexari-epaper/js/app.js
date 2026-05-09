@@ -48,6 +48,12 @@ window.EpaperApp = {
         try { EpaperWS.start(device); } catch (e) { logger.warn('[EpaperApp] WS start failed:', e && e.message); }
       }
 
+      // Sleep cycle: report wake reason immediately, then after 60 s schedule
+      // next hardware wake and go to sleep (skipped when autoSleep=NEVER).
+      if (window.EpaperSleepCycle) {
+        try { EpaperSleepCycle.run(); } catch (e) { logger.warn('[EpaperApp] SleepCycle failed:', e && e.message); }
+      }
+
       // Initial telemetry
       Telemetry.send(device.id).catch(function(e) { logger.warn('[EpaperApp] initial telemetry failed:', e && e.message); });
     },

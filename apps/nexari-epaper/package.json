@@ -1,6 +1,6 @@
 {
   "name": "nexari-epaper",
-  "version": "0.1.53",
+  "version": "0.1.56",
   "description": "Nexari Signage — Samsung E-Paper player (Tizen 8, 32\"/13\" panels, push-first power profile)",
   "scripts": {
     "build": "cross-env API_BASE=https://ds.chiho.app/api/v1 WS_URL=wss://ds.chiho.app node scripts/generate-build-info.cjs",

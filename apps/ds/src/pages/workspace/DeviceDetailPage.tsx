@@ -1393,9 +1393,9 @@ export function DeviceDetailContent({
         {!embedded && (
           <button
             onClick={() => navigate(`/workspaces/${wsId}/devices`)}
-            className="flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text)] transition-colors mb-4"
+            className="flex items-center gap-2 text-sm font-medium text-[var(--text-muted)] hover:text-[var(--text)] transition-colors mb-4"
           >
-            <ArrowLeft className="w-4 h-4" />Back to Devices
+            <ArrowLeft className="w-5 h-5" />Back to Devices
           </button>
         )}
         <PageHeader
