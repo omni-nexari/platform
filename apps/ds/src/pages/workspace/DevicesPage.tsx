@@ -19,24 +19,25 @@ function isPortrait(resolution: string | null | undefined): boolean {
   return parts.length === 2 && !isNaN(parts[0]!) && !isNaN(parts[1]!) && parts[1]! > parts[0]!;
 }
 
-function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, powerState, resolution }: {
+function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, powerState, resolution, kind }: {
   deviceId: string;
   screenshotId: string | null;
   latestFrameAt: number | null;
   status: Device['status'];
   powerState: Device['powerState'];
   resolution?: string | null;
+  kind?: Device['kind'];
 }) {
   const [errored, setErrored] = useState(false);
-  // Reset error state whenever a fresh screenshot id or frame timestamp arrives.
   useEffect(() => { setErrored(false); }, [screenshotId, latestFrameAt]);
 
   const isOffline = status !== 'online';
   const isPoweredOff = powerState === 'off' || powerState === 'standby';
-
   const portrait = isPortrait(resolution);
+  // Tizen (non-epaper) always sends landscape framebuffers even when the display
+  // is mounted portrait. Rotate them 90° into a portrait pillar-box.
+  const needsRotate = portrait && kind !== 'epaper';
 
-  // When device is offline or powered off, show a state overlay instead of the thumbnail.
   if (isOffline || isPoweredOff) {
     const label = isPoweredOff && !isOffline ? 'Powered Off' : status === 'offline' ? 'Offline' : status === 'error' ? 'Error' : 'Unclaimed';
     const Icon = isPoweredOff && !isOffline ? Monitor : WifiOff;
@@ -49,24 +50,41 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
   }
 
   const showImg = !!screenshotId && !errored;
-  // Append ?t= cache-buster so the browser re-fetches the image file whenever
-  // latestFrameAt changes — even if the DB row UUID hasn't changed yet.
   const src = buildApiUrl(`/devices/${deviceId}/screenshots/${screenshotId}${latestFrameAt ? `?t=${latestFrameAt}` : ''}`);
+
+  // Portrait pillar-box helper
+  // For epaper: image is already portrait — object-contain fills it naturally.
+  // For Tizen portrait: screenshot is landscape — rotate 90° using a wrapper div
+  // sized as the landscape aspect (177.78% wide × auto-height via aspect-ratio:16/9)
+  // centred and rotated, so it fills the 9:16 container after rotation.
+  const PortraitBox = ({ children }: { children: React.ReactNode }) => (
+    <div className="h-full aspect-[9/16] shrink-0 relative overflow-hidden">
+      {needsRotate
+        ? <div style={{
+            position: 'absolute', top: '50%', left: '50%',
+            width: '177.78%', aspectRatio: '16/9',
+            transform: 'translate(-50%, -50%) rotate(90deg)',
+          }}>
+            {children}
+          </div>
+        : children
+      }
+    </div>
+  );
+
   return (
-    // Always aspect-video height so portrait devices don't make the card taller.
-    // Portrait thumbnails are pillar-boxed inside a narrow centred column.
     <div className={`w-full aspect-video rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${showImg ? '' : 'bg-[var(--surface)]'}`}>
       {showImg
         ? portrait
-          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
+          ? <PortraitBox>
               <img
                 key={`${screenshotId}-${latestFrameAt ?? 0}`}
                 src={src}
                 alt="Latest screenshot"
-                className="w-full h-full object-contain"
+                className="w-full h-full object-cover"
                 onError={() => setErrored(true)}
               />
-            </div>
+            </PortraitBox>
           : <img
               key={`${screenshotId}-${latestFrameAt ?? 0}`}
               src={src}
@@ -81,11 +99,11 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
 }
 
 // ── LiveViewInCard — replaces the thumbnail with a live SSE stream ─────────────
-function LiveViewInCard({ deviceId, onStop, resolution }: { deviceId: string; onStop: () => void; resolution?: string | null }) {
+function LiveViewInCard({ deviceId, onStop, resolution, kind }: { deviceId: string; onStop: () => void; resolution?: string | null; kind?: Device['kind'] }) {
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [status, setStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
   const portrait = isPortrait(resolution);
-  const needsRotate = false; // kept for type safety, unused
+  const needsRotate = portrait && kind !== 'epaper';
 
   useEffect(() => {
     const es = new EventSource(`/api/devices/${deviceId}/screenshot/stream?intervalMs=1000`);
@@ -97,14 +115,28 @@ function LiveViewInCard({ deviceId, onStop, resolution }: { deviceId: string; on
     return () => es.close();
   }, [deviceId]);
 
+  const PortraitBox = ({ children }: { children: React.ReactNode }) => (
+    <div className="h-full aspect-[9/16] shrink-0 relative overflow-hidden">
+      {needsRotate
+        ? <div style={{
+            position: 'absolute', top: '50%', left: '50%',
+            width: '177.78%', aspectRatio: '16/9',
+            transform: 'translate(-50%, -50%) rotate(90deg)',
+          }}>
+            {children}
+          </div>
+        : children
+      }
+    </div>
+  );
+
   return (
-    // Always aspect-video so portrait live view doesn't make the card taller.
     <div className="relative w-full aspect-video rounded-lg border border-[var(--blue)]/60 overflow-hidden bg-black flex items-center justify-center">
       {imgSrc
         ? portrait
-          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
-              <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
-            </div>
+          ? <PortraitBox>
+              <img src={imgSrc} alt="Live" className="w-full h-full object-cover" />
+            </PortraitBox>
           : <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
         : <div className="flex flex-col items-center gap-2 text-white/40">
             <Monitor className="w-6 h-6" />
@@ -650,7 +682,7 @@ export default function DevicesPage() {
                     >
                       {/* Screenshot thumbnail or live view */}
                       {liveViewDeviceId === device.id
-                        ? <LiveViewInCard deviceId={device.id} resolution={device.resolution} onStop={() => setLiveViewDeviceId(null)} />
+                        ? <LiveViewInCard deviceId={device.id} resolution={device.resolution} kind={device.kind} onStop={() => setLiveViewDeviceId(null)} />
                         : <DeviceScreenshot
                             deviceId={device.id}
                             screenshotId={device.latestScreenshotId}
@@ -658,6 +690,7 @@ export default function DevicesPage() {
                             status={device.status}
                             powerState={device.powerState}
                             resolution={device.resolution}
+                            kind={device.kind}
                           />
                       }
 
