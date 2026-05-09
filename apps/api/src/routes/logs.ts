@@ -203,6 +203,28 @@ export async function logsRoutes(app: FastifyInstance) {
   });
 
   /**
+   * GET /logs/ws-token
+   *
+   * Returns the caller's session token for use as a WebSocket query-param.
+   * Browsers cannot inject custom headers on WebSocket connections, and Secure
+   * cookies are not sent over ws:// (plain HTTP LAN access).  Calling this
+   * normal HTTPS/HTTP endpoint first (credentials: include) returns the raw JWT
+   * so the client can pass it as ?token=... when opening the tail socket.
+   */
+  app.get(
+    '/ws-token',
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    { onRequest: [(app as any).authenticatePlatformAdmin] },
+    async (req: any, reply) => {
+      const token =
+        (req.cookies?.sa_access_token as string | undefined) ??
+        (req.cookies?.access_token   as string | undefined) ??
+        null;
+      return reply.send({ token });
+    },
+  );
+
+  /**
    * GET /logs/tail  (WebSocket)
    *
    * Live tail stream — sends newly ingested log entries in real time.
@@ -216,15 +238,20 @@ export async function logsRoutes(app: FastifyInstance) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (app as any).get('/tail', { websocket: true }, async (socket: any, req: any) => {
     // ── Auth ────────────────────────────────────────────────────────────
-    // Parse cookie directly from the raw header — @fastify/cookie may not
-    // run its onRequest hook before the WebSocket handler in v11.
+    // 1. ?token= query param  — fetched by client via GET /logs/ws-token
+    //    (browsers can't set headers on WebSocket; Secure cookies won't be
+    //    sent over ws://).
+    // 2. Raw cookie header fallback — works when COOKIE_SECURE=false and
+    //    @fastify/cookie's onRequest hook hasn't run yet in v11.
     function parseCookie(header: string | undefined, name: string): string | undefined {
       if (!header) return undefined;
       const m = header.match(new RegExp(`(?:^|;)\\s*${name}\\s*=\\s*([^;]*)`));
       return m ? decodeURIComponent(m[1]!) : undefined;
     }
+    const queryToken  = (req.query as Record<string, string | undefined>).token;
     const cookieHeader = (req.headers as Record<string, string | undefined>)['cookie'];
     const token = (
+      queryToken ??
       parseCookie(cookieHeader, 'sa_access_token') ??
       parseCookie(cookieHeader, 'access_token')
     );

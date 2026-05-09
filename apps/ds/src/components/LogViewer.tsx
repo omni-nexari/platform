@@ -375,19 +375,31 @@ export default function LogViewer({
     setTailing(false); setTailStatus('closed');
   }, []);
 
-  const startTail = useCallback(() => {
+  const startTail = useCallback(async () => {
     stopTail();
+    // Show connecting state immediately so the button reflects the pending state.
+    setTailing(true); setTailStatus('connecting');
+
     const params = new URLSearchParams();
     if (source)   params.set('source',    source);
     if (minLevel) params.set('min_level', minLevel);
     if (orgId)    params.set('org_id',    orgId);
     if (deviceId) params.set('device_id', deviceId);
 
+    // Fetch a short-lived WS auth token via a normal credentialed HTTP request.
+    // The browser sends httpOnly cookies for fetch() but NOT reliably for WebSocket
+    // (Secure cookies are blocked over ws://, and @fastify/websocket v11 may skip
+    // the cookie-parsing lifecycle hook before calling the handler).
+    try {
+      const wsTokenPath = apiPath.replace(/\/logs$/, '/logs/ws-token');
+      const { token } = await saApi.get<{ token: string | null }>(wsTokenPath);
+      if (token) params.set('token', token);
+    } catch { /* fall through — WS handler will close with 4001 */ }
+
     const proto    = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const tailPath = apiPath.replace(/\/logs$/, '/logs/tail');
     const ws = new WebSocket(`${proto}//${window.location.host}/api/v1${tailPath}?${params.toString()}`);
     wsRef.current = ws;
-    setTailing(true); setTailStatus('connecting');
 
     ws.onopen = () => {
       setTailStatus('open');

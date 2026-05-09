@@ -250,6 +250,9 @@ export default function InfraMonitoringPage() {
     : 0;
 
   const decisionsArr = Array.isArray(crowdsec) ? crowdsec : [];
+  const [showAllDecisions, setShowAllDecisions] = useState(false);
+  const DECISIONS_PREVIEW = 5;
+  const visibleDecisions = showAllDecisions ? decisionsArr : decisionsArr.slice(0, DECISIONS_PREVIEW);
 
   // GoAccess helpers
   const todayVisitors = traffic?.visitors?.data?.[0]?.visitors?.count ?? null;
@@ -597,7 +600,7 @@ export default function InfraMonitoringPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {decisionsArr.map((d) => (
+                  {visibleDecisions.map((d) => (
                     <tr
                       key={d.id}
                       className="border-b last:border-0"
@@ -613,6 +616,16 @@ export default function InfraMonitoringPage() {
                   ))}
                 </tbody>
               </table>
+              {decisionsArr.length > DECISIONS_PREVIEW && (
+                <button
+                  onClick={() => setShowAllDecisions((v) => !v)}
+                  className="mt-3 text-xs text-[var(--accent)] hover:underline"
+                >
+                  {showAllDecisions
+                    ? 'Show less'
+                    : `Show ${decisionsArr.length - DECISIONS_PREVIEW} more…`}
+                </button>
+              )}
             </div>
           )}
         </SectionCardBody>
