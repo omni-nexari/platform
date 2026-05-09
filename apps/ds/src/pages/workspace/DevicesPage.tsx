@@ -19,15 +19,14 @@ function isPortrait(resolution: string | null | undefined): boolean {
   return parts.length === 2 && !isNaN(parts[0]!) && !isNaN(parts[1]!) && parts[1]! > parts[0]!;
 }
 
-function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, powerState, resolution }: {
+function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, powerState, resolution, kind }: {
   deviceId: string;
   screenshotId: string | null;
   latestFrameAt: number | null;
   status: Device['status'];
   powerState: Device['powerState'];
   resolution?: string | null;
-}) {
-  const [errored, setErrored] = useState(false);
+  kind?: string | null | undefined;(false);
   // Reset error state whenever a fresh screenshot id or frame timestamp arrives.
   useEffect(() => { setErrored(false); }, [screenshotId, latestFrameAt]);
 
@@ -35,6 +34,9 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
   const isPoweredOff = powerState === 'off' || powerState === 'standby';
 
   const portrait = isPortrait(resolution);
+  // Tizen/SSSP framebuffer captures come out as landscape JPEG even for portrait displays.
+  // E-paper screenshots are captured from the DOM canvas and are already portrait-correct.
+  const needsRotate = portrait && kind !== 'epaper';
 
   // When device is offline or powered off, show a state overlay instead of the thumbnail.
   if (isOffline || isPoweredOff) {
@@ -57,7 +59,7 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
     // Portrait thumbnails are pillar-boxed inside a narrow centred column.
     <div className={`w-full aspect-video rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${showImg ? '' : 'bg-[var(--surface)]'}`}>
       {showImg
-        ? portrait
+        ? needsRotate
           ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0 relative">
               <img
                 key={`${screenshotId}-${latestFrameAt ?? 0}`}
@@ -66,9 +68,19 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
                 style={{
                   position: 'absolute', top: '50%', left: '50%',
                   width: '177.78%', height: '56.25%',
-                  transform: 'translate(-50%, -50%) rotate(-90deg)',
+                  transform: 'translate(-50%, -50%) rotate(90deg)',
                   objectFit: 'cover',
                 }}
+                onError={() => setErrored(true)}
+              />
+            </div>
+          : portrait
+          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
+              <img
+                key={`${screenshotId}-${latestFrameAt ?? 0}`}
+                src={src}
+                alt="Latest screenshot"
+                className="w-full h-full object-contain"
                 onError={() => setErrored(true)}
               />
             </div>
@@ -86,10 +98,11 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
 }
 
 // ── LiveViewInCard — replaces the thumbnail with a live SSE stream ─────────────
-function LiveViewInCard({ deviceId, onStop, resolution }: { deviceId: string; onStop: () => void; resolution?: string | null }) {
+function LiveViewInCard({ deviceId, onStop, resolution, kind }: { deviceId: string; onStop: () => void; resolution?: string | null | undefined; kind?: string | null | undefined }) {
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [status, setStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
   const portrait = isPortrait(resolution);
+  const needsRotate = portrait && kind !== 'epaper';
 
   useEffect(() => {
     const es = new EventSource(`/api/devices/${deviceId}/screenshot/stream?intervalMs=1000`);
@@ -105,9 +118,13 @@ function LiveViewInCard({ deviceId, onStop, resolution }: { deviceId: string; on
     // Always aspect-video so portrait live view doesn't make the card taller.
     <div className="relative w-full aspect-video rounded-lg border border-[var(--blue)]/60 overflow-hidden bg-black flex items-center justify-center">
       {imgSrc
-        ? portrait
+        ? needsRotate
           ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0 relative">
-              <img src={imgSrc} alt="Live" style={{ position: 'absolute', top: '50%', left: '50%', width: '177.78%', height: '56.25%', transform: 'translate(-50%, -50%) rotate(-90deg)', objectFit: 'cover' }} />
+              <img src={imgSrc} alt="Live" style={{ position: 'absolute', top: '50%', left: '50%', width: '177.78%', height: '56.25%', transform: 'translate(-50%, -50%) rotate(90deg)', objectFit: 'cover' }} />
+            </div>
+          : portrait
+          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
+              <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
             </div>
           : <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
         : <div className="flex flex-col items-center gap-2 text-white/40">
@@ -654,7 +671,7 @@ export default function DevicesPage() {
                     >
                       {/* Screenshot thumbnail or live view */}
                       {liveViewDeviceId === device.id
-                        ? <LiveViewInCard deviceId={device.id} resolution={device.resolution} onStop={() => setLiveViewDeviceId(null)} />
+                        ? <LiveViewInCard deviceId={device.id} resolution={device.resolution} kind={device.kind} onStop={() => setLiveViewDeviceId(null)} />
                         : <DeviceScreenshot
                             deviceId={device.id}
                             screenshotId={device.latestScreenshotId}
@@ -662,6 +679,7 @@ export default function DevicesPage() {
                             status={device.status}
                             powerState={device.powerState}
                             resolution={device.resolution}
+                            kind={device.kind}
                           />
                       }
 

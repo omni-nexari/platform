@@ -168,8 +168,10 @@ export async function logsRoutes(app: FastifyInstance) {
         WHEN ${logEntries.level} = 'warn'  THEN 2
         WHEN ${logEntries.level} = 'error' THEN 3
         ELSE 0 END) >= ${minOrder}`,
-      // Source filter
-      q['source'] ? eq(logEntries.source, q['source']) : undefined,
+      // Source filter — 'tizen' matches both tizen and tizen-sbb
+      q['source'] === 'tizen'
+        ? inArray(logEntries.source, ['tizen', 'tizen-sbb'])
+        : q['source'] ? eq(logEntries.source, q['source']) : undefined,
       // Org filter
       q['org_id'] && !allowedOrgIds
         ? eq(logEntries.orgId, q['org_id'])
@@ -259,8 +261,9 @@ export async function logsRoutes(app: FastifyInstance) {
     const handler = (entry: Parameters<typeof logBus['publish']>[0][0]) => {
       // Level filter
       if (levelOrder(entry.level) < filterMinLevel) return;
-      // Source filter
-      if (filterSource && entry.source !== filterSource) return;
+      // Source filter — 'tizen' matches both tizen and tizen-sbb
+      if (filterSource && filterSource !== 'tizen' && entry.source !== filterSource) return;
+      if (filterSource === 'tizen' && entry.source !== 'tizen' && entry.source !== 'tizen-sbb') return;
       // Org scope (management admin)
       if (allowedOrgIds && entry.orgId && !allowedOrgIds.has(entry.orgId)) return;
       // Org id filter (optional extra drill-down)

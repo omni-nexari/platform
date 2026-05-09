@@ -56,10 +56,9 @@ const LEVEL_STYLES: Record<string, string> = {
 };
 
 const SOURCE_LABELS: Record<string, string> = {
-  api:        'API',
-  ds:         'Dashboard',
-  tizen:      'Tizen',
-  'tizen-sbb': 'Tizen SBB',
+  api:    'API',
+  ds:     'Dashboard',
+  tizen:  'Tizen',
 };
 
 function LevelBadge({ level }: { level: string }) {
@@ -228,6 +227,9 @@ export default function LogViewer({
   const [orgId,    setOrgId]    = useState('');
   const [deviceId, setDeviceId] = useState('');
 
+  // API and Dashboard logs are server/frontend only — no device context applies
+  const showDeviceFilters = source !== 'api' && source !== 'ds';
+
   // ── Org combobox ──────────────────────────────────────────────────────────
   const [orgOptions,  setOrgOptions]  = useState<OrgOption[]>([]);
   const [orgSearch,   setOrgSearch]   = useState('');
@@ -320,6 +322,10 @@ export default function LogViewer({
   function clearDevice() {
     setDeviceId(''); setDeviceSearch(''); setDeviceLabel('');
     setDeviceTimeline(null);
+  }
+  function handleSourceChange(newSource: string) {
+    setSource(newSource);
+    if (newSource === 'api' || newSource === 'ds') clearOrg();
   }
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
@@ -486,14 +492,13 @@ export default function LogViewer({
               <label className="text-xs text-[var(--text-muted)]">Source</label>
               <select
                 value={source}
-                onChange={(e) => setSource(e.target.value)}
+                onChange={(e) => handleSourceChange(e.target.value)}
                 className="rounded-lg border border-[var(--card-border)] bg-[var(--bg)] px-2 py-1.5 text-sm"
               >
                 <option value="">All sources</option>
                 <option value="api">API</option>
                 <option value="ds">Dashboard</option>
                 <option value="tizen">Tizen</option>
-                <option value="tizen-sbb">Tizen SBB</option>
               </select>
             </div>
 
@@ -512,8 +517,8 @@ export default function LogViewer({
               </select>
             </div>
 
-            {/* Org combobox (superadmin only) */}
-            {showOrgFilter && (
+            {/* Org + Device filters — hidden for server/frontend-only sources */}
+            {showOrgFilter && showDeviceFilters && (
               <Combobox
                 label="Organization"
                 placeholder="Search by name…"
@@ -527,8 +532,7 @@ export default function LogViewer({
               />
             )}
 
-            {/* Device combobox or free-text */}
-            {orgId && deviceOptions.length > 0 ? (
+            {showDeviceFilters && orgId && deviceOptions.length > 0 && (
               <Combobox
                 label="Device"
                 placeholder="Search device…"
@@ -540,17 +544,6 @@ export default function LogViewer({
                 onClear={clearDevice}
                 loading={devsLoading}
               />
-            ) : (
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-[var(--text-muted)]">Device ID</label>
-                <input
-                  type="text"
-                  placeholder="uuid…"
-                  value={deviceId}
-                  onChange={(e) => setDeviceId(e.target.value)}
-                  className="w-60 rounded-lg border border-[var(--card-border)] bg-[var(--bg)] px-2 py-1.5 text-sm"
-                />
-              </div>
             )}
 
             {/* Load / Refresh */}
