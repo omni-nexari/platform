@@ -3180,9 +3180,10 @@ export async function superAdminRoutes(app: FastifyInstance) {
         LIMIT ${limit} OFFSET ${offset}
       `);
 
-      const [{ total }] = await db.execute<{ total: number }>(sql`
+      const totalRows = await db.execute<{ total: number }>(sql`
         SELECT COUNT(*)::int AS total FROM support_tickets t ${whereClause}
       `);
+      const total = (totalRows[0] as { total: number } | undefined)?.total ?? 0;
 
       return reply.send({ tickets: rows, total, page: pageNum, limit });
     },
@@ -3195,7 +3196,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
     '/support/unread-count',
     { onRequest: [app.authenticatePlatformOwner] },
     async (_req, reply) => {
-      const [{ unread }] = await db.execute<{ unread: number }>(sql`
+      const unreadRows = await db.execute<{ unread: number }>(sql`
         SELECT COUNT(DISTINCT t.id)::int AS unread
         FROM support_tickets t
         WHERE t.status NOT IN ('resolved', 'closed')
@@ -3210,6 +3211,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
               )
           )
       `);
+      const unread = (unreadRows[0] as { unread: number } | undefined)?.unread ?? 0;
       return reply.send({ unread });
     },
   );
@@ -3248,7 +3250,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
       if (message) {
         await db.insert(supportTicketMessages).values({
-          ticketId: ticket.id,
+          ticketId: ticket!.id,
           senderType: 'superadmin',
           senderId: caller.sub,
           senderName: caller.name ?? 'Platform Admin',
@@ -3264,12 +3266,12 @@ export async function superAdminRoutes(app: FastifyInstance) {
           recipientName: notifyEmail.name,
           subject,
           body: message ?? '',
-          ticketId: ticket.id,
+          ticketId: ticket!.id,
           notifyTarget: partyType === 'management_company' ? 'reseller' : 'client',
         }).catch(() => undefined);
       }
 
-      return reply.status(201).send({ ticket });
+      return reply.status(201).send({ ticket: ticket! });
     },
   );
 
@@ -3338,7 +3340,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
         notifyTarget: ticket.partyType === 'management_company' ? 'reseller' : 'client',
       }).catch(() => undefined);
 
-      return reply.status(201).send({ message: formatMessage(msg) });
+      return reply.status(201).send({ message: formatMessage(msg!) });
     },
   );
 
@@ -3422,7 +3424,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
     { onRequest: [app.authenticateManagementCompanyAdmin] },
     async (req, reply) => {
       const caller = req.user as Extract<PlatformAdminCaller, { type: 'management_company_admin' }>;
-      const [{ unread }] = await db.execute<{ unread: number }>(sql`
+      const resellerUnreadRows = await db.execute<{ unread: number }>(sql`
         SELECT COUNT(DISTINCT t.id)::int AS unread
         FROM support_tickets t
         WHERE t.status NOT IN ('resolved', 'closed')
@@ -3441,6 +3443,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
               )
           )
       `);
+      const unread = (resellerUnreadRows[0] as { unread: number } | undefined)?.unread ?? 0;
       return reply.send({ unread });
     },
   );
@@ -3483,7 +3486,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
       if (message) {
         await db.insert(supportTicketMessages).values({
-          ticketId: ticket.id,
+          ticketId: ticket!.id,
           senderType: 'reseller',
           senderId: caller.sub,
           senderName: caller.name ?? caller.email,
@@ -3492,9 +3495,9 @@ export async function superAdminRoutes(app: FastifyInstance) {
       }
 
       // Notify superadmin
-      void notifySuperAdmins(subject, message ?? '', ticket.id).catch(() => undefined);
+      void notifySuperAdmins(subject, message ?? '', ticket!.id).catch(() => undefined);
 
-      return reply.status(201).send({ ticket });
+      return reply.status(201).send({ ticket: ticket! });
     },
   );
 
@@ -3574,7 +3577,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
       void notifySuperAdmins(ticket.subject, body.data.body, id).catch(() => undefined);
 
-      return reply.status(201).send({ message: formatMessage(msg) });
+      return reply.status(201).send({ message: formatMessage(msg!) });
     },
   );
 
@@ -3713,7 +3716,7 @@ async function notifySuperAdmins(subject: string, body: string, ticketId: string
   const owners = await db.query.platformOwners.findMany({ columns: { email: true, name: true } });
   await Promise.allSettled(owners.map(o => sendSupportNotificationEmail({
     to: o.email,
-    recipientName: o.name ?? undefined,
+    ...(o.name != null ? { recipientName: o.name } : {}),
     subject,
     body,
     ticketId,
