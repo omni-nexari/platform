@@ -67,6 +67,8 @@ function StatCard({
 function PlatformOwnerView() {
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<'starter' | 'pro' | 'enterprise'>('starter');
+  const [selectedModules, setSelectedModules] = useState<'signage' | 'pos' | 'both'>('signage');
 
   const { data: analytics, isLoading: analyticsLoading } = useQuery({
     queryKey: ['sa-analytics'],
@@ -93,6 +95,8 @@ function PlatformOwnerView() {
       void qc.invalidateQueries({ queryKey: ['sa-companies'] });
       void qc.invalidateQueries({ queryKey: ['sa-analytics'] });
       form.reset();
+      setSelectedPlan('starter');
+      setSelectedModules('signage');
       setShowCreate(false);
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to create company'),
@@ -253,18 +257,29 @@ function PlatformOwnerView() {
 
       {/* Create company modal */}
       {showCreate && (
-        <Modal onClose={() => setShowCreate(false)} size="sm">
+        <Modal onClose={() => { setShowCreate(false); setSelectedPlan('starter'); setSelectedModules('signage'); }} size="md">
           <ModalHeader
             title="New Management Company"
             subtitle="An invite will be sent to the initial admin immediately."
-            onClose={() => setShowCreate(false)}
+            onClose={() => { setShowCreate(false); setSelectedPlan('starter'); setSelectedModules('signage'); }}
           />
           <ModalBody>
             <form
               id="create-company-form"
-              onSubmit={form.handleSubmit((d) => createCompany.mutate(d))}
+              onSubmit={form.handleSubmit((d) => createCompany.mutate({ ...d, plan: selectedPlan, allowedModules: selectedModules }))}
               className="space-y-4"
             >
+              <div>
+                <label className="ui-label">Company / SI Name</label>
+                <input
+                  {...form.register('companyName')}
+                  className="ui-input"
+                  placeholder="Acme Media Solutions"
+                />
+                {errors.companyName && (
+                  <p className="ui-field-error">{errors.companyName.message}</p>
+                )}
+              </div>
               <div>
                 <label className="ui-label">Admin's Full Name</label>
                 <input
@@ -288,13 +303,52 @@ function PlatformOwnerView() {
                   <p className="ui-field-error">{errors.initialAdminEmail.message}</p>
                 )}
               </div>
+              <div className="border-t pt-4" style={{ borderColor: 'var(--card-border)' }}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-3">Plan</p>
+                <div className="flex flex-wrap gap-2">
+                  {(['starter', 'pro', 'enterprise'] as const).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setSelectedPlan(p)}
+                      className={selectedPlan === p ? 'btn-primary text-sm px-4 py-1.5' : 'workspace-page-action text-sm px-4 py-1.5'}
+                    >
+                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-3">Modules</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    { value: 'signage', label: 'CMS Only',  sub: 'Signage & content' },
+                    { value: 'pos',     label: 'POS Only',  sub: 'Point of sale' },
+                    { value: 'both',    label: 'CMS + POS', sub: 'Full platform' },
+                  ] as const).map((m) => (
+                    <button
+                      key={m.value}
+                      type="button"
+                      onClick={() => setSelectedModules(m.value)}
+                      className="text-left rounded-xl border p-3 transition-colors"
+                      style={{
+                        background: selectedModules === m.value ? 'rgba(58,123,255,0.12)' : 'var(--card)',
+                        borderColor: selectedModules === m.value ? 'var(--blue)' : 'var(--card-border)',
+                      }}
+                    >
+                      <div className="font-semibold text-sm">{m.label}</div>
+                      <div className="text-xs text-[var(--text-muted)] mt-0.5">{m.sub}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
               <p className="text-xs text-[var(--text-muted)]">
-                The admin will set up their company name, portal address and logo when they accept the invite.
+                The admin will set up the portal address and logo when they accept the invite.
               </p>
             </form>
           </ModalBody>
           <ModalFooter>
-            <ModalSecondaryButton onClick={() => setShowCreate(false)}>
+            <ModalSecondaryButton onClick={() => { setShowCreate(false); setSelectedPlan('starter'); setSelectedModules('signage'); }}>
               Cancel
             </ModalSecondaryButton>
             <ModalPrimaryButton
