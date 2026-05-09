@@ -129,19 +129,28 @@ window.Telemetry = {
     var panel = this.detectPanel();
     var epaperApiVersion = this.getEpaperApiVersion();
 
-    // Battery level — webapis.epaper.getBatteryLevel() returns 0-100 integer.
+    // Battery level — webapis.deviced.getBatteryCapacity() returns 0-100 integer.
+    // Power source  — webapis.deviced.getBatteryPowerSource() → 'AC_CHARGER'|'USB_CHARGER'|'NO_CHARGER'
     var batteryPct = null;
+    var batterySource = null;
     try {
-      if (typeof webapis !== 'undefined' && webapis.epaper &&
-          typeof webapis.epaper.getBatteryLevel === 'function') {
-        var bl = webapis.epaper.getBatteryLevel();
-        logger.info('[Telemetry] getBatteryLevel raw:', bl, '(type:', typeof bl + ')');
-        if (bl != null && !isNaN(bl)) batteryPct = Math.round(Number(bl));
-        else logger.info('[Telemetry] getBatteryLevel returned null/NaN — panel may be mains-powered or API unsupported');
+      if (typeof webapis !== 'undefined' && webapis.deviced &&
+          typeof webapis.deviced.getBatteryCapacity === 'function') {
+        var bl = webapis.deviced.getBatteryCapacity();
+        if (bl != null && !isNaN(bl)) {
+          batteryPct = Math.round(Number(bl));
+          logger.info('[Telemetry] battery: ' + batteryPct + '%');
+        } else {
+          logger.info('[Telemetry] getBatteryCapacity returned null/NaN');
+        }
+        if (typeof webapis.deviced.getBatteryPowerSource === 'function') {
+          batterySource = webapis.deviced.getBatteryPowerSource();
+          logger.info('[Telemetry] powerSource: ' + batterySource);
+        }
       } else {
-        logger.info('[Telemetry] getBatteryLevel not available on this firmware');
+        logger.info('[Telemetry] webapis.deviced not available on this firmware');
       }
-    } catch (e) { logger.info('[Telemetry] getBatteryLevel threw:', e && e.message); }
+    } catch (e) { logger.info('[Telemetry] getBatteryCapacity threw: ' + (e && e.message)); }
 
     var info = {
       duid: duid,
@@ -166,6 +175,8 @@ window.Telemetry = {
       modelClass: panel.modelClass,
       epaperApiVersion: epaperApiVersion,
       batteryPct: batteryPct,
+      batterySource: batterySource,
+      batteryCharging: batterySource === 'AC_CHARGER' || batterySource === 'USB_CHARGER',
       timezone: timezone,
       capabilities: {
         epaper: !!epaperApiVersion,
@@ -191,6 +202,7 @@ window.Telemetry = {
       realModel: info.realModel,
       panelType: info.panelType,
       batteryPct: info.batteryPct,
+      batterySource: info.batterySource,
     }));
 
     return info;

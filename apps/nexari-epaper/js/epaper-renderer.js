@@ -38,7 +38,7 @@ window.EpaperRenderer = (function() {
     var img   = imgEl();
     var cal   = calEl();
     var frame = frameEl();
-    if (img)   img.style.display   = (type === 'image')    ? '' : 'none';
+    if (img)   img.style.display   = (type === 'image')    ? 'block' : 'none';
     if (cal)   cal.style.display   = (type === 'calendar') ? 'block' : 'none';
     if (frame) frame.style.display = (type === 'html5')    ? 'block' : 'none';
     // Destroy the calendar renderer when it goes off-screen

@@ -189,11 +189,29 @@ window.EpaperWS = (function() {
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, w, h);
 
+            // If an image is currently displayed, draw it directly (blob URL is
+            // same-origin so canvas stays clean and toDataURL() will not throw).
+            var imgContentEl = document.getElementById('content-image');
+            if (imgContentEl && imgContentEl.src &&
+                imgContentEl.naturalWidth > 0 &&
+                imgContentEl.style.display !== 'none') {
+              try {
+                ctx.drawImage(imgContentEl, 0, 0, w, h);
+                var imgB64 = canvas.toDataURL('image/jpeg', 0.85).replace(/^data:[^;]+;base64,/, '');
+                send({ type: 'screenshot_data', payload: { dataBase64: imgB64, trigger: 'manual', contentId: null } });
+                logger.info('[WS] screenshot sent from image element (' + imgB64.length + ' chars)');
+              } catch (imgErr) {
+                logger.warn('[WS] screenshot drawImage failed: ' + (imgErr && imgErr.message));
+                sendFallback('Image draw failed');
+              }
+              return;
+            }
+
             // Try to capture calendar DOM via SVG foreignObject + data URI
             var calEl = document.getElementById('content-calendar');
             var srcEl = calEl && calEl.firstElementChild ? calEl : null;
             if (!srcEl) {
-              sendFallback('No calendar content');
+              sendFallback('No content loaded');
               return;
             }
 
