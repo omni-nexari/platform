@@ -237,10 +237,19 @@ export async function logsRoutes(app: FastifyInstance) {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (app as any).get('/tail', { websocket: true }, async (socket: any, req: any) => {
+    // ── Parse query string directly from req.url ─────────────────────────
+    // @fastify/websocket v11 may invoke the handler before Fastify's normal
+    // query-parsing lifecycle hook runs, leaving req.query empty.
+    // Splitting req.url manually is always reliable.
+    const rawQs  = (typeof req.url === 'string' ? req.url.split('?')[1] : '') ?? '';
+    const qs     = new URLSearchParams(rawQs);
+
+    app.log.info({ url: req.url, hasToken: Boolean(qs.get('token')), hasCookie: Boolean((req.headers as Record<string, string | undefined>)['cookie']) }, '[logs/tail] WS handler reached');
+
     // ── Auth ────────────────────────────────────────────────────────────
     // 1. ?token= query param  — fetched by client via GET /logs/ws-token
-    //    (browsers can't set headers on WebSocket; Secure cookies won't be
-    //    sent over ws://).
+    //    (browsers can't set custom headers on WebSocket; Secure cookies are
+    //    blocked over ws://).
     // 2. Raw cookie header fallback — works when COOKIE_SECURE=false and
     //    @fastify/cookie's onRequest hook hasn't run yet in v11.
     function parseCookie(header: string | undefined, name: string): string | undefined {
@@ -248,15 +257,14 @@ export async function logsRoutes(app: FastifyInstance) {
       const m = header.match(new RegExp(`(?:^|;)\\s*${name}\\s*=\\s*([^;]*)`));
       return m ? decodeURIComponent(m[1]!) : undefined;
     }
-    const queryToken  = (req.query as Record<string, string | undefined>).token;
     const cookieHeader = (req.headers as Record<string, string | undefined>)['cookie'];
     const token = (
-      queryToken ??
+      qs.get('token') ??
       parseCookie(cookieHeader, 'sa_access_token') ??
       parseCookie(cookieHeader, 'access_token')
     );
     if (!token) {
-      socket.close(4001, 'Missing auth cookie');
+      socket.close(4001, 'Missing auth token');
       return;
     }
 
@@ -288,12 +296,11 @@ export async function logsRoutes(app: FastifyInstance) {
       allowedOrgIds = new Set(orgs.map((o) => o.id));
     }
 
-    // ── Parse client-supplied filters ────────────────────────────────────
-    const q = req.query as Record<string, string | undefined>;
-    const filterSource   = q['source']    ?? null;
-    const filterMinLevel = levelOrder(q['min_level'] ?? 'debug');
-    const filterOrgId    = q['org_id']    ?? null;
-    const filterDeviceId = q['device_id'] ?? null;
+    // ── Parse client-supplied filters (from the same URLSearchParams) ────
+    const filterSource   = qs.get('source')    ?? null;
+    const filterMinLevel = levelOrder(qs.get('min_level') ?? 'debug');
+    const filterOrgId    = qs.get('org_id')    ?? null;
+    const filterDeviceId = qs.get('device_id') ?? null;
 
     // ── Subscribe to logBus ──────────────────────────────────────────────
     const handler = (entry: Parameters<typeof logBus['publish']>[0][0]) => {
