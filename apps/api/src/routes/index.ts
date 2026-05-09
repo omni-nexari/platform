@@ -29,6 +29,7 @@ import { sensorsRoutes } from './sensors.js';
 import { testSyncRoutes } from './test-sync.js';
 import { integrationsRoutes } from './integrations.js';
 import { monitoringRoutes } from './monitoring.js';
+import { supportRoutes } from './support.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoute);
@@ -61,5 +62,6 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(testSyncRoutes, { prefix: '/test-sync' });
   await app.register(integrationsRoutes, { prefix: '/integrations' });
   await app.register(monitoringRoutes, { prefix: '/monitoring' });
+  await app.register(supportRoutes, { prefix: '/support' });
 }
 

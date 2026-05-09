@@ -342,3 +342,55 @@ export async function sendResellerOnboardingConfirmationEmail(
   });
   if (error) throw new Error(error.message);
 }
+
+// ── Support ticket notification ───────────────────────────────────────────────
+
+export interface SupportNotificationContext {
+  to: string;
+  recipientName?: string;
+  subject: string;
+  body: string;
+  ticketId: string;
+  /** Who is being notified — determines the deep-link URL */
+  notifyTarget: 'superadmin' | 'reseller' | 'client';
+}
+
+export async function sendSupportNotificationEmail(ctx: SupportNotificationContext): Promise<void> {
+  const ticketUrl =
+    ctx.notifyTarget === 'superadmin'
+      ? `${APP_URL}/superadmin/support/${ctx.ticketId}`
+      : ctx.notifyTarget === 'reseller'
+        ? `${APP_URL}/management/support/${ctx.ticketId}`
+        : `${APP_URL}/support/${ctx.ticketId}`;
+
+  const greeting = ctx.recipientName ? `Hi ${ctx.recipientName},` : 'Hi there,';
+  const preview = ctx.body.length > 300 ? `${ctx.body.slice(0, 300)}…` : ctx.body;
+
+  const bodyHtml = `
+    <p style="color:#444;line-height:1.6;margin:0 0 12px;">${greeting}</p>
+    <p style="color:#444;line-height:1.6;margin:0 0 16px;">
+      A new reply has been posted on your support ticket:
+      <strong style="color:#0f1115;">${ctx.subject}</strong>
+    </p>
+    <div style="background:#f5f7fb;border-radius:10px;padding:16px 20px;margin-bottom:20px;border-left:4px solid #3a7bff;">
+      <p style="margin:0;color:#444;line-height:1.6;white-space:pre-wrap;font-size:14px;">${preview}</p>
+    </div>
+    <p style="color:#888;font-size:13px;margin:0;">
+      Click the button below to view the full thread and reply.
+    </p>`;
+
+  const textBody = `${greeting}\n\nNew reply on ticket: ${ctx.subject}\n\n${ctx.body}\n\nView ticket: ${ticketUrl}`;
+
+  const { error } = await resend.emails.send({
+    from: FROM_ADMIN,
+    to: [ctx.to],
+    subject: `[OmniHub Support] ${ctx.subject}`,
+    html: card(
+      'New reply on your ticket',
+      bodyHtml,
+      { text: 'View Ticket', href: ticketUrl },
+    ),
+    text: textBody,
+  });
+  if (error) throw new Error(error.message);
+}

@@ -20,13 +20,19 @@ import PlatformAnalyticsPage from './pages/superadmin/PlatformAnalyticsPage.js';
 import PlatformNotificationsPage from './pages/superadmin/PlatformNotificationsPage.js';
 import PlatformLogsPage from './pages/superadmin/PlatformLogsPage.js';
 import PlayerReleasesPage from './pages/superadmin/PlayerReleasesPage.js';
+import SuperAdminSupportPage from './pages/superadmin/SuperAdminSupportPage.js';
+import SuperAdminSupportTicketDetailPage from './pages/superadmin/SuperAdminSupportTicketDetailPage.js';
 import ManagementLoginPage from './pages/management/ManagementLoginPage.js';
 import ManagementLayout from './pages/management/ManagementLayout.js';
 import ManagementDashboardPage from './pages/management/ManagementDashboardPage.js';
 import ManagementAnalyticsPage from './pages/management/ManagementAnalyticsPage.js';
 import ManagementNotificationsPage from './pages/management/ManagementNotificationsPage.js';
+import ManagementSupportPage from './pages/management/ManagementSupportPage.js';
+import ManagementSupportTicketDetailPage from './pages/management/ManagementSupportTicketDetailPage.js';
 import ManagementBrandingPage from './pages/management/ManagementBrandingPage.js';
 import ManagementLogsPage from './pages/management/ManagementLogsPage.js';
+import OrgSupportPage from './pages/support/OrgSupportPage.js';
+import OrgSupportTicketDetailPage from './pages/support/OrgSupportTicketDetailPage.js';
 import AcceptManagementCompanyInvitePage from './pages/auth/AcceptManagementCompanyInvitePage.js';
 import AcceptClientOrgInvitePage from './pages/auth/AcceptClientOrgInvitePage.js';
 import SettingsPage from './pages/account/SettingsPage.js';
@@ -269,6 +275,8 @@ export default function App() {
         <Route path="notifications" element={<PlatformNotificationsPage />} />
         <Route path="logs" element={<PlatformLogsPage />} />
         <Route path="player-releases" element={<PlayerReleasesPage />} />
+        <Route path="support" element={<SuperAdminSupportPage />} />
+        <Route path="support/:id" element={<SuperAdminSupportTicketDetailPage />} />
       </Route>
 
       {/* Management Company portal */}
@@ -290,6 +298,8 @@ export default function App() {
         <Route path="analytics" element={<ManagementAnalyticsPage />} />
         <Route path="notifications" element={<ManagementNotificationsPage />} />
         <Route path="logs" element={<ManagementLogsPage />} />
+        <Route path="support" element={<ManagementSupportPage />} />
+        <Route path="support/:id" element={<ManagementSupportTicketDetailPage />} />
       </Route>
 
       {/* Authenticated user shell */}
@@ -308,6 +318,8 @@ export default function App() {
       >
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/dashboard" element={<OrgDashboardPage />} />
+        <Route path="/support" element={<OrgSupportPage />} />
+        <Route path="/support/:id" element={<OrgSupportTicketDetailPage />} />
         <Route path="/tizen-test" element={<TizenTestPage />} />
         <Route path="/test-sync" element={<TestSyncPage />} />
         <Route path="/workspaces/:wsId" element={<WorkspaceDashboardPage />} />

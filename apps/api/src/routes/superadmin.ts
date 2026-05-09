@@ -21,8 +21,10 @@ import {
   portalAnalyticsDrilldownPresets,
   portalAnalyticsAlertStates,
   platformAdminNotifications,
+  supportTickets,
+  supportTicketMessages,
 } from '@signage/db';
-import { eq, isNull, count, sql, desc, and, inArray, asc, sum, gte, lte } from 'drizzle-orm';
+import { eq, isNull, count, sql, desc, and, inArray, asc, sum, gte, lte, gt } from 'drizzle-orm';
 import * as argon2 from 'argon2';
 import Redis from 'ioredis';
 import { randomBytes } from 'node:crypto';
@@ -35,8 +37,11 @@ import {
   InviteManagementCompanyAdminSchema,
   InviteClientOrgOwnerSchema,
   ManagementCompanyBrandingSchema,
+  CreateSupportTicketSchema,
+  ReplyToTicketSchema,
+  UpdateTicketSchema,
 } from '@signage/shared';
-import { sendInviteEmail } from '../services/email.js';
+import { sendInviteEmail, sendSupportNotificationEmail } from '../services/email.js';
 import { writeAuditLog } from '../services/audit.js';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
@@ -3125,4 +3130,593 @@ export async function superAdminRoutes(app: FastifyInstance) {
       return reply.send(list);
     },
   );
+
+  // =========================================================================
+  // SUPPORT TICKETS — Superadmin (platform_owner) routes
+  // =========================================================================
+
+  // ── GET /superadmin/support/tickets ────────────────────────────────────────
+  app.get(
+    '/support/tickets',
+    { onRequest: [app.authenticatePlatformOwner] },
+    async (req, reply) => {
+      const { status, category, partyType, companyId, orgId, page } = req.query as {
+        status?: string; category?: string; partyType?: string;
+        companyId?: string; orgId?: string; page?: string;
+      };
+      const pageNum = Math.max(1, parseInt(page ?? '1', 10));
+      const limit = 40;
+      const offset = (pageNum - 1) * limit;
+
+      const filters = [
+        status    ? sql`t.status = ${status}`                       : undefined,
+        category  ? sql`t.category = ${category}`                   : undefined,
+        partyType ? sql`t.party_type = ${partyType}`                : undefined,
+        companyId ? sql`t.company_id = ${companyId}::uuid`          : undefined,
+        orgId     ? sql`t.org_id = ${orgId}::uuid`                  : undefined,
+      ].filter(Boolean);
+
+      const whereClause = filters.length ? sql`WHERE ${sql.join(filters, sql` AND `)}` : sql``;
+
+      const rows = await db.execute<{
+        id: string; party_type: string; company_id: string | null; org_id: string | null;
+        party_name: string; submitted_by_name: string; submitted_by_email: string;
+        category: string; subject: string; status: string; priority: string;
+        assigned_to_owner_id: string | null; closed_at: string | null;
+        message_count: number; created_at: string; updated_at: string;
+      }>(sql`
+        SELECT t.id, t.party_type, t.company_id, t.org_id,
+          COALESCE(mc.name, o.name, 'Unknown') AS party_name,
+          t.submitted_by_name, t.submitted_by_email,
+          t.category, t.subject, t.status, t.priority,
+          t.assigned_to_owner_id, t.closed_at,
+          (SELECT COUNT(*) FROM support_ticket_messages m WHERE m.ticket_id = t.id)::int AS message_count,
+          t.created_at, t.updated_at
+        FROM support_tickets t
+        LEFT JOIN management_companies mc ON mc.id = t.company_id
+        LEFT JOIN organisations o ON o.id = t.org_id
+        ${whereClause}
+        ORDER BY t.updated_at DESC
+        LIMIT ${limit} OFFSET ${offset}
+      `);
+
+      const [{ total }] = await db.execute<{ total: number }>(sql`
+        SELECT COUNT(*)::int AS total FROM support_tickets t ${whereClause}
+      `);
+
+      return reply.send({ tickets: rows, total, page: pageNum, limit });
+    },
+  );
+
+  // ── GET /superadmin/support/unread-count ───────────────────────────────────
+  // Returns tickets that have at least one message from a non-superadmin sender
+  // posted after the last superadmin reply (or after ticket creation if no SA reply).
+  app.get(
+    '/support/unread-count',
+    { onRequest: [app.authenticatePlatformOwner] },
+    async (_req, reply) => {
+      const [{ unread }] = await db.execute<{ unread: number }>(sql`
+        SELECT COUNT(DISTINCT t.id)::int AS unread
+        FROM support_tickets t
+        WHERE t.status NOT IN ('resolved', 'closed')
+          AND EXISTS (
+            SELECT 1 FROM support_ticket_messages m
+            WHERE m.ticket_id = t.id
+              AND m.sender_type != 'superadmin'
+              AND m.created_at > COALESCE(
+                (SELECT MAX(m2.created_at) FROM support_ticket_messages m2
+                 WHERE m2.ticket_id = t.id AND m2.sender_type = 'superadmin'),
+                t.created_at - INTERVAL '1 second'
+              )
+          )
+      `);
+      return reply.send({ unread });
+    },
+  );
+
+  // ── POST /superadmin/support/tickets ───────────────────────────────────────
+  app.post(
+    '/support/tickets',
+    { onRequest: [app.authenticatePlatformOwner] },
+    async (req, reply) => {
+      const caller = req.user as PlatformAdminCaller;
+      const body = CreateSupportTicketSchema.safeParse(req.body);
+      if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+      const { partyType, companyId, orgId, category, subject, priority, message } = body.data;
+
+      if (partyType === 'management_company' && !companyId) {
+        return reply.status(400).send({ error: 'companyId required for management_company tickets' });
+      }
+      if (partyType === 'client_org' && !orgId) {
+        return reply.status(400).send({ error: 'orgId required for client_org tickets' });
+      }
+
+      const [ticket] = await db.insert(supportTickets).values({
+        partyType,
+        companyId: companyId ?? null,
+        orgId: orgId ?? null,
+        submittedByAdminId: null,
+        submittedByUserId: null,
+        submittedByName: caller.name ?? 'Platform Admin',
+        submittedByEmail: caller.email,
+        category,
+        subject,
+        priority: priority ?? 'medium',
+        assignedToOwnerId: caller.sub,
+      }).returning();
+
+      if (message) {
+        await db.insert(supportTicketMessages).values({
+          ticketId: ticket.id,
+          senderType: 'superadmin',
+          senderId: caller.sub,
+          senderName: caller.name ?? 'Platform Admin',
+          body: message,
+        });
+      }
+
+      // Email the target party
+      const notifyEmail = await resolvePartyEmail(companyId ?? null, orgId ?? null);
+      if (notifyEmail) {
+        void sendSupportNotificationEmail({
+          to: notifyEmail.email,
+          recipientName: notifyEmail.name,
+          subject,
+          body: message ?? '',
+          ticketId: ticket.id,
+          notifyTarget: partyType === 'management_company' ? 'reseller' : 'client',
+        }).catch(() => undefined);
+      }
+
+      return reply.status(201).send({ ticket });
+    },
+  );
+
+  // ── GET /superadmin/support/tickets/:id ────────────────────────────────────
+  app.get(
+    '/support/tickets/:id',
+    { onRequest: [app.authenticatePlatformOwner] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const ticket = await db.query.supportTickets.findFirst({
+        where: eq(supportTickets.id, id),
+      });
+      if (!ticket) return reply.status(404).send({ error: 'Ticket not found' });
+
+      const messages = await db.query.supportTicketMessages.findMany({
+        where: eq(supportTicketMessages.ticketId, id),
+        orderBy: asc(supportTicketMessages.createdAt),
+      });
+
+      const partyName = await resolvePartyName(ticket.companyId, ticket.orgId);
+
+      return reply.send({
+        ...ticket,
+        partyName,
+        messages: messages.map(formatMessage),
+      });
+    },
+  );
+
+  // ── POST /superadmin/support/tickets/:id/messages ─────────────────────────
+  app.post(
+    '/support/tickets/:id/messages',
+    { onRequest: [app.authenticatePlatformOwner] },
+    async (req, reply) => {
+      const caller = req.user as PlatformAdminCaller;
+      const { id } = req.params as { id: string };
+      const body = ReplyToTicketSchema.safeParse(req.body);
+      if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+      const ticket = await db.query.supportTickets.findFirst({
+        where: eq(supportTickets.id, id),
+      });
+      if (!ticket) return reply.status(404).send({ error: 'Ticket not found' });
+      if (ticket.status === 'closed') {
+        return reply.status(409).send({ error: 'Cannot reply to a closed ticket' });
+      }
+
+      const [msg] = await db.insert(supportTicketMessages).values({
+        ticketId: id,
+        senderType: 'superadmin',
+        senderId: caller.sub,
+        senderName: caller.name ?? 'Platform Admin',
+        body: body.data.body,
+        attachmentUrls: body.data.attachmentUrls?.join('\n') ?? null,
+      }).returning();
+
+      await db.update(supportTickets).set({ updatedAt: new Date() }).where(eq(supportTickets.id, id));
+
+      // Notify the other party
+      void sendSupportNotificationEmail({
+        to: ticket.submittedByEmail,
+        recipientName: ticket.submittedByName,
+        subject: ticket.subject,
+        body: body.data.body,
+        ticketId: id,
+        notifyTarget: ticket.partyType === 'management_company' ? 'reseller' : 'client',
+      }).catch(() => undefined);
+
+      return reply.status(201).send({ message: formatMessage(msg) });
+    },
+  );
+
+  // ── PATCH /superadmin/support/tickets/:id ─────────────────────────────────
+  app.patch(
+    '/support/tickets/:id',
+    { onRequest: [app.authenticatePlatformOwner] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = UpdateTicketSchema.safeParse(req.body);
+      if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+      const ticket = await db.query.supportTickets.findFirst({
+        where: eq(supportTickets.id, id),
+      });
+      if (!ticket) return reply.status(404).send({ error: 'Ticket not found' });
+
+      const updates: Record<string, unknown> = { updatedAt: new Date() };
+      if (body.data.status !== undefined) {
+        updates['status'] = body.data.status;
+        if (body.data.status === 'closed') updates['closedAt'] = new Date();
+        else if (ticket.status === 'closed') updates['closedAt'] = null;
+      }
+      if (body.data.priority !== undefined) updates['priority'] = body.data.priority;
+      if ('assignedToOwnerId' in body.data) updates['assignedToOwnerId'] = body.data.assignedToOwnerId;
+
+      await db.update(supportTickets).set(updates).where(eq(supportTickets.id, id));
+
+      return reply.send({ ok: true });
+    },
+  );
+
+  // =========================================================================
+  // SUPPORT TICKETS — Reseller (management_company_admin) routes
+  // All under /support/reseller/* — auth: authenticateManagementCompanyAdmin
+  // =========================================================================
+
+  // ── GET /superadmin/support/reseller/tickets ───────────────────────────────
+  app.get(
+    '/support/reseller/tickets',
+    { onRequest: [app.authenticateManagementCompanyAdmin] },
+    async (req, reply) => {
+      const caller = req.user as Extract<PlatformAdminCaller, { type: 'management_company_admin' }>;
+      const { status, category } = req.query as { status?: string; category?: string };
+
+      const filters = [
+        sql`(t.company_id = ${caller.managementCompanyId}::uuid OR t.org_id IN (
+          SELECT id FROM organisations WHERE management_company_id = ${caller.managementCompanyId}::uuid
+        ))`,
+        status   ? sql`t.status = ${status}`   : undefined,
+        category ? sql`t.category = ${category}` : undefined,
+      ].filter(Boolean);
+
+      const rows = await db.execute<{
+        id: string; party_type: string; company_id: string | null; org_id: string | null;
+        party_name: string; submitted_by_name: string;
+        category: string; subject: string; status: string; priority: string;
+        message_count: number; created_at: string; updated_at: string;
+      }>(sql`
+        SELECT t.id, t.party_type, t.company_id, t.org_id,
+          COALESCE(mc.name, o.name, 'Unknown') AS party_name,
+          t.submitted_by_name,
+          t.category, t.subject, t.status, t.priority,
+          (SELECT COUNT(*) FROM support_ticket_messages m WHERE m.ticket_id = t.id)::int AS message_count,
+          t.created_at, t.updated_at
+        FROM support_tickets t
+        LEFT JOIN management_companies mc ON mc.id = t.company_id
+        LEFT JOIN organisations o ON o.id = t.org_id
+        WHERE ${sql.join(filters, sql` AND `)}
+        ORDER BY t.updated_at DESC
+        LIMIT 100
+      `);
+
+      return reply.send({ tickets: rows });
+    },
+  );
+
+  // ── GET /superadmin/support/reseller/unread-count ─────────────────────────
+  app.get(
+    '/support/reseller/unread-count',
+    { onRequest: [app.authenticateManagementCompanyAdmin] },
+    async (req, reply) => {
+      const caller = req.user as Extract<PlatformAdminCaller, { type: 'management_company_admin' }>;
+      const [{ unread }] = await db.execute<{ unread: number }>(sql`
+        SELECT COUNT(DISTINCT t.id)::int AS unread
+        FROM support_tickets t
+        WHERE t.status NOT IN ('resolved', 'closed')
+          AND (
+            t.company_id = ${caller.managementCompanyId}::uuid
+            OR t.org_id IN (SELECT id FROM organisations WHERE management_company_id = ${caller.managementCompanyId}::uuid)
+          )
+          AND EXISTS (
+            SELECT 1 FROM support_ticket_messages m
+            WHERE m.ticket_id = t.id
+              AND m.sender_type = 'superadmin'
+              AND m.created_at > COALESCE(
+                (SELECT MAX(m2.created_at) FROM support_ticket_messages m2
+                 WHERE m2.ticket_id = t.id AND m2.sender_type != 'superadmin'),
+                t.created_at - INTERVAL '1 second'
+              )
+          )
+      `);
+      return reply.send({ unread });
+    },
+  );
+
+  // ── POST /superadmin/support/reseller/tickets ─────────────────────────────
+  app.post(
+    '/support/reseller/tickets',
+    { onRequest: [app.authenticateManagementCompanyAdmin] },
+    async (req, reply) => {
+      const caller = req.user as Extract<PlatformAdminCaller, { type: 'management_company_admin' }>;
+      const body = CreateSupportTicketSchema.safeParse(req.body);
+      if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+      const { category, subject, priority, message, orgId } = body.data;
+
+      // If opening on behalf of a client org, validate the org belongs to this company
+      if (orgId) {
+        const org = await db.query.organisations.findFirst({
+          where: and(
+            eq(organisations.id, orgId),
+            eq(organisations.managementCompanyId, caller.managementCompanyId),
+            isNull(organisations.deletedAt),
+          ),
+          columns: { id: true },
+        });
+        if (!org) return reply.status(403).send({ error: 'Org does not belong to your company' });
+      }
+
+      const [ticket] = await db.insert(supportTickets).values({
+        partyType: orgId ? 'client_org' : 'management_company',
+        companyId: caller.managementCompanyId,
+        orgId: orgId ?? null,
+        submittedByAdminId: caller.sub,
+        submittedByName: caller.name ?? caller.email,
+        submittedByEmail: caller.email,
+        category,
+        subject,
+        priority: priority ?? 'medium',
+      }).returning();
+
+      if (message) {
+        await db.insert(supportTicketMessages).values({
+          ticketId: ticket.id,
+          senderType: 'reseller',
+          senderId: caller.sub,
+          senderName: caller.name ?? caller.email,
+          body: message,
+        });
+      }
+
+      // Notify superadmin
+      void notifySuperAdmins(subject, message ?? '', ticket.id).catch(() => undefined);
+
+      return reply.status(201).send({ ticket });
+    },
+  );
+
+  // ── GET /superadmin/support/reseller/tickets/:id ──────────────────────────
+  app.get(
+    '/support/reseller/tickets/:id',
+    { onRequest: [app.authenticateManagementCompanyAdmin] },
+    async (req, reply) => {
+      const caller = req.user as Extract<PlatformAdminCaller, { type: 'management_company_admin' }>;
+      const { id } = req.params as { id: string };
+      const ticket = await db.query.supportTickets.findFirst({
+        where: eq(supportTickets.id, id),
+      });
+      if (!ticket) return reply.status(404).send({ error: 'Ticket not found' });
+
+      const allowed =
+        ticket.companyId === caller.managementCompanyId ||
+        (ticket.orgId && await db.query.organisations.findFirst({
+          where: and(
+            eq(organisations.id, ticket.orgId),
+            eq(organisations.managementCompanyId, caller.managementCompanyId),
+          ),
+          columns: { id: true },
+        }).then(Boolean));
+
+      if (!allowed) return reply.status(403).send({ error: 'Forbidden' });
+
+      const messages = await db.query.supportTicketMessages.findMany({
+        where: eq(supportTicketMessages.ticketId, id),
+        orderBy: asc(supportTicketMessages.createdAt),
+      });
+
+      return reply.send({ ...ticket, messages: messages.map(formatMessage) });
+    },
+  );
+
+  // ── POST /superadmin/support/reseller/tickets/:id/messages ────────────────
+  app.post(
+    '/support/reseller/tickets/:id/messages',
+    { onRequest: [app.authenticateManagementCompanyAdmin] },
+    async (req, reply) => {
+      const caller = req.user as Extract<PlatformAdminCaller, { type: 'management_company_admin' }>;
+      const { id } = req.params as { id: string };
+      const body = ReplyToTicketSchema.safeParse(req.body);
+      if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+      const ticket = await db.query.supportTickets.findFirst({
+        where: eq(supportTickets.id, id),
+      });
+      if (!ticket) return reply.status(404).send({ error: 'Ticket not found' });
+
+      const allowed =
+        ticket.companyId === caller.managementCompanyId ||
+        (ticket.orgId && await db.query.organisations.findFirst({
+          where: and(
+            eq(organisations.id, ticket.orgId),
+            eq(organisations.managementCompanyId, caller.managementCompanyId),
+          ),
+          columns: { id: true },
+        }).then(Boolean));
+
+      if (!allowed) return reply.status(403).send({ error: 'Forbidden' });
+      if (ticket.status === 'closed') return reply.status(409).send({ error: 'Ticket is closed' });
+
+      const [msg] = await db.insert(supportTicketMessages).values({
+        ticketId: id,
+        senderType: 'reseller',
+        senderId: caller.sub,
+        senderName: caller.name ?? caller.email,
+        body: body.data.body,
+        attachmentUrls: body.data.attachmentUrls?.join('\n') ?? null,
+      }).returning();
+
+      await db.update(supportTickets)
+        .set({ updatedAt: new Date(), ...(ticket.status === 'resolved' ? { status: 'in_progress' } : {}) })
+        .where(eq(supportTickets.id, id));
+
+      void notifySuperAdmins(ticket.subject, body.data.body, id).catch(() => undefined);
+
+      return reply.status(201).send({ message: formatMessage(msg) });
+    },
+  );
+
+  // ── POST /superadmin/support/reseller/tickets/:id/attachments ─────────────
+  app.post(
+    '/support/reseller/tickets/:id/attachments',
+    { onRequest: [app.authenticateManagementCompanyAdmin] },
+    async (req, reply) => {
+      const caller = req.user as Extract<PlatformAdminCaller, { type: 'management_company_admin' }>;
+      const { id } = req.params as { id: string };
+      const ticket = await db.query.supportTickets.findFirst({
+        where: eq(supportTickets.id, id),
+        columns: { id: true, companyId: true },
+      });
+      if (!ticket) return reply.status(404).send({ error: 'Ticket not found' });
+      if (ticket.companyId !== caller.managementCompanyId) return reply.status(403).send({ error: 'Forbidden' });
+      return uploadSupportAttachment(req, reply, id);
+    },
+  );
+
+  // ── POST /superadmin/support/tickets/:id/attachments (owner) ──────────────
+  app.post(
+    '/support/tickets/:id/attachments',
+    { onRequest: [app.authenticatePlatformOwner] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      return uploadSupportAttachment(req, reply, id);
+    },
+  );
+
+  // ── GET /superadmin/support/attachments/:ticketId/:filename ───────────────
+  app.get(
+    '/support/attachments/:ticketId/:filename',
+    { onRequest: [app.authenticatePlatformAdmin] },
+    async (req, reply) => {
+      const { ticketId, filename } = req.params as { ticketId: string; filename: string };
+      // Validate file belongs to a message in this ticket
+      const msgs = await db.query.supportTicketMessages.findMany({
+        where: eq(supportTicketMessages.ticketId, ticketId),
+        columns: { attachmentUrls: true },
+      });
+      const allUrls = msgs.flatMap(m => (m.attachmentUrls ?? '').split('\n').filter(Boolean));
+      const expected = `/api/v1/superadmin/support/attachments/${ticketId}/${filename}`;
+      if (!allUrls.includes(expected)) return reply.status(404).send({ error: 'Not found' });
+
+      const absPath = path.resolve(STORAGE_ROOT, 'support_attachments', ticketId, filename);
+      const fileBuffer = await fs.readFile(absPath).catch(() => null);
+      if (!fileBuffer) return reply.status(404).send({ error: 'File not found' });
+
+      const contentType = getBrandAssetContentType(filename);
+      return reply.type(contentType).send(fileBuffer);
+    },
+  );
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+async function uploadSupportAttachment(req: FastifyRequest, reply: FastifyReply, ticketId: string) {
+  const file = await req.file();
+  if (!file) return reply.status(400).send({ error: 'No file provided' });
+
+  const ALLOWED_MIME = new Set([
+    'image/png','image/jpeg','image/webp','image/gif',
+    'application/pdf','text/plain','text/csv',
+    'application/zip',
+  ]);
+  if (!ALLOWED_MIME.has(file.mimetype)) {
+    return reply.status(400).send({ error: 'File type not allowed' });
+  }
+
+  const ext = path.extname(file.filename).toLowerCase() || '.bin';
+  const filename = `${randomToken(12)}${ext}`;
+  const absDir = path.resolve(STORAGE_ROOT, 'support_attachments', ticketId);
+  await fs.mkdir(absDir, { recursive: true });
+  const absPath = path.resolve(absDir, filename);
+
+  let fileSize = 0;
+  const ws = createWriteStream(absPath);
+  for await (const chunk of file.file) {
+    ws.write(chunk);
+    fileSize += chunk.length;
+    if (fileSize > 20 * 1024 * 1024) {
+      ws.destroy();
+      await fs.unlink(absPath).catch(() => undefined);
+      return reply.status(413).send({ error: 'Attachment exceeds 20 MB limit' });
+    }
+  }
+  await new Promise<void>((resolve, reject) => { ws.end(); ws.on('finish', resolve); ws.on('error', reject); });
+
+  const url = `/api/v1/superadmin/support/attachments/${ticketId}/${filename}`;
+  return reply.status(201).send({ url });
+}
+
+function formatMessage(m: {
+  id: string; ticketId: string; senderType: string; senderId: string;
+  senderName: string; body: string; attachmentUrls: string | null; createdAt: Date | string;
+}) {
+  return {
+    ...m,
+    attachmentUrls: (m.attachmentUrls ?? '').split('\n').filter(Boolean),
+    createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : m.createdAt,
+  };
+}
+
+async function resolvePartyName(companyId: string | null, orgId: string | null): Promise<string> {
+  if (companyId) {
+    const c = await db.query.managementCompanies.findFirst({ where: eq(managementCompanies.id, companyId), columns: { name: true } });
+    if (c) return c.name;
+  }
+  if (orgId) {
+    const o = await db.query.organisations.findFirst({ where: eq(organisations.id, orgId), columns: { name: true } });
+    if (o) return o.name;
+  }
+  return 'Unknown';
+}
+
+async function resolvePartyEmail(companyId: string | null, orgId: string | null) {
+  if (companyId) {
+    const admin = await db.query.managementCompanyAdmins.findFirst({
+      where: and(eq(managementCompanyAdmins.managementCompanyId, companyId), eq(managementCompanyAdmins.role, 'owner')),
+      columns: { email: true, name: true },
+    });
+    if (admin) return { email: admin.email, name: admin.name ?? admin.email };
+  }
+  if (orgId) {
+    const user = await db.query.users.findFirst({
+      where: and(eq(users.orgId, orgId), eq(users.orgRole, 'prime_owner'), isNull(users.deletedAt)),
+      columns: { email: true, name: true },
+    });
+    if (user) return { email: user.email, name: user.name ?? user.email };
+  }
+  return null;
+}
+
+async function notifySuperAdmins(subject: string, body: string, ticketId: string) {
+  const owners = await db.query.platformOwners.findMany({ columns: { email: true, name: true } });
+  await Promise.allSettled(owners.map(o => sendSupportNotificationEmail({
+    to: o.email,
+    recipientName: o.name ?? undefined,
+    subject,
+    body,
+    ticketId,
+    notifyTarget: 'superadmin',
+  })));
 }

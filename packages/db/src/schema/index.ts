@@ -25,3 +25,4 @@ export * from './canvas.js';
 export * from './logs.js';
 export * from './pos.js';
 export * from './integrations.js';
+export * from './support.js';

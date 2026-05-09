@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
-import { Building2, BarChart2, Activity, Bell, LogOut, Layers, LayoutDashboard, Menu, X, ScrollText, Tv, ServerCog } from 'lucide-react';
+import { Building2, BarChart2, Activity, Bell, LogOut, Layers, LayoutDashboard, Menu, X, ScrollText, Tv, ServerCog, MessageSquare } from 'lucide-react';
 import { saApi, useSAStore } from '../../lib/superadmin-auth.js';
 import PortalNotificationTray from '../../components/PortalNotificationTray.js';
 
@@ -14,6 +14,7 @@ const NAV = [
   { to: '/superadmin/player-releases', icon: Tv, label: 'Player Releases', end: false as const },
   { to: '/superadmin/logs', icon: ScrollText, label: 'Logs', end: false as const },
   { to: '/superadmin/notifications', icon: Bell, label: 'Notifications', end: false as const },
+  { to: '/superadmin/support', icon: MessageSquare, label: 'Support', end: false as const },
 ];
 
 export default function SuperAdminLayout() {

@@ -48,6 +48,7 @@ import {
   DollarSign,
   FileText,
   Receipt,
+  MessageSquare,
 } from 'lucide-react';
 
 interface Workspace {
@@ -272,7 +273,19 @@ export default function AppLayout() {
             <LayoutDashboard className="w-4 h-4" />
             Dashboard
           </NavLink>
-          {/* Workspace-specific nav */}
+          <NavLink
+            to="/support"
+            className={({ isActive }) =>
+              `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                isActive
+                  ? 'bg-[var(--blue)] text-white'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+              }`
+            }
+          >
+            <MessageSquare className="w-4 h-4" />
+            Support
+          </NavLink>
           {currentWsId && (
             <>
               <div className="pt-2 pb-1 px-3">
