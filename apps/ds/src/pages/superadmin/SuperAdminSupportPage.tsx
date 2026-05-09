@@ -92,7 +92,7 @@ export default function SuperAdminSupportPage() {
   });
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<CreateSupportTicketInput & { message?: string }>({
-    resolver: zodResolver(CreateSupportTicketSchema),
+    resolver: zodResolver(CreateSupportTicketSchema) as any,
     defaultValues: { partyType: 'management_company', category: 'general', priority: 'medium' },
   });
 
@@ -196,7 +196,7 @@ export default function SuperAdminSupportPage() {
             onClose={() => { setShowCreate(false); reset(); }}
           />
           <ModalBody>
-            <form id="create-ticket-form" onSubmit={handleSubmit(d => createMut.mutate({ ...d, partyType }))} className="space-y-4">
+            <form id="create-ticket-form" onSubmit={handleSubmit(d => createMut.mutate({ ...d, partyType } as any))} className="space-y-4">
               {/* Party type */}
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-2">Send to</p>

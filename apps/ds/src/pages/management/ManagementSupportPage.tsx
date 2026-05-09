@@ -28,7 +28,6 @@ interface OrgRow { id: string; name: string }
 export default function ManagementSupportPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const user = useSAStore(s => s.user);
   const [showCreate, setShowCreate] = useState(false);
   const [onBehalf, setOnBehalf] = useState(false);
 
@@ -52,7 +51,7 @@ export default function ManagementSupportPage() {
   });
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<CreateSupportTicketInput & { message?: string }>({
-    resolver: zodResolver(CreateSupportTicketSchema),
+    resolver: zodResolver(CreateSupportTicketSchema) as any,
     defaultValues: { partyType: 'management_company', category: 'general', priority: 'medium' },
   });
 
@@ -152,7 +151,7 @@ export default function ManagementSupportPage() {
             onClose={() => { setShowCreate(false); reset(); setOnBehalf(false); }}
           />
           <ModalBody>
-            <form id="create-support-form" onSubmit={handleSubmit(d => createMut.mutate(d))} className="space-y-4">
+            <form id="create-support-form" onSubmit={handleSubmit(d => createMut.mutate(d as any))} className="space-y-4">
               {/* On behalf of client org toggle */}
               <div className="rounded-xl border p-3 flex items-center justify-between" style={{ borderColor: 'var(--card-border)', background: 'var(--bg2)' }}>
                 <div>
