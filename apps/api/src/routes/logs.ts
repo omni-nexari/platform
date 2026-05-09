@@ -216,7 +216,18 @@ export async function logsRoutes(app: FastifyInstance) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (app as any).get('/tail', { websocket: true }, async (socket: any, req: any) => {
     // ── Auth ────────────────────────────────────────────────────────────
-    const token = (req.cookies?.access_token ?? req.cookies?.sa_access_token) as string | undefined;
+    // Parse cookie directly from the raw header — @fastify/cookie may not
+    // run its onRequest hook before the WebSocket handler in v11.
+    function parseCookie(header: string | undefined, name: string): string | undefined {
+      if (!header) return undefined;
+      const m = header.match(new RegExp(`(?:^|;)\\s*${name}\\s*=\\s*([^;]*)`));
+      return m ? decodeURIComponent(m[1]!) : undefined;
+    }
+    const cookieHeader = (req.headers as Record<string, string | undefined>)['cookie'];
+    const token = (
+      parseCookie(cookieHeader, 'sa_access_token') ??
+      parseCookie(cookieHeader, 'access_token')
+    );
     if (!token) {
       socket.close(4001, 'Missing auth cookie');
       return;
