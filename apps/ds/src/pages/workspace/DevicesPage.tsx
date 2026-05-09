@@ -35,14 +35,13 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
   const isPoweredOff = powerState === 'off' || powerState === 'standby';
 
   const portrait = isPortrait(resolution);
-  const aspectClass = portrait ? 'aspect-[9/16]' : 'aspect-video';
 
   // When device is offline or powered off, show a state overlay instead of the thumbnail.
   if (isOffline || isPoweredOff) {
     const label = isPoweredOff && !isOffline ? 'Powered Off' : status === 'offline' ? 'Offline' : status === 'error' ? 'Error' : 'Unclaimed';
     const Icon = isPoweredOff && !isOffline ? Monitor : WifiOff;
     return (
-      <div className={`w-full ${aspectClass} rounded-lg border border-[var(--card-border)] flex flex-col items-center justify-center gap-2 bg-[var(--surface)] overflow-hidden`}>
+      <div className="w-full aspect-video rounded-lg border border-[var(--card-border)] flex flex-col items-center justify-center gap-2 bg-[var(--surface)] overflow-hidden">
         <Icon className="w-6 h-6 text-[var(--text-muted)] opacity-40" />
         <span className="text-[11px] text-[var(--text-muted)] opacity-60 font-medium">{label}</span>
       </div>
@@ -54,15 +53,27 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
   // latestFrameAt changes — even if the DB row UUID hasn't changed yet.
   const src = buildApiUrl(`/devices/${deviceId}/screenshots/${screenshotId}${latestFrameAt ? `?t=${latestFrameAt}` : ''}`);
   return (
-    <div className={`w-full ${aspectClass} rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${showImg ? '' : 'bg-[var(--surface)]'}`}>
+    // Always aspect-video height so portrait devices don't make the card taller.
+    // Portrait thumbnails are pillar-boxed inside a narrow centred column.
+    <div className={`w-full aspect-video rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${showImg ? '' : 'bg-[var(--surface)]'}`}>
       {showImg
-        ? <img
-            key={`${screenshotId}-${latestFrameAt ?? 0}`}
-            src={src}
-            alt="Latest screenshot"
-            className="w-full h-full object-cover"
-            onError={() => setErrored(true)}
-          />
+        ? portrait
+          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
+              <img
+                key={`${screenshotId}-${latestFrameAt ?? 0}`}
+                src={src}
+                alt="Latest screenshot"
+                className="w-full h-full object-cover"
+                onError={() => setErrored(true)}
+              />
+            </div>
+          : <img
+              key={`${screenshotId}-${latestFrameAt ?? 0}`}
+              src={src}
+              alt="Latest screenshot"
+              className="w-full h-full object-cover"
+              onError={() => setErrored(true)}
+            />
         : <Monitor className="w-6 h-6 text-[var(--text-muted)] opacity-30" />
       }
     </div>
@@ -74,7 +85,6 @@ function LiveViewInCard({ deviceId, onStop, resolution }: { deviceId: string; on
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [status, setStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
   const portrait = isPortrait(resolution);
-  const aspectClass = portrait ? 'aspect-[9/16]' : 'aspect-video';
 
   useEffect(() => {
     const es = new EventSource(`/api/devices/${deviceId}/screenshot/stream?intervalMs=1000`);
@@ -87,9 +97,14 @@ function LiveViewInCard({ deviceId, onStop, resolution }: { deviceId: string; on
   }, [deviceId]);
 
   return (
-    <div className={`relative w-full ${aspectClass} rounded-lg border border-[var(--blue)]/60 overflow-hidden bg-black flex items-center justify-center`}>
+    // Always aspect-video so portrait live view doesn't make the card taller.
+    <div className="relative w-full aspect-video rounded-lg border border-[var(--blue)]/60 overflow-hidden bg-black flex items-center justify-center">
       {imgSrc
-        ? <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
+        ? portrait
+          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
+              <img src={imgSrc} alt="Live" className="w-full h-full object-cover" />
+            </div>
+          : <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
         : <div className="flex flex-col items-center gap-2 text-white/40">
             <Monitor className="w-6 h-6" />
             <span className="text-[10px]">{status === 'error' ? 'No signal' : 'Connecting…'}</span>
@@ -605,7 +620,7 @@ export default function DevicesPage() {
                   {label}
                   <span className="ml-1 text-[var(--text-muted)] font-normal">({sectionDevices.length})</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {videowallGroupsHere.map(({ group, members }) => (
                     <VideowallGroupCard
                       key={`group-${group.id}`}
@@ -625,7 +640,7 @@ export default function DevicesPage() {
                   {ungroupedDevices.map((device) => (
                     <div
                       key={device.id}
-                      className={`group rounded-xl border p-4 flex flex-col gap-3 cursor-pointer transition-colors relative bg-[var(--card)] ${
+                      className={`group rounded-xl border p-3 flex flex-col gap-2 cursor-pointer transition-colors relative bg-[var(--card)] ${
                         selectedItems.has(device.id)
                           ? 'border-[var(--blue)]'
                           : 'border-[var(--card-border)] hover:border-[var(--blue)]/60'
@@ -656,7 +671,7 @@ export default function DevicesPage() {
                           className="mt-0.5 shrink-0 w-4 h-4 accent-[var(--blue)]"
                         />
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
                             device.status === 'online'
                               ? 'bg-[var(--success)]/15 text-[var(--success)]'
                               : device.status === 'error'
