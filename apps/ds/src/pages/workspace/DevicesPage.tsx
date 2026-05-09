@@ -28,13 +28,27 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
   resolution?: string | null;
 }) {
   const [errored, setErrored] = useState(false);
-  // Reset error state whenever a fresh screenshot id or frame timestamp arrives.
-  useEffect(() => { setErrored(false); }, [screenshotId, latestFrameAt]);
+  // null = not yet detected; true = landscape source (needs rotate); false = already portrait.
+  const [srcIsLandscape, setSrcIsLandscape] = useState<boolean | null>(null);
+  // Reset on every new screenshot so orientation re-detects.
+  useEffect(() => { setErrored(false); setSrcIsLandscape(null); }, [screenshotId, latestFrameAt]);
 
   const isOffline = status !== 'online';
   const isPoweredOff = powerState === 'off' || powerState === 'standby';
 
   const portrait = isPortrait(resolution);
+  // Tizen sends landscape framebuffer even when the physical display is portrait.
+  // Rotate only once we know the actual image dimensions.
+  const needsRotate = portrait && srcIsLandscape === true;
+
+  // CSS to rotate a landscape image into a portrait pillar-box:
+  // element is sized W=containerH, H=containerW then rotated 90°.
+  const rotatedImgStyle: React.CSSProperties = {
+    position: 'absolute', objectFit: 'cover',
+    width: '177.78%', height: '56.25%',
+    top: '21.875%', left: '-38.89%',
+    transform: 'rotate(90deg)', transformOrigin: 'center',
+  };
 
   // When device is offline or powered off, show a state overlay instead of the thumbnail.
   if (isOffline || isPoweredOff) {
@@ -58,12 +72,14 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
     <div className={`w-full aspect-video rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${showImg ? '' : 'bg-[var(--surface)]'}`}>
       {showImg
         ? portrait
-          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
+          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0 relative">
               <img
                 key={`${screenshotId}-${latestFrameAt ?? 0}`}
                 src={src}
                 alt="Latest screenshot"
-                className="w-full h-full object-contain"
+                className={needsRotate ? '' : 'w-full h-full object-contain'}
+                style={needsRotate ? rotatedImgStyle : undefined}
+                onLoad={(e) => { const i = e.currentTarget; setSrcIsLandscape(i.naturalWidth > i.naturalHeight); }}
                 onError={() => setErrored(true)}
               />
             </div>
@@ -84,7 +100,15 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
 function LiveViewInCard({ deviceId, onStop, resolution }: { deviceId: string; onStop: () => void; resolution?: string | null }) {
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [status, setStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
+  const [liveIsLandscape, setLiveIsLandscape] = useState<boolean | null>(null);
   const portrait = isPortrait(resolution);
+  const needsRotate = portrait && liveIsLandscape === true;
+  const rotatedImgStyle: React.CSSProperties = {
+    position: 'absolute', objectFit: 'cover',
+    width: '177.78%', height: '56.25%',
+    top: '21.875%', left: '-38.89%',
+    transform: 'rotate(90deg)', transformOrigin: 'center',
+  };
 
   useEffect(() => {
     const es = new EventSource(`/api/devices/${deviceId}/screenshot/stream?intervalMs=1000`);
@@ -101,8 +125,12 @@ function LiveViewInCard({ deviceId, onStop, resolution }: { deviceId: string; on
     <div className="relative w-full aspect-video rounded-lg border border-[var(--blue)]/60 overflow-hidden bg-black flex items-center justify-center">
       {imgSrc
         ? portrait
-          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
-              <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
+          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0 relative">
+              <img src={imgSrc} alt="Live"
+                className={needsRotate ? '' : 'w-full h-full object-contain'}
+                style={needsRotate ? rotatedImgStyle : undefined}
+                onLoad={(e) => { const i = e.currentTarget; setLiveIsLandscape(i.naturalWidth > i.naturalHeight); }}
+              />
             </div>
           : <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
         : <div className="flex flex-col items-center gap-2 text-white/40">
