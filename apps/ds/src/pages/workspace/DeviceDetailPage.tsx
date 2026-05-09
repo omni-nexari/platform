@@ -60,6 +60,12 @@ import { formatDistanceToNow } from '../utils/time.js';
 import WorkspaceTagPicker from '../../components/WorkspaceTagPicker.js';
 import EpaperTab from './EpaperTab.js';
 
+function isPortrait(resolution: string | null | undefined): boolean {
+  if (!resolution) return false;
+  const parts = resolution.toLowerCase().split('x').map(Number);
+  return parts.length === 2 && !isNaN(parts[0]!) && !isNaN(parts[1]!) && parts[1]! > parts[0]!;
+}
+
 import {
   ActionButton,
   Badge,
@@ -82,6 +88,7 @@ interface Screenshot {
   id: string;
   storageKey: string;
   takenAt: string;
+  trigger?: string | null;
 }
 
 interface DeviceHeartbeat {
@@ -364,7 +371,7 @@ function TimezoneCombobox({ value, onChange }: { value: string; onChange: (v: st
 
 // Fetches the latest in-memory screenshot frame for a device card / detail view.
 // Silently shows a placeholder if no frame is available yet (404).
-function LatestScreenshotFrame({ deviceId, className }: { deviceId: string; className?: string }) {
+function LatestScreenshotFrame({ deviceId, portrait, className }: { deviceId: string; portrait?: boolean; className?: string }) {
   const [src, setSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -390,7 +397,11 @@ function LatestScreenshotFrame({ deviceId, className }: { deviceId: string; clas
   return (
     <div className={`w-full aspect-video rounded-xl border border-[var(--border)] bg-[var(--surface)] flex items-center justify-center overflow-hidden ${className ?? ''}`}>
       {src
-        ? <img src={src} alt="Latest screenshot" className="w-full h-full object-contain" />
+        ? portrait
+          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
+              <img src={src} alt="Latest screenshot" className="w-full h-full object-contain" />
+            </div>
+          : <img src={src} alt="Latest screenshot" className="w-full h-full object-contain" />
         : <div className="flex flex-col items-center gap-2 text-[var(--text-muted)]">
             <Monitor className="w-8 h-8 opacity-30" />
             <span className="text-xs">{loading ? 'Loading…' : 'No screenshot yet'}</span>
@@ -1294,6 +1305,24 @@ export function DeviceDetailContent({
   });
 
   const sendCmd = (cmd: DeviceCommandInput) => cmdMutation.mutate(cmd);
+
+  // Screenshot mutations
+  const [screenshotsOpen, setScreenshotsOpen] = useState(false);
+
+  const deleteScreenshotMut = useMutation({
+    mutationFn: (shotId: string) => api.delete(`/devices/${deviceId}/screenshots/${shotId}`),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['device', deviceId] }); },
+    onError: () => toast.error('Failed to delete screenshot'),
+  });
+
+  const deleteAllScreenshotsMut = useMutation({
+    mutationFn: () => api.delete(`/devices/${deviceId}/screenshots`),
+    onSuccess: () => {
+      toast.success('All screenshots deleted');
+      void queryClient.invalidateQueries({ queryKey: ['device', deviceId] });
+    },
+    onError: () => toast.error('Failed to delete screenshots'),
+  });
 
   // All MDC commands go directly to /mdc-control (not via /command)
   // so the Node bridge always receives the correct displayId.
@@ -3001,6 +3030,7 @@ export function DeviceDetailContent({
               </span>
             </SectionCardHeader>
             <SectionCardBody className="space-y-4">
+              {/* Action row */}
               <div className="flex flex-wrap items-center gap-3">
                 <ActionButton
                   disabled={cmdDisabled}
@@ -3008,35 +3038,78 @@ export function DeviceDetailContent({
                 >
                   <Camera className="w-4 h-4" /> Take Screenshot
                 </ActionButton>
+                {/* Toggle screenshot gallery */}
+                <button
+                  onClick={() => setScreenshotsOpen((v) => !v)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--card)] text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+                >
+                  {screenshotsOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  {screenshotsOpen ? 'Hide' : 'Show'} Gallery
+                  {screenshots.length > 0 && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded-full bg-[var(--accent)]/20 text-[var(--accent)] text-[10px] font-semibold">
+                      {screenshots.length}
+                    </span>
+                  )}
+                </button>
+                {screenshotsOpen && screenshots.length > 0 && (
+                  <button
+                    disabled={deleteAllScreenshotsMut.isPending}
+                    onClick={() => deleteAllScreenshotsMut.mutate()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-xs text-red-400 hover:text-red-300 transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Delete All
+                  </button>
+                )}
               </div>
+
               {/* Latest in-memory frame */}
-              {deviceId && <LatestScreenshotFrame deviceId={deviceId} />}
+              {deviceId && <LatestScreenshotFrame deviceId={deviceId} portrait={isPortrait(device.resolution)} />}
+
+              {/* Screenshot gallery — hidden by default */}
+              {screenshotsOpen && screenshots.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {screenshots.map((s) => {
+                    const portrait = isPortrait(device.resolution);
+                    return (
+                      <div
+                        key={s.id}
+                        className={`${portrait ? 'aspect-[9/16]' : 'aspect-video'} rounded-lg bg-[var(--surface)] border border-[var(--border)] overflow-hidden relative group`}
+                      >
+                        <img
+                          src={`/api/devices/${device.id}/screenshots/${s.id}`}
+                          alt={`Screenshot ${s.takenAt}`}
+                          className="w-full h-full object-contain"
+                          loading="lazy"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        />
+                        {/* Hover overlay: timestamp + delete */}
+                        <div className="absolute inset-0 flex flex-col items-start justify-between p-1.5 bg-gradient-to-t from-black/70 via-transparent to-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => deleteScreenshotMut.mutate(s.id)}
+                            disabled={deleteScreenshotMut.isPending}
+                            className="self-end p-1 rounded bg-black/60 hover:bg-red-600/80 text-white/80 hover:text-white transition-colors"
+                            title="Delete screenshot"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                          <div className="space-y-0.5">
+                            <span className="text-white text-[10px] block">{new Date(s.takenAt).toLocaleString()}</span>
+                            {s.trigger && s.trigger !== 'thumbnail' && (
+                              <span className="text-white/60 text-[9px] block capitalize">{s.trigger.replace(/_/g, ' ')}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {screenshotsOpen && screenshots.length === 0 && (
+                <p className="text-xs text-[var(--text-muted)] text-center py-4">No saved screenshots yet. Use &ldquo;Take Screenshot&rdquo; to capture one.</p>
+              )}
             </SectionCardBody>
           </SectionCard>
-
-          {screenshots.length > 0 && (
-            <SectionCard>
-              <SectionCardHeader>
-                <h2 className="text-sm font-semibold text-[var(--text)]">
-                  Screenshots <span className="text-[var(--text-muted)] font-normal">({screenshots.length})</span>
-                </h2>
-              </SectionCardHeader>
-              <SectionCardBody>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {screenshots.map((s) => (
-                    <div key={s.id} className="aspect-video rounded-lg bg-[var(--surface)] border border-[var(--border)] overflow-hidden relative group">
-                      <img src={`/api/devices/${device.id}/screenshots/${s.id}`} alt={`Screenshot ${s.takenAt}`}
-                        className="w-full h-full object-cover" loading="lazy"
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                      <div className="absolute inset-0 flex items-end justify-start p-1.5 bg-gradient-to-t from-black/60 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <span className="text-white text-[10px]">{new Date(s.takenAt).toLocaleString()}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </SectionCardBody>
-            </SectionCard>
-          )}
 
         </div>
       )}

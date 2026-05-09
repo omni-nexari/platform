@@ -23,6 +23,7 @@ window.EpaperWS = (function() {
     deviceId: null,
     started: false,
     closed: false,
+    screenshotIntervalHandle: null,
   };
 
   var RECONNECT_MS = 5000;
@@ -140,119 +141,23 @@ window.EpaperWS = (function() {
 
       case 'screenshot':
       case 'screenshot_auto': {
-        // Capture current screen. Primary path: SVG foreignObject rasterisation via
-        // data URI (avoids blob URL issues on Tizen WebView).
-        // Fallback: plain canvas with version + timestamp (always works, confirms pipeline).
-        // NOTE: Chromium-based Tizen WebView taints the canvas for any SVG containing
-        // <foreignObject>, so toDataURL() may throw SecurityError — caught and falls back.
-        logger.info('[WS] screenshot received (type=' + t + ')');
+        captureAndSend('manual');
+        break;
+      }
 
-        (function captureAndSend() {
-          var w = window.innerWidth  || screen.width  || 1200;
-          var h = window.innerHeight || screen.height || 1600;
-          var version = (window.PLAYER_BUILD_INFO && window.PLAYER_BUILD_INFO.version) || '?';
-
-          function sendFallback(reason) {
-            try {
-              var fb  = document.createElement('canvas');
-              fb.width  = Math.min(w, 600);
-              fb.height = Math.min(h, 400);
-              var fc = fb.getContext('2d');
-              fc.fillStyle = '#f8f8f8';
-              fc.fillRect(0, 0, fb.width, fb.height);
-              fc.fillStyle = '#222';
-              fc.font = 'bold 22px sans-serif';
-              fc.fillText('Nexari E-Paper v' + version, 20, 50);
-              fc.font = '16px sans-serif';
-              fc.fillStyle = '#555';
-              fc.fillText(reason || 'Live capture unavailable on this firmware', 20, 88);
-              fc.fillText(new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC', 20, 116);
-              var info = '';
-              try {
-                info = window.screen.width + 'x' + window.screen.height +
-                       ' | ' + (navigator.userAgent.match(/Tizen\s[\d.]+/) || [''])[0];
-              } catch (_) {}
-              if (info) { fc.fillText(info, 20, 144); }
-              var b64 = fb.toDataURL('image/jpeg', 0.85).replace(/^data:[^;]+;base64,/, '');
-              send({ type: 'screenshot_data', payload: { dataBase64: b64, trigger: 'manual', contentId: null } });
-              logger.info('[WS] screenshot fallback sent (' + reason + ')');
-            } catch (e2) {
-              logger.warn('[WS] screenshot fallback failed: ' + (e2 && e2.message));
-            }
-          }
-
-          try {
-            var canvas = document.createElement('canvas');
-            canvas.width  = w;
-            canvas.height = h;
-            var ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, w, h);
-
-            // If an image is currently displayed, draw it directly (blob URL is
-            // same-origin so canvas stays clean and toDataURL() will not throw).
-            var imgContentEl = document.getElementById('content-image');
-            if (imgContentEl && imgContentEl.src &&
-                imgContentEl.naturalWidth > 0 &&
-                imgContentEl.style.display !== 'none') {
-              try {
-                ctx.drawImage(imgContentEl, 0, 0, w, h);
-                var imgB64 = canvas.toDataURL('image/jpeg', 0.85).replace(/^data:[^;]+;base64,/, '');
-                send({ type: 'screenshot_data', payload: { dataBase64: imgB64, trigger: 'manual', contentId: null } });
-                logger.info('[WS] screenshot sent from image element (' + imgB64.length + ' chars)');
-              } catch (imgErr) {
-                logger.warn('[WS] screenshot drawImage failed: ' + (imgErr && imgErr.message));
-                sendFallback('Image draw failed');
-              }
-              return;
-            }
-
-            // Try to capture calendar DOM via SVG foreignObject + data URI
-            var calEl = document.getElementById('content-calendar');
-            var srcEl = calEl && calEl.firstElementChild ? calEl : null;
-            if (!srcEl) {
-              sendFallback('No content loaded');
-              return;
-            }
-
-            var xml;
-            try { xml = new XMLSerializer().serializeToString(srcEl); } catch (xe) {
-              logger.warn('[WS] screenshot serialize failed: ' + (xe && xe.message));
-              sendFallback('Serialize error');
-              return;
-            }
-
-            var svgSrc =
-              '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">' +
-              '<foreignObject width="100%" height="100%">' +
-              '<div xmlns="http://www.w3.org/1999/xhtml">' + xml + '</div>' +
-              '</foreignObject></svg>';
-
-            // Use data URI (not blob URL) — more reliable on Tizen 8 WebView
-            var dataUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgSrc);
-            var img = new Image();
-            img.onload = function () {
-              try {
-                ctx.drawImage(img, 0, 0, w, h);
-                // toDataURL() throws SecurityError on Tizen for foreignObject canvases
-                var b64 = canvas.toDataURL('image/jpeg', 0.85).replace(/^data:[^;]+;base64,/, '');
-                send({ type: 'screenshot_data', payload: { dataBase64: b64, trigger: 'manual', contentId: null } });
-                logger.info('[WS] screenshot sent (' + b64.length + ' chars)');
-              } catch (e) {
-                logger.warn('[WS] screenshot toDataURL failed: ' + (e && e.message));
-                sendFallback('Canvas security restriction');
-              }
-            };
-            img.onerror = function () {
-              logger.warn('[WS] screenshot SVG load failed');
-              sendFallback('SVG render failed');
-            };
-            img.src = dataUri;
-          } catch (e) {
-            logger.warn('[WS] screenshot error: ' + (e && e.message));
-            sendFallback('Capture error');
-          }
-        })();
+      case 'set_screenshot_interval': {
+        // Clear any existing auto-screenshot timer
+        if (state.screenshotIntervalHandle) {
+          clearInterval(state.screenshotIntervalHandle);
+          state.screenshotIntervalHandle = null;
+        }
+        var minutes = Math.max(1, Number(msg.payload && msg.payload.minutes) || 5);
+        logger.info('[WS] screenshot interval set to ' + minutes + ' min');
+        // Capture immediately, then on interval
+        setTimeout(function() { captureAndSend('interval'); }, 3000);
+        state.screenshotIntervalHandle = setInterval(function() {
+          captureAndSend('interval');
+        }, minutes * 60000);
         break;
       }
 
@@ -262,7 +167,117 @@ window.EpaperWS = (function() {
     }
   }
 
-  async function sendHeartbeat() {
+  // ── captureAndSend — shared screen capture used by manual, auto, and interval ──
+  // trigger: 'manual' | 'interval'
+  function captureAndSend(trigger) {
+    var trig = trigger || 'manual';
+    logger.info('[WS] captureAndSend trigger=' + trig);
+
+    var w = window.innerWidth  || screen.width  || 1200;
+    var h = window.innerHeight || screen.height || 1600;
+    var version = (window.PLAYER_BUILD_INFO && window.PLAYER_BUILD_INFO.version) || '?';
+
+    function sendFallback(reason) {
+      try {
+        var fb  = document.createElement('canvas');
+        fb.width  = Math.min(w, 600);
+        fb.height = Math.min(h, 400);
+        var fc = fb.getContext('2d');
+        fc.fillStyle = '#f8f8f8';
+        fc.fillRect(0, 0, fb.width, fb.height);
+        fc.fillStyle = '#222';
+        fc.font = 'bold 22px sans-serif';
+        fc.fillText('Nexari E-Paper v' + version, 20, 50);
+        fc.font = '16px sans-serif';
+        fc.fillStyle = '#555';
+        fc.fillText(reason || 'Live capture unavailable on this firmware', 20, 88);
+        fc.fillText(new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC', 20, 116);
+        var info = '';
+        try {
+          info = window.screen.width + 'x' + window.screen.height +
+                 ' | ' + (navigator.userAgent.match(/Tizen\s[\d.]+/) || [''])[0];
+        } catch (_) {}
+        if (info) { fc.fillText(info, 20, 144); }
+        var b64 = fb.toDataURL('image/jpeg', 0.85).replace(/^data:[^;]+;base64,/, '');
+        send({ type: 'screenshot_data', payload: { dataBase64: b64, trigger: trig, contentId: null } });
+        logger.info('[WS] screenshot fallback sent (' + reason + ')');
+      } catch (e2) {
+        logger.warn('[WS] screenshot fallback failed: ' + (e2 && e2.message));
+      }
+    }
+
+    try {
+      var canvas = document.createElement('canvas');
+      canvas.width  = w;
+      canvas.height = h;
+      var ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+
+      // If an image is currently displayed, draw it directly (blob URL is
+      // same-origin so canvas stays clean and toDataURL() will not throw).
+      var imgContentEl = document.getElementById('content-image');
+      if (imgContentEl && imgContentEl.src &&
+          imgContentEl.naturalWidth > 0 &&
+          imgContentEl.style.display !== 'none') {
+        try {
+          ctx.drawImage(imgContentEl, 0, 0, w, h);
+          var imgB64 = canvas.toDataURL('image/jpeg', 0.85).replace(/^data:[^;]+;base64,/, '');
+          send({ type: 'screenshot_data', payload: { dataBase64: imgB64, trigger: trig, contentId: null } });
+          logger.info('[WS] screenshot sent from image element (' + imgB64.length + ' chars)');
+        } catch (imgErr) {
+          logger.warn('[WS] screenshot drawImage failed: ' + (imgErr && imgErr.message));
+          sendFallback('Image draw failed');
+        }
+        return;
+      }
+
+      // Try to capture calendar DOM via SVG foreignObject + data URI
+      var calEl = document.getElementById('content-calendar');
+      var srcEl = calEl && calEl.firstElementChild ? calEl : null;
+      if (!srcEl) {
+        sendFallback('No content loaded');
+        return;
+      }
+
+      var xml;
+      try { xml = new XMLSerializer().serializeToString(srcEl); } catch (xe) {
+        logger.warn('[WS] screenshot serialize failed: ' + (xe && xe.message));
+        sendFallback('Serialize error');
+        return;
+      }
+
+      var svgSrc =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">' +
+        '<foreignObject width="100%" height="100%">' +
+        '<div xmlns="http://www.w3.org/1999/xhtml">' + xml + '</div>' +
+        '</foreignObject></svg>';
+
+      // Use data URI (not blob URL) — more reliable on Tizen 8 WebView
+      var dataUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgSrc);
+      var img = new Image();
+      img.onload = function () {
+        try {
+          ctx.drawImage(img, 0, 0, w, h);
+          // toDataURL() throws SecurityError on Tizen for foreignObject canvases
+          var b64 = canvas.toDataURL('image/jpeg', 0.85).replace(/^data:[^;]+;base64,/, '');
+          send({ type: 'screenshot_data', payload: { dataBase64: b64, trigger: trig, contentId: null } });
+          logger.info('[WS] screenshot sent (' + b64.length + ' chars)');
+        } catch (e) {
+          logger.warn('[WS] screenshot toDataURL failed: ' + (e && e.message));
+          sendFallback('Canvas security restriction');
+        }
+      };
+      img.onerror = function () {
+        logger.warn('[WS] screenshot SVG load failed');
+        sendFallback('SVG render failed');
+      };
+      img.src = dataUri;
+    } catch (e) {
+      logger.warn('[WS] screenshot error: ' + (e && e.message));
+      sendFallback('Capture error');
+    }
+  }
     if (!state.socket || state.socket.readyState !== 1) return;
     try {
       var info = {};

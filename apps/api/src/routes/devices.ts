@@ -806,6 +806,29 @@ export async function deviceRoutes(app: FastifyInstance) {
     return reply.send(createReadStream(filePath));
   });
 
+  // ── DELETE /devices/:id/screenshots  (delete ALL) ────────────────────────
+  app.delete('/:id/screenshots', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    const shots = await db.query.deviceScreenshots.findMany({
+      where: eq(deviceScreenshots.deviceId, id),
+      columns: { id: true, storageKey: true },
+    });
+
+    await db.delete(deviceScreenshots).where(eq(deviceScreenshots.deviceId, id));
+    await Promise.allSettled(
+      shots.map((s) => fsPromises.unlink(path.resolve(STORAGE_ROOT, s.storageKey))),
+    );
+
+    return reply.send({ ok: true, count: shots.length });
+  });
+
   // ── DELETE /devices/:id/screenshots/:screenshotId ─────────────────────────
   app.delete('/:id/screenshots/:screenshotId', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
