@@ -370,8 +370,7 @@ export default function LogViewer({
     if (deviceId) params.set('device_id', deviceId);
 
     const proto    = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const tailPath = apiPath.replace(/^\/superadmin\/logs$/, '/logs/tail')
-                            .replace(/^\/management\/logs$/, '/logs/tail');
+    const tailPath = apiPath.replace(/\/logs$/, '/logs/tail');
     const ws = new WebSocket(`${proto}//${window.location.host}/api/v1${tailPath}?${params.toString()}`);
     wsRef.current = ws;
     setTailing(true); setTailStatus('connecting');
@@ -473,7 +472,7 @@ export default function LogViewer({
       {stats && stats.total > 0 && <StatsBanner stats={stats} />}
 
       {/* Filters */}
-      <SectionCard>
+      <SectionCard style={{ overflow: 'visible' }}>
         <SectionCardHeader>
           <div className="flex items-center gap-2 text-sm font-medium">
             <Filter size={14} /> Filters

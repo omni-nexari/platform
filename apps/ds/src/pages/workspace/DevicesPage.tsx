@@ -58,12 +58,17 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
     <div className={`w-full aspect-video rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${showImg ? '' : 'bg-[var(--surface)]'}`}>
       {showImg
         ? portrait
-          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
+          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0 relative">
               <img
                 key={`${screenshotId}-${latestFrameAt ?? 0}`}
                 src={src}
                 alt="Latest screenshot"
-                className="w-full h-full object-contain"
+                style={{
+                  position: 'absolute', top: '50%', left: '50%',
+                  width: '177.78%', height: '56.25%',
+                  transform: 'translate(-50%, -50%) rotate(-90deg)',
+                  objectFit: 'cover',
+                }}
                 onError={() => setErrored(true)}
               />
             </div>
@@ -101,8 +106,8 @@ function LiveViewInCard({ deviceId, onStop, resolution }: { deviceId: string; on
     <div className="relative w-full aspect-video rounded-lg border border-[var(--blue)]/60 overflow-hidden bg-black flex items-center justify-center">
       {imgSrc
         ? portrait
-          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
-              <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
+          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0 relative">
+              <img src={imgSrc} alt="Live" style={{ position: 'absolute', top: '50%', left: '50%', width: '177.78%', height: '56.25%', transform: 'translate(-50%, -50%) rotate(-90deg)', objectFit: 'cover' }} />
             </div>
           : <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
         : <div className="flex flex-col items-center gap-2 text-white/40">

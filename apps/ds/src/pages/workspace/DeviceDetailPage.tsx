@@ -398,8 +398,8 @@ function LatestScreenshotFrame({ deviceId, portrait, className }: { deviceId: st
     <div className={`w-full aspect-video rounded-xl border border-[var(--border)] bg-[var(--surface)] flex items-center justify-center overflow-hidden ${className ?? ''}`}>
       {src
         ? portrait
-          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0">
-              <img src={src} alt="Latest screenshot" className="w-full h-full object-contain" />
+          ? <div className="h-full aspect-[9/16] overflow-hidden shrink-0 relative">
+              <img src={src} alt="Latest screenshot" style={{ position: 'absolute', top: '50%', left: '50%', width: '177.78%', height: '56.25%', transform: 'translate(-50%, -50%) rotate(-90deg)', objectFit: 'cover' }} />
             </div>
           : <img src={src} alt="Latest screenshot" className="w-full h-full object-contain" />
         : <div className="flex flex-col items-center gap-2 text-[var(--text-muted)]">
@@ -3078,7 +3078,13 @@ export function DeviceDetailContent({
                         <img
                           src={`/api/devices/${device.id}/screenshots/${s.id}`}
                           alt={`Screenshot ${s.takenAt}`}
-                          className="w-full h-full object-contain"
+                          className={portrait ? undefined : 'w-full h-full object-contain'}
+                          style={portrait ? {
+                            position: 'absolute', top: '50%', left: '50%',
+                            width: '177.78%', height: '56.25%',
+                            transform: 'translate(-50%, -50%) rotate(-90deg)',
+                            objectFit: 'cover',
+                          } : undefined}
                           loading="lazy"
                           onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                         />
