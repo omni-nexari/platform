@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { db, playlists, playlistItems, playlistFolders, contentItems, workspaceMembers, workspaces, scheduleSlots, devices } from '@signage/db';
-import { eq, and, isNull, desc, ilike, inArray, sql, getTableColumns, gte, asc } from 'drizzle-orm';
+import { eq, and, isNull, isNotNull, desc, ilike, inArray, sql, getTableColumns, gte, asc } from 'drizzle-orm';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
 import { validatePlaylistItemConditions } from '@signage/shared';
 
@@ -100,8 +100,49 @@ export async function playlistRoutes(app: FastifyInstance) {
     ]);
 
     const assignedTagMap = await getAssignedTagsForEntities(workspaceId, 'playlist', rows.map((row) => row.id));
+
+    // Fetch preview content IDs (first 4 per playlist, ordered by position)
+    const playlistIds = rows.map((r) => r.id);
+    const previewMap: Record<string, string[]> = {};
+    const expiredMap: Record<string, boolean> = {};
+
+    if (playlistIds.length > 0) {
+      const previewItems = await db
+        .select({ playlistId: playlistItems.playlistId, contentId: playlistItems.contentId, position: playlistItems.position })
+        .from(playlistItems)
+        .where(and(inArray(playlistItems.playlistId, playlistIds), isNotNull(playlistItems.contentId)))
+        .orderBy(asc(playlistItems.position));
+
+      for (const item of previewItems) {
+        if (!previewMap[item.playlistId]) previewMap[item.playlistId] = [];
+        if (previewMap[item.playlistId]!.length < 4) {
+          previewMap[item.playlistId]!.push(item.contentId!);
+        }
+      }
+
+      const expiredItems = await db
+        .selectDistinct({ playlistId: playlistItems.playlistId })
+        .from(playlistItems)
+        .innerJoin(contentItems, and(
+          eq(playlistItems.contentId, contentItems.id),
+          isNotNull(contentItems.validUntil),
+          sql`${contentItems.validUntil} < NOW()`,
+          isNull(contentItems.deletedAt),
+        ))
+        .where(inArray(playlistItems.playlistId, playlistIds));
+
+      for (const item of expiredItems) {
+        expiredMap[item.playlistId] = true;
+      }
+    }
+
     return reply.send({
-      items: rows.map((row) => ({ ...row, assignedTags: assignedTagMap[row.id] ?? [] })),
+      items: rows.map((row) => ({
+        ...row,
+        assignedTags: assignedTagMap[row.id] ?? [],
+        previewContentIds: previewMap[row.id] ?? [],
+        hasExpiredContent: expiredMap[row.id] ?? false,
+      })),
       total: totalResult,
       page,
       limit,

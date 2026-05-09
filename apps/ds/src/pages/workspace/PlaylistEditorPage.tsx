@@ -6,8 +6,23 @@ import { api } from '../../lib/api.js';
 import {
   ArrowLeft, Plus, Save, Trash2, RefreshCw,
   ChevronUp, ChevronDown, X, Layers, Clock,
-  Play, AlertTriangle, Settings2, Monitor,
+  Play, AlertTriangle, Settings2, Monitor, GripVertical,
 } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import AuthImg from '../../components/AuthImg.js';
 import ContentPickerModal, { type PickedItem } from '../../components/ContentPickerModal.js';
 import DevicePickerModal from '../../components/DevicePickerModal.js';
@@ -202,6 +217,7 @@ function ItemRow({
 }) {
   const [condOpen, setCondOpen] = useState(false);
   const isPlaylist = !!item.nestedPlaylistId;
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.localId });
 
   const parsedConditions: ItemConditions = (() => {
     try { return JSON.parse(item.conditions) as ItemConditions; } catch { return {}; }
@@ -209,18 +225,34 @@ function ItemRow({
   const hasConditions = !!(parsedConditions.timeStart || parsedConditions.timeEnd || parsedConditions.daysOfWeek?.length);
 
   return (
-    <div className="flex items-center gap-3 p-3 rounded-xl border border-[var(--card-border)] bg-[var(--card)] group">
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
+      className="flex items-center gap-3 p-3 rounded-xl border border-[var(--card-border)] bg-[var(--card)] group"
+    >
+      {/* Drag handle */}
+      <button
+        {...attributes}
+        {...listeners}
+        className="shrink-0 w-5 flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text)] cursor-grab active:cursor-grabbing transition-colors touch-none"
+        title="Drag to reorder"
+      >
+        <GripVertical size={14} />
+      </button>
       {/* Index */}
-      <div className="shrink-0 w-6 text-center text-xs font-semibold text-[var(--text-muted)]">
+      <div className="shrink-0 w-5 text-center text-xs font-semibold text-[var(--text-muted)]">
         {index + 1}
       </div>
 
       {/* Thumbnail */}
-      <div className="shrink-0 relative w-16 h-10 rounded-lg overflow-hidden bg-[var(--surface-raised)]">
+      <div
+        className="shrink-0 relative rounded-lg overflow-hidden bg-[var(--surface-raised)]"
+        style={{ width: item.orientation === 'portrait' ? 26 : 64, height: 40 }}
+      >
         {item.thumbnailContentId ? (
           <AuthImg
             itemId={item.thumbnailContentId}
-            className="w-full h-full object-cover"
+            className={`w-full h-full ${item.orientation === 'portrait' ? 'object-contain' : 'object-cover'}`}
             fallback={<div className="w-full h-full flex items-center justify-center"><Layers size={14} className="text-[var(--text-muted)]" /></div>}
           />
         ) : (
@@ -466,14 +498,23 @@ export default function PlaylistEditorPage() {
   }
 
   function moveItem(from: number, to: number) {
-    setItems(prev => {
-      const arr = [...prev];
-      const removed = arr.splice(from, 1)[0]!;
-      arr.splice(to, 0, removed);
-      return arr;
-    });
+    setItems(prev => arrayMove(prev, from, to));
     markDirty();
   }
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setItems(prev => {
+        const oldIdx = prev.findIndex(i => i.localId === active.id);
+        const newIdx = prev.findIndex(i => i.localId === over.id);
+        return arrayMove(prev, oldIdx, newIdx);
+      });
+      markDirty();
+    }
+  }
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   function removeItem(idx: number) {
     setItems(prev => prev.filter((_, i) => i !== idx));
@@ -624,23 +665,27 @@ export default function PlaylistEditorPage() {
               <p className="text-sm text-[var(--text-muted)]">No items — add content using the button below</p>
             </div>
           ) : (
-            <div className="flex flex-col gap-2">
-              {items.map((item, idx) => (
-                <ItemRow
-                  key={item.localId}
-                  item={item}
-                  index={idx}
-                  total={items.length}
-                  orientationMismatch={isOrientationMismatch(item)}
-                  onMoveUp={() => moveItem(idx, idx - 1)}
-                  onMoveDown={() => moveItem(idx, idx + 1)}
-                  onRemove={() => removeItem(idx)}
-                  onChangeDuration={d => updateDuration(idx, d)}
-                  onChangeTransition={t => updateTransition(idx, t)}
-                  onChangeConditions={c => updateConditions(idx, c)}
-                />
-              ))}
-            </div>
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={items.map(i => i.localId)} strategy={verticalListSortingStrategy}>
+                <div className="flex flex-col gap-2">
+                  {items.map((item, idx) => (
+                    <ItemRow
+                      key={item.localId}
+                      item={item}
+                      index={idx}
+                      total={items.length}
+                      orientationMismatch={isOrientationMismatch(item)}
+                      onMoveUp={() => moveItem(idx, idx - 1)}
+                      onMoveDown={() => moveItem(idx, idx + 1)}
+                      onRemove={() => removeItem(idx)}
+                      onChangeDuration={d => updateDuration(idx, d)}
+                      onChangeTransition={t => updateTransition(idx, t)}
+                      onChangeConditions={c => updateConditions(idx, c)}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
           )}
 
           {/* Add content button */}

@@ -199,6 +199,21 @@ function ScheduleRow({
             {sch.slotCount} slot{sch.slotCount !== 1 ? 's' : ''}
           </span>
         </div>
+        {/* Slot count bar (up to 10 filled blocks) */}
+        {sch.slotCount > 0 && (
+          <div className="flex items-center gap-[3px] mt-1.5">
+            {Array.from({ length: Math.min(sch.slotCount, 10) }).map((_, i) => (
+              <div
+                key={i}
+                className="h-1.5 w-3 rounded-sm"
+                style={{ background: color, opacity: 0.7 + i * 0.03 }}
+              />
+            ))}
+            {sch.slotCount > 10 && (
+              <span className="text-[9px] text-[var(--text-muted)] ml-0.5">+{sch.slotCount - 10}</span>
+            )}
+          </div>
+        )}
         <div className="mt-1.5">
           <AssignedTagPills tags={sch.assignedTags} />
         </div>

@@ -66,6 +66,7 @@ export const managementCompanyAdminInvitations = pgTable(
       () => managementCompanyAdmins.id,
     ),
     email: text('email').notNull(),
+    recipientName: text('recipient_name'),
     role: text('role').notNull().default('admin'),
     token: text('token').notNull().unique(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),

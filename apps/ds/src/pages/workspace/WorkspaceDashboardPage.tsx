@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { api, buildApiUrl } from '../../lib/api.js';
 import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
-import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw } from 'lucide-react';
+import { Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Play, CalendarDays, Image, ListVideo } from 'lucide-react';
 import { formatDistanceToNow } from '../utils/time.js';
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import BulkTagModal from '../../components/BulkTagModal.js';
@@ -59,6 +59,12 @@ function StatusBadge({ status }: { status: Device['status'] }) {
   return <Badge tone={s.tone}>{s.label}</Badge>;
 }
 
+function isPortrait(resolution: string | null | undefined): boolean {
+  if (!resolution) return false;
+  const parts = resolution.toLowerCase().split('x').map(Number);
+  return parts.length === 2 && !isNaN(parts[0]!) && !isNaN(parts[1]!) && parts[1]! > parts[0]!;
+}
+
 export default function WorkspaceDashboardPage() {
   const { wsId } = useParams<{ wsId: string }>();
   const navigate = useNavigate();
@@ -82,6 +88,18 @@ export default function WorkspaceDashboardPage() {
     queryKey: ['devices', wsId, selectedTagIds],
     queryFn: () => api.get(`/devices?workspaceId=${wsId}${tagIdsParam}`),
     refetchInterval: 30_000, // poll for live status
+  });
+
+  interface WsSummaryMini {
+    playlistTotal: number;
+    playlistActive: number;
+    scheduleTotal: number;
+    scheduleActive: number;
+  }
+  const { data: wsSummary } = useQuery<WsSummaryMini>({
+    queryKey: ['workspace-summary-mini', wsId],
+    queryFn: () => api.get(`/workspaces/${wsId}/summary`),
+    enabled: !!wsId,
   });
 
   const filteredDevices = selectedStatus === 'all'
@@ -218,7 +236,7 @@ export default function WorkspaceDashboardPage() {
               onClick={() => navigate(`/workspaces/${wsId}/devices/${device.id}`)}
               className="ui-entity-card group text-left flex flex-col"
             >
-              <div className="ui-media-frame aspect-video">
+              <div className={`ui-media-frame ${isPortrait(device.resolution) ? 'aspect-[9/16]' : 'aspect-video'}`}>
                 {(() => {
                   const statusMeta = {
                     online: { label: 'Online', mediaTone: 'ui-media-badge-success' },
@@ -267,7 +285,10 @@ export default function WorkspaceDashboardPage() {
                 {/* Content/playlist badge + name over thumbnail */}
                 {device.publishedTarget && (
                   <div className="absolute bottom-8 left-2 right-2 z-20 flex items-center gap-1.5 min-w-0">
-                    <span className="ui-media-badge ui-media-badge-accent shrink-0">{device.publishedTarget.type}</span>
+                    <span className="ui-media-badge ui-media-badge-accent shrink-0">
+                      {device.publishedTarget.type === 'playlist' ? <Play size={9} /> : device.publishedTarget.type === 'schedule' ? <CalendarDays size={9} /> : <Image size={9} />}
+                      {device.publishedTarget.type}
+                    </span>
                     <span className="text-white text-[11px] font-medium truncate drop-shadow">{device.publishedTarget.name}</span>
                   </div>
                 )}
@@ -336,6 +357,44 @@ export default function WorkspaceDashboardPage() {
               </div>
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Mini playlist/schedule stats row */}
+      {wsSummary && (
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <button
+            onClick={() => navigate(`/workspaces/${wsId}/playlist`)}
+            className="flex items-center gap-3 p-3 rounded-xl border transition-colors hover:border-purple-500/40 hover:bg-purple-500/5"
+            style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
+          >
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'rgba(139,92,246,0.15)' }}>
+              <ListVideo className="w-4 h-4" style={{ color: '#a78bfa' }} />
+            </div>
+            <div className="text-left min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Playlists</p>
+              <p className="text-sm font-bold" style={{ color: 'var(--text)' }}>
+                <span style={{ color: '#a78bfa' }}>{wsSummary.playlistActive}</span>
+                <span style={{ color: 'var(--text-muted)' }}> / {wsSummary.playlistTotal} with content</span>
+              </p>
+            </div>
+          </button>
+          <button
+            onClick={() => navigate(`/workspaces/${wsId}/schedule`)}
+            className="flex items-center gap-3 p-3 rounded-xl border transition-colors hover:border-teal-500/40 hover:bg-teal-500/5"
+            style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
+          >
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'rgba(20,184,166,0.15)' }}>
+              <CalendarDays className="w-4 h-4" style={{ color: '#2dd4bf' }} />
+            </div>
+            <div className="text-left min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Schedules</p>
+              <p className="text-sm font-bold" style={{ color: 'var(--text)' }}>
+                <span style={{ color: '#2dd4bf' }}>{wsSummary.scheduleActive}</span>
+                <span style={{ color: 'var(--text-muted)' }}> / {wsSummary.scheduleTotal} active</span>
+              </p>
+            </div>
+          </button>
         </div>
       )}
 

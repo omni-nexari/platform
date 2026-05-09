@@ -457,6 +457,7 @@ export async function authRoutes(app: FastifyInstance) {
 
     return reply.send({
       email: invite.email,
+      recipientName: invite.recipientName ?? null,
       role: invite.role,
       companyName: company?.name ?? '',
       // true when the company still has a pending-generated slug (first admin onboarding)
@@ -553,7 +554,7 @@ export async function authRoutes(app: FastifyInstance) {
       where: eq(managementCompanies.id, invite.managementCompanyId),
     });
 
-    if (company?.slug?.startsWith('pending-') && body.data.companyName && body.data.companyPortalUrl) {
+    if (company?.slug?.startsWith('pending-') && body.data.companyPortalUrl) {
       const deletedSlugMatch = await db.query.managementCompanies.findFirst({
         where: and(
           eq(managementCompanies.slug, body.data.companyPortalUrl),
@@ -578,7 +579,7 @@ export async function authRoutes(app: FastifyInstance) {
       await db
         .update(managementCompanies)
         .set({
-          name: body.data.companyName,
+          ...(body.data.companyName ? { name: body.data.companyName } : {}),
           slug: body.data.companyPortalUrl,
           billingEmail: body.data.billingEmail || null,
           logoUrl: body.data.logoUrl || null,

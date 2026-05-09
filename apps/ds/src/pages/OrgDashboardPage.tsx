@@ -44,8 +44,10 @@ interface WsSummary {
   contentStats: ContentTypeStat[];
   playlistTotal: number;
   playlistActive: number;
+  playlistPublishedCount: number;
   scheduleTotal: number;
   scheduleActive: number;
+  schedulePublishedCount: number;
 }
 
 function formatBytes(bytes: number): string {
@@ -186,7 +188,8 @@ function ContentCard({
 }) {
   const ordered = TYPE_ORDER
     .map(t => stats.find(s => s.type === t))
-    .filter((s): s is ContentTypeStat => !!s && s.total > 0);
+    .filter((s): s is ContentTypeStat => !!s && s.total > 0)
+    .slice(0, 3); // show top 3 types in the stat grid
   const totalAll     = stats.reduce((s, r) => s + r.total, 0);
   const publishedAll = stats.reduce((s, r) => s + r.published, 0);
 
@@ -197,70 +200,66 @@ function ContentCard({
       style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
     >
       <div className="h-0.5 w-full" style={{ background: 'linear-gradient(90deg, #f59e0b, #f97316)' }} />
-      <div className="flex items-center justify-between px-4 pt-4 pb-2">
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'rgba(245,158,11,0.15)' }}>
-            <Image className="w-4 h-4" style={{ color: '#fbbf24' }} />
-          </div>
-          <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Content</span>
-        </div>
-        {totalAll > 0 && (
-          <span className="text-[11px] font-semibold tabular-nums" style={{ color: 'var(--text-muted)' }}>
-            <span style={{ color: '#f59e0b' }}>{publishedAll}</span>
-            <span style={{ color: 'rgba(255,255,255,0.2)' }}> / </span>
-            {totalAll}
-          </span>
-        )}
-      </div>
-
-      <div
-        className="mx-3 rounded-xl overflow-hidden relative px-3 py-3 flex flex-col justify-center"
-        style={{ aspectRatio: '16/9', background: 'linear-gradient(135deg, #1f1a10 0%, #0c0a06 100%)' }}
-      >
-        <div
-          className="absolute inset-0"
-          style={{ backgroundImage: 'radial-gradient(circle at 50% 50%, #f59e0b 0%, transparent 65%)', opacity: 0.12 }}
-        />
-        {ordered.length === 0 ? (
-          <div className="relative flex flex-col items-center justify-center gap-1.5">
-            <div style={{ opacity: 0.2, transform: 'scale(2.8)' }}>
-              <Image className="w-4 h-4" style={{ color: '#fbbf24' }} />
+      <div className="p-5 flex flex-col flex-1">
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-3" style={{ background: 'rgba(245,158,11,0.15)' }}>
+              <Image className="w-5 h-5" style={{ color: '#fbbf24' }} />
             </div>
+            <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Total Content</p>
+            <div className="text-4xl font-bold tracking-tight mt-0.5" style={{ color: 'var(--text)' }}>{totalAll}</div>
           </div>
-        ) : (
-          <div className="relative flex flex-col gap-1.5">
-            {ordered.map(s => {
-              const meta = CONTENT_TYPE_META[s.type] ?? { label: s.type, color: '#94a3b8' };
-              return (
-                <div key={s.type} className="flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: meta.color }} />
-                  <span className="text-xs flex-1" style={{ color: 'rgba(255,255,255,0.5)' }}>{meta.label}</span>
-                  <span className="text-xs font-bold tabular-nums" style={{ color: meta.color }}>{s.published}</span>
-                  <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.2)' }}>/</span>
-                  <span className="text-xs tabular-nums" style={{ color: 'rgba(255,255,255,0.4)' }}>{s.total}</span>
+        </div>
+        <div className="mt-auto">
+          {ordered.length > 0 ? (
+            <div className="grid grid-cols-3 gap-1">
+              {ordered.map(s => {
+                const meta = CONTENT_TYPE_META[s.type] ?? { label: s.type, color: '#94a3b8' };
+                return (
+                  <div key={s.type}>
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: meta.color }} />
+                      <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{meta.label}</span>
+                    </div>
+                    <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>{s.total}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-1">
+              {[
+                { label: 'Published', count: publishedAll, color: '#fbbf24' },
+                { label: 'On screens', count: publishedAll, color: '#34d399' },
+                { label: 'Total', count: totalAll, color: '#475569' },
+              ].map(({ label, count, color }) => (
+                <div key={label}>
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
+                    <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{label}</span>
+                  </div>
+                  <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>{count}</span>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <div className="px-4 py-3">
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Upload images, videos &amp; HTML5 packages.</p>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-// ── Playlist Card ─────────────────────────────────────────────────────────────
+// ── Playlist Card ──────────────────────────────────────────────────────────────────
 
 function PlaylistCard({
   total,
   active,
+  published,
   onClick,
 }: {
   total: number;
   active: number;
+  published: number;
   onClick?: () => void;
 }) {
   return (
@@ -270,70 +269,47 @@ function PlaylistCard({
       style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
     >
       <div className="h-0.5 w-full" style={{ background: 'linear-gradient(90deg, #8b5cf6, #a855f7)' }} />
-      <div className="flex items-center justify-between px-4 pt-4 pb-2">
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'rgba(139,92,246,0.15)' }}>
-            <ListVideo className="w-4 h-4" style={{ color: '#a78bfa' }} />
+      <div className="p-5 flex flex-col flex-1">
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-3" style={{ background: 'rgba(139,92,246,0.15)' }}>
+              <ListVideo className="w-5 h-5" style={{ color: '#a78bfa' }} />
+            </div>
+            <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Total Playlists</p>
+            <div className="text-4xl font-bold tracking-tight mt-0.5" style={{ color: 'var(--text)' }}>{total}</div>
           </div>
-          <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Playlists</span>
         </div>
-        {total > 0 && (
-          <span className="text-[11px] font-semibold tabular-nums" style={{ color: 'var(--text-muted)' }}>
-            <span style={{ color: '#a78bfa' }}>{active}</span>
-            <span style={{ color: 'rgba(255,255,255,0.2)' }}> / </span>
-            {total}
-          </span>
-        )}
-      </div>
-
-      <div
-        className="mx-3 rounded-xl overflow-hidden relative flex flex-col items-center justify-center gap-2"
-        style={{ aspectRatio: '16/9', background: 'linear-gradient(135deg, #130e1e 0%, #0a0810 100%)' }}
-      >
-        <div
-          className="absolute inset-0"
-          style={{ backgroundImage: 'radial-gradient(circle at 50% 50%, #8b5cf6 0%, transparent 65%)', opacity: 0.14 }}
-        />
-        {total === 0 ? (
-          <div className="relative flex flex-col items-center justify-center gap-1.5">
-            <div style={{ opacity: 0.2, transform: 'scale(2.8)' }}>
-              <ListVideo className="w-4 h-4" style={{ color: '#a78bfa' }} />
+        <div className="mt-auto grid grid-cols-3 gap-1">
+          {[
+            { label: 'With content', count: active,         color: '#a78bfa' },
+            { label: 'On screens',   count: published,      color: '#34d399' },
+            { label: 'Empty',        count: total - active, color: '#475569' },
+          ].map(({ label, count, color }) => (
+            <div key={label}>
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
+                <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{label}</span>
+              </div>
+              <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>{count}</span>
             </div>
-          </div>
-        ) : (
-          <div className="relative flex flex-col gap-1.5 w-full px-4">
-            <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#a78bfa' }} />
-              <span className="text-xs flex-1" style={{ color: 'rgba(255,255,255,0.5)' }}>Published</span>
-              <span className="text-xs font-bold tabular-nums" style={{ color: '#a78bfa' }}>{active}</span>
-              <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.2)' }}>/</span>
-              <span className="text-xs tabular-nums" style={{ color: 'rgba(255,255,255,0.4)' }}>{total}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#475569' }} />
-              <span className="text-xs flex-1" style={{ color: 'rgba(255,255,255,0.5)' }}>Draft</span>
-              <span className="text-xs tabular-nums" style={{ color: 'rgba(255,255,255,0.4)' }}>{total - active}</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="px-4 py-3">
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Sequence content &amp; control playback durations.</p>
+          ))}
+        </div>
       </div>
     </div>
   );
 }
 
-// ── Schedule Card ────────────────────────────────────────────────────────────
+// ── Schedule Card ──────────────────────────────────────────────────────────────────
 
 function ScheduleCard({
   total,
   active,
+  published,
   onClick,
 }: {
   total: number;
   active: number;
+  published: number;
   onClick?: () => void;
 }) {
   return (
@@ -343,56 +319,31 @@ function ScheduleCard({
       style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
     >
       <div className="h-0.5 w-full" style={{ background: 'linear-gradient(90deg, #14b8a6, #10b981)' }} />
-      <div className="flex items-center justify-between px-4 pt-4 pb-2">
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'rgba(20,184,166,0.15)' }}>
-            <CalendarDays className="w-4 h-4" style={{ color: '#2dd4bf' }} />
+      <div className="p-5 flex flex-col flex-1">
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-3" style={{ background: 'rgba(20,184,166,0.15)' }}>
+              <CalendarDays className="w-5 h-5" style={{ color: '#2dd4bf' }} />
+            </div>
+            <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Total Schedules</p>
+            <div className="text-4xl font-bold tracking-tight mt-0.5" style={{ color: 'var(--text)' }}>{total}</div>
           </div>
-          <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Schedule</span>
         </div>
-        {total > 0 && (
-          <span className="text-[11px] font-semibold tabular-nums" style={{ color: 'var(--text-muted)' }}>
-            <span style={{ color: '#2dd4bf' }}>{active}</span>
-            <span style={{ color: 'rgba(255,255,255,0.2)' }}> / </span>
-            {total}
-          </span>
-        )}
-      </div>
-
-      <div
-        className="mx-3 rounded-xl overflow-hidden relative flex flex-col items-center justify-center"
-        style={{ aspectRatio: '16/9', background: 'linear-gradient(135deg, #0a1614 0%, #060e0c 100%)' }}
-      >
-        <div
-          className="absolute inset-0"
-          style={{ backgroundImage: 'radial-gradient(circle at 50% 50%, #14b8a6 0%, transparent 65%)', opacity: 0.14 }}
-        />
-        {total === 0 ? (
-          <div className="relative flex flex-col items-center justify-center gap-1.5">
-            <div style={{ opacity: 0.2, transform: 'scale(2.8)' }}>
-              <CalendarDays className="w-4 h-4" style={{ color: '#2dd4bf' }} />
+        <div className="mt-auto grid grid-cols-3 gap-1">
+          {[
+            { label: 'Active',     count: active,         color: '#2dd4bf' },
+            { label: 'On screens', count: published,      color: '#34d399' },
+            { label: 'Inactive',   count: total - active, color: '#475569' },
+          ].map(({ label, count, color }) => (
+            <div key={label}>
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
+                <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{label}</span>
+              </div>
+              <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>{count}</span>
             </div>
-          </div>
-        ) : (
-          <div className="relative flex flex-col gap-1.5 w-full px-4">
-            <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#2dd4bf' }} />
-              <span className="text-xs flex-1" style={{ color: 'rgba(255,255,255,0.5)' }}>Active</span>
-              <span className="text-xs font-bold tabular-nums" style={{ color: '#2dd4bf' }}>{active}</span>
-              <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.2)' }}>/</span>
-              <span className="text-xs tabular-nums" style={{ color: 'rgba(255,255,255,0.4)' }}>{total}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#475569' }} />
-              <span className="text-xs flex-1" style={{ color: 'rgba(255,255,255,0.5)' }}>Inactive</span>
-              <span className="text-xs tabular-nums" style={{ color: 'rgba(255,255,255,0.4)' }}>{total - active}</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="px-4 py-3">
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Time-based playback scheduling across devices.</p>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -626,11 +577,13 @@ export default function OrgDashboardPage() {
             <PlaylistCard
               total={summary?.playlistTotal ?? 0}
               active={summary?.playlistActive ?? 0}
+              published={summary?.playlistPublishedCount ?? 0}
               onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/playlist`)}
             />
             <ScheduleCard
               total={summary?.scheduleTotal ?? 0}
               active={summary?.scheduleActive ?? 0}
+              published={summary?.schedulePublishedCount ?? 0}
               onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/schedule`)}
             />
           </div>

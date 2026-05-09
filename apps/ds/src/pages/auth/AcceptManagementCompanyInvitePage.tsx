@@ -17,6 +17,7 @@ type BrandingFontPreset = 'modern' | 'editorial' | 'geometric' | 'mono';
 
 interface InviteInfo {
   email: string;
+  recipientName: string | null;
   role: string;
   companyName: string;
   isFirstSetup: boolean;
@@ -51,7 +52,6 @@ function makeSchema(isFirstSetup: boolean) {
   const base = z.object({
     name: z.string().min(1, 'Full name is required').max(120),
     password: z.string().min(8, 'Password must be at least 8 characters'),
-    companyName: z.string().min(2, 'Company name is required').max(120).optional(),
     companyPortalUrl: z
       .string()
       .min(2, 'Portal address is required')
@@ -80,9 +80,6 @@ function makeSchema(isFirstSetup: boolean) {
     ownerWorkspaceTimezone: z.string().min(1, 'Workspace timezone is required').optional(),
   });
   return base.superRefine((val, ctx) => {
-    if (isFirstSetup && !val.companyName) {
-      ctx.addIssue({ code: 'custom', path: ['companyName'], message: 'Company name is required' });
-    }
     if (isFirstSetup && !val.companyPortalUrl) {
       ctx.addIssue({ code: 'custom', path: ['companyPortalUrl'], message: 'Portal address is required' });
     }
@@ -133,9 +130,8 @@ export default function AcceptManagementCompanyInvitePage() {
   useEffect(() => {
     if (!inviteInfo) return;
     reset({
-      name: '',
+      name: inviteInfo.recipientName ?? '',
       password: '',
-      companyName: inviteInfo.isFirstSetup ? '' : (inviteInfo.companyName ?? ''),
       companyPortalUrl: '',
       billingEmail: '',
       logoUrl: inviteInfo.logoUrl ?? '',
@@ -161,7 +157,6 @@ export default function AcceptManagementCompanyInvitePage() {
   const primaryColor = watch('primaryColor');
   const accentColor = watch('accentColor');
   const loginBackgroundUrl = watch('loginBackgroundUrl');
-  const companyName = watch('companyName');
   const companyPortalUrl = watch('companyPortalUrl');
   const createOwnerDashboardAccount = watch('createOwnerDashboardAccount');
 
@@ -184,7 +179,7 @@ export default function AcceptManagementCompanyInvitePage() {
   useEffect(() => {
     if (!inviteInfo?.isFirstSetup || !createOwnerDashboardAccount) return;
 
-    const nameSeed = companyName?.trim() ?? '';
+    const nameSeed = inviteInfo.companyName?.trim() ?? '';
     const slugSeed = companyPortalUrl?.trim() ?? '';
 
     if (!dirtyFields.ownerOrgName) {
@@ -199,7 +194,7 @@ export default function AcceptManagementCompanyInvitePage() {
     if (!dirtyFields.ownerWorkspaceTimezone) {
       setValue('ownerWorkspaceTimezone', 'UTC', { shouldValidate: false, shouldDirty: false });
     }
-  }, [companyName, companyPortalUrl, createOwnerDashboardAccount, dirtyFields.ownerOrgName, dirtyFields.ownerOrgSlug, dirtyFields.ownerWorkspaceName, dirtyFields.ownerWorkspaceTimezone, inviteInfo?.isFirstSetup, setValue]);
+  }, [companyPortalUrl, createOwnerDashboardAccount, dirtyFields.ownerOrgName, dirtyFields.ownerOrgSlug, dirtyFields.ownerWorkspaceName, dirtyFields.ownerWorkspaceTimezone, inviteInfo?.companyName, inviteInfo?.isFirstSetup, setValue]);
 
   const loginShellStyle = getManagementLoginShellStyle(
     inviteInfo
@@ -290,11 +285,11 @@ export default function AcceptManagementCompanyInvitePage() {
             <img src={inviteInfo.logoUrl} alt={inviteInfo.companyName || 'Company logo'} className="h-10 mx-auto mb-4 object-contain" />
           ) : null}
           <h1 className="management-heading text-2xl font-bold">
-            {inviteInfo.isFirstSetup ? 'Set up your admin account' : 'Accept admin invitation'}
+            {inviteInfo.isFirstSetup ? 'Finish setting up your portal' : 'Accept admin invitation'}
           </h1>
           <p className="text-sm text-[var(--text-muted)] mt-1">
             {inviteInfo.isFirstSetup
-              ? 'Create your account and set up your company portal'
+              ? <>Setting up <strong>{inviteInfo.companyName}</strong> — just choose a password and portal address</>
               : <>
                   Joining <strong>{inviteInfo.companyName}</strong> as{' '}
                   <span className="text-[var(--blue)] font-semibold capitalize">{inviteInfo.role}</span>
@@ -304,6 +299,27 @@ export default function AcceptManagementCompanyInvitePage() {
           <p className="text-xs text-[var(--text-muted)] mt-0.5">{inviteInfo.email}</p>
         </div>
 
+        {/* ── Pre-filled summary card ── */}
+        {inviteInfo.isFirstSetup && (
+          <div
+            className="mb-4 rounded-2xl border px-4 py-3 text-sm"
+            style={{ borderColor: 'var(--card-border)', background: 'color-mix(in srgb, var(--blue) 5%, var(--bg2) 95%)' }}
+          >
+            <p className="font-semibold text-[var(--text)] mb-1">Your account details</p>
+            <p className="text-[var(--text-muted)]">
+              <span className="font-medium text-[var(--text)]">Company:</span> {inviteInfo.companyName}
+            </p>
+            {inviteInfo.recipientName && (
+              <p className="text-[var(--text-muted)]">
+                <span className="font-medium text-[var(--text)]">Name:</span> {inviteInfo.recipientName}
+              </p>
+            )}
+            <p className="text-[var(--text-muted)]">
+              <span className="font-medium text-[var(--text)]">Email:</span> {inviteInfo.email}
+            </p>
+          </div>
+        )}
+
         <form
           onSubmit={handleSubmit(onSubmit)}
           className="rounded-2xl border p-6 space-y-4"
@@ -311,8 +327,19 @@ export default function AcceptManagementCompanyInvitePage() {
         >
           {/* ── Account section ── */}
           <div>
-            <label className="block text-sm font-medium mb-1">Full name</label>
-            <input {...register('name')} placeholder="Jane Smith" className="input w-full" />
+            <label className="block text-sm font-medium mb-1">
+              Full name
+              {inviteInfo.recipientName && (
+                <span className="ml-2 text-xs font-normal text-[var(--text-muted)]">(pre-filled by your admin)</span>
+              )}
+            </label>
+            <input
+              {...register('name')}
+              placeholder="Jane Smith"
+              className="input w-full"
+              readOnly={!!inviteInfo.recipientName}
+              style={inviteInfo.recipientName ? { opacity: 0.75, cursor: 'default' } : undefined}
+            />
             {errors.name && <p className="text-xs text-[var(--danger)] mt-1">{errors.name.message}</p>}
           </div>
 
@@ -334,20 +361,8 @@ export default function AcceptManagementCompanyInvitePage() {
             <>
               <hr style={{ borderColor: 'var(--card-border)' }} />
               <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                Your Company
+                Your Portal
               </p>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Company name</label>
-                <input
-                  {...register('companyName')}
-                  placeholder="Acme Corp"
-                  className="input w-full"
-                />
-                {errors.companyName && (
-                  <p className="text-xs text-[var(--danger)] mt-1">{errors.companyName.message}</p>
-                )}
-              </div>
 
               <div>
                 <label className="block text-sm font-medium mb-1">Portal address</label>

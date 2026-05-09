@@ -296,6 +296,9 @@ export async function contentRoutes(app: FastifyInstance) {
       if (q['folderId'] === 'root') conditions.push(isNull(contentItems.folderId));
       else conditions.push(eq(contentItems.folderId, q['folderId']));
     }
+    if (q['orientation']) {
+      conditions.push(eq(contentItems.orientation, q['orientation']));
+    }
 
     const sortField = q['sort'] === 'name' ? contentItems.name
       : q['sort'] === 'size' ? contentItems.fileSize

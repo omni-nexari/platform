@@ -106,11 +106,14 @@ function ContentCard({
       </div>
 
       {/* Thumbnail */}
-      <div className="relative shrink-0 w-[90px] h-[54px] rounded-lg overflow-hidden bg-[var(--surface-raised)]">
+      <div
+        className="relative shrink-0 rounded-lg overflow-hidden bg-[var(--surface-raised)]"
+        style={{ width: item.orientation === 'portrait' ? 34 : 90, height: 54 }}
+      >
         {(item.type === 'image' || item.type === 'video') ? (
           <AuthImg
             itemId={item.id}
-            className="w-full h-full object-cover"
+            className={`w-full h-full ${item.orientation === 'portrait' ? 'object-contain' : 'object-cover'}`}
             fallback={<div className="w-full h-full flex items-center justify-center"><span className={`text-[9px] font-bold uppercase text-white px-1.5 py-0.5 rounded ${meta.color}`}>{meta.label}</span></div>}
           />
         ) : (

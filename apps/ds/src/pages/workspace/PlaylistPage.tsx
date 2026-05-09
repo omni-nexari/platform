@@ -8,7 +8,7 @@ import BulkTagModal from '../../components/BulkTagModal.js';
 import DevicePickerModal from '../../components/DevicePickerModal.js';
 import {
   Plus, Layers, Layers2, Clock, MoreVertical,
-  Copy, Trash2, Play, Check, Monitor,
+  Copy, Trash2, Play, Check, Monitor, AlertTriangle,
 } from 'lucide-react';
 import AuthImg from '../../components/AuthImg.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
@@ -37,6 +37,8 @@ interface Playlist {
   totalDuration: number;
   itemCount: number;
   thumbnailContentId: string | null;
+  previewContentIds: string[];
+  hasExpiredContent: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -105,15 +107,43 @@ function PlaylistCard({
 
       {/* Thumbnail */}
       <div className="ui-media-frame aspect-video">
-        {pl.thumbnailContentId ? (
-          <AuthImg
-            itemId={pl.thumbnailContentId}
-            className="w-full h-full object-cover"
-            fallback={<div className="w-full h-full flex items-center justify-center"><Layers size={28} className="text-[var(--text-muted)]" /></div>}
-          />
+        {/* Cascade thumbnail strip — up to 4 content thumbnails */}
+        {pl.previewContentIds.length > 0 ? (
+          <div className="absolute inset-0 flex items-center justify-center bg-[var(--surface-raised)]">
+            <div className="flex items-center">
+              {pl.previewContentIds.slice(0, 4).map((cid, idx) => (
+                <div
+                  key={cid}
+                  className="relative shrink-0 h-16 w-[72px] rounded-lg overflow-hidden border-2 border-[var(--card)] shadow-md"
+                  style={{ marginLeft: idx === 0 ? 0 : -18, zIndex: idx }}
+                >
+                  <AuthImg
+                    itemId={cid}
+                    className="w-full h-full object-cover"
+                    fallback={<div className="w-full h-full flex items-center justify-center bg-[var(--surface)]"><Layers size={16} className="text-[var(--text-muted)]" /></div>}
+                  />
+                </div>
+              ))}
+              {pl.itemCount > 4 && (
+                <div
+                  className="shrink-0 h-16 w-[42px] rounded-lg flex items-center justify-center bg-[var(--surface)] border-2 border-[var(--card)] shadow-md text-xs font-semibold text-[var(--text-muted)]"
+                  style={{ marginLeft: -18, zIndex: 4 }}
+                >
+                  +{pl.itemCount - 4}
+                </div>
+              )}
+            </div>
+          </div>
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <Layers size={28} className="text-[var(--text-muted)]" />
+          </div>
+        )}
+
+        {/* Expired content warning */}
+        {pl.hasExpiredContent && (
+          <div className="ui-media-badge ui-media-badge-warning absolute top-2 left-2 z-20">
+            <AlertTriangle size={9} /> Expired
           </div>
         )}
 
@@ -126,7 +156,7 @@ function PlaylistCard({
 
         {/* Loop badge */}
         {pl.loop && (
-          <span className="ui-media-badge ui-media-badge-accent absolute top-2 left-2 z-20">
+          <span className="ui-media-badge ui-media-badge-accent absolute top-2 right-2 z-20">
             Loop
           </span>
         )}

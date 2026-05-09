@@ -291,7 +291,7 @@ function Thumb({ item, large = false }: { item: ContentItem; large?: boolean }) 
           <AuthImg
             itemId={item.id}
             alt={item.name}
-            className="absolute inset-0 w-full h-full object-cover"
+            className={`absolute inset-0 w-full h-full ${item.orientation === 'portrait' ? 'object-contain' : 'object-cover'}`}
             onError={handleThumbError}
             revision={thumbRev}
           />
@@ -353,6 +353,13 @@ function GridCard({
         <div className={`ui-media-badge absolute bottom-2 left-2 z-20 ${isExpired ? 'ui-media-badge-danger' : 'ui-media-badge-warning'}`}>
           <AlertTriangle size={9} />
           {isExpired ? 'Expired' : 'Expires soon'}
+        </div>
+      )}
+
+      {/* Portrait badge */}
+      {item.orientation === 'portrait' && (
+        <div className="ui-media-badge absolute top-2 right-2 z-20">
+          Portrait
         </div>
       )}
 
@@ -558,6 +565,7 @@ export default function ContentPage() {
   const view = (searchParams.get('view') as ViewMode | null) ?? 'grid-lg';
   const page = Math.max(Number(searchParams.get('page') ?? '1') || 1, 1);
   const selectedFolderId = (searchParams.get('folderId') ?? 'all') as 'all' | 'root' | string;
+  const orientation = (searchParams.get('orientation') ?? 'all') as 'all' | 'portrait' | 'landscape';
 
   const updateBrowseParams = (updater: (params: URLSearchParams) => void) => {
     const nextParams = new URLSearchParams(searchParams);
@@ -568,6 +576,7 @@ export default function ContentPage() {
     if (nextParams.get('view') === 'grid-lg') nextParams.delete('view');
     if (nextParams.get('page') === '1') nextParams.delete('page');
     if (nextParams.get('folderId') === 'all') nextParams.delete('folderId');
+    if (nextParams.get('orientation') === 'all') nextParams.delete('orientation');
     if (nextParams.toString() !== searchParams.toString()) {
       setSearchParams(nextParams, { replace: true });
     }
@@ -579,15 +588,17 @@ export default function ContentPage() {
     sort,
     view,
     selectedFolderId,
+    orientation,
   };
 
   const typeParam = filterType === 'all' ? '' : `&type=${filterType}`;
   const tagIdsParam = selectedTagIds.length > 0 ? `&tagIds=${selectedTagIds.join(',')}` : '';
   const folderParam = selectedFolderId === 'all' ? '' : `&folderId=${selectedFolderId}`;
+  const orientationParam = orientation === 'all' ? '' : `&orientation=${orientation}`;
 
   const { data, isLoading } = useQuery<ContentList>({
-    queryKey: ['content', wsId, filterType, selectedTagIds, selectedFolderId, sort, page],
-    queryFn: () => api.get(`/content?workspaceId=${wsId}${typeParam}${tagIdsParam}${folderParam}&sort=${sort}&page=${page}&limit=50`),
+    queryKey: ['content', wsId, filterType, selectedTagIds, selectedFolderId, sort, page, orientation],
+    queryFn: () => api.get(`/content?workspaceId=${wsId}${typeParam}${tagIdsParam}${folderParam}${orientationParam}&sort=${sort}&page=${page}&limit=50`),
     enabled: !!wsId,
     placeholderData: (prev) => prev,
   });
@@ -813,6 +824,22 @@ export default function ContentPage() {
                   active={filterType === f.id}
                 >
                   {f.label}
+                </FilterChip>
+              ))}
+            </div>
+
+            {/* Orientation filter */}
+            <div className="flex gap-1">
+              {(['all', 'landscape', 'portrait'] as const).map((o) => (
+                <FilterChip
+                  key={o}
+                  onClick={() => updateBrowseParams((params) => {
+                    params.set('orientation', o);
+                    params.set('page', '1');
+                  })}
+                  active={orientation === o}
+                >
+                  {o === 'all' ? 'All Orientations' : o.charAt(0).toUpperCase() + o.slice(1)}
                 </FilterChip>
               ))}
             </div>

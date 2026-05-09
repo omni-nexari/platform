@@ -155,8 +155,15 @@ window.API = {
       }
     }
 
+    // Calendar content must never autoplay from the workspace default —
+    // it must be explicitly published or scheduled.
     if (defaultPlaylist && (defaultPlaylist.items || []).length > 0) {
-      return this._normalizePlaylist(defaultPlaylist);
+      var defaultItems = (defaultPlaylist.items || []).filter(function (item) {
+        return !item.content || (item.content.type || '').toLowerCase() !== 'calendar';
+      });
+      if (defaultItems.length > 0) {
+        return this._normalizePlaylist(Object.assign({}, defaultPlaylist, { items: defaultItems }));
+      }
     }
     return null;
   },

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { db, workspaces, workspaceMembers, users, devices, contentItems, playlists, schedules } from '@signage/db';
-import { eq, and, isNull, count, sql } from 'drizzle-orm';
+import { eq, and, isNull, isNotNull, count, sql } from 'drizzle-orm';
 import { CreateWorkspaceSchema, AddWorkspaceMemberSchema } from '@signage/shared';
 import { writeAuditLog } from '../services/audit.js';
 import { isDeviceOnline } from '../services/ws.js';
@@ -347,6 +347,15 @@ export async function workspaceRoutes(app: FastifyInstance) {
       else if (n === -1) devicePowerOff++;
     }
 
+    const [playlistPublishedResult, schedulePublishedResult] = await Promise.all([
+      db.select({ count: count() }).from(devices)
+        .where(and(eq(devices.workspaceId, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt), isNotNull(devices.publishedPlaylistId)))
+        .then((r) => Number(r[0]?.count ?? 0)),
+      db.select({ count: count() }).from(devices)
+        .where(and(eq(devices.workspaceId, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt), isNotNull(devices.publishedScheduleId)))
+        .then((r) => Number(r[0]?.count ?? 0)),
+    ]);
+
     return reply.send({
       deviceTotal: online + offline + error,
       deviceOnline: online,
@@ -359,6 +368,8 @@ export async function workspaceRoutes(app: FastifyInstance) {
       playlistActive,
       scheduleTotal,
       scheduleActive,
+      playlistPublishedCount: playlistPublishedResult,
+      schedulePublishedCount: schedulePublishedResult,
     });
   });
 }

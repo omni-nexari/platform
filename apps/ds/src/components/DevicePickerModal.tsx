@@ -81,6 +81,13 @@ function DeviceCard({
   const [thumbErrored, setThumbErrored] = useState(false);
   const showThumb = !!item.latestScreenshotId && !thumbErrored;
 
+  const portrait = (() => {
+    if (!item.resolution) return false;
+    const parts = item.resolution.toLowerCase().split('x').map(Number);
+    return parts.length === 2 && !isNaN(parts[0]!) && !isNaN(parts[1]!) && parts[1]! > parts[0]!;
+  })();
+  const thumbW = portrait ? 34 : 90;
+
   return (
     <div
       onClick={onToggle}
@@ -96,7 +103,10 @@ function DeviceCard({
         {selected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
       </div>
 
-      <div className="relative shrink-0 w-[90px] h-[54px] rounded-lg overflow-hidden bg-[var(--surface-raised)] border border-[var(--border)]">
+      <div
+        className="relative shrink-0 rounded-lg overflow-hidden bg-[var(--surface-raised)] border border-[var(--border)]"
+        style={{ width: thumbW, height: 54 }}
+      >
         {showThumb
           ? <img
               key={`${item.latestScreenshotId}-${item.latestFrameAt ?? 0}`}

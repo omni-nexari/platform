@@ -9,16 +9,23 @@ import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
 
 type PairFormInput = Omit<ClaimDeviceInput, 'workspaceId'>;
-import { Grid2x2, Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon, Copy, CheckCheck, Battery } from 'lucide-react';
+import { Grid2x2, Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon, Copy, CheckCheck, Battery, Play, CalendarDays, Image } from 'lucide-react';
 
 // Shows the device thumbnail using the DB-backed screenshot record.
 // Re-renders automatically when the device list poll returns a new latestScreenshotId.
-function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, powerState }: {
+function isPortrait(resolution: string | null | undefined): boolean {
+  if (!resolution) return false;
+  const parts = resolution.toLowerCase().split('x').map(Number);
+  return parts.length === 2 && !isNaN(parts[0]!) && !isNaN(parts[1]!) && parts[1]! > parts[0]!;
+}
+
+function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, powerState, resolution }: {
   deviceId: string;
   screenshotId: string | null;
   latestFrameAt: number | null;
   status: Device['status'];
   powerState: Device['powerState'];
+  resolution?: string | null;
 }) {
   const [errored, setErrored] = useState(false);
   // Reset error state whenever a fresh screenshot id or frame timestamp arrives.
@@ -27,12 +34,15 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
   const isOffline = status !== 'online';
   const isPoweredOff = powerState === 'off' || powerState === 'standby';
 
+  const portrait = isPortrait(resolution);
+  const aspectClass = portrait ? 'aspect-[9/16]' : 'aspect-video';
+
   // When device is offline or powered off, show a state overlay instead of the thumbnail.
   if (isOffline || isPoweredOff) {
     const label = isPoweredOff && !isOffline ? 'Powered Off' : status === 'offline' ? 'Offline' : status === 'error' ? 'Error' : 'Unclaimed';
     const Icon = isPoweredOff && !isOffline ? Monitor : WifiOff;
     return (
-      <div className="w-full aspect-video rounded-lg border border-[var(--card-border)] flex flex-col items-center justify-center gap-2 bg-[var(--surface)] overflow-hidden">
+      <div className={`w-full ${aspectClass} rounded-lg border border-[var(--card-border)] flex flex-col items-center justify-center gap-2 bg-[var(--surface)] overflow-hidden`}>
         <Icon className="w-6 h-6 text-[var(--text-muted)] opacity-40" />
         <span className="text-[11px] text-[var(--text-muted)] opacity-60 font-medium">{label}</span>
       </div>
@@ -44,7 +54,7 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
   // latestFrameAt changes — even if the DB row UUID hasn't changed yet.
   const src = buildApiUrl(`/devices/${deviceId}/screenshots/${screenshotId}${latestFrameAt ? `?t=${latestFrameAt}` : ''}`);
   return (
-    <div className={`w-full aspect-video rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${showImg ? '' : 'bg-[var(--surface)]'}`}>
+    <div className={`w-full ${aspectClass} rounded-lg border border-[var(--card-border)] flex items-center justify-center overflow-hidden ${showImg ? '' : 'bg-[var(--surface)]'}`}>
       {showImg
         ? <img
             key={`${screenshotId}-${latestFrameAt ?? 0}`}
@@ -60,9 +70,11 @@ function DeviceScreenshot({ deviceId, screenshotId, latestFrameAt, status, power
 }
 
 // ── LiveViewInCard — replaces the thumbnail with a live SSE stream ─────────────
-function LiveViewInCard({ deviceId, onStop }: { deviceId: string; onStop: () => void }) {
+function LiveViewInCard({ deviceId, onStop, resolution }: { deviceId: string; onStop: () => void; resolution?: string | null }) {
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [status, setStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
+  const portrait = isPortrait(resolution);
+  const aspectClass = portrait ? 'aspect-[9/16]' : 'aspect-video';
 
   useEffect(() => {
     const es = new EventSource(`/api/devices/${deviceId}/screenshot/stream?intervalMs=1000`);
@@ -75,7 +87,7 @@ function LiveViewInCard({ deviceId, onStop }: { deviceId: string; onStop: () => 
   }, [deviceId]);
 
   return (
-    <div className="relative w-full aspect-video rounded-lg border border-[var(--blue)]/60 overflow-hidden bg-black flex items-center justify-center">
+    <div className={`relative w-full ${aspectClass} rounded-lg border border-[var(--blue)]/60 overflow-hidden bg-black flex items-center justify-center`}>
       {imgSrc
         ? <img src={imgSrc} alt="Live" className="w-full h-full object-contain" />
         : <div className="flex flex-col items-center gap-2 text-white/40">
@@ -102,6 +114,7 @@ import { formatDistanceToNow } from '../utils/time.js';
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import BulkTagModal from '../../components/BulkTagModal.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
+import ContentPickerModal, { type PickedItem } from '../../components/ContentPickerModal.js';
 import SmartViewsBar from '../../components/SmartViewsBar.js';
 import TagFilterBar from '../../components/TagFilterBar.js';
 import {
@@ -371,6 +384,24 @@ export default function DevicesPage() {
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [bulkPublishOpen, setBulkPublishOpen] = useState(false);
+
+  const bulkPublishMut = useMutation({
+    mutationFn: (item: PickedItem) =>
+      api.post('/devices/publish', {
+        workspaceId: wsId,
+        deviceIds: [...selectedItems],
+        resourceType: item.type,
+        resourceId: item.id,
+      }),
+    onSuccess: (_data, item) => {
+      toast.success(`Published "${item.name}" to ${selectedItems.size} device${selectedItems.size === 1 ? '' : 's'}`);
+      setBulkPublishOpen(false);
+      setSelectedItems(new Set());
+      void queryClient.invalidateQueries({ queryKey: ['devices', wsId] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to publish'),
+  });
 
   const tagIdsParam = selectedTagIds.length > 0 ? `&tagIds=${selectedTagIds.join(',')}` : '';
 
@@ -603,13 +634,14 @@ export default function DevicesPage() {
                     >
                       {/* Screenshot thumbnail or live view */}
                       {liveViewDeviceId === device.id
-                        ? <LiveViewInCard deviceId={device.id} onStop={() => setLiveViewDeviceId(null)} />
+                        ? <LiveViewInCard deviceId={device.id} resolution={device.resolution} onStop={() => setLiveViewDeviceId(null)} />
                         : <DeviceScreenshot
                             deviceId={device.id}
                             screenshotId={device.latestScreenshotId}
                             latestFrameAt={device.latestFrameAt}
                             status={device.status}
                             powerState={device.powerState}
+                            resolution={device.resolution}
                           />
                       }
 
@@ -658,6 +690,9 @@ export default function DevicesPage() {
                             <Battery className="w-3 h-3" />{device.batteryPct}%
                           </Badge>
                         )}
+                        {isPortrait(device.resolution) && (
+                          <Badge tone="neutral">Portrait</Badge>
+                        )}
                       </div>
 
                       {/* Meta */}
@@ -682,9 +717,12 @@ export default function DevicesPage() {
                         )}
                         {device.publishedTarget && (
                           <div className="flex items-center gap-1">
-                            <Check className="w-3 h-3 text-[var(--success)]" />
+                            {device.publishedTarget.type === 'playlist' ? <Play className="w-3 h-3 text-[var(--success)]" /> : device.publishedTarget.type === 'schedule' ? <CalendarDays className="w-3 h-3 text-[var(--success)]" /> : <Image className="w-3 h-3 text-[var(--success)]" />}
                             <span className="truncate">{device.publishedTarget.name}</span>
                           </div>
+                        )}
+                        {device.resolution && (
+                          <span className="font-mono text-[10px]">{device.resolution}</span>
                         )}
                         {device.ipAddress && (
                           <span className="font-mono">{device.ipAddress}</span>
@@ -699,7 +737,7 @@ export default function DevicesPage() {
                         {device.status === 'online' && liveViewDeviceId !== device.id && (
                           <button
                             onClick={(e) => { e.stopPropagation(); setLiveViewDeviceId(device.id); }}
-                            className="opacity-0 group-hover:opacity-100 flex items-center gap-1 px-2 py-0.5 rounded-full border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--accent)]/10 hover:border-[var(--accent)]/40 text-[var(--text-muted)] hover:text-[var(--accent)] text-[10px] font-semibold transition-all"
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-full border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--accent)]/10 hover:border-[var(--accent)]/40 text-[var(--text-muted)] hover:text-[var(--accent)] text-[10px] font-semibold transition-all"
                           >
                             <Eye className="w-3 h-3" />
                             Live
@@ -790,6 +828,12 @@ export default function DevicesPage() {
             Deselect all
           </button>
           <button
+            onClick={() => setBulkPublishOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-300 text-xs font-semibold hover:bg-purple-500/25 transition-colors"
+          >
+            <Play size={12} /> Publish
+          </button>
+          <button
             onClick={() => setBulkTagOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent)]/15 border border-[var(--accent)]/30 text-[var(--accent)] text-xs font-semibold hover:bg-[var(--accent)]/25 transition-colors"
           >
@@ -816,6 +860,17 @@ export default function DevicesPage() {
         onConfirm={() => bulkDeleteMut.mutate([...selectedItems])}
         onClose={() => setConfirmBulkDelete(false)}
       />
+
+      {bulkPublishOpen && wsId && (
+        <ContentPickerModal
+          open={bulkPublishOpen}
+          onClose={() => setBulkPublishOpen(false)}
+          onSelect={(items) => { if (items[0]) bulkPublishMut.mutate(items[0]); }}
+          workspaceId={wsId}
+          multi={false}
+          title={`Publish to ${selectedItems.size} device${selectedItems.size === 1 ? '' : 's'}`}
+        />
+      )}
     </div>
   );
 }

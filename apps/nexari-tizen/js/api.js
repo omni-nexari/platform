@@ -215,9 +215,18 @@ window.API = {
       }
     }
 
-    // No active slot — use workspace default playlist
+    // No active slot — use workspace default playlist.
+    // Calendar (meeting room / day / week / month) content must be explicitly
+    // published or placed in a schedule slot — it must never autoplay from the
+    // workspace default because it would override intentionally-published
+    // image/video content whenever the published target is missing.
     if (defaultPlaylist && (defaultPlaylist.items || []).length > 0) {
-      return API._normalizePlaylist(defaultPlaylist, deviceToken);
+      var defaultItems = (defaultPlaylist.items || []).filter(function (item) {
+        return !item.content || (item.content.type || '').toLowerCase() !== 'calendar';
+      });
+      if (defaultItems.length > 0) {
+        return API._normalizePlaylist(Object.assign({}, defaultPlaylist, { items: defaultItems }), deviceToken);
+      }
     }
     return null;
   },

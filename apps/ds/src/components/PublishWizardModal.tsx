@@ -187,6 +187,7 @@ export interface PublishWizardModalProps {
   contentId: string;
   contentName: string;
   workspaceId: string;
+  preSelectedDeviceIds?: string[];
   onClose: () => void;
   onDone: () => void;
 }
@@ -196,6 +197,7 @@ export default function PublishWizardModal({
   contentId,
   contentName,
   workspaceId,
+  preSelectedDeviceIds,
   onClose,
   onDone,
 }: PublishWizardModalProps) {
@@ -207,7 +209,9 @@ export default function PublishWizardModal({
 
   // Single target (step 2, single mode)
   const [singleTab, setSingleTab] = useState<SingleTab>('devices');
-  const [selectedDeviceIds, setSelectedDeviceIds] = useState<Set<string>>(new Set());
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState<Set<string>>(
+    () => new Set(preSelectedDeviceIds ?? []),
+  );
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
 
   // Device list filters

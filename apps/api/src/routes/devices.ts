@@ -1925,10 +1925,20 @@ export async function deviceRoutes(app: FastifyInstance) {
       ?? (publishedContent ? buildSingleContentPlaylist(publishedContent) : null)
       ?? defaultPlaylist;
 
+    // Calendar content must only play when explicitly published or scheduled —
+    // strip calendar items from the defaultPlaylist fallback so meeting-room
+    // content cannot autoplay without an intentional publish/schedule action.
+    const safeDefaultPlaylist = compatibilityDefaultPlaylist
+      ? {
+          ...compatibilityDefaultPlaylist,
+          items: compatibilityDefaultPlaylist.items.filter((item: { content?: { type?: string } | null }) => item.content?.type !== 'calendar'),
+        }
+      : null;
+
     return reply.send({
       workspace,
       deviceType: device.type ?? 'signage',
-      defaultPlaylist: compatibilityDefaultPlaylist,
+      defaultPlaylist: safeDefaultPlaylist,
       publishedContent,
       publishedPlaylist,
       publishedSchedule,
