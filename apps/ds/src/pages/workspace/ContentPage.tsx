@@ -102,6 +102,143 @@ function getTypeMeta(type: string) {
 const attemptedThumbnailRegenerationIds = new Set<string>();
 const missingThumbnailSourceIds = new Set<string>();
 
+// ── Calendar Card Preview ─────────────────────────────────────────────────────
+function CalendarCardPreview({ item, large = false }: { item: ContentItem; large?: boolean }) {
+  const size = large ? 'h-40' : 'h-28';
+  let meta: Record<string, unknown> = {};
+  try { meta = JSON.parse(item.metadata ?? '{}'); } catch { /* ignore */ }
+
+  const view    = (meta.view as string) || 'week';
+  const isDark  = (meta.theme as Record<string, unknown>)?.background === 'dark';
+  const accent  = ((meta.theme as Record<string, unknown>)?.accentColor as string) || '#4f46e5';
+  const rmeta   = (meta.roomMeta as Record<string, unknown>) || {};
+  const roomName = (rmeta.name as string) || item.name || 'Meeting Room';
+  const bg      = isDark ? '#1e1e2e' : '#f8fafc';
+  const surf    = isDark ? '#2a2a3e' : '#ffffff';
+  const textC   = isDark ? '#e2e8f0' : '#1e293b';
+  const mutedC  = isDark ? '#64748b' : '#94a3b8';
+  const bordC   = isDark ? '#3a3a50' : '#e2e8f0';
+  const today   = new Date();
+  const dayLetters = ['S','M','T','W','T','F','S'];
+
+  if (view === 'meeting_room') {
+    return (
+      <div className={`ui-media-frame w-full ${size} relative rounded-t-[0.95rem] overflow-hidden`}
+        style={{ background: bg, fontFamily: 'system-ui,sans-serif' }}>
+        <div className="absolute inset-0" style={{ right: 80 }}>
+          <div style={{ padding: '8px 10px 4px', borderBottom: `1px solid ${bordC}` }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: accent, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{roomName}</div>
+            <div style={{ fontSize: 7, color: mutedC, marginTop: 1 }}>Today &middot; {today.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
+          </div>
+          <div style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {([['9:00', '10:00', 'Team Standup'], ['11:00', '12:00', 'Design Review']] as [string, string, string][]).map(([s, e, t]) => (
+              <div key={t} style={{ display: 'flex', gap: 4, alignItems: 'flex-start' }}>
+                <div style={{ width: 2, height: 16, borderRadius: 1, background: accent, flexShrink: 0, marginTop: 1 }} />
+                <div>
+                  <div style={{ fontSize: 7.5, fontWeight: 600, color: textC, whiteSpace: 'nowrap' }}>{t}</div>
+                  <div style={{ fontSize: 6.5, color: mutedC }}>{s}&ndash;{e}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="absolute top-0 right-0 bottom-0" style={{ width: 80, background: accent, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+          <div style={{ fontSize: 8, fontWeight: 700, color: '#fff', letterSpacing: 1 }}>AVAILABLE</div>
+          <div style={{ width: 24, height: 1, background: 'rgba(255,255,255,0.4)' }} />
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>12:00</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'month') {
+    const firstDow   = new Date(today.getFullYear(), today.getMonth(), 1).getDay();
+    const daysInMon  = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+    const cells: (number | null)[] = [
+      ...Array(firstDow).fill(null),
+      ...Array.from({ length: daysInMon }, (_, i) => i + 1),
+    ];
+    while (cells.length % 7 !== 0) cells.push(null);
+    const weeks = Array.from({ length: cells.length / 7 }, (_, i) => cells.slice(i * 7, i * 7 + 7));
+    return (
+      <div className={`ui-media-frame w-full ${size} relative rounded-t-[0.95rem] overflow-hidden`}
+        style={{ background: bg, fontFamily: 'system-ui,sans-serif', padding: '6px 8px 4px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div style={{ display: 'flex' }}>
+          {dayLetters.map((d, i) => <div key={i} style={{ flex: 1, textAlign: 'center', fontSize: 6, fontWeight: 600, color: mutedC }}>{d}</div>)}
+        </div>
+        {weeks.map((w, wi) => (
+          <div key={wi} style={{ display: 'flex', flex: 1, gap: 1 }}>
+            {w.map((d, di) => {
+              const isToday = d === today.getDate();
+              return (
+                <div key={di} style={{ flex: 1, borderRadius: 2, background: d ? surf : 'transparent', border: `1px solid ${d ? bordC : 'transparent'}`, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '1px 0' }}>
+                  {d != null && (
+                    <span style={{ fontSize: 6.5, fontWeight: isToday ? 700 : 400, color: isToday ? '#fff' : textC, background: isToday ? accent : 'transparent', borderRadius: '50%', width: 10, height: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {d}
+                    </span>
+                  )}
+                  {d != null && d % 5 === 1 && <div style={{ width: '80%', height: 3, borderRadius: 1, background: accent, marginTop: 1, opacity: 0.7 }} />}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // day / week — time grid
+  const numCols   = view === 'day' ? 1 : 7;
+  const colDates  = view === 'day'
+    ? [today]
+    : Array.from({ length: 7 }, (_, i) => { const d = new Date(today); d.setDate(today.getDate() - today.getDay() + i); return d; });
+
+  return (
+    <div className={`ui-media-frame w-full ${size} relative rounded-t-[0.95rem] overflow-hidden`}
+      style={{ background: bg, fontFamily: 'system-ui,sans-serif', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', borderBottom: `1px solid ${bordC}`, flexShrink: 0 }}>
+        <div style={{ width: 18, flexShrink: 0, borderRight: `1px solid ${bordC}` }} />
+        {colDates.map((d, i) => {
+          const isToday = d.toDateString() === today.toDateString();
+          return (
+            <div key={i} style={{ flex: 1, textAlign: 'center', padding: '2px 1px', borderRight: `1px solid ${bordC}` }}>
+              <div style={{ fontSize: 6, color: mutedC }}>{dayLetters[d.getDay()]}</div>
+              <div style={{
+                fontSize: 7.5, fontWeight: isToday ? 700 : 400,
+                color: isToday ? '#fff' : textC,
+                background: isToday ? accent : 'transparent',
+                borderRadius: '50%', width: 11, height: 11,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '1px auto 0',
+              }}>{d.getDate()}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        <div style={{ width: 18, flexShrink: 0, borderRight: `1px solid ${bordC}` }}>
+          {['9','10','11','12','1'].map((h, i) => (
+            <div key={i} style={{ height: '20%', fontSize: 5, color: mutedC, textAlign: 'right', paddingRight: 2, paddingTop: 1 }}>{h}</div>
+          ))}
+        </div>
+        <div style={{ flex: 1, position: 'relative' }}>
+          {[0,1,2,3,4].map(h => (
+            <div key={h} style={{ position: 'absolute', left: 0, right: 0, top: `${h * 20}%`, borderTop: `1px solid ${bordC}` }} />
+          ))}
+          <div style={{
+            position: 'absolute',
+            left: `${(1 / numCols) * 100 * 0.05}%`,
+            width: `${(1 / numCols) * 100 * 0.9}%`,
+            top: '10%', height: '28%',
+            background: accent, borderRadius: 2, padding: '1px 3px', overflow: 'hidden',
+          }}>
+            <div style={{ fontSize: 5.5, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Team Standup</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Zone Layout Preview ───────────────────────────────────────────────────────
 const DEVICE_W = 1920;
 const DEVICE_H = 1080;
@@ -221,6 +358,7 @@ function ContentStatusBadge({ status, className }: { status: string; className?:
 // ── Thumbnail ─────────────────────────────────────────────────────────────────
 function Thumb({ item, large = false }: { item: ContentItem; large?: boolean }) {
   if (item.type === 'zone_layout') return <ZoneLayoutPreview item={item} large={large} />;
+  if (item.type === 'calendar') return <CalendarCardPreview item={item} large={large} />;
 
   const [imgFailed, setImgFailed] = useState(false);
   const [thumbRev, setThumbRev] = useState(0);
