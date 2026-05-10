@@ -2609,9 +2609,11 @@ var Player = class {
         return;
       }
       case "set_volume":
+      case "set_system_volume":
         if (typeof (payload == null ? void 0 : payload["level"]) === "number") await a.setVolume(payload["level"]);
         return;
       case "set_mute":
+      case "set_system_mute":
         if (typeof (payload == null ? void 0 : payload["mute"]) === "boolean") await a.setMute(payload["mute"]);
         return;
       case "set_brightness":
@@ -3118,6 +3120,10 @@ var Player = class {
       }, { once: true });
       v.addEventListener("error", () => {
         if (signal.aborted) {
+          done();
+          return;
+        }
+        if (this.currentVideoEl !== v) {
           done();
           return;
         }

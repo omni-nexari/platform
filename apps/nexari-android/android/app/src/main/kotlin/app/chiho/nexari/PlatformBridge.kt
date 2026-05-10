@@ -2,9 +2,11 @@ package app.chiho.nexari
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -87,7 +89,17 @@ class PlatformBridge(
     @JavascriptInterface
     fun getResources(): String = gson.toJson(resources.snapshot())
 
-    @JavascriptInterface fun reboot():    String = gson.toJson(power.reboot())
+    @JavascriptInterface fun reboot():    String {
+        val res = power.reboot()
+        // Device Owner not provisioned → fall back to a full app restart so the
+        // operator still sees *something* happen rather than a silent no-op.
+        if (res["supported"] == false) {
+            Log.w(TAG, "reboot not supported (not device owner) — falling back to relaunch")
+            main.postDelayed({ doRelaunch() }, 200)
+            return gson.toJson(mapOf("supported" to true, "fallback" to "relaunch"))
+        }
+        return gson.toJson(res)
+    }
     @JavascriptInterface fun powerOff():  String = gson.toJson(power.powerOff())
     @JavascriptInterface fun powerOn():   String = gson.toJson(mapOf("supported" to true))
     @JavascriptInterface fun sleep():     String = gson.toJson(power.sleep())
@@ -107,7 +119,27 @@ class PlatformBridge(
     }
 
     @JavascriptInterface
-    fun relaunch():     String { context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { context.startActivity(it) }; return "{}" }
+    fun relaunch():     String { main.post { doRelaunch() }; return "{}" }
+
+    /**
+     * Full process restart: launch our own launcher activity with NEW_TASK +
+     * CLEAR_TASK so the activity stack is recreated, then kill our PID after a
+     * short delay so the launching intent has time to fire.
+     */
+    private fun doRelaunch() {
+        try {
+            val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                context.startActivity(intent)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "relaunch start failed: ${'$'}{e.message}")
+        }
+        main.postDelayed({
+            try { Process.killProcess(Process.myPid()) } catch (_: Exception) {}
+        }, 350)
+    }
 
     @JavascriptInterface
     fun clearCache():   String { main.post { webView.clearCache(true) }; return "{}" }

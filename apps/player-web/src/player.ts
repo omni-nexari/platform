@@ -1007,8 +1007,10 @@ export class Player {
         done();
       }, { once:true });
       v.addEventListener('error',   () => {
-        // Suppress benign errors triggered by our own teardown (src='' after abort).
+        // Suppress benign errors triggered by our own teardown (src='' after abort,
+        // or src='' from transitionToVideo when we promote a successor element).
         if (signal.aborted) { done(); return; }
+        if (this.currentVideoEl !== v) { done(); return; }
         logger.warn(`[Player] video error: ${record.url}`);
         done();
       }, { once:true });
