@@ -137,16 +137,17 @@ async function getCpuTemperature(): Promise<number | null> {
 }
 
 /**
- * Read HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid — unique per Windows
- * install, stable across renames/reboots. Used as device DUID.
+ * Read HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid via `reg query`.
+ * Using reg.exe avoids PowerShell/cmd.exe quote-escaping issues with registry paths.
  */
 async function getMachineGuid(): Promise<string | null> {
   if (process.platform !== 'win32') return null;
   try {
     const { stdout } = await execAsync(
-      'powershell -NonInteractive -Command "(Get-ItemProperty -Path HKLM:\\SOFTWARE\\Microsoft\\Cryptography -Name MachineGuid).MachineGuid"'
+      'reg query "HKLM\\SOFTWARE\\Microsoft\\Cryptography" /v MachineGuid'
     );
-    return stdout.trim() || null;
+    const m = stdout.match(/MachineGuid\s+REG_SZ\s+(\S+)/);
+    return m?.[1] ?? null;
   } catch { return null; }
 }
 
@@ -195,14 +196,16 @@ export async function getSystemInfo() {
     getCpuTemperature(),
   ]);
 
-  // First non-internal IPv4 + its MAC
+  // First non-internal IPv4 + its MAC (skip zero-MACs from virtual adapters)
   let ipAddress: string | null = null;
   let macAddress: string | null = null;
   const ifaces = os.networkInterfaces();
   for (const name of Object.keys(ifaces)) {
     for (const iface of ifaces[name] ?? []) {
       if (!iface.internal && iface.family === 'IPv4') {
-        if (!ipAddress) { ipAddress = iface.address; macAddress = iface.mac; }
+        const validMac = (iface.mac && iface.mac !== '00:00:00:00:00:00') ? iface.mac : null;
+        if (!ipAddress) { ipAddress = iface.address; macAddress = validMac; }
+        else if (!macAddress && validMac) { macAddress = validMac; }
       }
     }
   }

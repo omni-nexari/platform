@@ -135,10 +135,18 @@ let _playTimer: ReturnType<typeof setTimeout> | null = null;
 let _contentSignature              = '';
 let _isPlaying                     = false;
 let _loadInFlight                  = false;
+let _activeItemId: string | null   = null;   // tracks which playlist item is currently rendered
+
+// Content types whose DOM/iframe manages its own data refresh internally.
+// When the playlist wraps back to the same item, we skip the teardown+rebuild.
+const SELF_REFRESH_TYPES = new Set([
+  'CALENDAR', 'HTML', 'HTML5', 'MENU_BOARD', 'CANVAS', 'DATASYNC', 'LIVE_STREAM', 'IPTV',
+]);
 
 function cancelPlayback() {
   if (_playTimer !== null) { clearTimeout(_playTimer); _playTimer = null; }
-  _isPlaying = false;
+  _isPlaying  = false;
+  _activeItemId = null;
 }
 
 function getSignature(pl: Playlist | null): string {
@@ -197,6 +205,16 @@ function playCurrentItem() {
   const item = _playlist.items[_currentIdx];
   if (!item?.content) { advancePlaylist(); return; }
 
+  // For live content (calendar, HTML, streams) that manages its own internal
+  // refresh loop, skip tearing down and rebuilding the DOM/iframe when the
+  // single-item playlist wraps back to the same item. Just reschedule the
+  // advance timer so multi-item playlists still cycle correctly.
+  if (_activeItemId === item.id && _isPlaying && SELF_REFRESH_TYPES.has(item.content.type)) {
+    scheduleAdvance(item.duration || 10);
+    return;
+  }
+
+  _activeItemId = item.id;
   _isPlaying = true;
   console.info(`[Player] Playing item ${_currentIdx + 1}/${_playlist.items.length}: type=${item.content.type} duration=${item.duration}s id=${item.id}`);
   renderContent(item);
@@ -590,45 +608,131 @@ async function renderVideowall(c: NormalizedContent, durationSec: number) {
 // ---------------------------------------------------------------------------
 // ZONE_LAYOUT — sub-player instances per zone
 // ---------------------------------------------------------------------------
-interface Zone {
+const ZONE_CANVAS_W = 1920;
+const ZONE_CANVAS_H = 1080;
+
+interface ZoneDef {
   id: string;
-  x: number; y: number; width: number; height: number;
-  playlistId?: string;
-  contentId?: string;
+  rect: { x: number; y: number; width: number; height: number };
+  source?: {
+    type: 'content' | 'playlist' | 'empty';
+    contentId?: string;
+    contentType?: string;
+    contentName?: string;
+    playlistId?: string;
+    playlistName?: string;
+    sourceDuration?: number | null;
+  } | null;
+}
+
+function _renderZoneContentEl(container: HTMLElement, contentId: string, contentType: string, apiBase: string, token: string) {
+  const fileUrl = `${apiBase}/devices/device/content/${contentId}/file?token=${encodeURIComponent(token)}`;
+  const type = contentType.toUpperCase();
+  if (type === 'IMAGE') {
+    const img = document.createElement('img');
+    img.src = fileUrl;
+    Object.assign(img.style, { width:'100%', height:'100%', objectFit:'contain', background:'#000', display:'block' });
+    container.appendChild(img);
+  } else if (type === 'VIDEO') {
+    const vid = document.createElement('video');
+    vid.src = fileUrl; vid.autoplay = true; vid.loop = true; vid.muted = true; vid.playsInline = true;
+    Object.assign(vid.style, { width:'100%', height:'100%', objectFit:'contain', background:'#000', display:'block' });
+    container.appendChild(vid);
+    vid.play().catch(() => {});
+  } else if (type === 'HTML5') {
+    const iframe = document.createElement('iframe');
+    iframe.src = `${apiBase}/devices/device/content/${contentId}/html5/${encodeURIComponent(token)}/index.html`;
+    Object.assign(iframe.style, { width:'100%', height:'100%', border:'none' });
+    container.appendChild(iframe);
+  } else {
+    // HTML / web URL / fallback
+    const iframe = document.createElement('iframe');
+    iframe.src = fileUrl;
+    Object.assign(iframe.style, { width:'100%', height:'100%', border:'none' });
+    container.appendChild(iframe);
+  }
+}
+
+async function _renderZonePlaylist(container: HTMLElement, playlistId: string, apiBase: string, token: string) {
+  try {
+    const res = await fetch(`${apiBase}/devices/device/playlist/${playlistId}?token=${encodeURIComponent(token)}`);
+    if (!res.ok) return;
+    const playlist = await res.json();
+    const items: any[] = (playlist.items || []).filter((i: any) => i.content);
+    if (items.length === 0) return;
+
+    let idx = 0;
+    function playItem() {
+      if (!container.isConnected) return; // detached when parent zone layout was replaced
+      const item = items[idx];
+      const content = item.content;
+      const type = (content.type || '').toUpperCase();
+      const fileUrl = `${apiBase}/devices/device/content/${content.id}/file?token=${encodeURIComponent(token)}`;
+      const duration = Math.max(3, item.duration || 10) * 1000;
+      container.innerHTML = '';
+      if (type === 'IMAGE') {
+        const img = document.createElement('img');
+        img.src = fileUrl;
+        Object.assign(img.style, { width:'100%', height:'100%', objectFit:'contain', background:'#000', display:'block' });
+        container.appendChild(img);
+      } else if (type === 'VIDEO') {
+        const vid = document.createElement('video');
+        vid.src = fileUrl; vid.autoplay = true; vid.loop = false; vid.muted = true; vid.playsInline = true;
+        Object.assign(vid.style, { width:'100%', height:'100%', objectFit:'contain', background:'#000', display:'block' });
+        container.appendChild(vid);
+        vid.play().catch(() => {});
+      } else if (type === 'HTML5') {
+        const iframe = document.createElement('iframe');
+        iframe.src = `${apiBase}/devices/device/content/${content.id}/html5/${encodeURIComponent(token)}/index.html`;
+        Object.assign(iframe.style, { width:'100%', height:'100%', border:'none' });
+        container.appendChild(iframe);
+      } else {
+        const iframe = document.createElement('iframe');
+        iframe.src = fileUrl;
+        Object.assign(iframe.style, { width:'100%', height:'100%', border:'none' });
+        container.appendChild(iframe);
+      }
+      idx = (idx + 1) % items.length;
+      setTimeout(playItem, duration);
+    }
+    playItem();
+  } catch (e) {
+    console.warn('[Player] Zone playlist load failed:', e);
+  }
 }
 
 function renderZoneLayout(c: NormalizedContent, durationSec: number) {
-  let zones: Zone[] = [];
+  let zones: ZoneDef[] = [];
   try { zones = JSON.parse(c.metadata || '{}').zones ?? []; } catch { /* ignore */ }
 
   if (zones.length === 0) { showIdle(); scheduleAdvance(durationSec); return; }
 
-  const pw = root.clientWidth || 1920;
-  const ph = root.clientHeight || 1080;
+  root.style.background = '#000';
+
+  const token   = localStorage.getItem('deviceToken') || '';
+  const apiBase = localStorage.getItem('apiBase') || 'https://ds.chiho.app/api/v1';
 
   for (const zone of zones) {
+    const rect = zone.rect ?? { x: 0, y: 0, width: ZONE_CANVAS_W, height: ZONE_CANVAS_H };
     const div = document.createElement('div');
     Object.assign(div.style, {
       position: 'absolute',
-      left:   `${((zone.x  || 0) / 100) * pw}px`,
-      top:    `${((zone.y  || 0) / 100) * ph}px`,
-      width:  `${((zone.width  || 100) / 100) * pw}px`,
-      height: `${((zone.height || 100) / 100) * ph}px`,
+      left:     `${(rect.x / ZONE_CANVAS_W) * 100}%`,
+      top:      `${(rect.y / ZONE_CANVAS_H) * 100}%`,
+      width:    `${(rect.width  / ZONE_CANVAS_W) * 100}%`,
+      height:   `${(rect.height / ZONE_CANVAS_H) * 100}%`,
       overflow: 'hidden',
+      background: '#000',
     });
     root.appendChild(div);
 
-    // Each zone gets its own sub-player via iframe to avoid sharing state
-    if (zone.playlistId || zone.contentId) {
-      const token   = localStorage.getItem('deviceToken') || '';
-      const apiBase = (localStorage.getItem('apiBase') || 'https://ds.chiho.app/api/v1').replace(/\/api\/v1\/?$/, '');
-      const type    = zone.playlistId ? 'playlist' : 'content';
-      const id      = zone.playlistId || zone.contentId;
-      const iframeSrc = `${apiBase}/api/v1/devices/device/${type}/${encodeURIComponent(id!)}/render?token=${encodeURIComponent(token)}`;
-      const zoneIframe = document.createElement('iframe');
-      Object.assign(zoneIframe.style, { width: '100%', height: '100%', border: 'none' });
-      zoneIframe.src = iframeSrc;
-      div.appendChild(zoneIframe);
+    const src = zone.source;
+    if (!src || src.type === 'empty') continue;
+
+    if (src.type === 'content' && src.contentId) {
+      _renderZoneContentEl(div, src.contentId, src.contentType ?? '', apiBase, token);
+    } else if (src.type === 'playlist' && src.playlistId) {
+      _renderZonePlaylist(div, src.playlistId, apiBase, token);
     }
   }
 

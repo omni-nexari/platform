@@ -55,8 +55,9 @@ function connect() {
 
   ws.on('open', () => {
     scheduleHeartbeat();
-    sendHeartbeat();
-    sendNetworkInfo();
+    // Delay first heartbeat by 2 s so the player window is fully shown
+    // and Electron's screen API returns real bounds instead of 0×0.
+    setTimeout(() => { sendHeartbeat(); sendNetworkInfo(); }, 2_000);
   });
 
   ws.on('message', (raw: RawData) => {
@@ -84,31 +85,42 @@ function scheduleHeartbeat() {
 
 async function sendHeartbeat() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const info = await getSystemInfo();
-  const displays = screen.getAllDisplays();
-  const primary  = screen.getPrimaryDisplay();
-  const res      = `${primary.bounds.width}x${primary.bounds.height}`;
-  const hb = {
-    type: 'heartbeat',
-    payload: {
-      playerVersion: '0.1.0',
-      platform: 'windows',
-      powerState: 'on',
-      resolution: res,
-      deviceUptimeSec: Math.round(os.uptime()),
-      memoryFreeBytes: os.freemem(),
-      memoryTotalBytes: os.totalmem(),
-      cpuLoad: info.cpuLoad ?? null,
-      storageFreeBytes: info.storageFreeBytes ?? null,
-      temperatureCelsius: info.temperatureC ?? null,
-      systemVolume: info.systemVolume ?? null,
-      systemMuted: info.systemMuted ?? null,
-      windowsBuild: info.windowsBuild ?? null,
-      displayCount: displays.length,
-      primaryDisplayIndex: displays.findIndex((d) => d.id === primary.id),
-    },
-  };
-  ws.send(JSON.stringify(hb));
+  try {
+    const info = await getSystemInfo();
+    const displays = screen.getAllDisplays();
+    const primary  = screen.getPrimaryDisplay();
+    // Use physical pixels (logical × scaleFactor) to match what Tizen reports.
+    // Fall back to workArea if bounds are zero (early boot race condition).
+    const b = (primary.bounds.width > 0) ? primary.bounds : primary.workArea;
+    const physW = Math.round(b.width  * primary.scaleFactor);
+    const physH = Math.round(b.height * primary.scaleFactor);
+    const res   = (physW > 0 && physH > 0) ? `${physW}x${physH}` : null;
+    console.log(`[ws-client] heartbeat: res=${res} mac=${info.macAddress} machineGuid=${info.machineGuid?.slice(0,8)}…`);
+    const hb = {
+      type: 'heartbeat',
+      payload: {
+        playerVersion: '0.1.0',
+        platform: 'windows',
+        powerState: 'on',
+        resolution: res,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        deviceUptimeSec: Math.round(os.uptime()),
+        memoryFreeBytes: os.freemem(),
+        memoryTotalBytes: os.totalmem(),
+        cpuLoad: info.cpuLoad ?? null,
+        storageFreeBytes: info.storageFreeBytes ?? null,
+        temperatureCelsius: info.temperatureC ?? null,
+        systemVolume: info.systemVolume ?? null,
+        systemMuted: info.systemMuted ?? null,
+        windowsBuild: info.windowsBuild ?? null,
+        displayCount: displays.length,
+        primaryDisplayIndex: displays.findIndex((d) => d.id === primary.id),
+      },
+    };
+    ws.send(JSON.stringify(hb));
+  } catch (err: any) {
+    console.error('[ws-client] sendHeartbeat failed:', err?.message ?? err);
+  }
 }
 
 function detectConnectionType(ifaceName: string): 'wifi' | 'ethernet' {
@@ -127,7 +139,17 @@ function sendNetworkInfo() {
   for (const [name, addrs] of Object.entries(ifaces)) {
     for (const iface of addrs ?? []) {
       if (!iface.internal && iface.family === 'IPv4') {
-        if (!ip) { ip = iface.address; mac = iface.mac; connectionType = detectConnectionType(name); }
+        // Accept any non-loopback IPv4 — don't filter by adapter name because
+        // Hyper-V bridges the physical NIC through a vEthernet adapter that
+        // carries the real IP and MAC.
+        const validMac = (iface.mac && iface.mac !== '00:00:00:00:00:00') ? iface.mac : null;
+        if (!ip) {
+          ip = iface.address;
+          mac = validMac;
+          connectionType = detectConnectionType(name);
+        } else if (!mac && validMac) {
+          mac = validMac; // found a real MAC for an already-selected IP
+        }
       }
     }
   }
