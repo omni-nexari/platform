@@ -159,6 +159,7 @@ export default function SuperAdminSupportPage() {
       </div>
 
       {/* Table */}
+      <div className="max-w-2xl mx-auto w-full">
       <div className="rounded-2xl border overflow-hidden" style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}>
         {isLoading ? (
           <div className="p-6 space-y-3">
@@ -185,6 +186,7 @@ export default function SuperAdminSupportPage() {
             </tbody>
           </table>
         )}
+      </div>
       </div>
 
       {/* Create ticket modal */}

@@ -95,6 +95,7 @@ export default function ManagementSupportPage() {
         }
       />
 
+      <div className="max-w-2xl mx-auto w-full">
       <div className="rounded-2xl border overflow-hidden" style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}>
         {isLoading ? (
           <div className="p-6 space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-10 w-full" />)}</div>
@@ -140,6 +141,7 @@ export default function ManagementSupportPage() {
             </tbody>
           </table>
         )}
+      </div>
       </div>
 
       {/* Create modal */}
