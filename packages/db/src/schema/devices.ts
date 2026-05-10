@@ -5,6 +5,7 @@ import {
   timestamp,
   boolean,
   integer,
+  bigint,
   doublePrecision,
   jsonb,
 } from 'drizzle-orm/pg-core';
@@ -36,7 +37,18 @@ export const devices = pgTable('devices', {
   // type: what the device is used for
   type: text('device_type').notNull().default('signage'), // signage | kiosk | kitchen
   // platform: the Player OS/runtime
-  platform: text('platform').notNull().default('tizen'),  // tizen | tizen-sbb | browser | android | webos | linux
+  platform: text('platform').notNull().default('tizen'),  // tizen | tizen-sbb | browser | android | webos | linux | windows
+
+  // ── Windows / desktop player extras (kind='tv', platform='windows') ────────
+  osVersion: text('os_version'),
+  cpuModel: text('cpu_model'),
+  gpuModel: text('gpu_model'),
+  displayCount: integer('display_count'),
+  primaryDisplayIndex: integer('primary_display_index'),
+  systemVolume: integer('system_volume'),         // 0-100 (Windows volume, distinct from MDC)
+  systemMuted: boolean('system_muted'),
+  systemBrightness: integer('system_brightness'), // 0-100 (DDC/CI on Windows)
+  windowsBuild: text('windows_build'),
 
   // ── Tizen hardware identity ────────────────────────────────────────────────
   duid: text('duid').unique(),
@@ -137,12 +149,19 @@ export const deviceScreenshots = pgTable('device_screenshots', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
-/** OTA player release catalog. */
+/** OTA player release catalog. (platform, version) is the natural key; one isLatest row per platform. */
 export const playerReleases = pgTable('player_releases', {
   id: uuid('id').primaryKey().defaultRandom(),
-  version: text('version').notNull().unique(),
+  /** 'tizen' | 'windows' | 'epaper' — separate channel per player. */
+  platform: text('platform').notNull().default('tizen'),
+  version: text('version').notNull(),
   releaseNotes: text('release_notes'),
   downloadUrl: text('download_url').notNull(),
+  /** electron-updater latest.yml URL (Windows only). */
+  manifestUrl: text('manifest_url'),
+  /** Installer file SHA-512 (Base64) — required by electron-updater. */
+  sha512: text('sha512'),
+  sizeBytes: bigint('size_bytes', { mode: 'number' }),
   isLatest: boolean('is_latest').notNull().default(false),
   publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

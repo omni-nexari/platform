@@ -67,7 +67,7 @@ export const DeviceSchema = z.object({
 });
 export type Device = z.infer<typeof DeviceSchema>;
 
-/** Sent by Tizen device on first boot to request a pairing code. */
+/** Sent by Tizen / e-paper / Windows / Android device on first boot to request a pairing code. */
 export const PairRequestSchema = z.object({
   duid: z.string().min(1).nullish(),
   modelName: z.string().nullish(),
@@ -75,12 +75,20 @@ export const PairRequestSchema = z.object({
   serialNumber: z.string().nullish(),
   firmwareVersion: z.string().nullish(),
   // ── E-paper extras (optional, sent only by nexari-epaper) ────────────────
-  kind: z.enum(['tv', 'epaper']).nullish(),
-  platform: z.string().nullish(), // 'tizen' | 'tizen-epaper' | 'tizen-sbb' | ...
+  kind: z.enum(['tv', 'epaper', 'android', 'androidtv', 'firetv']).nullish(),
+  platform: z.string().nullish(), // 'tizen' | 'tizen-epaper' | 'tizen-sbb' | 'android' | 'androidtv' | 'firetv' | 'windows' | ...
   panelW: z.number().int().positive().nullish(),
   panelH: z.number().int().positive().nullish(),
   orientation: z.enum(['landscape', 'portrait']).nullish(),
   epaperApiVersion: z.string().nullish(),
+  // ── Windows / desktop player extras (sent by nexari-windows) ─────────────────
+  osVersion: z.string().nullish(),
+  cpuModel: z.string().nullish(),
+  gpuModel: z.string().nullish(),
+  displayCount: z.number().int().positive().nullish(),
+  primaryDisplayIndex: z.number().int().min(0).nullish(),
+  windowsBuild: z.string().nullish(),
+  macAddress: z.string().nullish(),
 });
 export type PairRequestInput = z.infer<typeof PairRequestSchema>;
 
@@ -133,6 +141,20 @@ export const DeviceCommandSchema = z.discriminatedUnion('command', [
   z.object({ command: z.literal('relaunch_app') }),
   z.object({ command: z.literal('power_off') }),
   z.object({ command: z.literal('power_on') }),
+  // ── OS-level commands (Windows + Linux desktop) ────────────────────────
+  /** Suspend the OS (Windows: SetSuspendState; macOS/Linux: pmset/systemctl). */
+  z.object({ command: z.literal('sleep') }),
+  /** Toggle the display on/off (DPMS) without shutting down the OS. */
+  z.object({ command: z.literal('display_power'), payload: z.object({ on: z.boolean() }) }),
+  /** OS-level audio (vs MDC volume which only applies to Samsung TVs). */
+  z.object({ command: z.literal('set_system_volume'), payload: z.object({ level: z.number().int().min(0).max(100) }) }),
+  z.object({ command: z.literal('set_system_mute'),   payload: z.object({ mute: z.boolean() }) }),
+  /** DDC/CI brightness on Windows desktop monitors. */
+  z.object({ command: z.literal('set_brightness'),    payload: z.object({ level: z.number().int().min(0).max(100), displayIndex: z.number().int().min(0).optional() }) }),
+  /** Move the player window to a different attached display. */
+  z.object({ command: z.literal('set_display'),       payload: z.object({ displayIndex: z.number().int().min(0) }) }),
+  /** Send a Wake-on-LAN magic packet from this device to the target MAC. */
+  z.object({ command: z.literal('wake_on_lan'),       payload: z.object({ targetMac: z.string(), broadcastIp: z.string().optional() }) }),
   z.object({ command: z.literal('set_ntp'), payload: z.object({ server: z.string(), timezone: z.string() }) }),
   z.object({ command: z.literal('set_ir_lock'), payload: z.object({ lock: z.boolean() }) }),
   z.object({ command: z.literal('set_button_lock'), payload: z.object({ lock: z.boolean() }) }),
@@ -189,8 +211,17 @@ export const HeartbeatSchema = z.object({
   nextContentId: z.string().uuid().nullable().optional(),
   nextStartsAt: z.string().datetime().nullable().optional(),
   tvName: z.string().optional(),
-  // E-paper specific (Tizen 8 panels) — all optional so TVs can ignore them.
-  kind: z.enum(['tv', 'epaper']).optional(),
+  // ── Windows / desktop player heartbeat extras ─────────────────────────────
+  systemVolume:     z.number().int().min(0).max(100).nullable().optional(),
+  systemMuted:      z.boolean().nullable().optional(),
+  systemBrightness: z.number().int().min(0).max(100).nullable().optional(),
+  primaryDisplayIndex: z.number().int().min(0).optional(),
+  displayCount: z.number().int().positive().optional(),
+  windowsBuild: z.string().optional(),
+  /** electron-updater progress 0–100 while a player update is downloading. */
+  pendingUpdatePct: z.number().int().min(0).max(100).nullable().optional(),
+  // Device kind — TVs / e-paper / android variants. Optional so legacy clients can omit.
+  kind: z.enum(['tv', 'epaper', 'android', 'androidtv', 'firetv']).optional(),
   batteryPct: z.number().int().min(0).max(100).nullable().optional(),
   panelW: z.number().int().positive().optional(),
   panelH: z.number().int().positive().optional(),

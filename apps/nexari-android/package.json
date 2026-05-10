@@ -1,0 +1,14 @@
+{
+  "name": "nexari-android",
+  "version": "0.1.0",
+  "description": "Nexari Signage — Android player (WebView host around @signage/player-web). Targets phones, tablets, Android TV, and Fire TV.",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/sync-player-web.cjs && cd android && (./gradlew assembleSelfRelease || gradlew.bat assembleSelfRelease)",
+    "build:dev": "node scripts/sync-player-web.cjs && cd android && (./gradlew assembleDevDebug || gradlew.bat assembleDevDebug)",
+    "build:debug": "node scripts/sync-player-web.cjs && cd android && (./gradlew assembleSelfDebug || gradlew.bat assembleSelfDebug)",
+    "sync-bundle": "node scripts/sync-player-web.cjs",
+    "version:patch": "npm version patch --no-git-tag-version && node scripts/sync-version.cjs",
+    "version:minor": "npm version minor --no-git-tag-version && node scripts/sync-version.cjs"
+  }
+}

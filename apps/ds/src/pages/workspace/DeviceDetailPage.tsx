@@ -123,7 +123,7 @@ interface Device {
   name: string;
   status: 'unclaimed' | 'online' | 'offline' | 'error';
   type: 'signage' | 'kiosk' | 'kitchen';
-  platform: 'tizen' | 'webos' | 'android' | 'linux' | 'browser' | 'other';
+  platform: 'tizen' | 'tizen-sbb' | 'webos' | 'android' | 'linux' | 'browser' | 'windows' | 'other';
   manufacturer: string | null;
   lastSeen: string | null;
   playerVersion: string | null;
@@ -193,7 +193,7 @@ interface Device {
     name: string;
   } | null;
   // ── E-Paper ──────────────────────────────────────────────
-  kind?: 'tv' | 'epaper' | null;
+  kind?: 'tv' | 'epaper' | 'android' | 'androidtv' | 'firetv' | null;
   panelW?: number | null;
   panelH?: number | null;
   panelOrientation?: 'landscape' | 'portrait' | null;
@@ -1363,6 +1363,8 @@ export function DeviceDetailContent({
   const { device, screenshots, latestHeartbeat: hb } = data;
   const isOnline    = device.status === 'online';
   const isEpaper    = device.kind === 'epaper';
+  const isWindows   = device.platform === 'windows';
+  const isTizenTop  = ['tizen', 'tizen-sbb'].includes(device.platform ?? 'tizen');
   const cmdDisabled = !isOnline || cmdMutation.isPending;
   const fallbackNowPlaying = device.publishedTarget?.name ?? null;
   const fallbackNowPlayingType = device.publishedTarget?.type ?? null;
@@ -1486,7 +1488,7 @@ export function DeviceDetailContent({
           ...(!isEpaper && deviceType !== 'kitchen' && isTizen ? [{ id: 'power' as DeviceTabId, label: 'Power / Control' }] : []),
           { id: 'network',      label: 'Network' },
           { id: 'settings',     label: 'Settings' },
-          ...(!isEpaper && deviceType !== 'kitchen' ? [{ id: 'timers' as DeviceTabId, label: 'Timers' }] : []),
+          ...(!isEpaper && deviceType !== 'kitchen' && isTizenTop ? [{ id: 'timers' as DeviceTabId, label: 'Timers' }] : []),
           ...(deviceType === 'kiosk'   ? [{ id: 'kiosk-config' as DeviceTabId, label: 'Kiosk Config' }] : []),
           ...(deviceType === 'kitchen' ? [{ id: 'order-filter' as DeviceTabId, label: 'Order Filter' }] : []),
           { id: 'tags',         label: 'Tags' },
@@ -2062,7 +2064,7 @@ export function DeviceDetailContent({
           </SectionCard>
 
           {/* ── Network Configuration ───────────────────────────────────── */}
-          {!isEpaper && isOnline && (
+          {!isEpaper && isOnline && !isWindows && (
           <SectionCard>
             <SectionCardHeader>
               <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
@@ -2282,7 +2284,7 @@ export function DeviceDetailContent({
             </div>
 
             {/* ── Display Settings (MDC) ───────────────────────────────── */}
-            {!isEpaper && (
+            {!isEpaper && !isWindows && (
             <div className="sm:col-span-2 space-y-5">
 
               {/* 2×2 toggle grid */}
@@ -2940,7 +2942,7 @@ export function DeviceDetailContent({
             <SectionCardHeader>
               <div>
                 <h2 className="text-lg font-semibold text-[var(--text)]">Remote Console Logs</h2>
-                <p className="text-sm text-[var(--text-muted)]">Recent Tizen console output received from the device WebSocket</p>
+                <p className="text-sm text-[var(--text-muted)]">Recent console output received from the device WebSocket</p>
               </div>
             </SectionCardHeader>
             <SectionCardBody className="space-y-4">

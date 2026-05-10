@@ -52,6 +52,19 @@ else
     echo "    WARNING: No .wgt file in /var/signage/tizen/ — run install-nexari2.ps1 from Windows to deploy"
 fi
 
+# ── Android assets directory ───────────────────────────────────────────────
+# Hosts the latest APK + update.json + dpc-provisioning.json. Created here in
+# case the script is run on a fresh clone without a full bootstrap.
+echo "==> [update] Checking Android assets directory..."
+sudo mkdir -p /var/signage/android
+sudo chown -R "${USER}:${USER}" /var/signage/android
+if [[ -f /var/signage/android/nexari-android-latest.apk ]]; then
+    apk_size=$(du -sh /var/signage/android/nexari-android-latest.apk | cut -f1)
+    echo "    APK present: nexari-android-latest.apk (${apk_size})"
+else
+    echo "    INFO: No APK in /var/signage/android/ — build via apps/nexari-android and deploy with tools/deploy-android.ps1"
+fi
+
 echo ""
 echo "Done! Health check:"
 curl -s http://127.0.0.1:3000/api/v1/health

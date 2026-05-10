@@ -1,0 +1,76 @@
+{
+  "name": "nexari-windows",
+  "version": "0.1.0",
+  "description": "Nexari Windows Player — Electron-based digital signage player with cross-platform syncplay, kiosk lockdown, and signed auto-update.",
+  "private": true,
+  "main": "dist/main/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:preload": "tsc -p tsconfig.preload.json",
+    "build:renderer": "vite build",
+    "build": "pnpm run build:main && pnpm run build:preload && pnpm run build:renderer",
+    "typecheck": "tsc --noEmit -p tsconfig.main.json && tsc --noEmit -p tsconfig.preload.json && tsc --noEmit -p tsconfig.renderer.json",
+    "dev:renderer": "vite",
+    "dev": "pnpm run build && cross-env NEXARI_DEV=1 electron .",
+    "package": "pnpm run build && electron-builder --win --x64",
+    "package:dir": "pnpm run build && electron-builder --dir --win --x64",
+    "publish": "pnpm run build && electron-builder --win --x64 --publish always"
+  },
+  "dependencies": {
+    "@signage/shared": "workspace:*",
+    "electron-updater": "^6.3.9",
+    "hls.js": "^1.5.15",
+    "loudness": "^0.4.2",
+    "pdfjs-dist": "^4.10.38",
+    "wake_on_lan": "^1.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/wake_on_lan": "^0.0.32",
+    "@types/ws": "^8.5.13",
+    "cross-env": "^7.0.3",
+    "electron": "^32.2.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.10"
+  },
+  "build": {
+    "appId": "app.chiho.nexari-windows",
+    "productName": "Nexari Player",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "build/**/*"
+    ],
+    "extraResources": [],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "publisherName": "Chiho App",
+      "artifactName": "nexari-windows-${version}-setup.${ext}",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Nexari Player",
+      "include": "build/installer.nsh",
+      "license": "build/LICENSE.txt"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://ds.chiho.app/api/v1/downloads/windows",
+      "channel": "latest"
+    }
+  }
+}

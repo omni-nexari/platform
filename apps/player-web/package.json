@@ -1,0 +1,22 @@
+{
+  "name": "@signage/player-web",
+  "version": "0.1.0",
+  "description": "Shared web player bundle (sync engine + content renderers + PlatformAdapter contract) consumed by host shells (Android WebView, future Windows/Linux/web).",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && esbuild src/index.ts --bundle --format=esm --target=es2017 --outfile=dist/bundle.js --external:none",
+    "build:iife": "esbuild src/index.ts --bundle --format=iife --global-name=NexariPlayer --target=es2015 --outfile=dist/bundle.iife.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "watch": "esbuild src/index.ts --bundle --format=esm --target=es2017 --outfile=dist/bundle.js --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@signage/shared": "workspace:*"
+  }
+}

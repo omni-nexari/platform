@@ -20,6 +20,8 @@ import { analyticsRoutes } from './analytics.js';
 import { syncPlaylistRoutes } from './sync-playlists.js';
 import { syncGroupRoutes } from './sync-groups.js';
 import { playerReleasesRoutes } from './player-releases.js';
+import { downloadsRoutes } from './downloads.js';
+import { syncRelayRoutes } from './sync-relay.js';
 import { logsRoutes } from './logs.js';
 import { posRoutes } from './pos.js';
 import { deviceGroupsRoutes } from './device-groups.js';
@@ -53,6 +55,8 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(syncPlaylistRoutes, { prefix: '/sync-playlists' });
   await app.register(syncGroupRoutes, { prefix: '/sync-groups' });
   await app.register(playerReleasesRoutes, { prefix: '/player-releases' });
+  await app.register(downloadsRoutes, { prefix: '/downloads' });
+  await app.register(syncRelayRoutes, { prefix: '/sync-relay' });
   await app.register(logsRoutes, { prefix: '/logs' });
   await app.register(posRoutes, { prefix: '/pos' });
   await app.register(deviceGroupsRoutes, { prefix: '/device-groups' });

@@ -1383,7 +1383,74 @@ export async function deviceRoutes(app: FastifyInstance) {
     return reply.send({ sent: true, command: cmd.command });
   });
 
-  // ── E-PAPER ADMIN ENDPOINTS ─────────────────────────────────────────────
+  // ── POST /devices/:id/wake ─ Wake-on-LAN via a peer relay device ───────────
+  // Picks an online device in the same workspace + same /24 subnet and tells it
+  // to broadcast a WoL magic packet for the target's MAC address. Works across
+  // Tizen / Windows / e-paper players (they all implement the `wake_on_lan`
+  // command using Node `dgram` UDP broadcast to 255.255.255.255:9).
+  app.post('/:id/wake', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const target = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!target) return reply.status(404).send({ error: 'Not found' });
+    if (!target.macAddress) {
+      return reply.status(400).send({ error: 'Target device has no recorded MAC address' });
+    }
+
+    // Find peers in the same workspace that are currently online (WS connected).
+    const candidates = await db.query.devices.findMany({
+      where: and(
+        eq(devices.orgId, user.orgId),
+        eq(devices.workspaceId, target.workspaceId!),
+        isNull(devices.deletedAt),
+      ),
+      columns: { id: true, ipAddress: true, lastSeen: true, platform: true, kind: true },
+    });
+
+    // Prefer peers in the same /24 subnet, then any online peer.
+    const targetIp = target.ipAddress ?? null;
+    const subnet24 = (ip: string | null | undefined) => (ip ? ip.split('.').slice(0, 3).join('.') : null);
+    const targetSubnet = subnet24(targetIp);
+
+    const onlineCandidates = candidates
+      .filter((c) => c.id !== target.id && isDeviceOnline(c.id))
+      .sort((a, b) => {
+        const aSub = subnet24(a.ipAddress) === targetSubnet ? 1 : 0;
+        const bSub = subnet24(b.ipAddress) === targetSubnet ? 1 : 0;
+        if (aSub !== bSub) return bSub - aSub;
+        const aSeen = a.lastSeen ? new Date(a.lastSeen).getTime() : 0;
+        const bSeen = b.lastSeen ? new Date(b.lastSeen).getTime() : 0;
+        return bSeen - aSeen;
+      });
+
+    const relay = onlineCandidates[0];
+    if (!relay) {
+      return reply.status(409).send({
+        error: 'No online peer device available to broadcast Wake-on-LAN',
+        hint: 'At least one Tizen / Windows / e-paper player on the same LAN must be online.',
+      });
+    }
+
+    sendCommand(relay.id, {
+      type: 'wake_on_lan',
+      payload: { targetMac: target.macAddress },
+    });
+
+    await writeAuditLog({
+      orgId: user.orgId,
+      actorId: user.sub,
+      action: 'DEVICE_COMMAND_SENT',
+      entityType: 'device',
+      entityId: target.id,
+      meta: { command: 'wake_on_lan', viaRelayDeviceId: relay.id },
+      ipAddress: req.ip,
+    });
+
+    return reply.send({ sent: true, viaRelayDeviceId: relay.id, targetMac: target.macAddress });
+  });
   // Helper: load + auth-check an e-paper device. Returns null and writes an
   // error response if the caller is not allowed or the device is not e-paper.
   async function loadEpaperDevice(reqAny: { params: unknown; user: unknown }, replyAny: { status: (n: number) => { send: (b: unknown) => unknown } }): Promise<{ id: string; orgId: string | null; kind: string; epaperSettings: unknown } | null> {

@@ -1,0 +1,17 @@
+{
+  "android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME":
+    "app.chiho.nexari/.kiosk.NexariDeviceAdminReceiver",
+  "android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION":
+    "https://ds.chiho.app/android/nexari-android-latest.apk",
+  "android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_CHECKSUM":
+    "REPLACE_WITH_BASE64_SHA256_OF_APK",
+  "android.app.extra.PROVISIONING_SKIP_ENCRYPTION": false,
+  "android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED": true,
+  "android.app.extra.PROVISIONING_LOCALE": "en_US",
+  "android.app.extra.PROVISIONING_TIME_ZONE": "Asia/Hong_Kong",
+  "android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE": {
+    "default-api-base": "https://ds.chiho.app/api/v1",
+    "default-ws-base":  "wss://ds.chiho.app",
+    "default-ota-url":  "https://ds.chiho.app/android/update.json"
+  }
+}

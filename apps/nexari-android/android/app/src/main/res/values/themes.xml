@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Brand colour -->
+    <color name="nexari_bg">#0D0F1A</color>
+
+    <style name="Theme.Nexari" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/nexari_bg</item>
+        <item name="android:colorBackground">@color/nexari_bg</item>
+    </style>
+
+    <!-- Splash screen theme (API 31+ SplashScreen API). -->
+    <style name="Theme.Nexari.Splash" parent="Theme.Nexari.Fullscreen">
+        <item name="android:windowSplashScreenBackground">@color/nexari_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/nexari_bg</item>
+    </style>
+    <style name="Theme.Nexari.Fullscreen" parent="Theme.Nexari">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowContentTransitions">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+</resources>

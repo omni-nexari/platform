@@ -1,0 +1,5 @@
+Nexari Player
+Copyright (c) 2024 Chiho App
+
+This software is provided "as-is" for use with authorised Nexari digital
+signage deployments. All rights reserved.

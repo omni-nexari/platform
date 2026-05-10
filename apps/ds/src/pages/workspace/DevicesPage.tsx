@@ -185,7 +185,7 @@ interface Device {
   powerState: 'on' | 'off' | 'standby' | null;
   type: 'signage' | 'kiosk' | 'kitchen';
   platform: string;
-  kind?: 'tv' | 'epaper' | null;
+  kind?: 'tv' | 'epaper' | 'android' | 'androidtv' | 'firetv' | null;
   batteryPct?: number | null;
   manufacturer: string | null;
   modelName: string | null;
@@ -734,6 +734,15 @@ export default function DevicesPage() {
                         )}
                         {device.kind === 'epaper' && (
                           <Badge tone="info">E-Paper</Badge>
+                        )}
+                        {device.kind === 'androidtv' && (
+                          <Badge tone="info">Android TV</Badge>
+                        )}
+                        {device.kind === 'firetv' && (
+                          <Badge tone="info">Fire TV</Badge>
+                        )}
+                        {device.kind === 'android' && (
+                          <Badge tone="info">Android</Badge>
                         )}
                         {device.kind === 'epaper' && device.batteryPct != null && (
                           <Badge tone={device.batteryPct > 50 ? 'success' : device.batteryPct > 20 ? 'warning' : 'danger'}>

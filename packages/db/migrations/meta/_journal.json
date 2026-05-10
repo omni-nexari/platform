@@ -414,6 +414,13 @@
                         "when":  1778410000000,
                         "tag":  "0058_mgmt_invite_recipient_name",
                         "breakpoints":  true
+                    },
+                    {
+                        "idx":  59,
+                        "version":  "7",
+                        "when":  1778500000000,
+                        "tag":  "0059_windows_player",
+                        "breakpoints":  true
                     }
                 ]
 }

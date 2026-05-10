@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist/renderer",
+    "rootDir": "src/renderer",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "jsx": "preserve",
+    "noEmit": true,
+    "noUncheckedIndexedAccess": false,
+    "paths": {
+      "@sync/*": ["../../nexari-html5-sync/src/*"]
+    }
+  },
+  "include": [
+    "src/renderer/**/*",
+    "src/preload/types.d.ts",
+    "../nexari-html5-sync/src/**/*"
+  ]
+}

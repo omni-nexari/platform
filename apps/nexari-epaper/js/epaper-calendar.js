@@ -48,11 +48,260 @@ window.EpaperCalendar = (function () {
     }).join('\n');
   }
 
-  var PALETTE = ['#1a73e8', '#0f9d58', '#e67c00', '#8430ce', '#d50000', '#0097a7', '#616161', '#e91e63'];
+  var PALETTE  = ['#1a73e8', '#0f9d58', '#e67c00', '#8430ce', '#d50000', '#0097a7', '#616161', '#e91e63'];
+  var HOUR_PX  = 64;  // pixels per hour — matches Tizen
+  var WIN_START = 7;  // visible time window start (7 AM)
+  var WIN_END   = 21; // visible time window end   (9 PM)
+
+  // Always shows h:mm AM/PM (unlike fmtTime which drops :00)
+  function fmtTimeFull(d) {
+    var h = d.getHours(), m = d.getMinutes(), ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return h + ':' + pad2(m) + ' ' + ampm;
+  }
+
+  // ── time-grid shared builders (match Tizen's buildHeader / buildTimeGutter / etc.) ──
+
+  function buildCalHeader(contentName, dateLabel, now, accent, bg, border, text, muted) {
+    // No live clock — e-paper avoids setInterval redraws; show static date only.
+    var dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    return '<header style="flex-shrink:0;display:flex;align-items:center;padding:16px 24px;' +
+           'background:' + bg + ';border-bottom:1px solid ' + border + ';gap:16px;">' +
+             '<div style="width:4px;min-height:40px;background:' + accent + ';border-radius:2px;flex-shrink:0;"></div>' +
+             '<div style="flex:1;min-width:0;">' +
+               '<div style="font-size:13px;color:' + muted + ';font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">' + esc(contentName) + '</div>' +
+               '<div style="font-size:20px;font-weight:600;color:' + text + ';margin-top:2px;">' + esc(dateLabel) + '</div>' +
+             '</div>' +
+             '<div style="text-align:right;flex-shrink:0;font-size:13px;color:' + muted + ';">' + esc(dateStr) + '</div>' +
+           '</header>';
+  }
+
+  function buildTimeGutter(startH, endH, muted, border) {
+    var rows = '';
+    for (var h = startH; h <= endH; h++) {
+      var label = h === 0 ? '' : (h < 12 ? (h + ' AM') : h === 12 ? '12 PM' : ((h - 12) + ' PM'));
+      rows += '<div style="height:' + HOUR_PX + 'px;box-sizing:border-box;padding-right:8px;text-align:right;' +
+              'font-size:11px;color:' + muted + ';position:relative;top:-7px;">' + esc(label) + '</div>';
+    }
+    return '<div style="width:52px;flex-shrink:0;border-right:1px solid ' + border + ';overflow:hidden;">' + rows + '</div>';
+  }
+
+  function buildHourLines(numHours, border) {
+    var lines = '';
+    for (var h = 0; h <= numHours; h++) {
+      lines += '<div style="position:absolute;left:0;right:0;top:' + (h * HOUR_PX) + 'px;' +
+               'border-top:1px solid ' + border + ';pointer-events:none;"></div>';
+    }
+    return lines;
+  }
+
+  function buildNowIndicator(now, startH, endH, accent) {
+    var minOfDay = now.getHours() * 60 + now.getMinutes();
+    var winStart = startH * 60;
+    var winEnd   = endH * 60;
+    if (minOfDay < winStart || minOfDay > winEnd) return '';
+    var top = ((minOfDay - winStart) / 60) * HOUR_PX;
+    return '<div style="position:absolute;left:-5px;width:10px;height:10px;border-radius:50%;' +
+           'background:' + accent + ';z-index:10;top:' + (top - 5) + 'px;"></div>' +
+           '<div style="position:absolute;left:0;right:0;top:' + top + 'px;' +
+           'border-top:2px solid ' + accent + ';z-index:9;"></div>';
+  }
+
+  function buildAllDayStrip(allDayEvs, days, tz, accent, border, muted) {
+    if (!allDayEvs || allDayEvs.length === 0) return '';
+    var numCols = days.length;
+    var colW = 100 / numCols;
+    var chips = '';
+    for (var i = 0; i < allDayEvs.length; i++) {
+      var ev = allDayEvs[i];
+      var evDay = isoDate(toLocal(ev.start, tz));
+      var colIdx = 0;
+      for (var j = 0; j < days.length; j++) {
+        if (isoDate(days[j]) === evDay) { colIdx = j; break; }
+      }
+      chips += '<div style="position:absolute;left:calc(' + (colIdx * colW).toFixed(2) + '% + 2px);' +
+               'width:calc(' + colW.toFixed(2) + '% - 4px);' +
+               'top:' + (i * 22) + 'px;height:20px;background:' + PALETTE[i % PALETTE.length] + ';border-radius:3px;' +
+               'padding:2px 6px;font-size:11px;color:#fff;font-weight:600;' +
+               'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
+               esc(ev.title || '(all day)') + '</div>';
+    }
+    var stripH = allDayEvs.length * 22 + 4;
+    return '<div style="display:flex;flex-shrink:0;border-bottom:1px solid ' + border + ';">' +
+             '<div style="width:52px;flex-shrink:0;font-size:11px;color:' + muted + ';' +
+             'padding:4px 8px 4px 0;text-align:right;border-right:1px solid ' + border + ';">all-day</div>' +
+             '<div style="flex:1;position:relative;height:' + stripH + 'px;">' + chips + '</div>' +
+           '</div>';
+  }
+
+  function buildDayEventsHtml(dayEvs, startH, endH, tz, privacyMode) {
+    var html = '';
+    for (var i = 0; i < dayEvs.length; i++) {
+      var ev = dayEvs[i];
+      if (ev.allDay) continue;
+      var s   = toLocal(ev.start, tz);
+      var e2  = toLocal(ev.end,   tz);
+      var startMin = s.getHours()  * 60 + s.getMinutes();
+      var endMin   = Math.min(e2.getHours() * 60 + e2.getMinutes(), endH * 60);
+      var durMin   = Math.max(endMin - startMin, 30);
+      var top      = ((startMin - startH * 60) / 60) * HOUR_PX;
+      var height   = Math.max((durMin / 60) * HOUR_PX, 22);
+      // Clip events entirely outside the visible window
+      if (top + height < 0 || top > (endH - startH) * HOUR_PX) continue;
+      var color   = PALETTE[i % PALETTE.length];
+      var title   = (ev.isPrivate || privacyMode === 'busy_only') ? 'Busy' : (ev.title || '(no title)');
+      var showLoc = height > 44 && ev.location && !ev.isPrivate && privacyMode !== 'busy_only';
+      html += '<div style="position:absolute;left:2px;right:2px;top:' + top + 'px;height:' + height + 'px;' +
+              'background:' + color + ';border-radius:4px;padding:3px 6px;box-sizing:border-box;overflow:hidden;z-index:5;">' +
+                '<div style="font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
+                  esc(title) +
+                '</div>' +
+                '<div style="font-size:11px;color:rgba(255,255,255,0.85);white-space:nowrap;overflow:hidden;">' +
+                  fmtTimeFull(s) + ' \u2013 ' + fmtTimeFull(e2) +
+                '</div>' +
+                (showLoc ? '<div style="font-size:10px;color:rgba(255,255,255,0.75);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(ev.location) + '</div>' : '') +
+              '</div>';
+    }
+    return html;
+  }
 
   // ── view renderers ──────────────────────────────────────────────────────────
 
-  // ── renderListView: day + week — grouped agenda list, header matches Tizen buildHeader ──
+  // ── renderDayView: time-grid for today — identical structure to Tizen renderDayView ──
+  function renderDayView(container, events, content, meta, tz) {
+    var accent      = (meta.theme && meta.theme.accentColor) || '#1a73e8';
+    var isDark      = !!(meta.theme && meta.theme.background === 'dark');
+    var bg          = isDark ? '#1e1e2e' : '#ffffff';
+    var text        = isDark ? '#e2e8f0' : '#202124';
+    var muted       = isDark ? '#94a3b8' : '#70757a';
+    var border      = isDark ? '#3a3a50' : '#e0e0e0';
+    var privacyMode = (meta.privacyMode) || 'titles';
+
+    var now       = new Date();
+    var todayKey  = isoDate(now);
+    var dayEvs    = events.filter(function (e) { return isoDate(toLocal(e.start, tz)) === todayKey; });
+    var allDayEvs = dayEvs.filter(function (e) { return  e.allDay; });
+    var timedEvs  = dayEvs.filter(function (e) { return !e.allDay; });
+
+    var dateLabel = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    var gridH     = (WIN_END - WIN_START) * HOUR_PX;
+
+    container.innerHTML =
+      '<div style="position:absolute;inset:0;display:flex;flex-direction:column;background:' + bg + ';color:' + text + ';' +
+      'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;overflow:hidden;">' +
+        buildCalHeader(content.name || 'Calendar', dateLabel, now, accent, bg, border, text, muted) +
+        buildAllDayStrip(allDayEvs, [now], tz, accent, border, muted) +
+        '<div style="flex:1;display:flex;overflow:hidden;">' +
+          buildTimeGutter(WIN_START, WIN_END, muted, border) +
+          '<div style="flex:1;overflow-y:auto;position:relative;">' +
+            '<div style="position:relative;height:' + gridH + 'px;">' +
+              buildHourLines(WIN_END - WIN_START, border) +
+              buildNowIndicator(now, WIN_START, WIN_END, accent) +
+              buildDayEventsHtml(timedEvs, WIN_START, WIN_END, tz, privacyMode) +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  // ── renderWeekView: time-grid with day columns — identical to Tizen renderWeekView ──
+  function renderWeekView(container, events, content, meta, tz, numDays) {
+    var accent      = (meta.theme && meta.theme.accentColor) || '#1a73e8';
+    var isDark      = !!(meta.theme && meta.theme.background === 'dark');
+    var bg          = isDark ? '#1e1e2e' : '#ffffff';
+    var text        = isDark ? '#e2e8f0' : '#202124';
+    var muted       = isDark ? '#94a3b8' : '#70757a';
+    var border      = isDark ? '#3a3a50' : '#e0e0e0';
+    var privacyMode = (meta.privacyMode) || 'titles';
+
+    var now = new Date();
+    var dow = now.getDay();
+    // For 5-day (workweek): start Monday; for 7-day: start Sunday (matches Tizen)
+    var offset = (numDays === 5) ? (dow === 0 ? -6 : 1 - dow) : -dow;
+    var startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() + offset);
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    var days = [];
+    for (var di = 0; di < numDays; di++) {
+      var d = new Date(startOfWeek);
+      d.setDate(d.getDate() + di);
+      days.push(d);
+    }
+
+    var rangeLabel = days[0].toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+                     ' \u2013 ' + days[numDays - 1].toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    var todayIso   = isoDate(now);
+    var colW       = 100 / numDays;
+
+    var allDayEvs = events.filter(function (e) { return  e.allDay; });
+    var timedEvs  = events.filter(function (e) { return !e.allDay; });
+
+    // Day column headers — weekday name + circle date (today highlighted)
+    var dayHeaders = '';
+    for (var hi = 0; hi < days.length; hi++) {
+      var hd = days[hi];
+      var isToday = isoDate(hd) === todayIso;
+      dayHeaders +=
+        '<div style="flex:1;text-align:center;padding:6px 4px;border-right:1px solid ' + border + ';">' +
+          '<div style="font-size:11px;font-weight:500;color:' + muted + ';text-transform:uppercase;">' +
+            hd.toLocaleDateString('en-US', { weekday: 'short' }) +
+          '</div>' +
+          '<div style="width:30px;height:30px;margin:4px auto 0;border-radius:50%;' +
+               'display:flex;align-items:center;justify-content:center;' +
+               'background:' + (isToday ? accent : 'transparent') + ';' +
+               'color:' + (isToday ? '#fff' : text) + ';font-size:16px;font-weight:' + (isToday ? '700' : '400') + ';">' +
+            hd.getDate() +
+          '</div>' +
+        '</div>';
+    }
+
+    // Events per day column
+    var dayEventCols = '';
+    for (var ci = 0; ci < days.length; ci++) {
+      var dayKey  = isoDate(days[ci]);
+      var colEvs  = timedEvs.filter(function (e) { return isoDate(toLocal(e.start, tz)) === dayKey; });
+      var left    = (ci * colW).toFixed(2);
+      var colWidth = colW.toFixed(2);
+      dayEventCols +=
+        '<div style="position:absolute;left:' + left + '%;width:' + colWidth + '%;top:0;bottom:0;">' +
+          buildDayEventsHtml(colEvs, WIN_START, WIN_END, tz, privacyMode) +
+        '</div>';
+    }
+
+    // Vertical day separator lines
+    var separators = '';
+    for (var si = 1; si < days.length; si++) {
+      separators += '<div style="position:absolute;left:' + (si * colW).toFixed(2) + '%;top:0;bottom:0;border-left:1px solid ' + border + ';pointer-events:none;"></div>';
+    }
+
+    var todayInView = days.some(function (d) { return isoDate(d) === todayIso; });
+    var gridH = (WIN_END - WIN_START) * HOUR_PX;
+
+    container.innerHTML =
+      '<div style="position:absolute;inset:0;display:flex;flex-direction:column;background:' + bg + ';color:' + text + ';' +
+      'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;overflow:hidden;">' +
+        buildCalHeader(content.name || 'Calendar', rangeLabel, now, accent, bg, border, text, muted) +
+        '<div style="display:flex;border-bottom:1px solid ' + border + ';flex-shrink:0;">' +
+          '<div style="width:52px;flex-shrink:0;border-right:1px solid ' + border + ';"></div>' +
+          dayHeaders +
+        '</div>' +
+        buildAllDayStrip(allDayEvs, days, tz, accent, border, muted) +
+        '<div style="flex:1;display:flex;overflow:hidden;">' +
+          buildTimeGutter(WIN_START, WIN_END, muted, border) +
+          '<div style="flex:1;overflow-y:auto;position:relative;">' +
+            '<div style="position:relative;height:' + gridH + 'px;">' +
+              buildHourLines(WIN_END - WIN_START, border) +
+              (todayInView ? buildNowIndicator(now, WIN_START, WIN_END, accent) : '') +
+              dayEventCols +
+              separators +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  // ── renderListView (legacy agenda): day + week — kept only as internal fallback ──
   function renderListView(container, events, content, meta, tz, view) {
     var accent      = (meta.theme && meta.theme.accentColor) || '#1a73e8';
     var isDark      = !!(meta.theme && meta.theme.background === 'dark');
@@ -175,7 +424,6 @@ window.EpaperCalendar = (function () {
     var now       = new Date();
     var todayIso  = isoDate(now);
     var monthLabel   = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-    var fullDateStr  = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
     var firstDay  = new Date(now.getFullYear(), now.getMonth(), 1);
     var lastDay   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
@@ -216,7 +464,7 @@ window.EpaperCalendar = (function () {
           var ev     = dayEvs[ei];
           var evTitle = (ev.isPrivate || privacyMode === 'busy_only') ? 'Busy' : (ev.title || '(no title)');
           var evLocal = toLocal(ev.start, tz);
-          var timePrefix = ev.allDay ? '' : '<span style="opacity:0.85;">' + fmtTime(evLocal) + ' </span>';
+          var timePrefix = ev.allDay ? '' : '<span style="opacity:0.85;">' + fmtTimeFull(evLocal) + ' </span>';
           chips +=
             '<div style="margin:1px 4px;padding:1px 5px;border-radius:3px;font-size:11px;' +
             'background:' + PALETTE[ei % PALETTE.length] + ';color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
@@ -241,14 +489,7 @@ window.EpaperCalendar = (function () {
     container.innerHTML =
       '<div style="position:absolute;inset:0;display:flex;flex-direction:column;background:' + bg + ';color:' + text + ';' +
       'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;overflow:hidden;">' +
-        '<header style="flex-shrink:0;display:flex;align-items:center;padding:16px 24px;background:' + bg + ';border-bottom:1px solid ' + border + ';gap:16px;">' +
-          '<div style="width:4px;min-height:40px;background:' + accent + ';border-radius:2px;flex-shrink:0;"></div>' +
-          '<div style="flex:1;min-width:0;">' +
-            '<div style="font-size:13px;color:' + muted + ';font-weight:500;text-transform:uppercase;letter-spacing:0.5px;">' + esc(content.name || 'Calendar') + '</div>' +
-            '<div style="font-size:20px;font-weight:600;color:' + text + ';margin-top:2px;">' + esc(monthLabel) + '</div>' +
-          '</div>' +
-          '<div style="text-align:right;flex-shrink:0;font-size:13px;color:' + muted + ';">' + esc(fullDateStr) + '</div>' +
-        '</header>' +
+        buildCalHeader(content.name || 'Calendar', monthLabel, now, accent, bg, border, text, muted) +
         headerRow +
         '<div style="flex:1;display:flex;flex-direction:column;min-height:0;">' + weekRowsHtml + '</div>' +
       '</div>';
@@ -495,9 +736,11 @@ window.EpaperCalendar = (function () {
         renderMeetingRoom(container, evs, content, meta, tz);
       } else if (view === 'month') {
         renderMonthGrid(container, evs, content, meta, tz);
+      } else if (view === 'day') {
+        renderDayView(container, evs, content, meta, tz);
       } else {
-        // day, week, or legacy 'agenda' — all use the grouped list renderer
-        renderListView(container, evs, content, meta, tz, view);
+        // week / workweek / legacy 'agenda' — time-grid with day columns
+        renderWeekView(container, evs, content, meta, tz, view === 'workweek' ? 5 : 7);
       }
     };
 
@@ -632,8 +875,10 @@ window.EpaperCalendar = (function () {
       renderMeetingRoom(inst.container, events, inst.content || { id: contentId, name: '' }, meta, tz);
     } else if (view === 'month') {
       renderMonthGrid(inst.container, events, inst.content || { id: contentId, name: '' }, meta, tz);
+    } else if (view === 'day') {
+      renderDayView(inst.container, events, inst.content || { id: contentId, name: '' }, meta, tz);
     } else {
-      renderListView(inst.container, events, inst.content || { id: contentId, name: '' }, meta, tz, view);
+      renderWeekView(inst.container, events, inst.content || { id: contentId, name: '' }, meta, tz, view === 'workweek' ? 5 : 7);
     }
   }
 

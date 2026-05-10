@@ -65,7 +65,7 @@ fi
 
 # ── App directories ───────────────────────────────────────────────────────────
 echo "==> [bootstrap] Creating application directories..."
-sudo mkdir -p "$APP_DIR" /var/signage/uploads /var/signage/tizen /etc/signage /var/www/certbot
+sudo mkdir -p "$APP_DIR" /var/signage/uploads /var/signage/tizen /var/signage/android /etc/signage /var/www/certbot
 sudo chown -R "$APP_USER:$APP_USER" "$APP_DIR" /var/signage /etc/signage
 sudo chmod 750 /etc/signage
 
