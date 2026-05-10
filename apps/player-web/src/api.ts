@@ -55,22 +55,46 @@ export class Api {
     } catch { return null; }
   }
 
-  /** POST /devices/pair */
-  async pairDevice(info: PairInfo): Promise<{ code?: string; token?: string; status?: string; deviceId?: string }> {
-    const res = await fetch(`${this.base}/devices/pair`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(info),
-    });
-    if (!res.ok) throw new Error(`pair HTTP ${res.status}`);
-    return res.json();
+  /** POST /devices/pair/request */
+  async pairDevice(info: PairInfo): Promise<{ code?: string; deviceToken?: string; status?: string; deviceId?: string }> {
+    const url = `${this.base}/devices/pair/request`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15_000);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(info),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) {
+        let body = '';
+        try { body = await res.text(); } catch { /* ignore */ }
+        throw new Error(`pair HTTP ${res.status} ${res.statusText} — ${body.slice(0, 200)}`);
+      }
+      return res.json();
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') throw new Error(`pair timed out after 15s (is the API running at ${this.base}?)`);
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
-  /** GET /devices/pair/status?duid=… */
-  async pairStatus(duid: string): Promise<{ claimed: boolean; token?: string }> {
-    const res = await fetch(`${this.base}/devices/pair/status?duid=${encodeURIComponent(duid)}`);
-    if (!res.ok) return { claimed: false };
-    return res.json();
+  /** GET /devices/pair/status?code=… */
+  async pairStatus(code: string): Promise<{ claimed: boolean; token?: string }> {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10_000);
+    try {
+      const res = await fetch(`${this.base}/devices/pair/status?code=${encodeURIComponent(code)}`, { signal: ctrl.signal });
+      if (!res.ok) return { claimed: false };
+      const body = await res.json() as { status?: string; deviceToken?: string };
+      return { claimed: body.status === 'claimed', token: body.deviceToken };
+    } catch {
+      return { claimed: false };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** GET /pos/menu?workspaceId=… */

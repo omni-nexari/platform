@@ -44,6 +44,11 @@ app.commandLine.appendSwitch('enable-features', 'HardwareMediaKeyHandling');
 app.commandLine.appendSwitch('disable-features', 'AutofillServerCommunication');
 
 app.on('ready', async () => {
+  // Set AppUserModelID so Windows associates the taskbar icon with our shortcut
+  // (and does not fall back to the default electron.exe icon during dev).
+  if (process.platform === 'win32') {
+    try { app.setAppUserModelId('app.chiho.nexari-windows'); } catch { /* ignore */ }
+  }
   registerOsBridges();
   registerSettingsLifecycle();
 

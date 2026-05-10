@@ -40,8 +40,8 @@ if (fs.existsSync(SRC_DIST)) {
 // Always ship a tiny index.html that boots the player. Hosts that want a
 // different bootstrap can override after this script runs.
 const INDEX = path.join(DEST, 'index.html');
-if (!fs.existsSync(INDEX)) {
-  fs.writeFileSync(INDEX, `<!doctype html>
+// Always write the index.html (overwrite if present) to keep it in sync.
+fs.writeFileSync(INDEX, `<!doctype html>
 <html><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
@@ -51,20 +51,29 @@ if (!fs.existsSync(INDEX)) {
 <div id="player-root"></div>
 <script type="module">
 import { Player } from './bundle.js';
-const adapter = window.AndroidBridge && window.AndroidBridge.makeJsAdapter
+// Inject the async-adapter shim so makeJsAdapter() becomes available.
+if (window.AndroidBridge && window.AndroidBridge.makeJsAdapterScript) {
+  (0, eval)(window.AndroidBridge.makeJsAdapterScript());
+}
+const adapter = (window.AndroidBridge && typeof window.AndroidBridge.makeJsAdapter === 'function')
   ? window.AndroidBridge.makeJsAdapter()
   : null;
-if (!adapter) { document.body.textContent = 'AndroidBridge not available'; }
-else {
-  const apiBase = (window.AndroidBridge.getConfig && JSON.parse(window.AndroidBridge.getConfig()).apiBase) || 'https://ds.chiho.app/api/v1';
-  const wsBase  = (window.AndroidBridge.getConfig && JSON.parse(window.AndroidBridge.getConfig()).wsBase)  || 'wss://ds.chiho.app';
+if (!adapter) {
+  document.body.style.color = '#fff';
+  document.body.textContent = 'AndroidBridge not available';
+} else {
+  const cfg = JSON.parse(window.AndroidBridge.getConfig());
+  const apiBase = cfg.apiBase || 'https://ds.chiho.app/api/v1';
+  const wsBase  = cfg.wsBase  || 'wss://ds.chiho.app';
   const player = new Player({ apiBase, wsBase, adapter, container: document.getElementById('player-root') });
-  player.start().catch(e => { document.body.textContent = 'boot failed: ' + e.message; });
+  player.start().catch(e => {
+    document.body.style.color = '#fff';
+    document.body.textContent = 'boot failed: ' + e.message;
+  });
 }
 </script>
 </body></html>
 `);
-}
 
 // Copy the Nexari logo so the pairing screen and splash can use it.
 if (fs.existsSync(LOGO_SRC)) {

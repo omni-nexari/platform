@@ -2,6 +2,9 @@ package app.chiho.nexari
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.util.Log
+import android.webkit.ConsoleMessage
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -31,12 +34,27 @@ class PlayerView(context: Context) : FrameLayout(context) {
         s.domStorageEnabled = true
         s.databaseEnabled = true
         s.allowFileAccess = true
+        @Suppress("DEPRECATION")
+        s.allowFileAccessFromFileURLs = true   // required for ES module imports from file://
+        @Suppress("DEPRECATION")
+        s.allowUniversalAccessFromFileURLs = true
         s.mediaPlaybackRequiresUserGesture = false
         s.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         s.userAgentString = s.userAgentString + " NexariPlayer/${BuildConfig.VERSION_NAME}"
         s.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
         webView.setBackgroundColor(0xFF000000.toInt())
         webView.webViewClient = WebViewClient()
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
+                val level = when (msg.messageLevel()) {
+                    ConsoleMessage.MessageLevel.ERROR -> Log.ERROR
+                    ConsoleMessage.MessageLevel.WARNING -> Log.WARN
+                    else -> Log.DEBUG
+                }
+                Log.println(level, "Nexari", "${msg.message()} (${msg.sourceId()}:${msg.lineNumber()})")
+                return true
+            }
+        }
     }
 
     fun boot() {

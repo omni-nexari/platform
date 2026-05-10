@@ -6,6 +6,7 @@
   "main": "dist/main/main.js",
   "type": "commonjs",
   "scripts": {
+    "gen:icon": "node scripts/build-icon.mjs",
     "build:main": "tsc -p tsconfig.main.json",
     "build:preload": "tsc -p tsconfig.preload.json",
     "build:renderer": "vite build",

@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
+<title>Nexari Player</title>
+<style>html,body{margin:0;padding:0;background:#000;width:100%;height:100%;overflow:hidden}#player-root{position:fixed;inset:0}</style>
+</head><body>
+<div id="player-root"></div>
+<script type="module">
+import { Player } from './bundle.js';
+// Inject the async-adapter shim so makeJsAdapter() becomes available.
+if (window.AndroidBridge && window.AndroidBridge.makeJsAdapterScript) {
+  (0, eval)(window.AndroidBridge.makeJsAdapterScript());
+}
+const adapter = (window.AndroidBridge && typeof window.AndroidBridge.makeJsAdapter === 'function')
+  ? window.AndroidBridge.makeJsAdapter()
+  : null;
+if (!adapter) {
+  document.body.style.color = '#fff';
+  document.body.textContent = 'AndroidBridge not available';
+} else {
+  const cfg = JSON.parse(window.AndroidBridge.getConfig());
+  const apiBase = cfg.apiBase || 'https://ds.chiho.app/api/v1';
+  const wsBase  = cfg.wsBase  || 'wss://ds.chiho.app';
+  const player = new Player({ apiBase, wsBase, adapter, container: document.getElementById('player-root') });
+  player.start().catch(e => {
+    document.body.style.color = '#fff';
+    document.body.textContent = 'boot failed: ' + e.message;
+  });
+}
+</script>
+</body></html>

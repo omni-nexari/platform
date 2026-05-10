@@ -33,7 +33,7 @@ class DeviceInfoProvider(private val ctx: Context) {
             "manufacturer"    to Build.MANUFACTURER,
             "modelName"       to Build.MODEL,
             "modelCode"       to Build.DEVICE,
-            "serialNumber"    to safeSerial(),
+            "serialNumber"    to safeSerial(androidId),
             "firmwareVersion" to Build.VERSION.RELEASE,
             "playerVersion"   to (try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName } catch (_: Throwable) { null }),
             "resolution"      to resolution,
@@ -74,5 +74,10 @@ class DeviceInfoProvider(private val ctx: Context) {
     }
 
     @Suppress("DEPRECATION")
-    private fun safeSerial(): String? = try { Build.SERIAL.takeIf { it != Build.UNKNOWN } } catch (_: Throwable) { null }
+    private fun safeSerial(androidId: String): String {
+        // Build.SERIAL requires READ_PHONE_STATE on API 26+ and returns UNKNOWN on API 29+.
+        // Fall back to a deterministic prefix of ANDROID_ID so the field is never empty.
+        val hw = try { Build.SERIAL.takeIf { it != Build.UNKNOWN } } catch (_: Throwable) { null }
+        return hw ?: "AID-${androidId.takeLast(8).uppercase()}"
+    }
 }

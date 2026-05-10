@@ -48,6 +48,18 @@ function Invoke-Adb {
     if ($LASTEXITCODE -ne 0) { throw "adb $($AdbArgList -join ' ') failed (exit $LASTEXITCODE)" }
 }
 
+function Ensure-GradleWrapper {
+    param([string]$Dir)
+    $jar = "$Dir\gradle\wrapper\gradle-wrapper.jar"
+    if (-not (Test-Path $jar)) {
+        Write-Host "Downloading gradle-wrapper.jar..."
+        New-Item -ItemType Directory -Force -Path "$Dir\gradle\wrapper" | Out-Null
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/gradle/gradle/v8.8.0/gradle/wrapper/gradle-wrapper.jar" `
+            -OutFile $jar -UseBasicParsing
+        Write-Host "gradle-wrapper.jar downloaded."
+    }
+}
+
 # --- Build ---
 if (-not $SkipBuild) {
     # Step 1: player-web bundle
@@ -55,7 +67,7 @@ if (-not $SkipBuild) {
     Write-Host "=== Step 1: Build @signage/player-web ==="
     Push-Location $RepoRoot
     try {
-        pnpm --filter "@signage/player-web" build 2>&1 | Write-Host
+        pnpm --filter "@signage/player-web" build
         if ($LASTEXITCODE -ne 0) { throw "player-web build failed" }
     } finally { Pop-Location }
 
@@ -64,7 +76,7 @@ if (-not $SkipBuild) {
     Write-Host "=== Step 2: Sync bundle into Android assets ==="
     Push-Location $AppDir
     try {
-        node scripts/sync-player-web.cjs 2>&1 | Write-Host
+        node scripts/sync-player-web.cjs
         if ($LASTEXITCODE -ne 0) { throw "sync-player-web failed" }
     } finally { Pop-Location }
 
@@ -73,7 +85,7 @@ if (-not $SkipBuild) {
     Write-Host "=== Step 3: Bump patch version ==="
     Push-Location $AppDir
     try {
-        npm version patch --no-git-tag-version 2>&1 | Write-Host
+        npm version patch --no-git-tag-version
         if ($LASTEXITCODE -ne 0) { throw "npm version patch failed" }
     } finally { Pop-Location }
 
@@ -93,9 +105,10 @@ if (-not $SkipBuild) {
     # Step 4: Gradle assembleSelfRelease
     Write-Host ""
     Write-Host "=== Step 4: Gradle assembleSelfRelease ==="
+    Ensure-GradleWrapper $AndroidDir
     Push-Location $AndroidDir
     try {
-        .\gradlew.bat assembleSelfRelease 2>&1 | Write-Host
+        .\gradlew.bat assembleSelfRelease
         if ($LASTEXITCODE -ne 0) { throw "Gradle assembleSelfRelease failed" }
     } finally { Pop-Location }
 } else {

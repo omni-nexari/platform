@@ -134,42 +134,58 @@ export class Player {
   private async ensurePaired(): Promise<string | null> {
     const cached = (window as unknown as Record<string, unknown>)['__nexariToken'] as string | undefined
       ?? localStorage.getItem('nexariToken');
-    if (cached) return cached;
+    if (cached) {
+      logger.info('[Pairing] found cached token, skipping pair flow');
+      return cached;
+    }
 
+    logger.info('[Pairing] no cached token — fetching device info');
     const info = await this.cfg.adapter.getDeviceInfo();
     const net  = await this.cfg.adapter.getNetworkInfo();
+    logger.info(`[Pairing] deviceId=${info.deviceId} serial=${info.serialNumber} platform=${info.platform} ip=${net.ipAddress}`);
+    logger.info(`[Pairing] apiBase=${this.cfg.apiBase}`);
 
     this.showPairingScreen('------', info, net, 'Requesting pairing code…');
 
-    let pair: { code?: string; token?: string; status?: string; deviceId?: string };
+    let pair: { code?: string; deviceToken?: string; status?: string; deviceId?: string };
     try {
+      logger.info('[Pairing] POST /devices/pair …');
       pair = await this.api.pairDevice({
         duid: info.deviceId, modelName: info.modelName, modelCode: info.modelCode,
         serialNumber: info.serialNumber, firmwareVersion: info.firmwareVersion,
         kind: info.kind, platform: info.platform, playerVersion: info.playerVersion,
       });
+      logger.info(`[Pairing] pairDevice response: status=${pair.status} code=${pair.code} hasToken=${!!pair.deviceToken}`);
     } catch (e) {
+      logger.error(`[Pairing] pairDevice failed: ${(e as Error).message}`);
       this.updatePairingStatus(`Failed to contact server: ${(e as Error).message}. Retrying in 10s…`);
       await new Promise(r => setTimeout(r, 10_000));
       return this.ensurePaired();
     }
 
     // Device already claimed for this DUID — resume immediately
-    if (pair.status === 'claimed' && pair.token) {
+    if (pair.status === 'claimed' && pair.deviceToken) {
       logger.info('[Pairing] already claimed — resuming');
-      try { localStorage.setItem('nexariToken', pair.token); } catch {}
+      try { localStorage.setItem('nexariToken', pair.deviceToken); } catch {}
       this.hidePairingScreen();
-      return pair.token;
+      return pair.deviceToken;
     }
 
     const code = pair.code ?? '------';
+    logger.info(`[Pairing] showing code: ${code}`);
     this.showPairingScreen(code, info, net, 'Waiting for confirmation in dashboard…');
 
     // Poll until claimed
     for (;;) {
       await new Promise(r => setTimeout(r, 3000));
       let pb: { claimed: boolean; token?: string };
-      try { pb = await this.api.pairStatus(info.deviceId); } catch { continue; }
+      try {
+        pb = await this.api.pairStatus(pair.code!);
+        logger.info(`[Pairing] pairStatus: claimed=${pb.claimed}`);
+      } catch (e) {
+        logger.warn(`[Pairing] pairStatus error: ${(e as Error).message}`);
+        continue;
+      }
       if (pb.claimed && pb.token) {
         logger.info('[Pairing] confirmed!');
         try { localStorage.setItem('nexariToken', pb.token); } catch {}
@@ -280,7 +296,7 @@ export class Player {
         <label style="display:block;font-size:12px;color:#777;margin-bottom:6px;font-weight:600;">
           CMS / API Base URL
         </label>
-        <input id="nexari-input-api" type="url" value="${escapeHtml(apiBase)}" spellcheck="false"
+        <input id="nexari-input-api" type="text" value="${escapeHtml(apiBase)}" spellcheck="false"
                placeholder="http://192.168.1.17:3000/api/v1"
                style="width:100%;box-sizing:border-box;background:#111;border:1px solid #333;
                       border-radius:8px;padding:10px 12px;color:#fff;font-size:14px;
@@ -290,7 +306,7 @@ export class Player {
         <label style="display:block;font-size:12px;color:#777;margin-bottom:6px;font-weight:600;">
           WebSocket URL
         </label>
-        <input id="nexari-input-ws" type="url" value="${escapeHtml(wsBase)}" spellcheck="false"
+        <input id="nexari-input-ws" type="text" value="${escapeHtml(wsBase)}" spellcheck="false"
                placeholder="ws://192.168.1.17:3000"
                style="width:100%;box-sizing:border-box;background:#111;border:1px solid #333;
                       border-radius:8px;padding:10px 12px;color:#fff;font-size:14px;
