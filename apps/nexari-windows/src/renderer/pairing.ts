@@ -80,7 +80,7 @@ async function init() {
 
   hostEl.textContent = info?.hostname ?? navigator.userAgent.split(' ')[0] ?? '—';
   ipEl.textContent   = info?.ipAddress ?? '—';
-  osEl.textContent   = info?.windowsBuild ? `Windows ${info.windowsBuild}` : (info?.osRelease ?? '—');
+  osEl.textContent   = info?.osCaption ?? (info?.windowsBuild ? `Windows ${info.windowsBuild}` : (info?.osRelease ?? '—'));
   cpuEl.textContent  = (info?.cpuModel ?? '—').replace(/\s+@.+$/, '');  // strip clock speed for brevity
 
   // 3. Request pairing code
@@ -91,12 +91,12 @@ async function requestCode(apiBase: string, info: any) {
   setStatus('Requesting pairing code…');
 
   const body = {
-    duid:            info?.hostname ?? null,
+    duid:            info?.machineGuid ?? info?.hostname ?? null,
     modelName:       info?.cpuModel ?? null,
-    serialNumber:    info?.hostname ?? null,
+    serialNumber:    info?.biosSerial ?? info?.machineGuid ?? info?.hostname ?? null,
     firmwareVersion: info?.windowsBuild ?? info?.osRelease ?? null,
     platform:        'windows',
-    osVersion:       info?.osRelease ?? null,
+    osVersion:       info?.osCaption ?? info?.osRelease ?? null,
     cpuModel:        info?.cpuModel ?? null,
     windowsBuild:    info?.windowsBuild ?? null,
     macAddress:      info?.macAddress ?? null,

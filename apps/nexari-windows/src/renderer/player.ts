@@ -44,7 +44,9 @@ function logArgs(args: unknown[]): string {
 }
 
 function appendLog(level: LogLevel, args: unknown[]) {
-  const line = `[Player] ${logArgs(args)}`;
+  const raw  = logArgs(args);
+  // Don't double-prefix: messages already tagged with [Player] are stored as-is
+  const line = raw.startsWith('[') ? raw : `[Player] ${raw}`;
   _logRing.push({ level, line });
   if (_logRing.length > LOG_MAX) _logRing.splice(0, _logRing.length - LOG_MAX);
 }
@@ -1192,7 +1194,8 @@ showIdle('Loading content…');
     if (cfg.apiBase)     localStorage.setItem('apiBase',     cfg.apiBase);
     if (cfg.deviceToken) localStorage.setItem('deviceToken', cfg.deviceToken);
     if (cfg.deviceId)    localStorage.setItem('deviceId',    cfg.deviceId);
-    console.info(`[Player] Boot: platform=windows version=0.1.0 deviceId=${cfg.deviceId || '(none)'} apiBase=${cfg.apiBase || '(none)'}`);
+    const ver = (cfg as any).appVersion || '0.1.0';
+    console.info(`[Player] Boot: platform=windows version=${ver} deviceId=${cfg.deviceId || '(none)'} apiBase=${cfg.apiBase || '(none)'}`);
   } catch (e) {
     console.warn('[Player] getConfig IPC failed:', e);
   }

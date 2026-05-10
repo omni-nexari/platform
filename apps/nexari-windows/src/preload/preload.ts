@@ -13,7 +13,7 @@ const api = {
 
   // ── Config ──────────────────────────────────────────────────────────────
   getDefaultApiBase: (): Promise<string> => ipcRenderer.invoke('app:getDefaultApiBase'),
-  getConfig: (): Promise<{ apiBase: string; deviceToken: string; deviceId: string }> =>
+  getConfig: (): Promise<{ apiBase: string; deviceToken: string; deviceId: string; appVersion: string }> =>
     ipcRenderer.invoke('app:getConfig'),
 
   // ── Asset cache ──────────────────────────────────────────────────────────

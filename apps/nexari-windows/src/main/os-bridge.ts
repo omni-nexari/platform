@@ -74,21 +74,126 @@ export function sendWol(mac: string, broadcastIp?: string): Promise<void> {
 }
 
 // --------------------------------------------------------------------------
-// System info snapshot (for heartbeat)
+// System info snapshot (for heartbeat + pairing)
 // --------------------------------------------------------------------------
+
+/** CPU load 0-100 averaged over all logical cores, sampled over 200 ms. */
+async function getCpuLoad(): Promise<number | null> {
+  return new Promise((resolve) => {
+    const cpus1 = os.cpus();
+    setTimeout(() => {
+      const cpus2 = os.cpus();
+      let idle = 0, total = 0;
+      for (let i = 0; i < cpus1.length; i++) {
+        const t1 = cpus1[i]!.times;
+        const t2 = cpus2[i]!.times;
+        const dt = (t2.user - t1.user) + (t2.nice - t1.nice) + (t2.sys - t1.sys)
+                 + (t2.irq - t1.irq) + (t2.idle - t1.idle);
+        idle  += (t2.idle - t1.idle);
+        total += dt;
+      }
+      resolve(total > 0 ? Math.round((1 - idle / total) * 100) : null);
+    }, 200);
+  });
+}
+
+/**
+ * Disk free bytes on the drive that holds the user-data directory.
+ * Uses PowerShell Get-PSDrive on Windows; falls back to df on Linux.
+ */
+async function getStorageFree(): Promise<number | null> {
+  try {
+    if (process.platform === 'win32') {
+      // Get the drive letter (e.g. C) from process.execPath
+      const drive = process.execPath.split(':')[0]?.toUpperCase() ?? 'C';
+      const { stdout } = await execAsync(
+        `powershell -NonInteractive -Command "(Get-PSDrive -Name ${drive}).Free"`
+      );
+      const n = parseInt(stdout.trim(), 10);
+      return isNaN(n) ? null : n;
+    } else {
+      const { stdout } = await execAsync("df -k / | awk 'NR==2{print $4}'");
+      const kb = parseInt(stdout.trim(), 10);
+      return isNaN(kb) ? null : kb * 1024;
+    }
+  } catch { return null; }
+}
+
+/**
+ * CPU temperature in Celsius via WMI MSAcpi_ThermalZoneTemperature.
+ * Many desktop/laptop BIOSes expose this; returns null if unavailable.
+ */
+async function getCpuTemperature(): Promise<number | null> {
+  if (process.platform !== 'win32') return null;
+  try {
+    const { stdout } = await execAsync(
+      'powershell -NonInteractive -Command "(Get-WmiObject -Namespace root/wmi -Class MSAcpi_ThermalZoneTemperature).CurrentTemperature"'
+    );
+    // WMI reports tenths of Kelvin
+    const raw = parseFloat(stdout.trim());
+    if (isNaN(raw) || raw <= 0) return null;
+    return Math.round((raw / 10 - 273.15) * 10) / 10;
+  } catch { return null; }
+}
+
+/**
+ * Read HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid — unique per Windows
+ * install, stable across renames/reboots. Used as device DUID.
+ */
+async function getMachineGuid(): Promise<string | null> {
+  if (process.platform !== 'win32') return null;
+  try {
+    const { stdout } = await execAsync(
+      'powershell -NonInteractive -Command "(Get-ItemProperty -Path HKLM:\\SOFTWARE\\Microsoft\\Cryptography -Name MachineGuid).MachineGuid"'
+    );
+    return stdout.trim() || null;
+  } catch { return null; }
+}
+
+/** OEM chassis serial from BIOS — matches label on device. */
+async function getBiosSerial(): Promise<string | null> {
+  if (process.platform !== 'win32') return null;
+  try {
+    const { stdout } = await execAsync(
+      'powershell -NonInteractive -Command "(Get-WmiObject -Class Win32_BIOS).SerialNumber"'
+    );
+    const s = stdout.trim();
+    if (!s || /to be filled|default string|n\/a/i.test(s)) return null;
+    return s;
+  } catch { return null; }
+}
+
+/** Full OS name e.g. "Windows 11 Pro". */
+async function getOsCaption(): Promise<string | null> {
+  if (process.platform !== 'win32') return null;
+  try {
+    const { stdout } = await execAsync(
+      'powershell -NonInteractive -Command "(Get-WmiObject -Class Win32_OperatingSystem).Caption"'
+    );
+    return stdout.trim() || null;
+  } catch { return null; }
+}
+
 export async function getSystemInfo() {
   const vol = await getVolume();
   const brightness = await getBrightness();
 
-  // Windows build number from `ver` output
-  let windowsBuild: string | null = null;
-  if (process.platform === 'win32') {
-    try {
-      const { stdout } = await execAsync('ver');
-      const m = stdout.match(/(\d+\.\d+\.\d+)/);
-      if (m) windowsBuild = m[1] ?? null;
-    } catch { /* ignore */ }
-  }
+  // Run all slow queries in parallel
+  const [
+    machineGuid, biosSerial, osCaption, windowsBuild,
+    cpuLoad, storageFreeBytes, temperatureC,
+  ] = await Promise.all([
+    getMachineGuid(),
+    getBiosSerial(),
+    getOsCaption(),
+    process.platform === 'win32'
+      ? execAsync('powershell -NonInteractive -Command "[System.Environment]::OSVersion.Version.ToString()"')
+          .then(({ stdout }) => stdout.trim() || null).catch(() => null)
+      : Promise.resolve(null),
+    getCpuLoad(),
+    getStorageFree(),
+    getCpuTemperature(),
+  ]);
 
   // First non-internal IPv4 + its MAC
   let ipAddress: string | null = null;
@@ -97,22 +202,27 @@ export async function getSystemInfo() {
   for (const name of Object.keys(ifaces)) {
     for (const iface of ifaces[name] ?? []) {
       if (!iface.internal && iface.family === 'IPv4') {
-        if (!ipAddress) ipAddress = iface.address;
-        if (!macAddress) macAddress = iface.mac;
+        if (!ipAddress) { ipAddress = iface.address; macAddress = iface.mac; }
       }
     }
   }
 
   return {
-    systemVolume: vol?.level ?? null,
-    systemMuted: vol?.muted ?? null,
+    systemVolume:    vol?.level ?? null,
+    systemMuted:     vol?.muted ?? null,
     brightness,
     windowsBuild,
-    cpuModel: os.cpus()[0]?.model ?? null,
-    osRelease: os.release(),
-    hostname: os.hostname(),
+    osCaption,
+    cpuModel:        os.cpus()[0]?.model ?? null,
+    osRelease:       os.release(),
+    hostname:        os.hostname(),
+    machineGuid,
+    biosSerial,
     ipAddress,
     macAddress,
+    cpuLoad,
+    storageFreeBytes,
+    temperatureC,
   };
 }
 

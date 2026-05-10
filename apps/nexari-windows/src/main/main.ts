@@ -71,6 +71,7 @@ app.on('ready', async () => {
       apiBase:     s.get('apiBase') || defaultApiBase,
       deviceToken: s.get('deviceToken') || '',
       deviceId:    s.get('deviceId')    || '',
+      appVersion:  app.getVersion(),
     };
   });
 

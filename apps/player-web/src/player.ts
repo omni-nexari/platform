@@ -75,6 +75,13 @@ export class Player {
   private calendarPushHandlers = new Map<string, (events: CalendarEvent[]) => void>();
   private syncActive = false;
 
+  // Content download / cache state (mirrors Tizen downloadContentInBackground flow)
+  private lastContentSignature: string | null = null;
+  private pendingItems: ScheduleItem[] | null = null;
+  private pendingSignature: string | null = null;
+  private isDownloadingContent = false;
+  private deviceDisplayName = '';
+
   constructor(cfg: PlayerConfig) {
     // Allow the connection settings panel to override apiBase/wsBase via localStorage
     const savedApi = localStorage.getItem('PLAYER_API_BASE');
@@ -90,6 +97,7 @@ export class Player {
   async start(): Promise<void> {
     const info = await this.cfg.adapter.getDeviceInfo();
     this.deviceId = info.deviceId;
+    this.deviceDisplayName = info.modelName || info.modelCode || '';
     initLogger({ apiBase: this.cfg.apiBase, deviceId: info.deviceId });
     logger.info(`[Player] starting deviceId=${info.deviceId} platform=${info.platform}`);
 
@@ -98,6 +106,9 @@ export class Player {
 
     this.token = await this.ensurePaired();
     logger.info(`[Player] paired (token: ${this.token ? 'ok' : 'none'})`);
+
+    // Try offline cache first so something shows immediately while we connect
+    if (!this.tryLoadCachedSchedule()) this.showIdle('Waiting for content…');
 
     this.connectWs();
     this.heartbeatTimer = setInterval(
@@ -525,21 +536,143 @@ export class Player {
     }
   }
 
+  // ── Content signature (mirrors Tizen getContentSignature) ──────────────────
+  private getContentSignature(items: ScheduleItem[]): string {
+    const parts = items.map(item => {
+      const c = item.content as (ContentRecord & { updatedAt?: string; version?: string }) | undefined;
+      const updAt = (item as unknown as { updatedAt?: string }).updatedAt ?? '';
+      return [item.id ?? '', updAt, c?.id ?? '', (c?.updatedAt as string | undefined) ?? '', (c?.version as string | undefined) ?? ''].join(':');
+    });
+    return JSON.stringify(parts);
+  }
+
+  // ── Pre-cache all media files via the browser Cache API ─────────────────────
+  private async preCacheItems(items: ScheduleItem[]): Promise<void> {
+    if (!('caches' in window)) return; // Cache API not available (e.g. http:// or old Android)
+    const cache = await caches.open('nexari-content-v1');
+    const urls = items
+      .map(i => i.content?.url ?? '')
+      .filter(u => u && /\.(mp4|webm|jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(u));
+    const total = urls.length;
+    if (!total) return;
+
+    let done = 0;
+    await Promise.allSettled(urls.map(async (url) => {
+      try {
+        const cached = await cache.match(url);
+        if (!cached) await cache.add(url);
+      } catch { /* network error — not fatal */ }
+      done++;
+      this.updateIdleProgress(Math.round((done / total) * 100));
+    }));
+  }
+
+  // ── Update the idle progress bar in-place without re-rendering the screen ───
+  private updateIdleProgress(pct: number): void {
+    const bar = this.cfg.container.querySelector<HTMLElement>('.nexari-download-bar');
+    if (bar) bar.style.width = `${pct}%`;
+    const status = this.cfg.container.querySelector<HTMLElement>('.nexari-idle-status');
+    if (status) status.textContent = `Downloading content… ${pct}%`;
+  }
+
+  // ── Background download → swap (mirrors Tizen downloadContentInBackground) ──
+  private async downloadContentInBackground(items: ScheduleItem[], signature: string): Promise<void> {
+    if (this.isDownloadingContent) {
+      logger.info('[Player] download already in progress, skipping');
+      return;
+    }
+    if (signature === this.pendingSignature) {
+      logger.info('[Player] content already downloaded and pending');
+      return;
+    }
+    this.isDownloadingContent = true;
+    try {
+      // Only show idle with progress when nothing is on screen
+      const nothingPlaying = !this.playlistItems.length && !this.syncActive;
+      if (nothingPlaying) this.showIdle('Downloading content… 0%', 0);
+
+      await this.preCacheItems(items);
+
+      this.pendingItems     = items;
+      this.pendingSignature = signature;
+      // Persist schedule for offline fallback
+      try { localStorage.setItem('nexari-schedule-cache', JSON.stringify(items)); } catch { /* quota */ }
+      logger.info('[Player] download complete — swapping content');
+      this.swapToPending();
+    } catch (err) {
+      logger.error(`[Player] background download failed: ${(err as Error)?.message}`);
+      if (!this.playlistItems.length) {
+        if (!this.tryLoadCachedSchedule()) this.showIdle('Waiting for content…');
+      }
+    } finally {
+      this.isDownloadingContent = false;
+    }
+  }
+
+  private swapToPending(): void {
+    if (!this.pendingItems) return;
+    this.playlistItems        = this.pendingItems;
+    this.playlistIdx          = 0;
+    this.lastContentSignature = this.pendingSignature;
+    this.pendingItems         = null;
+    this.pendingSignature     = null;
+    if (this.syncActive) return;
+    this.cancelPlayback();
+    void this.renderPlaylist();
+  }
+
+  private tryLoadCachedSchedule(): boolean {
+    try {
+      const raw = localStorage.getItem('nexari-schedule-cache');
+      if (!raw) return false;
+      const items = JSON.parse(raw) as ScheduleItem[];
+      if (!Array.isArray(items) || !items.length) return false;
+      logger.info('[Player] using cached schedule (offline fallback)');
+      this.playlistItems        = items;
+      this.playlistIdx          = 0;
+      this.lastContentSignature = this.getContentSignature(items);
+      if (this.syncActive) return true;
+      this.cancelPlayback();
+      void this.renderPlaylist();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // ── Main content loader (mirrors Tizen loadContent) ──────────────────────────
   private async loadContent(): Promise<void> {
     logger.info('[Player] loadContent');
     try {
       const schedule = await this.api.getCurrentContent(this.deviceId);
       if (!schedule || !Array.isArray(schedule.items) || !schedule.items.length) {
-        this.showIdle('No content published');
+        if (!this.playlistItems.length) this.showIdle('Waiting for content…');
         return;
       }
-      this.playlistItems = schedule.items;
-      this.playlistIdx   = 0;
-      if (this.syncActive) return;
-      this.cancelPlayback();
-      await this.renderPlaylist();
+      const newSig    = this.getContentSignature(schedule.items);
+      const isPlaying = !!this.playlistItems.length && !!(this.playbackCancel && !this.playbackCancel.signal.aborted) || this.syncActive;
+
+      // Unchanged + still playing → skip
+      if (newSig === this.lastContentSignature && this.playlistItems.length && isPlaying) {
+        logger.info('[Player] content unchanged, still playing — skip');
+        return;
+      }
+
+      // Unchanged but playback stopped → force re-render from current items
+      if (newSig === this.lastContentSignature && this.playlistItems.length && !isPlaying) {
+        logger.warn('[Player] same signature but not playing — forcing re-render');
+        this.cancelPlayback();
+        void this.renderPlaylist();
+        return;
+      }
+
+      logger.info(`[Player] new content (${schedule.items.length} items), downloading…`);
+      void this.downloadContentInBackground(schedule.items, newSig);
     } catch (e) {
       logger.warn(`[Player] loadContent failed: ${(e as Error)?.message}`);
+      if (!this.playlistItems.length) {
+        if (!this.tryLoadCachedSchedule()) this.showIdle('Waiting for content…');
+      }
     }
   }
 
@@ -765,11 +898,57 @@ export class Player {
     this.send({ type:p.kind, version:p.version, packageId:p.packageId, pct:p.pct, error:p.error });
   }
 
-  private showIdle(msg: string): void {
+  private showIdle(msg: string, downloadProgress?: number): void {
+    const progressBar = (downloadProgress !== undefined && downloadProgress >= 0 && downloadProgress < 100)
+      ? `<div style="width:200px;height:8px;background:rgba(255,255,255,.15);border-radius:4px;margin:20px auto;overflow:hidden;">
+           <div class="nexari-download-bar" style="width:${downloadProgress}%;height:100%;background:linear-gradient(90deg,#3a7bff,#4ff2d1);transition:width .3s;"></div>
+         </div>`
+      : '';
+
+    const deviceLabel = escapeHtml(this.deviceDisplayName);
+
     this.cfg.container.innerHTML = `
-      <div style="position:absolute;inset:0;background:#0a0a0a;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:system-ui,sans-serif;">
-        <div style="font-size:64px;margin-bottom:24px;">&#9654;</div>
-        <div style="font-size:20px;color:#888;">${escapeHtml(msg)}</div>
-      </div>`;
+      <div style="position:absolute;inset:0;background:#0d0f1a;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:system-ui,sans-serif;">
+        <!-- bg grid -->
+        <div style="position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;"></div>
+
+        <!-- card -->
+        <div style="position:relative;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:24px;padding:48px 64px;text-align:center;min-width:340px;">
+
+          <!-- Nexari logo -->
+          <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:${deviceLabel ? '8px' : '24px'};">
+            <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:48px;height:48px;" aria-hidden="true">
+              <defs>
+                <linearGradient id="ng" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#3a7bff"/>
+                  <stop offset="100%" stop-color="#4ff2d1"/>
+                </linearGradient>
+              </defs>
+              <rect x="4" y="4" width="56" height="56" rx="14" stroke="url(#ng)" stroke-width="2.5"/>
+              <path d="M20 44 V20 L44 44 V20" stroke="url(#ng)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <div style="font-size:28px;font-weight:700;letter-spacing:.2em;background:linear-gradient(90deg,#3a7bff,#4ff2d1);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">NEXARI</div>
+          </div>
+
+          ${deviceLabel ? `<div style="font-size:13px;color:#666;margin-bottom:20px;">${deviceLabel}</div>` : ''}
+
+          <div style="height:1px;background:rgba(255,255,255,.08);margin:0 0 20px;"></div>
+
+          <!-- status row -->
+          <div style="display:flex;align-items:center;justify-content:center;gap:8px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:#3a7bff;box-shadow:0 0 8px #3a7bff;animation:nexariPulse 2s ease-in-out infinite;display:inline-block;"></span>
+            <span class="nexari-idle-status" style="font-size:15px;color:#888;">${escapeHtml(msg)}</span>
+          </div>
+          ${progressBar}
+        </div>
+
+        <div style="position:absolute;bottom:24px;font-size:12px;color:#333;letter-spacing:.05em;">Signage Player &middot; Standby</div>
+      </div>
+      <style>
+        @keyframes nexariPulse {
+          0%,100% { opacity:1; box-shadow:0 0 8px #3a7bff; }
+          50%      { opacity:.4; box-shadow:0 0 3px #3a7bff; }
+        }
+      </style>`;
   }
 }
