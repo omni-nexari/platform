@@ -14,6 +14,8 @@ export interface StoreSchema {
   kioskPinHash: string;
   workspaceId: string;
   groupId: string;
+  /** Per-device Windows player settings (mirrors API columns; see WindowsPlayerSettings in shared). */
+  windowsSettings: Record<string, unknown>;
 }
 
 const DEFAULTS: StoreSchema = {
@@ -25,6 +27,7 @@ const DEFAULTS: StoreSchema = {
   kioskPinHash: '',
   workspaceId: '',
   groupId: '',
+  windowsSettings: {},
 };
 
 class JsonStore {

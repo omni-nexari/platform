@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
 import { useAuthStore } from '../../lib/auth.js';
 import { UpdateDeviceSchema } from '@signage/shared';
-import type { UpdateDeviceInput, DeviceCommandInput } from '@signage/shared';
+import type { UpdateDeviceInput, DeviceCommandInput, WindowsPlayerSettings } from '@signage/shared';
 import {
   ArrowLeft,
   Wifi,
@@ -208,6 +208,7 @@ interface Device {
     ledMode?: 'ON' | 'OFF' | 'AUTO';
     batteryWarningIcon?: boolean;
     } | null;
+  windowsSettings?: WindowsPlayerSettings | null;
 }
 
 interface DeviceLogEntry {
@@ -1232,6 +1233,15 @@ export function DeviceDetailContent({
       void queryClient.invalidateQueries({ queryKey: ['devices', wsId] });
     },
     onError: () => toast.error('Update failed'),
+  });
+
+  const updateWindowsSettings = useMutation({
+    mutationFn: (body: WindowsPlayerSettings) => api.patch(`/devices/${deviceId}/windows-settings`, body),
+    onSuccess: () => {
+      toast.success('Windows settings updated');
+      void queryClient.invalidateQueries({ queryKey: ['device', deviceId] });
+    },
+    onError: () => toast.error('Failed to update Windows settings'),
   });
 
   const { data: playlistsResponse } = useQuery<{ items: { id: string; name: string }[]; total: number }>({
@@ -2516,6 +2526,14 @@ export function DeviceDetailContent({
         </SectionCardBody>
       </SectionCard>
 
+      {isWindows && (
+        <WindowsSettingsCard
+          settings={device.windowsSettings ?? {}}
+          onSave={(s) => updateWindowsSettings.mutate(s)}
+          saving={updateWindowsSettings.isPending}
+        />
+      )}
+
       <SectionCard>
         <SectionCardHeader>
           <h2 className="text-sm font-semibold text-[var(--text)]">Default Playlist</h2>
@@ -3174,3 +3192,217 @@ export default function DeviceDetailPage() {
   const { wsId, deviceId } = useParams<{ wsId: string; deviceId: string }>();
   return <DeviceDetailContent deviceId={deviceId} wsId={wsId} />;
 }
+
+// ── Windows Settings Card ────────────────────────────────────────────────────
+// Mirrors the WindowsPlayerSettings shape from @signage/shared. All fields are
+// optional; only changed fields are sent on save (PATCH merges server-side).
+
+function WindowsSettingsCard({ settings, onSave, saving }: {
+  settings: WindowsPlayerSettings;
+  onSave: (s: WindowsPlayerSettings) => void;
+  saving: boolean;
+}) {
+  const [draft, setDraft] = useState<WindowsPlayerSettings>(settings);
+  useEffect(() => { setDraft(settings); }, [settings]);
+
+  const set = <K extends keyof WindowsPlayerSettings>(k: K, v: WindowsPlayerSettings[K]) =>
+    setDraft((d) => ({ ...d, [k]: v }));
+
+  // Show a 4-digit PIN entry; we hash it with SHA-256 client-side before send.
+  const [pinInput, setPinInput] = useState<string>('');
+  async function hashPin(pin: string): Promise<string> {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pin));
+    return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  return (
+    <SectionCard>
+      <SectionCardHeader>
+        <h2 className="text-sm font-semibold text-[var(--text)]">Windows Player</h2>
+        <span className="text-xs text-[var(--text-muted)]">applied immediately if device online</span>
+      </SectionCardHeader>
+      <SectionCardBody>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+
+          {/* Auto-launch */}
+          <ToggleRow label="Auto-launch on Windows startup"
+            help="Adds player to HKCU\\Run so it starts after login."
+            checked={draft.autoLaunch ?? true}
+            onChange={(v) => set('autoLaunch', v)} />
+
+          {/* Daily reboot */}
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm text-[var(--text)]">Daily auto-reboot</div>
+              <div className="text-xs text-[var(--text-muted)]">Empty disables. 24h format HH:MM.</div>
+            </div>
+            <input
+              type="time"
+              value={draft.dailyRebootTime ?? ''}
+              onChange={(e) => set('dailyRebootTime', e.target.value || null)}
+              className="px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm"
+            />
+          </div>
+
+          <ToggleRow label="Hide cursor when idle"
+            checked={draft.hideCursor ?? true}
+            onChange={(v) => set('hideCursor', v)} />
+
+          <ToggleRow label="Enforce display sleep block (watchdog)"
+            checked={draft.enforceSleepBlock ?? true}
+            onChange={(v) => set('enforceSleepBlock', v)} />
+
+          <ToggleRow label="Block keyboard shortcuts"
+            help="Alt+F4 / Ctrl+W / F11 / Alt+Tab / Alt+Space"
+            checked={draft.blockShortcuts ?? true}
+            onChange={(v) => set('blockShortcuts', v)} />
+
+          <ToggleRow label="Hardware acceleration"
+            help="Disable if you see video glitches on Intel UHD GPUs."
+            checked={draft.hardwareAcceleration ?? true}
+            onChange={(v) => set('hardwareAcceleration', v)} />
+
+          {/* Rotation */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm text-[var(--text)]">Screen rotation</div>
+            <select
+              value={draft.rotation ?? 0}
+              onChange={(e) => set('rotation', Number(e.target.value) as 0|90|180|270)}
+              className="px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm"
+            >
+              <option value={0}>0° (landscape)</option>
+              <option value={90}>90° (portrait)</option>
+              <option value={180}>180° (inverted)</option>
+              <option value={270}>270°</option>
+            </select>
+          </div>
+
+          {/* Target display */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm text-[var(--text)]">Target display index</div>
+            <input
+              type="number" min={0} max={9}
+              value={draft.targetDisplayIndex ?? 0}
+              onChange={(e) => set('targetDisplayIndex', Number(e.target.value))}
+              className="w-20 px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm"
+            />
+          </div>
+
+          {/* Asset cache cap */}
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm text-[var(--text)]">Asset cache limit</div>
+              <div className="text-xs text-[var(--text-muted)]">LRU eviction above this size.</div>
+            </div>
+            <select
+              value={draft.assetCacheMaxBytes ?? 5 * 1024 ** 3}
+              onChange={(e) => set('assetCacheMaxBytes', Number(e.target.value))}
+              className="px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm"
+            >
+              <option value={1 * 1024 ** 3}>1 GB</option>
+              <option value={2 * 1024 ** 3}>2 GB</option>
+              <option value={5 * 1024 ** 3}>5 GB</option>
+              <option value={10 * 1024 ** 3}>10 GB</option>
+              <option value={20 * 1024 ** 3}>20 GB</option>
+            </select>
+          </div>
+
+          {/* Log retention */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm text-[var(--text)]">Log retention (days)</div>
+            <input
+              type="number" min={0} max={365}
+              value={draft.logRetentionDays ?? 14}
+              onChange={(e) => set('logRetentionDays', Number(e.target.value))}
+              className="w-20 px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm"
+            />
+          </div>
+
+          {/* Proxy URL */}
+          <div className="sm:col-span-2 flex items-center justify-between gap-3">
+            <div className="shrink-0">
+              <div className="text-sm text-[var(--text)]">HTTP Proxy</div>
+              <div className="text-xs text-[var(--text-muted)]">Leave blank for direct connection.</div>
+            </div>
+            <input
+              type="text" placeholder="http://proxy.lan:8080"
+              value={draft.proxyUrl ?? ''}
+              onChange={(e) => set('proxyUrl', e.target.value || null)}
+              className="flex-1 max-w-xs px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm"
+            />
+          </div>
+
+          {/* Remote DevTools */}
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm text-[var(--text)]">Remote DevTools port</div>
+              <div className="text-xs text-[var(--text-muted)]">0 to disable. Applies after restart.</div>
+            </div>
+            <input
+              type="number" min={0} max={65535}
+              value={draft.remoteDevToolsPort ?? 0}
+              onChange={(e) => set('remoteDevToolsPort', Number(e.target.value) || null)}
+              className="w-24 px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm"
+            />
+          </div>
+
+          {/* Exit kiosk PIN */}
+          <div className="sm:col-span-2 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm text-[var(--text)]">Exit kiosk PIN</div>
+              <div className="text-xs text-[var(--text-muted)]">
+                {draft.exitPinHash ? 'PIN currently set. Type a new 4-8 digit PIN to replace, or "clear" to remove.' : 'Set a PIN required to exit kiosk mode on the device.'}
+              </div>
+            </div>
+            <input
+              type="password"
+              placeholder="••••"
+              value={pinInput}
+              onChange={(e) => setPinInput(e.target.value)}
+              className="w-32 px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="mt-6 flex justify-end">
+          <ActionButton
+            type="button"
+            tone="primary"
+            className="px-4 py-2 text-sm"
+            disabled={saving}
+            onClick={async () => {
+              const out: WindowsPlayerSettings = { ...draft };
+              if (pinInput) {
+                if (pinInput.toLowerCase() === 'clear') out.exitPinHash = null;
+                else if (/^\d{4,8}$/.test(pinInput)) out.exitPinHash = await hashPin(pinInput);
+                else { toast.error('PIN must be 4-8 digits or "clear"'); return; }
+                setPinInput('');
+              }
+              onSave(out);
+            }}
+          >
+            Save Changes
+          </ActionButton>
+        </div>
+      </SectionCardBody>
+    </SectionCard>
+  );
+}
+
+function ToggleRow({ label, help, checked, onChange }: {
+  label: string;
+  help?: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div>
+        <div className="text-sm text-[var(--text)]">{label}</div>
+        {help && <div className="text-xs text-[var(--text-muted)]">{help}</div>}
+      </div>
+      <ToggleSwitch checked={checked} onChange={() => onChange(!checked)} />
+    </div>
+  );
+}
+

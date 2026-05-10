@@ -164,6 +164,64 @@ async function getBiosSerial(): Promise<string | null> {
   } catch { return null; }
 }
 
+/** Active Wi-Fi SSID via netsh (null if on ethernet or not connected). */
+export async function getWifiSsid(): Promise<string | null> {
+  if (process.platform !== 'win32') return null;
+  try {
+    const { stdout } = await execAsync('netsh wlan show interfaces');
+    // Match "    SSID                   : MyNetwork" but NOT "    BSSID …"
+    const m = stdout.match(/\bSSID\s*:\s*(.+)/);
+    const ssid = m?.[1]?.trim();
+    return ssid || null;
+  } catch { return null; }
+}
+
+/** System timezone as IANA name (e.g. "Asia/Singapore"). */
+export async function getWindowsTimezone(): Promise<string> {
+  try {
+    const { stdout } = await execAsync('tzutil /g');
+    const winId = stdout.trim();
+    // Mapping of Windows timezone IDs → IANA names (common deployments first)
+    const MAP: Record<string, string> = {
+      'UTC': 'UTC',
+      'Singapore Standard Time': 'Asia/Singapore',
+      'Malay Peninsula Standard Time': 'Asia/Kuala_Lumpur',
+      'SE Asia Standard Time': 'Asia/Bangkok',
+      'China Standard Time': 'Asia/Shanghai',
+      'Taipei Standard Time': 'Asia/Taipei',
+      'Tokyo Standard Time': 'Asia/Tokyo',
+      'Korea Standard Time': 'Asia/Seoul',
+      'India Standard Time': 'Asia/Kolkata',
+      'Sri Lanka Standard Time': 'Asia/Colombo',
+      'Nepal Standard Time': 'Asia/Kathmandu',
+      'Bangladesh Standard Time': 'Asia/Dhaka',
+      'Myanmar Standard Time': 'Asia/Rangoon',
+      'Arabian Standard Time': 'Asia/Dubai',
+      'Pakistan Standard Time': 'Asia/Karachi',
+      'Afghanistan Standard Time': 'Asia/Kabul',
+      'West Asia Standard Time': 'Asia/Tashkent',
+      'Central Asia Standard Time': 'Asia/Almaty',
+      'Russian Standard Time': 'Europe/Moscow',
+      'W. Europe Standard Time': 'Europe/Berlin',
+      'Central Europe Standard Time': 'Europe/Warsaw',
+      'Romance Standard Time': 'Europe/Paris',
+      'GMT Standard Time': 'Europe/London',
+      'Eastern Standard Time': 'America/New_York',
+      'Central Standard Time': 'America/Chicago',
+      'Mountain Standard Time': 'America/Denver',
+      'Pacific Standard Time': 'America/Los_Angeles',
+      'AUS Eastern Standard Time': 'Australia/Sydney',
+      'E. Australia Standard Time': 'Australia/Brisbane',
+      'W. Australia Standard Time': 'Australia/Perth',
+      'New Zealand Standard Time': 'Pacific/Auckland',
+      'Hawaiian Standard Time': 'Pacific/Honolulu',
+    };
+    return MAP[winId] ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  }
+}
+
 /** Full OS name e.g. "Windows 11 Pro". */
 async function getOsCaption(): Promise<string | null> {
   if (process.platform !== 'win32') return null;
@@ -183,6 +241,7 @@ export async function getSystemInfo() {
   const [
     machineGuid, biosSerial, osCaption, windowsBuild,
     cpuLoad, storageFreeBytes, temperatureC,
+    timezone, wifiSsid,
   ] = await Promise.all([
     getMachineGuid(),
     getBiosSerial(),
@@ -194,6 +253,8 @@ export async function getSystemInfo() {
     getCpuLoad(),
     getStorageFree(),
     getCpuTemperature(),
+    getWindowsTimezone(),
+    getWifiSsid(),
   ]);
 
   // First non-internal IPv4 + its MAC (skip zero-MACs from virtual adapters)
@@ -226,6 +287,8 @@ export async function getSystemInfo() {
     cpuLoad,
     storageFreeBytes,
     temperatureC,
+    timezone,
+    wifiSsid,
   };
 }
 

@@ -133,6 +133,8 @@ export const devices = pgTable('devices', {
   publishedSyncGroupId: uuid('published_sync_group_id'),
   /** Per-device alert threshold overrides. Shape: { notSeenMinutes?, tempC?, cpuLoad?, storageFreeBytes? } */
   alertThresholds: jsonb('alert_thresholds'),
+  /** Per-device Windows player settings — see WindowsPlayerSettings shape in shared. */
+  windowsSettings: jsonb('windows_settings'),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

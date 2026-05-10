@@ -130,6 +130,38 @@ export const UpdateDeviceSchema = z.object({
 });
 export type UpdateDeviceInput = z.infer<typeof UpdateDeviceSchema>;
 
+// ── Windows player settings (per-device) ──────────────────────────────────────
+// All fields optional so partial pushes are safe; the player merges with defaults.
+export const WindowsPlayerSettingsSchema = z.object({
+  /** Register HKCU\Run entry so the player auto-starts after login. */
+  autoLaunch: z.boolean().optional(),
+  /** Daily reboot time as "HH:MM" (24h) or null to disable. */
+  dailyRebootTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable().optional(),
+  /** Hide the OS cursor after a few seconds of inactivity. */
+  hideCursor: z.boolean().optional(),
+  /** Re-arm powerSaveBlocker on a watchdog so display sleep stays disabled. */
+  enforceSleepBlock: z.boolean().optional(),
+  /** Swallow Alt+F4, Win, Ctrl+W, F11 in kiosk mode. */
+  blockShortcuts: z.boolean().optional(),
+  /** SHA-256 hex of the PIN required to exit the kiosk shell. Empty = disabled. */
+  exitPinHash: z.string().nullable().optional(),
+  /** Disable Chromium HW acceleration (some Intel UHD GPUs glitch on 4K H.264). */
+  hardwareAcceleration: z.boolean().optional(),
+  /** Renderer rotation in degrees. */
+  rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).optional(),
+  /** File log retention in days (0 = no retention / keep forever). */
+  logRetentionDays: z.number().int().min(0).max(365).optional(),
+  /** Maximum asset cache size in bytes; LRU evicts when exceeded. */
+  assetCacheMaxBytes: z.number().int().min(50_000_000).optional(),
+  /** Optional HTTP proxy for `session.setProxy`. e.g. "http://proxy.lan:8080". */
+  proxyUrl: z.string().nullable().optional(),
+  /** Display index to render on; null = primary. */
+  targetDisplayIndex: z.number().int().min(0).nullable().optional(),
+  /** Remote DevTools port (Chromium --remote-debugging-port). null = disabled. */
+  remoteDevToolsPort: z.number().int().min(1024).max(65535).nullable().optional(),
+});
+export type WindowsPlayerSettings = z.infer<typeof WindowsPlayerSettingsSchema>;
+
 // ── WS Commands (server → device) ─────────────────────────────────────────────
 
 export const DeviceCommandSchema = z.discriminatedUnion('command', [
@@ -168,6 +200,7 @@ export const DeviceCommandSchema = z.discriminatedUnion('command', [
   z.object({ command: z.literal('dump_logs') }),
   z.object({ command: z.literal('set_screenshot_interval'), payload: z.object({ minutes: z.number().int().min(1) }) }),
   z.object({ command: z.literal('set_zones'), payload: z.object({ zones: z.array(ZoneConfigSchema) }) }),
+  z.object({ command: z.literal('set_windows_settings'), payload: z.object({ settings: WindowsPlayerSettingsSchema }) }),
   z.object({
     command: z.literal('mdc_control'),
     payload: z.object({

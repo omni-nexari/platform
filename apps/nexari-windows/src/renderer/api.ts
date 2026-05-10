@@ -61,6 +61,14 @@ async function apiFetch(path: string, token?: string): Promise<any> {
   const res = await fetch(`${getApiBase()}${path}`, {
     headers: { Authorization: `Bearer ${tok}` },
   });
+  if (res.status === 401 || res.status === 404) {
+    // Device was deleted or token revoked — clear credentials and go to pairing
+    console.warn(`[api] Device rejected (${res.status}), unpairing…`);
+    localStorage.removeItem('deviceToken');
+    localStorage.removeItem('deviceId');
+    window.nexari.unpair().catch(() => {});
+    throw new Error(`HTTP ${res.status}: device not found`);
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
   return res.json();
 }

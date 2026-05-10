@@ -18,8 +18,23 @@ import { createPlayerWindow } from './windows/player.js';
 import { createPairingWindow } from './windows/pairing.js';
 import { connectWs } from './ws-client.js';
 import { registerOsBridges } from './os-bridge.js';
+import { applySettings, getEffectiveSettings, loadSettingsForBoot, registerSettingsLifecycle } from './windows-settings.js';
 
 const isDev = !!process.env.NEXARI_DEV;
+
+// ── Pre-ready boot-time settings (must run before app.on('ready')) ──────────
+// Read persisted settings synchronously from disk so flags like
+// hardware-acceleration / remote DevTools port can be wired in before
+// Electron's GPU + browser stack initialize.
+try {
+  const boot = loadSettingsForBoot();
+  if (!boot.hardwareAcceleration) {
+    app.disableHardwareAcceleration();
+  }
+  if (boot.remoteDevToolsPort && boot.remoteDevToolsPort > 0) {
+    app.commandLine.appendSwitch('remote-debugging-port', String(boot.remoteDevToolsPort));
+  }
+} catch { /* first run — store missing */ }
 
 let playerWin: BrowserWindow | null = null;
 let pairingWin: BrowserWindow | null = null;
@@ -30,6 +45,11 @@ app.commandLine.appendSwitch('disable-features', 'AutofillServerCommunication');
 
 app.on('ready', async () => {
   registerOsBridges();
+  registerSettingsLifecycle();
+
+  // Apply persisted Windows player settings (idempotent — safe to call before
+  // a player window exists; rotation/cursor/display will re-apply once it does).
+  await applySettings({}, null);
 
   // Keep display awake — we are a signage player
   powerSaveBlocker.start('prevent-display-sleep');
@@ -43,22 +63,42 @@ app.on('ready', async () => {
   } else {
     playerWin = createPlayerWindow(isDev);
     playerWin.on('closed', () => { playerWin = null; });
+    // Re-apply window-bound settings (cursor / rotation / target display).
+    playerWin.webContents.once('did-finish-load', () => {
+      void applySettings({}, playerWin);
+    });
     connectWs(playerWin);
     setupUpdater(playerWin);
   }
 
-  // Pairing complete: renderer posts PAIRED — switch windows
-  ipcMain.once('PAIRED', (_evt, data: { token: string; deviceId: string; apiBase: string }) => {
+  // Pairing complete: renderer posts PAIRED — switch windows.
+  // Use ipcMain.on (not once) so re-pairing after unpair also works.
+  ipcMain.on('PAIRED', (_evt, data: { token: string; deviceId: string; apiBase: string }) => {
     const store2 = getStore();
     store2.set('deviceToken', data.token);
     store2.set('deviceId', data.deviceId);
     store2.set('apiBase', data.apiBase);
 
     pairingWin?.close();
+    pairingWin = null;
     playerWin = createPlayerWindow(isDev);
     playerWin.on('closed', () => { playerWin = null; });
+    playerWin.webContents.once('did-finish-load', () => {
+      void applySettings({}, playerWin);
+    });
     connectWs(playerWin);
     setupUpdater(playerWin);
+  });
+
+  // Device deleted from server — clear credentials and show pairing screen
+  ipcMain.handle('app:unpair', () => {
+    const s = getStore();
+    s.set('deviceToken', '');
+    s.set('deviceId', '');
+    playerWin?.close();
+    playerWin = null;
+    pairingWin = createPairingWindow(isDev);
+    pairingWin.on('closed', () => { pairingWin = null; });
   });
 
   // Expose full config to renderer (player bootstrap)

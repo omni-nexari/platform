@@ -15,6 +15,8 @@ const api = {
   getDefaultApiBase: (): Promise<string> => ipcRenderer.invoke('app:getDefaultApiBase'),
   getConfig: (): Promise<{ apiBase: string; deviceToken: string; deviceId: string; appVersion: string }> =>
     ipcRenderer.invoke('app:getConfig'),
+  /** Clear stored credentials and return to the pairing screen. */
+  unpair: (): Promise<void> => ipcRenderer.invoke('app:unpair'),
 
   // ── Asset cache ──────────────────────────────────────────────────────────
   /** Download a content URL to local disk cache and return the local file path. */

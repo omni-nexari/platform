@@ -9,7 +9,7 @@ import { eq, and, isNull, desc, asc, inArray, sql, ilike, gte, lte, lt } from 'd
 import { z } from 'zod';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
-import { ClaimDeviceSchema, UpdateDeviceSchema, DeviceCommandSchema, PairRequestSchema, buildWallGeometry } from '@signage/shared';
+import { ClaimDeviceSchema, UpdateDeviceSchema, DeviceCommandSchema, PairRequestSchema, buildWallGeometry, WindowsPlayerSettingsSchema } from '@signage/shared';
 import type { WallMember, WallBezels } from '@signage/shared';
 import { writeAuditLog } from '../services/audit.js';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
@@ -1541,6 +1541,33 @@ export async function deviceRoutes(app: FastifyInstance) {
     return reply.send({ ok: true, sent, settings: merged });
   });
 
+  // ── PATCH /devices/:id/windows-settings ─ Windows player config push ──────
+  // Body: WindowsPlayerSettings (partial). Merged onto existing JSON column
+  // and pushed to the device via WS.
+  app.patch('/:id/windows-settings', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const params = req.params as { id: string };
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, params.id), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Device not found' });
+    if (device.orgId !== user.orgId) return reply.status(403).send({ error: 'Forbidden' });
+
+    const parsed = WindowsPlayerSettingsSchema.safeParse(req.body);
+    if (!parsed.success) return reply.status(400).send({ error: parsed.error.flatten() });
+
+    const merged = Object.assign({}, (device.windowsSettings as Record<string, unknown> | null) ?? {}, parsed.data);
+    await db.update(devices).set({ windowsSettings: merged, updatedAt: new Date() }).where(eq(devices.id, device.id));
+
+    const sent = sendCommand(device.id, { type: 'set_windows_settings', payload: { settings: merged } });
+    await writeAuditLog({
+      orgId: user.orgId, actorId: user.sub, action: 'DEVICE_SETTINGS_UPDATED',
+      entityType: 'device', entityId: device.id, meta: { kind: 'windows', sent, fields: Object.keys(parsed.data) },
+      ipAddress: req.ip,
+    });
+    return reply.send({ ok: true, sent, settings: merged });
+  });
+
   // ── GET /devices/device/epaper/policy ─ device-auth, returns merged policy ─
   // The e-paper client calls this on boot (and after epaper_settings_changed).
   // Returns the device-specific epaper_settings merged onto sensible defaults.
@@ -1660,6 +1687,17 @@ export async function deviceRoutes(app: FastifyInstance) {
     setTimeout(() => {
       sendCommand(deviceId, { type: 'screenshot_auto' });
     }, 3_000);
+
+    // Push persisted Windows settings (if any) so the device's local store is
+    // in sync with the portal after restart / reinstall.
+    if (device.windowsSettings && typeof device.windowsSettings === 'object') {
+      setTimeout(() => {
+        sendCommand(deviceId, {
+          type: 'set_windows_settings',
+          payload: { settings: device.windowsSettings as Record<string, unknown> },
+        });
+      }, 4_000);
+    }
 
     // Re-push VIDEOWALL_INIT for any videowall group this device belongs to.
     // Without this, a device that reconnects after a reinstall plays full-screen

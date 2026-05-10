@@ -7,9 +7,9 @@
  * Sends heartbeats every 30 s.
  */
 import WebSocket, { type RawData } from 'ws';
-import { BrowserWindow, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import { getStore } from './store.js';
-import { getSystemInfo } from './os-bridge.js';
+import { getSystemInfo, getWifiSsid } from './os-bridge.js';
 import os from 'os';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -96,28 +96,28 @@ async function sendHeartbeat() {
     const physH = Math.round(b.height * primary.scaleFactor);
     const res   = (physW > 0 && physH > 0) ? `${physW}x${physH}` : null;
     console.log(`[ws-client] heartbeat: res=${res} mac=${info.macAddress} machineGuid=${info.machineGuid?.slice(0,8)}…`);
-    const hb = {
-      type: 'heartbeat',
-      payload: {
-        playerVersion: '0.1.0',
-        platform: 'windows',
-        powerState: 'on',
-        resolution: res,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        deviceUptimeSec: Math.round(os.uptime()),
-        memoryFreeBytes: os.freemem(),
-        memoryTotalBytes: os.totalmem(),
-        cpuLoad: info.cpuLoad ?? null,
-        storageFreeBytes: info.storageFreeBytes ?? null,
-        temperatureCelsius: info.temperatureC ?? null,
-        systemVolume: info.systemVolume ?? null,
-        systemMuted: info.systemMuted ?? null,
-        windowsBuild: info.windowsBuild ?? null,
-        displayCount: displays.length,
-        primaryDisplayIndex: displays.findIndex((d) => d.id === primary.id),
-      },
+    // Only include fields when non-null. The shared HeartbeatSchema marks most
+    // fields as `.optional()` (not `.nullable()`), so sending `null` would fail
+    // Zod validation and silently drop the entire heartbeat on the API side.
+    const payload: Record<string, unknown> = {
+      playerVersion: app.getVersion(),
+      platform: 'windows',
+      powerState: 'on',
+      timezone: info.timezone,
+      deviceUptimeSec: Math.round(os.uptime()),
+      memoryFreeBytes: os.freemem(),
+      memoryTotalBytes: os.totalmem(),
+      displayCount: displays.length,
+      primaryDisplayIndex: displays.findIndex((d) => d.id === primary.id),
     };
-    ws.send(JSON.stringify(hb));
+    if (res != null)                     payload.resolution         = res;
+    if (info.cpuLoad != null)            payload.cpuLoad            = info.cpuLoad;
+    if (info.storageFreeBytes != null)   payload.storageFreeBytes   = info.storageFreeBytes;
+    if (info.temperatureC != null)       payload.temperatureCelsius = info.temperatureC;
+    if (info.systemVolume != null)       payload.systemVolume       = info.systemVolume;
+    if (info.systemMuted != null)        payload.systemMuted        = info.systemMuted;
+    if (info.windowsBuild != null)       payload.windowsBuild       = info.windowsBuild;
+    ws.send(JSON.stringify({ type: 'heartbeat', payload }));
   } catch (err: any) {
     console.error('[ws-client] sendHeartbeat failed:', err?.message ?? err);
   }
@@ -129,7 +129,7 @@ function detectConnectionType(ifaceName: string): 'wifi' | 'ethernet' {
   return 'ethernet';
 }
 
-function sendNetworkInfo() {
+async function sendNetworkInfo() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const ifaces = os.networkInterfaces();
   let ip: string | null = null;
@@ -153,12 +153,14 @@ function sendNetworkInfo() {
       }
     }
   }
+  const ssid = await getWifiSsid();
   ws.send(JSON.stringify({
     type: 'network_info',
     payload: {
       ip: ip ?? undefined,
       mac: mac ?? undefined,
       connectionType,
+      ...(ssid != null ? { wifiSsid: ssid } : {}),
     },
   }));
 }
@@ -208,6 +210,14 @@ async function handleCommand(msg: any) {
     case 'wake_on_lan': {
       const { sendWol } = await import('./os-bridge.js');
       await sendWol(msg.payload?.targetMac ?? msg.targetMac, msg.payload?.broadcastIp ?? msg.broadcastIp);
+      break;
+    }
+
+    case 'set_windows_settings': {
+      const { applySettings } = await import('./windows-settings.js');
+      const settings = msg.payload?.settings ?? msg.settings ?? {};
+      await applySettings(settings, win);
+      console.info('[ws-client] applied windows settings:', Object.keys(settings).join(','));
       break;
     }
 

@@ -70,6 +70,7 @@ export type WsCommand =
   | { type: 'start_live_capture'; payload: { intervalMs: number } }
   | { type: 'stop_live_capture' }
   | { type: 'set_zones'; payload: { zones: Array<{ id: string; rect: { x: number; y: number; width: number; height: number }; playlistId?: string }> } }
+  | { type: 'set_windows_settings'; payload: { settings: Record<string, unknown> } }
   | { type: 'remote_key'; payload: { key: string } }
   | { type: 'remote_status'; payload: { requestId: string } }
   | { type: 'mdc_control'; payload: { action: string; requestId?: string; level?: number; mute?: boolean; source?: string; [key: string]: unknown } }
