@@ -38,6 +38,13 @@ export declare class Player {
     private localUrlCache;
     private calendarPushHandlers;
     private syncActive;
+    private screenshotIntervalHandle;
+    private liveIntervalHandle;
+    private liveCaptureActive;
+    private liveCaptureIntervalMs;
+    private liveCaptureBusy;
+    private thumbTimer;
+    private lastThumbAt;
     private lastContentSignature;
     private pendingItems;
     private pendingSignature;
@@ -56,6 +63,11 @@ export declare class Player {
     private send;
     private onWsMessage;
     private dispatchCommand;
+    private takeScreenshot;
+    /** Throttled auto-thumbnail on content change (≤1 per 10s, fires 5s after item starts). */
+    private scheduleContentChangeShot;
+    /** Live-view capture loop (setTimeout chain, not setInterval — prevents concurrent calls). */
+    private scheduleLiveCapture;
     private sendHeartbeat;
     private flushLogStream;
     private getContentSignature;
@@ -79,6 +91,13 @@ export declare class Player {
     private renderContent;
     private renderImage;
     private renderVideo;
+    /**
+     * Seamless VIDEO → VIDEO swap. Appends the new <video> on top of the
+     * currently playing one, waits for `canplay`, then releases the old element.
+     * Prevents the WebView default "play" overlay flash that appears when we
+     * pause/remove the prior video before the new one is decoded.
+     */
+    private transitionToVideo;
     private renderHTML;
     private renderCanvas;
     private renderCalendarContent;

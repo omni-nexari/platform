@@ -65,9 +65,20 @@ export interface PlatformNetworkInfo {
     /** Signal strength 0..100. */
     signalPct?: number;
 }
+export interface PlatformResources {
+    /** Aggregated CPU load 0..100 (null when not sampled yet). */
+    cpuLoad?: number | null;
+    memoryFreeBytes?: number | null;
+    memoryTotalBytes?: number | null;
+    storageFreeBytes?: number | null;
+    /** Seconds since boot. */
+    deviceUptimeSec?: number | null;
+}
 export interface PlatformAdapter {
     getDeviceInfo(): Promise<PlatformDeviceInfo>;
     getNetworkInfo(): Promise<PlatformNetworkInfo>;
+    /** Runtime resources for the heartbeat. Optional — hosts without /proc may omit. */
+    getResources?(): Promise<PlatformResources>;
     /** Hard reboot the host OS. Requires Device Owner on Android. */
     reboot(): Promise<{
         supported: boolean;

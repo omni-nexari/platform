@@ -9,7 +9,7 @@
  */
 export { Player } from './player.js';
 export type { PlayerConfig } from './player.js';
-export type { PlatformAdapter, PlatformDeviceInfo, PlatformNetworkInfo, PlatformPowerState, PlatformOtaProgress, PlatformOtaProgressKind, PlatformKind, } from './platform-adapter.js';
+export type { PlatformAdapter, PlatformDeviceInfo, PlatformNetworkInfo, PlatformPowerState, PlatformOtaProgress, PlatformOtaProgressKind, PlatformKind, PlatformResources, } from './platform-adapter.js';
 export { contentRenderers } from './renderers/index.js';
 export type { ContentRenderer, ContentItem, ContentType } from './renderers/index.js';
 //# sourceMappingURL=index.d.ts.map

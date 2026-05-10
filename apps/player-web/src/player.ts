@@ -80,6 +80,16 @@ export class Player {
   private calendarPushHandlers = new Map<string, (events: CalendarEvent[]) => void>();
   private syncActive = false;
 
+  // Screenshot state — mirrors Tizen/Windows behaviour
+  private screenshotIntervalHandle: ReturnType<typeof setInterval> | null = null;
+  private liveIntervalHandle: ReturnType<typeof setTimeout> | null = null;
+  private liveCaptureActive   = false;
+  private liveCaptureIntervalMs = 1000;
+  private liveCaptureBusy     = false;
+  // Throttled content-change thumbnail: at most once per 10s
+  private thumbTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastThumbAt = 0;
+
   // Content download / cache state (mirrors Tizen downloadContentInBackground flow)
   private lastContentSignature: string | null = null;
   private pendingItems: ScheduleItem[] | null = null;
@@ -419,6 +429,9 @@ export class Player {
     ws.addEventListener('message', ev => void this.onWsMessage(String(ev.data)));
     ws.addEventListener('close', () => {
       this.wsReady = false;
+      // Stop live-view capture loop — server won't be reading frames anyway
+      this.liveCaptureActive = false;
+      if (this.liveIntervalHandle) { clearTimeout(this.liveIntervalHandle); this.liveIntervalHandle = null; }
       logger.warn('[Player] WS closed — reconnect in 2s');
       this.reconnectTimer = setTimeout(() => this.connectWs(), 2000);
     });
@@ -493,20 +506,40 @@ export class Player {
       case 'clear_cache':      await a.clearCache(); return;
       case 'refresh_schedule': await this.loadContent(); return;
       case 'screenshot': {
-        const shot = await a.screenshot();
-        // Deliver via WS so the API persists it in deviceScreenshots
-        if (shot) this.send({ type: 'screenshot_data', payload: { dataBase64: shot, trigger: 'manual' } });
+        const shot = await a.screenshot().catch(() => null);
+        if (shot?.jpegBase64) this.send({ type: 'screenshot_data', payload: { dataBase64: shot.jpegBase64, trigger: 'manual', contentId: null } });
         return;
       }
       case 'screenshot_auto': {
         const shot = await a.screenshot().catch(() => null);
-        if (shot) this.send({ type: 'screenshot_data', payload: { dataBase64: shot, trigger: 'auto' } });
+        if (shot?.jpegBase64) this.send({ type: 'screenshot_data', payload: { dataBase64: shot.jpegBase64, trigger: 'content_change', contentId: null } });
+        return;
+      }
+      case 'set_screenshot_interval': {
+        if (this.screenshotIntervalHandle) { clearInterval(this.screenshotIntervalHandle); this.screenshotIntervalHandle = null; }
+        const minutes = Math.max(1, Number(payload?.['minutes']) || 5);
+        logger.info(`[Screenshot] interval set to ${minutes} min`);
+        // Take one first shot after 3s then repeat
+        setTimeout(() => void this.takeScreenshot('interval'), 3_000);
+        this.screenshotIntervalHandle = setInterval(() => void this.takeScreenshot('interval'), minutes * 60_000);
+        return;
+      }
+      case 'start_live_capture': {
+        const intervalMs = Math.max(1000, Number(payload?.['intervalMs']) || 1000);
+        logger.info(`[Screenshot] live capture, intervalMs=${intervalMs}`);
+        if (this.liveIntervalHandle) { clearTimeout(this.liveIntervalHandle); this.liveIntervalHandle = null; }
+        this.liveCaptureActive = true;
+        this.liveCaptureIntervalMs = intervalMs;
+        this.liveCaptureBusy = false;
+        this.scheduleLiveCapture(200);
         return;
       }
       case 'set_volume':
+      case 'set_system_volume':
         if (typeof payload?.['level'] === 'number') await a.setVolume(payload['level'] as number);
         return;
       case 'set_mute':
+      case 'set_system_mute':
         if (typeof payload?.['mute'] === 'boolean') await a.setMute(payload['mute'] as boolean);
         return;
       case 'set_brightness':
@@ -523,15 +556,76 @@ export class Player {
     }
   }
 
+  // ── Screenshot helpers ──────────────────────────────────────────────────────
+
+  private async takeScreenshot(trigger: 'manual' | 'content_change' | 'interval'): Promise<void> {
+    try {
+      const shot = await this.cfg.adapter.screenshot();
+      if (shot?.jpegBase64) {
+        this.send({ type: 'screenshot_data', payload: { dataBase64: shot.jpegBase64, trigger, contentId: null } });
+        logger.info(`[Screenshot] sent trigger=${trigger} bytes=${shot.jpegBase64.length}`);
+      }
+    } catch (e) {
+      logger.warn(`[Screenshot] failed: ${(e as Error).message}`);
+    }
+  }
+
+  /** Throttled auto-thumbnail on content change (≤1 per 10s, fires 5s after item starts). */
+  private scheduleContentChangeShot(): void {
+    const now = Date.now();
+    if (now - this.lastThumbAt < 10_000) return;
+    if (this.thumbTimer) { clearTimeout(this.thumbTimer); this.thumbTimer = null; }
+    this.thumbTimer = setTimeout(() => {
+      this.thumbTimer = null;
+      this.lastThumbAt = Date.now();
+      void this.takeScreenshot('content_change');
+    }, 5_000);
+  }
+
+  /** Live-view capture loop (setTimeout chain, not setInterval — prevents concurrent calls). */
+  private scheduleLiveCapture(delayMs: number): void {
+    this.liveIntervalHandle = setTimeout(async () => {
+      if (!this.liveCaptureActive) return;
+      if (this.liveCaptureBusy) { this.scheduleLiveCapture(200); return; }
+      this.liveCaptureBusy = true;
+      try {
+        const shot = await this.cfg.adapter.screenshot();
+        if (shot?.jpegBase64 && this.ws?.readyState === WebSocket.OPEN) {
+          this.send({ type: 'screenshot_data', payload: { dataBase64: shot.jpegBase64, trigger: 'live', contentId: null } });
+        }
+      } catch { /* best-effort */ } finally {
+        this.liveCaptureBusy = false;
+        if (this.liveCaptureActive) this.scheduleLiveCapture(Math.max(1000, this.liveCaptureIntervalMs));
+      }
+    }, delayMs);
+  }
+
   private async sendHeartbeat(): Promise<void> {
     // The API only processes heartbeats via WS (handleDeviceMessage in services/ws.ts).
     // Send as WS messages matching the Tizen/Windows pattern.
     if (!this.deviceId) return;
     try {
-      const info  = await this.cfg.adapter.getDeviceInfo();
-      const net   = await this.cfg.adapter.getNetworkInfo();
-      const power = await this.cfg.adapter.getPowerState();
-      logger.info(`[Heartbeat] sending res=${info.resolution} tz=${info.timezone} ver=${info.playerVersion} mac=${info.macAddress ?? 'null'} ip=${net.ipAddress}`);
+      const a     = this.cfg.adapter;
+      const info  = await a.getDeviceInfo();
+      const net   = await a.getNetworkInfo();
+      const power = await a.getPowerState();
+      const res   = a.getResources ? await a.getResources().catch(() => null) : null;
+
+      // Current / next content (id only — server JOINs to content table for names).
+      const items = this.playlistItems;
+      const curIdx = this.playlistIdx;
+      const currentId = items[curIdx]?.content?.id ?? null;
+      let nextId: string | null = null;
+      let nextStartsAt: string | null = null;
+      if (items.length > 1) {
+        const nIdx = (curIdx + 1) % items.length;
+        nextId = items[nIdx]?.content?.id ?? null;
+        // Best-effort: assume current item's remaining duration is its full duration.
+        const durSec = Number(items[curIdx]?.duration ?? 0);
+        if (durSec > 0) nextStartsAt = new Date(this.getSyncedTime() + durSec * 1000).toISOString();
+      }
+
+      logger.info(`[Heartbeat] sending res=${info.resolution} tz=${info.timezone} ver=${info.playerVersion} mac=${info.macAddress ?? 'null'} ip=${net.ipAddress} cpu=${res?.cpuLoad ?? 'n/a'} uptime=${res?.deviceUptimeSec ?? 'n/a'}s`);
       // Main heartbeat — no ipAddress/macAddress (those go in network_info)
       this.send({
         type: 'heartbeat',
@@ -539,7 +633,15 @@ export class Player {
           playerVersion: info.playerVersion, firmwareVersion: info.firmwareVersion,
           timezone: info.timezone, resolution: info.resolution,
           powerState: power, kind: info.kind, batteryPct: info.batteryPct,
-          currentContentId: this.playlistItems[this.playlistIdx]?.content?.id ?? null,
+          clockDriftMs: this.ntpOffset,
+          ...(res?.cpuLoad          != null ? { cpuLoad:          res.cpuLoad          } : {}),
+          ...(res?.memoryFreeBytes  != null ? { memoryFreeBytes:  res.memoryFreeBytes  } : {}),
+          ...(res?.memoryTotalBytes != null ? { memoryTotalBytes: res.memoryTotalBytes } : {}),
+          ...(res?.storageFreeBytes != null ? { storageFreeBytes: res.storageFreeBytes } : {}),
+          ...(res?.deviceUptimeSec  != null ? { deviceUptimeSec:  res.deviceUptimeSec  } : {}),
+          currentContentId: currentId,
+          nextContentId: nextId,
+          nextStartsAt: nextStartsAt,
         },
       });
       // Network info — uses field names expected by the server schema (ip/mac not ipAddress/macAddress)
@@ -813,6 +915,8 @@ export class Player {
           logger.warn(`[Player] renderContent error: ${(e as Error)?.message}`);
         }
         lastRenderedId = record.id || null;
+        // Auto-thumbnail: throttled screenshot ~5s after each new item renders
+        this.scheduleContentChangeShot();
       }
       if (ctrl.signal.aborted) break;
       await this.sleep(durMs, ctrl.signal);
@@ -829,12 +933,21 @@ export class Player {
   }
 
   private async renderContent(container: HTMLElement, record: ContentRecord, signal: AbortSignal): Promise<void> {
+    const type = (record.type || '').toUpperCase().replace(/_/g, '').replace('HTML5', 'HTML').replace('WEBURL', 'HTML').replace('LIVESTREAM', 'LIVE_STREAM').replace('ZONELAYOUT', 'ZONE_LAYOUT').replace('MENUBOARD', 'MENU_BOARD');
+
+    // Seamless VIDEO → VIDEO transition: keep the previous <video> in the DOM
+    // until the new one has `canplay`, then release the old. This hides the
+    // Android WebView default "play" overlay that flashes during teardown.
+    if (type === 'VIDEO' && this.currentVideoEl) {
+      await this.transitionToVideo(container, record, signal);
+      return;
+    }
+
     container.innerHTML = '';
     container.style.cssText = 'position:absolute;inset:0;overflow:hidden;background:#000;';
     if (this.currentHandle) { try { (this.currentHandle as CalendarHandle).destroy(); } catch {} this.currentHandle = null; }
     this.releaseVideo();
 
-    const type = (record.type || '').toUpperCase().replace(/_/g, '').replace('HTML5', 'HTML').replace('WEBURL', 'HTML').replace('LIVESTREAM', 'LIVE_STREAM').replace('ZONELAYOUT', 'ZONE_LAYOUT').replace('MENUBOARD', 'MENU_BOARD');
     switch (type) {
       case 'IMAGE':      await this.renderImage(container, record, signal); break;
       case 'VIDEO':      await this.renderVideo(container, record, signal); break;
@@ -871,13 +984,28 @@ export class Player {
       const url = this.resolveLocalUrl(record.url);
       if (!url) { resolve(); return; }
       const v = document.createElement('video');
-      v.src = url; v.autoplay=true; v.loop=true; v.muted=false; v.playsInline=true;
-      v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;';
+      v.src = url; v.autoplay=true; v.loop=true; v.playsInline=true;
+      // Start muted to guarantee autoplay (Chrome blocks audible autoplay without
+      // user gesture; the WebView shows a large "tap to play" overlay otherwise).
+      // We unmute after play() resolves.
+      v.muted = true; v.defaultMuted = true;
+      v.preload = 'auto';
+      v.setAttribute('disablepictureinpicture', '');
+      v.setAttribute('disableremoteplayback', '');
+      v.controls = false;
+      // Hidden until the first frame paints so the WebView's media-loading
+      // placeholder (large play-button overlay) is never revealed to viewers.
+      v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;opacity:0;';
       container.appendChild(v);
       this.currentVideoEl = v;
       let resolved = false;
       const done = () => { if (!resolved) { resolved = true; resolve(); } };
-      v.addEventListener('canplay', () => { v.play().catch(()=>{}); done(); }, { once:true });
+      v.addEventListener('loadedmetadata', () => { v.play().catch(() => {}); }, { once:true });
+      v.addEventListener('playing', () => {
+        v.style.opacity = '1';
+        v.muted = false;
+        done();
+      }, { once:true });
       v.addEventListener('error',   () => {
         // Suppress benign errors triggered by our own teardown (src='' after abort).
         if (signal.aborted) { done(); return; }
@@ -885,6 +1013,71 @@ export class Player {
         done();
       }, { once:true });
       signal.addEventListener('abort', () => { this.releaseVideo(); done(); });
+    });
+  }
+
+  /**
+   * Seamless VIDEO → VIDEO swap. Appends the new <video> on top of the
+   * currently playing one, waits for `canplay`, then releases the old element.
+   * Prevents the WebView default "play" overlay flash that appears when we
+   * pause/remove the prior video before the new one is decoded.
+   */
+  private transitionToVideo(container: HTMLElement, record: ContentRecord, signal: AbortSignal): Promise<void> {
+    return new Promise(resolve => {
+      const url = this.resolveLocalUrl(record.url);
+      if (!url) { resolve(); return; }
+      const prev = this.currentVideoEl;
+      const v = document.createElement('video');
+      v.src = url; v.autoplay=true; v.loop=true; v.playsInline=true;
+      // Start muted so autoplay isn't blocked; unmute on successful play().
+      v.muted = true; v.defaultMuted = true;
+      v.preload = 'auto';
+      v.setAttribute('disablepictureinpicture', '');
+      v.setAttribute('disableremoteplayback', '');
+      v.controls = false;
+      // Sit on top of the prior video, but stay INVISIBLE during decode so the
+      // WebView's media-loading placeholder (large play-button overlay on grey
+      // background) is never seen — only reveal once frames are actually painting.
+      v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:2;opacity:0;';
+      container.appendChild(v);
+      let resolved = false;
+      let swapped  = false;
+      const done = () => { if (!resolved) { resolved = true; resolve(); } };
+      const swap = () => {
+        if (swapped) return; swapped = true;
+        // Promote the new video to "current" and release the old one.
+        this.currentVideoEl = v;
+        v.style.opacity = '1';
+        v.style.zIndex = '';
+        if (prev && prev !== v) {
+          try { prev.pause(); } catch {}
+          try { prev.removeAttribute('src'); prev.src = ''; } catch {}
+          try { prev.load(); } catch {}
+          try { prev.remove(); } catch {}
+        }
+        v.muted = false;
+        done();
+      };
+      // `playing` fires after the first frame has been painted — guarantees we
+      // never reveal the WebView's loading placeholder. Kick off play() once
+      // metadata is loaded so the pipeline is filling while still hidden.
+      v.addEventListener('loadedmetadata', () => { v.play().catch(() => {}); }, { once:true });
+      v.addEventListener('playing', swap, { once:true });
+      v.addEventListener('error', () => {
+        if (signal.aborted) { done(); return; }
+        logger.warn(`[Player] video error: ${record.url}`);
+        // On error, still swap so we don't get stuck on the old video.
+        swap();
+      }, { once:true });
+      signal.addEventListener('abort', () => {
+        // Tear down whichever element is still being prepared.
+        try { v.pause(); } catch {}
+        try { v.removeAttribute('src'); v.src = ''; } catch {}
+        try { v.load(); } catch {}
+        try { v.remove(); } catch {}
+        if (this.currentVideoEl === v) this.currentVideoEl = null;
+        done();
+      });
     });
   }
 

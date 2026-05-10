@@ -919,6 +919,10 @@ export function DeviceDetailContent({
   const [optimisticSrcOrientation, setOptimisticSrcOrientation] = useState<number | null>(null);
   const [optimisticPowerState, setOptimisticPowerState] = useState<'on' | 'off' | null>(null);
   const [liveViewOpen, setLiveViewOpen] = useState(false);
+  // Android settings sliders (local — no heartbeat field yet)
+  const [androidVolume, setAndroidVolume] = useState<number>(50);
+  const [androidBrightness, setAndroidBrightness] = useState<number>(80);
+  const [androidMute, setAndroidMute] = useState<boolean>(false);
   // NTP form
   const [ntpServer,      setNtpServer]      = useState('');
   const [ntpTimezone,    setNtpTimezone]    = useState('');
@@ -1374,6 +1378,7 @@ export function DeviceDetailContent({
   const isOnline    = device.status === 'online';
   const isEpaper    = device.kind === 'epaper';
   const isWindows   = device.platform === 'windows';
+  const isAndroid   = ['android', 'androidtv', 'firetv'].includes(device.platform ?? '');
   const isTizenTop  = ['tizen', 'tizen-sbb'].includes(device.platform ?? 'tizen');
   const cmdDisabled = !isOnline || cmdMutation.isPending;
   const fallbackNowPlaying = device.publishedTarget?.name ?? null;
@@ -2263,14 +2268,14 @@ export function DeviceDetailContent({
       <SectionCard>
         <SectionCardHeader>
           <h2 className="text-sm font-semibold text-[var(--text)]">Settings</h2>
-          {device.mdcLastPoll && !isEpaper && (
+          {device.mdcLastPoll && !isEpaper && !isAndroid && (
             <span className="text-xs text-[var(--text-muted)]">MDC polled {formatDistanceToNow(device.mdcLastPoll)}</span>
           )}
         </SectionCardHeader>
         <SectionCardBody>
           <form onSubmit={handleSubmit((d) => {
             updateDevice.mutate(d);
-            if (isOnline && d.name) {
+            if (isOnline && d.name && !isAndroid && !isWindows && !isEpaper) {
               void sendMdc({ action: 'set_device_name', name: d.name.slice(0, 15) });
             }
           })}
@@ -2294,7 +2299,7 @@ export function DeviceDetailContent({
             </div>
 
             {/* ── Display Settings (MDC) ───────────────────────────────── */}
-            {!isEpaper && !isWindows && (
+            {!isEpaper && !isWindows && !isAndroid && (
             <div className="sm:col-span-2 space-y-5">
 
               {/* 2×2 toggle grid */}
@@ -2447,6 +2452,99 @@ export function DeviceDetailContent({
 
             </div>
             )} {/* !isEpaper — MDC Display Settings */}
+
+            {/* ── Android Controls ────────────────────────────────────── */}
+            {isAndroid && (
+            <div className="sm:col-span-2 space-y-5">
+              {/* Volume + Brightness sliders */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <Volume2 className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+                  <span className="text-xs text-[var(--text-muted)] w-20 shrink-0">Volume</span>
+                  <input
+                    type="range" min={0} max={100} step={1}
+                    value={androidVolume}
+                    onChange={(e) => setAndroidVolume(Number(e.target.value))}
+                    onMouseUp={() => sendCmd({ command: 'set_system_volume', payload: { level: androidVolume } })}
+                    onTouchEnd={() => sendCmd({ command: 'set_system_volume', payload: { level: androidVolume } })}
+                    disabled={cmdDisabled}
+                    className="flex-1 accent-[var(--blue)] disabled:opacity-40"
+                  />
+                  <span className="w-10 text-right font-mono text-xs text-[var(--text)]">{androidVolume}%</span>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {androidMute
+                    ? <VolumeX className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    : <Volume2 className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />}
+                  <span className="text-xs text-[var(--text-muted)] w-20 shrink-0">Mute</span>
+                  <ToggleSwitch
+                    label={androidMute ? 'Muted' : 'Unmuted'}
+                    checked={androidMute}
+                    onChange={() => {
+                      const next = !androidMute;
+                      setAndroidMute(next);
+                      sendCmd({ command: 'set_system_mute', payload: { mute: next } });
+                    }}
+                    labelClassName="text-xs"
+                  />
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <Sun className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+                  <span className="text-xs text-[var(--text-muted)] w-20 shrink-0">Brightness</span>
+                  <input
+                    type="range" min={0} max={100} step={1}
+                    value={androidBrightness}
+                    onChange={(e) => setAndroidBrightness(Number(e.target.value))}
+                    onMouseUp={() => sendCmd({ command: 'set_brightness', payload: { level: androidBrightness } })}
+                    onTouchEnd={() => sendCmd({ command: 'set_brightness', payload: { level: androidBrightness } })}
+                    disabled={cmdDisabled}
+                    className="flex-1 accent-[var(--blue)] disabled:opacity-40"
+                  />
+                  <span className="w-10 text-right font-mono text-xs text-[var(--text)]">{androidBrightness}%</span>
+                </div>
+              </div>
+
+              {/* Action buttons */}
+              <div className="pt-3 border-t border-[var(--border)]">
+                <span className="block text-xs font-medium text-[var(--text-muted)] mb-2">Device Actions</span>
+                <div className="flex flex-wrap gap-2">
+                  <ActionButton type="button" disabled={cmdDisabled}
+                    onClick={() => sendCmd({ command: 'screenshot' })}
+                    className="px-3 py-1.5 text-xs">
+                    <Monitor className="w-3 h-3" /> Screenshot
+                  </ActionButton>
+                  <ActionButton type="button" disabled={cmdDisabled}
+                    onClick={() => sendCmd({ command: 'relaunch_app' })}
+                    className="px-3 py-1.5 text-xs">
+                    <RefreshCw className="w-3 h-3" /> Relaunch App
+                  </ActionButton>
+                  <ActionButton type="button" disabled={cmdDisabled}
+                    onClick={() => sendCmd({ command: 'clear_cache' })}
+                    className="px-3 py-1.5 text-xs">
+                    <RefreshCw className="w-3 h-3" /> Clear Cache
+                  </ActionButton>
+                  <ActionButton type="button" disabled={cmdDisabled}
+                    onClick={() => sendCmd({ command: 'sleep' })}
+                    className="px-3 py-1.5 text-xs">
+                    <Power className="w-3 h-3" /> Sleep
+                  </ActionButton>
+                  <ActionButton type="button" disabled={cmdDisabled}
+                    onClick={() => {
+                      if (confirm('Reboot this Android device now?')) sendCmd({ command: 'reboot' });
+                    }}
+                    tone="danger"
+                    className="px-3 py-1.5 text-xs">
+                    <RotateCcw className="w-3 h-3" /> Reboot
+                  </ActionButton>
+                </div>
+                <p className="mt-2 text-xs text-[var(--text-muted)]">
+                  Reboot &amp; brightness require Device Owner permission on stock Android.
+                </p>
+              </div>
+            </div>
+            )}
 
             <div className="sm:col-span-2 flex justify-end">
               <ActionButton type="submit" disabled={!isDirty || isSubmitting || updateDevice.isPending}

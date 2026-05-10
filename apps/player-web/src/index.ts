@@ -18,6 +18,7 @@ export type {
   PlatformOtaProgress,
   PlatformOtaProgressKind,
   PlatformKind,
+  PlatformResources,
 } from './platform-adapter.js';
 
 export { contentRenderers } from './renderers/index.js';

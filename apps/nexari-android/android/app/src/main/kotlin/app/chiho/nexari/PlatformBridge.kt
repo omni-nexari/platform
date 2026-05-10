@@ -14,6 +14,7 @@ import app.chiho.nexari.system.AudioCtl
 import app.chiho.nexari.system.BrightnessCtl
 import app.chiho.nexari.system.DeviceInfoProvider
 import app.chiho.nexari.system.PowerCtl
+import app.chiho.nexari.system.ResourcesProvider
 import app.chiho.nexari.system.Screenshotter
 import com.google.gson.Gson
 import org.json.JSONObject
@@ -41,6 +42,7 @@ class PlatformBridge(
     private val audio    = AudioCtl(context)
     private val bright   = BrightnessCtl(context)
     private val power    = PowerCtl(context)
+    private val resources= ResourcesProvider(context)
     private val shooter  = Screenshotter(context, webView)
     private val kiosk    = KioskController(context)
     private val ota      = OtaInstaller(context)
@@ -81,6 +83,9 @@ class PlatformBridge(
 
     @JavascriptInterface
     fun getPowerState(): String = gson.toJson(mapOf("state" to power.state()))
+
+    @JavascriptInterface
+    fun getResources(): String = gson.toJson(resources.snapshot())
 
     @JavascriptInterface fun reboot():    String = gson.toJson(power.reboot())
     @JavascriptInterface fun powerOff():  String = gson.toJson(power.powerOff())
@@ -157,6 +162,7 @@ class PlatformBridge(
       getDeviceInfo:   () => p(b.getDeviceInfo()),
       getNetworkInfo:  () => p(b.getNetworkInfo()),
       getPowerState:   () => p(b.getPowerState()).then(x => x.state),
+      getResources:    () => p(b.getResources()),
       reboot:          () => p(b.reboot()),
       powerOff:        () => p(b.powerOff()),
       powerOn:         () => p(b.powerOn()),

@@ -2112,6 +2112,15 @@ var Player = class {
     this.localUrlCache = /* @__PURE__ */ new Map();
     this.calendarPushHandlers = /* @__PURE__ */ new Map();
     this.syncActive = false;
+    // Screenshot state — mirrors Tizen/Windows behaviour
+    this.screenshotIntervalHandle = null;
+    this.liveIntervalHandle = null;
+    this.liveCaptureActive = false;
+    this.liveCaptureIntervalMs = 1e3;
+    this.liveCaptureBusy = false;
+    // Throttled content-change thumbnail: at most once per 10s
+    this.thumbTimer = null;
+    this.lastThumbAt = 0;
     // Content download / cache state (mirrors Tizen downloadContentInBackground flow)
     this.lastContentSignature = null;
     this.pendingItems = null;
@@ -2454,6 +2463,11 @@ var Player = class {
     ws.addEventListener("message", (ev) => void this.onWsMessage(String(ev.data)));
     ws.addEventListener("close", () => {
       this.wsReady = false;
+      this.liveCaptureActive = false;
+      if (this.liveIntervalHandle) {
+        clearTimeout(this.liveIntervalHandle);
+        this.liveIntervalHandle = null;
+      }
       logger.warn("[Player] WS closed \u2014 reconnect in 2s");
       this.reconnectTimer = setTimeout(() => this.connectWs(), 2e3);
     });
@@ -2561,13 +2575,37 @@ var Player = class {
         await this.loadContent();
         return;
       case "screenshot": {
-        const shot = await a.screenshot();
-        if (shot) this.send({ type: "screenshot_data", payload: { dataBase64: shot, trigger: "manual" } });
+        const shot = await a.screenshot().catch(() => null);
+        if (shot == null ? void 0 : shot.jpegBase64) this.send({ type: "screenshot_data", payload: { dataBase64: shot.jpegBase64, trigger: "manual", contentId: null } });
         return;
       }
       case "screenshot_auto": {
         const shot = await a.screenshot().catch(() => null);
-        if (shot) this.send({ type: "screenshot_data", payload: { dataBase64: shot, trigger: "auto" } });
+        if (shot == null ? void 0 : shot.jpegBase64) this.send({ type: "screenshot_data", payload: { dataBase64: shot.jpegBase64, trigger: "content_change", contentId: null } });
+        return;
+      }
+      case "set_screenshot_interval": {
+        if (this.screenshotIntervalHandle) {
+          clearInterval(this.screenshotIntervalHandle);
+          this.screenshotIntervalHandle = null;
+        }
+        const minutes = Math.max(1, Number(payload == null ? void 0 : payload["minutes"]) || 5);
+        logger.info(`[Screenshot] interval set to ${minutes} min`);
+        setTimeout(() => void this.takeScreenshot("interval"), 3e3);
+        this.screenshotIntervalHandle = setInterval(() => void this.takeScreenshot("interval"), minutes * 6e4);
+        return;
+      }
+      case "start_live_capture": {
+        const intervalMs = Math.max(1e3, Number(payload == null ? void 0 : payload["intervalMs"]) || 1e3);
+        logger.info(`[Screenshot] live capture, intervalMs=${intervalMs}`);
+        if (this.liveIntervalHandle) {
+          clearTimeout(this.liveIntervalHandle);
+          this.liveIntervalHandle = null;
+        }
+        this.liveCaptureActive = true;
+        this.liveCaptureIntervalMs = intervalMs;
+        this.liveCaptureBusy = false;
+        this.scheduleLiveCapture(200);
         return;
       }
       case "set_volume":
@@ -2593,17 +2631,78 @@ var Player = class {
         logger.warn(`[Player] unhandled command: ${command}`);
     }
   }
+  // ── Screenshot helpers ──────────────────────────────────────────────────────
+  async takeScreenshot(trigger) {
+    try {
+      const shot = await this.cfg.adapter.screenshot();
+      if (shot == null ? void 0 : shot.jpegBase64) {
+        this.send({ type: "screenshot_data", payload: { dataBase64: shot.jpegBase64, trigger, contentId: null } });
+        logger.info(`[Screenshot] sent trigger=${trigger} bytes=${shot.jpegBase64.length}`);
+      }
+    } catch (e) {
+      logger.warn(`[Screenshot] failed: ${e.message}`);
+    }
+  }
+  /** Throttled auto-thumbnail on content change (≤1 per 10s, fires 5s after item starts). */
+  scheduleContentChangeShot() {
+    const now = Date.now();
+    if (now - this.lastThumbAt < 1e4) return;
+    if (this.thumbTimer) {
+      clearTimeout(this.thumbTimer);
+      this.thumbTimer = null;
+    }
+    this.thumbTimer = setTimeout(() => {
+      this.thumbTimer = null;
+      this.lastThumbAt = Date.now();
+      void this.takeScreenshot("content_change");
+    }, 5e3);
+  }
+  /** Live-view capture loop (setTimeout chain, not setInterval — prevents concurrent calls). */
+  scheduleLiveCapture(delayMs) {
+    this.liveIntervalHandle = setTimeout(async () => {
+      var _a;
+      if (!this.liveCaptureActive) return;
+      if (this.liveCaptureBusy) {
+        this.scheduleLiveCapture(200);
+        return;
+      }
+      this.liveCaptureBusy = true;
+      try {
+        const shot = await this.cfg.adapter.screenshot();
+        if ((shot == null ? void 0 : shot.jpegBase64) && ((_a = this.ws) == null ? void 0 : _a.readyState) === WebSocket.OPEN) {
+          this.send({ type: "screenshot_data", payload: { dataBase64: shot.jpegBase64, trigger: "live", contentId: null } });
+        }
+      } catch (e) {
+      } finally {
+        this.liveCaptureBusy = false;
+        if (this.liveCaptureActive) this.scheduleLiveCapture(Math.max(1e3, this.liveCaptureIntervalMs));
+      }
+    }, delayMs);
+  }
   async sendHeartbeat() {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     if (!this.deviceId) return;
     try {
-      const info = await this.cfg.adapter.getDeviceInfo();
-      const net = await this.cfg.adapter.getNetworkInfo();
-      const power = await this.cfg.adapter.getPowerState();
-      logger.info(`[Heartbeat] sending res=${info.resolution} tz=${info.timezone} ver=${info.playerVersion} mac=${(_a = info.macAddress) != null ? _a : "null"} ip=${net.ipAddress}`);
+      const a = this.cfg.adapter;
+      const info = await a.getDeviceInfo();
+      const net = await a.getNetworkInfo();
+      const power = await a.getPowerState();
+      const res = a.getResources ? await a.getResources().catch(() => null) : null;
+      const items = this.playlistItems;
+      const curIdx = this.playlistIdx;
+      const currentId = (_c = (_b = (_a = items[curIdx]) == null ? void 0 : _a.content) == null ? void 0 : _b.id) != null ? _c : null;
+      let nextId = null;
+      let nextStartsAt = null;
+      if (items.length > 1) {
+        const nIdx = (curIdx + 1) % items.length;
+        nextId = (_f = (_e = (_d = items[nIdx]) == null ? void 0 : _d.content) == null ? void 0 : _e.id) != null ? _f : null;
+        const durSec = Number((_h = (_g = items[curIdx]) == null ? void 0 : _g.duration) != null ? _h : 0);
+        if (durSec > 0) nextStartsAt = new Date(this.getSyncedTime() + durSec * 1e3).toISOString();
+      }
+      logger.info(`[Heartbeat] sending res=${info.resolution} tz=${info.timezone} ver=${info.playerVersion} mac=${(_i = info.macAddress) != null ? _i : "null"} ip=${net.ipAddress} cpu=${(_j = res == null ? void 0 : res.cpuLoad) != null ? _j : "n/a"} uptime=${(_k = res == null ? void 0 : res.deviceUptimeSec) != null ? _k : "n/a"}s`);
       this.send({
         type: "heartbeat",
-        payload: {
+        payload: __spreadProps(__spreadValues(__spreadValues(__spreadValues(__spreadValues(__spreadValues({
           playerVersion: info.playerVersion,
           firmwareVersion: info.firmwareVersion,
           timezone: info.timezone,
@@ -2611,16 +2710,20 @@ var Player = class {
           powerState: power,
           kind: info.kind,
           batteryPct: info.batteryPct,
-          currentContentId: (_d = (_c = (_b = this.playlistItems[this.playlistIdx]) == null ? void 0 : _b.content) == null ? void 0 : _c.id) != null ? _d : null
-        }
+          clockDriftMs: this.ntpOffset
+        }, (res == null ? void 0 : res.cpuLoad) != null ? { cpuLoad: res.cpuLoad } : {}), (res == null ? void 0 : res.memoryFreeBytes) != null ? { memoryFreeBytes: res.memoryFreeBytes } : {}), (res == null ? void 0 : res.memoryTotalBytes) != null ? { memoryTotalBytes: res.memoryTotalBytes } : {}), (res == null ? void 0 : res.storageFreeBytes) != null ? { storageFreeBytes: res.storageFreeBytes } : {}), (res == null ? void 0 : res.deviceUptimeSec) != null ? { deviceUptimeSec: res.deviceUptimeSec } : {}), {
+          currentContentId: currentId,
+          nextContentId: nextId,
+          nextStartsAt
+        })
       });
       if (net.ipAddress) {
         this.send({
           type: "network_info",
           payload: __spreadValues({
             ip: net.ipAddress,
-            mac: (_e = info.macAddress) != null ? _e : "",
-            connectionType: (_f = net.connectionType) != null ? _f : "wifi"
+            mac: (_l = info.macAddress) != null ? _l : "",
+            connectionType: (_m = net.connectionType) != null ? _m : "wifi"
           }, net.ssid ? { wifiSsid: net.ssid } : {})
         });
       }
@@ -2885,6 +2988,7 @@ var Player = class {
           logger.warn(`[Player] renderContent error: ${e == null ? void 0 : e.message}`);
         }
         lastRenderedId = record.id || null;
+        this.scheduleContentChangeShot();
       }
       if (ctrl.signal.aborted) break;
       await this.sleep(durMs, ctrl.signal);
@@ -2902,6 +3006,11 @@ var Player = class {
     });
   }
   async renderContent(container, record, signal) {
+    const type = (record.type || "").toUpperCase().replace(/_/g, "").replace("HTML5", "HTML").replace("WEBURL", "HTML").replace("LIVESTREAM", "LIVE_STREAM").replace("ZONELAYOUT", "ZONE_LAYOUT").replace("MENUBOARD", "MENU_BOARD");
+    if (type === "VIDEO" && this.currentVideoEl) {
+      await this.transitionToVideo(container, record, signal);
+      return;
+    }
     container.innerHTML = "";
     container.style.cssText = "position:absolute;inset:0;overflow:hidden;background:#000;";
     if (this.currentHandle) {
@@ -2912,7 +3021,6 @@ var Player = class {
       this.currentHandle = null;
     }
     this.releaseVideo();
-    const type = (record.type || "").toUpperCase().replace(/_/g, "").replace("HTML5", "HTML").replace("WEBURL", "HTML").replace("LIVESTREAM", "LIVE_STREAM").replace("ZONELAYOUT", "ZONE_LAYOUT").replace("MENUBOARD", "MENU_BOARD");
     switch (type) {
       case "IMAGE":
         await this.renderImage(container, record, signal);
@@ -2982,9 +3090,14 @@ var Player = class {
       v.src = url;
       v.autoplay = true;
       v.loop = true;
-      v.muted = false;
       v.playsInline = true;
-      v.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;";
+      v.muted = true;
+      v.defaultMuted = true;
+      v.preload = "auto";
+      v.setAttribute("disablepictureinpicture", "");
+      v.setAttribute("disableremoteplayback", "");
+      v.controls = false;
+      v.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;opacity:0;";
       container.appendChild(v);
       this.currentVideoEl = v;
       let resolved = false;
@@ -2994,9 +3107,13 @@ var Player = class {
           resolve();
         }
       };
-      v.addEventListener("canplay", () => {
+      v.addEventListener("loadedmetadata", () => {
         v.play().catch(() => {
         });
+      }, { once: true });
+      v.addEventListener("playing", () => {
+        v.style.opacity = "1";
+        v.muted = false;
         done();
       }, { once: true });
       v.addEventListener("error", () => {
@@ -3009,6 +3126,105 @@ var Player = class {
       }, { once: true });
       signal.addEventListener("abort", () => {
         this.releaseVideo();
+        done();
+      });
+    });
+  }
+  /**
+   * Seamless VIDEO → VIDEO swap. Appends the new <video> on top of the
+   * currently playing one, waits for `canplay`, then releases the old element.
+   * Prevents the WebView default "play" overlay flash that appears when we
+   * pause/remove the prior video before the new one is decoded.
+   */
+  transitionToVideo(container, record, signal) {
+    return new Promise((resolve) => {
+      const url = this.resolveLocalUrl(record.url);
+      if (!url) {
+        resolve();
+        return;
+      }
+      const prev = this.currentVideoEl;
+      const v = document.createElement("video");
+      v.src = url;
+      v.autoplay = true;
+      v.loop = true;
+      v.playsInline = true;
+      v.muted = true;
+      v.defaultMuted = true;
+      v.preload = "auto";
+      v.setAttribute("disablepictureinpicture", "");
+      v.setAttribute("disableremoteplayback", "");
+      v.controls = false;
+      v.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:2;opacity:0;";
+      container.appendChild(v);
+      let resolved = false;
+      let swapped = false;
+      const done = () => {
+        if (!resolved) {
+          resolved = true;
+          resolve();
+        }
+      };
+      const swap = () => {
+        if (swapped) return;
+        swapped = true;
+        this.currentVideoEl = v;
+        v.style.opacity = "1";
+        v.style.zIndex = "";
+        if (prev && prev !== v) {
+          try {
+            prev.pause();
+          } catch (e) {
+          }
+          try {
+            prev.removeAttribute("src");
+            prev.src = "";
+          } catch (e) {
+          }
+          try {
+            prev.load();
+          } catch (e) {
+          }
+          try {
+            prev.remove();
+          } catch (e) {
+          }
+        }
+        v.muted = false;
+        done();
+      };
+      v.addEventListener("loadedmetadata", () => {
+        v.play().catch(() => {
+        });
+      }, { once: true });
+      v.addEventListener("playing", swap, { once: true });
+      v.addEventListener("error", () => {
+        if (signal.aborted) {
+          done();
+          return;
+        }
+        logger.warn(`[Player] video error: ${record.url}`);
+        swap();
+      }, { once: true });
+      signal.addEventListener("abort", () => {
+        try {
+          v.pause();
+        } catch (e) {
+        }
+        try {
+          v.removeAttribute("src");
+          v.src = "";
+        } catch (e) {
+        }
+        try {
+          v.load();
+        } catch (e) {
+        }
+        try {
+          v.remove();
+        } catch (e) {
+        }
+        if (this.currentVideoEl === v) this.currentVideoEl = null;
         done();
       });
     });
