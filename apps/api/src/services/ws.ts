@@ -157,7 +157,9 @@ export type WsCommand =
       };
     }
   // Force the panel to sleep now (admin override).
-  | { type: 'epaper_force_sleep' };
+  | { type: 'epaper_force_sleep' }
+  // Send a Wake-on-LAN magic packet to a target MAC address.
+  | { type: 'wake_on_lan'; payload: { targetMac: string } };
 
 const connections = new Map<string, Conn>();
 const deviceLogs = new Map<string, DeviceConsoleLogEntry[]>();
