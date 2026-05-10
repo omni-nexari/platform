@@ -56,6 +56,7 @@ function projectConnection(c: CalendarConnectionRow) {
     accountEmail: c.accountEmail,
     status: c.status,
     lastSyncedAt: c.lastSyncedAt,
+    tokenExpiresAt: c.tokenExpiresAt,
     lastErrorMessage: c.lastErrorMessage,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
@@ -225,12 +226,23 @@ export async function integrationsRoutes(app: FastifyInstance) {
     if (!member) return reply.status(403).send({ error: 'Forbidden' });
 
     const popup = (req.query as Record<string, string>)['popup'] === '1';
+    const reconnectId = (req.query as Record<string, string>)['reconnectId'];
+    // Validate the connection to reconnect belongs to this workspace.
+    if (reconnectId) {
+      const existing = await db.query.calendarConnections.findFirst({
+        where: and(eq(calendarConnections.id, reconnectId), isNull(calendarConnections.deletedAt)),
+      });
+      if (!existing || existing.workspaceId !== workspaceId) {
+        return reply.status(404).send({ error: 'Connection not found' });
+      }
+    }
     const stateToken = signState({
       workspaceId,
       scope: desiredScope,
       userId: user.sub,
       provider,
       popup,
+      ...(reconnectId ? { reconnectId } : {}),
       n: crypto.randomBytes(8).toString('base64url'),
       ts: Date.now(),
     });
@@ -265,6 +277,7 @@ export async function integrationsRoutes(app: FastifyInstance) {
       userId: string;
       provider: string;
       popup?: boolean;
+      reconnectId?: string;
     }>(state);
     if (!payload || payload.provider !== provider) {
       return reply.redirect(finishUrl('error', 'State verification failed'));
@@ -293,18 +306,39 @@ export async function integrationsRoutes(app: FastifyInstance) {
         return finish('error', 'Unsupported provider');
       }
 
-      const [conn] = await db.insert(calendarConnections).values({
-        workspaceId: payload.workspaceId,
-        userId: payload.scope === 'personal' ? payload.userId : null,
-        provider,
-        displayName: exchanged.email ?? `${provider} calendar`,
-        accountEmail: exchanged.email ?? null,
-        accessToken: encryptSecret(exchanged.accessToken),
-        refreshToken: exchanged.refreshToken ? encryptSecret(exchanged.refreshToken) : null,
-        tokenExpiresAt: new Date(Date.now() + exchanged.expiresIn * 1000),
-        scopes: provider === 'google' ? GOOGLE_SCOPES : MS_SCOPES,
-        status: 'active',
-      }).returning();
+      let conn: CalendarConnectionRow | undefined;
+      if (payload.reconnectId) {
+        // Reconnect: update existing connection's tokens in-place.
+        await db.update(calendarConnections).set({
+          accessToken: encryptSecret(exchanged.accessToken),
+          ...(exchanged.refreshToken ? { refreshToken: encryptSecret(exchanged.refreshToken) } : {}),
+          tokenExpiresAt: new Date(Date.now() + exchanged.expiresIn * 1000),
+          status: 'active',
+          lastErrorMessage: null,
+          updatedAt: new Date(),
+        }).where(and(
+          eq(calendarConnections.id, payload.reconnectId),
+          eq(calendarConnections.workspaceId, payload.workspaceId),
+        ));
+        conn = await db.query.calendarConnections.findFirst({
+          where: eq(calendarConnections.id, payload.reconnectId),
+        });
+      } else {
+        // New connection: insert.
+        const [inserted] = await db.insert(calendarConnections).values({
+          workspaceId: payload.workspaceId,
+          userId: payload.scope === 'personal' ? payload.userId : null,
+          provider,
+          displayName: exchanged.email ?? `${provider} calendar`,
+          accountEmail: exchanged.email ?? null,
+          accessToken: encryptSecret(exchanged.accessToken),
+          refreshToken: exchanged.refreshToken ? encryptSecret(exchanged.refreshToken) : null,
+          tokenExpiresAt: new Date(Date.now() + exchanged.expiresIn * 1000),
+          scopes: provider === 'google' ? GOOGLE_SCOPES : MS_SCOPES,
+          status: 'active',
+        }).returning();
+        conn = inserted;
+      }
 
       // Best-effort initial calendar sync.
       if (conn) {

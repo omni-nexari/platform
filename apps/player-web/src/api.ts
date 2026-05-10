@@ -10,27 +10,70 @@ export class Api {
 
   // ── Schedule / content ────────────────────────────────────────────────────
 
-  /** Returns the schedule object for `deviceId`.  Throws on non-2xx. */
-  async getCurrentContent(deviceId: string): Promise<Schedule | null> {
+  /** Returns the schedule object for this device.  Throws on non-2xx. */
+  async getCurrentContent(_deviceId: string): Promise<Schedule | null> {
     const t = this.token();
-    const url = `${this.base}/devices/device/${encodeURIComponent(deviceId)}/schedule${
-      t ? `?token=${encodeURIComponent(t)}` : ''
-    }`;
+    // The server resolves device identity from the JWT; no :id in path.
+    const url = `${this.base}/devices/device/schedule${t ? `?token=${encodeURIComponent(t)}` : ''}`;
     const res = await fetch(url);
     if (res.status === 404) return null;
     if (!res.ok) throw Object.assign(new Error(`schedule HTTP ${res.status}`), { status: res.status });
-    const body = await res.json() as { schedule?: Schedule; data?: Schedule };
-    return body.schedule ?? body.data ?? (body as unknown as Schedule);
+    const body = await res.json() as { schedules?: unknown[] };
+    if (!Array.isArray(body.schedules) || !body.schedules.length) return null;
+
+    const raw = body.schedules[0] as Record<string, unknown>;
+    // Server uses 'slots' not 'items' — normalize and enrich content URLs
+    const slots = (raw.slots as Array<Record<string, unknown>> | undefined) ?? [];
+    const items: ScheduleItem[] = slots.flatMap((slot): ScheduleItem[] => {
+      const playlist = slot['playlist'] as { items?: Array<Record<string, unknown>> } | null;
+      if (playlist?.items?.length) {
+        // Playlist slot: expand into the playlist's individual items
+        return playlist.items
+          .map((pi): ScheduleItem | null => {
+            const c = this.enrichContent(pi['content'] as Record<string, unknown> | null, t);
+            if (!c) return null;
+            return { id: pi['id'] as string, contentId: pi['contentId'] as string | undefined,
+              duration: pi['duration'] as number | undefined, content: c };
+          })
+          .filter((x): x is ScheduleItem => x !== null);
+      }
+      // Direct content slot
+      const c = this.enrichContent(slot['content'] as Record<string, unknown> | null, t);
+      if (!c) return [];
+      const contentRaw = slot['content'] as Record<string, unknown>;
+      return [{ id: slot['id'] as string, contentId: slot['contentId'] as string | undefined,
+        duration: contentRaw['duration'] as number | undefined, content: c }];
+    });
+
+    return { ...(raw as unknown as Schedule), items };
   }
 
-  /** Sends a heartbeat. Returns the server response body. */
-  async sendHeartbeat(deviceId: string, payload: Record<string, unknown>): Promise<void> {
-    const t = this.token();
-    await fetch(`${this.base}/devices/device/${encodeURIComponent(deviceId)}/heartbeat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...payload, ...(t ? { token: t } : {}) }),
-    });
+  private enrichContent(content: Record<string, unknown> | null, token: string | null): ContentRecord | null {
+    if (!content) return null;
+    const id = content['id'] as string;
+    const type = ((content['type'] as string) ?? '').toLowerCase();
+    let url: string | undefined;
+    if (type === 'web_url') {
+      url = content['webUrl'] as string | undefined;
+    } else if (type === 'html5') {
+      // Token is embedded in path so relative asset requests carry it automatically
+      url = token
+        ? `${this.base}/devices/device/content/${id}/html5/${encodeURIComponent(token)}/`
+        : undefined;
+    } else {
+      url = `${this.base}/devices/device/content/${id}/file${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    }
+    return { ...(content as unknown as ContentRecord), url };
+  }
+
+  /**
+   * Sends a heartbeat.  The server processes heartbeats only via WebSocket
+   * (type='heartbeat' message).  This method is kept as a no-op HTTP stub;
+   * the Player class sends heartbeats directly over the WS connection instead.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async sendHeartbeat(_deviceId: string, _payload: Record<string, unknown>): Promise<void> {
+    // No-op: heartbeats are sent over WebSocket in Player.sendHeartbeat()
   }
 
   /** Uploads a base64-encoded screenshot. Best-effort (never throws). */
@@ -111,14 +154,16 @@ export class Api {
 
   /** GET /devices/device/:id/content/:contentId/calendar/events */
   async getCalendarEvents(
-    deviceId: string,
+    _deviceId: string,
     contentId: string,
     from: Date,
     to: Date,
   ): Promise<CalendarEvent[]> {
     const t = this.token();
+    // Route: /device/content/:id/calendar/events — device identity comes from the JWT, no :deviceId in path.
+    // Tizen player uses the same path. The old path (/device/:deviceId/content/...) returned 404.
     const res = await fetch(
-      `${this.base}/devices/device/${encodeURIComponent(deviceId)}/content/${encodeURIComponent(contentId)}/calendar/events`
+      `${this.base}/devices/device/content/${encodeURIComponent(contentId)}/calendar/events`
         + `?from=${encodeURIComponent(from.toISOString())}`
         + `&to=${encodeURIComponent(to.toISOString())}`
         + (t ? `&token=${encodeURIComponent(t)}` : ''),

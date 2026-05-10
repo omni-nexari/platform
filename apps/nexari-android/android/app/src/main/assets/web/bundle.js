@@ -86,25 +86,67 @@ var Api = class {
     this.token = token;
   }
   // ── Schedule / content ────────────────────────────────────────────────────
-  /** Returns the schedule object for `deviceId`.  Throws on non-2xx. */
-  async getCurrentContent(deviceId) {
-    var _a, _b;
+  /** Returns the schedule object for this device.  Throws on non-2xx. */
+  async getCurrentContent(_deviceId2) {
+    var _a;
     const t = this.token();
-    const url = `${this.base}/devices/device/${encodeURIComponent(deviceId)}/schedule${t ? `?token=${encodeURIComponent(t)}` : ""}`;
+    const url = `${this.base}/devices/device/schedule${t ? `?token=${encodeURIComponent(t)}` : ""}`;
     const res = await fetch(url);
     if (res.status === 404) return null;
     if (!res.ok) throw Object.assign(new Error(`schedule HTTP ${res.status}`), { status: res.status });
     const body = await res.json();
-    return (_b = (_a = body.schedule) != null ? _a : body.data) != null ? _b : body;
-  }
-  /** Sends a heartbeat. Returns the server response body. */
-  async sendHeartbeat(deviceId, payload) {
-    const t = this.token();
-    await fetch(`${this.base}/devices/device/${encodeURIComponent(deviceId)}/heartbeat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(__spreadValues(__spreadValues({}, payload), t ? { token: t } : {}))
+    if (!Array.isArray(body.schedules) || !body.schedules.length) return null;
+    const raw = body.schedules[0];
+    const slots = (_a = raw.slots) != null ? _a : [];
+    const items = slots.flatMap((slot) => {
+      var _a2;
+      const playlist = slot["playlist"];
+      if ((_a2 = playlist == null ? void 0 : playlist.items) == null ? void 0 : _a2.length) {
+        return playlist.items.map((pi) => {
+          const c2 = this.enrichContent(pi["content"], t);
+          if (!c2) return null;
+          return {
+            id: pi["id"],
+            contentId: pi["contentId"],
+            duration: pi["duration"],
+            content: c2
+          };
+        }).filter((x) => x !== null);
+      }
+      const c = this.enrichContent(slot["content"], t);
+      if (!c) return [];
+      const contentRaw = slot["content"];
+      return [{
+        id: slot["id"],
+        contentId: slot["contentId"],
+        duration: contentRaw["duration"],
+        content: c
+      }];
     });
+    return __spreadProps(__spreadValues({}, raw), { items });
+  }
+  enrichContent(content, token) {
+    var _a;
+    if (!content) return null;
+    const id = content["id"];
+    const type = ((_a = content["type"]) != null ? _a : "").toLowerCase();
+    let url;
+    if (type === "web_url") {
+      url = content["webUrl"];
+    } else if (type === "html5") {
+      url = token ? `${this.base}/devices/device/content/${id}/html5/${encodeURIComponent(token)}/` : void 0;
+    } else {
+      url = `${this.base}/devices/device/content/${id}/file${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+    }
+    return __spreadProps(__spreadValues({}, content), { url });
+  }
+  /**
+   * Sends a heartbeat.  The server processes heartbeats only via WebSocket
+   * (type='heartbeat' message).  This method is kept as a no-op HTTP stub;
+   * the Player class sends heartbeats directly over the WS connection instead.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async sendHeartbeat(_deviceId2, _payload) {
   }
   /** Uploads a base64-encoded screenshot. Best-effort (never throws). */
   async uploadScreenshot(deviceId, jpegBase64, trigger = "manual") {
@@ -187,11 +229,11 @@ var Api = class {
     }
   }
   /** GET /devices/device/:id/content/:contentId/calendar/events */
-  async getCalendarEvents(deviceId, contentId, from, to) {
+  async getCalendarEvents(_deviceId2, contentId, from, to) {
     var _a;
     const t = this.token();
     const res = await fetch(
-      `${this.base}/devices/device/${encodeURIComponent(deviceId)}/content/${encodeURIComponent(contentId)}/calendar/events?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}` + (t ? `&token=${encodeURIComponent(t)}` : "")
+      `${this.base}/devices/device/content/${encodeURIComponent(contentId)}/calendar/events?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}` + (t ? `&token=${encodeURIComponent(t)}` : "")
     );
     if (!res.ok) return [];
     const body = await res.json();
@@ -467,6 +509,7 @@ function renderCalendar(container, content, api, deviceId, ws, registerPushHandl
     startClock();
   };
   const renderMeetingRoom = (events) => {
+    var _a2;
     const now = getNow();
     const startOfDay = /* @__PURE__ */ new Date();
     startOfDay.setHours(0, 0, 0, 0);
@@ -481,7 +524,12 @@ function renderCalendar(container, content, api, deviceId, ws, registerPushHandl
     const isAmberEnding = isBusy && msToCurrentEnd < 15 * 60 * 1e3;
     const isAmberSoon = !isBusy && isFinite(msToNextStart) && msToNextStart < 15 * 60 * 1e3;
     const railColor = isBusy && !isAmberEnding ? "#d93025" : isBusy && isAmberEnding || isAmberSoon ? "#f59e0b" : "#34a853";
+    const portrait = window.innerHeight > window.innerWidth;
     const roomName = (roomMeta == null ? void 0 : roomMeta.name) || content.name || "Meeting Room";
+    const capacity = (_a2 = roomMeta == null ? void 0 : roomMeta.capacity) != null ? _a2 : null;
+    const bookingUrl = (roomMeta == null ? void 0 : roomMeta.bookingUrl) || "";
+    const logoUrl = (roomMeta == null ? void 0 : roomMeta.logoUrl) || "";
+    const backgroundUrl = (roomMeta == null ? void 0 : roomMeta.backgroundUrl) || "";
     const showLoc = theme.showLocation !== false;
     const showAtt = !!theme.showAttendeeCount;
     const fmtRange = (e) => `${fmtClockTime(toLocal(e.start))} \u2013 ${fmtClockTime(toLocal(e.end))}`;
@@ -489,45 +537,96 @@ function renderCalendar(container, content, api, deviceId, ws, registerPushHandl
       const m = Math.ceil(ms / 6e4);
       return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${pad2(m % 60)}m`;
     };
+    const allDayEvents = today.filter((e) => e.allDay);
     const timedEvents = today.filter((e) => !e.allDay);
-    const nowStr = fmtClockTime(now);
-    const dateStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-    const statusLabel = isBusy ? "IN USE" : "AVAILABLE";
-    const statusSubtitle = currentEv ? isAmberEnding ? `Ends in ${fmtCountdown(msToCurrentEnd)}` : `Ends at ${fmtClockTime(toLocal(currentEv.end))}` : nextEv ? isAmberSoon ? `Starts in ${fmtCountdown(msToNextStart)}` : `Next: ${fmtClockTime(toLocal(nextEv.start))}` : "No meetings today";
-    const meetingsHtml = timedEvents.length === 0 ? `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:${textMuted};font-size:28px;text-align:center;padding:40px;">No meetings scheduled today</div>` : timedEvents.map((e) => {
+    const allDayHtml = allDayEvents.length === 0 ? "" : `
+      <div style="display:flex;flex-wrap:wrap;gap:8px;padding:12px 36px;border-bottom:1px solid ${border};background:${isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)"}">
+        ${allDayEvents.map((e) => {
+      const isCancelled = e.status === "cancelled";
+      const isTentative = e.status === "tentative";
+      const title = e.isPrivate ? "Busy" : e.title || "Reserved";
+      return `<div style="display:inline-flex;align-items:center;gap:6px;padding:4px 14px;border-radius:20px;background:${accent}22;border:1px solid ${accent}44;font-size:18px;color:${isCancelled ? textMuted : text};${isCancelled ? "text-decoration:line-through;opacity:0.55;" : ""}">
+            <span>&#9656;</span><span>${escapeHtml(title)}</span>
+            ${isTentative ? `<span style="font-size:14px;background:#f59e0b;color:#fff;padding:1px 6px;border-radius:3px;">?</span>` : ""}
+          </div>`;
+    }).join("")}
+      </div>`;
+    const meetingsHtml = timedEvents.length === 0 && allDayEvents.length === 0 ? `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:${textMuted};font-size:36px;letter-spacing:2px;text-transform:uppercase;text-align:center;padding:40px;">No meetings scheduled for today</div>` : timedEvents.map((e) => {
       const isCurrent = e === currentEv;
+      const isCancelled = e.status === "cancelled";
+      const isTentative = e.status === "tentative";
       const title = e.isPrivate ? "Busy" : e.title || "Reserved";
       const organizer = e.organizerName || e.organizerEmail || "";
-      return `<div style="display:flex;gap:24px;padding:20px 32px;align-items:baseline;border-bottom:1px solid ${border};${isCurrent ? `background:${railColor}1a;` : ""}">
-            <div style="font-variant-numeric:tabular-nums;font-size:26px;font-weight:600;color:${text};white-space:nowrap;min-width:190px;">${escapeHtml(fmtRange(e))}</div>
+      return `<div style="display:flex;gap:28px;padding:22px 36px;align-items:baseline;border-bottom:1px solid ${border};opacity:${isCancelled ? "0.45" : "1"};${isCurrent ? `background:${railColor}1a;` : ""}">
+            <div style="font-variant-numeric:tabular-nums;font-size:28px;font-weight:600;color:${text};white-space:nowrap;min-width:210px;">${escapeHtml(fmtRange(e))}</div>
             <div style="flex:1;min-width:0;">
-              <div style="font-size:28px;font-weight:600;color:${text};">${escapeHtml(title)}</div>
-              <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;">
-                ${organizer && !e.isPrivate ? `<span style="font-size:17px;color:${textMuted};">${escapeHtml(organizer)}</span>` : ""}
-                ${showLoc && e.location && !e.isPrivate ? `<span style="font-size:17px;color:${textMuted};">\u{1F4CD} ${escapeHtml(e.location)}</span>` : ""}
-                ${showAtt && typeof e.attendeeCount === "number" ? `<span style="font-size:17px;color:${textMuted};">\u{1F465} ${e.attendeeCount}</span>` : ""}
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <span style="font-size:30px;font-weight:600;color:${text};line-height:1.25;${isCancelled ? "text-decoration:line-through;" : ""}">${escapeHtml(title)}</span>
+                ${isTentative ? `<span style="background:#f59e0b;color:#fff;padding:3px 10px;border-radius:4px;font-size:15px;font-weight:700;letter-spacing:0.5px;">TENTATIVE</span>` : ""}
+                ${isCancelled ? `<span style="background:#6b7280;color:#fff;padding:3px 10px;border-radius:4px;font-size:15px;font-weight:700;letter-spacing:0.5px;">CANCELLED</span>` : ""}
+              </div>
+              <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:4px;">
+                ${organizer && !e.isPrivate ? `<span style="font-size:19px;color:${textMuted};">${escapeHtml(organizer)}</span>` : ""}
+                ${showLoc && e.location && !e.isPrivate ? `<span style="font-size:19px;color:${textMuted};">&#128205; ${escapeHtml(e.location)}</span>` : ""}
+                ${showAtt && typeof e.attendeeCount === "number" ? `<span style="font-size:19px;color:${textMuted};">&#128101; ${e.attendeeCount}</span>` : ""}
               </div>
             </div>
-            ${isCurrent ? `<div style="background:${railColor};color:#fff;padding:6px 14px;border-radius:4px;font-size:15px;text-transform:uppercase;letter-spacing:1px;align-self:center;flex-shrink:0;">Now</div>` : ""}
+            ${isCurrent ? `<div style="background:${railColor};color:#fff;padding:6px 14px;border-radius:4px;font-size:16px;text-transform:uppercase;letter-spacing:1px;align-self:center;flex-shrink:0;">Now</div>` : ""}
           </div>`;
     }).join("");
-    container.innerHTML = `
-      <div style="position:absolute;inset:0;display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-        <div style="background:${railColor};color:#fff;padding:28px 36px;flex-shrink:0;border-bottom:4px solid rgba(0,0,0,0.15);">
-          <div style="display:flex;align-items:center;justify-content:space-between;">
-            <div>
-              <div style="font-size:40px;font-weight:800;letter-spacing:-1px;">${escapeHtml(roomName)}</div>
-              <div style="font-size:28px;font-weight:600;letter-spacing:2px;text-transform:uppercase;margin-top:4px;opacity:0.9;">${escapeHtml(statusLabel)}</div>
-              <div style="font-size:18px;margin-top:6px;opacity:0.8;">${escapeHtml(statusSubtitle)}</div>
-            </div>
-            <div style="text-align:right;">
-              <div id="cal-clock" style="font-size:52px;font-weight:800;letter-spacing:-1px;">${escapeHtml(nowStr)}</div>
-              <div style="font-size:17px;opacity:0.85;margin-top:4px;">${escapeHtml(dateStr)}</div>
-            </div>
-          </div>
-        </div>
-        <div style="flex:1;overflow-y:auto;background:${bg};color:${text};">${meetingsHtml}</div>
+    const tappable = !!bookingUrl;
+    const buttons = [
+      { label: "Book", enabled: !isBusy && tappable },
+      { label: "Accept", enabled: !!currentEv && tappable },
+      { label: "Prolong", enabled: !!currentEv && tappable },
+      { label: "End meeting", enabled: !!currentEv && tappable }
+    ];
+    const buttonsHtml = buttons.map((b, i) => `
+      <button data-mr-action="${i}" ${!b.enabled ? "disabled" : ""}
+              style="display:block;width:100%;text-align:left;padding:18px 22px;margin-bottom:12px;background:${b.enabled ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.06)"};color:${b.enabled ? "#fff" : "rgba(255,255,255,0.35)"};border:1px solid rgba(255,255,255,0.28);border-radius:8px;font-size:20px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;cursor:${b.enabled ? "pointer" : "not-allowed"};font-family:inherit;">
+        ${escapeHtml(b.label)}
+      </button>`).join("");
+    const statusText = isBusy ? isAmberEnding ? "ENDING SOON" : "IN USE" : isAmberSoon ? "STARTING SOON" : "AVAILABLE";
+    const statusLine = currentEv ? isAmberEnding ? `Ends in ${fmtCountdown(msToCurrentEnd)}` : `Until ${fmtClockTime(toLocal(currentEv.end))}` : nextEv ? isAmberSoon ? `Starts in ${fmtCountdown(msToNextStart)}` : `Free until ${fmtClockTime(toLocal(nextEv.start))}` : "Free for the rest of the day";
+    const header = `
+      <div style="display:flex;align-items:center;gap:18px;padding:18px 32px;background:${isDark ? "#2a2e3e" : "#f1f3f5"};border-bottom:3px solid ${railColor};flex-shrink:0;">
+        ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="" style="height:64px;max-width:180px;object-fit:contain;flex-shrink:0;" />` : ""}
+        <div style="font-size:52px;font-weight:700;color:${text};letter-spacing:2px;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(roomName)}</div>
+        ${(roomMeta == null ? void 0 : roomMeta.location) ? `<div style="font-size:22px;color:${textMuted};margin-left:16px;flex-shrink:0;">${escapeHtml(roomMeta.location)}</div>` : ""}
       </div>`;
+    const rail = `
+      <div style="background:${railColor};color:#fff;display:flex;flex-direction:column;padding:28px 26px;${portrait ? "flex-shrink:0;" : "width:360px;flex-shrink:0;"}">
+        <div id="cal-clock" style="font-size:64px;font-weight:700;letter-spacing:-1px;line-height:1;">${escapeHtml(clockStyle === "none" ? "" : fmtClockTime(now))}</div>
+        <div style="font-size:22px;opacity:0.9;margin-top:6px;">${now.getFullYear()}.${pad2(now.getMonth() + 1)}.${pad2(now.getDate())}</div>
+        <div style="font-size:28px;font-weight:700;margin-top:22px;letter-spacing:1px;">${escapeHtml(statusText)}</div>
+        <div style="font-size:18px;opacity:0.92;margin-top:6px;">${escapeHtml(statusLine)}</div>
+        ${capacity ? `<div style="margin-top:24px;"><div style="font-size:15px;letter-spacing:2px;text-transform:uppercase;opacity:0.85;margin-bottom:8px;">Room capacity</div><div style="display:inline-block;background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.32);padding:10px 20px;border-radius:6px;font-size:32px;font-weight:700;">${capacity}</div></div>` : ""}
+        <div style="margin-top:auto;padding-top:24px;">${buttonsHtml}</div>
+      </div>`;
+    const body = `
+      <div style="flex:1;position:relative;overflow:hidden;${backgroundUrl ? `background-image:url(${JSON.stringify(backgroundUrl)});background-size:cover;background-position:center;` : ""}">
+        ${backgroundUrl ? `<div style="position:absolute;inset:0;background:${isDark ? "rgba(30,30,46,0.78)" : "rgba(255,255,255,0.78)"};"></div>` : ""}
+        <div style="position:relative;height:100%;overflow-y:auto;">${allDayHtml}${meetingsHtml}</div>
+      </div>`;
+    const edgeOverlay = isBusy || isAmberSoon ? `<style>@keyframes mr-pulse{0%,100%{opacity:0.18}50%{opacity:0.72}}</style><div style="pointer-events:none;position:absolute;inset:0;z-index:999;box-shadow:inset 0 0 0 12px ${railColor};animation:mr-pulse 1.6s ease-in-out infinite;"></div>` : `<div style="pointer-events:none;position:absolute;inset:0;z-index:999;box-shadow:inset 0 0 0 12px ${railColor};"></div>`;
+    container.innerHTML = `
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;background:${bg};color:${text};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:hidden;">
+        ${header}
+        <div style="flex:1;display:flex;flex-direction:${portrait ? "column" : "row"};overflow:hidden;">${body}${rail}</div>
+        ${edgeOverlay}
+      </div>`;
+    if (tappable) {
+      const btns = container.querySelectorAll("[data-mr-action]");
+      btns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          if (btn.disabled) return;
+          try {
+            window.open(bookingUrl, "_blank", "noopener");
+          } catch (e) {
+          }
+        });
+      });
+    }
     startClock();
   };
   const renderError = (msg) => {
@@ -2007,6 +2106,10 @@ var Player = class {
     this.playbackCancel = null;
     this.currentHandle = null;
     this.currentVideoEl = null;
+    // Map of remote content URL → local object URL (blob:). Populated by
+    // preCacheItems() so that renderImage/Video/HTML/Pdf can play from local
+    // storage and survive transient network loss.
+    this.localUrlCache = /* @__PURE__ */ new Map();
     this.calendarPushHandlers = /* @__PURE__ */ new Map();
     this.syncActive = false;
     // Content download / cache state (mirrors Tizen downloadContentInBackground flow)
@@ -2015,6 +2118,8 @@ var Player = class {
     this.pendingSignature = null;
     this.isDownloadingContent = false;
     this.deviceDisplayName = "";
+    // Cache for the pdfjsLib promise so we only inject the script tag once.
+    this.pdfJsLibPromise = null;
     const savedApi = localStorage.getItem("PLAYER_API_BASE");
     const savedWs = localStorage.getItem("PLAYER_WS_URL");
     this.cfg = __spreadProps(__spreadValues({}, cfg), {
@@ -2036,6 +2141,7 @@ var Player = class {
     logger.info(`[Player] paired (token: ${this.token ? "ok" : "none"})`);
     if (!this.tryLoadCachedSchedule()) this.showIdle("Waiting for content\u2026");
     this.connectWs();
+    void this.sendHeartbeat();
     this.heartbeatTimer = setInterval(
       () => this.sendHeartbeat().catch((e) => logger.warn(`[Player] heartbeat: ${e}`)),
       (_a = this.cfg.heartbeatMs) != null ? _a : 3e4
@@ -2336,7 +2442,7 @@ var Player = class {
     return Date.now() + this.ntpOffset;
   }
   connectWs() {
-    const url = `${this.cfg.wsBase}/api/v1/devices/ws/${encodeURIComponent(this.deviceId)}${this.token ? `?token=${encodeURIComponent(this.token)}` : ""}`;
+    const url = `${this.cfg.wsBase}/api/v1/devices/ws/device${this.token ? `?token=${encodeURIComponent(this.token)}` : ""}`;
     logger.info(`[Player] WS connect ${url}`);
     const ws = new WebSocket(url);
     this.ws = ws;
@@ -2488,26 +2594,38 @@ var Player = class {
     }
   }
   async sendHeartbeat() {
-    var _a, _b, _c;
-    if (!this.wsReady) return;
+    var _a, _b, _c, _d, _e, _f;
+    if (!this.deviceId) return;
     try {
       const info = await this.cfg.adapter.getDeviceInfo();
       const net = await this.cfg.adapter.getNetworkInfo();
       const power = await this.cfg.adapter.getPowerState();
-      await this.api.sendHeartbeat(this.deviceId, {
-        playerVersion: info.playerVersion,
-        firmwareVersion: info.firmwareVersion,
-        timezone: info.timezone,
-        resolution: info.resolution,
-        powerState: power,
-        kind: info.kind,
-        batteryPct: info.batteryPct,
-        ipAddress: net.ipAddress,
-        macAddress: info.macAddress,
-        currentContentId: (_c = (_b = (_a = this.playlistItems[this.playlistIdx]) == null ? void 0 : _a.content) == null ? void 0 : _b.id) != null ? _c : null,
-        token: this.token
+      logger.info(`[Heartbeat] sending res=${info.resolution} tz=${info.timezone} ver=${info.playerVersion} mac=${(_a = info.macAddress) != null ? _a : "null"} ip=${net.ipAddress}`);
+      this.send({
+        type: "heartbeat",
+        payload: {
+          playerVersion: info.playerVersion,
+          firmwareVersion: info.firmwareVersion,
+          timezone: info.timezone,
+          resolution: info.resolution,
+          powerState: power,
+          kind: info.kind,
+          batteryPct: info.batteryPct,
+          currentContentId: (_d = (_c = (_b = this.playlistItems[this.playlistIdx]) == null ? void 0 : _b.content) == null ? void 0 : _c.id) != null ? _d : null
+        }
       });
+      if (net.ipAddress) {
+        this.send({
+          type: "network_info",
+          payload: __spreadValues({
+            ip: net.ipAddress,
+            mac: (_e = info.macAddress) != null ? _e : "",
+            connectionType: (_f = net.connectionType) != null ? _f : "wifi"
+          }, net.ssid ? { wifiSsid: net.ssid } : {})
+        });
+      }
     } catch (e) {
+      logger.warn(`[Heartbeat] failed: ${e.message}`);
     }
   }
   flushLogStream() {
@@ -2539,26 +2657,58 @@ var Player = class {
     });
     return JSON.stringify(parts);
   }
-  // ── Pre-cache all media files via the browser Cache API ─────────────────────
+  // ── Pre-cache every content file as a local blob: URL ──────────────────────
+  // Downloads every URL referenced by the schedule via fetch() and registers
+  // the resulting Blob as an object URL in localUrlCache. Renderers then call
+  // resolveLocalUrl() to swap the remote URL for the local one — playback is
+  // fully offline once the schedule has been cached.
   async preCacheItems(items) {
-    if (!("caches" in window)) return;
-    const cache = await caches.open("nexari-content-v1");
-    const urls = items.map((i) => {
-      var _a, _b;
-      return (_b = (_a = i.content) == null ? void 0 : _a.url) != null ? _b : "";
-    }).filter((u) => u && /\.(mp4|webm|jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(u));
+    const urls = Array.from(new Set(
+      items.map((i) => {
+        var _a, _b;
+        return (_b = (_a = i.content) == null ? void 0 : _a.url) != null ? _b : "";
+      }).filter((u) => !!u)
+    ));
     const total = urls.length;
     if (!total) return;
+    const nextCache = /* @__PURE__ */ new Map();
     let done = 0;
     await Promise.allSettled(urls.map(async (url) => {
       try {
-        const cached = await cache.match(url);
-        if (!cached) await cache.add(url);
+        const existing = this.localUrlCache.get(url);
+        if (existing) {
+          nextCache.set(url, existing);
+          done++;
+          this.updateIdleProgress(Math.round(done / total * 100));
+          return;
+        }
+        const resp = await fetch(url, { credentials: "omit" });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        nextCache.set(url, blobUrl);
+        logger.info(`[Cache] downloaded ${url.split("?")[0]} (${(blob.size / 1024).toFixed(1)} KiB)`);
       } catch (e) {
+        logger.warn(`[Cache] failed ${url.split("?")[0]}: ${e == null ? void 0 : e.message}`);
       }
       done++;
       this.updateIdleProgress(Math.round(done / total * 100));
     }));
+    for (const [oldUrl, oldBlob] of this.localUrlCache) {
+      if (!nextCache.has(oldUrl)) {
+        try {
+          URL.revokeObjectURL(oldBlob);
+        } catch (e) {
+        }
+      }
+    }
+    this.localUrlCache = nextCache;
+  }
+  /** Swap a remote content URL for the locally cached blob: URL if available. */
+  resolveLocalUrl(url) {
+    var _a;
+    if (!url) return "";
+    return (_a = this.localUrlCache.get(url)) != null ? _a : url;
   }
   // ── Update the idle progress bar in-place without re-rendering the screen ───
   updateIdleProgress(pct) {
@@ -2620,6 +2770,8 @@ var Player = class {
       this.playlistItems = items;
       this.playlistIdx = 0;
       this.lastContentSignature = this.getContentSignature(items);
+      void this.preCacheItems(items).catch(() => {
+      });
       if (this.syncActive) return true;
       this.cancelPlayback();
       void this.renderPlaylist();
@@ -2630,17 +2782,26 @@ var Player = class {
   }
   // ── Main content loader (mirrors Tizen loadContent) ──────────────────────────
   async loadContent() {
+    var _a, _b;
     logger.info("[Player] loadContent");
     try {
       const schedule = await this.api.getCurrentContent(this.deviceId);
       if (!schedule || !Array.isArray(schedule.items) || !schedule.items.length) {
-        if (!this.playlistItems.length) this.showIdle("Waiting for content\u2026");
+        logger.warn(`[Player] loadContent: no items (schedule=${schedule ? "ok" : "null"} items=${(_b = (_a = schedule == null ? void 0 : schedule.items) == null ? void 0 : _a.length) != null ? _b : 0})`);
+        this.cancelPlayback();
+        this.playlistItems = [];
+        this.lastContentSignature = null;
+        this.showIdle("Waiting for content\u2026");
         return;
       }
       const newSig = this.getContentSignature(schedule.items);
       const isPlaying2 = !!this.playlistItems.length && !!(this.playbackCancel && !this.playbackCancel.signal.aborted) || this.syncActive;
       if (newSig === this.lastContentSignature && this.playlistItems.length && isPlaying2) {
         logger.info("[Player] content unchanged, still playing \u2014 skip");
+        if (this.localUrlCache.size === 0) {
+          void this.preCacheItems(this.playlistItems).catch(() => {
+          });
+        }
         return;
       }
       if (newSig === this.lastContentSignature && this.playlistItems.length && !isPlaying2) {
@@ -2670,15 +2831,35 @@ var Player = class {
       }
       this.currentHandle = null;
     }
-    if (this.currentVideoEl) {
-      try {
-        this.currentVideoEl.pause();
-      } catch (e) {
-      }
-      this.currentVideoEl.remove();
-      this.currentVideoEl = null;
-    }
+    this.releaseVideo();
     this.cfg.container.innerHTML = "";
+  }
+  /**
+   * Fully release a <video> element's media decoder resources.
+   * On Android WebView, just .pause() + .remove() leaks the decoder buffer.
+   * Must clear src, removeAttribute, call load(), then remove from DOM.
+   */
+  releaseVideo() {
+    const v = this.currentVideoEl;
+    if (!v) return;
+    this.currentVideoEl = null;
+    try {
+      v.pause();
+    } catch (e) {
+    }
+    try {
+      v.removeAttribute("src");
+      v.src = "";
+    } catch (e) {
+    }
+    try {
+      v.load();
+    } catch (e) {
+    }
+    try {
+      v.remove();
+    } catch (e) {
+    }
   }
   async renderPlaylist() {
     const ctrl = new AbortController();
@@ -2689,20 +2870,24 @@ var Player = class {
       return;
     }
     let idx = this.playlistIdx;
+    let lastRenderedId = null;
     while (!ctrl.signal.aborted) {
       const item = items[idx];
       const record = toContentRecord(item);
       const durMs = getDurationMs(item);
-      logger.info(`[Player] item[${idx}] type=${record.type} id=${record.id} dur=${durMs}ms`);
-      try {
-        await this.renderContent(this.cfg.container, record, ctrl.signal);
-      } catch (e) {
-        if (ctrl.signal.aborted) break;
-        logger.warn(`[Player] renderContent error: ${e == null ? void 0 : e.message}`);
+      const sameAsLast = record.id && record.id === lastRenderedId;
+      if (!sameAsLast) {
+        logger.info(`[Player] item[${idx}] type=${record.type} id=${record.id} dur=${durMs}ms`);
+        try {
+          await this.renderContent(this.cfg.container, record, ctrl.signal);
+        } catch (e) {
+          if (ctrl.signal.aborted) break;
+          logger.warn(`[Player] renderContent error: ${e == null ? void 0 : e.message}`);
+        }
+        lastRenderedId = record.id || null;
       }
       if (ctrl.signal.aborted) break;
-      const isLooper = ["CALENDAR", "MENU_BOARD", "DATASYNC", "ZONE_LAYOUT"].includes(record.type.toUpperCase());
-      if (!isLooper) await this.sleep(durMs, ctrl.signal);
+      await this.sleep(durMs, ctrl.signal);
       if (ctrl.signal.aborted) break;
       idx = (idx + 1) % items.length;
     }
@@ -2726,15 +2911,8 @@ var Player = class {
       }
       this.currentHandle = null;
     }
-    if (this.currentVideoEl) {
-      try {
-        this.currentVideoEl.pause();
-      } catch (e) {
-      }
-      this.currentVideoEl.remove();
-      this.currentVideoEl = null;
-    }
-    const type = (record.type || "").toUpperCase();
+    this.releaseVideo();
+    const type = (record.type || "").toUpperCase().replace(/_/g, "").replace("HTML5", "HTML").replace("WEBURL", "HTML").replace("LIVESTREAM", "LIVE_STREAM").replace("ZONELAYOUT", "ZONE_LAYOUT").replace("MENUBOARD", "MENU_BOARD");
     switch (type) {
       case "IMAGE":
         await this.renderImage(container, record, signal);
@@ -2767,18 +2945,19 @@ var Player = class {
         await this.renderZoneLayout(container, record, signal);
         break;
       default:
-        logger.warn(`[Player] unknown content type: ${type}`);
-        this.showIdle(`Unknown type: ${escapeHtml3(type)}`);
+        logger.warn(`[Player] unknown content type: ${record.type}`);
+        this.showIdle(`Unknown type: ${escapeHtml3(record.type)}`);
     }
   }
   renderImage(container, record, signal) {
     return new Promise((resolve) => {
-      if (!record.url) {
+      const url = this.resolveLocalUrl(record.url);
+      if (!url) {
         resolve();
         return;
       }
       const img = document.createElement("img");
-      img.src = record.url;
+      img.src = url;
       img.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;";
       img.onload = () => resolve();
       img.onerror = () => {
@@ -2794,12 +2973,13 @@ var Player = class {
   }
   renderVideo(container, record, signal) {
     return new Promise((resolve) => {
-      if (!record.url) {
+      const url = this.resolveLocalUrl(record.url);
+      if (!url) {
         resolve();
         return;
       }
       const v = document.createElement("video");
-      v.src = record.url;
+      v.src = url;
       v.autoplay = true;
       v.loop = true;
       v.muted = false;
@@ -2807,24 +2987,29 @@ var Player = class {
       v.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;";
       container.appendChild(v);
       this.currentVideoEl = v;
+      let resolved = false;
+      const done = () => {
+        if (!resolved) {
+          resolved = true;
+          resolve();
+        }
+      };
       v.addEventListener("canplay", () => {
         v.play().catch(() => {
         });
-        resolve();
+        done();
       }, { once: true });
       v.addEventListener("error", () => {
+        if (signal.aborted) {
+          done();
+          return;
+        }
         logger.warn(`[Player] video error: ${record.url}`);
-        resolve();
+        done();
       }, { once: true });
       signal.addEventListener("abort", () => {
-        try {
-          v.pause();
-        } catch (e) {
-        }
-        v.src = "";
-        v.remove();
-        this.currentVideoEl = null;
-        resolve();
+        this.releaseVideo();
+        done();
       });
     });
   }
@@ -2837,8 +3022,11 @@ var Player = class {
       const frame = document.createElement("iframe");
       frame.src = record.url;
       frame.style.cssText = "position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;";
-      frame.sandbox.add("allow-scripts", "allow-same-origin", "allow-forms", "allow-popups");
       frame.onload = () => resolve();
+      frame.onerror = () => {
+        logger.warn(`[Player] iframe error: ${record.url}`);
+        resolve();
+      };
       container.appendChild(frame);
       signal.addEventListener("abort", () => {
         frame.src = "about:blank";
@@ -2944,27 +3132,201 @@ var Player = class {
       this.showIdle("PDF: no URL");
       return;
     }
-    await this.renderHTML(container, record, signal);
+    try {
+      await this.renderPdfWithPdfJs(container, record, signal);
+    } catch (e) {
+      logger.warn(`[Player] PDF render failed, falling back to iframe: ${e == null ? void 0 : e.message}`);
+      await this.renderHTML(container, record, signal);
+    }
+  }
+  /**
+   * PDF.js-based renderer. Mirrors the Tizen implementation: lazy-loads
+   * pdfjs/pdf.min.js (shipped in android assets via sync-player-web.cjs),
+   * fetches the PDF as a Uint8Array (from local blob cache when available),
+   * renders each page to a canvas and auto-advances every durMs/numPages.
+   */
+  async renderPdfWithPdfJs(container, record, signal) {
+    const lib = await this.loadPdfJs();
+    const url = this.resolveLocalUrl(record.url);
+    if (!url) throw new Error("no url");
+    const ab = await (await fetch(url)).arrayBuffer();
+    if (signal.aborted) return;
+    const pdf = await lib.getDocument({ data: new Uint8Array(ab) }).promise;
+    if (signal.aborted) return;
+    logger.info(`[Player] PDF loaded ${pdf.numPages} page(s)`);
+    let activeCanvas = null;
+    let currentRenderTask = null;
+    const renderPage = async (num) => {
+      if (currentRenderTask == null ? void 0 : currentRenderTask.cancel) {
+        try {
+          currentRenderTask.cancel();
+        } catch (e) {
+        }
+      }
+      try {
+        const page = await pdf.getPage(num);
+        const cw = Math.max(container.offsetWidth || window.innerWidth || 1920, 1);
+        const ch = Math.max(container.offsetHeight || window.innerHeight || 1080, 1);
+        const nativeVp = page.getViewport({ scale: 1 });
+        const scale = Math.min(cw / nativeVp.width, ch / nativeVp.height);
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(Math.floor(viewport.width), 1);
+        canvas.height = Math.max(Math.floor(viewport.height), 1);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return null;
+        const left = Math.floor((cw - viewport.width) / 2);
+        const top = Math.floor((ch - viewport.height) / 2);
+        canvas.style.cssText = `position:absolute;left:${left}px;top:${top}px;background:#000;`;
+        currentRenderTask = page.render({ canvasContext: ctx, viewport });
+        await currentRenderTask.promise;
+        currentRenderTask = null;
+        return canvas;
+      } catch (e) {
+        const name = e == null ? void 0 : e.name;
+        if (name === "RenderingCancelledException") return null;
+        logger.warn(`[Player] PDF page ${num} render error: ${e == null ? void 0 : e.message}`);
+        return null;
+      }
+    };
+    const first = await renderPage(1);
+    if (signal.aborted) return;
+    if (first) {
+      container.appendChild(first);
+      activeCanvas = first;
+    }
+    if (pdf.numPages <= 1) return;
+    const durMs = getDurationMs({ content: record, duration: void 0 });
+    const perPage = Math.max(Math.floor(durMs / pdf.numPages), 4e3);
+    let currentPage = 1;
+    const advance = async () => {
+      if (signal.aborted) return;
+      currentPage = currentPage % pdf.numPages + 1;
+      const next = await renderPage(currentPage);
+      if (signal.aborted) {
+        return;
+      }
+      if (next && container.isConnected) {
+        if (activeCanvas && activeCanvas.parentNode === container) container.replaceChild(next, activeCanvas);
+        else container.appendChild(next);
+        activeCanvas = next;
+      }
+    };
+    const interval = setInterval(() => {
+      void advance();
+    }, perPage);
+    signal.addEventListener("abort", () => {
+      clearInterval(interval);
+      if (currentRenderTask == null ? void 0 : currentRenderTask.cancel) {
+        try {
+          currentRenderTask.cancel();
+        } catch (e) {
+        }
+      }
+    });
+  }
+  loadPdfJs() {
+    if (this.pdfJsLibPromise) return this.pdfJsLibPromise;
+    this.pdfJsLibPromise = new Promise((resolve, reject) => {
+      const existing = window.pdfjsLib;
+      const onReady = () => {
+        const lib = window.pdfjsLib;
+        if (!lib) {
+          reject(new Error("pdfjsLib failed to load"));
+          return;
+        }
+        try {
+          lib.GlobalWorkerOptions.workerSrc = "pdfjs/pdf.worker.min.js";
+        } catch (e) {
+        }
+        resolve(lib);
+      };
+      if (existing) {
+        onReady();
+        return;
+      }
+      const s = document.createElement("script");
+      s.src = "pdfjs/pdf.min.js";
+      s.onload = () => onReady();
+      s.onerror = () => reject(new Error("failed to load pdfjs/pdf.min.js"));
+      document.head.appendChild(s);
+    });
+    return this.pdfJsLibPromise;
   }
   async renderZoneLayout(container, record, signal) {
+    var _a, _b, _c, _d, _e, _f, _g;
     const meta = parseMetadata3(record);
-    const zones = meta["zones"] || [];
+    const zones = (_a = meta["zones"]) != null ? _a : [];
     if (!zones.length) {
       this.showIdle("Zone layout: no zones");
       return;
     }
-    container.style.position = "absolute";
+    const CANVAS_W = typeof meta["canvasWidth"] === "number" ? meta["canvasWidth"] : 1920;
+    const CANVAS_H = typeof meta["canvasHeight"] === "number" ? meta["canvasHeight"] : 1080;
+    logger.info(`[Zone] canvas ${CANVAS_W}\xD7${CANVAS_H}, ${zones.length} zone(s)`);
     for (const zone of zones) {
       if (signal.aborted) break;
+      const r = zone.rect;
+      let l, t, w, h;
+      if (r) {
+        l = r.x / CANVAS_W * 100;
+        t = r.y / CANVAS_H * 100;
+        w = r.width / CANVAS_W * 100;
+        h = r.height / CANVAS_H * 100;
+      } else {
+        l = (_b = zone.x) != null ? _b : 0;
+        t = (_c = zone.y) != null ? _c : 0;
+        w = (_d = zone.width) != null ? _d : 100;
+        h = (_e = zone.height) != null ? _e : 100;
+      }
       const el = document.createElement("div");
-      el.style.cssText = `position:absolute;left:${zone.x}%;top:${zone.y}%;width:${zone.width}%;height:${zone.height}%;overflow:hidden;`;
+      el.style.cssText = `position:absolute;left:${l.toFixed(4)}%;top:${t.toFixed(4)}%;width:${w.toFixed(4)}%;height:${h.toFixed(4)}%;overflow:hidden;background:#000;`;
       container.appendChild(el);
-      if (zone.url) {
-        const rec = { id: zone.id || "zone", type: zone.type || "HTML", url: zone.url };
-        try {
-          await this.renderContent(el, rec, signal);
-        } catch (e) {
+      const src = zone.source;
+      const objectFit = zone.fitMode === "fill" ? "cover" : "contain";
+      if ((src == null ? void 0 : src.type) === "content" && src.contentId) {
+        const tok = this.token;
+        const contentType = ((_f = src.contentType) != null ? _f : "image").toLowerCase();
+        if (contentType === "html5") {
+          const frame = document.createElement("iframe");
+          frame.src = tok ? `${this.cfg.apiBase}/devices/device/content/${encodeURIComponent(src.contentId)}/html5/${encodeURIComponent(tok)}/` : "";
+          frame.style.cssText = "width:100%;height:100%;border:0;background:#000;";
+          el.appendChild(frame);
+          signal.addEventListener("abort", () => {
+            frame.src = "about:blank";
+          });
+        } else if (contentType === "video") {
+          const fileUrl = `${this.cfg.apiBase}/devices/device/content/${encodeURIComponent(src.contentId)}/file${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
+          const v = document.createElement("video");
+          v.src = fileUrl;
+          v.autoplay = true;
+          v.loop = true;
+          v.muted = true;
+          v.playsInline = true;
+          v.style.cssText = `width:100%;height:100%;object-fit:${objectFit};background:#000;`;
+          el.appendChild(v);
+          v.play().catch(() => {
+          });
+          signal.addEventListener("abort", () => {
+            v.pause();
+            v.src = "";
+          });
+        } else {
+          const fileUrl = contentType === "web_url" ? (_g = src["webUrl"]) != null ? _g : "" : `${this.cfg.apiBase}/devices/device/content/${encodeURIComponent(src.contentId)}/file${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
+          const img = document.createElement("img");
+          img.src = fileUrl;
+          img.style.cssText = `width:100%;height:100%;object-fit:${objectFit};background:#000;`;
+          img.onerror = () => logger.warn(`[Zone] image load error: ${src.contentId}`);
+          el.appendChild(img);
         }
+      } else if (zone.url) {
+        const frame = document.createElement("iframe");
+        frame.src = zone.url;
+        frame.style.cssText = "width:100%;height:100%;border:0;background:#000;";
+        el.appendChild(frame);
+        signal.addEventListener("abort", () => {
+          frame.src = "about:blank";
+        });
       }
     }
   }

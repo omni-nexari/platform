@@ -1,12 +1,16 @@
 package app.chiho.nexari
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
 import android.webkit.WebView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 /**
  * Hosts the full-screen [PlayerView] WebView and wires up the [PlatformBridge].
@@ -34,7 +38,19 @@ class MainActivity : AppCompatActivity() {
         playerView = PlayerView(this)
         setContentView(playerView)
         applyImmersiveMode()
+        requestLocationPermissionIfNeeded()
         playerView.boot()
+    }
+
+    private fun requestLocationPermissionIfNeeded() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                1001,
+            )
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

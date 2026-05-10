@@ -318,56 +318,124 @@ export function renderCalendar(
     const isAmberEnding = isBusy && msToCurrentEnd < 15*60*1000;
     const isAmberSoon = !isBusy && isFinite(msToNextStart) && msToNextStart < 15*60*1000;
     const railColor = (isBusy&&!isAmberEnding) ? '#d93025' : (isBusy&&isAmberEnding)||isAmberSoon ? '#f59e0b' : '#34a853';
-    const roomName = roomMeta?.name || content.name || 'Meeting Room';
-    const showLoc = theme.showLocation !== false;
-    const showAtt = !!theme.showAttendeeCount;
-    const fmtRange = (e: Ev) => `${fmtClockTime(toLocal(e.start))} – ${fmtClockTime(toLocal(e.end))}`;
-    const fmtCountdown = (ms: number) => { const m=Math.ceil(ms/60000); return m<60?`${m} min`:`${Math.floor(m/60)}h ${pad2(m%60)}m`; };
-    const timedEvents = today.filter(e => !e.allDay);
-    const nowStr = fmtClockTime(now);
-    const dateStr = now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
-    const statusLabel = isBusy ? 'IN USE' : 'AVAILABLE';
-    const statusSubtitle = currentEv
-      ? (isAmberEnding ? `Ends in ${fmtCountdown(msToCurrentEnd)}` : `Ends at ${fmtClockTime(toLocal(currentEv.end))}`)
-      : (nextEv ? (isAmberSoon ? `Starts in ${fmtCountdown(msToNextStart)}` : `Next: ${fmtClockTime(toLocal(nextEv.start))}`) : 'No meetings today');
 
-    const meetingsHtml = timedEvents.length === 0
-      ? `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:${textMuted};font-size:28px;text-align:center;padding:40px;">No meetings scheduled today</div>`
+    const portrait     = window.innerHeight > window.innerWidth;
+    const roomName     = roomMeta?.name || content.name || 'Meeting Room';
+    const capacity     = roomMeta?.capacity ?? null;
+    const bookingUrl   = roomMeta?.bookingUrl || '';
+    const logoUrl      = roomMeta?.logoUrl || '';
+    const backgroundUrl = roomMeta?.backgroundUrl || '';
+    const showLoc  = theme.showLocation !== false;
+    const showAtt  = !!theme.showAttendeeCount;
+
+    const fmtRange = (e: Ev) => `${fmtClockTime(toLocal(e.start))} \u2013 ${fmtClockTime(toLocal(e.end))}`;
+    const fmtCountdown = (ms: number) => { const m=Math.ceil(ms/60000); return m<60?`${m} min`:`${Math.floor(m/60)}h ${pad2(m%60)}m`; };
+
+    const allDayEvents = today.filter(e => e.allDay);
+    const timedEvents  = today.filter(e => !e.allDay);
+
+    const allDayHtml = allDayEvents.length === 0 ? '' : `
+      <div style="display:flex;flex-wrap:wrap;gap:8px;padding:12px 36px;border-bottom:1px solid ${border};background:${isDark?'rgba(255,255,255,0.04)':'rgba(0,0,0,0.03)'}">
+        ${allDayEvents.map(e => {
+          const isCancelled = e.status === 'cancelled';
+          const isTentative = e.status === 'tentative';
+          const title = e.isPrivate ? 'Busy' : (e.title || 'Reserved');
+          return `<div style="display:inline-flex;align-items:center;gap:6px;padding:4px 14px;border-radius:20px;background:${accent}22;border:1px solid ${accent}44;font-size:18px;color:${isCancelled?textMuted:text};${isCancelled?'text-decoration:line-through;opacity:0.55;':''}">
+            <span>&#9656;</span><span>${escapeHtml(title)}</span>
+            ${isTentative?`<span style="font-size:14px;background:#f59e0b;color:#fff;padding:1px 6px;border-radius:3px;">?</span>`:''}
+          </div>`;
+        }).join('')}
+      </div>`;
+
+    const meetingsHtml = timedEvents.length === 0 && allDayEvents.length === 0
+      ? `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:${textMuted};font-size:36px;letter-spacing:2px;text-transform:uppercase;text-align:center;padding:40px;">No meetings scheduled for today</div>`
       : timedEvents.map(e => {
-          const isCurrent = e === currentEv;
+          const isCurrent   = e === currentEv;
+          const isCancelled = e.status === 'cancelled';
+          const isTentative = e.status === 'tentative';
           const title = e.isPrivate ? 'Busy' : (e.title || 'Reserved');
           const organizer = e.organizerName || e.organizerEmail || '';
-          return `<div style="display:flex;gap:24px;padding:20px 32px;align-items:baseline;border-bottom:1px solid ${border};${isCurrent?`background:${railColor}1a;`:''}">
-            <div style="font-variant-numeric:tabular-nums;font-size:26px;font-weight:600;color:${text};white-space:nowrap;min-width:190px;">${escapeHtml(fmtRange(e))}</div>
+          return `<div style="display:flex;gap:28px;padding:22px 36px;align-items:baseline;border-bottom:1px solid ${border};opacity:${isCancelled?'0.45':'1'};${isCurrent?`background:${railColor}1a;`:''}">
+            <div style="font-variant-numeric:tabular-nums;font-size:28px;font-weight:600;color:${text};white-space:nowrap;min-width:210px;">${escapeHtml(fmtRange(e))}</div>
             <div style="flex:1;min-width:0;">
-              <div style="font-size:28px;font-weight:600;color:${text};">${escapeHtml(title)}</div>
-              <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;">
-                ${organizer&&!e.isPrivate?`<span style="font-size:17px;color:${textMuted};">${escapeHtml(organizer)}</span>`:''}
-                ${showLoc&&e.location&&!e.isPrivate?`<span style="font-size:17px;color:${textMuted};">📍 ${escapeHtml(e.location)}</span>`:''}
-                ${showAtt&&typeof e.attendeeCount==='number'?`<span style="font-size:17px;color:${textMuted};">👥 ${e.attendeeCount}</span>`:''}
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <span style="font-size:30px;font-weight:600;color:${text};line-height:1.25;${isCancelled?'text-decoration:line-through;':''}">${escapeHtml(title)}</span>
+                ${isTentative?`<span style="background:#f59e0b;color:#fff;padding:3px 10px;border-radius:4px;font-size:15px;font-weight:700;letter-spacing:0.5px;">TENTATIVE</span>`:''}
+                ${isCancelled?`<span style="background:#6b7280;color:#fff;padding:3px 10px;border-radius:4px;font-size:15px;font-weight:700;letter-spacing:0.5px;">CANCELLED</span>`:''}
+              </div>
+              <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:4px;">
+                ${organizer&&!e.isPrivate?`<span style="font-size:19px;color:${textMuted};">${escapeHtml(organizer)}</span>`:''}
+                ${showLoc&&e.location&&!e.isPrivate?`<span style="font-size:19px;color:${textMuted};">&#128205; ${escapeHtml(e.location!)}</span>`:''}
+                ${showAtt&&typeof e.attendeeCount==='number'?`<span style="font-size:19px;color:${textMuted};">&#128101; ${e.attendeeCount}</span>`:''}
               </div>
             </div>
-            ${isCurrent?`<div style="background:${railColor};color:#fff;padding:6px 14px;border-radius:4px;font-size:15px;text-transform:uppercase;letter-spacing:1px;align-self:center;flex-shrink:0;">Now</div>`:''}
+            ${isCurrent?`<div style="background:${railColor};color:#fff;padding:6px 14px;border-radius:4px;font-size:16px;text-transform:uppercase;letter-spacing:1px;align-self:center;flex-shrink:0;">Now</div>`:''}
           </div>`;
         }).join('');
 
-    container.innerHTML = `
-      <div style="position:absolute;inset:0;display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-        <div style="background:${railColor};color:#fff;padding:28px 36px;flex-shrink:0;border-bottom:4px solid rgba(0,0,0,0.15);">
-          <div style="display:flex;align-items:center;justify-content:space-between;">
-            <div>
-              <div style="font-size:40px;font-weight:800;letter-spacing:-1px;">${escapeHtml(roomName)}</div>
-              <div style="font-size:28px;font-weight:600;letter-spacing:2px;text-transform:uppercase;margin-top:4px;opacity:0.9;">${escapeHtml(statusLabel)}</div>
-              <div style="font-size:18px;margin-top:6px;opacity:0.8;">${escapeHtml(statusSubtitle)}</div>
-            </div>
-            <div style="text-align:right;">
-              <div id="cal-clock" style="font-size:52px;font-weight:800;letter-spacing:-1px;">${escapeHtml(nowStr)}</div>
-              <div style="font-size:17px;opacity:0.85;margin-top:4px;">${escapeHtml(dateStr)}</div>
-            </div>
-          </div>
-        </div>
-        <div style="flex:1;overflow-y:auto;background:${bg};color:${text};">${meetingsHtml}</div>
+    const tappable = !!bookingUrl;
+    const buttons: { label: string; enabled: boolean }[] = [
+      { label: 'Book',        enabled: !isBusy && tappable },
+      { label: 'Accept',      enabled: !!currentEv && tappable },
+      { label: 'Prolong',     enabled: !!currentEv && tappable },
+      { label: 'End meeting', enabled: !!currentEv && tappable },
+    ];
+    const buttonsHtml = buttons.map((b, i) => `
+      <button data-mr-action="${i}" ${!b.enabled?'disabled':''}
+              style="display:block;width:100%;text-align:left;padding:18px 22px;margin-bottom:12px;background:${b.enabled?'rgba(255,255,255,0.18)':'rgba(255,255,255,0.06)'};color:${b.enabled?'#fff':'rgba(255,255,255,0.35)'};border:1px solid rgba(255,255,255,0.28);border-radius:8px;font-size:20px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;cursor:${b.enabled?'pointer':'not-allowed'};font-family:inherit;">
+        ${escapeHtml(b.label)}
+      </button>`).join('');
+
+    const statusText = isBusy ? (isAmberEnding?'ENDING SOON':'IN USE') : (isAmberSoon?'STARTING SOON':'AVAILABLE');
+    const statusLine = currentEv
+      ? (isAmberEnding ? `Ends in ${fmtCountdown(msToCurrentEnd)}` : `Until ${fmtClockTime(toLocal(currentEv.end))}`)
+      : nextEv
+      ? (isAmberSoon ? `Starts in ${fmtCountdown(msToNextStart)}` : `Free until ${fmtClockTime(toLocal(nextEv.start))}`)
+      : 'Free for the rest of the day';
+
+    const header = `
+      <div style="display:flex;align-items:center;gap:18px;padding:18px 32px;background:${isDark?'#2a2e3e':'#f1f3f5'};border-bottom:3px solid ${railColor};flex-shrink:0;">
+        ${logoUrl?`<img src="${escapeHtml(logoUrl)}" alt="" style="height:64px;max-width:180px;object-fit:contain;flex-shrink:0;" />`:''}
+        <div style="font-size:52px;font-weight:700;color:${text};letter-spacing:2px;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(roomName)}</div>
+        ${roomMeta?.location?`<div style="font-size:22px;color:${textMuted};margin-left:16px;flex-shrink:0;">${escapeHtml(roomMeta.location)}</div>`:''}
       </div>`;
+
+    const rail = `
+      <div style="background:${railColor};color:#fff;display:flex;flex-direction:column;padding:28px 26px;${portrait?'flex-shrink:0;':'width:360px;flex-shrink:0;'}">
+        <div id="cal-clock" style="font-size:64px;font-weight:700;letter-spacing:-1px;line-height:1;">${escapeHtml(clockStyle==='none'?'':fmtClockTime(now))}</div>
+        <div style="font-size:22px;opacity:0.9;margin-top:6px;">${now.getFullYear()}.${pad2(now.getMonth()+1)}.${pad2(now.getDate())}</div>
+        <div style="font-size:28px;font-weight:700;margin-top:22px;letter-spacing:1px;">${escapeHtml(statusText)}</div>
+        <div style="font-size:18px;opacity:0.92;margin-top:6px;">${escapeHtml(statusLine)}</div>
+        ${capacity?`<div style="margin-top:24px;"><div style="font-size:15px;letter-spacing:2px;text-transform:uppercase;opacity:0.85;margin-bottom:8px;">Room capacity</div><div style="display:inline-block;background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.32);padding:10px 20px;border-radius:6px;font-size:32px;font-weight:700;">${capacity}</div></div>`:''}
+        <div style="margin-top:auto;padding-top:24px;">${buttonsHtml}</div>
+      </div>`;
+
+    const body = `
+      <div style="flex:1;position:relative;overflow:hidden;${backgroundUrl?`background-image:url(${JSON.stringify(backgroundUrl)});background-size:cover;background-position:center;`:''}">
+        ${backgroundUrl?`<div style="position:absolute;inset:0;background:${isDark?'rgba(30,30,46,0.78)':'rgba(255,255,255,0.78)'};"></div>`:''}
+        <div style="position:relative;height:100%;overflow-y:auto;">${allDayHtml}${meetingsHtml}</div>
+      </div>`;
+
+    const edgeOverlay = (isBusy||isAmberSoon)
+      ? `<style>@keyframes mr-pulse{0%,100%{opacity:0.18}50%{opacity:0.72}}</style><div style="pointer-events:none;position:absolute;inset:0;z-index:999;box-shadow:inset 0 0 0 12px ${railColor};animation:mr-pulse 1.6s ease-in-out infinite;"></div>`
+      : `<div style="pointer-events:none;position:absolute;inset:0;z-index:999;box-shadow:inset 0 0 0 12px ${railColor};"></div>`;
+
+    container.innerHTML = `
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;background:${bg};color:${text};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:hidden;">
+        ${header}
+        <div style="flex:1;display:flex;flex-direction:${portrait?'column':'row'};overflow:hidden;">${body}${rail}</div>
+        ${edgeOverlay}
+      </div>`;
+
+    if (tappable) {
+      const btns = container.querySelectorAll<HTMLButtonElement>('[data-mr-action]');
+      btns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (btn.disabled) return;
+          try { window.open(bookingUrl, '_blank', 'noopener'); } catch { /**/ }
+        });
+      });
+    }
     startClock();
   };
 

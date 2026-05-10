@@ -522,6 +522,8 @@ export async function contentRoutes(app: FastifyInstance) {
       workspaceId?: string;
       name?: string;
       zones?: unknown[];
+      canvasWidth?: number;
+      canvasHeight?: number;
     };
     const wsId = body.workspaceId;
     if (!wsId) return reply.status(400).send({ error: 'workspaceId required' });
@@ -543,7 +545,7 @@ export async function contentRoutes(app: FastifyInstance) {
       uploadedBy: user.sub,
       type: 'zone_layout',
       name: body.name.trim(),
-      metadata: JSON.stringify({ zones: body.zones }),
+      metadata: JSON.stringify({ zones: body.zones, canvasWidth: body.canvasWidth ?? 1920, canvasHeight: body.canvasHeight ?? 1080 }),
       status: 'ready',
       approvalState: initialApprovalStateZl,
     }).returning();
@@ -708,6 +710,7 @@ export async function contentRoutes(app: FastifyInstance) {
         : events;
       return reply.send({ events: safe });
     } catch (e) {
+      req.log.error({ err: e, contentId: id, connectionId: meta.connectionId }, 'Calendar provider error');
       const msg = e instanceof Error ? e.message : String(e);
       return reply.status(502).send({ error: 'Provider error', detail: msg });
     }
@@ -969,6 +972,8 @@ export async function contentRoutes(app: FastifyInstance) {
       validUntil?: string | null;
       folderId?: string | null;
       zones?: unknown[];
+      canvasWidth?: number;
+      canvasHeight?: number;
     };
 
     const item = await db.query.contentItems.findFirst({
@@ -988,7 +993,7 @@ export async function contentRoutes(app: FastifyInstance) {
       ...(body.validFrom !== undefined && { validFrom: body.validFrom ? new Date(body.validFrom) : null }),
       ...(body.validUntil !== undefined && { validUntil: body.validUntil ? new Date(body.validUntil) : null }),
       ...(body.folderId !== undefined && { folderId: body.folderId }),
-      ...(body.zones !== undefined && item.type === 'zone_layout' && { metadata: JSON.stringify({ zones: body.zones }) }),
+      ...(body.zones !== undefined && item.type === 'zone_layout' && { metadata: JSON.stringify({ zones: body.zones, canvasWidth: body.canvasWidth ?? 1920, canvasHeight: body.canvasHeight ?? 1080 }) }),
       updatedAt: new Date(),
     })
       .where(eq(contentItems.id, id))

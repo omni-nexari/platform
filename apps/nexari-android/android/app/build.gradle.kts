@@ -30,12 +30,13 @@ android {
 
     flavorDimensions += "channel"
     productFlavors {
-        // Dev build — points at local dev server on 192.168.1.17:3000.
+        // Dev build — points at LAN nginx on 192.168.1.17:80 (same as Tizen build:dev).
+        // nginx proxies / to 127.0.0.1:3000 and upgrades WS automatically.
         create("dev") {
             dimension = "channel"
             buildConfigField("boolean", "OTA_ENABLED", "false")
-            buildConfigField("String",  "DEFAULT_API_BASE", "\"http://192.168.1.17:3000/api/v1\"")
-            buildConfigField("String",  "DEFAULT_WS_BASE",  "\"ws://192.168.1.17:3000\"")
+            buildConfigField("String",  "DEFAULT_API_BASE", "\"http://192.168.1.17/api/v1\"")
+            buildConfigField("String",  "DEFAULT_WS_BASE",  "\"ws://192.168.1.17\"")
             buildConfigField("String",  "DEFAULT_OTA_URL",  "\"\"")
         }
         // Self-hosted APK with in-app OTA enabled.

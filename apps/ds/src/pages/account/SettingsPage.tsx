@@ -2406,6 +2406,7 @@ interface CalendarConnection {
   accountEmail: string | null;
   status: 'active' | 'error' | 'revoked';
   lastSyncedAt: string | null;
+  tokenExpiresAt: string | null;
   lastErrorMessage: string | null;
   createdAt: string;
 }
@@ -2467,15 +2468,22 @@ function IntegrationsSection({ selectedWsId }: { selectedWsId: string | null }) 
     },
   });
 
-  const startOAuth = async (provider: 'google' | 'microsoft') => {
+  const startOAuth = async (
+    provider: 'google' | 'microsoft',
+    reconnectId?: string,
+    existingScope?: 'workspace' | 'personal',
+  ) => {
     if (!selectedWsId) return;
-    if (scope === 'workspace' && !isManager) {
+    const effectiveScope = existingScope ?? scope;
+    if (effectiveScope === 'workspace' && !isManager) {
       toast.error('Manager role required for workspace-shared connections');
       return;
     }
     try {
+      const params = new URLSearchParams({ workspaceId: selectedWsId, scope: effectiveScope, popup: '1' });
+      if (reconnectId) params.set('reconnectId', reconnectId);
       const res = await api.get<{ redirectUrl: string }>(
-        `/integrations/calendar/oauth/${provider}/start?workspaceId=${selectedWsId}&scope=${scope}&popup=1`,
+        `/integrations/calendar/oauth/${provider}/start?${params.toString()}`,
       );
       const popup = window.open(res.redirectUrl, 'oauth_popup', 'width=600,height=700,left=200,top=100');
       if (!popup) {
@@ -2492,7 +2500,7 @@ function IntegrationsSection({ selectedWsId }: { selectedWsId: string | null }) 
         window.removeEventListener('message', handler);
         const data = typeof e.data === 'string' ? JSON.parse(e.data) as Record<string, string> : e.data as Record<string, string>;
         if (data['oauth'] === 'connected') {
-          toast.success(`${data['provider'] === 'microsoft' ? 'Outlook' : 'Google'} calendar connected`);
+          toast.success(`${data['provider'] === 'microsoft' ? 'Outlook' : 'Google'} calendar ${reconnectId ? 'reconnected' : 'connected'}`);
           qc.invalidateQueries({ queryKey: ['calendar-connections', selectedWsId] });
         } else {
           toast.error(data['detail'] ? `Connection failed: ${data['detail']}` : 'Connection failed');
@@ -2602,8 +2610,14 @@ function IntegrationsSection({ selectedWsId }: { selectedWsId: string | null }) 
                     <Badge tone={c.scope === 'workspace' ? 'info' : 'neutral'}>
                       {c.scope === 'workspace' ? 'Workspace' : 'Just you'}
                     </Badge>
-                    <Badge tone={c.status === 'active' ? 'success' : c.status === 'error' ? 'danger' : 'neutral'}>
-                      {c.status}
+                    <Badge tone={
+                      c.status === 'active' && !(c.tokenExpiresAt && new Date(c.tokenExpiresAt) <= new Date())
+                        ? 'success'
+                        : c.status === 'revoked' ? 'neutral' : 'danger'
+                    }>
+                      {c.status === 'active' && c.tokenExpiresAt && new Date(c.tokenExpiresAt) <= new Date()
+                        ? 'expired'
+                        : c.status}
                     </Badge>
                   </div>
                   <p className="text-xs text-[var(--text-muted)] truncate">
@@ -2611,10 +2625,37 @@ function IntegrationsSection({ selectedWsId }: { selectedWsId: string | null }) 
                     {c.accountEmail ? ` · ${c.accountEmail}` : ''}
                     {c.lastSyncedAt ? ` · synced ${new Date(c.lastSyncedAt).toLocaleString()}` : ''}
                   </p>
+                  {c.tokenExpiresAt && (c.provider === 'google' || c.provider === 'microsoft') && (() => {
+                    const exp = new Date(c.tokenExpiresAt);
+                    const now = new Date();
+                    const isExpired = exp <= now;
+                    const daysLeft = Math.ceil((exp.getTime() - now.getTime()) / 86_400_000);
+                    const expLabel = exp.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+                    const warningSoon = !isExpired && daysLeft <= 7;
+                    return (
+                      <p className={`text-xs mt-0.5 ${isExpired ? 'text-[var(--red)]' : warningSoon ? 'text-[var(--yellow,#ca8a04)]' : 'text-[var(--text-muted)]'}`}>
+                        {isExpired
+                          ? `Token expired ${expLabel} · reconnect to restore`
+                          : warningSoon
+                            ? `Token expires ${expLabel} (${daysLeft}d) · reconnect soon`
+                            : `Token valid until ${expLabel}`}
+                      </p>
+                    );
+                  })()}
                   {c.lastErrorMessage && (
-                    <p className="text-xs text-[var(--red)] mt-1 truncate">{c.lastErrorMessage}</p>
+                    <p className="text-xs text-[var(--red)] mt-0.5 truncate">{c.lastErrorMessage}</p>
                   )}
                 </div>
+                {(c.status !== 'active' || (!!c.tokenExpiresAt && new Date(c.tokenExpiresAt) <= new Date()))
+                  && (c.provider === 'google' || c.provider === 'microsoft') && (
+                  <button
+                    onClick={() => startOAuth(c.provider as 'google' | 'microsoft', c.id, c.scope)}
+                    className="px-2 py-1 rounded text-xs font-medium bg-[var(--blue)] text-white hover:opacity-90 shrink-0"
+                    title="Re-authorize this connection"
+                  >
+                    Reconnect
+                  </button>
+                )}
                 <button
                   onClick={() => sync.mutate(c.id)}
                   disabled={sync.isPending}

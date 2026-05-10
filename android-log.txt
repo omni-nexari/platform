@@ -1,0 +1,422 @@
+﻿--------- beginning of main
+05-10 17:18:01.978  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:02.159  2069  2281 D SemInputMotionEventDispatcher: registerMotionEventListener: already registered: com.samsung.android.hardware.secinputdev.taas.ExternalApi$5@f382804
+05-10 17:18:02.428  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:85:A3, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-69, periodicAdvInt=0x0
+05-10 17:18:02.431 18483 18598 I BCMGR[11.2.04.4]: BeaconMainController] onReceive - [1 : bad rssi][2 : ST packet!][3 : bad rssi][4 : bad rssi][5 : bad rssi][6 : ST packet!][7 : bad rssi][8 : bad rssi][9 : bad rssi][10 : bad rssi]
+05-10 17:18:02.439 18623 18651 I [-0400]oneconnect[1.8.45.24_01][BEACON_MANAGER_CONTROL_SERVICE]: TvOcfParser.onReceive - TV Popup Onboarding is skipped - ($)
+05-10 17:18:02.494  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:90:68, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-87, periodicAdvInt=0x0
+05-10 17:18:02.557  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:90:68, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-87, periodicAdvInt=0x0
+--------- beginning of system
+05-10 17:18:02.643 28851 28851 I wpa_supplicant: Heartbeat 225
+05-10 17:18:02.658  1542  2405 I VSyncReactor: Current= 90, Period= 90, hwcPeriod= 90
+05-10 17:18:02.729  2069  2501 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET, states=14
+05-10 17:18:02.731  2069  2501 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET6, states=14
+05-10 17:18:02.731  2069  2501 D InetDiagMessage: Destroyed live tcp sockets for uids={10317} in 5ms
+05-10 17:18:02.732  2069  2501 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET, states=14
+05-10 17:18:02.733  2069  2501 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET6, states=14
+05-10 17:18:02.733  2069  2501 D InetDiagMessage: Destroyed live tcp sockets for uids={20317} in 2ms
+05-10 17:18:03.090  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of ap_ntc\n"
+05-10 17:18:03.090  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of mtk-master-charger\n"
+05-10 17:18:03.264  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:03.368 21242 21418 D ProfileInstaller: Installing profile for app.chiho.nexari
+05-10 17:18:03.587  1492 21233 I HYPER-HAL: [RequestManager.cpp]releaseLocked(): Released ID : 12834728
+05-10 17:18:03.882   573   573 D io_stats: !@   8,32 r 59497862 1466778600 w 15317449 188402356 d 1920522 250310656 f 1837975 4096584 iot 15017924 0 th 0 0 0 pt 0 inp 0 0 435352.332
+05-10 17:18:04.478  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:5A:EF, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-91, periodicAdvInt=0x0
+05-10 17:18:04.546  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:04.661  2069 21361 I SystemUiVisibilityPolicyController: handleMessage: entry what = 101
+05-10 17:18:04.709  2069  4155 D SemWifiUsabilityStatsMonitor: onWifiUsabilityStats - seqNum 30497, isSameBssidAndFreq true
+05-10 17:18:04.712  2069  2583 I SemWifiLinkQualityMonitor: Link stat: 0 / 0 / 1.00 (5) / 200 / -60.0 || 100.0 : 200.00 / 0.5 : 1.00 / 0.55 : 0.30 / G (G) || 48a8dbbf5500: 0.143 / 56.000 / D || N N / 0 0 / Y 2.0 / Y X 0 / 435353160 0 || Invalid
+05-10 17:18:05.287  1542  2405 I VSyncReactor: Current= 90, Period= 90, hwcPeriod= 90
+05-10 17:18:05.884   573   573 D io_stats: !@   8,32 r 59497943 1466779912 w 15317541 188405336 d 1920522 250310656 f 1837975 4096584 iot 15018008 0 th 0 0 0 pt 0 inp 0 0 435354.334
+05-10 17:18:05.885   573   573 D io_stats: !@ Read_top(KB): .gms.persistent:high(18431) 1244 sh:normal(21416) 524 logd:/(456) 48
+05-10 17:18:05.885   573   573 D io_stats: !@ Write_top(KB): kworker/u32:3:/(17901) 2976 .apps.messaging:low(20899) 4
+05-10 17:18:05.937  5049  6041 I SDHMS:x : SIOP:: AP:308 BAT:282 USB:280 CHG:302 PA:297 WIFI:293 BLK:0 SUBBAT:0 SKIN:288 SKINF:280 SKINB:288 LRP2:288 LRF2:280 LRB2:288 AP2:288 CHG2:283 MEM2:288 WIFI2:288 SPK2:291 VAP05:299 AVGCUR:-5 AVGSYS:0 POWER:-21
+05-10 17:18:06.092  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of ap_ntc\n"
+05-10 17:18:06.093  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of mtk-master-charger\n"
+05-10 17:18:06.163  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:90:68, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-87, periodicAdvInt=0x0
+05-10 17:18:06.239  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:E2:7B, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-73, periodicAdvInt=0x0
+05-10 17:18:07.102  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:07.724  2069  4155 D SemWifiUsabilityStatsMonitor: onWifiUsabilityStats - seqNum 30498, isSameBssidAndFreq true
+05-10 17:18:07.728  2750  2859 D Tile.WifiTile: handleUpdateState isTransient=false transientEnabling =false cb.isTransient=false state.state = 2 mStateBeforeClick.value =false enabled =true
+05-10 17:18:07.740  2069  2246 D ActivityManager: Received BROADCAST intent 0x261a742 Key{broadcastIntent pkg=com.google.android.gms/com.google.android.gms.scheduler intent=act=com.google.android.gms.gcm.ACTION_CHECK_QUEUE xflg=0x4 pkg=com.google.android.gms cmp=com.google.android.gms/.gcm.nts.SchedulerInternalReceiver flags=0x2000000 u=0} requestCode=0 sent=0 from uid 1000
+05-10 17:18:07.831 18431 21256 I NetworkScheduler.Stats: (REDACTED) Task %s/%s started execution. cause:%s exec_start_elapsed_seconds: %s
+05-10 17:18:07.842 18431 21254 I NetworkScheduler.Stats: (REDACTED) Task %s/%s started execution. cause:%s exec_start_elapsed_seconds: %s
+05-10 17:18:07.846 18663 18749 I PlayGamesServices[GamesSyncAdapter]: Starting sync for 43b5dacf
+05-10 17:18:07.846 18663 20621 I PlayGamesServices[GamesSyncAdapter]: Starting sync for b324a3bb
+05-10 17:18:07.854 18663 20621 I PlayGamesServices[GamesSyncAdapter]: Sync duration for b324a3bb: 1
+05-10 17:18:07.854 18663 18749 I PlayGamesServices[GamesSyncAdapter]: Sync duration for 43b5dacf: 1
+05-10 17:18:07.877 18431 21256 I NetworkScheduler.Stats: (REDACTED) Task %s/%s finished executing. cause:%s result: %s elapsed_millis: %s uptime_millis: %s exec_start_elapsed_seconds: %s
+05-10 17:18:07.884 18663 20519 W PlayGamesServices[UiUtils]: AppVersion: Cannot find the installed destination app.
+05-10 17:18:07.884 18431 21256 I NetworkScheduler.Stats: (REDACTED) Task %s/%s finished executing. cause:%s result: %s elapsed_millis: %s uptime_millis: %s exec_start_elapsed_seconds: %s
+05-10 17:18:07.885 18663 20519 I GetServiceValidatorImpl: (REDACTED) onGetService() from Client SDK version [%s], Module version [%s], PGA version [%s], Account [%s], Calling package [%s], Game package [%s]
+05-10 17:18:07.885   573   573 D io_stats: !@   8,32 r 59498100 1466782764 w 15317549 188405360 d 1920522 250310656 f 1837978 4096586 iot 15018100 0 th 0 0 0 pt 0 inp 0 0 435356.335
+05-10 17:18:07.887 18663 20519 W GetGamesServiceReqFacto: Parsing request with ignored arguments. signInOptionsBundle [Bundle[{com.google.android.gms.signin.internal.serverClientId=null, com.google.android.gms.signin.internal.usePromptModeForAuthCode=true, com.google.android.gms.signin.internal.logSessionId=null, com.google.android.gms.signin.internal.hostedDomain=null, com.google.android.gms.signin.internal.offlineAccessRequested=false, com.google.android.gms.signin.internal.waitForAccessTokenRefresh=false, com.google.android.gms.signin.internal.clientRequestedAccount=Account {name=<<default account>>, type=com.google}, com.google.android.gms.signin.internal.idTokenRequested=false, com.google.android.gms.signin.internal.forceCodeForRefreshToken=false}]], isRetryingSignIn [false], skipWelcomePopup [false], requireGooglePlus [false]
+05-10 17:18:07.888 18663 20519 I GetGamesServiceReqFacto: Replacing request for `games` scope with `games_lite`
+05-10 17:18:07.900 18663 21426 I SignInPerformer-1: (REDACTED) Handling request [%s], isFirstPartyCaller [%s]
+05-10 17:18:07.902 18663 21426 I SignInPerformer-1: Successfully brokered first-party unauthenticated GamesService [CONTEXT service_id=1 ]
+05-10 17:18:07.905 18663 21426 I GetGamesServiceV2Op: (REDACTED) Successfully brokered GamesService for request %s
+05-10 17:18:07.905 18663 20519 W PlayGamesServices[UiUtils]: AppVersion: Cannot find the installed destination app.
+05-10 17:18:07.905 18663 20519 W PlayGamesServices[UiUtils]: AppVersionName: Cannot find the installed destination app.
+05-10 17:18:07.911 18663 20519 W PlayGamesServices[UiUtils]: AppVersion: Cannot find the installed destination app.
+05-10 17:18:07.911 18663 20519 W PlayGamesServices[UiUtils]: AppVersionName: Cannot find the installed destination app.
+05-10 17:18:07.912 18431 21256 I NetworkScheduler.Stats: (REDACTED) Task %s/%s started execution. cause:%s exec_start_elapsed_seconds: %s
+05-10 17:18:07.916 18663 18749 I PlayGamesServices[GamesSyncAdapter]: Starting sync for 6f1f5f30
+05-10 17:18:07.917 18663 18749 I PlayGamesServices[GamesSyncAdapter]: Sync duration for 6f1f5f30: 1
+05-10 17:18:07.921 18431 21424 I NetworkScheduler.Stats: (REDACTED) Task %s/%s finished executing. cause:%s result: %s elapsed_millis: %s uptime_millis: %s exec_start_elapsed_seconds: %s
+05-10 17:18:07.922 18663 20519 W PlayGamesServices[UiUtils]: AppVersion: Cannot find the installed destination app.
+05-10 17:18:07.922 18663 20519 W PlayGamesServices[UiUtils]: AppVersionName: Cannot find the installed destination app.
+05-10 17:18:08.006 21242 21248 W pp.chiho.nexari: userfaultfd: MOVE ioctl seems unsupported: Connection timed out
+05-10 17:18:08.055  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:5A:EF, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-97, periodicAdvInt=0x0
+05-10 17:18:08.385  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:08.514  5049  5049 I SDHMS:LOAD: type: LoadsFreqs, value: 0:0:0:1255500:2200000:0:1064000:2000000:0:7:390:0
+05-10 17:18:08.567  2069  2613 D WifiConnectivityMonitor.NetworkStatsAnalyzer: Backhaul result - RSSI:-60, CE:10, PE:7, TI:12, PTI:9, TW:0, PTW:0, Tx:3941, Rx:20636, TxS:3941, RxS:20607, RESULT:true, IC:0, ICT:5, WC:0, WCT:5, R:0, RC:0, IE:0, EC:0
+05-10 17:18:09.096  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of ap_ntc\n"
+05-10 17:18:09.096  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of mtk-master-charger\n"
+05-10 17:18:09.199  2069  3663 D NetdEventListenerService: CSC Feature value: true
+05-10 17:18:09.199  2069  3663 D NetdEventListenerService: CSC Feature value: true
+05-10 17:18:09.271  1542  2405 I VSyncReactor: Current= 90, Period= 90, hwcPeriod= 90
+05-10 17:18:09.887   573   573 D io_stats: !@   8,32 r 59498111 1466782812 w 15317562 188405404 d 1920522 250310656 f 1837979 4096588 iot 15018116 0 th 0 0 0 pt 0 inp 0 0 435358.337
+05-10 17:18:09.888   573   573 D io_stats: !@ Read_top(KB): hbox:interactor:high(18496) 2456 kworker/u32:2:/(14090) 256 .gms.persistent:high(18431) 108
+05-10 17:18:09.888   573   573 D io_stats: !@ Write_top(KB): .gms.persistent:high(18431) 36 pp.chiho.nexari:top(21242) 8 id.app.routines:low(20455) 4
+05-10 17:18:10.577  2069  2122 D BatteryExternalStatsWorker: update stats : update-network-download (6)
+05-10 17:18:10.577  2069  2122 D BatteryExternalStatsWorker: Update Rail Energy data
+05-10 17:18:10.577  2069  2122 D BatteryExternalStatsWorker: mStats lock released
+05-10 17:18:10.577  2069  2122 D BatteryExternalStatsWorker: done updateExternalStatsLocked
+05-10 17:18:10.739  2069  4155 D SemWifiUsabilityStatsMonitor: onWifiUsabilityStats - seqNum 30499, isSameBssidAndFreq true
+05-10 17:18:11.034   757 21155 I keystore2: system/security/keystore2/watchdog/src/lib.rs:377 - Watchdog thread idle -> terminating. Have a great day.
+05-10 17:18:11.792  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:90:68, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-88, periodicAdvInt=0x0
+05-10 17:18:11.805  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:90:68, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-87, periodicAdvInt=0x0
+05-10 17:18:11.891   573   573 D io_stats: !@   8,32 r 59498114 1466782824 w 15317714 188406520 d 1920522 250310656 f 1837989 4096604 iot 15018148 0 th 0 0 0 pt 0 inp 0 0 435360.341
+05-10 17:18:12.061  1555  1574 D ccci_mdinit: (1):monitor_time_update_thread round:103103 ########
+05-10 17:18:12.096  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of ap_ntc\n"
+05-10 17:18:12.097  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of mtk-master-charger\n"
+05-10 17:18:12.097  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of camera0\n"
+05-10 17:18:12.097  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of mtk-master-charger\n"
+05-10 17:18:12.097  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of nrpa_ntc\n"
+05-10 17:18:12.098  1643  1669 E thermal_core: dump_thermal_log:"Error: sccanf error, ret=9\n"
+05-10 17:18:12.100  1643  1669 E thermal_core: node_read:"Failed to read /sys/class/thermal/thermal_zone2/temp: No data available\n"
+05-10 17:18:12.100  1643  1669 I thermal_core: "soc/nr/lte/ap_ntc/tpcb/conn/chg/cam/c_ttj/g_ttj/a_ttj=0/-274000/29100/-274000/46000/27000/-274000/-274000/85000/85000/85000\n"
+05-10 17:18:12.100  1643  1669 I thermal_core: "[C(l)(c)(i)][G(l)(c)][A(l)(c)][TH][D]=[(666666/666666/666666)(500/725/0)(0x0)][(666666)(666666)][(666666666)(666666666)][0][1600]\n"
+05-10 17:18:12.100  1643  1669 E thermal_core: node_read:"Failed to open /sys/kernel/helio-dvfsrc/dvfsrc_therm_info: No such file or directory\n"
+05-10 17:18:12.101  1643  1669 I thermal_core: "1600"
+05-10 17:18:12.225  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:12.647 28851 28851 I wpa_supplicant: Heartbeat 226
+05-10 17:18:13.026 18663 18663 D BoundBrokerSvc: onUnbind: Intent { act=com.google.android.gms.feedback.internal.IFeedbackService dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.GmsBoundBrokerService }
+05-10 17:18:13.153  1737  1810 D AALLightSensor: oldLux=80 [SA:-1 LA:-1] newLux=80 (oriLux: 76)
+05-10 17:18:13.277  1542  2405 I VSyncReactor: Current= 90, Period= 90, hwcPeriod= 90
+05-10 17:18:13.320  2069  2110 I ActivityManager: com.samsung.android.mtp is exempt from freezer by list
+05-10 17:18:13.340  1464  1464 D Zygote  : Forked child process 21429
+05-10 17:18:13.341  2069  2111 I ActivityManager: Start proc 21429:android.process.media/u0a66 for service {com.samsung.android.mtp/com.samsung.android.mtp.MtpService}
+05-10 17:18:13.342  2069  2111 I ActivityManager: ProcessObserver broadcast disabled
+05-10 17:18:13.360 21429 21429 I d.process.media: Using CollectorTypeCMC GC.
+05-10 17:18:13.371 21429 21429 D nativeloader: Load libframework-connectivity-tiramisu-jni.so using APEX ns com_android_tethering for caller /apex/com.android.tethering/javalib/framework-connectivity-t.jar: ok
+05-10 17:18:13.373 21429 21429 D ActivityThread: setConscryptValidator
+05-10 17:18:13.373 21429 21429 D ActivityThread: setConscryptValidator - put
+05-10 17:18:13.387 21429 21429 I ActivityThread: Relaunch all activities: onCoreSettingsChange
+05-10 17:18:13.404 21429 21429 D nativeloader: Configuring clns-shared-9 for other apk /system/priv-app/MtpApplication/MtpApplication.apk. target_sdk_version=36, uses_libraries=, library_path=/system/priv-app/MtpApplication/lib/arm64:/system/lib64:/system_ext/lib64, permitted_path=/data:/mnt/expand:/data/user/0/com.samsung.android.mtp:/system/priv-app/MtpApplication:/system/lib64:/system_ext/lib64
+05-10 17:18:13.424 21429 21429 V GraphicsEnvironment: Currently set values for:
+05-10 17:18:13.424 21429 21429 V GraphicsEnvironment:   angle_gl_driver_selection_pkgs=[]
+05-10 17:18:13.424 21429 21429 V GraphicsEnvironment:   angle_gl_driver_selection_values=[]
+05-10 17:18:13.424 21429 21429 V GraphicsEnvironment: com.samsung.android.mtp is not listed in per-application setting
+05-10 17:18:13.424 21429 21429 V GraphicsEnvironment: ANGLE allowlist from config: com.dreamgames.royalmatch com.dts.freefiremax com.dxx.firenow com.gramgames.mergedragons com.ludo.king com.mojang.minecraftpe com.my.defense com.nintendo.zaka com.os.airforce com.playrix.fishdomdd.gplay io.teslatech.callbreak jp.konami.prospia net.peakgames.toonblast
+05-10 17:18:13.424 21429 21429 V GraphicsEnvironment: com.samsung.android.mtp is not listed in ANGLE allowlist or settings, returning default
+05-10 17:18:13.424 21429 21429 V GraphicsEnvironment: Neither updatable production driver nor prerelease driver is supported.
+05-10 17:18:13.444 21429 21429 D nativeloader: Configuring clns-shared-10 for other apk /system/priv-app/MtpService/MtpService.apk. target_sdk_version=36, uses_libraries=, library_path=/system/priv-app/MtpService/lib/arm64:/system/lib64:/system_ext/lib64, permitted_path=/data:/mnt/expand:/data/user/0/com.android.mtp:/system/priv-app/MtpService:/system/lib64:/system_ext/lib64
+05-10 17:18:13.463 21429 21429 E ashmem  : Pinning is deprecated since Android Q. Please use trim or other methods.
+05-10 17:18:13.493 21429 21429 D ApplicationLoaders: Returning zygote-cached class loader: /system/framework/org.apache.http.legacy.jar
+05-10 17:18:13.501 21429 21429 D nativeloader: Configuring clns-shared-11 for other apk /system/priv-app/SecDownloadProvider/SecDownloadProvider.apk. target_sdk_version=36, uses_libraries=, library_path=/system/priv-app/SecDownloadProvider/lib/arm64:/system/lib64:/system_ext/lib64, permitted_path=/data:/mnt/expand:/data/user/0/com.android.providers.downloads:/system/priv-app/SecDownloadProvider:/system/lib64:/system_ext/lib64
+05-10 17:18:13.511 21429 21429 V DownloadManager: onCreate : initialize the content provider
+05-10 17:18:13.515 21429 21429 V DownloadManager: onCreate : initialization complete
+05-10 17:18:13.536 21429 21429 D nativeloader: Configuring clns-shared-12 for other apk /system/priv-app/MediaProviderLegacy/MediaProviderLegacy.apk. target_sdk_version=36, uses_libraries=, library_path=/system/priv-app/MediaProviderLegacy/lib/arm64:/system/lib64:/system_ext/lib64, permitted_path=/data:/mnt/expand:/data/user/0/com.android.providers.media:/system/priv-app/MediaProviderLegacy:/system/lib64:/system_ext/lib64
+05-10 17:18:13.614 21429 21429 I Toast   : show: caller = com.samsung.android.mtp.MtpService.onStartCommand:157 
+05-10 17:18:13.617 21429 21429 I Toast   : show: contextDispId = 0 mCustomDisplayId = -1 focusedDisplayId = 0 isActivityContext = false
+05-10 17:18:13.624  2069  2860 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendBroadcast:1335 com.android.server.notification.NotificationManagerService$17.enqueueToastForDex:62 com.android.server.notification.NotificationManagerService$17.enqueueTextToastForDex:17 android.app.INotificationManager$Stub.onTransact:4630 android.os.Binder.execTransactInternal:1457 
+05-10 17:18:13.633  1542  2405 I SurfaceFlinger: id=34154 createSurf, flag=84004, WindowToken{f118b52 type=2005 android.os.Binder@389e3dd}#34154
+05-10 17:18:13.643  1542  1542 I SurfaceFlinger: RequestedLayer [WindowToken{f118b52 type=2005 android.os.Binder@389e3dd}#34154] hidden!! flag  from(1) --> to(0)
+05-10 17:18:13.643  1542  1542 I SurfaceFlinger: [WindowToken{f118b52 type=2005 android.os.Binder@389e3dd}#34154] attach to parent LayerHierarchy{RequestedLayerState{Leaf:20:21#30 parentId=29} 1 children}
+05-10 17:18:13.644 21429 21429 D MtpService: startServer
+05-10 17:18:13.644 21429 21429 D MtpService: starting MTP server in MTP mode with storage /storage/emulated/0 as user 0
+05-10 17:18:13.646  1481  1503 I hwcomposer: [HWCDisplay] (0 updateFps():4131), (type:1, mode:2) fps:0.241572,dur:12418.68,max:12361.58,min:10.01  
+05-10 17:18:13.650  2750  2750 E ndroid.systemui: Invalid resource ID 0x00000000.
+05-10 17:18:13.660  2750  2750 V ToastPresenter: yOffset = 180
+05-10 17:18:13.660  2750  2750 V ToastPresenter: Text: Donn in android.widget.ToastPresenter@55affd6
+05-10 17:18:13.664  2750  2750 I WindowManager: WindowManagerGlobal#addView, ty=2005, view=android.widget.LinearLayout{7365257 V.E...... ......I. 0,0-0,0}, caller=android.view.WindowManagerImpl.addView:158 android.widget.ToastPresenter.addToastView:424 android.widget.ToastPresenter.show:325 
+05-10 17:18:13.664  2750  2750 I ViewRootImpl: dVRR is disabled
+05-10 17:18:13.665  2750  2894 D NativeCustomFrequencyManager: [NativeCFMS] BpCustomFrequencyManager::BpCustomFrequencyManager()
+05-10 17:18:13.671  2069  3663 D InputTransport: Input channel constructed: '82ab195', fd=1087
+05-10 17:18:13.671  2069  3663 D InputTransport: Input channel constructed: '82ab195', fd=1090
+05-10 17:18:13.671  2069  3663 D InputTransport: Input channel constructed: '82ab195', fd=1092
+05-10 17:18:13.671  2069  3663 D InputTransport: Input channel destroyed: '82ab195', fd=1090
+05-10 17:18:13.674  1542  2405 I SurfaceFlinger: id=34155 createSurf, flag=84004, 82ab195 Toast#34155
+05-10 17:18:13.675  2069  3663 D RestrictionPolicy: isScreenCaptureEnabled : ret=true userId=0
+05-10 17:18:13.676  2069  3663 D InputTransport: Input channel destroyed: '82ab195', fd=1092
+05-10 17:18:13.679  2750  2750 D InputTransport: Input channel constructed: '82ab195', fd=598
+05-10 17:18:13.680  2750  2750 I InsetsController: onStateChanged: host=Toast, from=android.view.ViewRootImpl.onInsetsStateChanged:3026, state=InsetsState: {mDisplayFrame=Rect(0, 0 - 1080, 2340), mDisplayCutout=DisplayCutout{insets=Rect(0, 80 - 0, 0) waterfall=Insets{left=0, top=0, right=0, bottom=0} boundingRect={Bounds=[Rect(0, 0 - 0, 0), Rect(472, 0 - 608, 80), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0)]} cutoutPathParserInfo={CutoutPathParserInfo{displayWidth=1080 displayHeight=2340 physicalDisplayWidth=1080 physicalDisplayHeight=2340 density={2.8125} cutoutSpec={M 0,0 H -24.177777778 V 28.4444444444 H 24.177777778 V 0 H 0 Z @dp} rotation={0} scale={1.0} physicalPixelDisplaySizeRatio={1.0}}} sideOverrides={}}, mRoundedCorners=RoundedCorners{[RoundedCorner{position=TopLeft, radius=113, center=Point(113, 113)}, RoundedCorner{position=TopRight, radius=113, center=Point(967, 113)}, RoundedCorner{position=BottomRight, radius=113, center=Point(967, 2227)}, RoundedCorner{position=BottomLeft, radius=113, center=Point(113, 2227)}]}  mRoundedCornerFrame=Rect(0, 0 - 0, 0), mPrivacyIndicatorBounds=PrivacyIndicatorBounds {static bounds=Rect(956, 0 - 1080, 80) rotation=0}, mDisplayShape=DisplayShape{ spec=-311912193 displayWidth=1080 displayHeight=2340 physicalPixelDisplaySizeRatio=1.0 rotation=0 offsetX=0 offsetY=0 scale=1.0}, mSources= { InsetsSource: {fab20001 mType=navigationBars mFrame=[0,2205][1080,2340] mVisible=false mFlags= mSideHint=BOTTOM mBoundingRects=null}, InsetsSource: {fab20004 mType=systemGestures mFrame=[0,0][0,0] mVisible=true mFlags= mSideHint=NONE mBoundingRects=null}, InsetsSource: {fab20005 mType=mandatorySystemGestures mFrame=[0,2205][1080,2340] mVisible=true mFlags= mSideHint=BOTTOM mBoundingRects=null}, InsetsSource: {fab20006 mType=tappableElement mFrame=[0,2205][1080,2340] mVisible=true mFlags= mSideHint=BOTTOM mBoundingRects=null}, InsetsSource: {fab20024 mType=systemGestures mFrame=[0,0][0,0] mVisible=true mFlags= mSideHint=NONE mBoundingRects=null}, InsetsSource: {3 mType=ime mFrame=[0,0][0,0] mVisible=false mFlags= mSideHint=NONE mBoundingRects=null}, InsetsSource: {27 mType=displayCutout mFrame=[0,0][1080,80] mVisible=true mFlags= mSideHint=TOP mBoundingRects=null}, InsetsSource: {7f6e0000 mType=statusBars mFrame=[0,0][1080,80] mVisible=false mFlags= mSideHint=TOP mBoundingRects=null}, InsetsSource: {7f6e0005 mType=mandatorySystemGestures mFrame=[0,0][1080,114] mVisible=true mFlags= mSideHint=TOP mBoundingRects=null}, InsetsSource: {7f6e0006 mType=tappableElement mFrame=[0,0][1080,80] mVisible=true mFlags= mSideHint=TOP mBoundingRects=null} }
+05-10 17:18:13.680  2750  2750 I VRI[Toast]@581c144: synced displayState. AttachInfo displayState=2
+05-10 17:18:13.681  2750  2750 I VRI[Toast]@581c144: setView = android.widget.LinearLayout@7365257 IsHRR=false mFlingFrameRateChange=0 TM=true
+05-10 17:18:13.683  2750  2894 D HWUI    : HWUI - treat SMPTE_170M as sRGB
+05-10 17:18:13.684 21429 21429 D MtpService: launchMTP
+05-10 17:18:13.684 21429 21429 W MtpService: opensession is not come
+05-10 17:18:13.687  1542  1542 I SurfaceFlinger: RequestedLayer [82ab195 Toast#34155] hidden!! flag  from(1) --> to(0)
+05-10 17:18:13.687  1542  1542 I SurfaceFlinger: [82ab195 Toast#34155] attach to parent LayerHierarchy{RequestedLayerState{WindowToken{f118b52 type=2005 android.os.Binder@389e3dd}#34154 parentId=30} 1 children}
+05-10 17:18:13.691 21429 21453 D d.process.media: Log level = 0xFFFFFF00 [0]
+05-10 17:18:13.691 21429 21454 E d.process.media: start waitControls: Success
+05-10 17:18:13.693  2069  2860 I WindowManager: Relayout Window{82ab195 u0 Toast}: viewVisibility=0 req=900x232 ty=2005 d0
+05-10 17:18:13.694  1542  2405 I SurfaceFlinger: id=34156 createSurf, flag=44004, Toast$_2750#34156
+05-10 17:18:13.694  2069  2860 D WindowManager: makeSurface duration=1 name=Toast$_2750
+05-10 17:18:13.695  2069  2860 W PhoneWindowManager: lockNow pending, ignore updating lockscreen timeout
+05-10 17:18:13.698  2069  2860 I WindowManager: Relayout hash=82ab195, pid=2750, syncId=-1: mAttrs={(0,180)(wrapxwrap) gr=BOTTOM CENTER sim={adjust=pan} ty=TOAST fmt=TRANSLUCENT wanim=0x1030004 receive insets ignoring z-order
+05-10 17:18:13.698  2069  2860 I WindowManager:   fl=1000098
+05-10 17:18:13.698  2069  2860 I WindowManager:   pfl=30000000
+05-10 17:18:13.698  2069  2860 I WindowManager:   bhv=1
+05-10 17:18:13.698  2069  2860 I WindowManager:   fitTypes=20f
+05-10 17:18:13.698  2069  2860 I WindowManager:   fitIgnoreVis
+05-10 17:18:13.698  2069  2860 I WindowManager:   frameRateBoostOnTouch=true
+05-10 17:18:13.698  2069  2860 I WindowManager:   dvrrWindowFrameRateHint=true naviIconColor=0}
+05-10 17:18:13.701  2750  2750 D BufferQueueConsumer: [](id:abe000007a8,api:0,p:-1,c:2750) connect: controlledByApp=false
+05-10 17:18:13.701  2750  2750 I BLASTBufferQueue: [VRI[Toast]@581c144#1960](f:0,a:0,s:0) constructor()
+05-10 17:18:13.701  2750  2750 I BLASTBufferQueue_Java: new BLASTBufferQueue, mName= VRI[Toast]@581c144 mNativeObject= 0xb400007381620400 caller= android.view.ViewRootImpl.updateBlastSurfaceIfNeeded:3585 android.view.ViewRootImpl.relayoutWindow:11685 android.view.ViewRootImpl.performTraversals:4804 android.view.ViewRootImpl.doTraversal:3924 android.view.ViewRootImpl$TraversalRunnable.run:12903 android.view.Choreographer$CallbackRecord.run:1901 android.view.Choreographer$CallbackRecord.run:1910 android.view.Choreographer.doCallbacks:1367 android.view.Choreographer.doFrame:1292 android.view.Choreographer$FrameDisplayEventReceiver.run:1870 
+05-10 17:18:13.701  2750  2750 I BLASTBufferQueue_Java: update, w= 900 h= 232 mName = VRI[Toast]@581c144 mNativeObject= 0xb400007381620400 sc.mNativeObject= 0xb400007381306580 format= -3 caller= android.view.ViewRootImpl.updateBlastSurfaceIfNeeded:3590 android.view.ViewRootImpl.relayoutWindow:11685 android.view.ViewRootImpl.performTraversals:4804 android.view.ViewRootImpl.doTraversal:3924 android.view.ViewRootImpl$TraversalRunnable.run:12903 android.view.Choreographer$CallbackRecord.run:1901 
+05-10 17:18:13.701  2750  2750 I BLASTBufferQueue: [VRI[Toast]@581c144#1960](f:0,a:0,s:0) update width=900 height=232 format=-3 mTransformHint=0
+05-10 17:18:13.702  2750  2750 I VRI[Toast]@581c144: Relayout returned: old=(0,80,1080,2205) new=(90,1793,990,2025) relayoutAsync=false req=(900,232)0 dur=8 res=0x3 s={true 0xb400007384042200} ch=true seqId=0
+05-10 17:18:13.703  2750  2750 I VRI[Toast]@581c144: performConfigurationChange setNightDimText nightDimLevel=0
+05-10 17:18:13.704  2750  2750 D VRI[Toast]@581c144: mThreadedRenderer.initialize() mSurface={isValid=true 0xb400007384042200} hwInitialized=true
+05-10 17:18:13.707  2750  2750 D VRI[Toast]@581c144: reportNextDraw android.view.ViewRootImpl.performTraversals:5443 android.view.ViewRootImpl.doTraversal:3924 android.view.ViewRootImpl$TraversalRunnable.run:12903 android.view.Choreographer$CallbackRecord.run:1901 android.view.Choreographer$CallbackRecord.run:1910 
+05-10 17:18:13.707  2750  2750 D VRI[Toast]@581c144: Setup new sync=wmsSync-VRI[Toast]@581c144#95
+05-10 17:18:13.707  2750  2750 I VRI[Toast]@581c144: Creating new active sync group VRI[Toast]@581c144#96
+05-10 17:18:13.708  2750  2750 D VRI[Toast]@581c144: registerCallbacksForSync syncBuffer=false
+05-10 17:18:13.709  1542  1542 I SurfaceFlinger: [Toast$_2750#34156] attach to parent LayerHierarchy{RequestedLayerState{82ab195 Toast#34155 parentId=34154} 1 children}
+05-10 17:18:13.711  2750  2888 D VRI[Toast]@581c144: Received frameDrawingCallback syncResult=0 frameNum=1.
+05-10 17:18:13.711  2750  2888 I VRI[Toast]@581c144: mWNT: t=0xb400007383244380 mBlastBufferQueue=0xb400007381620400 fn= 1 HdrRenderState mRenderHdrSdrRatio=1.0 caller= android.view.ViewRootImpl$12.onFrameDraw:15441 android.view.ThreadedRenderer$1.onFrameDraw:718 <bottom of call stack> 
+05-10 17:18:13.711  2750  2888 I VRI[Toast]@581c144: Setting up sync and frameCommitCallback
+05-10 17:18:13.721  2750  2894 I BLASTBufferQueue: [VRI[Toast]@581c144#1960](f:0,a:0,s:0) onFrameAvailable the first frame is available
+05-10 17:18:13.722  2750  2894 I BLASTBufferQueue: [VRI[Toast]@581c144#1960](f:0,a:1,s:0) acquireNextBufferLocked size=900x232 mFrameNumber=1 applyTransaction=true mTimestamp=435362171486871(auto) mPendingTransactions.size=0 graphicBufferId=11811160088075 transform=0
+05-10 17:18:13.723  2750  2894 I VRI[Toast]@581c144: Received frameCommittedCallback lastAttemptedDrawFrameNum=1 didProduceBuffer=true
+05-10 17:18:13.724  2750  2894 D HWUI    : CFMS:: SetUp Pid : 2750    Tid : 2894
+05-10 17:18:13.724  2750  2750 D VRI[Toast]@581c144: reportDrawFinished seqId=0
+05-10 17:18:13.725  2069  2860 D WindowManager: finishDrawingWindow: Window{82ab195 u0 Toast} mDrawState=DRAW_PENDING seqId=0
+05-10 17:18:13.726  2069  2093 W PhoneWindowManager: lockNow pending, ignore updating lockscreen timeout
+05-10 17:18:13.732  2069  2093 I WindowManager: Reparenting to leash, surface=Surface(name=82ab195 Toast)/@0x322206f, leashParent=Surface(name=WindowToken{f118b52 type=2005 android.os.Binder@389e3dd})/@0x43d17c
+05-10 17:18:13.735  1542  2405 I SurfaceFlinger: id=34157 createSurf, flag=24004, Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34157
+05-10 17:18:13.737  2069  2093 D WindowManager: makeSurface duration=4 leash=Surface(name=Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation)/@0x89c2a05
+05-10 17:18:13.739  2069  2093 V WindowManager: performShowLocked: mDrawState=HAS_DRAWN in Window{82ab195 u0 Toast}
+05-10 17:18:13.744  2069  2094 D PowerManagerService: [api] setPowerBoost(L) boost:0, durationMs:0, caller (uid: 1000 pid: 2069) <- m() in com.android.server.display.DisplayManagerService$BinderService$$ExternalSyntheticOutline0:1
+05-10 17:18:13.748  2069  4155 D SemWifiUsabilityStatsMonitor: onWifiUsabilityStats - seqNum 30500, isSameBssidAndFreq true
+05-10 17:18:13.755  1542  1542 I SurfaceFlinger: [Display 0 name="Built-in Screen"#49] setFrameRateCategory: High
+05-10 17:18:13.755  1542  1542 E SurfaceFlinger: alpha changed 1.000 -> 0.000 - Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34157
+05-10 17:18:13.755  1542  1542 I SurfaceFlinger: RequestedLayer [Surface(name=82ab195 Toast)/@0x32220[...]tion-leash of window_animation#34157] hidden!! flag  from(1) --> to(0)
+05-10 17:18:13.755  1542  1542 E SurfaceFlinger: alpha changed 0.000 -> 0.000 - Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34157
+05-10 17:18:13.755  1542  1542 I SurfaceFlinger: RequestedLayer [Toast$_2750#34156] hidden!! flag  from(1) --> to(0)
+05-10 17:18:13.756  1542  1542 I SurfaceFlinger: [LayerHierarchy{RequestedLayerState{82ab195 Toast#34155 parentId=34157} 1 children}] reparent to LayerHierarchy{RequestedLayerState{Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34157 parentId=34154} 1 children}
+05-10 17:18:13.756  1542  1542 I SurfaceFlinger: [Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34157] attach to parent LayerHierarchy{RequestedLayerState{WindowToken{f118b52 type=2005 android.os.Binder@389e3dd}#34154 parentId=30} 1 children}
+05-10 17:18:13.766  1542  1542 E SurfaceFlinger: alpha changed 0.000 -> 0.044 - Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34157
+05-10 17:18:13.779  1542  1542 D SurfaceFlinger: Display 4627039422300187648 HWC layers:
+05-10 17:18:13.779  1542  1542 D SurfaceFlinger:   SOLID_COLOR |                        0 | 00000000 | N/A          |    0.0    0.0    0.0    0.0 |    0    0 1080   81 | Letterbox - top#34150 (0)
+05-10 17:18:13.779  1542  1542 D SurfaceFlinger:        DEVICE |           91233695301633 | 00002102 | RGBA_8888    |    0.0    0.0 1080.0 2260.0 |    0   80 1080 2340 | app.chiho.nexari/app.chiho.nexari.MainActivity$_21242#34145 (8)
+05-10 17:18:13.779  1542  1542 D SurfaceFlinger:        DEVICE |           11811160088075 | 00002100 | RGBA_8888    |    0.0    0.0  900.0  232.0 |   90 1793  990 2025 | Toast$_2750#34156 (1)
+05-10 17:18:13.779  1542  1542 D SurfaceFlinger: 
+05-10 17:18:13.894   573   573 D io_stats: !@   8,32 r 59498440 1466790564 w 15317716 188406528 d 1920522 250310656 f 1837989 4096604 iot 15018244 0 th 0 0 0 pt 0 inp 0 0 435362.344
+05-10 17:18:13.895   573   573 D io_stats: !@ Read_top(KB): d.process.media:high(21429) 5500 d.process.media:low(21429) 1032 system_server:high(2069) 608
+05-10 17:18:13.896   573   573 D io_stats: !@ Write_top(KB): f2fs_ckpt-254:6:/(3346) 588 kworker/1:0:/(10196) 340 kworker/u32:3:/(17901) 180
+05-10 17:18:13.949 18663 18663 D BoundBrokerSvc: onUnbind: Intent { act=com.google.android.gms.safetynet.service.START xflg=0x4 pkg=com.google.android.gms }
+05-10 17:18:13.953 18663 18663 D BoundBrokerSvc: onUnbind: Intent { act=com.google.android.gms.safebrowsing.SafeBrowsingService.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.GmsBoundBrokerService }
+05-10 17:18:14.256  2069  2093 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{f118b52 type=2005 android.os.Binder@389e3dd})/@0x43d17c, destroy=true, surface=Surface(name=82ab195 Toast)/@0x322206f
+05-10 17:18:14.270  2069  2093 W PhoneWindowManager: lockNow pending, ignore updating lockscreen timeout
+05-10 17:18:14.274  2069  2093 W PhoneWindowManager: lockNow pending, ignore updating lockscreen timeout
+05-10 17:18:14.277  1542  1542 I SurfaceFlinger: [Display 0 name="Built-in Screen"#49] setFrameRateCategory: Default
+05-10 17:18:14.277  1542  1542 I SurfaceFlinger: [LayerHierarchy{RequestedLayerState{82ab195 Toast#34155 parentId=34154} 1 children}] reparent to LayerHierarchy{RequestedLayerState{WindowToken{f118b52 type=2005 android.os.Binder@389e3dd}#34154 parentId=30} 2 children}
+05-10 17:18:14.277  1542  1542 I SurfaceFlinger: [LayerHierarchy{RequestedLayerState{Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34157} no children}] reparent to OffscreenRoot
+05-10 17:18:14.277  1542  1542 I SurfaceFlinger: [LayerHierarchy{RequestedLayerState{Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34157} no children}] RelativeParent to null
+05-10 17:18:14.280  1542  1542 I SurfaceFlinger: onHandleDestroyed: layerId=34157, name=Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34157
+05-10 17:18:14.280  1542  1542 I SurfaceFlinger: id=34157 Removed Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34157 (154)
+05-10 17:18:14.281  1542  1542 E RefreshRateSelector: Can't find HRR max refresh rate by policy with the same group 0
+05-10 17:18:14.288  1542  1542 I SurfaceFlinger: destroyed Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34157
+05-10 17:18:14.290  1542  1542 I Layer   : id=34157 Destroyed Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34157
+05-10 17:18:14.334  1481  1857 I hwcomposer: [HWC] (0)fire a callback of refresh to SF[4]  
+05-10 17:18:14.358  1542  1542 I BufferQueueProducer: [FramebufferSurface](this:0xb4000074f8cf0370,id:-1,api:1,p:1542,c:1542) queueBuffer: fps=0.13 dur=14946.75 max=14704.02 min=242.72
+05-10 17:18:14.376  2069  2079 I system_server: Background concurrent mark compact GC freed 20MB AllocSpace bytes, 61(1928KB) LOS objects, 18% free, 105MB/129MB, paused 2.104ms,10.176ms total 404.454ms
+05-10 17:18:14.379  2069  2080 I BpBinder: onLastStrongRef automatically unlinking death recipients: 
+05-10 17:18:14.787  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:15.010  2750  2765 I ndroid.systemui: Background concurrent mark compact GC freed 20MB AllocSpace bytes, 28(560KB) LOS objects, 29% free, 56MB/80MB, paused 756us,2.944ms total 208.488ms
+05-10 17:18:15.022  1542  2917 I SurfaceFlinger: onHandleDestroyed: layerId=34149, name=Surface(name=e62658a app.chiho.nexari/app.chiho.nexari.MainActivity)/@0x5f7d090 - animation-leash of starting_reveal#34149
+05-10 17:18:15.022  2750  2767 W System  : A resource failed to call release. 
+05-10 17:18:15.022  1542  2917 I SurfaceFlinger: id=34149 Removed Surface(name=e62658a app.chiho.nexari/app.chiho.nexari.MainActivity)/@0x5f7d090 - animation-leash of starting_reveal#34149 (153)
+05-10 17:18:15.023  2750  2767 W System  : A resource failed to call release. 
+05-10 17:18:15.026  2750  2767 W System  : A resource failed to call release. 
+05-10 17:18:15.026  2750  2767 W System  : A resource failed to call release. 
+05-10 17:18:15.026  2750  2767 W System  : A resource failed to call release. 
+05-10 17:18:15.026  2750  2767 W System  : A resource failed to call release. 
+05-10 17:18:15.026  2750  2767 W System  : A resource failed to call release. 
+05-10 17:18:15.028  2750  2767 W System  : A resource failed to call release. 
+05-10 17:18:15.028  2750  2767 W System  : A resource failed to call release. 
+05-10 17:18:15.029  2750  2767 W System  : A resource failed to call release. 
+05-10 17:18:15.029  2750  2767 W System  : A resource failed to call release. 
+05-10 17:18:15.029  2750  2767 W System  : A resource failed to call release. 
+05-10 17:18:15.031  1542  1542 I SurfaceFlinger: destroyed Surface(name=e62658a app.chiho.nexari/app.chiho.nexari.MainActivity)/@0x5f7d090 - animation-leash of starting_reveal#34149
+05-10 17:18:15.033  1542  1542 I Layer   : id=34149 Destroyed Surface(name=e62658a app.chiho.nexari/app.chiho.nexari.MainActivity)/@0x5f7d090 - animation-leash of starting_reveal#34149
+05-10 17:18:15.038  1481  1503 I hwcomposer: [HWCDisplay] (0 updateFps():4131), (type:1, mode:2) fps:40.955662,dur:1391.75,max:678.90,min:7.08  
+05-10 17:18:15.079  1481  1857 I hwcomposer: [HWC] (0)fire a callback of refresh to SF[4]  
+05-10 17:18:15.101  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of ap_ntc\n"
+05-10 17:18:15.101  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of mtk-master-charger\n"
+05-10 17:18:15.111  1542  2917 I VSyncReactor: Current= 90, Period= 90, hwcPeriod= 90
+05-10 17:18:15.555  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:85:A3, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-70, periodicAdvInt=0x0
+05-10 17:18:15.563 18623 18651 I [-0400]oneconnect[1.8.45.24_01][BEACON_MANAGER_CONTROL_SERVICE]: TvOcfParser.onReceive - TV Popup Onboarding is skipped - ($)
+05-10 17:18:15.623  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:5A:EF, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-94, periodicAdvInt=0x0
+05-10 17:18:15.625 18483 18598 I BCMGR[11.2.04.4]: BeaconMainController] onReceive - [1 : ST packet!][2 : bad rssi][3 : bad rssi][4 : bad rssi][5 : bad rssi][6 : bad rssi][7 : bad rssi][8 : bad rssi][9 : bad rssi][10 : ST packet!]
+05-10 17:18:15.897   573   573 D io_stats: !@   8,32 r 59498446 1466790600 w 15317732 188410864 d 1920522 250310656 f 1837989 4096604 iot 15018288 0 th 0 0 0 pt 0 inp 0 0 435364.347
+05-10 17:18:15.944  5049  6041 I SDHMS:x : SIOP:: AP:297 BAT:282 USB:279 CHG:298 PA:293 WIFI:291 BLK:0 SUBBAT:0 SKIN:287 SKINF:280 SKINB:287 LRP2:287 LRF2:280 LRB2:287 AP2:287 CHG2:281 MEM2:287 WIFI2:287 SPK2:292 VAP05:298 AVGCUR:-5 AVGSYS:0 POWER:-21
+05-10 17:18:16.025 21176 21176 I AidlLazyServiceRegistrar: Process has 0 (of 1 available) client(s) in use after notification artd has clients: 0
+05-10 17:18:16.026 21176 21176 I AidlLazyServiceRegistrar: Trying to shut down the service. No clients in use for any service in process.
+05-10 17:18:16.027 21176 21176 I AidlLazyServiceRegistrar: Unregistered all clients and exiting
+05-10 17:18:16.062  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:16.097  2069  2110 I ActivityManager: Waited long enough for: ServiceRecord{e0823ad u0 com.samsung.android.rubin.app/com.samsung.android.rubin.controller.services.KeepAliveService c:com.samsung.android.rubin.app}
+05-10 17:18:16.769  2069  4155 D SemWifiUsabilityStatsMonitor: onWifiUsabilityStats - seqNum 30501, isSameBssidAndFreq true
+05-10 17:18:17.272  1542  2917 I VSyncReactor: Current= 90, Period= 90, hwcPeriod= 90
+05-10 17:18:17.341  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:17.483  2750  2750 I WindowManager: WindowManagerGlobal#removeView, ty=2005, view=android.widget.LinearLayout{7365257 V.E...... ........ 0,0-900,232}, caller=android.view.WindowManagerGlobal.removeView:654 android.view.WindowManagerImpl.removeViewImmediate:216 android.widget.ToastPresenter.hide:348 
+05-10 17:18:17.489  2750  2750 I VRI[Toast]@581c144: dispatchDetachedFromWindow
+05-10 17:18:17.490  2750  2750 I BLASTBufferQueue: [VRI[Toast]@581c144#1960](f:0,a:1,s:0) destructor()
+05-10 17:18:17.491  2750  2750 D BufferQueueConsumer: [VRI[Toast]@581c144#1960(BLAST Consumer)1960](id:abe000007a8,api:0,p:-1,c:2750) disconnect
+05-10 17:18:17.493  2069  5201 D InputTransport: Input channel destroyed: '82ab195', fd=1087
+05-10 17:18:17.493  2069  5201 V WindowManager: Remove Window{82ab195 u0 Toast}: mSurfaceControl=Surface(name=Toast$_2750)/@0x9a31d80 mAnimatingExit=false mRemoveOnExit=false mHasSurface=true surfaceShowing=true animating=false app-animation=false callers=com.android.server.wm.Session.remove:16 android.view.IWindowSession$Stub.onTransact:804 com.android.server.wm.Session.onTransact:1 android.os.Binder.execTransactInternal:1462 android.os.Binder.execTransact:1401 <bottom of call stack> 
+05-10 17:18:17.498  2069  5201 I WindowManager: Reparenting to leash, surface=Surface(name=82ab195 Toast)/@0x322206f, leashParent=Surface(name=WindowToken{f118b52 type=2005 android.os.Binder@389e3dd})/@0x43d17c
+05-10 17:18:17.500  1542  2917 I SurfaceFlinger: id=34158 createSurf, flag=24000, Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34158
+05-10 17:18:17.500  2069  5201 D WindowManager: makeSurface duration=2 leash=Surface(name=Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation)/@0x882035f
+05-10 17:18:17.503  2069  5201 W PhoneWindowManager: lockNow pending, ignore updating lockscreen timeout
+05-10 17:18:17.504  1542  1542 I SurfaceFlinger: [Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34158] attach to parent LayerHierarchy{RequestedLayerState{WindowToken{f118b52 type=2005 android.os.Binder@389e3dd}#34154 parentId=30} 2 children}
+05-10 17:18:17.506  2069  2093 W PhoneWindowManager: lockNow pending, ignore updating lockscreen timeout
+05-10 17:18:17.506  2750  2750 D InputTransport: Input channel destroyed: '82ab195', fd=598
+05-10 17:18:17.507  2069  5201 W NotificationService: Toast already killed. pkg=com.samsung.android.mtp token=android.os.BinderProxy@6dc91ac
+05-10 17:18:17.508  1481  1503 I hwcomposer: [HWCDisplay] (0 updateFps():4131), (type:1, mode:2) fps:0.809694,dur:2470.07,max:2413.92,min:56.15  
+05-10 17:18:17.516  1542  1542 I SurfaceFlinger: [Display 0 name="Built-in Screen"#49] setFrameRateCategory: High
+05-10 17:18:17.516  1542  1542 I SurfaceFlinger: [LayerHierarchy{RequestedLayerState{82ab195 Toast#34155 parentId=34158} 1 children}] reparent to LayerHierarchy{RequestedLayerState{Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34158 parentId=34154} 1 children}
+05-10 17:18:17.774  2069  2092 W PhoneWindowManager: lockNow pending, ignore updating lockscreen timeout
+05-10 17:18:17.899   573   573 D io_stats: !@   8,32 r 59498461 1466790760 w 15317732 188410864 d 1920522 250310656 f 1837989 4096604 iot 15018292 0 th 0 0 0 pt 0 inp 0 0 435366.349
+05-10 17:18:17.900   573   573 D io_stats: !@ Read_top(KB): init:/(1) 60 ocessService0:0:top(21296) 52 ndroid.systemui:high(2750) 36
+05-10 17:18:17.900   573   573 D io_stats: !@ Write_top(KB): kworker/u32:2:/(14090) 4336
+05-10 17:18:18.007  2069  2093 I WindowManager: Reparenting to original parent: Surface(name=WindowToken{f118b52 type=2005 android.os.Binder@389e3dd})/@0x43d17c, destroy=true, surface=Surface(name=82ab195 Toast)/@0x322206f
+05-10 17:18:18.015  1542  1542 E SurfaceFlinger: alpha changed 0.044 -> 0.000 - Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34158
+05-10 17:18:18.017  2069  2093 W PhoneWindowManager: lockNow pending, ignore updating lockscreen timeout
+05-10 17:18:18.021  1542  1542 D SurfaceFlinger: Display 4627039422300187648 HWC layers:
+05-10 17:18:18.021  1542  1542 D SurfaceFlinger:   SOLID_COLOR |                        0 | 00000000 | N/A          |    0.0    0.0    0.0    0.0 |    0    0 1080   81 | Letterbox - top#34150 (0)
+05-10 17:18:18.021  1542  1542 D SurfaceFlinger:        DEVICE |           91233695301633 | 00002102 | RGBA_8888    |    0.0    0.0 1080.0 2260.0 |    0   80 1080 2340 | app.chiho.nexari/app.chiho.nexari.MainActivity$_21242#34145 (8)
+05-10 17:18:18.021  1542  1542 D SurfaceFlinger: 
+05-10 17:18:18.022  2069  2093 W PhoneWindowManager: lockNow pending, ignore updating lockscreen timeout
+05-10 17:18:18.026  1542  1542 I SurfaceFlinger: [Display 0 name="Built-in Screen"#49] setFrameRateCategory: Default
+05-10 17:18:18.026  1542  1542 I SurfaceFlinger: RequestedLayer [Toast$_2750#34156] hidden!! flag  from(0) --> to(1)
+05-10 17:18:18.026  1542  1542 I SurfaceFlinger: [LayerHierarchy{RequestedLayerState{Toast$_2750#34156} no children}] reparent to OffscreenRoot
+05-10 17:18:18.026  1542  1542 I SurfaceFlinger: [LayerHierarchy{RequestedLayerState{Toast$_2750#34156} no children}] RelativeParent to null
+05-10 17:18:18.026  1542  1542 I SurfaceFlinger: [LayerHierarchy{RequestedLayerState{82ab195 Toast#34155} no children}] reparent to OffscreenRoot
+05-10 17:18:18.026  1542  1542 I SurfaceFlinger: [LayerHierarchy{RequestedLayerState{82ab195 Toast#34155} no children}] RelativeParent to null
+05-10 17:18:18.026  1542  1542 I SurfaceFlinger: [LayerHierarchy{RequestedLayerState{Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34158} no children}] reparent to OffscreenRoot
+05-10 17:18:18.026  1542  1542 I SurfaceFlinger: [LayerHierarchy{RequestedLayerState{Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34158} no children}] RelativeParent to null
+05-10 17:18:18.027  1542  1542 I SurfaceFlinger: onHandleDestroyed: layerId=34156, name=Toast$_2750#34156
+05-10 17:18:18.027  1542  1542 I SurfaceFlinger: id=34156 Removed Toast$_2750#34156 (153)
+05-10 17:18:18.028  1542  1542 I SurfaceFlinger: onHandleDestroyed: layerId=34158, name=Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34158
+05-10 17:18:18.028  1542  1542 I SurfaceFlinger: id=34158 Removed Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34158 (153)
+05-10 17:18:18.028  1542  1542 I SurfaceFlinger: onHandleDestroyed: layerId=34155, name=82ab195 Toast#34155
+05-10 17:18:18.028  1542  1542 I SurfaceFlinger: id=34155 Removed 82ab195 Toast#34155 (153)
+05-10 17:18:18.028  1542  1542 E RefreshRateSelector: Can't find HRR max refresh rate by policy with the same group 0
+05-10 17:18:18.038  1542  1542 I SurfaceFlinger: destroyed Toast$_2750#34156
+05-10 17:18:18.038  1542  1542 I SurfaceFlinger: destroyed Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34158
+05-10 17:18:18.038  1542  1542 I SurfaceFlinger: destroyed 82ab195 Toast#34155
+05-10 17:18:18.039  1542  1542 I Layer   : id=34155 Destroyed 82ab195 Toast#34155
+05-10 17:18:18.039  1542  1542 I Layer   : id=34158 Destroyed Surface(name=82ab195 Toast)/@0x322206f - animation-leash of window_animation#34158
+05-10 17:18:18.040  1542  1542 I Layer   : id=34156 Destroyed Toast$_2750#34156
+05-10 17:18:18.102  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of ap_ntc\n"
+05-10 17:18:18.102  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of mtk-master-charger\n"
+05-10 17:18:18.579  2069  2613 D WifiConnectivityMonitor.NetworkStatsAnalyzer: Backhaul result - RSSI:-60, CE:10, PE:10, TI:12, PTI:12, TW:0, PTW:0, Tx:0, Rx:55, TxS:0, RxS:0, RESULT:true, IC:0, ICT:5, WC:0, WCT:5, R:0, RC:0, IE:0, EC:0
+05-10 17:18:18.625  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:18.709  5049  5049 I SDHMS:LOAD: type: LoadsFreqs, value: 0:0:0:828999:2200000:725000:619999:2000000:500000:0:0:0
+05-10 17:18:18.890  1590  1590 I FPSGO   : FPSGO_SET_UNKNOWN cmd:-1
+05-10 17:18:18.992  2069  2154 D PowerManagerService: UserActivityState : 1 -> 2 groupId=0
+05-10 17:18:18.997  2069  2069 I MdnieScenarioControlService: action  :  com.samsung.server.PowerManagerService.action.USER_ACTIVITY
+05-10 17:18:19.322  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:E2:7B, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-73, periodicAdvInt=0x0
+05-10 17:18:19.562  1501  1543 I libPerfCtl: xgfGetFPS pid:-1 fps:0
+05-10 17:18:19.563  1501  1543 I libPerfCtl: xgfGetFPS ioctl_valid:-2
+05-10 17:18:19.784  2069  4155 D SemWifiUsabilityStatsMonitor: onWifiUsabilityStats - seqNum 30502, isSameBssidAndFreq true
+05-10 17:18:21.088  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:E2:7B, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-82, periodicAdvInt=0x0
+05-10 17:18:21.105  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of ap_ntc\n"
+05-10 17:18:21.106  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of mtk-master-charger\n"
+05-10 17:18:21.185  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:21.192  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:B8:F7, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-90, periodicAdvInt=0x0
+05-10 17:18:21.194  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:CD:35, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-97, periodicAdvInt=0x0
+05-10 17:18:21.266  1542  2405 I VSyncReactor: Current= 90, Period= 90, hwcPeriod= 90
+05-10 17:18:21.904   573   573 D io_stats: !@   8,32 r 59498464 1466790780 w 15317736 188410880 d 1920522 250310656 f 1837989 4096604 iot 15018296 0 th 0 0 0 pt 0 inp 0 0 435370.354
+05-10 17:18:21.905   573   573 D io_stats: !@ Read_top(KB): ocessService0:0:top(21296) 12 system_server:high(2069) 4 kworker/2:3H:/(32510) 4
+05-10 17:18:21.905   573   573 D io_stats: !@ Write_top(KB): kworker/u32:3:/(17901) 16
+05-10 17:18:22.650 28851 28851 I wpa_supplicant: Heartbeat 227
+05-10 17:18:22.799  2069  4155 D SemWifiUsabilityStatsMonitor: onWifiUsabilityStats - seqNum 30503, isSameBssidAndFreq true
+05-10 17:18:22.922  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:5A:EF, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-92, periodicAdvInt=0x0
+05-10 17:18:23.023  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:5A:EF, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-91, periodicAdvInt=0x0
+05-10 17:18:23.745  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:23.869 19766 19766 I ContactsProvider: [P] onTrimMemory-success
+05-10 17:18:24.108  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of ap_ntc\n"
+05-10 17:18:24.108  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of mtk-master-charger\n"
+05-10 17:18:24.108  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of camera0\n"
+05-10 17:18:24.108  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of mtk-master-charger\n"
+05-10 17:18:24.108  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of nrpa_ntc\n"
+05-10 17:18:24.109  1643  1669 E thermal_core: dump_thermal_log:"Error: sccanf error, ret=9\n"
+05-10 17:18:24.110  1643  1669 E thermal_core: node_read:"Failed to read /sys/class/thermal/thermal_zone2/temp: No data available\n"
+05-10 17:18:24.111  1643  1669 I thermal_core: "soc/nr/lte/ap_ntc/tpcb/conn/chg/cam/c_ttj/g_ttj/a_ttj=0/-274000/28857/-274000/46000/27000/-274000/-274000/85000/85000/85000\n"
+05-10 17:18:24.111  1643  1669 I thermal_core: "[C(l)(c)(i)][G(l)(c)][A(l)(c)][TH][D]=[(666666/666666/666666)(500/725/0)(0x0)][(666666)(666666)][(666666666)(666666666)][0][1200]\n"
+05-10 17:18:24.111  1643  1669 E thermal_core: node_read:"Failed to open /sys/kernel/helio-dvfsrc/dvfsrc_therm_info: No such file or directory\n"
+05-10 17:18:24.111  1643  1669 I thermal_core: "1200"
+05-10 17:18:24.200  2069  2217 I ActivityManager: Changes in 10238 19 to 19, 128 to 0
+05-10 17:18:24.201 20665 20665 I Finsky:background: [2] Memory trim requested to level 40
+05-10 17:18:24.201 20277 20277 I Finsky  : [2] Memory trim requested to level 40
+05-10 17:18:24.201 20277 20277 I Finsky  : [2] Flushing in-memory image cache
+05-10 17:18:24.209  2069  2217 I ActivityManager: Changes in 10204 19 to 19, 128 to 0
+05-10 17:18:24.218  1542  2405 I VSyncReactor: Current= 90, Period= 90, hwcPeriod= 90
+05-10 17:18:24.962 21363 21368 W droid.rubin.app: userfaultfd: MOVE ioctl seems unsupported: Connection timed out
+05-10 17:18:24.978  2069 21464 D WifiConnectivityMonitor.DnsThread:  [|207]
+05-10 17:18:24.982  2069  2613 D WifiConnectivityMonitor.NetworkStatsAnalyzer: DNS resultType : 0, responseTime : 207
+05-10 17:18:24.983  2069  2607 D OpenNetworkQos[4.00]: updateBssidLatestDnsResultType - result: 0
+05-10 17:18:24.983  2069  2607 D OpenNetworkQos[4.00]: updateBssidNoInternet: mBssidNoInternet = false
+05-10 17:18:24.983  2069  2607 D OpenNetworkQos[4.00]: getOpenNetworkQosNoInternetStatus: false
+05-10 17:18:24.983  2069  2607 D OpenNetworkQos[4.00]: getOpenNetworkQosScores: 26 30 30 
+05-10 17:18:24.983  2069  2607 D KNOX_MDM_SettingsProvider: isChangeAllowed() : name = wifi_wcm_qos_sharing_score_summary
+05-10 17:18:24.983  2069  2607 I WifiProfileShare: network QoS data was changed (internet), updateQoSData networkType: true, qosData: false
+05-10 17:18:24.984  2069  3620 V WifiProfileShare.Caster: checkAndGetShareData - device locked
+05-10 17:18:24.988 21363 21368 I droid.rubin.app: Background concurrent mark compact GC freed 10MB AllocSpace bytes, 51(1724KB) LOS objects, 59% free, 4184KB/10MB, paused 651us,6.243ms total 142.836ms
+05-10 17:18:25.027  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:25.273  1542  2405 I VSyncReactor: Current= 90, Period= 90, hwcPeriod= 90
+05-10 17:18:25.815  2069  4155 D SemWifiUsabilityStatsMonitor: onWifiUsabilityStats - seqNum 30504, isSameBssidAndFreq true
+05-10 17:18:25.820  2750  2859 D Tile.WifiTile: handleUpdateState isTransient=false transientEnabling =false cb.isTransient=false state.state = 2 mStateBeforeClick.value =false enabled =true
+05-10 17:18:25.909   573   573 D io_stats: !@   8,32 r 59498467 1466790852 w 15317738 188410888 d 1920522 250310656 f 1837989 4096604 iot 15018300 0 th 0 0 0 pt 0 inp 0 0 435374.359
+05-10 17:18:25.910   573   573 D io_stats: !@ Read_top(KB): d.process.acore:low(19766) 72
+05-10 17:18:25.910   573   573 D io_stats: !@ Write_top(KB): kworker/u32:1:/(27503) 8
+05-10 17:18:25.949  5049  6041 I SDHMS:x : SIOP:: AP:291 BAT:281 USB:279 CHG:295 PA:292 WIFI:290 BLK:0 SUBBAT:0 SKIN:286 SKINF:279 SKINB:286 LRP2:286 LRF2:279 LRB2:286 AP2:286 CHG2:280 MEM2:286 WIFI2:286 SPK2:291 VAP05:295 AVGCUR:-5 AVGSYS:0 POWER:-21
+05-10 17:18:26.306  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:26.692  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:85:A3, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-79, periodicAdvInt=0x0
+05-10 17:18:26.777  3063  3550 I ScanController: onScanResult to scannerId: 2- eventType=0x1b, addressType=0, address=XX:XX:XX:XX:98:03, primaryPhy=1, secondaryPhy=0, advertisingSid=0xff, txPower=127, rssi=-91, periodicAdvInt=0x0
+05-10 17:18:26.778  3063  3550 E BluetoothRemoteDevices: Remote class is UNCATEGORIZED
+05-10 17:18:26.983 20358 20358 W SmApplication: onTrimMemory : 40
+05-10 17:18:26.987 20358 20358 I DC.AppIconCache: clear icon cache
+05-10 17:18:27.114  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of ap_ntc\n"
+05-10 17:18:27.114  1643  1669 E thermal_core: find_tz_idx_by_name:"Failed to find thermal zone index of mtk-master-charger\n"
+05-10 17:18:27.245 18459 20767 I id.app.launcher: Explicit concurrent mark compact GC freed 1188KB AllocSpace bytes, 0(0B) LOS objects, 49% free, 13MB/26MB, paused 765us,1.499ms total 65.692ms
+05-10 17:18:27.248 18459 20505 I HoneySpace.Memory-Monitor: trimMemory 20
+05-10 17:18:27.584  2729  3222 D SatelliteController: isInCarrierRoamingNbIotNtn: satellite is disabled
+05-10 17:18:27.753  1737  1810 D AALLightSensor: oldLux=80 [SA:-1 LA:-1] newLux=80 (oriLux: 80)
+05-10 17:18:27.913   573   573 D io_stats: !@   8,32 r 59498476 1466791400 w 15317738 188410888 d 1920522 250310656 f 1837989 4096604 iot 15018304 0 th 0 0 0 pt 0 inp 0 0 435376.362
+05-10 17:18:28.339  1512  1556 E BatteryDump: !@new_battery_dump : 4315,-5,3000,3150,100,281,279,294,0,0,285,294,0,Full,NO_CHARGING,None,Good,PDIC,0,Normal,0,0,9600,0x0,0x10000,0x0,0,0,0000,0000,00000000,0,0,0,0,218,4305,10000,980,0,
+05-10 17:18:28.348  1515  1515 I seh_thermal_service: getTemperaturesWithType SehTemperatureType: 3
+05-10 17:18:28.349  1512  1512 I sehhealth-service: updateLrpSysfs: write: 286
+05-10 17:18:28.491  1542  2405 I VSyncReactor: Current= 90, Period= 90, hwcPeriod= 90
+05-10 17:18:28.503  1542  1542 I SurfaceFlinger: [LayerHierarchy{RequestedLayerState{WindowToken{f118b52 type=2005 android.os.Binder@389e3dd}#34154} no children}] reparent to OffscreenRoot
+05-10 17:18:28.503  1542  1542 I SurfaceFlinger: [LayerHierarchy{RequestedLayerState{WindowToken{f118b52 type=2005 android.os.Binder@389e3dd}#34154} no children}] RelativeParent to null
+05-10 17:18:28.505  1542  1542 I SurfaceFlinger: onHandleDestroyed: layerId=34154, name=WindowToken{f118b52 type=2005 android.os.Binder@389e3dd}#34154
+05-10 17:18:28.506  1542  1542 I SurfaceFlinger: id=34154 Removed WindowToken{f118b52 type=2005 android.os.Binder@389e3dd}#34154 (150)
+05-10 17:18:28.508  1481  1503 I hwcomposer: [HWCDisplay] (0 updateFps():4131), (type:1, mode:2) fps:4.454640,dur:10999.77,max:10466.49,min:10.02  
+05-10 17:18:28.513  1542  1542 I SurfaceFlinger: destroyed WindowToken{f118b52 type=2005 android.os.Binder@389e3dd}#34154
+05-10 17:18:28.516  1542  1542 I Layer   : id=34154 Destroyed WindowToken{f118b52 type=2005 android.os.Binder@389e3dd}#34154
+05-10 17:18:28.585  2069  2613 D WifiConnectivityMonitor.NetworkStatsAnalyzer: Backhaul result - RSSI:-60, CE:10, PE:10, TI:12, PTI:12, TW:0, PTW:0, Tx:1, Rx:30, TxS:0, RxS:0, RESULT:true, IC:0, ICT:5, WC:0, WCT:5, R:0, RC:0, IE:0, EC:0
+05-10 17:18:28.835  2069  4155 D SemWifiUsabilityStatsMonitor: onWifiUsabilityStats - seqNum 30505, isSameBssidAndFreq true
+05-10 17:18:28.841  2750  2859 D Tile.WifiTile: handleUpdateState isTransient=false transientEnabling =false cb.isTransient=false state.state = 2 mStateBeforeClick.value =false enabled =true
+05-10 17:18:28.915  5049  5049 I SDHMS:LOAD: type: LoadsFreqs, value: 0:0:0:734499:1200000:725000:506999:850000:500000:0:0:0
+05-10 17:18:28.983  2069  2154 D PowerManagerService: UserActivityState : 2 -> 4 groupId=0
+05-10 17:18:28.983  2069  2154 I PowerManagerService: [PWL] On : 435316569 (60864 ms ago)
+05-10 17:18:28.984  2069  2154 I PowerManagerService: [PWL]  mStayOn: true  mWakeLockSummary & WAKE_LOCK_STAY_AWAKE: 20  mUserActivitySummary: 0x4
+05-10 17:18:28.984  2069  2154 I PowerManagerService: [PWL]  SCREEN_BRIGHT_WAKE_LOCK           'WindowManager/displayId:0' ON_AFTER_RELEASE ACQ=-29s998ms (uid=1000 pid=2069 ws=WorkSource{10337 app.chiho.nexari} displayId=0 lock=d1ec616)
+05-10 17:18:28.987  2069  2069 I MdnieScenarioControlService: action  :  com.samsung.server.PowerManagerService.action.USER_ACTIVITY

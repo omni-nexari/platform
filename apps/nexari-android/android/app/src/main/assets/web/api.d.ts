@@ -8,10 +8,15 @@ export declare class Api {
     private base;
     private token;
     constructor(base: string, token: () => string | null);
-    /** Returns the schedule object for `deviceId`.  Throws on non-2xx. */
-    getCurrentContent(deviceId: string): Promise<Schedule | null>;
-    /** Sends a heartbeat. Returns the server response body. */
-    sendHeartbeat(deviceId: string, payload: Record<string, unknown>): Promise<void>;
+    /** Returns the schedule object for this device.  Throws on non-2xx. */
+    getCurrentContent(_deviceId: string): Promise<Schedule | null>;
+    private enrichContent;
+    /**
+     * Sends a heartbeat.  The server processes heartbeats only via WebSocket
+     * (type='heartbeat' message).  This method is kept as a no-op HTTP stub;
+     * the Player class sends heartbeats directly over the WS connection instead.
+     */
+    sendHeartbeat(_deviceId: string, _payload: Record<string, unknown>): Promise<void>;
     /** Uploads a base64-encoded screenshot. Best-effort (never throws). */
     uploadScreenshot(deviceId: string, jpegBase64: string, trigger?: string): Promise<void>;
     /** Fetches NTP server time. Returns epoch-ms or null on failure. */
@@ -31,7 +36,7 @@ export declare class Api {
     /** GET /pos/menu?workspaceId=… */
     getPosMenu(workspaceId: string): Promise<PosMenu | null>;
     /** GET /devices/device/:id/content/:contentId/calendar/events */
-    getCalendarEvents(deviceId: string, contentId: string, from: Date, to: Date): Promise<CalendarEvent[]>;
+    getCalendarEvents(_deviceId: string, contentId: string, from: Date, to: Date): Promise<CalendarEvent[]>;
     sendLogs(deviceId: string, entries: LogEntry[]): Promise<void>;
 }
 export interface PairInfo {

@@ -38,8 +38,10 @@ type DragState = {
 
 const CANVAS_W = 640;
 const CANVAS_H = 360;
-const DEVICE_W = 1920;
-const DEVICE_H = 1080;
+// DEVICE_W / DEVICE_H: the coordinate space zones are authored in.
+// Exported so the editor page can include them in saved metadata.
+export const DEVICE_W = 1920;
+export const DEVICE_H = 1080;
 const MAX_ZONES = 8;
 
 const SYNC_GROUPS = [

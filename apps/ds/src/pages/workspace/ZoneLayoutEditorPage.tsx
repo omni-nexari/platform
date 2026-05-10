@@ -4,7 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ArrowLeft, Send } from 'lucide-react';
 import { api } from '../../lib/api.js';
-import ZoneLayoutEditor, { type ZoneConfig } from '../../components/ZoneLayoutEditor.js';
+import ZoneLayoutEditor, { type ZoneConfig, DEVICE_W, DEVICE_H } from '../../components/ZoneLayoutEditor.js';
 import { ActionButton, Skeleton } from '../../components/UiPrimitives.js';
 import DevicePickerModal, { type PickedDevice } from '../../components/DevicePickerModal.js';
 
@@ -65,6 +65,7 @@ export default function ZoneLayoutEditorPage() {
     if (!item?.metadata) return [];
     try {
       const parsed = JSON.parse(item.metadata);
+      // canvasWidth/Height stored in metadata for awareness; zones use DEVICE_W/DEVICE_H from editor
       return Array.isArray(parsed.zones) ? parsed.zones : [];
     } catch {
       return [];
@@ -101,6 +102,8 @@ export default function ZoneLayoutEditorPage() {
           workspaceId: wsId,
           name,
           zones,
+          canvasWidth: DEVICE_W,
+          canvasHeight: DEVICE_H,
         });
         if (durationSecs != null) {
           await api.patch(`/content/${created.id}`, { duration: durationSecs });
@@ -112,6 +115,8 @@ export default function ZoneLayoutEditorPage() {
         await api.patch(`/content/${id}`, {
           name: editName.trim() || item?.name,
           zones,
+          canvasWidth: DEVICE_W,
+          canvasHeight: DEVICE_H,
           ...(durationSecs != null ? { duration: durationSecs } : {}),
         });
         setSavedId(id);

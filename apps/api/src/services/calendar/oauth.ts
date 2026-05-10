@@ -37,8 +37,23 @@ export async function ensureAccessToken(
   // 60s safety window (skip if force-refresh requested)
   if (!opts?.force && access && exp > now + 60_000) return access;
   if (!refresh) {
-    if (!access) throw new Error('No access or refresh token on connection');
-    return access; // best effort
+    if (!access) {
+      const msg = 'No tokens stored on this connection. Please reconnect.';
+      await db.update(calendarConnections)
+        .set({ status: 'error', lastErrorMessage: msg, updatedAt: new Date() })
+        .where(eq(calendarConnections.id, conn.id));
+      throw new Error(msg);
+    }
+    // No refresh token: if the access token is still valid return it; otherwise
+    // the provider will reject it — mark as error so the user is prompted to reconnect.
+    if (exp > 0 && exp <= now) {
+      const msg = 'Access token has expired and no refresh token is available. Please reconnect.';
+      await db.update(calendarConnections)
+        .set({ status: 'error', lastErrorMessage: msg, updatedAt: new Date() })
+        .where(eq(calendarConnections.id, conn.id));
+      throw new Error(msg);
+    }
+    return access; // still valid — use it as-is
   }
 
   const params = new URLSearchParams({

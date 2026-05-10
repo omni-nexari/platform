@@ -35,6 +35,7 @@ export declare class Player {
     private playbackCancel;
     private currentHandle;
     private currentVideoEl;
+    private localUrlCache;
     private calendarPushHandlers;
     private syncActive;
     private lastContentSignature;
@@ -59,12 +60,20 @@ export declare class Player {
     private flushLogStream;
     private getContentSignature;
     private preCacheItems;
+    /** Swap a remote content URL for the locally cached blob: URL if available. */
+    private resolveLocalUrl;
     private updateIdleProgress;
     private downloadContentInBackground;
     private swapToPending;
     private tryLoadCachedSchedule;
     private loadContent;
     private cancelPlayback;
+    /**
+     * Fully release a <video> element's media decoder resources.
+     * On Android WebView, just .pause() + .remove() leaks the decoder buffer.
+     * Must clear src, removeAttribute, call load(), then remove from DOM.
+     */
+    private releaseVideo;
     private renderPlaylist;
     private sleep;
     private renderContent;
@@ -76,6 +85,15 @@ export declare class Player {
     private renderDataSyncContent;
     private renderLiveStream;
     private renderPdf;
+    /**
+     * PDF.js-based renderer. Mirrors the Tizen implementation: lazy-loads
+     * pdfjs/pdf.min.js (shipped in android assets via sync-player-web.cjs),
+     * fetches the PDF as a Uint8Array (from local blob cache when available),
+     * renders each page to a canvas and auto-advances every durMs/numPages.
+     */
+    private renderPdfWithPdfJs;
+    private pdfJsLibPromise;
+    private loadPdfJs;
     private renderZoneLayout;
     private initSyncGroup;
     private initVideoWall;

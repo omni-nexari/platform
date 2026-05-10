@@ -1,7 +1,7 @@
 # install-android-dev.ps1 -- Build devDebug APK and sideload onto a USB-connected phone.
 # Mirrors install-nexari2.ps1 (Tizen dev script) for the Android player.
 #
-# API base: http://192.168.1.17:3000  (dev flavor)
+# API base: http://192.168.1.17/api/v1  (dev flavor, via nginx)
 # Requires: JDK 17, Node.js, pnpm, USB cable, USB debugging enabled on phone.
 #
 # Usage:
@@ -121,8 +121,8 @@ Invoke-Adb @("shell", "am", "start", "-n", "$PackageName/.MainActivity")
 
 Write-Host ""
 Write-Host "Done! The Nexari Android dev build is running on your device."
-Write-Host "  API base : http://192.168.1.17:3000/api/v1"
-Write-Host "  WS base  : ws://192.168.1.17:3000"
+Write-Host "  API base : http://192.168.1.17/api/v1"
+Write-Host "  WS base  : ws://192.168.1.17"
 Write-Host ""
 Write-Host "Chrome DevTools remote debugging:"
 Write-Host "  Open chrome://inspect/#devices in Chrome on this PC."

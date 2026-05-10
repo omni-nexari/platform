@@ -83,4 +83,19 @@ if (fs.existsSync(LOGO_SRC)) {
   console.warn('[sync-player-web] nexari-logo.png not found at', LOGO_SRC);
 }
 
+// Copy PDF.js (v2) from the Tizen player's vendored modules so the Android
+// player can render PDFs offline. The renderer in player-web/src/player.ts
+// lazy-loads ./pdfjs/pdf.min.js, which sets workerSrc to ./pdfjs/pdf.worker.min.js.
+const PDFJS_SRC_DIR = path.resolve(__dirname, '..', '..', 'nexari-tizen', 'js', 'modules');
+const PDFJS_DST_DIR = path.join(DEST, 'pdfjs');
+const PDFJS_FILES   = ['pdf.min.js', 'pdf.worker.min.js'];
+let pdfOk = true;
+for (const f of PDFJS_FILES) {
+  const src = path.join(PDFJS_SRC_DIR, f);
+  if (!fs.existsSync(src)) { console.warn('[sync-player-web] pdfjs file missing:', src); pdfOk = false; continue; }
+  fs.mkdirSync(PDFJS_DST_DIR, { recursive: true });
+  fs.copyFileSync(src, path.join(PDFJS_DST_DIR, f));
+}
+if (pdfOk) console.log('[sync-player-web] copied pdfjs/ (pdf.min.js + pdf.worker.min.js)');
+
 console.log('[sync-player-web] done →', DEST);

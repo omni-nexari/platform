@@ -72,6 +72,11 @@ export class Player {
   private currentHandle:  CalendarHandle | DataSyncHandle | null = null;
   private currentVideoEl: HTMLVideoElement | null = null;
 
+  // Map of remote content URL → local object URL (blob:). Populated by
+  // preCacheItems() so that renderImage/Video/HTML/Pdf can play from local
+  // storage and survive transient network loss.
+  private localUrlCache = new Map<string, string>();
+
   private calendarPushHandlers = new Map<string, (events: CalendarEvent[]) => void>();
   private syncActive = false;
 
@@ -111,6 +116,9 @@ export class Player {
     if (!this.tryLoadCachedSchedule()) this.showIdle('Waiting for content…');
 
     this.connectWs();
+    // Send first heartbeat immediately so dashboard gets resolution/timezone/etc
+    // without waiting for the 30s interval tick.
+    void this.sendHeartbeat();
     this.heartbeatTimer = setInterval(
       () => this.sendHeartbeat().catch(e => logger.warn(`[Player] heartbeat: ${e}`)),
       this.cfg.heartbeatMs ?? 30_000,
@@ -397,7 +405,9 @@ export class Player {
   getSyncedTime(): number { return Date.now() + this.ntpOffset; }
 
   private connectWs(): void {
-    const url = `${this.cfg.wsBase}/api/v1/devices/ws/${encodeURIComponent(this.deviceId)}${this.token ? `?token=${encodeURIComponent(this.token)}` : ''}`;
+    // Same URL shape as Tizen + Windows players: /api/v1/devices/ws/device?token=…
+    // The server resolves the deviceId from the JWT in the query param.
+    const url = `${this.cfg.wsBase}/api/v1/devices/ws/device${this.token ? `?token=${encodeURIComponent(this.token)}` : ''}`;
     logger.info(`[Player] WS connect ${url}`);
     const ws = new WebSocket(url);
     this.ws = ws;
@@ -514,20 +524,39 @@ export class Player {
   }
 
   private async sendHeartbeat(): Promise<void> {
-    if (!this.wsReady) return;
+    // The API only processes heartbeats via WS (handleDeviceMessage in services/ws.ts).
+    // Send as WS messages matching the Tizen/Windows pattern.
+    if (!this.deviceId) return;
     try {
       const info  = await this.cfg.adapter.getDeviceInfo();
       const net   = await this.cfg.adapter.getNetworkInfo();
       const power = await this.cfg.adapter.getPowerState();
-      await this.api.sendHeartbeat(this.deviceId, {
-        playerVersion: info.playerVersion, firmwareVersion: info.firmwareVersion,
-        timezone: info.timezone, resolution: info.resolution,
-        powerState: power, kind: info.kind, batteryPct: info.batteryPct,
-        ipAddress: net.ipAddress, macAddress: info.macAddress,
-        currentContentId: this.playlistItems[this.playlistIdx]?.content?.id ?? null,
-        token: this.token,
+      logger.info(`[Heartbeat] sending res=${info.resolution} tz=${info.timezone} ver=${info.playerVersion} mac=${info.macAddress ?? 'null'} ip=${net.ipAddress}`);
+      // Main heartbeat — no ipAddress/macAddress (those go in network_info)
+      this.send({
+        type: 'heartbeat',
+        payload: {
+          playerVersion: info.playerVersion, firmwareVersion: info.firmwareVersion,
+          timezone: info.timezone, resolution: info.resolution,
+          powerState: power, kind: info.kind, batteryPct: info.batteryPct,
+          currentContentId: this.playlistItems[this.playlistIdx]?.content?.id ?? null,
+        },
       });
-    } catch { /**/ }
+      // Network info — uses field names expected by the server schema (ip/mac not ipAddress/macAddress)
+      if (net.ipAddress) {
+        this.send({
+          type: 'network_info',
+          payload: {
+            ip: net.ipAddress,
+            mac: info.macAddress ?? '',
+            connectionType: net.connectionType ?? 'wifi',
+            ...(net.ssid ? { wifiSsid: net.ssid } : {}),
+          },
+        });
+      }
+    } catch (e) {
+      logger.warn(`[Heartbeat] failed: ${(e as Error).message}`);
+    }
   }
 
   private flushLogStream(): void {
@@ -562,25 +591,58 @@ export class Player {
     return JSON.stringify(parts);
   }
 
-  // ── Pre-cache all media files via the browser Cache API ─────────────────────
+  // ── Pre-cache every content file as a local blob: URL ──────────────────────
+  // Downloads every URL referenced by the schedule via fetch() and registers
+  // the resulting Blob as an object URL in localUrlCache. Renderers then call
+  // resolveLocalUrl() to swap the remote URL for the local one — playback is
+  // fully offline once the schedule has been cached.
   private async preCacheItems(items: ScheduleItem[]): Promise<void> {
-    if (!('caches' in window)) return; // Cache API not available (e.g. http:// or old Android)
-    const cache = await caches.open('nexari-content-v1');
-    const urls = items
-      .map(i => i.content?.url ?? '')
-      .filter(u => u && /\.(mp4|webm|jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(u));
+    // Collect every URL we might play. Also gather metadata URLs (zone layouts
+    // reference child contentIds, but those come back as their own schedule
+    // items in practice — keep this simple and trust item.content.url).
+    const urls = Array.from(new Set(
+      items.map(i => i.content?.url ?? '').filter(u => !!u)
+    ));
     const total = urls.length;
     if (!total) return;
 
+    const nextCache = new Map<string, string>();
     let done = 0;
     await Promise.allSettled(urls.map(async (url) => {
       try {
-        const cached = await cache.match(url);
-        if (!cached) await cache.add(url);
-      } catch { /* network error — not fatal */ }
+        // Reuse an existing blob URL if we already downloaded this exact URL.
+        const existing = this.localUrlCache.get(url);
+        if (existing) { nextCache.set(url, existing); done++; this.updateIdleProgress(Math.round((done / total) * 100)); return; }
+
+        const resp = await fetch(url, { credentials: 'omit' });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        nextCache.set(url, blobUrl);
+        logger.info(`[Cache] downloaded ${url.split('?')[0]} (${(blob.size/1024).toFixed(1)} KiB)`);
+      } catch (e) {
+        // Network failure — leave this URL out of the new cache so the renderer
+        // falls back to streaming. (Network may come back, or cached schedule
+        // will be used on next boot.)
+        logger.warn(`[Cache] failed ${url.split('?')[0]}: ${(e as Error)?.message}`);
+      }
       done++;
       this.updateIdleProgress(Math.round((done / total) * 100));
     }));
+
+    // Revoke object URLs that are no longer referenced by the new schedule.
+    for (const [oldUrl, oldBlob] of this.localUrlCache) {
+      if (!nextCache.has(oldUrl)) {
+        try { URL.revokeObjectURL(oldBlob); } catch {}
+      }
+    }
+    this.localUrlCache = nextCache;
+  }
+
+  /** Swap a remote content URL for the locally cached blob: URL if available. */
+  private resolveLocalUrl(url: string | undefined | null): string {
+    if (!url) return '';
+    return this.localUrlCache.get(url) ?? url;
   }
 
   // ── Update the idle progress bar in-place without re-rendering the screen ───
@@ -647,6 +709,9 @@ export class Player {
       this.playlistItems        = items;
       this.playlistIdx          = 0;
       this.lastContentSignature = this.getContentSignature(items);
+      // Best-effort: download all referenced media in the background so future
+      // renders play from local blob storage (offline resilience).
+      void this.preCacheItems(items).catch(() => { /* network not available is fine */ });
       if (this.syncActive) return true;
       this.cancelPlayback();
       void this.renderPlaylist();
@@ -662,15 +727,24 @@ export class Player {
     try {
       const schedule = await this.api.getCurrentContent(this.deviceId);
       if (!schedule || !Array.isArray(schedule.items) || !schedule.items.length) {
-        if (!this.playlistItems.length) this.showIdle('Waiting for content…');
+        logger.warn(`[Player] loadContent: no items (schedule=${schedule ? 'ok' : 'null'} items=${schedule?.items?.length ?? 0})`);
+        // Content was unpublished — cancel whatever is playing and show idle.
+        this.cancelPlayback();
+        this.playlistItems = [];
+        this.lastContentSignature = null;
+        this.showIdle('Waiting for content…');
         return;
       }
       const newSig    = this.getContentSignature(schedule.items);
       const isPlaying = !!this.playlistItems.length && !!(this.playbackCancel && !this.playbackCancel.signal.aborted) || this.syncActive;
 
-      // Unchanged + still playing → skip
+      // Unchanged + still playing → skip re-render, but kick off a cache top-up
+      // in case the previous boot used a cached schedule and we never downloaded.
       if (newSig === this.lastContentSignature && this.playlistItems.length && isPlaying) {
         logger.info('[Player] content unchanged, still playing — skip');
+        if (this.localUrlCache.size === 0) {
+          void this.preCacheItems(this.playlistItems).catch(() => {});
+        }
         return;
       }
 
@@ -695,8 +769,23 @@ export class Player {
   private cancelPlayback(): void {
     if (this.playbackCancel) { this.playbackCancel.abort(); this.playbackCancel = null; }
     if (this.currentHandle) { try { (this.currentHandle as CalendarHandle).destroy(); } catch {} this.currentHandle = null; }
-    if (this.currentVideoEl) { try { this.currentVideoEl.pause(); } catch {} this.currentVideoEl.remove(); this.currentVideoEl = null; }
+    this.releaseVideo();
     this.cfg.container.innerHTML = '';
+  }
+
+  /**
+   * Fully release a <video> element's media decoder resources.
+   * On Android WebView, just .pause() + .remove() leaks the decoder buffer.
+   * Must clear src, removeAttribute, call load(), then remove from DOM.
+   */
+  private releaseVideo(): void {
+    const v = this.currentVideoEl;
+    if (!v) return;
+    this.currentVideoEl = null;
+    try { v.pause(); } catch {}
+    try { v.removeAttribute('src'); v.src = ''; } catch {}
+    try { v.load(); } catch {}
+    try { v.remove(); } catch {}
   }
 
   private async renderPlaylist(): Promise<void> {
@@ -706,19 +795,27 @@ export class Player {
     if (!items.length) { this.showIdle('No content published'); return; }
 
     let idx = this.playlistIdx;
+    let lastRenderedId: string | null = null;
     while (!ctrl.signal.aborted) {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const item   = items[idx]!;
       const record = toContentRecord(item);
       const durMs  = getDurationMs(item);
-      logger.info(`[Player] item[${idx}] type=${record.type} id=${record.id} dur=${durMs}ms`);
-      try { await this.renderContent(this.cfg.container, record, ctrl.signal); } catch (e) {
-        if (ctrl.signal.aborted) break;
-        logger.warn(`[Player] renderContent error: ${(e as Error)?.message}`);
+      // If the next item is the same content we are already showing (e.g. single-item
+      // playlist looping, or two consecutive identical items), skip the re-render —
+      // <video loop>, <iframe>, etc. continue running on their own. Re-rendering would
+      // leak media decoder slots on Android WebView and eventually OOM-kill the app.
+      const sameAsLast = record.id && record.id === lastRenderedId;
+      if (!sameAsLast) {
+        logger.info(`[Player] item[${idx}] type=${record.type} id=${record.id} dur=${durMs}ms`);
+        try { await this.renderContent(this.cfg.container, record, ctrl.signal); } catch (e) {
+          if (ctrl.signal.aborted) break;
+          logger.warn(`[Player] renderContent error: ${(e as Error)?.message}`);
+        }
+        lastRenderedId = record.id || null;
       }
       if (ctrl.signal.aborted) break;
-      const isLooper = ['CALENDAR','MENU_BOARD','DATASYNC','ZONE_LAYOUT'].includes(record.type.toUpperCase());
-      if (!isLooper) await this.sleep(durMs, ctrl.signal);
+      await this.sleep(durMs, ctrl.signal);
       if (ctrl.signal.aborted) break;
       idx = (idx + 1) % items.length;
     }
@@ -735,9 +832,9 @@ export class Player {
     container.innerHTML = '';
     container.style.cssText = 'position:absolute;inset:0;overflow:hidden;background:#000;';
     if (this.currentHandle) { try { (this.currentHandle as CalendarHandle).destroy(); } catch {} this.currentHandle = null; }
-    if (this.currentVideoEl) { try { this.currentVideoEl.pause(); } catch {} this.currentVideoEl.remove(); this.currentVideoEl = null; }
+    this.releaseVideo();
 
-    const type = (record.type || '').toUpperCase();
+    const type = (record.type || '').toUpperCase().replace(/_/g, '').replace('HTML5', 'HTML').replace('WEBURL', 'HTML').replace('LIVESTREAM', 'LIVE_STREAM').replace('ZONELAYOUT', 'ZONE_LAYOUT').replace('MENUBOARD', 'MENU_BOARD');
     switch (type) {
       case 'IMAGE':      await this.renderImage(container, record, signal); break;
       case 'VIDEO':      await this.renderVideo(container, record, signal); break;
@@ -750,16 +847,17 @@ export class Player {
       case 'PDF':        await this.renderPdf(container, record, signal); break;
       case 'ZONE_LAYOUT': await this.renderZoneLayout(container, record, signal); break;
       default:
-        logger.warn(`[Player] unknown content type: ${type}`);
-        this.showIdle(`Unknown type: ${escapeHtml(type)}`);
+        logger.warn(`[Player] unknown content type: ${record.type}`);
+        this.showIdle(`Unknown type: ${escapeHtml(record.type)}`);
     }
   }
 
   private renderImage(container: HTMLElement, record: ContentRecord, signal: AbortSignal): Promise<void> {
     return new Promise(resolve => {
-      if (!record.url) { resolve(); return; }
+      const url = this.resolveLocalUrl(record.url);
+      if (!url) { resolve(); return; }
       const img = document.createElement('img');
-      img.src = record.url;
+      img.src = url;
       img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;';
       img.onload  = () => resolve();
       img.onerror = () => { logger.warn(`[Player] image error: ${record.url}`); resolve(); };
@@ -770,26 +868,38 @@ export class Player {
 
   private renderVideo(container: HTMLElement, record: ContentRecord, signal: AbortSignal): Promise<void> {
     return new Promise(resolve => {
-      if (!record.url) { resolve(); return; }
+      const url = this.resolveLocalUrl(record.url);
+      if (!url) { resolve(); return; }
       const v = document.createElement('video');
-      v.src = record.url; v.autoplay=true; v.loop=true; v.muted=false; v.playsInline=true;
+      v.src = url; v.autoplay=true; v.loop=true; v.muted=false; v.playsInline=true;
       v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;';
       container.appendChild(v);
       this.currentVideoEl = v;
-      v.addEventListener('canplay', () => { v.play().catch(()=>{}); resolve(); }, { once:true });
-      v.addEventListener('error',   () => { logger.warn(`[Player] video error: ${record.url}`); resolve(); }, { once:true });
-      signal.addEventListener('abort', () => { try{v.pause();}catch{} v.src=''; v.remove(); this.currentVideoEl=null; resolve(); });
+      let resolved = false;
+      const done = () => { if (!resolved) { resolved = true; resolve(); } };
+      v.addEventListener('canplay', () => { v.play().catch(()=>{}); done(); }, { once:true });
+      v.addEventListener('error',   () => {
+        // Suppress benign errors triggered by our own teardown (src='' after abort).
+        if (signal.aborted) { done(); return; }
+        logger.warn(`[Player] video error: ${record.url}`);
+        done();
+      }, { once:true });
+      signal.addEventListener('abort', () => { this.releaseVideo(); done(); });
     });
   }
 
   private renderHTML(container: HTMLElement, record: ContentRecord, signal: AbortSignal): Promise<void> {
     return new Promise(resolve => {
+      // HTML5/web_url packages must stream from the API (they contain relative
+      // asset references). Don't substitute a blob URL — keep the original.
       if (!record.url) { resolve(); return; }
       const frame = document.createElement('iframe');
       frame.src = record.url;
       frame.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;';
-      frame.sandbox.add('allow-scripts','allow-same-origin','allow-forms','allow-popups');
+      // No sandbox for html5/web_url — these are trusted uploads that need full JS execution.
+      // A sandboxed unique origin would break scripts that reference window.parent or use cookies.
       frame.onload = () => resolve();
+      frame.onerror = () => { logger.warn(`[Player] iframe error: ${record.url}`); resolve(); };
       container.appendChild(frame);
       signal.addEventListener('abort', () => { frame.src='about:blank'; frame.remove(); resolve(); });
     });
@@ -852,25 +962,228 @@ export class Player {
 
   private async renderPdf(container: HTMLElement, record: ContentRecord, signal: AbortSignal): Promise<void> {
     if (!record.url) { this.showIdle('PDF: no URL'); return; }
-    await this.renderHTML(container, record, signal);
+    try {
+      await this.renderPdfWithPdfJs(container, record, signal);
+    } catch (e) {
+      logger.warn(`[Player] PDF render failed, falling back to iframe: ${(e as Error)?.message}`);
+      await this.renderHTML(container, record, signal);
+    }
+  }
+
+  /**
+   * PDF.js-based renderer. Mirrors the Tizen implementation: lazy-loads
+   * pdfjs/pdf.min.js (shipped in android assets via sync-player-web.cjs),
+   * fetches the PDF as a Uint8Array (from local blob cache when available),
+   * renders each page to a canvas and auto-advances every durMs/numPages.
+   */
+  private async renderPdfWithPdfJs(container: HTMLElement, record: ContentRecord, signal: AbortSignal): Promise<void> {
+    const lib = await this.loadPdfJs();
+    const url = this.resolveLocalUrl(record.url);
+    if (!url) throw new Error('no url');
+
+    const ab = await (await fetch(url)).arrayBuffer();
+    if (signal.aborted) return;
+
+    const pdf = await lib.getDocument({ data: new Uint8Array(ab) }).promise;
+    if (signal.aborted) return;
+    logger.info(`[Player] PDF loaded ${pdf.numPages} page(s)`);
+
+    // Do NOT change container.style here — renderContent already set it to
+    // position:absolute;inset:0;overflow:hidden;background:#000 which fills the
+    // screen. Setting position:relative would collapse the container to 0px height
+    // and overflow:hidden would clip all canvas children, causing a black screen.
+
+    let activeCanvas: HTMLCanvasElement | null = null;
+    let currentRenderTask: { cancel?: () => void; promise: Promise<unknown> } | null = null;
+
+    const renderPage = async (num: number): Promise<HTMLCanvasElement | null> => {
+      if (currentRenderTask?.cancel) { try { currentRenderTask.cancel(); } catch {} }
+      try {
+        const page = await pdf.getPage(num);
+        const cw = Math.max(container.offsetWidth || window.innerWidth || 1920, 1);
+        const ch = Math.max(container.offsetHeight || window.innerHeight || 1080, 1);
+        const nativeVp = page.getViewport({ scale: 1 });
+        const scale = Math.min(cw / nativeVp.width, ch / nativeVp.height);
+        const viewport = page.getViewport({ scale });
+
+        const canvas = document.createElement('canvas');
+        canvas.width  = Math.max(Math.floor(viewport.width),  1);
+        canvas.height = Math.max(Math.floor(viewport.height), 1);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+
+        const left = Math.floor((cw - viewport.width) / 2);
+        const top  = Math.floor((ch - viewport.height) / 2);
+        canvas.style.cssText = `position:absolute;left:${left}px;top:${top}px;background:#000;`;
+
+        currentRenderTask = page.render({ canvasContext: ctx, viewport });
+        await currentRenderTask.promise;
+        currentRenderTask = null;
+        return canvas;
+      } catch (e) {
+        const name = (e as { name?: string })?.name;
+        if (name === 'RenderingCancelledException') return null;
+        logger.warn(`[Player] PDF page ${num} render error: ${(e as Error)?.message}`);
+        return null;
+      }
+    };
+
+    // Show page 1
+    const first = await renderPage(1);
+    if (signal.aborted) return;
+    if (first) { container.appendChild(first); activeCanvas = first; }
+
+    if (pdf.numPages <= 1) return;
+
+    // Auto-flip pages. Tie the cycle to the playlist duration: divide evenly
+    // across pages, with a 4s floor so individual pages are readable.
+    const durMs = getDurationMs({ content: record, duration: undefined } as ScheduleItem);
+    const perPage = Math.max(Math.floor(durMs / pdf.numPages), 4000);
+    let currentPage = 1;
+
+    const advance = async () => {
+      if (signal.aborted) return;
+      currentPage = (currentPage % pdf.numPages) + 1;
+      const next = await renderPage(currentPage);
+      if (signal.aborted) { return; }
+      if (next && container.isConnected) {
+        if (activeCanvas && activeCanvas.parentNode === container) container.replaceChild(next, activeCanvas);
+        else container.appendChild(next);
+        activeCanvas = next;
+      }
+    };
+
+    const interval = setInterval(() => { void advance(); }, perPage);
+    signal.addEventListener('abort', () => {
+      clearInterval(interval);
+      if (currentRenderTask?.cancel) { try { currentRenderTask.cancel(); } catch {} }
+    });
+  }
+
+  // Cache for the pdfjsLib promise so we only inject the script tag once.
+  private pdfJsLibPromise: Promise<{
+    getDocument: (src: { data: Uint8Array }) => { promise: Promise<{
+      numPages: number;
+      getPage: (n: number) => Promise<{
+        getViewport: (o: { scale: number }) => { width: number; height: number };
+        render: (o: { canvasContext: CanvasRenderingContext2D; viewport: unknown }) => { promise: Promise<unknown>; cancel?: () => void };
+      }>;
+    }> };
+    GlobalWorkerOptions: { workerSrc: string };
+  }> | null = null;
+
+  private loadPdfJs(): Promise<NonNullable<typeof this.pdfJsLibPromise> extends Promise<infer T> ? T : never> {
+    if (this.pdfJsLibPromise) return this.pdfJsLibPromise as Promise<never>;
+    this.pdfJsLibPromise = new Promise((resolve, reject) => {
+      const existing = (window as unknown as { pdfjsLib?: unknown }).pdfjsLib;
+      const onReady = () => {
+        const lib = (window as unknown as { pdfjsLib?: { GlobalWorkerOptions: { workerSrc: string } } }).pdfjsLib;
+        if (!lib) { reject(new Error('pdfjsLib failed to load')); return; }
+        try { lib.GlobalWorkerOptions.workerSrc = 'pdfjs/pdf.worker.min.js'; } catch {}
+        resolve(lib as never);
+      };
+      if (existing) { onReady(); return; }
+      const s = document.createElement('script');
+      s.src = 'pdfjs/pdf.min.js';
+      s.onload  = () => onReady();
+      s.onerror = () => reject(new Error('failed to load pdfjs/pdf.min.js'));
+      document.head.appendChild(s);
+    });
+    return this.pdfJsLibPromise as Promise<never>;
   }
 
   private async renderZoneLayout(container: HTMLElement, record: ContentRecord, signal: AbortSignal): Promise<void> {
     const meta = parseMetadata(record);
-    type ZoneDef = { id:string; x:number; y:number; width:number; height:number; url?:string; type?:string; };
-    const zones = (meta['zones'] as ZoneDef[]) || [];
+    // ZoneConfig shape from ZoneLayoutEditor: { id, rect:{x,y,width,height}, source:{type,contentId,contentType}|null }
+    // rect is in absolute pixels on a 1920×1080 canvas.
+    type ZoneSource = { type: 'content'; contentId: string; contentType?: string }
+      | { type: 'playlist'; playlistId: string }
+      | { type: 'empty' };
+    type ZoneConfig = {
+      id: string;
+      rect?: { x: number; y: number; width: number; height: number };
+      // Legacy flat format (percentages)
+      x?: number; y?: number; width?: number; height?: number;
+      source?: ZoneSource | null;
+      url?: string;     // legacy
+      type?: string;    // legacy
+      fitMode?: 'fill' | 'contain' | null;
+    };
+    const zones = (meta['zones'] as ZoneConfig[]) ?? [];
     if (!zones.length) { this.showIdle('Zone layout: no zones'); return; }
-    container.style.position = 'absolute';
+
+    // Read the coordinate space this zone layout was authored in.
+    // Stored by ZoneLayoutEditor as canvasWidth/canvasHeight in metadata.
+    // Fallback to 1920×1080 for legacy zone layouts that pre-date this field.
+    const CANVAS_W = typeof meta['canvasWidth'] === 'number' ? meta['canvasWidth'] : 1920;
+    const CANVAS_H = typeof meta['canvasHeight'] === 'number' ? meta['canvasHeight'] : 1080;
+    logger.info(`[Zone] canvas ${CANVAS_W}×${CANVAS_H}, ${zones.length} zone(s)`);
+
     for (const zone of zones) {
       if (signal.aborted) break;
-      const el = document.createElement('div');
-      el.style.cssText = `position:absolute;left:${zone.x}%;top:${zone.y}%;width:${zone.width}%;height:${zone.height}%;overflow:hidden;`;
-      container.appendChild(el);
-      if (zone.url) {
-        const rec: ContentRecord = { id:zone.id||'zone', type:zone.type||'HTML', url:zone.url };
-        try { await this.renderContent(el, rec, signal); } catch { /**/ }
+
+      // Resolve coordinates — prefer nested rect (pixel), fall back to flat (percentage)
+      const r = zone.rect;
+      let l: number, t: number, w: number, h: number;
+      if (r) {
+        // Pixel-space 1920×1080 → percentage
+        l = (r.x / CANVAS_W) * 100;
+        t = (r.y / CANVAS_H) * 100;
+        w = (r.width  / CANVAS_W) * 100;
+        h = (r.height / CANVAS_H) * 100;
+      } else {
+        // Legacy: already percentage
+        l = zone.x ?? 0; t = zone.y ?? 0; w = zone.width ?? 100; h = zone.height ?? 100;
       }
+
+      const el = document.createElement('div');
+      el.style.cssText = `position:absolute;left:${l.toFixed(4)}%;top:${t.toFixed(4)}%;width:${w.toFixed(4)}%;height:${h.toFixed(4)}%;overflow:hidden;background:#000;`;
+      container.appendChild(el);
+
+      const src = zone.source;
+      const objectFit = zone.fitMode === 'fill' ? 'cover' : 'contain';
+
+      if (src?.type === 'content' && src.contentId) {
+        const tok = this.token;
+        const contentType = (src.contentType ?? 'image').toLowerCase();
+        if (contentType === 'html5') {
+          const frame = document.createElement('iframe');
+          frame.src = tok
+            ? `${this.cfg.apiBase}/devices/device/content/${encodeURIComponent(src.contentId)}/html5/${encodeURIComponent(tok)}/`
+            : '';
+          frame.style.cssText = 'width:100%;height:100%;border:0;background:#000;';
+          el.appendChild(frame);
+          signal.addEventListener('abort', () => { frame.src = 'about:blank'; });
+        } else if (contentType === 'video') {
+          const fileUrl = `${this.cfg.apiBase}/devices/device/content/${encodeURIComponent(src.contentId)}/file${tok ? `?token=${encodeURIComponent(tok)}` : ''}`;
+          const v = document.createElement('video');
+          v.src = fileUrl; v.autoplay = true; v.loop = true; v.muted = true; v.playsInline = true;
+          v.style.cssText = `width:100%;height:100%;object-fit:${objectFit};background:#000;`;
+          el.appendChild(v);
+          v.play().catch(() => {});
+          signal.addEventListener('abort', () => { v.pause(); v.src = ''; });
+        } else {
+          // image (default) or web_url
+          const fileUrl = contentType === 'web_url'
+            ? (src as { contentId: string; contentType?: string; webUrl?: string })['webUrl'] ?? ''
+            : `${this.cfg.apiBase}/devices/device/content/${encodeURIComponent(src.contentId)}/file${tok ? `?token=${encodeURIComponent(tok)}` : ''}`;
+          const img = document.createElement('img');
+          img.src = fileUrl;
+          img.style.cssText = `width:100%;height:100%;object-fit:${objectFit};background:#000;`;
+          img.onerror = () => logger.warn(`[Zone] image load error: ${src.contentId}`);
+          el.appendChild(img);
+        }
+      } else if (zone.url) {
+        // Legacy: zone has a direct URL
+        const frame = document.createElement('iframe');
+        frame.src = zone.url;
+        frame.style.cssText = 'width:100%;height:100%;border:0;background:#000;';
+        el.appendChild(frame);
+        signal.addEventListener('abort', () => { frame.src = 'about:blank'; });
+      }
+      // type === 'playlist' or 'empty': leave zone with black background for now
     }
+    // renderZoneLayout returns immediately — the player then sleeps for durMs (zone_layout is NOT a looper)
   }
 
   private async initSyncGroup(msg: Record<string, unknown>): Promise<void> {
