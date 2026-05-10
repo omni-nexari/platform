@@ -49,10 +49,39 @@ window.Telemetry = {
       return this._systemInfoCache;
     }
 
-    var build = await this.getPropertyAsync('BUILD');
-    var network = await this.getPropertyAsync('NETWORK');
-    var wifi = await this.getPropertyAsync('WIFI_NETWORK');
-    var ethernet = await this.getPropertyAsync('ETHERNET_NETWORK');
+    var results = await Promise.all([
+      this.getPropertyAsync('BUILD'),
+      this.getPropertyAsync('NETWORK'),
+      this.getPropertyAsync('WIFI_NETWORK'),
+      this.getPropertyAsync('ETHERNET_NETWORK'),
+      this.getPropertyAsync('CPU'),
+      this.getPropertyAsync('STORAGE'),
+    ]);
+    var build    = results[0];
+    var network  = results[1];
+    var wifi     = results[2];
+    var ethernet = results[3];
+    var cpu      = results[4];
+    var storage  = results[5];
+
+    // Memory — direct synchronous methods are more accurate than the MEMORY property
+    var memoryTotal = null;
+    var memoryFree  = null;
+    try {
+      if (typeof tizen !== 'undefined' && tizen.systeminfo) {
+        if (typeof tizen.systeminfo.getTotalMemory === 'function')    memoryTotal = tizen.systeminfo.getTotalMemory();
+        if (typeof tizen.systeminfo.getAvailableMemory === 'function') memoryFree  = tizen.systeminfo.getAvailableMemory();
+      }
+    } catch (e) {}
+
+    // Device uptime in seconds
+    var deviceUptimeSec = null;
+    try {
+      if (typeof tizen !== 'undefined' && tizen.systeminfo &&
+          typeof tizen.systeminfo.getDeviceUptime === 'function') {
+        deviceUptimeSec = tizen.systeminfo.getDeviceUptime();
+      }
+    } catch (e) {}
 
     var duid = null, model = null, realModel = null, serialNumber = null, firmwareVersion = null;
     try {
@@ -177,6 +206,12 @@ window.Telemetry = {
       batteryPct: batteryPct,
       batterySource: batterySource,
       batteryCharging: batterySource === 'AC_CHARGER' || batterySource === 'USB_CHARGER',
+      // Resources (same field names as nexari-tizen so WS/DB handling is identical)
+      cpuLoad: (cpu && cpu.load != null) ? cpu.load : null,
+      storageFreeBytes: (storage && storage.units && storage.units[0]) ? storage.units[0].availableCapacity : null,
+      memoryFreeBytes: memoryFree,
+      memoryTotalBytes: memoryTotal,
+      deviceUptimeSec: deviceUptimeSec,
       timezone: timezone,
       capabilities: {
         epaper: !!epaperApiVersion,

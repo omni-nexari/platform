@@ -305,6 +305,11 @@ window.EpaperWS = (function() {
             panelW: info.panelW || null,
             panelH: info.panelH || null,
             batteryPct: info.batteryPct != null ? info.batteryPct : null,
+            cpuLoad: info.cpuLoad != null ? info.cpuLoad : null,
+            memoryFreeBytes: info.memoryFreeBytes != null ? info.memoryFreeBytes : null,
+            memoryTotalBytes: info.memoryTotalBytes != null ? info.memoryTotalBytes : null,
+            storageFreeBytes: info.storageFreeBytes != null ? info.storageFreeBytes : null,
+            deviceUptimeSec: info.deviceUptimeSec != null ? info.deviceUptimeSec : null,
           },
         });
         // Dispatch extended telemetry: network_info + heartbeat extras (mirrors nexari-tizen)

@@ -527,24 +527,29 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
       })
       .where(eq(devices.id, deviceId));
 
-    await db.insert(deviceHeartbeats).values({
-      deviceId,
-      playerVersion: hb.playerVersion,
-      firmwareVersion: hb.firmwareVersion,
-      powerState: hb.powerState,
-      clockDriftMs: hb.clockDriftMs,
-      irLock: hb.irLock,
-      buttonLock: hb.buttonLock,
-      cpuLoad: hb.cpuLoad,
-      storageFreeBytes: hb.storageFreeBytes,
-      memoryFreeBytes: hb.memoryFreeBytes,
-      memoryTotalBytes: hb.memoryTotalBytes,
-      deviceUptimeSec: hb.deviceUptimeSec,
-      temperatureC: hb.temperatureCelsius,
-      currentContentId: hb.currentContentId ?? null,
-      nextContentId: hb.nextContentId ?? null,
-      nextStartsAt: hb.nextStartsAt ? new Date(hb.nextStartsAt) : null,
-    });
+    // Skip the heartbeat row for sleeping notifications — it carries no resource
+    // data (cpuLoad, memory, storage are all null) and would become the "latest"
+    // heartbeat, wiping the Telemetry panel until the device wakes again.
+    if (hb.powerState !== 'sleeping') {
+      await db.insert(deviceHeartbeats).values({
+        deviceId,
+        playerVersion: hb.playerVersion,
+        firmwareVersion: hb.firmwareVersion,
+        powerState: hb.powerState,
+        clockDriftMs: hb.clockDriftMs,
+        irLock: hb.irLock,
+        buttonLock: hb.buttonLock,
+        cpuLoad: hb.cpuLoad,
+        storageFreeBytes: hb.storageFreeBytes,
+        memoryFreeBytes: hb.memoryFreeBytes,
+        memoryTotalBytes: hb.memoryTotalBytes,
+        deviceUptimeSec: hb.deviceUptimeSec,
+        temperatureC: hb.temperatureCelsius,
+        currentContentId: hb.currentContentId ?? null,
+        nextContentId: hb.nextContentId ?? null,
+        nextStartsAt: hb.nextStartsAt ? new Date(hb.nextStartsAt) : null,
+      });
+    }
 
     // If drift exceeds ±200ms, nudge the TV to resync — but at most once per 60s per device
     const NTP_RESYNC_THRESHOLD_MS = 200;
