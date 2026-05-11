@@ -630,15 +630,19 @@ function _renderZoneContentEl(container: HTMLElement, contentId: string, content
   const type = contentType.toUpperCase();
   if (type === 'IMAGE') {
     const img = document.createElement('img');
-    img.src = fileUrl;
     Object.assign(img.style, { width:'100%', height:'100%', objectFit:'contain', background:'#000', display:'block' });
     container.appendChild(img);
+    void downloadFirst(fileUrl).then((u) => { if (img.isConnected) img.src = u; });
   } else if (type === 'VIDEO') {
     const vid = document.createElement('video');
-    vid.src = fileUrl; vid.autoplay = true; vid.loop = true; vid.muted = true; vid.playsInline = true;
+    vid.autoplay = true; vid.loop = true; vid.muted = true; vid.playsInline = true;
     Object.assign(vid.style, { width:'100%', height:'100%', objectFit:'contain', background:'#000', display:'block' });
     container.appendChild(vid);
-    vid.play().catch(() => {});
+    void downloadFirst(fileUrl).then((u) => {
+      if (!vid.isConnected) return;
+      vid.src = u;
+      vid.play().catch(() => {});
+    });
   } else if (type === 'HTML5') {
     const iframe = document.createElement('iframe');
     iframe.src = `${apiBase}/devices/device/content/${contentId}/html5/${encodeURIComponent(token)}/index.html`;
@@ -672,15 +676,19 @@ async function _renderZonePlaylist(container: HTMLElement, playlistId: string, a
       container.innerHTML = '';
       if (type === 'IMAGE') {
         const img = document.createElement('img');
-        img.src = fileUrl;
         Object.assign(img.style, { width:'100%', height:'100%', objectFit:'contain', background:'#000', display:'block' });
         container.appendChild(img);
+        void downloadFirst(fileUrl).then((u) => { if (img.isConnected) img.src = u; });
       } else if (type === 'VIDEO') {
         const vid = document.createElement('video');
-        vid.src = fileUrl; vid.autoplay = true; vid.loop = false; vid.muted = true; vid.playsInline = true;
+        vid.autoplay = true; vid.loop = false; vid.muted = true; vid.playsInline = true;
         Object.assign(vid.style, { width:'100%', height:'100%', objectFit:'contain', background:'#000', display:'block' });
         container.appendChild(vid);
-        vid.play().catch(() => {});
+        void downloadFirst(fileUrl).then((u) => {
+          if (!vid.isConnected) return;
+          vid.src = u;
+          vid.play().catch(() => {});
+        });
       } else if (type === 'HTML5') {
         const iframe = document.createElement('iframe');
         iframe.src = `${apiBase}/devices/device/content/${content.id}/html5/${encodeURIComponent(token)}/index.html`;

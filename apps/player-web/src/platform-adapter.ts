@@ -128,6 +128,7 @@ export interface PlatformAdapter {
   clearCache(): Promise<void>;
   /** Restart only the WebView/renderer, keeping the host process alive. */
   reloadRenderer(): Promise<void>;
+  openSettings?(): Promise<void>;
 
   // ── OTA ────────────────────────────────────────────────────────────────────
   /**

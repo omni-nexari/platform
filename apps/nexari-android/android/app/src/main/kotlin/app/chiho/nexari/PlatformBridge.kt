@@ -164,6 +164,18 @@ class PlatformBridge(
     fun reloadRenderer(): String { main.post { webView.reload() }; return "{}" }
 
     @JavascriptInterface
+    fun openSettings(): String {
+        try {
+            val intent = Intent(android.provider.Settings.ACTION_SETTINGS)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.w("PlatformBridge", "openSettings failed: ${e.message}")
+        }
+        return "{}"
+    }
+
+    @JavascriptInterface
     fun lockKiosk():    String = gson.toJson(kiosk.lock())
 
     @JavascriptInterface
@@ -223,6 +235,7 @@ class PlatformBridge(
       screenshot:      () => Promise.resolve(JSON.parse(b.screenshot())),
       relaunch:        () => { b.relaunch(); return Promise.resolve(); },
       clearCache:      () => { b.clearCache(); return Promise.resolve(); },
+      openSettings:    () => { if(b.openSettings) b.openSettings(); return Promise.resolve(); },
       reloadRenderer:  () => { b.reloadRenderer(); return Promise.resolve(); },
       lockKiosk:       () => p(b.lockKiosk()),
       unlockKiosk:     () => p(b.unlockKiosk()),

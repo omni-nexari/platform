@@ -2572,6 +2572,9 @@ var Player = class {
       case "clear_cache":
         await a.clearCache();
         return;
+      case "open_settings":
+        if (typeof a.openSettings === "function") await a.openSettings();
+        return;
       case "refresh_schedule":
         await this.loadContent();
         return;

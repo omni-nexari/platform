@@ -198,6 +198,7 @@ export const DeviceCommandSchema = z.discriminatedUnion('command', [
   z.object({ command: z.literal('update_player'), payload: z.object({ version: z.string(), downloadUrl: z.string() }) }),
   z.object({ command: z.literal('clear_cache') }),
   z.object({ command: z.literal('dump_logs') }),
+  z.object({ command: z.literal('open_settings') }),
   z.object({ command: z.literal('set_screenshot_interval'), payload: z.object({ minutes: z.number().int().min(1) }) }),
   z.object({ command: z.literal('set_zones'), payload: z.object({ zones: z.array(ZoneConfigSchema) }) }),
   z.object({ command: z.literal('set_windows_settings'), payload: z.object({ settings: WindowsPlayerSettingsSchema }) }),

@@ -124,6 +124,7 @@ export interface PlatformAdapter {
     clearCache(): Promise<void>;
     /** Restart only the WebView/renderer, keeping the host process alive. */
     reloadRenderer(): Promise<void>;
+    openSettings?(): Promise<void>;
     /**
      * Download + install an APK / package. Progress callbacks fire on a best
      * effort basis. Resolves only after install completes (or fails).

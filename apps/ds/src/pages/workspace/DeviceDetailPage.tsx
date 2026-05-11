@@ -2526,6 +2526,11 @@ export function DeviceDetailContent({
                     <RefreshCw className="w-3 h-3" /> Clear Cache
                   </ActionButton>
                   <ActionButton type="button" disabled={cmdDisabled}
+                    onClick={() => sendCmd({ command: 'open_settings' })}
+                    className="px-3 py-1.5 text-xs">
+                    <Monitor className="w-3 h-3" /> Android Settings
+                  </ActionButton>
+                  <ActionButton type="button" disabled={cmdDisabled}
                     onClick={() => sendCmd({ command: 'sleep' })}
                     className="px-3 py-1.5 text-xs">
                     <Power className="w-3 h-3" /> Sleep
