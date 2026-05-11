@@ -103,7 +103,18 @@ class PlatformBridge(
         return gson.toJson(res)
     }
     @JavascriptInterface fun powerOff():  String = gson.toJson(power.powerOff())
-    @JavascriptInterface fun powerOn():   String = gson.toJson(mapOf("supported" to true))
+    @JavascriptInterface fun powerOn():   String {
+        main.post {
+            val window = (context as? android.app.Activity)?.window
+            if (window != null) {
+                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                val lp = window.attributes
+                lp.screenBrightness = -1.0f // Restore default
+                window.attributes = lp
+            }
+        }
+        return gson.toJson(mapOf("supported" to true))
+    }
     @JavascriptInterface fun sleep():     String = gson.toJson(power.sleep())
 
     @JavascriptInterface fun setVolume(pct: Int):       String = gson.toJson(audio.setVolume(pct))
@@ -136,21 +147,14 @@ class PlatformBridge(
     private fun doRelaunch() {
         try {
             val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-            if (intent != null) {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                val pi = PendingIntent.getActivity(
-                    context, 0, intent,
-                    PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                )
-                val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-                am.set(AlarmManager.RTC, System.currentTimeMillis() + 1500L, pi)
+            if (intent?.component != null) {
+                val restartIntent = Intent.makeRestartActivityTask(intent.component)
+                context.startActivity(restartIntent)
+                Runtime.getRuntime().exit(0)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "relaunch schedule failed: ${e.message}")
+            Log.w("PlatformBridge", "relaunch start failed: ${e.message}")
         }
-        main.postDelayed({
-            try { Process.killProcess(Process.myPid()) } catch (_: Exception) {}
-        }, 400)
     }
 
     @JavascriptInterface

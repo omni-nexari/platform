@@ -16,7 +16,17 @@ class BrightnessCtl(private val ctx: Context) {
         }
         val v = (pct.coerceIn(0, 100) * 255 / 100)
         return try {
+            Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
             Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, v)
+            
+            // Also apply it to the current Window if possible
+            (ctx as? android.app.Activity)?.runOnUiThread {
+                val window = ctx.window
+                val lp = window.attributes
+                lp.screenBrightness = pct / 100f
+                window.attributes = lp
+            }
+            
             mapOf("supported" to true)
         } catch (e: Exception) {
             mapOf("supported" to false, "error" to (e.message ?: "denied"))

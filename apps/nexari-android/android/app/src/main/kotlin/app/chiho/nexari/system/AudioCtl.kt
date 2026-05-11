@@ -10,7 +10,7 @@ class AudioCtl(ctx: Context) {
         val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         val v = (pct.coerceIn(0, 100) * max / 100)
         return try {
-            am.setStreamVolume(AudioManager.STREAM_MUSIC, v, 0)
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, v, AudioManager.FLAG_SHOW_UI or AudioManager.FLAG_PLAY_SOUND)
             mapOf("supported" to true)
         } catch (e: SecurityException) {
             mapOf("supported" to false, "error" to (e.message ?: "denied"))

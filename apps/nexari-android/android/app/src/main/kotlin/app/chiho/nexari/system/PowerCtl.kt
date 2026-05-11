@@ -30,16 +30,23 @@ class PowerCtl(private val ctx: Context) {
 
     fun sleep(): Map<String, Any> {
         return try {
+            // First, remove the FLAG_KEEP_SCREEN_ON so the device CAN sleep,
+            // and force the screen brightness to 0 to simulate sleep.
+            (ctx as? android.app.Activity)?.runOnUiThread {
+                val window = ctx.window
+                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                val lp = window.attributes
+                lp.screenBrightness = 0.0f
+                window.attributes = lp
+            }
+
             if (dpm.isAdminActive(admin)) {
                 dpm.lockNow()
                 mapOf("supported" to true)
             } else {
-                // Device Admin not active — fall back to dimming display to 0.
+                // Device Admin not active — dim/flag already applied.
                 android.util.Log.w("PowerCtl", "Device Admin not active; dimming to 0 as sleep fallback")
-                val bright = BrightnessCtl(ctx)
-                val result = bright.setBrightness(0)
-                if (result["supported"] == true) mapOf("supported" to true, "fallback" to "dim")
-                else mapOf("supported" to false, "error" to "device admin not active; dim fallback also unavailable")
+                mapOf("supported" to true, "fallback" to "dim")
             }
         } catch (e: SecurityException) {
             mapOf("supported" to false, "error" to (e.message ?: "denied"))
