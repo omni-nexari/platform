@@ -3398,7 +3398,7 @@ function WindowsSettingsCard({ settings, onSave, saving }: {
               <div className="text-xs text-[var(--text-muted)]">LRU eviction above this size.</div>
             </div>
             <select
-              value={draft.assetCacheMaxBytes ?? 5 * 1024 ** 3}
+              value={draft.assetCacheMaxBytes ?? 50 * 1024 ** 3}
               onChange={(e) => set('assetCacheMaxBytes', Number(e.target.value))}
               className="px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm"
             >
@@ -3407,6 +3407,9 @@ function WindowsSettingsCard({ settings, onSave, saving }: {
               <option value={5 * 1024 ** 3}>5 GB</option>
               <option value={10 * 1024 ** 3}>10 GB</option>
               <option value={20 * 1024 ** 3}>20 GB</option>
+              <option value={50 * 1024 ** 3}>50 GB (default)</option>
+              <option value={100 * 1024 ** 3}>100 GB</option>
+              <option value={200 * 1024 ** 3}>200 GB</option>
             </select>
           </div>
 

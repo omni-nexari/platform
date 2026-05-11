@@ -50,7 +50,7 @@ const DEFAULTS: Required<{
   hardwareAcceleration: true,
   rotation: 0,
   logRetentionDays: 14,
-  assetCacheMaxBytes: 5 * 1024 * 1024 * 1024, // 5 GB
+  assetCacheMaxBytes: 50 * 1024 * 1024 * 1024, // 50 GB
   proxyUrl: '',
   targetDisplayIndex: 0,
   remoteDevToolsPort: 0,
