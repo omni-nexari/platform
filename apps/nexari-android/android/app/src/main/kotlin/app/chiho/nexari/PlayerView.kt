@@ -3,6 +3,7 @@ package app.chiho.nexari
 import android.annotation.SuppressLint
 import android.content.Context
 import android.util.Log
+import android.view.View
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -43,8 +44,14 @@ class PlayerView(context: Context) : FrameLayout(context) {
         s.userAgentString = s.userAgentString + " NexariPlayer/${BuildConfig.VERSION_NAME}"
         s.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
         webView.setBackgroundColor(0xFF000000.toInt())
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         webView.webViewClient = WebViewClient()
         webView.webChromeClient = object : WebChromeClient() {
+            override fun getDefaultVideoPoster(): android.graphics.Bitmap? {
+                // Return an empty transparent bitmap to hide the giant play button
+                return android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
+            }
+
             override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
                 val level = when (msg.messageLevel()) {
                     ConsoleMessage.MessageLevel.ERROR -> Log.ERROR

@@ -2782,29 +2782,47 @@ var Player = class {
     if (!total) return;
     const nextCache = /* @__PURE__ */ new Map();
     let done = 0;
+    const diskCache = await caches.open("nexari-content-v1").catch(() => null);
     await Promise.allSettled(urls.map(async (url) => {
+      var _a;
       try {
-        const existing = this.localUrlCache.get(url);
+        const urlKey = (_a = url.split("?")[0]) != null ? _a : url;
+        const existing = this.localUrlCache.get(urlKey);
         if (existing) {
-          nextCache.set(url, existing);
+          nextCache.set(urlKey, existing);
           done++;
           this.updateIdleProgress(Math.round(done / total * 100));
           return;
         }
-        const resp = await fetch(url, { credentials: "omit" });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        let resp = diskCache ? await diskCache.match(urlKey) : void 0;
+        let isHit = !!resp;
+        if (!resp) {
+          resp = await fetch(url, { credentials: "omit" });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          if (diskCache) {
+            try {
+              await diskCache.put(urlKey, resp.clone());
+            } catch (e) {
+              logger.warn(`[Cache] write disk fail: ${e}`);
+            }
+          }
+        }
         const blob = await resp.blob();
         const blobUrl = URL.createObjectURL(blob);
-        nextCache.set(url, blobUrl);
-        logger.info(`[Cache] downloaded ${url.split("?")[0]} (${(blob.size / 1024).toFixed(1)} KiB)`);
+        nextCache.set(urlKey, blobUrl);
+        if (isHit) {
+          logger.info(`[Cache] local disk hit ${urlKey} (${(blob.size / 1024).toFixed(1)} KiB)`);
+        } else {
+          logger.info(`[Cache] downloaded ${urlKey} (${(blob.size / 1024).toFixed(1)} KiB)`);
+        }
       } catch (e) {
         logger.warn(`[Cache] failed ${url.split("?")[0]}: ${e == null ? void 0 : e.message}`);
       }
       done++;
       this.updateIdleProgress(Math.round(done / total * 100));
     }));
-    for (const [oldUrl, oldBlob] of this.localUrlCache) {
-      if (!nextCache.has(oldUrl)) {
+    for (const [oldUrlKey, oldBlob] of this.localUrlCache) {
+      if (!nextCache.has(oldUrlKey)) {
         try {
           URL.revokeObjectURL(oldBlob);
         } catch (e) {
@@ -2815,9 +2833,10 @@ var Player = class {
   }
   /** Swap a remote content URL for the locally cached blob: URL if available. */
   resolveLocalUrl(url) {
-    var _a;
+    var _a, _b;
     if (!url) return "";
-    return (_a = this.localUrlCache.get(url)) != null ? _a : url;
+    const urlKey = (_a = url.split("?")[0]) != null ? _a : url;
+    return (_b = this.localUrlCache.get(urlKey)) != null ? _b : url;
   }
   // ── Update the idle progress bar in-place without re-rendering the screen ───
   updateIdleProgress(pct) {
@@ -3097,13 +3116,81 @@ var Player = class {
       v.autoplay = true;
       v.loop = true;
       v.playsInline = true;
-      v.muted = true;
-      v.defaultMuted = true;
+      const isNexariAndroid = navigator.userAgent.includes("NexariPlayer");
+      if (!isNexariAndroid) {
+        v.muted = true;
+        v.defaultMuted = true;
+      }
       v.preload = "auto";
       v.setAttribute("disablepictureinpicture", "");
       v.setAttribute("disableremoteplayback", "");
       v.controls = false;
-      v.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;opacity:0;";
+      if (isNexariAndroid) {
+        v.style.cssText = "position:absolute;width:1px;height:1px;top:-9999px;left:-9999px;opacity:0;pointer-events:none;";
+        container.appendChild(v);
+        const canvas = document.createElement("canvas");
+        canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;background:#000;";
+        container.appendChild(canvas);
+        const ctx = canvas.getContext("2d", { alpha: false });
+        this.currentVideoEl = v;
+        let resolved2 = false;
+        const done2 = () => {
+          if (!resolved2) {
+            resolved2 = true;
+            resolve();
+          }
+        };
+        let rafId = 0;
+        const draw = () => {
+          if (signal.aborted) return;
+          if (v.readyState >= 2 && ctx) {
+            const vw = v.videoWidth, vh = v.videoHeight;
+            if (vw && vh && (canvas.width !== vw || canvas.height !== vh)) {
+              canvas.width = vw;
+              canvas.height = vh;
+            }
+            try {
+              ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+            } catch (e) {
+            }
+          }
+          rafId = requestAnimationFrame(draw);
+        };
+        v.addEventListener("loadedmetadata", () => {
+          v.play().catch(() => {
+          });
+        }, { once: true });
+        v.addEventListener("playing", () => {
+          rafId = requestAnimationFrame(draw);
+          done2();
+        }, { once: true });
+        v.addEventListener("error", () => {
+          if (signal.aborted) {
+            done2();
+            return;
+          }
+          if (this.currentVideoEl !== v) {
+            done2();
+            return;
+          }
+          logger.warn(`[Player] video error: ${record.url}`);
+          done2();
+        }, { once: true });
+        signal.addEventListener("abort", () => {
+          if (rafId) cancelAnimationFrame(rafId);
+          try {
+            canvas.remove();
+          } catch (e) {
+          }
+          this.releaseVideo();
+          done2();
+        });
+        return;
+      }
+      const overlay = document.createElement("div");
+      overlay.style.cssText = "position:absolute;inset:0;width:100%;height:100%;background:#000;z-index:3;";
+      container.appendChild(overlay);
+      v.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;";
       container.appendChild(v);
       this.currentVideoEl = v;
       let resolved = false;
@@ -3118,7 +3205,9 @@ var Player = class {
         });
       }, { once: true });
       v.addEventListener("playing", () => {
-        v.style.opacity = "1";
+        if (overlay && overlay.parentNode) {
+          overlay.remove();
+        }
         v.muted = false;
         done();
       }, { once: true });
@@ -3147,6 +3236,36 @@ var Player = class {
    * pause/remove the prior video before the new one is decoded.
    */
   transitionToVideo(container, record, signal) {
+    if (navigator.userAgent.includes("NexariPlayer")) {
+      const prev = this.currentVideoEl;
+      if (prev) {
+        try {
+          prev.pause();
+        } catch (e) {
+        }
+        try {
+          prev.removeAttribute("src");
+          prev.src = "";
+        } catch (e) {
+        }
+        try {
+          prev.load();
+        } catch (e) {
+        }
+        try {
+          prev.remove();
+        } catch (e) {
+        }
+      }
+      container.querySelectorAll("canvas").forEach((c) => {
+        try {
+          c.remove();
+        } catch (e) {
+        }
+      });
+      this.currentVideoEl = null;
+      return this.renderVideo(container, record, signal);
+    }
     return new Promise((resolve) => {
       const url = this.resolveLocalUrl(record.url);
       if (!url) {
@@ -3165,7 +3284,10 @@ var Player = class {
       v.setAttribute("disablepictureinpicture", "");
       v.setAttribute("disableremoteplayback", "");
       v.controls = false;
-      v.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:2;opacity:0;";
+      const overlay = document.createElement("div");
+      overlay.style.cssText = "position:absolute;inset:0;width:100%;height:100%;background:#000;z-index:3;";
+      container.appendChild(overlay);
+      v.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;";
       container.appendChild(v);
       let resolved = false;
       let swapped = false;
@@ -3179,8 +3301,9 @@ var Player = class {
         if (swapped) return;
         swapped = true;
         this.currentVideoEl = v;
-        v.style.opacity = "1";
-        v.style.zIndex = "";
+        if (overlay && overlay.parentNode) {
+          overlay.remove();
+        }
         if (prev && prev !== v) {
           try {
             prev.pause();
@@ -3200,7 +3323,9 @@ var Player = class {
           } catch (e) {
           }
         }
-        v.muted = false;
+        if (!navigator.userAgent.includes("NexariPlayer")) {
+          v.muted = false;
+        }
         done();
       };
       v.addEventListener("loadedmetadata", () => {

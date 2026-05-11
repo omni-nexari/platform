@@ -355,8 +355,17 @@ async function renderVideo(c: NormalizedContent, durationSec: number) {
     scheduleAdvance(durationSec);
   };
 
-  // Fallback timer in case the video is longer than scheduled duration
-  scheduleAdvance(durationSec);
+  // Videos play to their natural end (onended). The playlist-configured
+  // `durationSec` is only a floor for the safety fallback — if the video's
+  // intrinsic duration is longer, we extend the timer to match. This way a
+  // 30-second clip set to "5s" in the playlist still plays in full.
+  vid.onloadedmetadata = () => {
+    const intrinsic = isFinite(vid.duration) ? vid.duration : 0;
+    const safety = Math.max(durationSec, Math.ceil(intrinsic) + 2);
+    scheduleAdvance(safety);
+  };
+  // Initial fallback in case metadata never loads
+  scheduleAdvance(Math.max(durationSec, 60));
   root.appendChild(vid);
   vid.play().catch(() => {});
 }
@@ -684,11 +693,28 @@ async function _renderZonePlaylist(container: HTMLElement, playlistId: string, a
         vid.autoplay = true; vid.loop = false; vid.muted = true; vid.playsInline = true;
         Object.assign(vid.style, { width:'100%', height:'100%', objectFit:'contain', background:'#000', display:'block' });
         container.appendChild(vid);
+        // Advance when the clip ends naturally; setTimeout is only a safety net
+        // sized to the larger of the configured duration and the intrinsic length.
+        let _zoneTimer: ReturnType<typeof setTimeout> | null = null;
+        const advance = () => {
+          if (_zoneTimer) { clearTimeout(_zoneTimer); _zoneTimer = null; }
+          idx = (idx + 1) % items.length;
+          playItem();
+        };
+        vid.onended = advance;
+        vid.onloadedmetadata = () => {
+          const intrinsic = isFinite(vid.duration) ? vid.duration : 0;
+          const safety = Math.max(duration, (Math.ceil(intrinsic) + 2) * 1000);
+          if (_zoneTimer) clearTimeout(_zoneTimer);
+          _zoneTimer = setTimeout(advance, safety);
+        };
+        _zoneTimer = setTimeout(advance, Math.max(duration, 60_000));
         void downloadFirst(fileUrl).then((u) => {
           if (!vid.isConnected) return;
           vid.src = u;
           vid.play().catch(() => {});
         });
+        return; // skip the unconditional setTimeout below for this iteration
       } else if (type === 'HTML5') {
         const iframe = document.createElement('iframe');
         iframe.src = `${apiBase}/devices/device/content/${content.id}/html5/${encodeURIComponent(token)}/index.html`;

@@ -3,8 +3,8 @@
 (function () {
   var info = {
     version: "1.0.62",
-    buildId: "20260509-182136Z",
-    builtAt: "2026-05-09T18:21:36.183Z"
+    buildId: "20260511-025828Z",
+    builtAt: "2026-05-11T02:58:28.656Z"
   };
 
   // Exposed for debugging in Remote Inspector
@@ -13,7 +13,7 @@
 
   // Dev config overrides (injected at build time)
   window.__PLAYER_CONFIG__ = {
-    API_BASE: "http://192.168.1.17/api/v1",
-    WS_URL: "ws://192.168.1.17"
+    API_BASE: "https://ds.chiho.app/api/v1",
+    WS_URL: "wss://ds.chiho.app"
   };
 })();

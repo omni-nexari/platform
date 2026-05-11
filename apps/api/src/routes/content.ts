@@ -1234,7 +1234,39 @@ export async function contentRoutes(app: FastifyInstance) {
 
     return reply.send(updated);
   });
-  // ── GET /content/:id/thumbnail ──────────────────────────────────────────
+
+  // ── POST /content/:id/reprocess ──────────────────────────────────────────
+  // Re-runs the full media processing pipeline (transcode + thumbnail + probe)
+  // on an existing item. Use this to re-transcode 10-bit HEVC videos that
+  // were uploaded before the Android compatibility fix.
+  app.post('/:id/reprocess', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const item = await db.query.contentItems.findFirst({
+      where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)),
+    });
+    if (!item || !item.filePath) return reply.status(404).send({ error: 'Not found' });
+
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+
+    await db.update(contentItems)
+      .set({ status: 'processing', updatedAt: new Date() })
+      .where(eq(contentItems.id, id));
+
+    const queue = getQueue<{ contentId: string }>(QUEUE_NAMES.mediaProcessing);
+    if (queue) {
+      await queue.add('process', { contentId: id }, { jobId: `reprocess-${id}-${Date.now()}` });
+    } else {
+      processContentMedia(id).catch((err: unknown) => {
+        req.log.error({ err, contentId: id }, '[reprocess] inline media processing failed');
+      });
+    }
+
+    return reply.send({ ok: true, queued: !!queue });
+  });
+
   // Serves the thumbnail JPEG if one was generated, otherwise falls back to
   // the original file for images (as its own thumbnail).
   app.get('/:id/thumbnail', { onRequest: [app.authenticate] }, async (req, reply) => {

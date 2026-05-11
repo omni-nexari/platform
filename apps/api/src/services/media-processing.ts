@@ -199,6 +199,7 @@ interface VideoMeta {
   width: number | null; height: number | null; duration: number | null;
   fps: number | null; bitRate: number | null; maxBitRate: number | null;
   videoCodec: string | null; codecProfile: string | null; codecLevel: number | null;
+  pixFmt: string | null;
 }
 
 export async function probeVideo(absPath: string): Promise<VideoMeta> {
@@ -210,7 +211,7 @@ export async function probeVideo(absPath: string): Promise<VideoMeta> {
       streams?: Array<{
         codec_type?: string; codec_name?: string; profile?: string; level?: number;
         width?: number; height?: number; r_frame_rate?: string; avg_frame_rate?: string;
-        bit_rate?: string; max_bit_rate?: string; duration?: string;
+        bit_rate?: string; max_bit_rate?: string; duration?: string; pix_fmt?: string;
       }>;
       format?: { duration?: string; bit_rate?: string };
     };
@@ -232,9 +233,71 @@ export async function probeVideo(absPath: string): Promise<VideoMeta> {
       videoCodec: vs?.codec_name ?? null,
       codecProfile: vs?.profile ?? null,
       codecLevel: vs?.level ?? null,
+      pixFmt: vs?.pix_fmt ?? null,
     };
   } catch {
-    return { width: null, height: null, duration: null, fps: null, bitRate: null, maxBitRate: null, videoCodec: null, codecProfile: null, codecLevel: null };
+    return { width: null, height: null, duration: null, fps: null, bitRate: null, maxBitRate: null, videoCodec: null, codecProfile: null, codecLevel: null, pixFmt: null };
+  }
+}
+
+/**
+ * Detect whether a video needs transcoding for compatibility with Android
+ * WebView / Chromium playback. Android WebView fails to display 10-bit HEVC
+ * (Main 10 profile, pix_fmt yuv420p10le) — Mali GPU compositor reports
+ * "Unrecognised Android chroma siting range" and renders black.
+ *
+ * Returns true when the file is 10-bit (or any other known-incompatible
+ * configuration) and should be transcoded to 8-bit H.264.
+ */
+export function needsTranscode(meta: VideoMeta): boolean {
+  const pix = (meta.pixFmt ?? '').toLowerCase();
+  if (pix.includes('10le') || pix.includes('10be') || pix.includes('p010')) return true;
+  const profile = (meta.codecProfile ?? '').toLowerCase();
+  if (profile.includes('main 10') || profile.includes('main10')) return true;
+  return false;
+}
+
+/**
+ * Transcode a video in-place to 8-bit H.264 (yuv420p) for maximum compatibility
+ * with Android WebView and other constrained players. Replaces the source file
+ * atomically; returns the new on-disk size in bytes or null on failure.
+ */
+export async function transcodeToCompatible(absPath: string): Promise<{ size: number; hash: string } | null> {
+  const dir = path.dirname(absPath);
+  const base = path.basename(absPath, path.extname(absPath));
+  const tmpPath = path.join(dir, `${base}.transcode.mp4`);
+  try {
+    // H.264 high profile, 8-bit yuv420p, AAC audio, faststart for streaming.
+    // CRF 20 is visually transparent for signage at 4K. preset=fast balances
+    // quality vs CPU on the API server (Pi/x86).
+    await execFileAsync(FFMPEG_BIN, [
+      '-y', '-i', absPath,
+      '-map', '0:v:0', '-map', '0:a?',
+      '-c:v', 'libx264', '-profile:v', 'high', '-pix_fmt', 'yuv420p',
+      '-preset', 'fast', '-crf', '20',
+      '-c:a', 'aac', '-b:a', '192k',
+      '-movflags', '+faststart',
+      tmpPath,
+    ], { maxBuffer: 64 * 1024 * 1024 });
+
+    // Atomically replace original
+    await fs.rename(tmpPath, absPath);
+    const stat = await fs.stat(absPath);
+    // Recompute sha256 for duplicate detection
+    const crypto = await import('node:crypto');
+    const fsSync = await import('node:fs');
+    const hash = crypto.createHash('sha256');
+    await new Promise<void>((resolve, reject) => {
+      const stream = fsSync.createReadStream(absPath);
+      stream.on('data', (chunk) => hash.update(chunk));
+      stream.on('end', () => resolve());
+      stream.on('error', reject);
+    });
+    return { size: stat.size, hash: hash.digest('hex') };
+  } catch (err) {
+    console.error(`[media] transcode failed for ${absPath}:`, err);
+    await fs.unlink(tmpPath).catch(() => undefined);
+    return null;
   }
 }
 
@@ -292,6 +355,23 @@ export async function processContentMedia(contentId: string): Promise<void> {
   const thumbRel = item.filePath.replace(/(\.[^.]+)?$/, '_thumb.jpg');
   const thumbAbs = path.resolve(STORAGE_ROOT, thumbRel);
 
+  // For videos, run transcode-if-needed BEFORE thumbnail generation so the
+  // thumbnail is captured from the post-transcode (compatible) file.
+  let transcoded: { size: number; hash: string } | null = null;
+  let initialVideoProbe: VideoMeta | null = null;
+  if (type === 'video') {
+    initialVideoProbe = await probeVideo(absPath);
+    if (needsTranscode(initialVideoProbe)) {
+      console.log(`[media] transcoding ${contentId} (codec=${initialVideoProbe.videoCodec} profile=${initialVideoProbe.codecProfile} pix_fmt=${initialVideoProbe.pixFmt}) for Android compatibility`);
+      transcoded = await transcodeToCompatible(absPath);
+      if (transcoded) {
+        await db.update(contentItems)
+          .set({ fileSize: transcoded.size, fileHash: transcoded.hash })
+          .where(eq(contentItems.id, contentId));
+      }
+    }
+  }
+
   let thumbnailRelPath: string | undefined;
   try {
     if (type === 'image') {
@@ -324,13 +404,16 @@ export async function processContentMedia(contentId: string): Promise<void> {
   let probeMetadata: Record<string, unknown> = {};
 
   if (type === 'video') {
-    const p = await probeVideo(absPath);
+    // Re-probe if we transcoded; otherwise reuse the initial probe.
+    const p = transcoded ? await probeVideo(absPath) : (initialVideoProbe ?? await probeVideo(absPath));
     probeWidth = p.width;
     probeHeight = p.height;
     probeDuration = p.duration != null ? Math.round(p.duration) : null;
     probeMetadata = {
       fps: p.fps, bitRate: p.bitRate, maxBitRate: p.maxBitRate,
       videoCodec: p.videoCodec, codecProfile: p.codecProfile, codecLevel: p.codecLevel,
+      pixFmt: p.pixFmt,
+      ...(transcoded && { transcoded: true }),
     };
   } else if (type === 'image') {
     const p = await probeImage(absPath);

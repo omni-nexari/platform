@@ -717,22 +717,40 @@ export class Player {
 
     const nextCache = new Map<string, string>();
     let done = 0;
+    
+    // Open persistent browser cache
+    const diskCache = await caches.open('nexari-content-v1').catch(() => null);
+
     await Promise.allSettled(urls.map(async (url) => {
       try {
-        // Reuse an existing blob URL if we already downloaded this exact URL.
-        const existing = this.localUrlCache.get(url);
-        if (existing) { nextCache.set(url, existing); done++; this.updateIdleProgress(Math.round((done / total) * 100)); return; }
+        const urlKey = url.split('?')[0] ?? url; // Ignore query params for cache key (presigned URLs might change tokens)
+        
+        // Reuse an existing blob URL if in memory.
+        const existing = this.localUrlCache.get(urlKey);
+        if (existing) { nextCache.set(urlKey, existing); done++; this.updateIdleProgress(Math.round((done / total) * 100)); return; }
 
-        const resp = await fetch(url, { credentials: 'omit' });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        let resp = diskCache ? await diskCache.match(urlKey) : undefined;
+        let isHit = !!resp;
+
+        if (!resp) {
+          resp = await fetch(url, { credentials: 'omit' });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          // Put clone into persistent cache
+          if (diskCache) {
+            try { await diskCache.put(urlKey, resp.clone()); } catch(e) { logger.warn(`[Cache] write disk fail: ${e}`); }
+          }
+        }
+
         const blob = await resp.blob();
         const blobUrl = URL.createObjectURL(blob);
-        nextCache.set(url, blobUrl);
-        logger.info(`[Cache] downloaded ${url.split('?')[0]} (${(blob.size/1024).toFixed(1)} KiB)`);
+        nextCache.set(urlKey, blobUrl);
+        
+        if (isHit) {
+          logger.info(`[Cache] local disk hit ${urlKey} (${(blob.size/1024).toFixed(1)} KiB)`);
+        } else {
+          logger.info(`[Cache] downloaded ${urlKey} (${(blob.size/1024).toFixed(1)} KiB)`);
+        }
       } catch (e) {
-        // Network failure — leave this URL out of the new cache so the renderer
-        // falls back to streaming. (Network may come back, or cached schedule
-        // will be used on next boot.)
         logger.warn(`[Cache] failed ${url.split('?')[0]}: ${(e as Error)?.message}`);
       }
       done++;
@@ -740,8 +758,8 @@ export class Player {
     }));
 
     // Revoke object URLs that are no longer referenced by the new schedule.
-    for (const [oldUrl, oldBlob] of this.localUrlCache) {
-      if (!nextCache.has(oldUrl)) {
+    for (const [oldUrlKey, oldBlob] of this.localUrlCache) {
+      if (!nextCache.has(oldUrlKey)) {
         try { URL.revokeObjectURL(oldBlob); } catch {}
       }
     }
@@ -751,7 +769,8 @@ export class Player {
   /** Swap a remote content URL for the locally cached blob: URL if available. */
   private resolveLocalUrl(url: string | undefined | null): string {
     if (!url) return '';
-    return this.localUrlCache.get(url) ?? url;
+    const urlKey = url.split('?')[0] ?? url;
+    return this.localUrlCache.get(urlKey) ?? url;
   }
 
   // ── Update the idle progress bar in-place without re-rendering the screen ───
@@ -992,30 +1011,32 @@ export class Player {
       if (!url) { resolve(); return; }
       const v = document.createElement('video');
       v.src = url; v.autoplay=true; v.loop=true; v.playsInline=true;
-      // Start muted to guarantee autoplay (Chrome blocks audible autoplay without
-      // user gesture; the WebView shows a large "tap to play" overlay otherwise).
-      // We unmute after play() resolves.
-      v.muted = true; v.defaultMuted = true;
+      const isNexariAndroid = navigator.userAgent.includes('NexariPlayer');
+      if (!isNexariAndroid) {
+        v.muted = true; v.defaultMuted = true;
+      }
       v.preload = 'auto';
       v.setAttribute('disablepictureinpicture', '');
       v.setAttribute('disableremoteplayback', '');
       v.controls = false;
-      // Hidden until the first frame paints so the WebView's media-loading
-      // placeholder (large play-button overlay) is never revealed to viewers.
-      v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;opacity:0;';
+
+      // Black overlay hides the WebView's loading placeholder until first frame paints.
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;background:#000;z-index:3;';
+      container.appendChild(overlay);
+
+      v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;';
       container.appendChild(v);
       this.currentVideoEl = v;
       let resolved = false;
       const done = () => { if (!resolved) { resolved = true; resolve(); } };
       v.addEventListener('loadedmetadata', () => { v.play().catch(() => {}); }, { once:true });
       v.addEventListener('playing', () => {
-        v.style.opacity = '1';
-        v.muted = false;
+        if (overlay && overlay.parentNode) overlay.remove();
+        if (!isNexariAndroid) v.muted = false;
         done();
       }, { once:true });
-      v.addEventListener('error',   () => {
-        // Suppress benign errors triggered by our own teardown (src='' after abort,
-        // or src='' from transitionToVideo when we promote a successor element).
+      v.addEventListener('error', () => {
         if (signal.aborted) { done(); return; }
         if (this.currentVideoEl !== v) { done(); return; }
         logger.warn(`[Player] video error: ${record.url}`);
@@ -1038,16 +1059,23 @@ export class Player {
       const prev = this.currentVideoEl;
       const v = document.createElement('video');
       v.src = url; v.autoplay=true; v.loop=true; v.playsInline=true;
-      // Start muted so autoplay isn't blocked; unmute on successful play().
-      v.muted = true; v.defaultMuted = true;
+      const isNexariAndroid = navigator.userAgent.includes('NexariPlayer');
+      if (!isNexariAndroid) {
+        v.muted = true; v.defaultMuted = true;
+      }
       v.preload = 'auto';
       v.setAttribute('disablepictureinpicture', '');
       v.setAttribute('disableremoteplayback', '');
       v.controls = false;
-      // Sit on top of the prior video, but stay INVISIBLE during decode so the
-      // WebView's media-loading placeholder (large play-button overlay on grey
-      // background) is never seen — only reveal once frames are actually painting.
-      v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:2;opacity:0;';
+      // Create a solid black overlay that covers the video until it paints its first frame
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;background:#000;z-index:3;';
+      container.appendChild(overlay);
+
+      // No opacity or complex z-index CSS on the video itself! This ensures Chromium can
+      // use the native hardware overlay on cheap Android TV boxes instead of mapping the
+      // video through the texture renderer (which crashes on 10-bit 4K Mali drivers).
+      v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;';
       container.appendChild(v);
       let resolved = false;
       let swapped  = false;
@@ -1056,15 +1084,18 @@ export class Player {
         if (swapped) return; swapped = true;
         // Promote the new video to "current" and release the old one.
         this.currentVideoEl = v;
-        v.style.opacity = '1';
-        v.style.zIndex = '';
+        if (overlay && overlay.parentNode) {
+          overlay.remove();
+        }
         if (prev && prev !== v) {
           try { prev.pause(); } catch {}
           try { prev.removeAttribute('src'); prev.src = ''; } catch {}
           try { prev.load(); } catch {}
           try { prev.remove(); } catch {}
         }
-        v.muted = false;
+        if (!navigator.userAgent.includes('NexariPlayer')) {
+          v.muted = false;
+        }
         done();
       };
       // `playing` fires after the first frame has been painted — guarantees we

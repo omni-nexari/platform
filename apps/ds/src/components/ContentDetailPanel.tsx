@@ -979,6 +979,12 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
     onError: () => toast.error('Thumbnail generation failed — check server logs'),
   });
 
+  const reprocessMut = useMutation({
+    mutationFn: () => api.post(`/content/${itemId}/reprocess`),
+    onSuccess: () => { toast.success('Reprocessing started — refresh in a moment'); invalidate(); },
+    onError: () => toast.error('Failed to start reprocessing'),
+  });
+
   const patchMut = useMutation({
     mutationFn: (data: Record<string, unknown>) => api.patch(`/content/${itemId}`, data),
     onSuccess: () => { toast.success('Saved'); invalidate(); },
@@ -1216,6 +1222,15 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
                     className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-raised)] disabled:opacity-50"
                   >
                     <RotateCcw size={12} /> {regenThumbMut.isPending ? 'Regenerating…' : 'Regenerate thumbnail'}
+                  </button>
+                )}
+                {item?.type === 'video' && (
+                  <button
+                    onClick={() => { setMenuOpen(false); reprocessMut.mutate(); }}
+                    disabled={reprocessMut.isPending}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-raised)] disabled:opacity-50"
+                  >
+                    <RotateCcw size={12} /> {reprocessMut.isPending ? 'Reprocessing…' : 'Reprocess video'}
                   </button>
                 )}
                 <div className="my-1 border-t border-[var(--border)]" />
