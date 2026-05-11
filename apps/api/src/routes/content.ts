@@ -1255,11 +1255,11 @@ export async function contentRoutes(app: FastifyInstance) {
       .set({ status: 'processing', updatedAt: new Date() })
       .where(eq(contentItems.id, id));
 
-    const queue = getQueue<{ contentId: string }>(QUEUE_NAMES.mediaProcessing);
+    const queue = getQueue<{ contentId: string; transcode?: boolean }>(QUEUE_NAMES.mediaProcessing);
     if (queue) {
-      await queue.add('process', { contentId: id }, { jobId: `reprocess-${id}-${Date.now()}` });
+      await queue.add('process', { contentId: id, transcode: true }, { jobId: `reprocess-${id}-${Date.now()}` });
     } else {
-      processContentMedia(id).catch((err: unknown) => {
+      processContentMedia(id, { transcode: true }).catch((err: unknown) => {
         req.log.error({ err, contentId: id }, '[reprocess] inline media processing failed');
       });
     }
@@ -1317,7 +1317,23 @@ export async function contentRoutes(app: FastifyInstance) {
     const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
     if (!member) return reply.status(403).send({ error: 'Forbidden' });
 
-    const absPath = path.resolve(STORAGE_ROOT, item.filePath);
+    // Serve the Android-compatible H.264 variant when the requesting client is
+    // an Android device (UA contains both 'Android' and 'NexariPlayer').
+    const ua = req.headers['user-agent'] ?? '';
+    const isAndroid = ua.includes('Android') && ua.includes('NexariPlayer');
+    let serveFilePath = item.filePath;
+    let mimeType = item.mimeType ?? 'application/octet-stream';
+    if (isAndroid && item.type === 'video') {
+      try {
+        const meta = JSON.parse(item.metadata ?? '{}') as Record<string, unknown>;
+        if (typeof meta['androidFilePath'] === 'string') {
+          serveFilePath = meta['androidFilePath'];
+          mimeType = 'video/mp4';
+        }
+      } catch { /* ignore */ }
+    }
+
+    const absPath = path.resolve(STORAGE_ROOT, serveFilePath);
     try {
       await fs.access(absPath);
     } catch {
@@ -1325,7 +1341,7 @@ export async function contentRoutes(app: FastifyInstance) {
     }
 
     const stat = await fs.stat(absPath);
-    reply.header('Content-Type', item.mimeType ?? 'application/octet-stream');
+    reply.header('Content-Type', mimeType);
     reply.header('Content-Length', stat.size);
     reply.header('Content-Disposition', `inline; filename="${item.originalName ?? id}"`);
     return reply.send(createReadStream(absPath));

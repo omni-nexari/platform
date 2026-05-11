@@ -258,42 +258,49 @@ export function needsTranscode(meta: VideoMeta): boolean {
 }
 
 /**
- * Transcode a video in-place to 8-bit H.264 (yuv420p) for maximum compatibility
- * with Android WebView and other constrained players. Replaces the source file
- * atomically; returns the new on-disk size in bytes or null on failure.
+ * Transcode a video to an Android-compatible 8-bit H.264 (High, Level 5.1)
+ * variant saved ALONGSIDE the original. The original is never touched so
+ * Tizen, Windows, and other players keep accessing the native file.
+ *
+ * Output path: same directory, same base name, suffix `_android.mp4`.
+ * Returns the absolute path of the new file, its size, and sha256 hash.
  */
-export async function transcodeToCompatible(absPath: string): Promise<{ size: number; hash: string } | null> {
+export async function transcodeToCompatible(
+  absPath: string,
+): Promise<{ absAndroidPath: string; size: number; hash: string } | null> {
   const dir = path.dirname(absPath);
   const base = path.basename(absPath, path.extname(absPath));
-  const tmpPath = path.join(dir, `${base}.transcode.mp4`);
+  const androidPath = path.join(dir, `${base}_android.mp4`);
+  const tmpPath = path.join(dir, `${base}_android.tmp.mp4`);
   try {
-    // H.264 high profile, 8-bit yuv420p, AAC audio, faststart for streaming.
+    // H.264 High profile, Level 5.1 (max for 4K@60fps), 8-bit yuv420p, AAC audio.
     // CRF 20 is visually transparent for signage at 4K. preset=fast balances
-    // quality vs CPU on the API server (Pi/x86).
+    // encode quality vs CPU time on the Pi / x86 server.
     await execFileAsync(FFMPEG_BIN, [
       '-y', '-i', absPath,
       '-map', '0:v:0', '-map', '0:a?',
-      '-c:v', 'libx264', '-profile:v', 'high', '-pix_fmt', 'yuv420p',
+      '-c:v', 'libx264',
+      '-profile:v', 'high', '-level:v', '5.1',
+      '-pix_fmt', 'yuv420p',
       '-preset', 'fast', '-crf', '20',
       '-c:a', 'aac', '-b:a', '192k',
       '-movflags', '+faststart',
       tmpPath,
     ], { maxBuffer: 64 * 1024 * 1024 });
 
-    // Atomically replace original
-    await fs.rename(tmpPath, absPath);
-    const stat = await fs.stat(absPath);
-    // Recompute sha256 for duplicate detection
+    // Atomically promote temp → final android variant
+    await fs.rename(tmpPath, androidPath);
+    const stat = await fs.stat(androidPath);
     const crypto = await import('node:crypto');
     const fsSync = await import('node:fs');
-    const hash = crypto.createHash('sha256');
+    const hashObj = crypto.createHash('sha256');
     await new Promise<void>((resolve, reject) => {
-      const stream = fsSync.createReadStream(absPath);
-      stream.on('data', (chunk) => hash.update(chunk));
+      const stream = fsSync.createReadStream(androidPath);
+      stream.on('data', (chunk) => hashObj.update(chunk));
       stream.on('end', () => resolve());
       stream.on('error', reject);
     });
-    return { size: stat.size, hash: hash.digest('hex') };
+    return { absAndroidPath: androidPath, size: stat.size, hash: hashObj.digest('hex') };
   } catch (err) {
     console.error(`[media] transcode failed for ${absPath}:`, err);
     await fs.unlink(tmpPath).catch(() => undefined);
@@ -338,7 +345,7 @@ export async function probeImage(absPath: string): Promise<{
  *
  * On unrecoverable failure sets `status: 'error'`. Never throws.
  */
-export async function processContentMedia(contentId: string): Promise<void> {
+export async function processContentMedia(contentId: string, opts: { transcode?: boolean } = {}): Promise<void> {
   const item = await db.query.contentItems.findFirst({ where: eq(contentItems.id, contentId) });
   if (!item || !item.filePath) return;
 
@@ -355,19 +362,21 @@ export async function processContentMedia(contentId: string): Promise<void> {
   const thumbRel = item.filePath.replace(/(\.[^.]+)?$/, '_thumb.jpg');
   const thumbAbs = path.resolve(STORAGE_ROOT, thumbRel);
 
-  // For videos, run transcode-if-needed BEFORE thumbnail generation so the
-  // thumbnail is captured from the post-transcode (compatible) file.
-  let transcoded: { size: number; hash: string } | null = null;
+  // Optional transcode (opt-in via opts.transcode). Most players (Tizen, web,
+  // Windows) support 10-bit HEVC natively, so we don't transcode on upload.
+  // The reprocess endpoint passes transcode:true to convert 10-bit HEVC files
+  // to 8-bit H.264 for Android compatibility.
+  let androidFilePath: string | null = null;  // relative to STORAGE_ROOT
   let initialVideoProbe: VideoMeta | null = null;
   if (type === 'video') {
     initialVideoProbe = await probeVideo(absPath);
-    if (needsTranscode(initialVideoProbe)) {
+    if (opts.transcode && needsTranscode(initialVideoProbe)) {
       console.log(`[media] transcoding ${contentId} (codec=${initialVideoProbe.videoCodec} profile=${initialVideoProbe.codecProfile} pix_fmt=${initialVideoProbe.pixFmt}) for Android compatibility`);
-      transcoded = await transcodeToCompatible(absPath);
-      if (transcoded) {
-        await db.update(contentItems)
-          .set({ fileSize: transcoded.size, fileHash: transcoded.hash })
-          .where(eq(contentItems.id, contentId));
+      const result = await transcodeToCompatible(absPath);
+      if (result) {
+        // Store relative path — original filePath/fileHash/fileSize are untouched
+        // so Tizen, Windows, and web players continue using the source file.
+        androidFilePath = path.relative(path.resolve(STORAGE_ROOT), result.absAndroidPath).replace(/\\/g, '/');
       }
     }
   }
@@ -404,8 +413,7 @@ export async function processContentMedia(contentId: string): Promise<void> {
   let probeMetadata: Record<string, unknown> = {};
 
   if (type === 'video') {
-    // Re-probe if we transcoded; otherwise reuse the initial probe.
-    const p = transcoded ? await probeVideo(absPath) : (initialVideoProbe ?? await probeVideo(absPath));
+    const p = initialVideoProbe ?? await probeVideo(absPath);
     probeWidth = p.width;
     probeHeight = p.height;
     probeDuration = p.duration != null ? Math.round(p.duration) : null;
@@ -413,7 +421,7 @@ export async function processContentMedia(contentId: string): Promise<void> {
       fps: p.fps, bitRate: p.bitRate, maxBitRate: p.maxBitRate,
       videoCodec: p.videoCodec, codecProfile: p.codecProfile, codecLevel: p.codecLevel,
       pixFmt: p.pixFmt,
-      ...(transcoded && { transcoded: true }),
+      ...(androidFilePath && { androidFilePath }),
     };
   } else if (type === 'image') {
     const p = await probeImage(absPath);

@@ -2198,7 +2198,23 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
     if (!item || !item.filePath) return reply.status(404).send({ error: 'Content not found' });
 
-    const absPath = path.resolve(STORAGE_ROOT, item.filePath);
+    // Serve the Android-compatible H.264 variant when the requesting client is
+    // an Android device (UA contains both 'Android' and 'NexariPlayer').
+    const ua = (req.headers as Record<string, string | undefined>)['user-agent'] ?? '';
+    const isAndroid = ua.includes('Android') && ua.includes('NexariPlayer');
+    let serveFilePath = item.filePath;
+    let mimeType = item.mimeType ?? 'application/octet-stream';
+    if (isAndroid && item.type === 'video') {
+      try {
+        const meta = JSON.parse(item.metadata ?? '{}') as Record<string, unknown>;
+        if (typeof meta['androidFilePath'] === 'string') {
+          serveFilePath = meta['androidFilePath'];
+          mimeType = 'video/mp4';
+        }
+      } catch { /* ignore */ }
+    }
+
+    const absPath = path.resolve(STORAGE_ROOT, serveFilePath);
     try {
       await fsPromises.access(absPath);
     } catch {
@@ -2207,7 +2223,6 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     const stat = await fsPromises.stat(absPath);
     const fileSize = stat.size;
-    const mimeType = item.mimeType ?? 'application/octet-stream';
     const disposition = `inline; filename="${item.originalName ?? id}"`;
 
     // Common headers always sent

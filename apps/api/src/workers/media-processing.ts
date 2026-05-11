@@ -14,13 +14,14 @@ import { QUEUE_NAMES } from '../queues/index.js';
 
 export interface MediaProcessingJobData {
   contentId: string;
+  transcode?: boolean;
 }
 
 export function startMediaProcessingWorker(connection: Redis): Worker<MediaProcessingJobData> {
   const worker = new Worker<MediaProcessingJobData>(
     QUEUE_NAMES.mediaProcessing,
     async (job) => {
-      await processContentMedia(job.data.contentId);
+      await processContentMedia(job.data.contentId, { transcode: job.data.transcode === true });
     },
     {
       connection: connection as unknown as ConnectionOptions,
