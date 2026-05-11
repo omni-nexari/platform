@@ -60,7 +60,14 @@ function Ensure-GradleWrapper {
 # --- Check device connected ---
 Write-Host ""
 Write-Host "=== Checking ADB device ==="
-$connectedDevices = & $AdbPath devices 2>&1 | Select-String "device$"
+# Start the ADB daemon explicitly so the "daemon not running" noise on stderr
+# is isolated here (with a lower ErrorActionPreference) and not inside the
+# pipeline that filters device list lines.
+$null = & {
+    $ErrorActionPreference = 'Continue'
+    & $AdbPath start-server 2>&1
+}
+$connectedDevices = & $AdbPath devices | Select-String "device$"
 if (-not $connectedDevices) {
     Write-Error "No ADB device found. Connect your phone via USB and enable USB debugging."
     exit 1

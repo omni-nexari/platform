@@ -88,16 +88,49 @@ var Api = class {
   // ── Schedule / content ────────────────────────────────────────────────────
   /** Returns the schedule object for this device.  Throws on non-2xx. */
   async getCurrentContent(_deviceId2) {
-    var _a;
+    var _a, _b, _c, _d, _e;
     const t = this.token();
-    const url = `${this.base}/devices/device/schedule${t ? `?token=${encodeURIComponent(t)}` : ""}`;
-    const res = await fetch(url);
-    if (res.status === 404) return null;
-    if (!res.ok) throw Object.assign(new Error(`schedule HTTP ${res.status}`), { status: res.status });
-    const body = await res.json();
+    const [schedRes, wsRes] = await Promise.all([
+      fetch(`${this.base}/devices/device/schedule${t ? `?token=${encodeURIComponent(t)}` : ""}`),
+      fetch(`${this.base}/devices/device/workspace${t ? `?token=${encodeURIComponent(t)}` : ""}`).catch(() => null)
+    ]);
+    if (schedRes.status === 404) return null;
+    if (!schedRes.ok) throw Object.assign(new Error(`schedule HTTP ${schedRes.status}`), { status: schedRes.status });
+    const wsBody = (wsRes == null ? void 0 : wsRes.ok) ? await wsRes.json().catch(() => null) : null;
+    const publishedSyncGroup = wsBody == null ? void 0 : wsBody["publishedSyncGroup"];
+    if (publishedSyncGroup) {
+      const sg = publishedSyncGroup;
+      const sp = sg["syncPlaylist"];
+      const spItems = (_a = sp == null ? void 0 : sp["items"]) != null ? _a : [];
+      if (spItems.length > 0) {
+        const items2 = spItems.map((item) => {
+          var _a2;
+          const c = this.enrichContent(item["content"], t);
+          if (!c) return null;
+          return {
+            id: item["id"],
+            contentId: item["contentId"],
+            duration: (_a2 = item["durationSeconds"]) != null ? _a2 : 10,
+            content: c
+          };
+        }).filter((x) => x !== null);
+        if (items2.length > 0) {
+          return {
+            id: sp["id"],
+            playlistName: (_b = sp["name"]) != null ? _b : "Sync Playlist",
+            items: items2,
+            syncGroupId: sg["id"],
+            allTizen: !!sg["allTizen"],
+            relayUrl: (_c = sg["relayUrl"]) != null ? _c : null,
+            peers: (_d = sg["peers"]) != null ? _d : []
+          };
+        }
+      }
+    }
+    const body = await schedRes.json();
     if (!Array.isArray(body.schedules) || !body.schedules.length) return null;
     const raw = body.schedules[0];
-    const slots = (_a = raw.slots) != null ? _a : [];
+    const slots = (_e = raw.slots) != null ? _e : [];
     const items = slots.flatMap((slot) => {
       var _a2;
       const playlist = slot["playlist"];
@@ -2124,6 +2157,9 @@ var Player = class {
     // Content download / cache state (mirrors Tizen downloadContentInBackground flow)
     this.lastContentSignature = null;
     this.pendingItems = null;
+    this._pendingSyncGroupMsg = null;
+    // Relay info stored when loadContent() finds a cross-OS sync group; consumed by swapToPending().
+    this._pendingSyncRelayInfo = null;
     this.pendingSignature = null;
     this.isDownloadingContent = false;
     this.deviceDisplayName = "";
@@ -2160,6 +2196,7 @@ var Player = class {
     this.logStreamTimer = setInterval(() => this.flushLogStream(), 5e3);
   }
   stop() {
+    var _a, _b;
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -2183,6 +2220,10 @@ var Player = class {
       } catch (e) {
       }
       this.syncActive = false;
+    }
+    try {
+      (_b = (_a = window.nexari) == null ? void 0 : _a.stopRelay) == null ? void 0 : _b.call(_a);
+    } catch (e) {
     }
     if (this.ws) {
       try {
@@ -2542,7 +2583,7 @@ var Player = class {
         await this.initSyncGroup(msg);
         return;
       case "VIDEOWALL_INIT":
-        this.initVideoWall(msg);
+        await this.initVideoWall(msg);
         return;
       default:
         await this.dispatchCommand(t, msg["payload"]);
@@ -2576,6 +2617,7 @@ var Player = class {
         if (typeof a.openSettings === "function") await a.openSettings();
         return;
       case "refresh_schedule":
+      case "SESSION_CONFIG":
         await this.loadContent();
         return;
       case "screenshot": {
@@ -2884,6 +2926,27 @@ var Player = class {
     this.lastContentSignature = this.pendingSignature;
     this.pendingItems = null;
     this.pendingSignature = null;
+    if (this._pendingSyncGroupMsg) {
+      const syncMsg = this._pendingSyncGroupMsg;
+      this._pendingSyncGroupMsg = null;
+      this._pendingSyncRelayInfo = null;
+      void this.initSyncGroup(syncMsg);
+      return;
+    }
+    if (this._pendingSyncRelayInfo) {
+      const info = this._pendingSyncRelayInfo;
+      this._pendingSyncRelayInfo = null;
+      logger.info(`[Player] swapToPending: starting cross-OS relay sync for group ${info.groupId}`);
+      void this.initSyncGroup({
+        groupId: info.groupId,
+        relayUrl: info.relayUrl,
+        leaderPriority: info.leaderPriority,
+        expectedPeers: info.peerCount,
+        syncRelayMode: "cloud"
+        // API relay — no device-side relay server needed
+      });
+      return;
+    }
     if (this.syncActive) return;
     this.cancelPlayback();
     void this.renderPlaylist();
@@ -2910,7 +2973,7 @@ var Player = class {
   }
   // ── Main content loader (mirrors Tizen loadContent) ──────────────────────────
   async loadContent() {
-    var _a, _b;
+    var _a, _b, _c, _d;
     logger.info("[Player] loadContent");
     try {
       const schedule = await this.api.getCurrentContent(this.deviceId);
@@ -2939,6 +3002,24 @@ var Player = class {
         return;
       }
       logger.info(`[Player] new content (${schedule.items.length} items), downloading\u2026`);
+      const sg = schedule;
+      if (sg["allTizen"] === false && sg["relayUrl"]) {
+        const rawPeers = (_c = sg["peers"]) != null ? _c : [];
+        const sortedPeers = [...rawPeers].sort((a, b) => {
+          var _a2, _b2;
+          return ((_a2 = a.leaderPriority) != null ? _a2 : 999) - ((_b2 = b.leaderPriority) != null ? _b2 : 999);
+        });
+        this._pendingSyncRelayInfo = {
+          groupId: String((_d = sg["syncGroupId"]) != null ? _d : ""),
+          relayUrl: String(sg["relayUrl"]),
+          leaderPriority: sortedPeers.map((p) => p.deviceId),
+          peerCount: Math.max(1, sortedPeers.length - 1)
+          // count of OTHER peers
+        };
+        logger.info(`[Player] cross-OS sync group relay stored: ${this._pendingSyncRelayInfo.relayUrl}`);
+      } else {
+        this._pendingSyncRelayInfo = null;
+      }
       void this.downloadContentInBackground(schedule.items, newSig);
     } catch (e) {
       logger.warn(`[Player] loadContent failed: ${e == null ? void 0 : e.message}`);
@@ -3125,68 +3206,6 @@ var Player = class {
       v.setAttribute("disablepictureinpicture", "");
       v.setAttribute("disableremoteplayback", "");
       v.controls = false;
-      if (isNexariAndroid) {
-        v.style.cssText = "position:absolute;width:1px;height:1px;top:-9999px;left:-9999px;opacity:0;pointer-events:none;";
-        container.appendChild(v);
-        const canvas = document.createElement("canvas");
-        canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;background:#000;";
-        container.appendChild(canvas);
-        const ctx = canvas.getContext("2d", { alpha: false });
-        this.currentVideoEl = v;
-        let resolved2 = false;
-        const done2 = () => {
-          if (!resolved2) {
-            resolved2 = true;
-            resolve();
-          }
-        };
-        let rafId = 0;
-        const draw = () => {
-          if (signal.aborted) return;
-          if (v.readyState >= 2 && ctx) {
-            const vw = v.videoWidth, vh = v.videoHeight;
-            if (vw && vh && (canvas.width !== vw || canvas.height !== vh)) {
-              canvas.width = vw;
-              canvas.height = vh;
-            }
-            try {
-              ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
-            } catch (e) {
-            }
-          }
-          rafId = requestAnimationFrame(draw);
-        };
-        v.addEventListener("loadedmetadata", () => {
-          v.play().catch(() => {
-          });
-        }, { once: true });
-        v.addEventListener("playing", () => {
-          rafId = requestAnimationFrame(draw);
-          done2();
-        }, { once: true });
-        v.addEventListener("error", () => {
-          if (signal.aborted) {
-            done2();
-            return;
-          }
-          if (this.currentVideoEl !== v) {
-            done2();
-            return;
-          }
-          logger.warn(`[Player] video error: ${record.url}`);
-          done2();
-        }, { once: true });
-        signal.addEventListener("abort", () => {
-          if (rafId) cancelAnimationFrame(rafId);
-          try {
-            canvas.remove();
-          } catch (e) {
-          }
-          this.releaseVideo();
-          done2();
-        });
-        return;
-      }
       const overlay = document.createElement("div");
       overlay.style.cssText = "position:absolute;inset:0;width:100%;height:100%;background:#000;z-index:3;";
       container.appendChild(overlay);
@@ -3205,10 +3224,8 @@ var Player = class {
         });
       }, { once: true });
       v.addEventListener("playing", () => {
-        if (overlay && overlay.parentNode) {
-          overlay.remove();
-        }
-        v.muted = false;
+        if (overlay && overlay.parentNode) overlay.remove();
+        if (!isNexariAndroid) v.muted = false;
         done();
       }, { once: true });
       v.addEventListener("error", () => {
@@ -3236,36 +3253,6 @@ var Player = class {
    * pause/remove the prior video before the new one is decoded.
    */
   transitionToVideo(container, record, signal) {
-    if (navigator.userAgent.includes("NexariPlayer")) {
-      const prev = this.currentVideoEl;
-      if (prev) {
-        try {
-          prev.pause();
-        } catch (e) {
-        }
-        try {
-          prev.removeAttribute("src");
-          prev.src = "";
-        } catch (e) {
-        }
-        try {
-          prev.load();
-        } catch (e) {
-        }
-        try {
-          prev.remove();
-        } catch (e) {
-        }
-      }
-      container.querySelectorAll("canvas").forEach((c) => {
-        try {
-          c.remove();
-        } catch (e) {
-        }
-      });
-      this.currentVideoEl = null;
-      return this.renderVideo(container, record, signal);
-    }
     return new Promise((resolve) => {
       const url = this.resolveLocalUrl(record.url);
       if (!url) {
@@ -3278,8 +3265,11 @@ var Player = class {
       v.autoplay = true;
       v.loop = true;
       v.playsInline = true;
-      v.muted = true;
-      v.defaultMuted = true;
+      const isNexariAndroid = navigator.userAgent.includes("NexariPlayer");
+      if (!isNexariAndroid) {
+        v.muted = true;
+        v.defaultMuted = true;
+      }
       v.preload = "auto";
       v.setAttribute("disablepictureinpicture", "");
       v.setAttribute("disableremoteplayback", "");
@@ -3686,7 +3676,7 @@ var Player = class {
     }
   }
   async initSyncGroup(msg) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c;
     if (this.syncActive) {
       try {
         stop();
@@ -3696,13 +3686,18 @@ var Player = class {
     }
     const groupId = String((_a = msg["groupId"]) != null ? _a : "");
     const expectedPeers = Number((_b = msg["expectedPeers"]) != null ? _b : 1);
-    const wsUrl = String((_c = msg["relayUrl"]) != null ? _c : this.cfg.wsBase.replace(/^wss?:\/\//, "ws://") + "/sync");
-    const urls = this.playlistItems.map((i) => {
+    const leaderPriority = Array.isArray(msg["leaderPriority"]) ? msg["leaderPriority"] : [];
+    const tok = this.token;
+    const wsBase = this.cfg.apiBase.replace(/\/api\/v1\/?$/, "").replace(/^http/, "ws");
+    const wsUrl = `${wsBase}/api/v1/sync-relay${tok ? "?token=" + encodeURIComponent(tok) : ""}`;
+    logger.info(`[Sync] relay URL: ${wsUrl}`);
+    let urls = this.playlistItems.map((i) => {
       var _a2;
-      return ((_a2 = i.content) == null ? void 0 : _a2.url) || "";
+      return this.resolveLocalUrl((_a2 = i.content) == null ? void 0 : _a2.url) || "";
     }).filter(Boolean);
     if (!urls.length) {
-      logger.warn("[Player] syncGroup: no video URLs");
+      logger.info("[Player] syncGroup: no video URLs yet, deferring until download completes");
+      this._pendingSyncGroupMsg = msg;
       return;
     }
     this.cancelPlayback();
@@ -3716,7 +3711,7 @@ var Player = class {
       wsUrl,
       groupId,
       deviceId: this.deviceId,
-      selfIp: (_d = net.ipAddress) != null ? _d : "",
+      selfIp: (_c = net.ipAddress) != null ? _c : "",
       expectedPeers,
       onStatus: (s) => logger.info(`[Sync] ${s}`),
       prepareEngine: (url) => prepare(url),
@@ -3734,13 +3729,93 @@ var Player = class {
       this.syncActive = false;
     });
   }
-  initVideoWall(msg) {
-    var _a, _b, _c, _d, _e, _f;
-    const srcX = Number((_a = msg["srcX"]) != null ? _a : 0), srcY = Number((_b = msg["srcY"]) != null ? _b : 0);
-    const srcW = Number((_c = msg["srcW"]) != null ? _c : window.innerWidth), srcH = Number((_d = msg["srcH"]) != null ? _d : window.innerHeight);
-    const dstW = Number((_e = msg["dstW"]) != null ? _e : window.innerWidth), dstH = Number((_f = msg["dstH"]) != null ? _f : window.innerHeight);
+  async initVideoWall(msg) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q;
+    let srcX = 0, srcY = 0, srcW = window.innerWidth, srcH = window.innerHeight;
+    let dstW = window.innerWidth, dstH = window.innerHeight;
+    const geo = msg["geometry"];
+    const myCell = msg["myCell"];
+    if (geo && myCell) {
+      const colWidths = (_a = geo["colWidths"]) != null ? _a : [];
+      const rowHeights = (_b = geo["rowHeights"]) != null ? _b : [];
+      const col = Number((_c = myCell["positionCol"]) != null ? _c : 0);
+      const row = Number((_d = myCell["positionRow"]) != null ? _d : 0);
+      const colSpan = Number((_e = myCell["colSpan"]) != null ? _e : 1);
+      const rowSpan = Number((_f = myCell["rowSpan"]) != null ? _f : 1);
+      let offsetX = 0;
+      for (let c = 0; c < col; c++) offsetX += colWidths[c] || 0;
+      let offsetY = 0;
+      for (let r = 0; r < row; r++) offsetY += rowHeights[r] || 0;
+      let cellW = 0;
+      for (let c = col; c < col + colSpan; c++) cellW += colWidths[c] || 0;
+      let cellH = 0;
+      for (let r = row; r < row + rowSpan; r++) cellH += rowHeights[r] || 0;
+      srcX = offsetX;
+      srcY = offsetY;
+      srcW = cellW;
+      srcH = cellH;
+      dstW = Number((_g = geo["canvasW"]) != null ? _g : window.innerWidth);
+      dstH = Number((_h = geo["canvasH"]) != null ? _h : window.innerHeight);
+    } else {
+      srcX = Number((_i = msg["srcX"]) != null ? _i : 0);
+      srcY = Number((_j = msg["srcY"]) != null ? _j : 0);
+      srcW = Number((_k = msg["srcW"]) != null ? _k : window.innerWidth);
+      srcH = Number((_l = msg["srcH"]) != null ? _l : window.innerHeight);
+      dstW = Number((_m = msg["dstW"]) != null ? _m : window.innerWidth);
+      dstH = Number((_n = msg["dstH"]) != null ? _n : window.innerHeight);
+    }
     setWallCrop(srcX, srcY, srcW, srcH, dstW, dstH);
-    logger.info(`[Player] videowall crop srcX=${srcX} srcY=${srcY} srcW=${srcW} srcH=${srcH}`);
+    logger.info(`[Player] videowall crop srcX=${srcX} srcY=${srcY} srcW=${srcW} srcH=${srcH} canvas ${dstW}x${dstH}`);
+    if (this.syncActive) {
+      try {
+        stop();
+      } catch (e) {
+      }
+      this.syncActive = false;
+    }
+    const leaderPriority = Array.isArray(msg["leaderPriority"]) ? msg["leaderPriority"] : [];
+    const tok2 = this.token;
+    const wsBase2 = this.cfg.apiBase.replace(/\/api\/v1\/?$/, "").replace(/^http/, "ws");
+    const wsUrl = `${wsBase2}/api/v1/sync-relay${tok2 ? "?token=" + encodeURIComponent(tok2) : ""}`;
+    const groupId = String((_p = (_o = msg["deviceGroupId"]) != null ? _o : msg["groupId"]) != null ? _p : "");
+    const peers = Array.isArray(msg["peers"]) ? msg["peers"] : [];
+    const expectedPeers = peers.length - 1 || 1;
+    const urls = this.playlistItems.map((i) => {
+      var _a2;
+      return this.resolveLocalUrl((_a2 = i.content) == null ? void 0 : _a2.url) || "";
+    }).filter(Boolean);
+    if (!urls.length) {
+      logger.warn("[Player] videowall: no video URLs");
+      return;
+    }
+    this.cancelPlayback();
+    const container = this.cfg.container;
+    container.innerHTML = "";
+    await initEngine(container);
+    setPlaylist(urls);
+    const net = await this.cfg.adapter.getNetworkInfo();
+    this.syncActive = true;
+    init({
+      wsUrl,
+      groupId,
+      deviceId: this.deviceId,
+      selfIp: (_q = net.ipAddress) != null ? _q : "",
+      expectedPeers,
+      onStatus: (s) => logger.info(`[Sync/Wall] ${s}`),
+      prepareEngine: (url) => prepare(url),
+      schedulePlay: (epochMs) => schedulePlayAt(epochMs),
+      getEngineDuration: () => getDuration(),
+      restartEngine: () => {
+        try {
+          destroyEngine();
+        } catch (e) {
+        }
+        void initEngine(container).then(() => setPlaylist(urls));
+      }
+    }).catch((e) => {
+      logger.error(`[Sync/Wall] init: ${e == null ? void 0 : e.message}`);
+      this.syncActive = false;
+    });
   }
   sendOta(p) {
     this.send({ type: p.kind, version: p.version, packageId: p.packageId, pct: p.pct, error: p.error });

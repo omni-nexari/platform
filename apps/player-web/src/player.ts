@@ -93,6 +93,9 @@ export class Player {
   // Content download / cache state (mirrors Tizen downloadContentInBackground flow)
   private lastContentSignature: string | null = null;
   private pendingItems: ScheduleItem[] | null = null;
+  private _pendingSyncGroupMsg: Record<string, unknown> | null = null;
+  // Relay info stored when loadContent() finds a cross-OS sync group; consumed by swapToPending().
+  private _pendingSyncRelayInfo: { groupId: string; relayUrl: string; leaderPriority: string[]; peerCount: number } | null = null;
   private pendingSignature: string | null = null;
   private isDownloadingContent = false;
   private deviceDisplayName = '';
@@ -512,7 +515,8 @@ export class Player {
       case 'relaunch_app':     await a.relaunch(); return;
       case 'clear_cache':      await a.clearCache(); return;
       case 'open_settings':    if (typeof a.openSettings === 'function') await a.openSettings(); return;
-      case 'refresh_schedule': await this.loadContent(); return;
+      case 'refresh_schedule':
+      case 'SESSION_CONFIG': await this.loadContent(); return;
       case 'screenshot': {
         const shot = await a.screenshot().catch(() => null);
         if (shot?.jpegBase64) this.send({ type: 'screenshot_data', payload: { dataBase64: shot.jpegBase64, trigger: 'manual', contentId: null } });
@@ -823,6 +827,28 @@ export class Player {
     this.lastContentSignature = this.pendingSignature;
     this.pendingItems         = null;
     this.pendingSignature     = null;
+    // If a SYNC_GROUP_INIT arrived while content was downloading, retry now.
+    if (this._pendingSyncGroupMsg) {
+      const syncMsg = this._pendingSyncGroupMsg;
+      this._pendingSyncGroupMsg = null;
+      this._pendingSyncRelayInfo = null;
+      void this.initSyncGroup(syncMsg);
+      return;
+    }
+    // If loadContent() found a cross-OS sync group, init relay now that content is ready.
+    if (this._pendingSyncRelayInfo) {
+      const info = this._pendingSyncRelayInfo;
+      this._pendingSyncRelayInfo = null;
+      logger.info(`[Player] swapToPending: starting cross-OS relay sync for group ${info.groupId}`);
+      void this.initSyncGroup({
+        groupId: info.groupId,
+        relayUrl: info.relayUrl,
+        leaderPriority: info.leaderPriority,
+        expectedPeers: info.peerCount,
+        syncRelayMode: 'cloud', // API relay — no device-side relay server needed
+      });
+      return;
+    }
     if (this.syncActive) return;
     this.cancelPlayback();
     void this.renderPlaylist();
@@ -886,6 +912,24 @@ export class Player {
       }
 
       logger.info(`[Player] new content (${schedule.items.length} items), downloading…`);
+
+      // If this content belongs to a cross-OS sync group, stash relay metadata
+      // so swapToPending() can call initSyncGroup() instead of renderPlaylist().
+      const sg = schedule as unknown as Record<string, unknown>;
+      if (sg['allTizen'] === false && sg['relayUrl']) {
+        const rawPeers = (sg['peers'] as Array<{ deviceId: string; leaderPriority?: number | null }>) ?? [];
+        const sortedPeers = [...rawPeers].sort((a, b) => (a.leaderPriority ?? 999) - (b.leaderPriority ?? 999));
+        this._pendingSyncRelayInfo = {
+          groupId: String(sg['syncGroupId'] ?? ''),
+          relayUrl: String(sg['relayUrl']),
+          leaderPriority: sortedPeers.map(p => p.deviceId),
+          peerCount: Math.max(1, sortedPeers.length - 1), // count of OTHER peers
+        };
+        logger.info(`[Player] cross-OS sync group relay stored: ${this._pendingSyncRelayInfo.relayUrl}`);
+      } else {
+        this._pendingSyncRelayInfo = null;
+      }
+
       void this.downloadContentInBackground(schedule.items, newSig);
     } catch (e) {
       logger.warn(`[Player] loadContent failed: ${(e as Error)?.message}`);
@@ -1431,18 +1475,24 @@ export class Player {
 
     // Determine if this device is the elected leader.
     const leaderPriority = Array.isArray(msg['leaderPriority']) ? msg['leaderPriority'] as string[] : [];
-    const isLeader = leaderPriority.length > 0 && leaderPriority[0] === this.deviceId;
-    const syncRelayMode = String(msg['syncRelayMode'] ?? 'lan');
 
-    // If leader and LAN mode, start the Java relay server on port 9616 (Android bridge).
-    if (isLeader && syncRelayMode === 'lan') {
-      try { (window as any).nexari?.startRelay?.(9616); } catch {}
+    // Always derive relay URL from this device's own API base + token so it connects
+    // to the same host it already uses (LAN IP or cloud). The manifest's relayUrl
+    // is built server-side from APP_URL and may point to the wrong host/scheme.
+    const tok = this.token;
+    const wsBase = this.cfg.apiBase
+      .replace(/\/api\/v1\/?$/, '')   // strip /api/v1 suffix
+      .replace(/^http/, 'ws');         // http→ws, https→wss
+    const wsUrl = `${wsBase}/api/v1/sync-relay${tok ? '?token=' + encodeURIComponent(tok) : ''}`;
+    logger.info(`[Sync] relay URL: ${wsUrl}`);
+
+    let urls = this.playlistItems.map(i => this.resolveLocalUrl(i.content?.url) || '').filter(Boolean);
+    if (!urls.length) {
+      // Content not downloaded yet — store msg and retry after download completes.
+      logger.info('[Player] syncGroup: no video URLs yet, deferring until download completes');
+      this._pendingSyncGroupMsg = msg;
+      return;
     }
-
-    // Determine relay URL: use relayUrl from manifest for LAN, or fall back to cloud.
-    const wsUrl = String(msg['relayUrl'] ?? this.cfg.wsBase.replace(/^wss?:\/\//, 'ws://') + '/sync');
-    const urls = this.playlistItems.map(i => this.resolveLocalUrl(i.content?.url) || '').filter(Boolean);
-    if (!urls.length) { logger.warn('[Player] syncGroup: no video URLs'); return; }
 
     this.cancelPlayback();
     const container = this.cfg.container;
@@ -1495,21 +1545,17 @@ export class Player {
 
     // 2. Stop any previous sync/relay before starting new session.
     if (this.syncActive) { try { syncStop(); } catch {} this.syncActive = false; }
-    try { (window as any).nexari?.stopRelay?.(); } catch {}
 
-    // 3. Start relay if this device is the elected leader (LAN mode).
+    // 3. Derive relay URL from this device's own API base + token.
     const leaderPriority = Array.isArray(msg['leaderPriority']) ? msg['leaderPriority'] as string[] : [];
-    const isLeader       = leaderPriority.length > 0 && leaderPriority[0] === this.deviceId;
-    const syncRelayMode  = String(msg['syncRelayMode'] ?? 'lan');
-    if (isLeader && syncRelayMode === 'lan') {
-      try { (window as any).nexari?.startRelay?.(9616); } catch {}
-    }
+    const tok2 = this.token;
+    const wsBase2 = this.cfg.apiBase.replace(/\/api\/v1\/?$/, '').replace(/^http/, 'ws');
+    const wsUrl = `${wsBase2}/api/v1/sync-relay${tok2 ? '?token=' + encodeURIComponent(tok2) : ''}`;
 
     // 4. Start sync engine — same flow as initSyncGroup.
     const groupId      = String(msg['deviceGroupId'] ?? msg['groupId'] ?? '');
     const peers        = Array.isArray(msg['peers']) ? msg['peers'] as unknown[] : [];
     const expectedPeers = peers.length - 1 || 1; // other peers count
-    const wsUrl        = String(msg['relayUrl'] ?? this.cfg.wsBase.replace(/^wss?:\/\//, 'ws://') + '/sync');
     const urls = this.playlistItems.map(i => this.resolveLocalUrl(i.content?.url) || '').filter(Boolean);
     if (!urls.length) { logger.warn('[Player] videowall: no video URLs'); return; }
 

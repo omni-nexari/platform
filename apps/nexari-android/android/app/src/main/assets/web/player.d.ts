@@ -47,6 +47,8 @@ export declare class Player {
     private lastThumbAt;
     private lastContentSignature;
     private pendingItems;
+    private _pendingSyncGroupMsg;
+    private _pendingSyncRelayInfo;
     private pendingSignature;
     private isDownloadingContent;
     private deviceDisplayName;

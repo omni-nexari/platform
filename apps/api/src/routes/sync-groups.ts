@@ -401,13 +401,7 @@ export async function syncGroupRoutes(app: FastifyInstance) {
       platform: (m.device as any)?.platform ?? 'tizen',
     }));
 
-    const CAN_RELAY = ['tizen', 'tizen-sbb', 'windows', 'android'];
-    const leaderDev = (sortedMembers[0]?.device as any) ?? null;
     const syncRelayMode: string = (group as any).syncRelayMode ?? 'lan';
-    const relayUrl =
-      syncRelayMode === 'lan' && leaderDev && CAN_RELAY.includes(leaderDev.platform ?? '')
-        ? `ws://${leaderDev.ipAddress}:9616`
-        : null;
 
     let playlistPayload: { id: string; items: Array<Record<string, unknown>> } | null = null;
     if (group.syncPlaylist) {
@@ -432,6 +426,17 @@ export async function syncGroupRoutes(app: FastifyInstance) {
       .set({ manifestVersion: newVersion, state: 'preparing', updatedAt: new Date() })
       .where(eq(syncGroups.id, id));
 
+    const allTizen = sortedMembers.length > 0 && sortedMembers.every(m => {
+      const plat = (m.device as any)?.platform ?? 'tizen';
+      return plat === 'tizen' || plat === 'tizen-sbb';
+    });
+    // For cross-OS groups always use the centralised API relay so no device needs
+    // to host its own relay server (Windows has none; Android's bridge is optional).
+    const appUrl = (process.env['APP_URL'] ?? 'http://localhost:3000').replace(/\/$/, '');
+    const relayUrl = !allTizen
+      ? appUrl.replace(/^http/, 'ws') + '/api/v1/sync-relay'
+      : null;
+
     const manifest = {
       type: 'SYNC_GROUP_INIT' as const,
       syncGroupId: group.id,
@@ -441,6 +446,7 @@ export async function syncGroupRoutes(app: FastifyInstance) {
       peers,
       relayUrl,
       syncRelayMode,
+      allTizen,
       playlist: playlistPayload,
     };
 

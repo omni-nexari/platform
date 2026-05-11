@@ -13,12 +13,49 @@ export class Api {
   /** Returns the schedule object for this device.  Throws on non-2xx. */
   async getCurrentContent(_deviceId: string): Promise<Schedule | null> {
     const t = this.token();
-    // The server resolves device identity from the JWT; no :id in path.
-    const url = `${this.base}/devices/device/schedule${t ? `?token=${encodeURIComponent(t)}` : ''}`;
-    const res = await fetch(url);
-    if (res.status === 404) return null;
-    if (!res.ok) throw Object.assign(new Error(`schedule HTTP ${res.status}`), { status: res.status });
-    const body = await res.json() as { schedules?: unknown[] };
+
+    // Fetch schedule AND workspace in parallel — workspace carries publishedSyncGroup
+    // which is not included in /device/schedule.
+    const [schedRes, wsRes] = await Promise.all([
+      fetch(`${this.base}/devices/device/schedule${t ? `?token=${encodeURIComponent(t)}` : ''}`),
+      fetch(`${this.base}/devices/device/workspace${t ? `?token=${encodeURIComponent(t)}` : ''}`).catch(() => null),
+    ]);
+
+    if (schedRes.status === 404) return null;
+    if (!schedRes.ok) throw Object.assign(new Error(`schedule HTTP ${schedRes.status}`), { status: schedRes.status });
+
+    // If device has a sync group published, return that playlist with priority.
+    const wsBody = wsRes?.ok ? await wsRes.json().catch(() => null) as Record<string, unknown> | null : null;
+    const publishedSyncGroup = wsBody?.['publishedSyncGroup'] as Record<string, unknown> | null | undefined;
+    if (publishedSyncGroup) {
+      const sg = publishedSyncGroup;
+      const sp = sg['syncPlaylist'] as Record<string, unknown> | null | undefined;
+      const spItems = (sp?.['items'] as Array<Record<string, unknown>> | undefined) ?? [];
+      if (spItems.length > 0) {
+        const items: ScheduleItem[] = spItems
+          .map((item): ScheduleItem | null => {
+            const c = this.enrichContent(item['content'] as Record<string, unknown> | null, t);
+            if (!c) return null;
+            return {
+              id: item['id'] as string,
+              contentId: item['contentId'] as string | undefined,
+              duration: (item['durationSeconds'] as number | undefined) ?? 10,
+              content: c,
+            };
+          })
+          .filter((x): x is ScheduleItem => x !== null);
+        if (items.length > 0) {
+          return { id: sp!['id'] as string, playlistName: sp!['name'] as string ?? 'Sync Playlist', items,
+            syncGroupId: sg['id'] as string,
+            allTizen: !!(sg['allTizen']),
+            relayUrl: (sg['relayUrl'] as string | null) ?? null,
+            peers: (sg['peers'] as unknown[]) ?? [],
+          } as unknown as Schedule;
+        }
+      }
+    }
+
+    const body = await schedRes.json() as { schedules?: unknown[] };
     if (!Array.isArray(body.schedules) || !body.schedules.length) return null;
 
     const raw = body.schedules[0] as Record<string, unknown>;

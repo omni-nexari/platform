@@ -194,6 +194,11 @@ const Player = {
   // Mixed-platform videowall: WS relay client (used when allTizen === false)
   _mixedRelayWs: null as WebSocket | null,
   _mixedRelayStop: null as (() => void) | null,
+  // Cross-OS sync group relay (same JSON protocol, separate connection)
+  _syncGroupRelayWs: null as WebSocket | null,
+  _syncGroupRelayStop: null as (() => void) | null,
+  // Last received SYNC_GROUP_INIT manifest (for relay bootstrap from renderPlaylist)
+  _lastSyncGroupManifest: null as Record<string, unknown> | null,
 
   // Live calendar push handlers, keyed by contentId. Populated by
   // renderCalendar when it subscribes; cleared on unsubscribe / teardown.
@@ -471,20 +476,28 @@ const Player = {
           break;
 
         case 'SYNC_GROUP_INIT':
-          logger.info('Sync group init received:', message.payload);
-          if (typeof SyncEngine !== 'undefined') {
-            SyncEngine.setManifest(message.payload);
-            // If relay is LAN and we may become leader, start the relay server
-            // when elected. The callback fires on role transitions only.
-            if (message.payload?.syncRelayMode === 'lan') {
-              SyncEngine.onRoleChange((r: string) => {
-                if (r === 'leader') {
-                  logger.info('[player] Elected as leader — starting node relay');
-                  this._startWallNodeRelay();
-                }
-              });
+          logger.info('Sync group init received');
+          // Store manifest for relay bootstrap when renderPlaylist runs.
+          this._lastSyncGroupManifest = message as unknown as Record<string, unknown>;
+          if (message.allTizen === false) {
+            // Cross-OS group: connect to the Node.js relay WS immediately.
+            // renderPlaylist will also call this but it's idempotent (stops old first).
+            this._startSyncGroupRelay(message as any);
+          } else {
+            // Tizen-only group: feed the JS SyncEngine for fallback / diagnostics.
+            if (typeof SyncEngine !== 'undefined') {
+              SyncEngine.setManifest(message);
+              if ((message as any).syncRelayMode === 'lan') {
+                SyncEngine.onRoleChange((r: string) => {
+                  if (r === 'leader') {
+                    logger.info('[player] Elected as leader — starting node relay');
+                    this._startWallNodeRelay();
+                  }
+                });
+              }
             }
           }
+          this.loadContent();
           break;
 
         case 'VIDEOWALL_INIT':
@@ -1813,7 +1826,15 @@ const Player = {
     // Tear down any previous connection.
     if (this._mixedRelayStop) { try { this._mixedRelayStop(); } catch {} this._mixedRelayStop = null; }
 
-    const relayUrl  = manifest.relayUrl;
+    // Derive relay URL from this device's own API base (not manifest.relayUrl which may
+    // be the cloud domain while devices are on a local network).
+    const tizenApiBase = (typeof CONFIG !== 'undefined' && CONFIG.API_BASE) || '';
+    const tizenWsBase  = tizenApiBase.replace(/^http/, 'ws').replace(/\/api\/v1\/?$/, '');
+    const tizenToken   = this.deviceToken || localStorage.getItem('deviceToken') || '';
+    const relayUrl     = tizenWsBase
+      ? `${tizenWsBase}/api/v1/sync-relay?token=${encodeURIComponent(tizenToken)}`
+      : (manifest.relayUrl as string | null);
+
     const groupId   = manifest.deviceGroupId;
     const deviceId  = this.deviceId;
     if (!relayUrl) return;
@@ -1918,6 +1939,204 @@ const Player = {
 
     connect();
   },
+
+  /**
+   * Cross-OS sync group relay — WS client using the same Node.js relay JSON
+   * protocol as Android/Windows (WS_REGISTER, PING/PONG, READY/GO, LOOP_READY/LOOP_GO).
+   * Used when allTizen===false (mixed Tizen + Android/Windows group).
+   *
+   * This keeps Tizen in step with the relay leader (usually Android or Windows)
+   * without any Samsung b2bsyncplay API calls.
+   */
+  _startSyncGroupRelay(manifest: any) {
+    // Tear down any previous connection.
+    if (this._syncGroupRelayStop) { try { this._syncGroupRelayStop(); } catch {} this._syncGroupRelayStop = null; }
+
+    const groupId   = manifest.syncGroupId || manifest.groupId || '';
+    const deviceId  = this.deviceId;
+    const token     = this.deviceToken || localStorage.getItem('deviceToken') || '';
+
+    // Always derive the relay URL from the device's own API base so it uses the
+    // same host/IP the device is already connected to (LAN or cloud).
+    // The manifest's relayUrl is unreliable (built from APP_URL, may be cloud domain
+    // even when devices are on a local network).
+    const apiBase  = (typeof CONFIG !== 'undefined' && CONFIG.API_BASE) || '';
+    const wsBase   = apiBase.replace(/^http/, 'ws').replace(/\/api\/v1\/?$/, '');
+    const relayUrl = wsBase
+      ? `${wsBase}/api/v1/sync-relay?token=${encodeURIComponent(token)}`
+      : null;
+
+    if (!relayUrl) {
+      logger.warn('[SyncRelay] cannot derive relayUrl from CONFIG.API_BASE, aborting');
+      return;
+    }
+
+    // Determine if this device is the relay leader.
+    const leaderPriority: string[] = Array.isArray(manifest.leaderPriority) ? manifest.leaderPriority : [];
+    const isLeader = leaderPriority.length > 0 && leaderPriority[0] === deviceId;
+
+    // If this Tizen device is the leader, start the Node relay server (b2bcontrol).
+    if (isLeader) this._startWallNodeRelay();
+
+    const self = this;
+    let stopped   = false;
+    let goTimer: any = null;
+    let loopTimer: any = null;
+    let reconnTimer: any = null;
+    let readySent = false;
+    let currentItemIndex = 0;
+    // Clock offset: serverTime = localTime + _relayClockOffset
+    let _relayClockOffset = 0;
+
+    const sendIfOpen = (ws: WebSocket, obj: object) => {
+      if (ws.readyState === 1) try { ws.send(JSON.stringify(obj)); } catch {}
+    };
+
+    // Measure server clock offset via PING/PONG (5 samples, best RTT wins).
+    const measureClockOffset = (ws: WebSocket): Promise<void> => {
+      return new Promise((resolve) => {
+        const SAMPLES = 5;
+        const results: { offset: number; rtt: number }[] = [];
+        let remaining = SAMPLES;
+        const finish = () => {
+          if (results.length > 0) {
+            results.sort((a, b) => a.rtt - b.rtt);
+            _relayClockOffset = results[0]!.offset;
+            logger.info('[SyncRelay] clock offset=' + _relayClockOffset + 'ms rtt=' + results[0]!.rtt + 'ms');
+          }
+          resolve();
+        };
+        for (let i = 0; i < SAMPLES; i++) {
+          setTimeout(() => {
+            if (stopped || ws.readyState !== 1) { if (--remaining === 0) finish(); return; }
+            const t1 = Date.now();
+            const handler = (ev2: MessageEvent) => {
+              let m: any; try { m = JSON.parse(ev2.data as string); } catch { return; }
+              if (!m || m.type !== 'PONG' || m.t1 !== t1) return;
+              ws.removeEventListener('message', handler);
+              const t3 = Date.now();
+              results.push({ offset: Math.round(m.t2 + (t3 - t1) / 2 - t3), rtt: t3 - t1 });
+              if (--remaining === 0) finish();
+            };
+            ws.addEventListener('message', handler);
+            sendIfOpen(ws, { type: 'PING', t1 });
+            setTimeout(() => { ws.removeEventListener('message', handler); if (--remaining === 0) finish(); }, 1000);
+          }, i * 60);
+        }
+      });
+    };
+
+    // Poll until the current video is ready (src set and can play), then send READY.
+    const pollAndSendReady = (ws: WebSocket) => {
+      if (stopped || readySent) return;
+      const video = self._activeSyncVideo ||
+        (document.getElementById('content-container') as HTMLElement | null)
+          ?.querySelector('video') as HTMLVideoElement | null;
+      if (video && (video.readyState >= 2 || video.src)) {
+        readySent = true;
+        sendIfOpen(ws, { type: 'READY', groupId, deviceId });
+        logger.info('[SyncRelay] READY sent (item ' + currentItemIndex + ')');
+      } else {
+        setTimeout(() => pollAndSendReady(ws), 300);
+      }
+    };
+
+    // Schedule playback at an absolute epoch ms (server time from relay).
+    const schedulePlayAt = (serverPlayAt: number) => {
+      // Convert server epoch to local time using measured clock offset.
+      const localPlayAt = serverPlayAt - _relayClockOffset;
+      const delay = Math.max(0, localPlayAt - Date.now());
+      logger.info('[SyncRelay] scheduled play in ' + delay + 'ms (serverEpoch=' + serverPlayAt + ' offset=' + _relayClockOffset + ')');
+      if (goTimer) clearTimeout(goTimer);
+      goTimer = setTimeout(() => {
+        if (stopped) return;
+        // Seek current video to 0 and play for a synchronized start.
+        const video = self._activeSyncVideo ||
+          (document.getElementById('content-container') as HTMLElement | null)
+            ?.querySelector('video') as HTMLVideoElement | null;
+        if (video) {
+          try { video.currentTime = 0; } catch {}
+          video.play().catch(() => {});
+          // Schedule LOOP_READY ~800 ms before video ends.
+          const durMs = (video.duration || 10) * 1000;
+          if (loopTimer) clearTimeout(loopTimer);
+          loopTimer = setTimeout(() => {
+            if (!stopped) {
+              readySent = false;
+              sendIfOpen(ws as WebSocket, { type: 'LOOP_READY', groupId, deviceId });
+              logger.info('[SyncRelay] LOOP_READY sent');
+            }
+          }, Math.max(durMs - 800, 200));
+        }
+        logger.info('[SyncRelay] play triggered (item ' + currentItemIndex + ')');
+      }, delay);
+    };
+
+    let ws: WebSocket;
+
+    const connect = () => {
+      if (stopped) return;
+      ws = new WebSocket(relayUrl!);
+      self._syncGroupRelayWs = ws;
+
+      ws.onopen = () => {
+        readySent = false;
+        // Measure clock offset first, then register + start polling.
+        measureClockOffset(ws).then(() => {
+          if (stopped) return;
+          sendIfOpen(ws, { type: 'WS_REGISTER', deviceId, groupId });
+          logger.info('[SyncRelay] registered → ' + relayUrl);
+          pollAndSendReady(ws);
+        });
+      };
+
+      ws.onmessage = (ev: MessageEvent) => {
+        let msg: any;
+        try { msg = JSON.parse(ev.data as string); } catch { return; }
+        const t = msg && msg.type;
+
+        if (t === 'PING') {
+          sendIfOpen(ws, { type: 'PONG', t1: msg.t1, t2: Date.now() });
+          return;
+        }
+
+        if (t === 'GO' || t === 'LOOP_GO') {
+          logger.info('[SyncRelay] ' + t + ' playAt=' + msg.playAt);
+          if (t === 'LOOP_GO') currentItemIndex = (currentItemIndex + 1);
+          schedulePlayAt(Number(msg.playAt));
+          return;
+        }
+
+        if (t === 'PEERS') {
+          logger.info('[SyncRelay] PEERS: ' + JSON.stringify(msg.peers));
+          return;
+        }
+
+        if (t === 'HEARTBEAT_PEERS') return; // informational
+      };
+
+      ws.onerror = () => logger.warn('[SyncRelay] WS error');
+      ws.onclose = () => {
+        self._syncGroupRelayWs = null;
+        if (!stopped) {
+          reconnTimer = setTimeout(connect, 2000);
+          logger.warn('[SyncRelay] WS closed — reconnecting in 2s');
+        }
+      };
+    };
+
+    this._syncGroupRelayStop = () => {
+      stopped = true;
+      if (goTimer)    clearTimeout(goTimer);
+      if (loopTimer)  clearTimeout(loopTimer);
+      if (reconnTimer) clearTimeout(reconnTimer);
+      if (self._syncGroupRelayWs) { try { self._syncGroupRelayWs.close(); } catch {} self._syncGroupRelayWs = null; }
+      logger.info('[SyncRelay] stopped');
+    };
+
+    connect();
+  },
+
   // (sample uses 5 for full-screen, 7 for rotated) is mirrored from the
   // Samsung b2bsync sample.
   _startNativeSyncPlay(api: any, groupId: number) {
@@ -1974,9 +2193,15 @@ const Player = {
     //   � a deliberate demo sub-rect, not a full-screen call.
 
     const rotation = 'OFF';
+    // b2bsyncplay uses CENTER-ORIGIN coords (posX/posY = offset from screen center).
+    // For full-screen: posX = -(vpW/2), posY = -(vpH/2), width = vpW, height = vpH
+    const vpW = (typeof window !== 'undefined' && window.innerWidth)  || 1920;
+    const vpH = (typeof window !== 'undefined' && window.innerHeight) || 1080;
+    const rectX = -Math.round(vpW / 2);
+    const rectY = -Math.round(vpH / 2);
     try {
-      logger.info('[NativeSync] startSyncPlay rect=0,0,1920,1080 groupID=' + groupId);
-      const handle = api.startSyncPlay(0, 0, 1920, 1080, 5, rotation, onChange);
+      logger.info('[NativeSync] startSyncPlay rect=' + rectX + ',' + rectY + ',' + vpW + ',' + vpH + ' groupID=' + groupId);
+      const handle = api.startSyncPlay(rectX, rectY, vpW, vpH, 5, rotation, onChange);
       this._nativeSyncActive = true;
       this._nativeSyncGroupId = groupId;
       logger.info('[NativeSync] startSyncPlay invoked (groupID=' + groupId + ', handle=' + handle + ')');
@@ -6365,26 +6590,57 @@ const Player = {
       const nativeGroupId: number | null =
         (syncPlayInfo && Number.isInteger(syncPlayInfo.groupID)) ? syncPlayInfo.groupID : null;
       const nativeApi = this._getB2bSyncPlayApi();
-      if (nativeApi && nativeGroupId !== null) {
+      // Only use firmware b2bsyncplay when ALL peers are Samsung Tizen devices.
+      // Cross-OS groups (Tizen + Android + Windows) must use the relay engine.
+      const isAllTizen: boolean = syncPlayInfo?.allTizen !== false;
+      if (nativeApi && nativeGroupId !== null && isAllTizen) {
         logger.info('[NativeSync] Using b2bapis.b2bsyncplay (groupID=' + nativeGroupId + ')');
         this.renderPlaylistNativeSync(playableItems, nativeGroupId, container);
         return;
       }
-      logger.info('[Sync] b2bsyncplay unavailable (api=' + !!nativeApi +
-        ' groupID=' + nativeGroupId + ') � falling back to HTML5 + JS SyncEngine');
+      if (!isAllTizen) {
+        logger.info('[Sync] Cross-OS group detected (allTizen=false) — connecting to Node.js relay WS');
+        // Connect (or reconnect) to the relay WS for this cross-OS sync group.
+        // Use the manifest cached from SYNC_GROUP_INIT if available, otherwise
+        // derive relayUrl from the peer IP list in syncPlayInfo.
+        const manifest = this._lastSyncGroupManifest;
+        const relayUrl: string | null =
+          (manifest && (manifest['relayUrl'] as string | null)) ||
+          (() => {
+            // Derive from the leader peer's IP (first in sorted leaderPriority list)
+            const peers: any[] = Array.isArray(syncPlayInfo && syncPlayInfo.peers) ? syncPlayInfo.peers : [];
+            if (!peers.length) return null;
+            const sorted = [...peers].sort((a: any, b: any) => (a.leaderPriority ?? 0) - (b.leaderPriority ?? 0));
+            const leaderIp = sorted[0]?.ipAddress || sorted[0]?.lastKnownIp || null;
+            return leaderIp ? `ws://${leaderIp}:9616` : null;
+          })();
+        if (relayUrl) {
+          this._startSyncGroupRelay({ ...((manifest || {}) as object), relayUrl,
+            syncGroupId: syncGroupId || (manifest && manifest['syncGroupId']),
+            leaderPriority: (manifest && manifest['leaderPriority']) ||
+              (() => {
+                const peers: any[] = Array.isArray(syncPlayInfo && syncPlayInfo.peers) ? syncPlayInfo.peers : [];
+                return [...peers]
+                  .sort((a: any, b: any) => (a.leaderPriority ?? 0) - (b.leaderPriority ?? 0))
+                  .map((p: any) => p.deviceId);
+              })(),
+          });
+        } else {
+          logger.warn('[Sync] Cross-OS group: no relayUrl available, falling back to standard render');
+        }
+        this.renderPlaylistStandard(playableItems, container);
+        return;
+      }
 
-      // Seed the SyncEngine with a manifest derived from the schedule
-      // payload so leader election, peer NTP, and heartbeats can run even
-      // before the server pushes a SYNC_GROUP_INIT.
+      logger.info('[Sync] b2bsyncplay unavailable (api=' + !!nativeApi +
+        ' groupID=' + nativeGroupId + ') — falling back to HTML5 + JS SyncEngine');
+      // Tizen-only fallback: seed the JS SyncEngine.
       try {
         if (typeof SyncEngine !== 'undefined' && SyncEngine.setManifest) {
           const peers = Array.isArray(syncPlayInfo && syncPlayInfo.peers) ? syncPlayInfo.peers : [];
           const sortedPeers = [...peers].sort((a: any, b: any) =>
             (a.leaderPriority ?? 0) - (b.leaderPriority ?? 0));
           const manifest = {
-            // SyncEngine.Manifest.groupId is the sync-group UUID (not the
-            // 16-bit Samsung native-syncplay number). The numeric Samsung ID
-            // is only relevant on the legacy AVPlay-native path.
             groupId: syncGroupId,
             version: 0,
             leaderPriority: sortedPeers.map((p: any) => p.deviceId),
@@ -7083,6 +7339,12 @@ const Player = {
     // active. Must come before AVPlay close so the video plane is released.
     if (this._nativeSyncActive) {
       this.stopNativeSyncPlay();
+    }
+
+    // Stop cross-OS sync group relay if active.
+    if (this._syncGroupRelayStop) {
+      try { this._syncGroupRelayStop(); } catch {}
+      this._syncGroupRelayStop = null;
     }
 
     // Drop any sync-mode references; the next renderPlaylist re-establishes them.

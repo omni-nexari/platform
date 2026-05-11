@@ -140,6 +140,7 @@ let _activeItemId: string | null   = null;   // tracks which playlist item is cu
 // Cross-platform sync/videowall manifest received via WS
 let _wallManifest: any = null;
 let _syncGroupManifest: any = null;
+let _syncActive = false;
 
 // Content types whose DOM/iframe manages its own data refresh internally.
 // When the playlist wraps back to the same item, we skip the teardown+rebuild.
@@ -151,6 +152,15 @@ function cancelPlayback() {
   if (_playTimer !== null) { clearTimeout(_playTimer); _playTimer = null; }
   _isPlaying  = false;
   _activeItemId = null;
+}
+
+async function stopSyncIfActive() {
+  if (!_syncActive) return;
+  _syncActive = false;
+  try {
+    const { stopSync } = await import('./sync-coordinator.js');
+    stopSync();
+  } catch { /* ignore */ }
 }
 
 function getSignature(pl: Playlist | null): string {
@@ -168,6 +178,7 @@ async function loadContent() {
     const content = await ApiClient.getCurrentContent();
 
     if (!content || content.items.length === 0) {
+      await stopSyncIfActive();
       cancelPlayback();
       _playlist = null;
       _contentSignature = '';
@@ -177,22 +188,66 @@ async function loadContent() {
     }
 
     const sig = getSignature(content);
-    if (sig === _contentSignature && _isPlaying) {
+    if (sig === _contentSignature && (_isPlaying || _syncActive)) {
       console.debug('[Player] Content unchanged, continuing playback');
       return;
     }
 
     console.info(`[Player] Playlist loaded: id=${content.id} items=${content.items.length}`);
+    await stopSyncIfActive();
     cancelPlayback();
     _playlist  = content;
     _currentIdx = 0;
     _contentSignature = sig;
+
+    // Cross-OS sync group: use the relay engine instead of solo playback.
+    if (content.syncGroupId && content.allTizen === false) {
+      void startSyncGroupPlayback(content);
+      return;
+    }
+
     playCurrentItem();
   } catch (err: any) {
     console.error('[Player] loadContent failed:', err?.message || err);
-    if (!_isPlaying) showIdle();
+    if (!_isPlaying && !_syncActive) showIdle();
   } finally {
     _loadInFlight = false;
+  }
+}
+
+async function startSyncGroupPlayback(content: Playlist) {
+  try {
+    const { startSync } = await import('./sync-coordinator.js');
+    const cfg = await window.nexari.getConfig();
+    const deviceId  = cfg.deviceId  || localStorage.getItem('deviceId')  || '';
+    const token     = cfg.deviceToken || localStorage.getItem('deviceToken') || '';
+    const apiBase   = cfg.apiBase   || localStorage.getItem('apiBase')   || 'https://ds.chiho.app/api/v1';
+
+    const peers = (content.syncPlay?.peers ?? []) as Array<{ deviceId: string; leaderPriority?: number | null }>;
+    const expectedPeers = Math.max(1, peers.length - 1);
+
+    const urls = content.items
+      .map(i => i.content?.url || i.content?.fileUrl || '')
+      .filter(Boolean);
+
+    if (!urls.length) { console.warn('[Sync] no video URLs'); playCurrentItem(); return; }
+
+    console.info(`[Sync] starting relay sync groupId=${content.syncGroupId} peers=${expectedPeers} relay=${content.relayUrl}`);
+    _syncActive = true;
+    await startSync({
+      apiBase,
+      token,
+      deviceId,
+      groupId: content.syncGroupId!,
+      expectedPeers,
+      container: root,
+      playlist: urls,
+      onStatus: (s) => console.info(`[Sync] ${s}`),
+    });
+  } catch (e: any) {
+    console.error('[Sync] startSyncGroupPlayback failed:', e?.message || e);
+    _syncActive = false;
+    playCurrentItem();
   }
 }
 
@@ -1319,6 +1374,10 @@ window.nexari.onMessage('WS_MESSAGE', (msg: any) => {
     case 'VIDEOWALL_INIT':
       console.info('[Player] VIDEOWALL_INIT received');
       _wallManifest = msg;
+      loadContent();
+      break;
+    case 'SESSION_CONFIG':
+      console.info('[Player] SESSION_CONFIG received — refreshing content');
       loadContent();
       break;
     case 'SYNC_GROUP_INIT': {

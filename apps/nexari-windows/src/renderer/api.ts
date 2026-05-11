@@ -43,6 +43,10 @@ export interface Playlist {
   syncPlay: SyncPlayInfo | null;
   /** Resolved sync group UUID (JS engine path). */
   syncGroupId?: string | null;
+  /** Relay WS URL for cross-OS sync groups. */
+  relayUrl?: string | null;
+  /** False when group contains non-Tizen peers — use relay engine, not b2bsyncplay. */
+  allTizen?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,6 +226,8 @@ function _normalizeSyncPlaylist(syncPlaylist: any, groupId: any, syncGroup: any)
       peers: syncGroup?.peers || [],
     },
     syncGroupId: syncGroup?.id || null,
+    relayUrl: syncGroup?.relayUrl || null,
+    allTizen: syncGroup?.allTizen ?? true,
   };
 }
 

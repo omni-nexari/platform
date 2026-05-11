@@ -2024,8 +2024,8 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     // Resolve sync group + its sync playlist when publishedSyncGroupId is set
     let publishedSyncGroup: {
-      id: string; groupId: number; mode: string;
-      peers: Array<{ deviceId: string; ipAddress: string | null; leaderPriority: number }>;
+      id: string; groupId: number; mode: string; allTizen: boolean; relayUrl: string | null;
+      peers: Array<{ deviceId: string; ipAddress: string | null; leaderPriority: number; platform: string | null }>;
       syncPlaylist: { id: string; name: string; items: Array<{ id: string; contentId: string | null; durationSeconds: number | null; sortOrder: number; content: typeof contentItems.$inferSelect | null }> } | null;
     } | null = null;
 
@@ -2051,16 +2051,24 @@ export async function deviceRoutes(app: FastifyInstance) {
           const spContentMap = Object.fromEntries(spContentRows.map((c) => [c.id, c]));
           // Fetch all members of this sync group with their device IPs for peer coordination
           const memberRows = await db
-            .select({ deviceId: syncGroupMembers.deviceId, leaderPriority: syncGroupMembers.leaderPriority, ipAddress: devices.ipAddress })
+            .select({ deviceId: syncGroupMembers.deviceId, leaderPriority: syncGroupMembers.leaderPriority, ipAddress: devices.ipAddress, platform: devices.platform })
             .from(syncGroupMembers)
             .leftJoin(devices, eq(devices.id, syncGroupMembers.deviceId))
             .where(eq(syncGroupMembers.syncGroupId, sg.id));
-          const peers = memberRows.map((m) => ({ deviceId: m.deviceId, ipAddress: m.ipAddress ?? null, leaderPriority: m.leaderPriority }));
+          const peers = memberRows.map((m) => ({ deviceId: m.deviceId, ipAddress: m.ipAddress ?? null, leaderPriority: m.leaderPriority, platform: m.platform ?? null }));
+          // Sort by leaderPriority (ascending) so peers[0] is always the elected leader
+          peers.sort((a, b) => (a.leaderPriority ?? 999) - (b.leaderPriority ?? 999));
+          const allTizen = peers.length > 0 && peers.every((p) => p.platform === 'tizen' || p.platform === 'tizen-sbb');
+          // For cross-OS groups use the centralised API relay (always running, reachable by all platforms).
+          const appUrl = (process.env['APP_URL'] ?? 'http://localhost:3000').replace(/\/$/, '');
+          const relayUrl = !allTizen ? appUrl.replace(/^http/, 'ws') + '/api/v1/sync-relay' : null;
 
           publishedSyncGroup = {
             id: sg.id,
             groupId: sg.groupId,
             mode: sg.mode,
+            allTizen,
+            relayUrl,
             peers,
             syncPlaylist: {
               id: sp.id,

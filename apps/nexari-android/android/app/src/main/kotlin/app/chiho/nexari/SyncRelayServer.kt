@@ -204,7 +204,7 @@ class ClientHandler(
 
     private fun computeAccept(key: String): String {
         val sha1 = MessageDigest.getInstance("SHA-1")
-        sha1.update("$key258EAFA5-E914-47DA-95CA-C5AB0DC85B11".toByteArray(Charsets.UTF_8))
+        sha1.update("${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11".toByteArray(Charsets.UTF_8))
         return Base64.encodeToString(sha1.digest(), Base64.NO_WRAP)
     }
 

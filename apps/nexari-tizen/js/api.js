@@ -270,7 +270,7 @@ window.API = {
       playlistId: syncPlaylist.id,
       playlistName: syncPlaylist.name || 'Sync Playlist',
       items,
-      syncPlay: { enabled: true, groupID: numericGroupId, syncGroupId: (syncGroup && syncGroup.id) || null, peers: (syncGroup && syncGroup.peers) || [] },
+      syncPlay: { enabled: true, groupID: numericGroupId, syncGroupId: (syncGroup && syncGroup.id) || null, peers: (syncGroup && syncGroup.peers) || [], allTizen: syncGroup != null ? !!syncGroup.allTizen : true },
     };
   },
 
