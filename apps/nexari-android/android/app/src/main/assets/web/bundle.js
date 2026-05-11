@@ -2545,6 +2545,7 @@ var Player = class {
         this.initVideoWall(msg);
         return;
       default:
+        await this.dispatchCommand(t, msg["payload"]);
         return;
     }
   }
@@ -3206,6 +3207,10 @@ var Player = class {
       v.addEventListener("playing", swap, { once: true });
       v.addEventListener("error", () => {
         if (signal.aborted) {
+          done();
+          return;
+        }
+        if (this.currentVideoEl !== v && swapped) {
           done();
           return;
         }

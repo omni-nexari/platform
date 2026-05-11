@@ -490,7 +490,13 @@ export class Player {
       }
       case 'SYNC_GROUP_INIT': await this.initSyncGroup(msg); return;
       case 'VIDEOWALL_INIT':   this.initVideoWall(msg); return;
-      default: return;
+      default:
+        // The API sends device commands using the command name as the WS type
+        // (e.g. type='reboot', type='screenshot', type='set_system_volume').
+        // Route everything that reached default through dispatchCommand so
+        // player-web handles the same types as the Tizen reference player.
+        await this.dispatchCommand(t, msg['payload'] as Record<string,unknown>|undefined);
+        return;
     }
   }
 
@@ -1067,6 +1073,10 @@ export class Player {
       v.addEventListener('playing', swap, { once:true });
       v.addEventListener('error', () => {
         if (signal.aborted) { done(); return; }
+        // If this element has been superseded by a later transition (prev teardown
+        // via src=''+load() fires a synthetic error), silently discard — the
+        // successor is already playing.
+        if (this.currentVideoEl !== v && swapped) { done(); return; }
         logger.warn(`[Player] video error: ${record.url}`);
         // On error, still swap so we don't get stuck on the old video.
         swap();

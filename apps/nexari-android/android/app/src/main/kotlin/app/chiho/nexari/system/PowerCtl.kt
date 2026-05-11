@@ -30,8 +30,17 @@ class PowerCtl(private val ctx: Context) {
 
     fun sleep(): Map<String, Any> {
         return try {
-            if (dpm.isAdminActive(admin)) { dpm.lockNow(); mapOf("supported" to true) }
-            else mapOf("supported" to false, "error" to "device admin not active")
+            if (dpm.isAdminActive(admin)) {
+                dpm.lockNow()
+                mapOf("supported" to true)
+            } else {
+                // Device Admin not active — fall back to dimming display to 0.
+                android.util.Log.w("PowerCtl", "Device Admin not active; dimming to 0 as sleep fallback")
+                val bright = BrightnessCtl(ctx)
+                val result = bright.setBrightness(0)
+                if (result["supported"] == true) mapOf("supported" to true, "fallback" to "dim")
+                else mapOf("supported" to false, "error" to "device admin not active; dim fallback also unavailable")
+            }
         } catch (e: SecurityException) {
             mapOf("supported" to false, "error" to (e.message ?: "denied"))
         }

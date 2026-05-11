@@ -1,6 +1,8 @@
 package app.chiho.nexari
 
 import android.annotation.SuppressLint
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -122,23 +124,33 @@ class PlatformBridge(
     fun relaunch():     String { main.post { doRelaunch() }; return "{}" }
 
     /**
-     * Full process restart: launch our own launcher activity with NEW_TASK +
-     * CLEAR_TASK so the activity stack is recreated, then kill our PID after a
-     * short delay so the launching intent has time to fire.
+     * Full process restart using AlarmManager so the relaunch fires OUTSIDE
+     * the dying process — startActivity + killProcess in the same process
+     * kills the new activity before it can establish itself.
+     *
+     * Sequence:
+     *  1. AlarmManager schedules a one-shot launch 1.5 s from now.
+     *  2. After 400 ms we kill our process (WS closes, device goes offline).
+     *  3. 1.1 s later Android fires the PendingIntent → fresh app start.
      */
     private fun doRelaunch() {
         try {
             val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
             if (intent != null) {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                context.startActivity(intent)
+                val pi = PendingIntent.getActivity(
+                    context, 0, intent,
+                    PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+                val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                am.set(AlarmManager.RTC, System.currentTimeMillis() + 1500L, pi)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "relaunch start failed: ${'$'}{e.message}")
+            Log.w(TAG, "relaunch schedule failed: ${e.message}")
         }
         main.postDelayed({
             try { Process.killProcess(Process.myPid()) } catch (_: Exception) {}
-        }, 350)
+        }, 400)
     }
 
     @JavascriptInterface
