@@ -16,6 +16,7 @@ import PublishWizardModal from './PublishWizardModal.js';
 import WorkspaceTagPicker from './WorkspaceTagPicker.js';
 import EditMenuBoardModal from './EditMenuBoardModal.js';
 import Html5EditorModal from './Html5EditorModal.js';
+import VideoReprocessWizard from './VideoReprocessWizard.js';
 
 const APPROVE_ROLES = new Set(['prime_owner', 'owner', 'admin', 'a-manager']);
 import ConfirmDialog from './ConfirmDialog.js';
@@ -979,11 +980,7 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
     onError: () => toast.error('Thumbnail generation failed — check server logs'),
   });
 
-  const reprocessMut = useMutation({
-    mutationFn: () => api.post(`/content/${itemId}/reprocess`),
-    onSuccess: () => { toast.success('Reprocessing started — refresh in a moment'); invalidate(); },
-    onError: () => toast.error('Failed to start reprocessing'),
-  });
+  const [reprocessWizardOpen, setReprocessWizardOpen] = useState(false);
 
   const patchMut = useMutation({
     mutationFn: (data: Record<string, unknown>) => api.patch(`/content/${itemId}`, data),
@@ -1226,11 +1223,10 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
                 )}
                 {item?.type === 'video' && (
                   <button
-                    onClick={() => { setMenuOpen(false); reprocessMut.mutate(); }}
-                    disabled={reprocessMut.isPending}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-raised)] disabled:opacity-50"
+                    onClick={() => { setMenuOpen(false); setReprocessWizardOpen(true); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-raised)]"
                   >
-                    <RotateCcw size={12} /> {reprocessMut.isPending ? 'Reprocessing…' : 'Reprocess video'}
+                    <RotateCcw size={12} /> Reprocess video…
                   </button>
                 )}
                 <div className="my-1 border-t border-[var(--border)]" />
@@ -1306,6 +1302,16 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
             onClose={() => setHtml5EditorOpen(false)}
           />
         )}
+
+        {/* Video reprocess wizard */}
+        <VideoReprocessWizard
+          open={reprocessWizardOpen}
+          itemId={itemId ?? ''}
+          itemName={item?.name ?? ''}
+          workspaceId={workspaceId}
+          onClose={() => setReprocessWizardOpen(false)}
+          onDone={invalidate}
+        />
 
         {/* ── Tabs ── */}
         <div className="flex border-b border-[var(--border)] shrink-0">

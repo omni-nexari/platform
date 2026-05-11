@@ -9,19 +9,29 @@
 
 import { Worker, type ConnectionOptions } from 'bullmq';
 import type { Redis } from 'ioredis';
-import { processContentMedia } from '../services/media-processing.js';
+import { processContentMedia, reprocessVideoWithOptions, type VideoReprocessOptions } from '../services/media-processing.js';
 import { QUEUE_NAMES } from '../queues/index.js';
 
 export interface MediaProcessingJobData {
   contentId: string;
   transcode?: boolean;
+  reprocessOptions?: VideoReprocessOptions;
+  uploadedBy?: string;
 }
 
 export function startMediaProcessingWorker(connection: Redis): Worker<MediaProcessingJobData> {
   const worker = new Worker<MediaProcessingJobData>(
     QUEUE_NAMES.mediaProcessing,
     async (job) => {
-      await processContentMedia(job.data.contentId, { transcode: job.data.transcode === true });
+      if (job.data.reprocessOptions) {
+        await reprocessVideoWithOptions(
+          job.data.contentId,
+          job.data.reprocessOptions,
+          job.data.uploadedBy ?? 'system',
+        );
+      } else {
+        await processContentMedia(job.data.contentId, { transcode: job.data.transcode === true });
+      }
     },
     {
       connection: connection as unknown as ConnectionOptions,

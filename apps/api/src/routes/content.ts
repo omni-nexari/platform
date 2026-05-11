@@ -17,6 +17,8 @@ import {
   generatePresentationThumb,
   generateHtml5Thumb,
   processContentMedia,
+  reprocessVideoWithOptions,
+  type VideoReprocessOptions,
 } from '../services/media-processing.js';
 import { getQueue, QUEUE_NAMES } from '../queues/index.js';
 import { listEventsForConnection } from '../services/calendar/index.js';
@@ -1255,16 +1257,35 @@ export async function contentRoutes(app: FastifyInstance) {
       .set({ status: 'processing', updatedAt: new Date() })
       .where(eq(contentItems.id, id));
 
-    const queue = getQueue<{ contentId: string; transcode?: boolean }>(QUEUE_NAMES.mediaProcessing);
-    if (queue) {
-      await queue.add('process', { contentId: id, transcode: true }, { jobId: `reprocess-${id}-${Date.now()}` });
+    const body = (req.body ?? {}) as { options?: VideoReprocessOptions };
+    const opts  = body.options;
+    let queued = false;
+
+    if (opts) {
+      // Full wizard-driven reprocess
+      const queue = getQueue<{ contentId: string; reprocessOptions?: VideoReprocessOptions; uploadedBy?: string }>(QUEUE_NAMES.mediaProcessing);
+      if (queue) {
+        await queue.add('process', { contentId: id, reprocessOptions: opts, uploadedBy: user.sub }, { jobId: `reprocess-${id}-${Date.now()}` });
+        queued = true;
+      } else {
+        reprocessVideoWithOptions(id, opts, user.sub).catch((err: unknown) => {
+          req.log.error({ err, contentId: id }, '[reprocess] inline reprocessVideoWithOptions failed');
+        });
+      }
     } else {
-      processContentMedia(id, { transcode: true }).catch((err: unknown) => {
-        req.log.error({ err, contentId: id }, '[reprocess] inline media processing failed');
-      });
+      // Legacy simple reprocess (Android transcode only)
+      const queue = getQueue<{ contentId: string; transcode?: boolean }>(QUEUE_NAMES.mediaProcessing);
+      if (queue) {
+        await queue.add('process', { contentId: id, transcode: true }, { jobId: `reprocess-${id}-${Date.now()}` });
+        queued = true;
+      } else {
+        processContentMedia(id, { transcode: true }).catch((err: unknown) => {
+          req.log.error({ err, contentId: id }, '[reprocess] inline media processing failed');
+        });
+      }
     }
 
-    return reply.send({ ok: true, queued: !!queue });
+    return reply.send({ ok: true, queued });
   });
 
   // Serves the thumbnail JPEG if one was generated, otherwise falls back to

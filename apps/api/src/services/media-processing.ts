@@ -12,8 +12,10 @@
 
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { randomUUID, createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { db, contentItems } from '@signage/db';
 import { eq } from 'drizzle-orm';
@@ -305,6 +307,448 @@ export async function transcodeToCompatible(
     console.error(`[media] transcode failed for ${absPath}:`, err);
     await fs.unlink(tmpPath).catch(() => undefined);
     return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VideoReprocessOptions — user-facing wizard configuration
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface VideoReprocessOptions {
+  // Video codec
+  videoCodec: 'h264' | 'h265' | 'vp9' | 'copy';
+  h264Profile?: 'baseline' | 'main' | 'high';
+  h264Level?: '3.1' | '4.0' | '4.1' | '5.0' | '5.1' | '5.2';
+  h265Profile?: 'main' | 'main10';
+  // Quality
+  qualityMode: 'crf' | 'bitrate';
+  crf?: number;
+  videoBitrate?: string;   // e.g. '8000k', '20M'
+  encodePreset?: 'ultrafast' | 'superfast' | 'veryfast' | 'faster' | 'fast' | 'medium' | 'slow';
+  pixelFormat?: 'yuv420p' | 'yuv422p' | 'yuv444p' | 'yuv420p10le';
+  framerate?: number;      // undefined = keep source fps
+  // Resolution / scale
+  resolution: 'original' | '4k' | '1080p' | '720p' | '480p' | 'custom';
+  customWidth?: number;
+  customHeight?: number;
+  scaleMode?: 'fit' | 'fill' | 'stretch';
+  // Trim (seconds from file start)
+  trimStart?: number;
+  trimEnd?: number;
+  // Rotation
+  rotation?: 0 | 90 | 180 | 270;
+  // Audio
+  audioCodec: 'copy' | 'aac' | 'mp3' | 'none';
+  audioBitrate?: '64k' | '128k' | '192k' | '256k' | '320k';
+  audioChannels?: 'original' | '2' | '1';
+  // Output disposition
+  //   android_variant  — saves _android.mp4 alongside original; other players unaffected
+  //   replace_original — overwrites the source; all players see the new file
+  //   new_item         — creates a new content item; original untouched
+  outputTarget: 'android_variant' | 'replace_original' | 'new_item';
+  // Optional user-supplied name for new_item output or wall tile prefix
+  outputName?: string;
+  // Video wall — creates rows×cols new content items (one spatially-cropped tile each)
+  videoWall?: { cols: number; rows: number };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Private ffmpeg helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _resolutionDims(opts: VideoReprocessOptions): { w: number; h: number } | null {
+  if (opts.resolution === '4k')    return { w: 3840, h: 2160 };
+  if (opts.resolution === '1080p') return { w: 1920, h: 1080 };
+  if (opts.resolution === '720p')  return { w: 1280, h: 720  };
+  if (opts.resolution === '480p')  return { w: 854,  h: 480  };
+  if (opts.resolution === 'custom' && opts.customWidth && opts.customHeight)
+    return { w: opts.customWidth, h: opts.customHeight };
+  return null;
+}
+
+/**
+ * Optionally swap libx264/libx265 for a hardware encoder when the
+ * FFMPEG_HW_ACCEL env var is set ('vaapi' | 'nvenc').
+ */
+function _resolveVideoEncoder(codec: string): string {
+  const hw = (process.env['FFMPEG_HW_ACCEL'] ?? '').toLowerCase();
+  if (!hw) return codec;
+  if (codec === 'libx264') {
+    if (hw === 'nvenc') return 'h264_nvenc';
+    if (hw === 'vaapi') return 'h264_vaapi';
+  }
+  if (codec === 'libx265') {
+    if (hw === 'nvenc') return 'hevc_nvenc';
+    if (hw === 'vaapi') return 'hevc_vaapi';
+  }
+  return codec;
+}
+
+function _buildFfmpegArgs(
+  absInput: string,
+  absOutput: string,
+  opts: VideoReprocessOptions,
+  extraVf?: string,
+): string[] {
+  const args: string[] = ['-y'];
+
+  // Input-side seek
+  if (opts.trimStart && opts.trimStart > 0) args.push('-ss', String(opts.trimStart));
+  args.push('-i', absInput);
+
+  // Output-side duration
+  if (opts.trimEnd != null && opts.trimEnd > 0) {
+    const dur = opts.trimEnd - (opts.trimStart ?? 0);
+    if (dur > 0) args.push('-t', String(dur));
+  }
+
+  // Stream selection
+  args.push('-map', '0:v:0');
+  if (opts.audioCodec !== 'none') args.push('-map', '0:a?');
+
+  // ── Video filter chain ────────────────────────────────────────────────────
+  const vfParts: string[] = [];
+  if (extraVf) vfParts.push(extraVf);
+
+  // Rotation
+  if (opts.rotation === 90)       vfParts.push('transpose=1');
+  else if (opts.rotation === 180) vfParts.push('vflip,hflip');
+  else if (opts.rotation === 270) vfParts.push('transpose=2');
+
+  // Scale (only when codec is not copy)
+  if (opts.videoCodec !== 'copy') {
+    const dim = _resolutionDims(opts);
+    if (dim) {
+      const { w, h } = dim;
+      if (opts.scaleMode === 'stretch') {
+        vfParts.push(`scale=${w}:${h}`);
+      } else if (opts.scaleMode === 'fill') {
+        vfParts.push(`scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}`);
+      } else {
+        // fit (default) — letterbox/pillarbox with black padding
+        vfParts.push(
+          `scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
+          `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2`,
+        );
+      }
+    }
+    // Always ensure even pixel dimensions required by most codecs
+    vfParts.push('scale=trunc(iw/2)*2:trunc(ih/2)*2');
+    if (vfParts.length > 0) args.push('-vf', vfParts.join(','));
+  }
+
+  // ── Video codec ───────────────────────────────────────────────────────────
+  if (opts.videoCodec === 'copy') {
+    args.push('-c:v', 'copy');
+  } else if (opts.videoCodec === 'h264') {
+    const enc = _resolveVideoEncoder('libx264');
+    args.push('-c:v', enc);
+    if (enc === 'libx264') {
+      if (opts.h264Profile)  args.push('-profile:v', opts.h264Profile);
+      if (opts.h264Level)    args.push('-level:v',   opts.h264Level);
+      if (opts.pixelFormat)  args.push('-pix_fmt',   opts.pixelFormat);
+      if (opts.encodePreset) args.push('-preset',    opts.encodePreset);
+      if (opts.qualityMode === 'crf' && opts.crf != null)
+        args.push('-crf', String(opts.crf));
+      else if (opts.qualityMode === 'bitrate' && opts.videoBitrate)
+        args.push('-b:v', opts.videoBitrate);
+    } else {
+      // HW encoder: pass profile + cq/bitrate flags
+      if (opts.h264Profile) args.push('-profile:v', opts.h264Profile);
+      if (opts.qualityMode === 'crf' && opts.crf != null)
+        args.push('-cq', String(opts.crf));
+      else if (opts.qualityMode === 'bitrate' && opts.videoBitrate)
+        args.push('-b:v', opts.videoBitrate);
+    }
+  } else if (opts.videoCodec === 'h265') {
+    const enc = _resolveVideoEncoder('libx265');
+    args.push('-c:v', enc);
+    if (enc === 'libx265') {
+      if (opts.h265Profile)  args.push('-profile:v', opts.h265Profile);
+      if (opts.pixelFormat)  args.push('-pix_fmt',   opts.pixelFormat);
+      if (opts.encodePreset) args.push('-preset',    opts.encodePreset);
+      if (opts.qualityMode === 'crf' && opts.crf != null)
+        args.push('-crf', String(opts.crf));
+      else if (opts.qualityMode === 'bitrate' && opts.videoBitrate)
+        args.push('-b:v', opts.videoBitrate);
+    } else {
+      if (opts.qualityMode === 'crf' && opts.crf != null)
+        args.push('-cq', String(opts.crf));
+      else if (opts.qualityMode === 'bitrate' && opts.videoBitrate)
+        args.push('-b:v', opts.videoBitrate);
+    }
+  } else if (opts.videoCodec === 'vp9') {
+    args.push('-c:v', 'libvpx-vp9');
+    if (opts.pixelFormat) args.push('-pix_fmt', opts.pixelFormat);
+    if (opts.qualityMode === 'crf' && opts.crf != null)
+      args.push('-crf', String(opts.crf), '-b:v', '0');
+    else if (opts.qualityMode === 'bitrate' && opts.videoBitrate)
+      args.push('-b:v', opts.videoBitrate);
+    if (opts.encodePreset) {
+      // VP9 uses -deadline / -cpu-used instead of -preset
+      const speedMap: Record<string, string> = {
+        ultrafast: '8', superfast: '7', veryfast: '6',
+        faster: '5', fast: '4', medium: '2', slow: '1',
+      };
+      args.push('-deadline', 'good', '-cpu-used', speedMap[opts.encodePreset] ?? '4');
+    }
+  }
+
+  if (opts.framerate) args.push('-r', String(opts.framerate));
+
+  // ── Audio ─────────────────────────────────────────────────────────────────
+  if (opts.audioCodec === 'none') {
+    args.push('-an');
+  } else if (opts.audioCodec === 'copy') {
+    args.push('-c:a', 'copy');
+  } else {
+    args.push('-c:a', opts.audioCodec === 'mp3' ? 'libmp3lame' : 'aac');
+    if (opts.audioBitrate) args.push('-b:a', opts.audioBitrate);
+    if (opts.audioChannels === '2') args.push('-ac', '2');
+    else if (opts.audioChannels === '1') args.push('-ac', '1');
+  }
+
+  // faststart for streaming MP4 (skip for WebM/VP9)
+  if (!absOutput.endsWith('.webm')) args.push('-movflags', '+faststart');
+
+  args.push(absOutput);
+  return args;
+}
+
+async function _hashFile(absPath: string): Promise<string> {
+  const h = createHash('sha256');
+  await new Promise<void>((resolve, reject) => {
+    const s = createReadStream(absPath);
+    s.on('data', (c) => h.update(c));
+    s.on('end', resolve);
+    s.on('error', reject);
+  });
+  return h.digest('hex');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// reprocessVideoWithOptions — user-initiated transcode with full options
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Run a full user-configured transcode job for an existing content item.
+ *
+ * outputTarget behaviour:
+ *   android_variant  — writes <base>_android.mp4 alongside original; all other
+ *                      players (Tizen/Windows/web) continue using the source.
+ *   replace_original — overwrites the source in-place; all players see the new file.
+ *   new_item         — inserts a new contentItems row; original untouched.
+ *
+ * videoWall overrides outputTarget: always creates rows×cols new items, each
+ * containing one spatially-cropped tile of the source video.
+ */
+export async function reprocessVideoWithOptions(
+  contentId: string,
+  opts: VideoReprocessOptions,
+  uploadedBy: string,
+): Promise<void> {
+  const item = await db.query.contentItems.findFirst({ where: eq(contentItems.id, contentId) });
+  if (!item || !item.filePath) return;
+
+  const absPath  = path.resolve(STORAGE_ROOT, item.filePath);
+  const dir      = path.dirname(absPath);
+  const base     = path.basename(absPath, path.extname(absPath));
+  const relDir   = path.dirname(item.filePath).replace(/\\/g, '/');
+
+  // ── Video-wall tile split ─────────────────────────────────────────────────
+  if (opts.videoWall && opts.videoWall.cols >= 1 && opts.videoWall.rows >= 1) {
+    const { cols, rows } = opts.videoWall;
+    const tilePrefix = opts.outputName?.trim() || item.name;
+    const tileIds: string[] = [];
+
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const tileId       = randomUUID();
+        const tileFilename = `${base}_wall_r${row}c${col}_${tileId}.mp4`;
+        const absTile      = path.join(dir, tileFilename);
+        const tmpTile      = `${absTile}.tmp`;
+
+        // Even-aligned crop: divide source into equal tiles
+        const cropVf =
+          `crop=trunc(iw/${cols}/2)*2:trunc(ih/${rows}/2)*2:` +
+          `trunc(iw/${cols}/2)*2*${col}:trunc(ih/${rows}/2)*2*${row}`;
+
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { videoWall: _vw, ...tileOpts } = opts;
+        const ffArgs = _buildFfmpegArgs(absPath, tmpTile, tileOpts as VideoReprocessOptions, cropVf);
+        try {
+          await execFileAsync(FFMPEG_BIN, ffArgs, { maxBuffer: 128 * 1024 * 1024 });
+          await fs.rename(tmpTile, absTile);
+        } catch (err) {
+          console.error(`[media] wall tile r${row}c${col} failed:`, err);
+          await fs.unlink(tmpTile).catch(() => {});
+          continue;
+        }
+
+        const tileStat    = await fs.stat(absTile);
+        const tileRelPath = `${relDir}/${tileFilename}`;
+        const tileName    = `${tilePrefix} [R${row + 1}C${col + 1}]`;
+
+        await db.insert(contentItems).values({
+          id: tileId,
+          workspaceId:  item.workspaceId,
+          uploadedBy,
+          type:         'video',
+          name:         tileName,
+          originalName: `${tileName}.mp4`,
+          filePath:     tileRelPath,
+          mimeType:     'video/mp4',
+          fileSize:     tileStat.size,
+          folderId:     item.folderId ?? null,
+          status:       'processing',
+        } as typeof contentItems.$inferInsert);
+
+        const thumbRel = tileRelPath.replace(/\.mp4$/, '_thumb.jpg');
+        const thumbAbs = path.resolve(STORAGE_ROOT, thumbRel);
+        await generateVideoThumb(absTile, thumbAbs).catch(() => {});
+
+        const tp = await probeVideo(absTile).catch(() => null);
+        await db.update(contentItems)
+          .set({
+            status:        'ready',
+            thumbnailPath: thumbRel,
+            width:         tp?.width ?? null,
+            height:        tp?.height ?? null,
+            duration:      tp?.duration != null ? Math.round(tp.duration) : null,
+            metadata: JSON.stringify({
+              videoCodec:  tp?.videoCodec,
+              fps:         tp?.fps,
+              pixFmt:      tp?.pixFmt,
+              wallTile:    { row, col, rows, cols, sourceContentId: contentId },
+            }),
+            updatedAt: new Date(),
+          })
+          .where(eq(contentItems.id, tileId));
+
+        tileIds.push(tileId);
+      }
+    }
+
+    // Update source item with wallTileIds reference
+    let existingMeta: Record<string, unknown> = {};
+    try { existingMeta = JSON.parse(item.metadata ?? '{}'); } catch { /* ignore */ }
+    await db.update(contentItems)
+      .set({ status: 'ready', metadata: JSON.stringify({ ...existingMeta, wallTileIds: tileIds }), updatedAt: new Date() })
+      .where(eq(contentItems.id, contentId));
+    return;
+  }
+
+  // ── Single-file transcode ─────────────────────────────────────────────────
+  let outPath: string;
+  let outRelPath: string;
+
+  if (opts.outputTarget === 'android_variant') {
+    outPath    = path.join(dir, `${base}_android.mp4`);
+    outRelPath = `${relDir}/${base}_android.mp4`;
+  } else if (opts.outputTarget === 'replace_original') {
+    outPath    = absPath;
+    outRelPath = item.filePath;
+  } else {
+    const suffix   = randomUUID().slice(0, 8);
+    const filename = `${base}_${suffix}.mp4`;
+    outPath    = path.join(dir, filename);
+    outRelPath = `${relDir}/${filename}`;
+  }
+
+  const tmpPath = `${outPath}.rp_tmp`;
+  const ffArgs  = _buildFfmpegArgs(absPath, tmpPath, opts);
+
+  try {
+    await execFileAsync(FFMPEG_BIN, ffArgs, { maxBuffer: 128 * 1024 * 1024 });
+    await fs.rename(tmpPath, outPath);
+  } catch (err) {
+    console.error(`[media] reprocess failed for ${contentId}:`, err);
+    await fs.unlink(tmpPath).catch(() => {});
+    await db.update(contentItems)
+      .set({ status: 'error', updatedAt: new Date() })
+      .where(eq(contentItems.id, contentId));
+    return;
+  }
+
+  const stat = await fs.stat(outPath);
+  let existingMeta: Record<string, unknown> = {};
+  try { existingMeta = JSON.parse(item.metadata ?? '{}'); } catch { /* ignore */ }
+
+  if (opts.outputTarget === 'android_variant') {
+    await db.update(contentItems)
+      .set({
+        status:   'ready',
+        metadata: JSON.stringify({ ...existingMeta, androidFilePath: outRelPath }),
+        updatedAt: new Date(),
+      })
+      .where(eq(contentItems.id, contentId));
+
+  } else if (opts.outputTarget === 'replace_original') {
+    const newHash = await _hashFile(outPath);
+    const probe   = await probeVideo(outPath).catch(() => null);
+    const thumbRel = item.filePath.replace(/(\.[^.]+)?$/, '_thumb.jpg');
+    const thumbAbs = path.resolve(STORAGE_ROOT, thumbRel);
+    await generateVideoThumb(outPath, thumbAbs).catch(() => {});
+
+    await db.update(contentItems)
+      .set({
+        status:       'ready',
+        fileSize:     stat.size,
+        fileHash:     newHash,
+        thumbnailPath: thumbRel.replace(/\\/g, '/'),
+        width:        probe?.width    ?? item.width,
+        height:       probe?.height   ?? item.height,
+        duration:     probe?.duration != null ? Math.round(probe.duration) : item.duration,
+        metadata:     JSON.stringify({
+          ...existingMeta,
+          videoCodec:   probe?.videoCodec,
+          codecProfile: probe?.codecProfile,
+          pixFmt:       probe?.pixFmt,
+          fps:          probe?.fps,
+        }),
+        updatedAt: new Date(),
+      })
+      .where(eq(contentItems.id, contentId));
+
+  } else {
+    // new_item
+    const newHash  = await _hashFile(outPath);
+    const probe    = await probeVideo(outPath).catch(() => null);
+    const thumbRel = outRelPath.replace(/\.mp4$/, '_thumb.jpg');
+    const thumbAbs = path.resolve(STORAGE_ROOT, thumbRel);
+    await generateVideoThumb(outPath, thumbAbs).catch(() => {});
+
+    const newName = opts.outputName?.trim() || `${item.name} (reprocessed)`;
+
+    await db.insert(contentItems).values({
+      id:           randomUUID(),
+      workspaceId:  item.workspaceId,
+      uploadedBy,
+      type:         'video',
+      name:         newName,
+      originalName: `${newName}.mp4`,
+      filePath:     outRelPath,
+      thumbnailPath: thumbRel,
+      mimeType:     'video/mp4',
+      fileSize:     stat.size,
+      fileHash:     newHash,
+      folderId:     item.folderId ?? null,
+      width:        probe?.width    ?? null,
+      height:       probe?.height   ?? null,
+      duration:     probe?.duration != null ? Math.round(probe.duration) : null,
+      status:       'ready',
+      metadata: JSON.stringify({
+        videoCodec:       probe?.videoCodec,
+        fps:              probe?.fps,
+        pixFmt:           probe?.pixFmt,
+        sourceContentId:  contentId,
+      }),
+    } as typeof contentItems.$inferInsert);
+
+    // Mark the source item as ready (it was set to 'processing' by the route)
+    await db.update(contentItems)
+      .set({ status: 'ready', updatedAt: new Date() })
+      .where(eq(contentItems.id, contentId));
   }
 }
 
