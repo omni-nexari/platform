@@ -39,6 +39,7 @@ interface DeviceLite {
   id: string;
   name: string;
   status: string;
+  platform?: string;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -56,7 +57,7 @@ const GROUP_TYPES = ['sync', 'videowall', 'location', 'tag'] as const;
 
 interface WizardState {
   open: boolean;
-  step: 1 | 2;
+  step: 1 | 2 | 3;
   name: string;
   type: DeviceGroup['type'];
   description: string;
@@ -64,11 +65,14 @@ interface WizardState {
   rows: number;
   createdGroupId: string | null;
   createdSyncGroupId: string | null;
+  pinnedLeaderId: string | null;
+  syncRelayMode: 'lan' | 'cloud';
 }
 
 const INITIAL_WIZARD: WizardState = {
   open: false, step: 1, name: '', type: 'location', description: '',
   cols: 2, rows: 2, createdGroupId: null, createdSyncGroupId: null,
+  pinnedLeaderId: null, syncRelayMode: 'lan',
 };
 
 // ── Stepper ───────────────────────────────────────────────────────────────────
@@ -190,9 +194,30 @@ export default function DeviceGroupsPage() {
     onSuccess: () => {
       const count = selectedIds.size;
       toast.success(`${count} screen${count !== 1 ? 's' : ''} added`);
-      skipAndNavigate();
+      // For sync/videowall groups: proceed to step 3 (relay/leader settings).
+      // For other types: navigate directly.
+      if (wizard.type === 'sync' || wizard.type === 'videowall') {
+        setWizard((w) => ({ ...w, step: 3 }));
+      } else {
+        skipAndNavigate();
+      }
     },
     onError: () => toast.error('Failed to add screens'),
+  });
+
+  const patchGroupMut = useMutation({
+    mutationFn: () => {
+      const body = { syncRelayMode: wizard.syncRelayMode, pinnedLeaderId: wizard.pinnedLeaderId };
+      if (wizard.type === 'sync' && wizard.createdSyncGroupId) {
+        return api.patch(`/sync-groups/${wizard.createdSyncGroupId}`, body);
+      }
+      return api.patch(`/device-groups/${wizard.createdGroupId}`, body);
+    },
+    onSuccess: () => {
+      toast.success('Group settings saved');
+      skipAndNavigate();
+    },
+    onError: () => toast.error('Failed to save settings'),
   });
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -317,11 +342,11 @@ export default function DeviceGroupsPage() {
       <Modal
         open={wizard.open}
         size={wizard.step === 2 ? 'md' : 'sm'}
-        onClose={() => wizard.step === 2 ? skipAndNavigate() : closeWizard()}
+        onClose={() => wizard.step >= 2 ? skipAndNavigate() : closeWizard()}
       >
         {/* Step indicators */}
         <div className="px-5 pt-5 flex items-center gap-1.5">
-          {([1, 2] as const).map((s) => (
+          {((['sync', 'videowall'].includes(wizard.type) || wizard.step === 1) ? ([1, 2, 3] as const) : ([1, 2] as const)).map((s) => (
             <div key={s} className="flex items-center gap-1.5">
               {s > 1 && <div className="h-px w-5 bg-[var(--border)]" />}
               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold transition-colors ${
@@ -334,7 +359,7 @@ export default function DeviceGroupsPage() {
                 {wizard.step > s ? <Check className="w-3 h-3" /> : s}
               </div>
               <span className={`text-xs ${wizard.step === s ? 'text-[var(--text)]' : 'text-[var(--text-muted)]'}`}>
-                {s === 1 ? 'Group details' : 'Add screens'}
+                {s === 1 ? 'Group details' : s === 2 ? 'Add screens' : 'Sync settings'}
               </span>
             </div>
           ))}
@@ -510,6 +535,98 @@ export default function DeviceGroupsPage() {
                   : selectedIds.size > 0
                   ? `Add ${selectedIds.size} Screen${selectedIds.size !== 1 ? 's' : ''}`
                   : 'Add Screens'}
+              </ModalPrimaryButton>
+            </ModalFooter>
+          </>
+        )}
+
+        {/* ── Step 3: sync / relay settings ─────────────────────────────────── */}
+        {wizard.step === 3 && (
+          <>
+            <ModalHeader>Sync settings for &ldquo;{wizard.name}&rdquo;</ModalHeader>
+            <ModalBody>
+              <div className="space-y-5">
+                {/* Relay mode */}
+                <div>
+                  <label className="ui-label">Relay Mode</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['lan', 'cloud'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setWizard((w) => ({ ...w, syncRelayMode: mode }))}
+                        className={`flex flex-col gap-0.5 px-3 py-2.5 rounded-lg border text-sm transition-colors text-left ${
+                          wizard.syncRelayMode === mode
+                            ? 'border-[var(--blue)] bg-[var(--blue)]/10 text-[var(--text)]'
+                            : 'border-[var(--card-border)] text-[var(--text-muted)] hover:text-[var(--text)]'
+                        }`}
+                      >
+                        <span className="font-medium capitalize">{mode === 'lan' ? 'LAN (local)' : 'Cloud relay'}</span>
+                        <span className="text-xs text-[var(--text-faint)]">
+                          {mode === 'lan' ? 'Devices sync directly over local network' : 'Sync via cloud — works across sites'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Leader selection */}
+                <div>
+                  <label className="ui-label">Sync Leader</label>
+                  <p className="text-xs text-[var(--text-muted)] mb-2">
+                    The leader coordinates playback timing. Auto-select picks the best device automatically.
+                  </p>
+                  <div className="rounded-lg border border-[var(--border)] overflow-hidden max-h-48 overflow-y-auto divide-y divide-[var(--border)]">
+                    {/* Auto-select option */}
+                    <button
+                      type="button"
+                      onClick={() => setWizard((w) => ({ ...w, pinnedLeaderId: null }))}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                        wizard.pinnedLeaderId === null ? 'bg-[var(--blue)]/8' : 'hover:bg-[var(--bg)]'
+                      }`}
+                    >
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                        wizard.pinnedLeaderId === null ? 'border-[var(--blue)] bg-[var(--blue)]' : 'border-[var(--border)]'
+                      }`}>
+                        {wizard.pinnedLeaderId === null && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                      </div>
+                      <span className="text-sm text-[var(--text)]">Auto-select (recommended)</span>
+                    </button>
+                    {/* Selected devices as leader candidates */}
+                    {allDevices.filter((d) => selectedIds.has(d.id)).map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => setWizard((w) => ({ ...w, pinnedLeaderId: d.id }))}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                          wizard.pinnedLeaderId === d.id ? 'bg-[var(--blue)]/8' : 'hover:bg-[var(--bg)]'
+                        }`}
+                      >
+                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                          wizard.pinnedLeaderId === d.id ? 'border-[var(--blue)] bg-[var(--blue)]' : 'border-[var(--border)]'
+                        }`}>
+                          {wizard.pinnedLeaderId === d.id && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                        </div>
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.status === 'online' ? 'bg-emerald-400' : 'bg-white/20'}`} />
+                        <span className="text-sm text-[var(--text)] flex-1 truncate">{d.name}</span>
+                        {d.platform && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--text-faint)] shrink-0 capitalize">
+                            {d.platform}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </ModalBody>
+            <ModalFooter>
+              <ModalSecondaryButton onClick={skipAndNavigate}>Skip</ModalSecondaryButton>
+              <ModalPrimaryButton
+                onClick={() => patchGroupMut.mutate()}
+                disabled={patchGroupMut.isPending}
+              >
+                {patchGroupMut.isPending ? 'Saving…' : 'Save & Finish'}
               </ModalPrimaryButton>
             </ModalFooter>
           </>

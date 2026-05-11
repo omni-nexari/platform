@@ -15,6 +15,8 @@ if (window.AndroidBridge && window.AndroidBridge.makeJsAdapterScript) {
 const adapter = (window.AndroidBridge && typeof window.AndroidBridge.makeJsAdapter === 'function')
   ? window.AndroidBridge.makeJsAdapter()
   : null;
+// Expose adapter as window.nexari so player can call platform methods (e.g. startRelay).
+try { if (adapter) window.nexari = adapter; } catch (_) {}
 if (!adapter) {
   document.body.style.color = '#fff';
   document.body.textContent = 'AndroidBridge not available';

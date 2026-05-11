@@ -140,6 +140,8 @@ interface DeviceGroupDetail {
   bezelRightMm: number | null;
   bezelBottomMm: number | null;
   bezelLeftMm: number | null;
+  syncRelayMode: 'lan' | 'cloud' | null;
+  pinnedLeaderId: string | null;
   members: DeviceGroupMember[];
   syncGroup: SyncGroupHydrated | null;
   syncMembers: SyncMember[];
@@ -243,6 +245,18 @@ export default function DeviceGroupDetailPage() {
       void qc.invalidateQueries({ queryKey: ['device-group', groupId] });
     },
     onError: () => toast.error('Failed to remove'),
+  });
+
+  const patchRelayMut = useMutation({
+    mutationFn: (body: { syncRelayMode?: 'lan' | 'cloud'; pinnedLeaderId?: string | null }) => {
+      if (isSync && syncGroupId) return api.patch(`/sync-groups/${syncGroupId}`, body);
+      return api.patch(`/device-groups/${groupId}`, body);
+    },
+    onSuccess: () => {
+      toast.success('Settings saved');
+      void qc.invalidateQueries({ queryKey: ['device-group', groupId] });
+    },
+    onError: () => toast.error('Failed to save settings'),
   });
 
   if (isLoading || !group) {
@@ -403,6 +417,90 @@ export default function DeviceGroupDetailPage() {
               <p className="text-xs text-[var(--text-muted)]">
                 Mode: <span className="text-[var(--text)]">{group.syncGroup.mode === 'native-samsung' ? 'Samsung Native SyncPlay' : group.syncGroup.mode}</span>
               </p>
+
+              {/* Relay mode toggle */}
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="text-[var(--text-muted)]">Relay:</span>
+                <div className="flex items-center gap-1">
+                  {(['lan', 'cloud'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => patchRelayMut.mutate({ syncRelayMode: m })}
+                      className={`px-2 py-1 rounded border text-xs transition-colors ${
+                        (group.syncRelayMode ?? 'lan') === m
+                          ? 'border-[var(--blue)] bg-[var(--blue)]/15 text-[var(--text)]'
+                          : 'border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)]'
+                      }`}
+                    >
+                      {m === 'lan' ? 'LAN' : 'Cloud'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Leader picker */}
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="text-[var(--text-muted)]">Leader:</span>
+                <select
+                  className="ui-input text-xs py-1 h-auto"
+                  value={group.pinnedLeaderId ?? ''}
+                  onChange={(e) => patchRelayMut.mutate({ pinnedLeaderId: e.target.value || null })}
+                >
+                  <option value="">Auto-select</option>
+                  {group.syncMembers.map((m) => (
+                    <option key={m.deviceId} value={m.deviceId}>
+                      {m.device?.name ?? m.deviceId}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {isVideowall && (
+            <div className="rounded-xl border p-4 flex flex-col gap-3" style={{ borderColor: 'var(--border)' }}>
+              <h3 className="text-sm font-semibold text-[var(--text)] flex items-center gap-2">
+                <Tv className="w-4 h-4 text-[var(--text-muted)]" /> Video Wall Sync Settings
+              </h3>
+
+              {/* Relay mode toggle */}
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="text-[var(--text-muted)]">Relay:</span>
+                <div className="flex items-center gap-1">
+                  {(['lan', 'cloud'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => patchRelayMut.mutate({ syncRelayMode: m })}
+                      className={`px-2 py-1 rounded border text-xs transition-colors ${
+                        (group.syncRelayMode ?? 'lan') === m
+                          ? 'border-[var(--blue)] bg-[var(--blue)]/15 text-[var(--text)]'
+                          : 'border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)]'
+                      }`}
+                    >
+                      {m === 'lan' ? 'LAN' : 'Cloud'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Leader picker */}
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="text-[var(--text-muted)]">Leader:</span>
+                <select
+                  className="ui-input text-xs py-1 h-auto"
+                  value={group.pinnedLeaderId ?? ''}
+                  onChange={(e) => patchRelayMut.mutate({ pinnedLeaderId: e.target.value || null })}
+                >
+                  <option value="">Auto-select</option>
+                  {group.members.map((m) => (
+                    <option key={m.deviceId} value={m.deviceId}>
+                      {m.device?.name ?? m.deviceId}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           )}
 

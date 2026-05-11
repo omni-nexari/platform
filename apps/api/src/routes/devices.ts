@@ -1742,13 +1742,30 @@ export async function deviceRoutes(app: FastifyInstance) {
           const geometry = buildWallGeometry(wallMembers, group.videoWallCols, group.videoWallRows, bezels);
           const sortedMembers = [...allMembers]
             .filter((m) => m.positionCol != null && m.positionRow != null)
-            .sort((a, b) => (a.positionRow! - b.positionRow!) || (a.positionCol! - b.positionCol!));
+            .sort((a, b) => {
+              const aPinned = (group as any).pinnedLeaderId === a.deviceId ? 0 : 1;
+              const bPinned = (group as any).pinnedLeaderId === b.deviceId ? 0 : 1;
+              if (aPinned !== bPinned) return aPinned - bPinned;
+              const platPri = (id: string) => {
+                const p = (deviceMap[id] as any)?.platform ?? '';
+                return ({ tizen: 0, 'tizen-sbb': 1, windows: 2, android: 3, browser: 4 } as Record<string, number>)[p] ?? 99;
+              };
+              const ap = platPri(a.deviceId), bp = platPri(b.deviceId);
+              if (ap !== bp) return ap - bp;
+              return (a.positionRow! - b.positionRow!) || (a.positionCol! - b.positionCol!);
+            });
           const leaderPriority = sortedMembers.map((m) => m.deviceId);
           const peers = sortedMembers.map((m) => ({
             deviceId: m.deviceId,
             lastKnownIp: (deviceMap[m.deviceId] as any)?.ipAddress ?? null,
             port: 9615,
+            platform: (deviceMap[m.deviceId] as any)?.platform ?? 'tizen',
           }));
+          const allTizen = peers.every((p) => p.platform === 'tizen' || p.platform === 'tizen-sbb');
+          const leaderDev = deviceMap[sortedMembers[0]?.deviceId ?? ''] as any;
+          const relayMode = (group as any).syncRelayMode ?? 'lan';
+          const relayUrl = relayMode === 'lan' && leaderDev?.ipAddress && ['tizen','tizen-sbb','windows','android'].includes(leaderDev.platform ?? '')
+            ? `ws://${leaderDev.ipAddress}:9616` : null;
 
           const myMember = allMembers.find((m) => m.deviceId === deviceId);
           if (!myMember || myMember.positionCol == null || myMember.positionRow == null) continue;
@@ -1760,6 +1777,9 @@ export async function deviceRoutes(app: FastifyInstance) {
             geometry,
             leaderPriority,
             peers,
+            allTizen,
+            relayUrl,
+            syncRelayMode: relayMode,
             myCell: {
               deviceId,
               positionCol: myMember.positionCol,

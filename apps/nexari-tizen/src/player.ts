@@ -191,6 +191,9 @@ const Player = {
   // Videowall Phase 2 (wall-engine + wall-sync subsystem)
   _videowallCurrentUrl: null as string | null,
   _wallRelayStarted: false as boolean,
+  // Mixed-platform videowall: WS relay client (used when allTizen === false)
+  _mixedRelayWs: null as WebSocket | null,
+  _mixedRelayStop: null as (() => void) | null,
 
   // Live calendar push handlers, keyed by contentId. Populated by
   // renderCalendar when it subscribes; cleared on unsubscribe / teardown.
@@ -471,6 +474,16 @@ const Player = {
           logger.info('Sync group init received:', message.payload);
           if (typeof SyncEngine !== 'undefined') {
             SyncEngine.setManifest(message.payload);
+            // If relay is LAN and we may become leader, start the relay server
+            // when elected. The callback fires on role transitions only.
+            if (message.payload?.syncRelayMode === 'lan') {
+              SyncEngine.onRoleChange((r: string) => {
+                if (r === 'leader') {
+                  logger.info('[player] Elected as leader — starting node relay');
+                  this._startWallNodeRelay();
+                }
+              });
+            }
           }
           break;
 
@@ -512,14 +525,17 @@ const Player = {
               WallEngine.initEngine();
             }
             if (typeof WallSync !== 'undefined' && !WallSync.isRunning()
-                && message.leaderPriority && message.peers) {
+                && message.leaderPriority && message.peers
+                && message.allTizen !== false) {
               const leaderDeviceId = message.leaderPriority[0];
               const leaderPeer = message.peers.find((p: any) => p.deviceId === leaderDeviceId);
-              const relayIp = leaderPeer && leaderPeer.lastKnownIp;
-              if (relayIp) {
+              // Prefer explicit relayUrl from manifest; fall back to deriving from lastKnownIp.
+              const wsUrl = message.relayUrl
+                || (leaderPeer?.lastKnownIp ? `ws://${leaderPeer.lastKnownIp}:9616` : null);
+              if (wsUrl) {
                 this._startWallNodeRelay();
                 WallSync.init({
-                  wsUrl:         `ws://${relayIp}:9616`,
+                  wsUrl,
                   groupId:       message.deviceGroupId,
                   deviceId:      this.deviceId,
                   expectedPeers: message.peers.length,
@@ -527,6 +543,12 @@ const Player = {
                   getContentUrl: () => this._videowallCurrentUrl || null,
                 });
               }
+            }
+            // Mixed-platform videowall: allTizen===false → connect to RFC 6455 relay.
+            if (message.allTizen === false && message.leaderPriority && message.peers) {
+              const isLeader = message.leaderPriority[0] === this.deviceId;
+              if (isLeader) this._startWallNodeRelay();
+              this._startMixedWallSync(message);
             }
           }
           // Re-check content so any pending videowall content starts rendering
@@ -1782,7 +1804,120 @@ const Player = {
     }
   },
 
-  // Internal: invoke startSyncPlay() for the full panel rect. The 5th arg
+  /**
+   * Mixed-platform videowall sync — connects to the RFC 6455 relay as a WS
+   * client using the same JSON protocol as sync.ts (cloud relay).
+   * Used when allTizen===false (Windows/Android leader or mixed group).
+   */
+  _startMixedWallSync(manifest: any) {
+    // Tear down any previous connection.
+    if (this._mixedRelayStop) { try { this._mixedRelayStop(); } catch {} this._mixedRelayStop = null; }
+
+    const relayUrl  = manifest.relayUrl;
+    const groupId   = manifest.deviceGroupId;
+    const deviceId  = this.deviceId;
+    if (!relayUrl) return;
+
+    const self = this;
+    let stopped = false;
+    let goTimer: any = null;
+    let reconnTimer: any = null;
+    let readySent = false;
+
+    const sendIfOpen = (ws: WebSocket, obj: object) => {
+      if (ws.readyState === 1) try { ws.send(JSON.stringify(obj)); } catch {}
+    };
+
+    const connect = () => {
+      if (stopped) return;
+      const ws = new WebSocket(relayUrl);
+      self._mixedRelayWs = ws;
+
+      ws.onopen = () => {
+        readySent = false;
+        sendIfOpen(ws, { type: 'WS_REGISTER', deviceId, groupId });
+        logger.info('[MixedWall] registered → ' + relayUrl);
+        // Poll until content is loaded, then send READY.
+        const pollReady = () => {
+          if (stopped || readySent) return;
+          if (self._videowallCurrentUrl) {
+            readySent = true;
+            sendIfOpen(ws, { type: 'READY' });
+            logger.info('[MixedWall] READY sent');
+          } else {
+            setTimeout(pollReady, 500);
+          }
+        };
+        pollReady();
+      };
+
+      ws.onmessage = (ev: MessageEvent) => {
+        let msg: any;
+        try { msg = JSON.parse(ev.data as string); } catch { return; }
+
+        if (msg.type === 'LOAD_URL') {
+          // Leader says "load this URL" — Tizen already loads from schedule,
+          // but reset readySent so we re-confirm when our content is ready.
+          readySent = false;
+          const pollReady = () => {
+            if (stopped || readySent) return;
+            if (self._videowallCurrentUrl) {
+              readySent = true;
+              sendIfOpen(ws, { type: 'READY' });
+              logger.info('[MixedWall] READY re-sent (LOAD_URL trigger)');
+            } else {
+              setTimeout(pollReady, 500);
+            }
+          };
+          setTimeout(pollReady, 100);
+          return;
+        }
+
+        if (msg.type === 'GO' || msg.type === 'LOOP_GO') {
+          const playAt = Number(msg.playAt);
+          const delay  = Math.max(0, playAt - Date.now());
+          logger.info('[MixedWall] ' + msg.type + ' in ' + delay + 'ms');
+          if (goTimer) clearTimeout(goTimer);
+          goTimer = setTimeout(() => {
+            // Seek current AVPlay instance to 0 and play for synchronized start.
+            const player = self.currentAvPlayer === 'player1' ? self.avPlayer1 : self.avPlayer2;
+            if (player) {
+              try { player.seek(0); } catch {}
+              try { player.play(); } catch {}
+            }
+            logger.info('[MixedWall] play triggered');
+            // After loop starts playing, send LOOP_READY for next loop barrier.
+            const dur = player ? (player.getDuration() || 10000) : 10000;
+            setTimeout(() => {
+              if (!stopped && ws.readyState === 1) {
+                sendIfOpen(ws, { type: 'LOOP_READY', groupId, deviceId });
+                logger.info('[MixedWall] LOOP_READY sent');
+              }
+            }, Math.max(dur - 1000, 500));
+          }, delay);
+          return;
+        }
+      };
+
+      ws.onerror = () => logger.warn('[MixedWall] WS error');
+      ws.onclose = () => {
+        self._mixedRelayWs = null;
+        if (!stopped) {
+          reconnTimer = setTimeout(connect, 2000);
+          logger.warn('[MixedWall] WS closed — reconnecting');
+        }
+      };
+    };
+
+    this._mixedRelayStop = () => {
+      stopped = true;
+      if (goTimer) clearTimeout(goTimer);
+      if (reconnTimer) clearTimeout(reconnTimer);
+      if (self._mixedRelayWs) { try { self._mixedRelayWs.close(); } catch {} self._mixedRelayWs = null; }
+    };
+
+    connect();
+  },
   // (sample uses 5 for full-screen, 7 for rotated) is mirrored from the
   // Samsung b2bsync sample.
   _startNativeSyncPlay(api: any, groupId: number) {
@@ -2805,6 +2940,7 @@ const Player = {
       if (typeof WallEngine !== 'undefined' && WallEngine.isInitialised()) {
         try { WallEngine.destroyEngine(); } catch {}
       }
+      if (this._mixedRelayStop) { try { this._mixedRelayStop(); } catch {} this._mixedRelayStop = null; }
       this._videowallCurrentUrl = null;
     }
     // Videowall mode: CSS-crop the full-wall video to this panel's region.

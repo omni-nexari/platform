@@ -18,6 +18,125 @@ let ws: WebSocket | null = null;
 let hbTimer: ReturnType<typeof setInterval> | null = null;
 let win: BrowserWindow | null = null;
 
+// ── LAN Relay (port 9616) ─────────────────────────────────────────────────
+// Full JSON protocol relay compatible with sync.ts (cloud relay protocol).
+// Handles: WS_REGISTER→PEERS, PING→PONG(t1/t2), READY barrier→GO(playAt),
+//          LOOP_READY barrier→LOOP_GO(playAt), HEARTBEAT_PEERS every 5s,
+//          all other messages fanout with `from`.
+
+interface RelayPeer { ws: WebSocket; deviceId: string; groupId: string; registeredAt: number; }
+
+let relayServer: WebSocket.Server | null = null;
+let relayPeers: RelayPeer[] = [];
+let relayReadySet: Set<WebSocket> = new Set();
+let relayLoopReady = new Map<string, Set<string>>();
+let relayHbTimer: ReturnType<typeof setInterval> | null = null;
+
+function _relaySendPeers(groupId: string): void {
+  const group = relayPeers.filter((p) => p.groupId === groupId);
+  const peers = group.map((p) => ({ deviceId: p.deviceId, ip: '', registeredAt: p.registeredAt }));
+  const frame = JSON.stringify({ type: 'PEERS', groupId, peers, serverTimeMs: Date.now() });
+  group.forEach((p) => { if (p.ws.readyState === WebSocket.OPEN) try { p.ws.send(frame); } catch {} });
+}
+
+function startRelayServer(_expectedPeers: number): void {
+  if (relayServer) return; // already running
+  relayReadySet.clear();
+  relayLoopReady.clear();
+  relayPeers = [];
+
+  relayServer = new WebSocket.Server({ port: 9616 });
+
+  // Heartbeat: broadcast HEARTBEAT_PEERS to each group every 5 s so sync.ts
+  // _waitPeers() sees peer updates even if WS_REGISTER arrives out of order.
+  relayHbTimer = setInterval(() => {
+    if (!relayServer) return;
+    const groups = new Set(relayPeers.map((p) => p.groupId).filter(Boolean));
+    for (const gid of groups) {
+      const ids = relayPeers.filter((p) => p.groupId === gid).map((p) => p.deviceId);
+      const frame = JSON.stringify({ type: 'HEARTBEAT_PEERS', peers: ids });
+      relayPeers.filter((p) => p.groupId === gid).forEach((p) => {
+        if (p.ws.readyState === WebSocket.OPEN) try { p.ws.send(frame); } catch {}
+      });
+    }
+  }, 5000);
+
+  relayServer.on('close', () => {
+    if (relayHbTimer) { clearInterval(relayHbTimer); relayHbTimer = null; }
+  });
+
+  relayServer.on('connection', (client: WebSocket) => {
+    const peer: RelayPeer = { ws: client, deviceId: '', groupId: '', registeredAt: 0 };
+    relayPeers.push(peer);
+
+    client.on('message', (data: RawData) => {
+      let msg: any;
+      try { msg = JSON.parse(data.toString()); } catch { return; }
+      const type: string = msg?.type ?? '';
+
+      if (type === 'PING') {
+        client.send(JSON.stringify({ type: 'PONG', t1: msg.t1, t2: Date.now() }));
+        return;
+      }
+      if (type === 'WS_REGISTER') {
+        peer.deviceId    = String(msg.deviceId || `anon-${Date.now()}`);
+        peer.groupId     = String(msg.groupId  || 'default');
+        peer.registeredAt = Date.now();
+        _relaySendPeers(peer.groupId);
+        return;
+      }
+      if (type === 'READY') {
+        relayReadySet.add(client);
+        const groupPeers = relayPeers.filter((p) => p.groupId === peer.groupId && p.ws.readyState === WebSocket.OPEN);
+        if (relayReadySet.size >= Math.max(1, groupPeers.length)) {
+          const playAt = Date.now() + 400;
+          const go = JSON.stringify({ type: 'GO', playAt });
+          groupPeers.forEach((p) => { try { p.ws.send(go); } catch {} });
+          relayReadySet.clear();
+        }
+        return;
+      }
+      if (type === 'LOOP_READY') {
+        const gid = String(msg.groupId || peer.groupId);
+        let set = relayLoopReady.get(gid);
+        if (!set) { set = new Set(); relayLoopReady.set(gid, set); }
+        set.add(String(msg.deviceId || peer.deviceId));
+        const groupPeers = relayPeers.filter((p) => p.groupId === gid && p.ws.readyState === WebSocket.OPEN);
+        if (groupPeers.length >= 2 && set.size >= groupPeers.length) {
+          relayLoopReady.set(gid, new Set());
+          const playAt = Date.now() + 400;
+          const loopGo = JSON.stringify({ type: 'LOOP_GO', playAt });
+          groupPeers.forEach((p) => { try { p.ws.send(loopGo); } catch {} });
+        }
+        return;
+      }
+      // All other messages (LOAD_URL, PLAYHEAD, etc.): fanout to group with `from`.
+      const out = JSON.stringify({ ...msg, from: peer.deviceId || 'relay' });
+      relayPeers.filter((p) => p.ws !== client && p.groupId === peer.groupId)
+        .forEach((p) => { if (p.ws.readyState === WebSocket.OPEN) try { p.ws.send(out); } catch {} });
+    });
+
+    client.on('close', () => {
+      relayReadySet.delete(client);
+      const idx = relayPeers.indexOf(peer);
+      if (idx >= 0) relayPeers.splice(idx, 1);
+      if (peer.groupId) _relaySendPeers(peer.groupId);
+    });
+  });
+  console.info('[ws-client] LAN relay server started on port 9616');
+}
+
+function stopRelayServer(): void {
+  if (!relayServer) return;
+  if (relayHbTimer) { clearInterval(relayHbTimer); relayHbTimer = null; }
+  relayServer.close();
+  relayServer = null;
+  relayPeers = [];
+  relayReadySet.clear();
+  relayLoopReady.clear();
+  console.info('[ws-client] LAN relay server stopped');
+}
+
 /** Send any message over the device WS (callable from IPC handlers). */
 export function wsSend(payload: Record<string, unknown>): void {
   if (ws?.readyState === WebSocket.OPEN) {
@@ -255,6 +374,24 @@ async function handleCommand(msg: any) {
     case 'emergency_clear':
       win?.webContents.send('WS_MESSAGE', msg);
       break;
+
+    case 'SYNC_GROUP_INIT':
+    case 'VIDEOWALL_INIT': {
+      // If this device is the elected leader and relay mode is LAN, start the
+      // relay server so followers can connect to port 9616.
+      const store2 = getStore();
+      const myDeviceId = store2.get('deviceId') as string | undefined;
+      const isLeader = Array.isArray(msg.leaderPriority) && msg.leaderPriority[0] === myDeviceId;
+      if (isLeader && (msg.syncRelayMode ?? 'lan') === 'lan') {
+        const expectedPeers = Array.isArray(msg.peers) ? msg.peers.length : 1;
+        startRelayServer(expectedPeers);
+      } else {
+        // Not leader — stop any previous relay we may have been running.
+        stopRelayServer();
+      }
+      win?.webContents.send('WS_MESSAGE', msg);
+      break;
+    }
 
     default:
       // Forward all other messages (sync relay etc.) to renderer

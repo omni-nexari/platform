@@ -146,6 +146,7 @@ export class Player {
     if (this.logStreamTimer)       { clearInterval(this.logStreamTimer);       this.logStreamTimer = null; }
     this.cancelPlayback();
     if (this.syncActive) { try { syncStop(); } catch {} this.syncActive = false; }
+    try { (window as any).nexari?.stopRelay?.(); } catch {}
     if (this.ws) { try { this.ws.close(); } catch {} this.ws = null; }
   }
 
@@ -489,7 +490,7 @@ export class Player {
         return;
       }
       case 'SYNC_GROUP_INIT': await this.initSyncGroup(msg); return;
-      case 'VIDEOWALL_INIT':   this.initVideoWall(msg); return;
+      case 'VIDEOWALL_INIT':   await this.initVideoWall(msg); return;
       default:
         // The API sends device commands using the command name as the WS type
         // (e.g. type='reboot', type='screenshot', type='set_system_volume').
@@ -1427,8 +1428,20 @@ export class Player {
     if (this.syncActive) { try { syncStop(); } catch {} this.syncActive = false; }
     const groupId       = String(msg['groupId'] ?? '');
     const expectedPeers = Number(msg['expectedPeers'] ?? 1);
-    const wsUrl         = String(msg['relayUrl'] ?? this.cfg.wsBase.replace(/^wss?:\/\//, 'ws://') + '/sync');
-    const urls = this.playlistItems.map(i => i.content?.url || '').filter(Boolean);
+
+    // Determine if this device is the elected leader.
+    const leaderPriority = Array.isArray(msg['leaderPriority']) ? msg['leaderPriority'] as string[] : [];
+    const isLeader = leaderPriority.length > 0 && leaderPriority[0] === this.deviceId;
+    const syncRelayMode = String(msg['syncRelayMode'] ?? 'lan');
+
+    // If leader and LAN mode, start the Java relay server on port 9616 (Android bridge).
+    if (isLeader && syncRelayMode === 'lan') {
+      try { (window as any).nexari?.startRelay?.(9616); } catch {}
+    }
+
+    // Determine relay URL: use relayUrl from manifest for LAN, or fall back to cloud.
+    const wsUrl = String(msg['relayUrl'] ?? this.cfg.wsBase.replace(/^wss?:\/\//, 'ws://') + '/sync');
+    const urls = this.playlistItems.map(i => this.resolveLocalUrl(i.content?.url) || '').filter(Boolean);
     if (!urls.length) { logger.warn('[Player] syncGroup: no video URLs'); return; }
 
     this.cancelPlayback();
@@ -1452,12 +1465,73 @@ export class Player {
     }).catch(e => { logger.error(`[Sync] init failed: ${(e as Error)?.message}`); this.syncActive=false; });
   }
 
-  private initVideoWall(msg: Record<string, unknown>): void {
-    const srcX=Number(msg['srcX']??0), srcY=Number(msg['srcY']??0);
-    const srcW=Number(msg['srcW']??window.innerWidth), srcH=Number(msg['srcH']??window.innerHeight);
-    const dstW=Number(msg['dstW']??window.innerWidth), dstH=Number(msg['dstH']??window.innerHeight);
+  private async initVideoWall(msg: Record<string, unknown>): Promise<void> {
+    // 1. Compute wall crop — prefer new geometry+myCell format, fall back to legacy flat fields.
+    let srcX = 0, srcY = 0, srcW = window.innerWidth, srcH = window.innerHeight;
+    let dstW = window.innerWidth, dstH = window.innerHeight;
+    const geo    = msg['geometry']  as Record<string, unknown> | null | undefined;
+    const myCell = msg['myCell']    as Record<string, unknown> | null | undefined;
+    if (geo && myCell) {
+      const colWidths  = (geo['colWidths']  as number[]) ?? [];
+      const rowHeights = (geo['rowHeights'] as number[]) ?? [];
+      const col     = Number(myCell['positionCol'] ?? 0);
+      const row     = Number(myCell['positionRow'] ?? 0);
+      const colSpan = Number(myCell['colSpan']      ?? 1);
+      const rowSpan = Number(myCell['rowSpan']      ?? 1);
+      let offsetX = 0; for (let c = 0; c < col; c++) offsetX += (colWidths[c]  || 0);
+      let offsetY = 0; for (let r = 0; r < row; r++) offsetY += (rowHeights[r] || 0);
+      let cellW = 0; for (let c = col; c < col + colSpan; c++) cellW += (colWidths[c]  || 0);
+      let cellH = 0; for (let r = row; r < row + rowSpan; r++) cellH += (rowHeights[r] || 0);
+      srcX = offsetX; srcY = offsetY; srcW = cellW; srcH = cellH;
+      dstW = Number(geo['canvasW'] ?? window.innerWidth);
+      dstH = Number(geo['canvasH'] ?? window.innerHeight);
+    } else {
+      srcX = Number(msg['srcX'] ?? 0);              srcY = Number(msg['srcY'] ?? 0);
+      srcW = Number(msg['srcW'] ?? window.innerWidth); srcH = Number(msg['srcH'] ?? window.innerHeight);
+      dstW = Number(msg['dstW'] ?? window.innerWidth); dstH = Number(msg['dstH'] ?? window.innerHeight);
+    }
     setWallCrop(srcX, srcY, srcW, srcH, dstW, dstH);
-    logger.info(`[Player] videowall crop srcX=${srcX} srcY=${srcY} srcW=${srcW} srcH=${srcH}`);
+    logger.info(`[Player] videowall crop srcX=${srcX} srcY=${srcY} srcW=${srcW} srcH=${srcH} canvas ${dstW}x${dstH}`);
+
+    // 2. Stop any previous sync/relay before starting new session.
+    if (this.syncActive) { try { syncStop(); } catch {} this.syncActive = false; }
+    try { (window as any).nexari?.stopRelay?.(); } catch {}
+
+    // 3. Start relay if this device is the elected leader (LAN mode).
+    const leaderPriority = Array.isArray(msg['leaderPriority']) ? msg['leaderPriority'] as string[] : [];
+    const isLeader       = leaderPriority.length > 0 && leaderPriority[0] === this.deviceId;
+    const syncRelayMode  = String(msg['syncRelayMode'] ?? 'lan');
+    if (isLeader && syncRelayMode === 'lan') {
+      try { (window as any).nexari?.startRelay?.(9616); } catch {}
+    }
+
+    // 4. Start sync engine — same flow as initSyncGroup.
+    const groupId      = String(msg['deviceGroupId'] ?? msg['groupId'] ?? '');
+    const peers        = Array.isArray(msg['peers']) ? msg['peers'] as unknown[] : [];
+    const expectedPeers = peers.length - 1 || 1; // other peers count
+    const wsUrl        = String(msg['relayUrl'] ?? this.cfg.wsBase.replace(/^wss?:\/\//, 'ws://') + '/sync');
+    const urls = this.playlistItems.map(i => this.resolveLocalUrl(i.content?.url) || '').filter(Boolean);
+    if (!urls.length) { logger.warn('[Player] videowall: no video URLs'); return; }
+
+    this.cancelPlayback();
+    const container = this.cfg.container;
+    container.innerHTML = '';
+    await initEngine(container);
+    setPlaylist(urls);
+
+    const net = await this.cfg.adapter.getNetworkInfo();
+    this.syncActive = true;
+    syncInit({
+      wsUrl, groupId, deviceId: this.deviceId, selfIp: net.ipAddress ?? '',
+      expectedPeers, onStatus: s => logger.info(`[Sync/Wall] ${s}`),
+      prepareEngine: url => prepare(url),
+      schedulePlay:  epochMs => schedulePlayAt(epochMs),
+      getEngineDuration: () => getDuration(),
+      restartEngine: () => {
+        try { destroyEngine(); } catch {}
+        void initEngine(container).then(() => setPlaylist(urls));
+      },
+    }).catch(e => { logger.error(`[Sync/Wall] init: ${(e as Error)?.message}`); this.syncActive = false; });
   }
 
   private sendOta(p: PlatformOtaProgress): void {

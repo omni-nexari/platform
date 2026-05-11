@@ -36,6 +36,10 @@ export const deviceGroups = pgTable('device_groups', {
   bezelLeftMm: numeric('bezel_left_mm', { precision: 6, scale: 2 }),
   // For sync type: backing Samsung SyncPlay group (auto-created on POST /device-groups when type='sync')
   syncGroupId: uuid('sync_group_id').references(() => syncGroups.id, { onDelete: 'set null' }),
+  /** Relay mode: 'lan' = leader device opens port 9616 relay; 'cloud' = use API /sync-relay */
+  syncRelayMode: text('sync_relay_mode').notNull().default('lan'),
+  /** Pinned leader device ID; NULL = auto-elect by platform priority */
+  pinnedLeaderId: uuid('pinned_leader_id').references(() => devices.id, { onDelete: 'set null' }),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -55,6 +59,8 @@ export const deviceGroupMembers = pgTable('device_group_members', {
   colSpan: integer('col_span').notNull().default(1),
   rowSpan: integer('row_span').notNull().default(1),
   tileRotation: text('tile_rotation').notNull().default('0'), // '0'|'90'|'180'|'270'
+  /** Lower number = higher leader priority. 0 = preferred leader. Used for videowall groups. */
+  leaderPriority: integer('leader_priority').notNull().default(0),
   addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

@@ -109,7 +109,10 @@ export type WsCommand =
         bezels: { topMm: number; rightMm: number; bottomMm: number; leftMm: number } | null;
       };
       leaderPriority: string[];
-      peers: Array<{ deviceId: string; lastKnownIp: string | null; port: number }>;
+      peers: Array<{ deviceId: string; lastKnownIp: string | null; port: number; platform?: string }>;
+      allTizen?: boolean;
+      relayUrl?: string | null;
+      syncRelayMode?: string;
       myCell: {
         deviceId: string;
         positionCol: number;

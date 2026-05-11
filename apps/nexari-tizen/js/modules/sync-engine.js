@@ -57,6 +57,7 @@ var SyncEngine;
     let heartbeatTimer = null;
     let peerNtpInProgress = false;
     let commandHandler = null;
+    let roleChangeCallback = null;
     let playbackState = { itemIndex: -1, currentTimeMs: 0, syncGroupId: null };
     const followerViews = {};
     // ── Public: init ────────────────────────────────────────────────────────
@@ -82,6 +83,11 @@ var SyncEngine;
         commandHandler = handler;
     }
     SyncEngine.onSyncCommand = onSyncCommand;
+    // ── Public: subscribe to role changes (leader/follower/idle) ───────────
+    function onRoleChange(cb) {
+        roleChangeCallback = cb;
+    }
+    SyncEngine.onRoleChange = onRoleChange;
     // ── Public: receive manifest from API WS (SYNC_GROUP_INIT) ─────────────
     function setManifest(m) {
         if (!opts)
@@ -360,10 +366,18 @@ var SyncEngine;
         if (newRole !== role || winner.deviceId !== leaderDeviceId) {
             opts.logger.info('[SyncEngine] leader change: ' + leaderDeviceId + ' → ' + winner.deviceId +
                 ' (selfRole=' + newRole + ', candidates=' + candidates.length + ')');
+            const prevRole = role;
             role = newRole;
             leaderDeviceId = winner.deviceId;
             leaderIp = winner.ip;
             leaderPort = winner.port;
+            // Fire role-change callback for callers that need to start/stop relay.
+            if (roleChangeCallback && newRole !== prevRole) {
+                try {
+                    roleChangeCallback(newRole);
+                }
+                catch (_) { }
+            }
             // Followers immediately try to NTP-align with new leader.
             if (newRole === 'follower')
                 void syncTimeWithLeader();

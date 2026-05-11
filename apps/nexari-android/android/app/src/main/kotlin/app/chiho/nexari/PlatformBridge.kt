@@ -51,7 +51,32 @@ class PlatformBridge(
     private val kiosk    = KioskController(context)
     private val ota      = OtaInstaller(context)
 
-    fun shutdown() { /* nothing yet */ }
+    @Volatile private var relayServer: SyncRelayServer? = null
+
+    fun shutdown() { stopRelayInternal() }
+
+    private fun stopRelayInternal() {
+        val r = relayServer
+        if (r != null) {
+            relayServer = null
+            r.stop()
+        }
+    }
+
+    @JavascriptInterface
+    fun startRelay(port: Int): String {
+        stopRelayInternal()
+        val r = SyncRelayServer(port)
+        relayServer = r
+        r.start()
+        return gson.toJson(mapOf("ok" to true, "port" to port))
+    }
+
+    @JavascriptInterface
+    fun stopRelay(): String {
+        stopRelayInternal()
+        return gson.toJson(mapOf("ok" to true))
+    }
 
     // ── Static config exposed at boot ──────────────────────────────────────────
 
@@ -240,6 +265,8 @@ class PlatformBridge(
       lockKiosk:       () => p(b.lockKiosk()),
       unlockKiosk:     () => p(b.unlockKiosk()),
       isKioskActive:   () => p(b.isKioskActive()).then(x => !!x.active),
+      startRelay:      (port) => p(b.startRelay(port|0)),
+      stopRelay:       () => p(b.stopRelay()),
       installUpdate:   (args) => new Promise((resolve, reject) => {
         const id = 'ota_' + Date.now() + '_' + Math.random().toString(36).slice(2);
         otaCbs[id] = { resolve, reject, onProgress: args.onProgress };

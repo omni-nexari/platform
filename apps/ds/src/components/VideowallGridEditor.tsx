@@ -62,6 +62,8 @@ export interface GridGroup {
   bezelRightMm: number | null;
   bezelBottomMm: number | null;
   bezelLeftMm: number | null;
+  syncRelayMode?: 'lan' | 'cloud' | null;
+  pinnedLeaderId?: string | null;
   members: GridMember[];
 }
 
@@ -112,6 +114,10 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
   const [bezelBottom, setBezelBottom] = useState(String(group.bezelBottomMm ?? ''));
   const [bezelLeft,   setBezelLeft]   = useState(String(group.bezelLeftMm   ?? ''));
 
+  // Relay / leader state
+  const [relayMode,      setRelayMode]      = useState<'lan' | 'cloud'>(group.syncRelayMode ?? 'lan');
+  const [pinnedLeaderId, setPinnedLeaderId] = useState<string>(group.pinnedLeaderId ?? '');
+
   // Open dropdown cell
   const [openCell, setOpenCell] = useState<string | null>(null);
 
@@ -130,6 +136,8 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
     setBezelRight(String(group.bezelRightMm ?? ''));
     setBezelBottom(String(group.bezelBottomMm ?? ''));
     setBezelLeft(String(group.bezelLeftMm ?? ''));
+    setRelayMode(group.syncRelayMode ?? 'lan');
+    setPinnedLeaderId(group.pinnedLeaderId ?? '');
   }, [group]);
 
   // ── Derived ──────────────────────────────────────────────────────────────────
@@ -195,6 +203,19 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
       void qc.invalidateQueries({ queryKey: ['device-group', groupId] });
     },
     onError: () => toast.error('Failed to save bezels'),
+  });
+
+  const saveRelayMut = useMutation({
+    mutationFn: () =>
+      api.patch(`/device-groups/${groupId}`, {
+        syncRelayMode: relayMode,
+        pinnedLeaderId: pinnedLeaderId || null,
+      }),
+    onSuccess: () => {
+      toast.success('Relay settings saved');
+      void qc.invalidateQueries({ queryKey: ['device-group', groupId] });
+    },
+    onError: () => toast.error('Failed to save relay settings'),
   });
 
   const pushManifestMut = useMutation({
@@ -368,6 +389,64 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
               />
             </label>
           ))}
+        </div>
+      </div>
+
+      {/* Sync leader & relay */}
+      <div className="rounded-xl border p-5 flex flex-col gap-4" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-[var(--text)]">Sync Leader &amp; Relay</h2>
+            <p className="text-xs text-[var(--text-muted)] mt-0.5">Choose how screens find and connect to the sync leader.</p>
+          </div>
+          <button
+            onClick={() => saveRelayMut.mutate()}
+            disabled={saveRelayMut.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-[var(--blue)] text-white rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity"
+          >
+            <Save className="w-3.5 h-3.5" />
+            {saveRelayMut.isPending ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+
+        {/* Relay mode */}
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-[var(--text-muted)] w-16 shrink-0">Relay:</span>
+          <div className="flex items-center gap-1">
+            {(['lan', 'cloud'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setRelayMode(m)}
+                className={`px-3 py-1.5 rounded-lg border text-xs transition-colors ${
+                  relayMode === m
+                    ? 'border-[var(--blue)] bg-[var(--blue)]/15 text-[var(--text)]'
+                    : 'border-[var(--card-border)] text-[var(--text-muted)] hover:text-[var(--text)]'
+                }`}
+              >
+                {m === 'lan' ? 'LAN (local)' : 'Cloud relay'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Leader picker */}
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-[var(--text-muted)] w-16 shrink-0">Leader:</span>
+          <select
+            className="ui-input text-xs py-1 h-auto flex-1 max-w-xs"
+            value={pinnedLeaderId}
+            onChange={(e) => setPinnedLeaderId(e.target.value)}
+          >
+            <option value="">Auto-select (recommended)</option>
+            {group.members
+              .filter((m) => m.device)
+              .map((m) => (
+                <option key={m.deviceId} value={m.deviceId}>
+                  {m.device!.name}
+                </option>
+              ))}
+          </select>
         </div>
       </div>
 

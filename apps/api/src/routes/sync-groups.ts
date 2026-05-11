@@ -158,7 +158,7 @@ export async function syncGroupRoutes(app: FastifyInstance) {
   app.patch('/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
     const { id } = req.params as { id: string };
-    const body = req.body as { name?: string; syncPlaylistId?: string | null };
+    const body = req.body as { name?: string; syncPlaylistId?: string | null; syncRelayMode?: 'lan' | 'cloud'; pinnedLeaderId?: string | null };
 
     const group = await db.query.syncGroups.findFirst({
       where: and(eq(syncGroups.id, id), isNull(syncGroups.deletedAt)),
@@ -178,6 +178,8 @@ export async function syncGroupRoutes(app: FastifyInstance) {
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (body.name !== undefined) patch.name = body.name.trim();
     if ('syncPlaylistId' in body) patch.syncPlaylistId = body.syncPlaylistId ?? null;
+    if (body.syncRelayMode !== undefined) patch.syncRelayMode = body.syncRelayMode;
+    if ('pinnedLeaderId' in body) patch.pinnedLeaderId = body.pinnedLeaderId ?? null;
 
     const [updated] = await db.update(syncGroups).set(patch).where(eq(syncGroups.id, id)).returning();
 
@@ -379,15 +381,33 @@ export async function syncGroupRoutes(app: FastifyInstance) {
     const wsAccess = await checkWorkspaceAccess(group.workspaceId, user.sub);
     if (!wsAccess) return reply.status(403).send({ error: 'Forbidden' });
 
-    // Sort members by leaderPriority ascending — the priority list is the
-    // device's leader-election input.
-    const sortedMembers = [...group.members].sort((a, b) => a.leaderPriority - b.leaderPriority);
+    // Sort members: respect pinnedLeaderId first, then leaderPriority, then platform priority.
+    const PLAT_PRI: Record<string, number> = { tizen: 0, 'tizen-sbb': 1, windows: 2, android: 3, browser: 4 };
+    const platPri = (dev: any) => PLAT_PRI[(dev as any)?.platform ?? ''] ?? 99;
+    const pinnedId = (group as any).pinnedLeaderId as string | null ?? null;
+    const sortedMembers = [...group.members].sort((a, b) => {
+      if (pinnedId) {
+        if (a.deviceId === pinnedId) return -1;
+        if (b.deviceId === pinnedId) return 1;
+      }
+      if (a.leaderPriority !== b.leaderPriority) return a.leaderPriority - b.leaderPriority;
+      return platPri(a.device) - platPri(b.device);
+    });
     const leaderPriority = sortedMembers.map((m) => m.deviceId);
     const peers = sortedMembers.map((m) => ({
       deviceId: m.deviceId,
       lastKnownIp: m.lastSeenIp ?? (m.device as any)?.lastKnownIp ?? null,
       port: 9615,
+      platform: (m.device as any)?.platform ?? 'tizen',
     }));
+
+    const CAN_RELAY = ['tizen', 'tizen-sbb', 'windows', 'android'];
+    const leaderDev = (sortedMembers[0]?.device as any) ?? null;
+    const syncRelayMode: string = (group as any).syncRelayMode ?? 'lan';
+    const relayUrl =
+      syncRelayMode === 'lan' && leaderDev && CAN_RELAY.includes(leaderDev.platform ?? '')
+        ? `ws://${leaderDev.ipAddress}:9616`
+        : null;
 
     let playlistPayload: { id: string; items: Array<Record<string, unknown>> } | null = null;
     if (group.syncPlaylist) {
@@ -419,6 +439,8 @@ export async function syncGroupRoutes(app: FastifyInstance) {
       groupId: group.groupId,
       leaderPriority,
       peers,
+      relayUrl,
+      syncRelayMode,
       playlist: playlistPayload,
     };
 

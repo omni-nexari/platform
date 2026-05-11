@@ -137,6 +137,10 @@ let _isPlaying                     = false;
 let _loadInFlight                  = false;
 let _activeItemId: string | null   = null;   // tracks which playlist item is currently rendered
 
+// Cross-platform sync/videowall manifest received via WS
+let _wallManifest: any = null;
+let _syncGroupManifest: any = null;
+
 // Content types whose DOM/iframe manages its own data refresh internally.
 // When the playlist wraps back to the same item, we skip the teardown+rebuild.
 const SELF_REFRESH_TYPES = new Set([
@@ -586,15 +590,34 @@ async function renderVideowall(c: NormalizedContent, durationSec: number) {
     position: 'absolute',
   });
 
-  const { offsetX = 0, offsetY = 0, cropW = 1, cropH = 1 } = meta;
   const pw = root.clientWidth;
   const ph = root.clientHeight;
 
-  // Scale the video to canvas size and translate to show only this cell's region
-  const scaleX = 1 / cropW;
-  const scaleY = 1 / cropH;
-  const tx     = -offsetX * pw * scaleX;
-  const ty     = -offsetY * ph * scaleY;
+  // Prefer geometry from wall manifest (cross-platform path).
+  // Fall back to legacy offsetX/offsetY/cropW/cropH from content metadata.
+  let scaleX: number, scaleY: number, tx: number, ty: number;
+  const manifest = _wallManifest;
+  if (manifest?.geometry && manifest?.myCell) {
+    const geo = manifest.geometry;
+    const mc  = manifest.myCell;
+    const col = mc.positionCol; const row = mc.positionRow;
+    const colSpan = mc.colSpan || 1; const rowSpan = mc.rowSpan || 1;
+    let offsetXPx = 0; for (let ci = 0; ci < col; ci++) offsetXPx += (geo.colWidths[ci] || 0);
+    let offsetYPx = 0; for (let ri = 0; ri < row; ri++) offsetYPx += (geo.rowHeights[ri] || 0);
+    let cellW = 0; for (let ci = col; ci < col + colSpan; ci++) cellW += (geo.colWidths[ci] || 0);
+    let cellH = 0; for (let ri = row; ri < row + rowSpan; ri++) cellH += (geo.rowHeights[ri] || 0);
+    const cW = geo.canvasW || pw; const cH = geo.canvasH || ph;
+    scaleX = cW / cellW;
+    scaleY = cH / cellH;
+    tx     = -(offsetXPx / cW) * cW * scaleX;
+    ty     = -(offsetYPx / cH) * cH * scaleY;
+  } else {
+    const { offsetX = 0, offsetY = 0, cropW = 1, cropH = 1 } = meta;
+    scaleX = 1 / cropW;
+    scaleY = 1 / cropH;
+    tx     = -offsetX * pw * scaleX;
+    ty     = -offsetY * ph * scaleY;
+  }
 
   vid.style.width     = pw + 'px';
   vid.style.height    = ph + 'px';
@@ -1293,6 +1316,30 @@ window.nexari.onMessage('WS_MESSAGE', (msg: any) => {
         renderHTML({ url: msg.url } as NormalizedContent, 3600);
       }
       break;
+    case 'VIDEOWALL_INIT':
+      console.info('[Player] VIDEOWALL_INIT received');
+      _wallManifest = msg;
+      loadContent();
+      break;
+    case 'SYNC_GROUP_INIT': {
+      console.info('[Player] SYNC_GROUP_INIT received');
+      _syncGroupManifest = msg;
+      // Pre-download all playlist items so sync play is local.
+      const playlist = msg?.playlist;
+      if (playlist?.items?.length) {
+        void Promise.all(
+          playlist.items
+            .map((item: any) => item?.filePath || item?.url || '')
+            .filter(Boolean)
+            .map((u: string) => downloadFirst(u)),
+        ).then(() => {
+          console.info('[Player] SYNC_GROUP_INIT pre-download complete');
+        });
+      }
+      // Also trigger schedule refresh so the player renders sync content.
+      loadContent();
+      break;
+    }
   }
 });
 

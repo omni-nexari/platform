@@ -65,6 +65,10 @@ export const syncGroups = pgTable('sync_groups', {
   state: text('state').notNull().default('idle'),
   /** Item index currently active across the group (best-effort, leader-reported) */
   currentItemIndex: integer('current_item_index').notNull().default(0),
+  /** Relay mode: 'lan' = leader device opens port 9616 relay; 'cloud' = use API /sync-relay */
+  syncRelayMode: text('sync_relay_mode').notNull().default('lan'),
+  /** Pinned leader device ID; NULL = auto-elect by platform priority */
+  pinnedLeaderId: uuid('pinned_leader_id').references(() => devices.id, { onDelete: 'set null' }),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

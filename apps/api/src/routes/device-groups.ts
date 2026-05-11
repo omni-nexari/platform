@@ -40,6 +40,27 @@ async function hydrateSyncGroup(group: typeof deviceGroups.$inferSelect) {
 }
 
 /**
+ * Platform priority for automatic leader election.
+ * Lower number = higher priority.
+ */
+const PLATFORM_PRIORITY: Record<string, number> = {
+  'tizen':     0,
+  'tizen-sbb': 1,
+  'windows':   2,
+  'android':   3,
+  'browser':   4,
+};
+
+function platformPriority(platform: string | null | undefined): number {
+  return PLATFORM_PRIORITY[platform ?? ''] ?? 99;
+}
+
+/** Platforms that can open a TCP server socket and run the port-9616 relay. */
+function canRunRelay(platform: string | null | undefined): boolean {
+  return ['tizen', 'tizen-sbb', 'windows', 'android'].includes(platform ?? '');
+}
+
+/**
  * Builds wall geometry and pushes VIDEOWALL_INIT to every online member of a
  * videowall group.  The caller must separately send `refresh_schedule`.
  */
@@ -84,17 +105,39 @@ async function buildAndPushWallManifest(
     bezels,
   );
 
-  const sortedMembers = [...memberRows]
-    .filter((m) => m.positionCol != null && m.positionRow != null)
-    .sort((a, b) =>
-      (a.positionRow! - b.positionRow!) || (a.positionCol! - b.positionCol!),
-    );
+  // Sort positioned members: pinned leader first (priority 0), then by platform
+  // priority, then by grid position (row, col) for stable ordering.
+  const positionedMembers = memberRows.filter(
+    (m) => m.positionCol != null && m.positionRow != null,
+  );
+  const sortedMembers = [...positionedMembers].sort((a, b) => {
+    const aPinned = group.pinnedLeaderId === a.deviceId ? 0 : 1;
+    const bPinned = group.pinnedLeaderId === b.deviceId ? 0 : 1;
+    if (aPinned !== bPinned) return aPinned - bPinned;
+    const aPlatPri = platformPriority((deviceMap[a.deviceId] as any)?.platform);
+    const bPlatPri = platformPriority((deviceMap[b.deviceId] as any)?.platform);
+    if (aPlatPri !== bPlatPri) return aPlatPri - bPlatPri;
+    return (a.positionRow! - b.positionRow!) || (a.positionCol! - b.positionCol!);
+  });
+
   const leaderPriority = sortedMembers.map((m) => m.deviceId);
   const peers = sortedMembers.map((m) => ({
     deviceId:    m.deviceId,
     lastKnownIp: (deviceMap[m.deviceId] as any)?.ipAddress ?? null,
     port:        9615,
+    platform:    (deviceMap[m.deviceId] as any)?.platform ?? 'tizen',
   }));
+
+  const allTizen = peers.every(
+    (p) => p.platform === 'tizen' || p.platform === 'tizen-sbb',
+  );
+
+  const leaderDevice = deviceMap[sortedMembers[0]?.deviceId ?? ''] as any;
+  const syncRelayMode = (group as any).syncRelayMode ?? 'lan';
+  const relayUrl =
+    syncRelayMode === 'lan' && leaderDevice && canRunRelay(leaderDevice.platform)
+      ? `ws://${leaderDevice.ipAddress}:9616`
+      : null;
 
   let pushed = 0;
   let skipped = 0;
@@ -106,6 +149,9 @@ async function buildAndPushWallManifest(
       geometry,
       leaderPriority,
       peers,
+      allTizen,
+      relayUrl,
+      syncRelayMode,
       myCell: {
         deviceId:       m.deviceId,
         positionCol:    m.positionCol!,
@@ -349,6 +395,8 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
       bezelRightMm?: number | null;
       bezelBottomMm?: number | null;
       bezelLeftMm?: number | null;
+      syncRelayMode?: 'lan' | 'cloud';
+      pinnedLeaderId?: string | null;
     };
 
     const group = await db.query.deviceGroups.findFirst({
@@ -365,6 +413,8 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
     if (body.bezelRightMm !== undefined) patch['bezelRightMm'] = body.bezelRightMm;
     if (body.bezelBottomMm !== undefined) patch['bezelBottomMm'] = body.bezelBottomMm;
     if (body.bezelLeftMm !== undefined) patch['bezelLeftMm'] = body.bezelLeftMm;
+    if (body.syncRelayMode !== undefined) patch['syncRelayMode'] = body.syncRelayMode;
+    if (body.pinnedLeaderId !== undefined) patch['pinnedLeaderId'] = body.pinnedLeaderId;
 
     const [updated] = await db.update(deviceGroups).set(patch).where(eq(deviceGroups.id, id)).returning();
 
@@ -755,20 +805,30 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
       bezels,
     );
 
-    // Peer list ordered by positionRow then positionCol (leader = position [0,0]).
-    // Priority order is stable across manifest pushes so leader election is
-    // deterministic regardless of which device receives the manifest first.
+    // Peer list: pinned leader first, then by platform priority, then grid pos.
     const sortedMembers = [...memberRows]
       .filter((m) => m.positionCol != null && m.positionRow != null)
-      .sort((a, b) =>
-        (a.positionRow! - b.positionRow!) || (a.positionCol! - b.positionCol!),
-      );
+      .sort((a, b) => {
+        const aPinned = (group as any).pinnedLeaderId === a.deviceId ? 0 : 1;
+        const bPinned = (group as any).pinnedLeaderId === b.deviceId ? 0 : 1;
+        if (aPinned !== bPinned) return aPinned - bPinned;
+        const aPp = platformPriority((deviceMap[a.deviceId] as any)?.platform);
+        const bPp = platformPriority((deviceMap[b.deviceId] as any)?.platform);
+        if (aPp !== bPp) return aPp - bPp;
+        return (a.positionRow! - b.positionRow!) || (a.positionCol! - b.positionCol!);
+      });
     const leaderPriority = sortedMembers.map((m) => m.deviceId);
     const peers = sortedMembers.map((m) => ({
       deviceId: m.deviceId,
       lastKnownIp: (deviceMap[m.deviceId] as any)?.ipAddress ?? null,
       port: 9615,
+      platform: (deviceMap[m.deviceId] as any)?.platform ?? 'tizen',
     }));
+    const allTizen = peers.every((p) => p.platform === 'tizen' || p.platform === 'tizen-sbb');
+    const leaderDev = deviceMap[sortedMembers[0]?.deviceId ?? ''] as any;
+    const grpRelayMode = (group as any).syncRelayMode ?? 'lan';
+    const relayUrl = grpRelayMode === 'lan' && leaderDev && canRunRelay(leaderDev.platform)
+      ? `ws://${leaderDev.ipAddress}:9616` : null;
 
     let pushed = 0;
     let skipped = 0;
@@ -780,6 +840,9 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
         geometry,
         leaderPriority,
         peers,
+        allTizen,
+        relayUrl,
+        syncRelayMode: grpRelayMode,
         myCell: {
           deviceId:     m.deviceId,
           positionCol:  m.positionCol!,

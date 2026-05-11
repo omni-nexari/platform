@@ -97,6 +97,7 @@ namespace SyncEngine {
   let peerNtpInProgress = false;
 
   let commandHandler: CommandHandler | null = null;
+  let roleChangeCallback: ((newRole: 'leader' | 'follower' | 'idle') => void) | null = null;
 
   // Current local playback state — provided by player via setPlaybackState().
   // Used by followers to send heartbeats and by the leader to compute its
@@ -140,6 +141,11 @@ namespace SyncEngine {
   // ── Public: subscribe to inbound sync commands ─────────────────────────
   export function onSyncCommand(handler: CommandHandler): void {
     commandHandler = handler;
+  }
+
+  // ── Public: subscribe to role changes (leader/follower/idle) ───────────
+  export function onRoleChange(cb: (newRole: 'leader' | 'follower' | 'idle') => void): void {
+    roleChangeCallback = cb;
   }
 
   // ── Public: receive manifest from API WS (SYNC_GROUP_INIT) ─────────────
@@ -387,10 +393,15 @@ namespace SyncEngine {
     if (newRole !== role || winner.deviceId !== leaderDeviceId) {
       opts.logger.info('[SyncEngine] leader change: ' + leaderDeviceId + ' → ' + winner.deviceId +
                        ' (selfRole=' + newRole + ', candidates=' + candidates.length + ')');
+      const prevRole = role;
       role = newRole;
       leaderDeviceId = winner.deviceId;
       leaderIp = winner.ip;
       leaderPort = winner.port;
+      // Fire role-change callback for callers that need to start/stop relay.
+      if (roleChangeCallback && newRole !== prevRole) {
+        try { roleChangeCallback(newRole); } catch (_) {}
+      }
       // Followers immediately try to NTP-align with new leader.
       if (newRole === 'follower') void syncTimeWithLeader();
     }
