@@ -434,7 +434,7 @@ export async function syncGroupRoutes(app: FastifyInstance) {
     // to host its own relay server (Windows has none; Android's bridge is optional).
     const appUrl = (process.env['APP_URL'] ?? 'http://localhost:3000').replace(/\/$/, '');
     const relayUrl = !allTizen
-      ? appUrl.replace(/^http/, 'ws') + '/api/v1/sync-relay'
+      ? appUrl.replace(/^http/, 'ws') + '/api/v1/sync-relay/ws'
       : null;
 
     const manifest = {

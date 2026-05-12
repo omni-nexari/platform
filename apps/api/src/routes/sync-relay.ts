@@ -81,10 +81,12 @@ export async function syncRelayRoutes(app: FastifyInstance) {
   // GET /sync-relay/time — used as a clock-sync HTTP fallback (mirrors logic.js)
   app.get('/time', async (_req, reply) => reply.send({ serverTimeMs: Date.now() }));
 
-  // GET /sync-relay (WebSocket)
+  // GET /sync-relay/ws (WebSocket)
   // No `app.authenticate` here because pairing tokens are validated manually:
   // we accept the JWT via ?token= query so HTML/Tizen WebApps can connect.
-  (app as any).get('/', { websocket: true }, async (socket: any, req: any) => {
+  // Path is `/ws` (not `/`) because nginx prefix-proxying + Fastify root-prefix
+  // routes don't reliably match an upgrade request without a path segment.
+  (app as any).get('/ws', { websocket: true }, async (socket: any, req: any) => {
     let authedDeviceId: string | null = null;
     try {
       const token = (req.query as { token?: string })?.token;

@@ -31,7 +31,7 @@ export async function startSync(cfg: WindowsSyncConfig): Promise<void> {
 
   // Build the WS relay URL pointing at the centralized relay
   const wsBase = cfg.apiBase.replace(/^http/, 'ws');
-  const wsUrl  = `${wsBase}/sync-relay?token=${encodeURIComponent(cfg.token)}`;
+  const wsUrl  = `${wsBase}/sync-relay/ws?token=${encodeURIComponent(cfg.token)}`;
 
   // Dynamically import the engine so it attaches to the passed container
   const { initEngine, prepare, schedulePlayAt, destroyEngine } = await import('@sync/engine.js');

@@ -2061,7 +2061,7 @@ export async function deviceRoutes(app: FastifyInstance) {
           const allTizen = peers.length > 0 && peers.every((p) => p.platform === 'tizen' || p.platform === 'tizen-sbb');
           // For cross-OS groups use the centralised API relay (always running, reachable by all platforms).
           const appUrl = (process.env['APP_URL'] ?? 'http://localhost:3000').replace(/\/$/, '');
-          const relayUrl = !allTizen ? appUrl.replace(/^http/, 'ws') + '/api/v1/sync-relay' : null;
+          const relayUrl = !allTizen ? appUrl.replace(/^http/, 'ws') + '/api/v1/sync-relay/ws' : null;
 
           publishedSyncGroup = {
             id: sg.id,

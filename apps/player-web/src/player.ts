@@ -1483,7 +1483,7 @@ export class Player {
     const wsBase = this.cfg.apiBase
       .replace(/\/api\/v1\/?$/, '')   // strip /api/v1 suffix
       .replace(/^http/, 'ws');         // http→ws, https→wss
-    const wsUrl = `${wsBase}/api/v1/sync-relay${tok ? '?token=' + encodeURIComponent(tok) : ''}`;
+    const wsUrl = `${wsBase}/api/v1/sync-relay/ws${tok ? '?token=' + encodeURIComponent(tok) : ''}`;
     logger.info(`[Sync] relay URL: ${wsUrl}`);
 
     let urls = this.playlistItems.map(i => this.resolveLocalUrl(i.content?.url) || '').filter(Boolean);
@@ -1550,7 +1550,7 @@ export class Player {
     const leaderPriority = Array.isArray(msg['leaderPriority']) ? msg['leaderPriority'] as string[] : [];
     const tok2 = this.token;
     const wsBase2 = this.cfg.apiBase.replace(/\/api\/v1\/?$/, '').replace(/^http/, 'ws');
-    const wsUrl = `${wsBase2}/api/v1/sync-relay${tok2 ? '?token=' + encodeURIComponent(tok2) : ''}`;
+    const wsUrl = `${wsBase2}/api/v1/sync-relay/ws${tok2 ? '?token=' + encodeURIComponent(tok2) : ''}`;
 
     // 4. Start sync engine — same flow as initSyncGroup.
     const groupId      = String(msg['deviceGroupId'] ?? msg['groupId'] ?? '');
