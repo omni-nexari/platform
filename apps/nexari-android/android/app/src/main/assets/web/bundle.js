@@ -1742,6 +1742,7 @@ var _ewmaN = 0;
 var _peerWatchTimer = null;
 var _resyncInProgress = false;
 var _playlistUrls = [];
+var _wsGen = 0;
 async function init(cfg) {
   var _a;
   _cfg = cfg;
@@ -1807,15 +1808,23 @@ function stop() {
   logger.info("[Sync] stopped");
 }
 function _connectWs() {
+  const myGen = ++_wsGen;
   return new Promise((resolve) => {
     const attempt = () => {
-      if (_stopped) return;
+      if (_stopped || _wsGen !== myGen) return;
       logger.info(`[Sync] WS connecting \u2192 ${_cfg.wsUrl}`);
       _wsReady = false;
       try {
         const ws = new WebSocket(_cfg.wsUrl);
         _ws = ws;
         ws.onopen = () => {
+          if (_wsGen !== myGen) {
+            try {
+              ws.close();
+            } catch (e) {
+            }
+            return;
+          }
           _wsReady = true;
           logger.info("[Sync] WS connected");
           _wsSend({ type: "WS_REGISTER", deviceId: _cfg.deviceId, groupId: _cfg.groupId, ip: _cfg.selfIp });
@@ -1833,11 +1842,11 @@ function _connectWs() {
         ws.onclose = () => {
           _wsReady = false;
           logger.warn("[Sync] WS closed \u2014 reconnecting\u2026");
-          if (!_stopped) setTimeout(attempt, WS_RECONNECT_MS);
+          if (!_stopped && _wsGen === myGen) setTimeout(attempt, WS_RECONNECT_MS);
         };
       } catch (e) {
         logger.error(`[Sync] WS open failed: ${e == null ? void 0 : e.message}`);
-        if (!_stopped) setTimeout(attempt, WS_RECONNECT_MS);
+        if (!_stopped && _wsGen === myGen) setTimeout(attempt, WS_RECONNECT_MS);
       }
     };
     attempt();
@@ -1897,16 +1906,27 @@ function _measureClock() {
 }
 var _localToServer = (t) => t + _offsetMs;
 var _serverToLocal = (t) => t - _offsetMs;
+var PEER_WAIT_TIMEOUT_MS = 2e4;
 function _waitPeers() {
   return new Promise((resolve) => {
+    const deadline = Date.now() + PEER_WAIT_TIMEOUT_MS;
+    const elect = () => {
+      const all = [..._peers, _cfg.deviceId].sort();
+      _role2 = all[all.length - 1] === _cfg.deviceId ? "leader" : "follower";
+    };
     const check = () => {
       if (_stopped) {
         resolve();
         return;
       }
       if (_peers.length >= _cfg.expectedPeers) {
-        const all = [..._peers, _cfg.deviceId].sort();
-        _role2 = all[all.length - 1] === _cfg.deviceId ? "leader" : "follower";
+        elect();
+        resolve();
+        return;
+      }
+      if (Date.now() >= deadline) {
+        logger.warn(`[Sync] peer-wait timeout \u2014 got ${_peers.length}/${_cfg.expectedPeers} peer(s), proceeding`);
+        elect();
         resolve();
         return;
       }
@@ -1916,7 +1936,7 @@ function _waitPeers() {
   });
 }
 function _dispatch(msg) {
-  var _a, _b, _c;
+  var _a, _b, _c, _d, _e, _f;
   const from = String((_a = msg["from"]) != null ? _a : "relay");
   if (msg["type"] === "PONG") return;
   if (msg["type"] === "PEERS" || msg["type"] === "HEARTBEAT_PEERS") {
@@ -1938,21 +1958,26 @@ function _dispatch(msg) {
       return;
     }
     _loadReceived = true;
-    const url = String((_b = msg["url"]) != null ? _b : "");
-    _cfg.onStatus(`Follower \u2014 preparing: ${url.split("/").pop()}`);
-    const currentPlaylist = getPlaylistUrls();
-    if (currentPlaylist.length > 1) {
-      const leaderFile = (_c = url.split("/").pop()) != null ? _c : "";
-      const matchIdx = currentPlaylist.findIndex((u) => u.split("/").pop() === leaderFile);
-      if (matchIdx > 0) {
-        const reordered = [...currentPlaylist.slice(matchIdx), ...currentPlaylist.slice(0, matchIdx)];
-        setPlaylist(reordered);
-        logger.info(`[Sync] follower playlist realigned to start at ${leaderFile}`);
-      } else if (matchIdx === 0) {
-        setPlaylist(currentPlaylist);
-      }
+    const localPlaylist = getPlaylistUrls();
+    let localUrl;
+    const msgIndex = typeof msg["index"] === "number" ? msg["index"] : -1;
+    if (msgIndex >= 0 && localPlaylist[msgIndex]) {
+      localUrl = localPlaylist[msgIndex];
+    } else {
+      const leaderFile = (_c = String((_b = msg["url"]) != null ? _b : "").split("/").pop()) != null ? _c : "";
+      const matchIdx = localPlaylist.findIndex((u) => u.split("/").pop() === leaderFile);
+      localUrl = matchIdx >= 0 ? localPlaylist[matchIdx] : (_e = localPlaylist[0]) != null ? _e : String((_d = msg["url"]) != null ? _d : "");
     }
-    _cfg.prepareEngine(url).then(() => {
+    const startIdx = localPlaylist.indexOf(localUrl);
+    if (startIdx > 0) {
+      setPlaylist([...localPlaylist.slice(startIdx), ...localPlaylist.slice(0, startIdx)]);
+      logger.info(`[Sync] follower playlist realigned to start at ${localUrl.split("/").pop()}`);
+    } else {
+      setPlaylist(localPlaylist);
+    }
+    _cfg.onStatus(`Follower \u2014 preparing: ${localUrl.split("/").pop()}`);
+    logger.info(`[Sync] LOAD_URL \u2192 local: ${localUrl.split("/").pop()} (leader sent: ${String((_f = msg["url"]) != null ? _f : "").split("/").pop()})`);
+    _cfg.prepareEngine(localUrl).then(() => {
       if (_stopped) return;
       logger.info("[Sync] follower READY \u2014 sending READY");
       _cfg.onStatus("Follower \u2014 READY sent, waiting for GO\u2026");
@@ -2002,9 +2027,11 @@ function _dispatch(msg) {
 }
 async function _runLeader() {
   _cfg.onStatus("Leader \u2014 fetching video URL\u2026");
-  const url = await _fetchVideoUrl();
+  const url = _cfg.fetchVideoUrl ? await _cfg.fetchVideoUrl() : await _fetchVideoUrl();
   logger.info(`[Sync] leader video: ${url}`);
-  _wsSend({ type: "LOAD_URL", url });
+  const _leaderAllUrls = getPlaylistUrls();
+  const _leaderIdx = _leaderAllUrls.indexOf(url);
+  _wsSend({ type: "LOAD_URL", url, index: _leaderIdx >= 0 ? _leaderIdx : 0 });
   _cfg.onStatus("Leader \u2014 preparing engine\u2026");
   _cfg.prepareEngine(url).then(() => {
     if (_stopped) return;
@@ -3714,6 +3741,11 @@ var Player = class {
       selfIp: (_c = net.ipAddress) != null ? _c : "",
       expectedPeers,
       onStatus: (s) => logger.info(`[Sync] ${s}`),
+      // Android-specific URL resolver: always use the locally-downloaded file path.
+      fetchVideoUrl: () => {
+        var _a2, _b2;
+        return Promise.resolve((_b2 = (_a2 = getPlaylistUrls()[0]) != null ? _a2 : urls[0]) != null ? _b2 : "");
+      },
       prepareEngine: (url) => prepare(url),
       schedulePlay: (epochMs) => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),
@@ -3802,6 +3834,11 @@ var Player = class {
       selfIp: (_q = net.ipAddress) != null ? _q : "",
       expectedPeers,
       onStatus: (s) => logger.info(`[Sync/Wall] ${s}`),
+      // Android-specific URL resolver: always use the locally-downloaded file path.
+      fetchVideoUrl: () => {
+        var _a2, _b2;
+        return Promise.resolve((_b2 = (_a2 = getPlaylistUrls()[0]) != null ? _a2 : urls[0]) != null ? _b2 : "");
+      },
       prepareEngine: (url) => prepare(url),
       schedulePlay: (epochMs) => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),

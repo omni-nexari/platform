@@ -450,6 +450,8 @@ export async function syncGroupRoutes(app: FastifyInstance) {
       version: newVersion,
       groupId: group.groupId,
       leaderPriority,
+      // expectedPeers: each device connects to the relay and should wait for this many others.
+      expectedPeers: Math.max(1, peers.length - 1),
       peers,
       relayUrl,
       syncRelayMode,

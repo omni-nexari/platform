@@ -2157,6 +2157,12 @@ const Player = {
                     sendIfOpen(ws, { type: 'PONG', t1: msg.t1, t2: Date.now() });
                     return;
                 }
+                if (t === 'LOAD_URL') {
+                    // Leader broadcast a content index — reset READY flag and re-confirm when video is ready.
+                    readySent = false;
+                    setTimeout(() => pollAndSendReady(ws), 100);
+                    return;
+                }
                 if (t === 'GO' || t === 'LOOP_GO') {
                     logger.info('[SyncRelay] ' + t + ' playAt=' + msg.playAt);
                     if (t === 'LOOP_GO')

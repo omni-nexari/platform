@@ -36,6 +36,14 @@ export interface SyncConfig {
   schedulePlay:      (epochMs: number) => void;
   getEngineDuration: () => number;
   restartEngine?:    () => void;
+  /** When this device is elected leader, call this to get its own local URL. */
+  fetchVideoUrl?:    () => Promise<string>;
+  /**
+   * Pre-elected leader deviceId from the manifest's leaderPriority[0].
+   * When set, role is determined immediately (no lexicographic election needed).
+   * Followers skip peer-wait entirely; the leader still waits for peers.
+   */
+  pinnedLeaderId?:   string;
 }
 
 const CLOCK_SAMPLES    = 7;
@@ -68,16 +76,24 @@ let _ewmaN = 0;
 let _peerWatchTimer: ReturnType<typeof setInterval> | null = null;
 let _resyncInProgress = false;
 let _playlistUrls: string[] = [];
+let _wsGen = 0;  // incremented each init(); stale onclose closures bail on mismatch
 
 // ── Public ─────────────────────────────────────────────────────────────────────
 
 export async function init(cfg: SyncConfig): Promise<void> {
-  _cfg = cfg; _stopped = false; _role = 'pending'; _peers = [];
+  _cfg = cfg; _stopped = false; _peers = [];
   _leaderReady = false; _followerReady = new Set(); _goSent = false; _loadReceived = false;
   _phaseStartedAt = 0; _ewma = 0; _ewmaN = 0;
   _selfLatency = DEVICE_LATENCY_MS[cfg.deviceId] ?? 0;
 
-  logger.info(`[Sync] init deviceId=${cfg.deviceId} group=${cfg.groupId}`);
+  // Pre-determine role from manifest if the elected leader is known.
+  // Setting _role early lets LOAD_URL / GO handlers fire correctly even
+  // before _waitPeers() resolves (e.g. if LOAD_URL arrives during clock sync).
+  _role = cfg.pinnedLeaderId
+    ? (cfg.pinnedLeaderId === cfg.deviceId ? 'leader' : 'follower')
+    : 'pending';
+
+  logger.info(`[Sync] init deviceId=${cfg.deviceId} group=${cfg.groupId} role=${_role} pinned=${cfg.pinnedLeaderId ?? 'none'}`);
   cfg.onStatus('Connecting to relay…');
 
   setOnLoop(() => {
@@ -124,15 +140,17 @@ export function stop(): void {
 // ── WebSocket ──────────────────────────────────────────────────────────────────
 
 function _connectWs(): Promise<void> {
+  const myGen = ++_wsGen;
   return new Promise((resolve) => {
     const attempt = () => {
-      if (_stopped) return;
+      if (_stopped || _wsGen !== myGen) return;
       logger.info(`[Sync] WS connecting → ${_cfg.wsUrl}`);
       _wsReady = false;
       try {
         const ws = new WebSocket(_cfg.wsUrl);
         _ws = ws;
         ws.onopen = () => {
+          if (_wsGen !== myGen) { try { ws.close(); } catch {} return; }  // superseded
           _wsReady = true;
           logger.info('[Sync] WS connected');
           _wsSend({ type: 'WS_REGISTER', deviceId: _cfg.deviceId, groupId: _cfg.groupId, ip: _cfg.selfIp });
@@ -145,11 +163,11 @@ function _connectWs(): Promise<void> {
         ws.onclose = () => {
           _wsReady = false;
           logger.warn('[Sync] WS closed — reconnecting…');
-          if (!_stopped) setTimeout(attempt, WS_RECONNECT_MS);
+          if (!_stopped && _wsGen === myGen) setTimeout(attempt, WS_RECONNECT_MS);
         };
       } catch (e: unknown) {
         logger.error(`[Sync] WS open failed: ${(e as Error)?.message}`);
-        if (!_stopped) setTimeout(attempt, WS_RECONNECT_MS);
+        if (!_stopped && _wsGen === myGen) setTimeout(attempt, WS_RECONNECT_MS);
       }
     };
     attempt();
@@ -204,14 +222,31 @@ const _serverToLocal = (t: number) => t - _offsetMs;
 
 // ── Peer discovery ────────────────────────────────────────────────────────────
 
+const PEER_WAIT_TIMEOUT_MS = 20_000;
+
 function _waitPeers(): Promise<void> {
+  // Followers with a pre-elected leader skip peer-wait entirely — they just
+  // listen for LOAD_URL. The leader still waits so it knows who to collect
+  // READY from before sending GO.
+  if (_role === 'follower') return Promise.resolve();
+
   return new Promise((resolve) => {
+    const deadline = Date.now() + PEER_WAIT_TIMEOUT_MS;
+    const elect = () => {
+      // Only run lexicographic election if role wasn't pre-determined.
+      if (_role === 'pending') {
+        const all = [..._peers, _cfg.deviceId].sort();
+        _role = all[all.length - 1] === _cfg.deviceId ? 'leader' : 'follower';
+      }
+    };
     const check = () => {
       if (_stopped) { resolve(); return; }
       if (_peers.length >= _cfg.expectedPeers) {
-        const all = [..._peers, _cfg.deviceId].sort();
-        _role = all[all.length - 1] === _cfg.deviceId ? 'leader' : 'follower';
-        resolve(); return;
+        elect(); resolve(); return;
+      }
+      if (Date.now() >= deadline) {
+        logger.warn(`[Sync] peer-wait timeout — got ${_peers.length}/${_cfg.expectedPeers} peer(s), proceeding`);
+        elect(); resolve(); return;
       }
       setTimeout(check, 300);
     };

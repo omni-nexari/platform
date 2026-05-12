@@ -9,6 +9,8 @@ export interface SyncConfig {
     schedulePlay: (epochMs: number) => void;
     getEngineDuration: () => number;
     restartEngine?: () => void;
+    /** When this device is elected leader, call this to get its own local URL. */
+    fetchVideoUrl?: () => Promise<string>;
 }
 export declare function init(cfg: SyncConfig): Promise<void>;
 export declare function stop(): void;

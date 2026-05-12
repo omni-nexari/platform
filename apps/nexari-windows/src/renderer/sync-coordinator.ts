@@ -11,19 +11,21 @@
  */
 import { init as syncInit, stop as syncStop } from '@sync/sync.js';
 import type { SyncConfig } from '@sync/sync.js';
-import { setPlaylist } from '@sync/engine.js';
+import { setPlaylist, getPlaylistUrls } from '@sync/engine.js';
 
 let _active = false;
 
 export interface WindowsSyncConfig {
-  apiBase:       string;
-  token:         string;
-  deviceId:      string;
-  groupId:       string;
-  expectedPeers: number;
-  container:     HTMLElement;
-  playlist:      string[];          // array of video URLs
-  onStatus:      (msg: string) => void;
+  apiBase:        string;
+  token:          string;
+  deviceId:       string;
+  groupId:        string;
+  expectedPeers:  number;
+  /** Pre-elected leader deviceId from manifest leaderPriority[0]. Skips lexicographic election. */
+  pinnedLeaderId?: string;
+  container:      HTMLElement;
+  playlist:       string[];          // array of video URLs
+  onStatus:       (msg: string) => void;
 }
 
 export async function startSync(cfg: WindowsSyncConfig): Promise<void> {
@@ -48,11 +50,12 @@ export async function startSync(cfg: WindowsSyncConfig): Promise<void> {
 
   const syncCfg: SyncConfig = {
     wsUrl,
-    groupId:       cfg.groupId,
-    deviceId:      cfg.deviceId,
-    selfIp:        '',            // not used by centralized relay
-    expectedPeers: cfg.expectedPeers,
-    onStatus:      cfg.onStatus,
+    groupId:        cfg.groupId,
+    deviceId:       cfg.deviceId,
+    selfIp:         '',            // not used by centralized relay
+    expectedPeers:  cfg.expectedPeers,
+    pinnedLeaderId: cfg.pinnedLeaderId,
+    onStatus:       cfg.onStatus,
     // OS-specific URL resolver: Windows uses its own local file paths so the
     // leader always broadcasts a valid local path + playlist index.
     fetchVideoUrl: () => {

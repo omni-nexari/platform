@@ -18,7 +18,7 @@ import { renderMenuBoard } from './renderers/menu-board.js';
 import { renderDataSync,  type DataSyncHandle } from './renderers/datasync.js';
 import {
   initEngine, prepare, schedulePlayAt, playFromPrebuffer, destroyEngine,
-  setPlaylist, getDuration, setWallCrop,
+  setPlaylist, getPlaylistUrls, getDuration, setWallCrop,
 } from './sync/engine.js';
 import { init as syncInit, stop as syncStop } from './sync/sync.js';
 
@@ -920,7 +920,7 @@ export class Player {
         const rawPeers = (sg['peers'] as Array<{ deviceId: string; leaderPriority?: number | null }>) ?? [];
         const sortedPeers = [...rawPeers].sort((a, b) => (a.leaderPriority ?? 999) - (b.leaderPriority ?? 999));
         this._pendingSyncRelayInfo = {
-          groupId: String(sg['syncGroupId'] ?? ''),
+          groupId: String(sg['id'] ?? sg['syncGroupId'] ?? ''),  // 'id' is the UUID key in API response
           relayUrl: String(sg['relayUrl']),
           leaderPriority: sortedPeers.map(p => p.deviceId),
           peerCount: Math.max(1, sortedPeers.length - 1), // count of OTHER peers
@@ -1470,11 +1470,18 @@ export class Player {
 
   private async initSyncGroup(msg: Record<string, unknown>): Promise<void> {
     if (this.syncActive) { try { syncStop(); } catch {} this.syncActive = false; }
-    const groupId       = String(msg['groupId'] ?? '');
-    const expectedPeers = Number(msg['expectedPeers'] ?? 1);
+    // Use UUID (syncGroupId) if present; fall back to numeric groupId for compat.
+    const groupId = String(msg['syncGroupId'] ?? msg['groupId'] ?? '');
 
-    // Determine if this device is the elected leader.
+    // Derive expectedPeers: prefer explicit field, otherwise count from peer arrays.
+    const peerList = Array.isArray(msg['peers']) ? msg['peers'] as unknown[]
+                   : Array.isArray(msg['leaderPriority']) ? msg['leaderPriority'] as unknown[]
+                   : [];
+    const expectedPeers = Number(msg['expectedPeers'] ?? Math.max(1, peerList.length - 1));
+
+    // Leader is leaderPriority[0] — already sorted by UI/platform priority on the server.
     const leaderPriority = Array.isArray(msg['leaderPriority']) ? msg['leaderPriority'] as string[] : [];
+    const pinnedLeaderId = leaderPriority[0] ?? '';
 
     // Always derive relay URL from this device's own API base + token so it connects
     // to the same host it already uses (LAN IP or cloud). The manifest's relayUrl
@@ -1504,7 +1511,8 @@ export class Player {
     this.syncActive = true;
     syncInit({
       wsUrl, groupId, deviceId: this.deviceId, selfIp: net.ipAddress ?? '',
-      expectedPeers, onStatus: s => logger.info(`[Sync] ${s}`),
+      expectedPeers, pinnedLeaderId,
+      onStatus: s => logger.info(`[Sync] ${s}`),
       // Android-specific URL resolver: always use the locally-downloaded file path.
       fetchVideoUrl: () => Promise.resolve(getPlaylistUrls()[0] ?? urls[0] ?? ''),
       prepareEngine: url => prepare(url),

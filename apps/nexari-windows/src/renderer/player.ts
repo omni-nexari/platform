@@ -225,6 +225,8 @@ async function startSyncGroupPlayback(content: Playlist) {
 
     const peers = (content.syncPlay?.peers ?? []) as Array<{ deviceId: string; leaderPriority?: number | null }>;
     const expectedPeers = Math.max(1, peers.length - 1);
+    // peers is already sorted by leaderPriority asc from the API; peers[0] is the designated leader.
+    const pinnedLeaderId = peers[0]?.deviceId ?? '';
 
     const urls = content.items
       .map(i => i.content?.url || i.content?.fileUrl || '')
@@ -232,7 +234,7 @@ async function startSyncGroupPlayback(content: Playlist) {
 
     if (!urls.length) { console.warn('[Sync] no video URLs'); playCurrentItem(); return; }
 
-    console.info(`[Sync] starting relay sync groupId=${content.syncGroupId} peers=${expectedPeers} relay=${content.relayUrl}`);
+    console.info(`[Sync] starting relay sync groupId=${content.syncGroupId} peers=${expectedPeers} pinnedLeader=${pinnedLeaderId}`);
     _syncActive = true;
     await startSync({
       apiBase,
@@ -240,6 +242,7 @@ async function startSyncGroupPlayback(content: Playlist) {
       deviceId,
       groupId: content.syncGroupId!,
       expectedPeers,
+      pinnedLeaderId,
       container: root,
       playlist: urls,
       onStatus: (s) => console.info(`[Sync] ${s}`),
