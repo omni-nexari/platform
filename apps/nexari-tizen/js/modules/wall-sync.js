@@ -320,7 +320,7 @@ var WallSync;
     }
     // ── Message dispatch ───────────────────────────────────────────────────────
     function _dispatch(msg) {
-        var _a;
+        var _a, _b, _c;
         const from = (_a = msg.from) !== null && _a !== void 0 ? _a : 'relay';
         // PONG is consumed by per-sample listeners in _measureClock
         if (msg.type === 'PONG')
@@ -347,10 +347,14 @@ var WallSync;
                 return;
             }
             _loadReceived = true;
-            _currentUrl = msg.url;
-            _cfg.onStatus(`Follower — preparing: ${msg.url.split('/').pop()}`);
+            // For videowall (Tizen), the local URL is always provided by _cfg.getContentUrl().
+            // The leader's msg.url is used as fallback if local content isn't ready yet.
+            const wallLocalUrl = (_b = _cfg.getContentUrl()) !== null && _b !== void 0 ? _b : msg.url;
+            _currentUrl = wallLocalUrl;
+            _cfg.onStatus(`Follower — preparing: ${wallLocalUrl.split('/').pop()}`);
+            logger.info(`[WallSync] LOAD_URL → local: ${wallLocalUrl.split('/').pop()} (leader: ${((_c = msg.url) !== null && _c !== void 0 ? _c : '').split('/').pop()})`);
             if (typeof WallEngine !== 'undefined') {
-                WallEngine.prepare(msg.url)
+                WallEngine.prepare(wallLocalUrl)
                     .then(() => {
                     if (_stopped)
                         return;
@@ -418,7 +422,9 @@ var WallSync;
             _goSent = false;
             _leaderReady = false;
             _loadReceived = false;
-            _wsSend({ type: 'LOAD_URL', url });
+            // Include url and index=0 so cross-OS followers can identify the content item.
+            // WallEngine handles a single URL per round — no multi-item playlist.
+            _wsSend({ type: 'LOAD_URL', url, index: 0 });
             _cfg.onStatus('Leader — preparing engine\u2026');
             if (typeof WallEngine !== 'undefined') {
                 WallEngine.prepare(url)
