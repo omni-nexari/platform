@@ -25,13 +25,20 @@ async function checkWorkspaceAccess(workspaceId: string, userId: string) {
 }
 
 /**
- * Detect mode from members: if any member device has a non-Samsung modelCode,
- * fall back to 'custom-mixed'.  For now all known devices are Samsung.
+ * Detect mode from members: if every member is a Tizen/Tizen-SBB device,
+ * use Samsung native SyncPlay; otherwise use the CrossOS relay engine.
  */
 async function detectMode(syncGroupId: string): Promise<'native-samsung' | 'custom-mixed'> {
-  // All Tizen LFD devices are Samsung — mode is always native-samsung at this stage.
-  // Phase 5 will add non-Samsung device detection.
-  return 'native-samsung';
+  const members = await db.query.syncGroupMembers.findMany({
+    where: eq(syncGroupMembers.syncGroupId, syncGroupId),
+    with: { device: { columns: { platform: true } } },
+  });
+  if (members.length === 0) return 'native-samsung';
+  const allTizen = members.every((m) => {
+    const plat: string = (m.device as any)?.platform ?? 'tizen';
+    return plat === 'tizen' || plat === 'tizen-sbb';
+  });
+  return allTizen ? 'native-samsung' : 'custom-mixed';
 }
 
 /**

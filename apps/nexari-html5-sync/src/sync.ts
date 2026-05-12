@@ -44,6 +44,13 @@ export interface SyncConfig {
   schedulePlay:      (epochMs: number) => void;
   getEngineDuration: () => number;
   restartEngine?:    () => void;
+  /**
+   * OS-specific resolver called by the leader to obtain the URL it should load
+   * and broadcast. Each platform provides its own implementation so the leader
+   * always uses a locally-valid path regardless of which OS wins the election.
+   * If omitted, falls back to getPlaylistUrls()[0] (requires pre-seeded playlist).
+   */
+  fetchVideoUrl?: () => Promise<string>;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -290,30 +297,32 @@ function _dispatch(msg: any): void {
     if (_role !== 'follower') return;
     if (_loadReceived) { logger.info('[Sync] LOAD_URL dup — ignored'); return; }
     _loadReceived = true;
-    _cfg.onStatus(`Follower — preparing: ${msg.url.split('/').pop()}`);
 
-    // Reset follower playlist index so it starts from the same clip the leader
-    // is starting from. Without this, after a leader resync the follower keeps
-    // its own independent loop counter and diverges within 1–2 clips.
-    const currentPlaylist = getPlaylistUrls();
-    if (currentPlaylist.length > 1) {
-      const leaderFile = msg.url.split('/').pop() ?? '';
-      const matchIdx   = currentPlaylist.findIndex((u) => u.split('/').pop() === leaderFile);
-      if (matchIdx >= 0 && matchIdx !== 0) {
-        // Re-order playlist so the leader's clip is first, preserving cycle order
-        const reordered = [
-          ...currentPlaylist.slice(matchIdx),
-          ...currentPlaylist.slice(0, matchIdx),
-        ];
-        setPlaylist(reordered);
-        logger.info(`[Sync] follower playlist realigned to start at ${leaderFile}`);
-      } else if (matchIdx === 0) {
-        // Already at index 0 — just reset the index counter
-        setPlaylist(currentPlaylist);
-      }
+    // Use the follower's own locally-resolved URL for this playlist item.
+    // The leader may be on a different OS with incompatible file:// paths.
+    // Prefer msg.index (explicit position); fall back to filename match.
+    const localPlaylist = getPlaylistUrls();
+    let localUrl: string;
+    if (typeof msg.index === 'number' && localPlaylist[msg.index]) {
+      localUrl = localPlaylist[msg.index];
+    } else {
+      const leaderFile = (msg.url ?? '').split('/').pop() ?? '';
+      const matchIdx   = localPlaylist.findIndex((u) => u.split('/').pop() === leaderFile);
+      localUrl = matchIdx >= 0 ? localPlaylist[matchIdx] : (localPlaylist[0] ?? msg.url);
+    }
+    // Align playlist so the correct item is first, preserving cycle order.
+    const startIdx = localPlaylist.indexOf(localUrl);
+    if (startIdx > 0) {
+      setPlaylist([...localPlaylist.slice(startIdx), ...localPlaylist.slice(0, startIdx)]);
+      logger.info(`[Sync] follower playlist realigned to start at ${localUrl.split('/').pop()}`);
+    } else {
+      setPlaylist(localPlaylist);
     }
 
-    _cfg.prepareEngine(msg.url)
+    _cfg.onStatus(`Follower — preparing: ${localUrl.split('/').pop()}`);
+    logger.info(`[Sync] LOAD_URL → local: ${localUrl.split('/').pop()} (leader sent: ${(msg.url ?? '').split('/').pop()})`);
+
+    _cfg.prepareEngine(localUrl)
       .then(() => {
         if (_stopped) return;
         logger.info('[Sync] follower READY — sending READY');
@@ -370,11 +379,14 @@ function _dispatch(msg: any): void {
 
 async function _runLeader(): Promise<void> {
   _cfg.onStatus('Leader — fetching video URL…');
-  const url = await _fetchVideoUrl();
+  const url = _cfg.fetchVideoUrl ? await _cfg.fetchVideoUrl() : await _fetchVideoUrl();
   logger.info(`[Sync] leader video: ${url}`);
 
-  // Broadcast LOAD_URL to all followers
-  _wsSend({ type: 'LOAD_URL', url });
+  // Broadcast LOAD_URL to all followers. Include playlist index so cross-OS
+  // followers can load their own local copy of the same item without needing
+  // to interpret the leader's OS-specific file path.
+  const loadIndex = _playlistUrls.indexOf(url);
+  _wsSend({ type: 'LOAD_URL', url, index: loadIndex >= 0 ? loadIndex : 0 });
 
   _cfg.onStatus('Leader — preparing engine…');
   _cfg.prepareEngine(url)
@@ -516,6 +528,16 @@ function _resolveBundledUrl(filename: string): Promise<string> {
  * Falls back to the API content URL as a single-item playlist if the API responds.
  */
 async function _fetchPlaylistUrls(): Promise<string[]> {
+  // If the host player has already seeded the engine playlist (e.g. Windows/Android
+  // player-web passes its own downloaded file URLs via setPlaylist before calling
+  // syncInit), use those directly — avoids resolving Tizen-specific bundled paths
+  // on non-Tizen platforms.
+  const preSeeded = getPlaylistUrls();
+  if (preSeeded.length > 0) {
+    logger.info(`[Sync] playlist from pre-seeded engine (${preSeeded.length} items)`);
+    return preSeeded;
+  }
+
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 3000);

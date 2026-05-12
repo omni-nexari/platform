@@ -246,23 +246,31 @@ function _dispatch(msg: Record<string, unknown>): void {
     if (_role !== 'follower') return;
     if (_loadReceived) { logger.info('[Sync] LOAD_URL dup — ignored'); return; }
     _loadReceived = true;
-    const url = String(msg['url'] ?? '');
-    _cfg.onStatus(`Follower — preparing: ${url.split('/').pop()}`);
 
-    const currentPlaylist = getPlaylistUrls();
-    if (currentPlaylist.length > 1) {
-      const leaderFile = url.split('/').pop() ?? '';
-      const matchIdx = currentPlaylist.findIndex((u) => u.split('/').pop() === leaderFile);
-      if (matchIdx > 0) {
-        const reordered = [...currentPlaylist.slice(matchIdx), ...currentPlaylist.slice(0, matchIdx)];
-        setPlaylist(reordered);
-        logger.info(`[Sync] follower playlist realigned to start at ${leaderFile}`);
-      } else if (matchIdx === 0) {
-        setPlaylist(currentPlaylist);
-      }
+    // Use follower's own locally-resolved URL — leader may be on a different OS
+    // with incompatible file:// paths. msg.index indicates the playlist position.
+    const localPlaylist = getPlaylistUrls();
+    let localUrl: string;
+    const msgIndex = typeof msg['index'] === 'number' ? (msg['index'] as number) : -1;
+    if (msgIndex >= 0 && localPlaylist[msgIndex]) {
+      localUrl = localPlaylist[msgIndex]!;
+    } else {
+      const leaderFile = String(msg['url'] ?? '').split('/').pop() ?? '';
+      const matchIdx = localPlaylist.findIndex((u) => u.split('/').pop() === leaderFile);
+      localUrl = matchIdx >= 0 ? localPlaylist[matchIdx]! : (localPlaylist[0] ?? String(msg['url'] ?? ''));
+    }
+    const startIdx = localPlaylist.indexOf(localUrl);
+    if (startIdx > 0) {
+      setPlaylist([...localPlaylist.slice(startIdx), ...localPlaylist.slice(0, startIdx)]);
+      logger.info(`[Sync] follower playlist realigned to start at ${localUrl.split('/').pop()}`);
+    } else {
+      setPlaylist(localPlaylist);
     }
 
-    _cfg.prepareEngine(url).then(() => {
+    _cfg.onStatus(`Follower — preparing: ${localUrl.split('/').pop()}`);
+    logger.info(`[Sync] LOAD_URL → local: ${localUrl.split('/').pop()} (leader sent: ${String(msg['url'] ?? '').split('/').pop()})`);
+
+    _cfg.prepareEngine(localUrl).then(() => {
       if (_stopped) return;
       logger.info('[Sync] follower READY — sending READY');
       _cfg.onStatus('Follower — READY sent, waiting for GO…');
@@ -315,9 +323,11 @@ function _dispatch(msg: Record<string, unknown>): void {
 
 async function _runLeader(): Promise<void> {
   _cfg.onStatus('Leader — fetching video URL…');
-  const url = await _fetchVideoUrl();
+  const url = _cfg.fetchVideoUrl ? await _cfg.fetchVideoUrl() : await _fetchVideoUrl();
   logger.info(`[Sync] leader video: ${url}`);
-  _wsSend({ type: 'LOAD_URL', url });
+  const _leaderAllUrls = getPlaylistUrls();
+  const _leaderIdx = _leaderAllUrls.indexOf(url);
+  _wsSend({ type: 'LOAD_URL', url, index: _leaderIdx >= 0 ? _leaderIdx : 0 });
 
   _cfg.onStatus('Leader — preparing engine…');
   _cfg.prepareEngine(url).then(() => {

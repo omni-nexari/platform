@@ -113,15 +113,25 @@ export async function syncRelayRoutes(app: FastifyInstance) {
 
       // ── WS_REGISTER ────────────────────────────────────────────────────
       if (msg?.type === 'WS_REGISTER') {
-        // If the client supplied a JWT, it MUST match the deviceId it claims.
-        if (authedDeviceId && msg.deviceId && msg.deviceId !== authedDeviceId) {
-          send(socket, { type: 'ERROR', error: 'deviceId does not match token' });
-          try { socket.close(4001, 'auth mismatch'); } catch { /* ignore */ }
-          return;
+        // JWT proves the device is paired/authorised. The relay deviceId is
+        // the client's chosen identity for peer-listing and leader election —
+        // it may differ from the JWT sub (e.g. Android uses a MAC-based ID).
+        // We do not reject on mismatch; we only require a valid token to connect.
+        const newDeviceId = String(msg.deviceId || authedDeviceId || `anon-${Date.now()}`);
+        const newGroupId  = String(msg.groupId  || 'default');
+
+        // Evict any stale entry for the same deviceId in the same group so
+        // the PEERS list never shows the same device twice after a reconnect.
+        for (const existing of clients) {
+          if (existing !== client && existing.deviceId === newDeviceId && existing.groupId === newGroupId) {
+            try { existing.socket.close(4000, 'superseded'); } catch { /* ignore */ }
+            clients.delete(existing);
+          }
         }
-        client.deviceId = String(msg.deviceId || authedDeviceId || `anon-${Date.now()}`);
-        client.groupId  = String(msg.groupId  || 'default');
-        client.ip       = String(msg.ip || client.ip || '');
+
+        client.deviceId     = newDeviceId;
+        client.groupId      = newGroupId;
+        client.ip           = String(msg.ip || client.ip || '');
         client.registeredAt = Date.now();
         sendPeers(client.groupId);
         return;

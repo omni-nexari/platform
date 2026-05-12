@@ -335,10 +335,21 @@ namespace WallSync {
       if (_role !== 'follower') return;
       if (_loadReceived) { logger.info('[WallSync] LOAD_URL dup — ignored'); return; }
       _loadReceived = true;
-      _currentUrl   = msg.url;
-      _cfg.onStatus(`Follower — preparing: ${msg.url.split('/').pop()}`);
+      // Use the follower's own locally-resolved URL (cross-OS path compatibility).
+      const wallLocalPlaylist = typeof WallEngine !== 'undefined' ? WallEngine.getPlaylistUrls?.() ?? [] : [];
+      let wallLocalUrl: string;
+      if (typeof msg.index === 'number' && wallLocalPlaylist[msg.index]) {
+        wallLocalUrl = wallLocalPlaylist[msg.index];
+      } else {
+        const leaderFile = (msg.url ?? '').split('/').pop() ?? '';
+        const mi = wallLocalPlaylist.findIndex((u: string) => u.split('/').pop() === leaderFile);
+        wallLocalUrl = mi >= 0 ? wallLocalPlaylist[mi] : (_cfg.getContentUrl() ?? msg.url);
+      }
+      _currentUrl   = wallLocalUrl;
+      _cfg.onStatus(`Follower — preparing: ${wallLocalUrl.split('/').pop()}`);
+      logger.info(`[WallSync] LOAD_URL → local: ${wallLocalUrl.split('/').pop()} (leader: ${(msg.url ?? '').split('/').pop()})`);
       if (typeof WallEngine !== 'undefined') {
-        WallEngine.prepare(msg.url)
+        WallEngine.prepare(wallLocalUrl)
           .then(() => {
             if (_stopped) return;
             logger.info('[WallSync] follower READY — sending READY');
@@ -410,7 +421,10 @@ namespace WallSync {
     _leaderReady   = false;
     _loadReceived  = false;
 
-    _wsSend({ type: 'LOAD_URL', url });
+    // Include playlist index so cross-OS followers resolve their own local URL.
+    const _wallPlaylist = typeof WallEngine !== 'undefined' ? WallEngine.getPlaylistUrls?.() ?? [] : [];
+    const wallLoadIndex = _wallPlaylist.indexOf(url);
+    _wsSend({ type: 'LOAD_URL', url, index: wallLoadIndex >= 0 ? wallLoadIndex : 0 });
 
     _cfg.onStatus('Leader — preparing engine\u2026');
     if (typeof WallEngine !== 'undefined') {

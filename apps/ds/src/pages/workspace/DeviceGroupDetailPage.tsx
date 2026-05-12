@@ -415,7 +415,11 @@ export default function DeviceGroupDetailPage() {
                 </div>
               </div>
               <p className="text-xs text-[var(--text-muted)]">
-                Mode: <span className="text-[var(--text)]">{group.syncGroup.mode === 'native-samsung' ? 'Samsung Native SyncPlay' : group.syncGroup.mode}</span>
+                Mode: <span className="text-[var(--text)]">{
+                  group.syncGroup.mode === 'native-samsung'
+                    ? 'Samsung Native SyncPlay'
+                    : 'CrossOS Sync Engine'
+                }</span>
               </p>
 
               {/* Relay mode toggle */}

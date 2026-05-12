@@ -1505,6 +1505,8 @@ export class Player {
     syncInit({
       wsUrl, groupId, deviceId: this.deviceId, selfIp: net.ipAddress ?? '',
       expectedPeers, onStatus: s => logger.info(`[Sync] ${s}`),
+      // Android-specific URL resolver: always use the locally-downloaded file path.
+      fetchVideoUrl: () => Promise.resolve(getPlaylistUrls()[0] ?? urls[0] ?? ''),
       prepareEngine: url => prepare(url),
       schedulePlay:  epochMs => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),
@@ -1570,6 +1572,8 @@ export class Player {
     syncInit({
       wsUrl, groupId, deviceId: this.deviceId, selfIp: net.ipAddress ?? '',
       expectedPeers, onStatus: s => logger.info(`[Sync/Wall] ${s}`),
+      // Android-specific URL resolver: always use the locally-downloaded file path.
+      fetchVideoUrl: () => Promise.resolve(getPlaylistUrls()[0] ?? urls[0] ?? ''),
       prepareEngine: url => prepare(url),
       schedulePlay:  epochMs => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),
