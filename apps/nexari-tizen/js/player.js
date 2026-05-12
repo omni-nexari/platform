@@ -1848,7 +1848,7 @@ const Player = {
         const tizenWsBase = tizenApiBase.replace(/^http/, 'ws').replace(/\/api\/v1\/?$/, '');
         const tizenToken = this.deviceToken || localStorage.getItem('deviceToken') || '';
         const relayUrl = tizenWsBase
-            ? `${tizenWsBase}/api/v1/sync-relay?token=${encodeURIComponent(tizenToken)}`
+            ? `${tizenWsBase}/api/v1/sync-relay/ws?token=${encodeURIComponent(tizenToken)}`
             : manifest.relayUrl;
         const groupId = manifest.deviceGroupId;
         const deviceId = this.deviceId;
@@ -2001,7 +2001,7 @@ const Player = {
         const apiBase = (typeof CONFIG !== 'undefined' && CONFIG.API_BASE) || '';
         const wsBase = apiBase.replace(/^http/, 'ws').replace(/\/api\/v1\/?$/, '');
         const relayUrl = wsBase
-            ? `${wsBase}/api/v1/sync-relay?token=${encodeURIComponent(token)}`
+            ? `${wsBase}/api/v1/sync-relay/ws?token=${encodeURIComponent(token)}`
             : null;
         if (!relayUrl) {
             logger.warn('[SyncRelay] cannot derive relayUrl from CONFIG.API_BASE, aborting');

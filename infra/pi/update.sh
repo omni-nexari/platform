@@ -34,7 +34,7 @@ echo "==> [update] Restarting service..."
 sudo systemctl restart signage-api
 
 echo "==> [update] Updating nginx config..."
-sudo cp "$APP_DIR/infra/nginx/signage.conf" /etc/nginx/sites-available/signage
+sudo cp "$APP_DIR/infra/nginx/signage.conf" /etc/nginx/sites-available/signage.conf
 sudo nginx -t && sudo systemctl reload nginx
 
 # ── Tizen assets directory ────────────────────────────────────────────────────

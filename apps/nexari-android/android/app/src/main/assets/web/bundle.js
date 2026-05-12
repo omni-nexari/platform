@@ -3689,7 +3689,7 @@ var Player = class {
     const leaderPriority = Array.isArray(msg["leaderPriority"]) ? msg["leaderPriority"] : [];
     const tok = this.token;
     const wsBase = this.cfg.apiBase.replace(/\/api\/v1\/?$/, "").replace(/^http/, "ws");
-    const wsUrl = `${wsBase}/api/v1/sync-relay${tok ? "?token=" + encodeURIComponent(tok) : ""}`;
+    const wsUrl = `${wsBase}/api/v1/sync-relay/ws${tok ? "?token=" + encodeURIComponent(tok) : ""}`;
     logger.info(`[Sync] relay URL: ${wsUrl}`);
     let urls = this.playlistItems.map((i) => {
       var _a2;
@@ -3776,7 +3776,7 @@ var Player = class {
     const leaderPriority = Array.isArray(msg["leaderPriority"]) ? msg["leaderPriority"] : [];
     const tok2 = this.token;
     const wsBase2 = this.cfg.apiBase.replace(/\/api\/v1\/?$/, "").replace(/^http/, "ws");
-    const wsUrl = `${wsBase2}/api/v1/sync-relay${tok2 ? "?token=" + encodeURIComponent(tok2) : ""}`;
+    const wsUrl = `${wsBase2}/api/v1/sync-relay/ws${tok2 ? "?token=" + encodeURIComponent(tok2) : ""}`;
     const groupId = String((_p = (_o = msg["deviceGroupId"]) != null ? _o : msg["groupId"]) != null ? _p : "");
     const peers = Array.isArray(msg["peers"]) ? msg["peers"] : [];
     const expectedPeers = peers.length - 1 || 1;
