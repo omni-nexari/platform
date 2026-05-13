@@ -39,6 +39,8 @@ export declare class Player {
     private calendarPushHandlers;
     private syncActive;
     private platform;
+    /** DB UUID decoded from JWT sub — used as sync relay deviceId so leaderPriority comparison works. */
+    private dbDeviceId;
     private screenshotIntervalHandle;
     private liveIntervalHandle;
     private liveCaptureActive;

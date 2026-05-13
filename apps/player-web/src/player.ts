@@ -109,6 +109,8 @@ export class Player {
   private calendarPushHandlers = new Map<string, (events: CalendarEvent[]) => void>();
   private syncActive = false;
   private platform = '';
+  /** DB UUID decoded from JWT sub — used as sync relay deviceId so leaderPriority comparison works. */
+  private dbDeviceId = '';
 
   // Screenshot state — mirrors Tizen/Windows behaviour
   private screenshotIntervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -159,7 +161,14 @@ export class Player {
 
     this.token = await this.ensurePaired();
     logger.info(`[Player] paired (token: ${this.token ? 'ok' : 'none'})`);
-
+    // Decode JWT to get the DB UUID (sub claim) — used for sync group leader election
+    // so that leaderPriority array (which contains DB UUIDs) matches correctly.
+    if (this.token) {
+      try {
+        const payload = JSON.parse(atob(this.token.split('.')[1]!)) as Record<string, unknown>;
+        this.dbDeviceId = String(payload['sub'] ?? '');
+      } catch { /* ignore decode errors */ }
+    }
     // Try offline cache first so something shows immediately while we connect
     if (!this.tryLoadCachedSchedule()) this.showIdle('Waiting for content…');
 
@@ -1097,12 +1106,18 @@ export class Player {
       this.playlistItems        = items;
       this.playlistIdx          = 0;
       this.lastContentSignature = this.getContentSignature(items);
-      // Best-effort: download all referenced media in the background so future
-      // renders play from local blob storage (offline resilience).
-      void this.preCacheItems(items).catch(() => { /* network not available is fine */ });
-      if (this.syncActive) return true;
-      this.cancelPlayback();
-      void this.renderPlaylist();
+      // Pre-warm the blob URL cache BEFORE rendering so HTTP video/image URLs
+      // are replaced with blob: URLs, preventing mixed-content blocks on
+      // Android WebView (video src= blocks HTTP even with MIXED_CONTENT_ALWAYS_ALLOW).
+      // The finally always fires (even on network failure), so rendering is
+      // guaranteed. loadContent() may also call renderPlaylist concurrently if
+      // it returns faster — that's fine; preCacheItems.finally will cancel it
+      // and re-render with blob URLs once the cache is warm.
+      this.preCacheItems(items).catch(() => { /* offline is fine */ }).finally(() => {
+        if (this.syncActive) return;
+        this.cancelPlayback();
+        void this.renderPlaylist();
+      });
       return true;
     } catch {
       return false;
@@ -1130,7 +1145,22 @@ export class Player {
       // in case the previous boot used a cached schedule and we never downloaded.
       if (newSig === this.lastContentSignature && this.playlistItems.length && isPlaying) {
         logger.info('[Player] content unchanged, still playing — skip');
-        if (this.localUrlCache.size === 0) {
+        // After a fresh restart, the cached schedule plays as a regular playlist.
+        // If the API confirms this is a sync group and the sync engine isn't running,
+        // re-initialize sync mode now that localUrlCache should have blob URLs.
+        const sg = schedule as unknown as Record<string, unknown>;
+        if (!this.syncActive && sg['allTizen'] === false && sg['relayUrl']) {
+          logger.info('[Player] re-entering sync group after restart');
+          void this.initSyncGroup({
+            groupId:       String(sg['syncGroupId'] ?? ''),
+            relayUrl:      String(sg['relayUrl']),
+            leaderPriority: ((sg['peers'] as Array<{ deviceId: string; leaderPriority?: number | null }>) ?? [])
+              .sort((a, b) => (a.leaderPriority ?? 999) - (b.leaderPriority ?? 999))
+              .map(p => p.deviceId),
+            expectedPeers: Math.max(1, ((sg['peers'] as unknown[]) ?? []).length - 1),
+            syncRelayMode: 'cloud',
+          });
+        } else if (this.localUrlCache.size === 0) {
           void this.preCacheItems(this.playlistItems).catch(() => {});
         }
         return;
@@ -1734,10 +1764,16 @@ export class Player {
     setPlaylist(urls);
 
     const net = await this.cfg.adapter.getNetworkInfo();
+    // Derive pinnedLeaderId from leaderPriority array (first entry = designated leader)
+    const pinnedLeaderId = leaderPriority[0] ?? '';
+
     this.syncActive = true;
+    // Use DB UUID (from JWT sub) as sync deviceId so leader election compares correctly
+    // against leaderPriority array which contains DB UUIDs. Falls back to hardware deviceId.
+    const syncDeviceId = this.dbDeviceId || this.deviceId;
     syncInit({
-      wsUrl, groupId, deviceId: this.deviceId, selfIp: net.ipAddress ?? '',
-      expectedPeers, onStatus: s => logger.info(`[Sync] ${s}`),
+      wsUrl, groupId, deviceId: syncDeviceId, selfIp: net.ipAddress ?? '',
+      expectedPeers, pinnedLeaderId, onStatus: s => logger.info(`[Sync] ${s}`),
       // Android WebView has higher video decode startup latency (~100ms).
       // Negative selfLatency tells the engine to call play() that many ms earlier
       // so the first rendered frame aligns with other devices.

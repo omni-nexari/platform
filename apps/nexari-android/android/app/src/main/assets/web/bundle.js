@@ -1759,7 +1759,7 @@ function _onEos() {
 // src/sync/sync.ts
 var CLOCK_SAMPLES = 7;
 var CLOCK_RESYNC_MS = 6e4;
-var GO_AHEAD_MS = 5e3;
+var GO_AHEAD_MS = 1500;
 var PLAYHEAD_TICK_MS = 600;
 var WS_RECONNECT_MS = 2e3;
 var LEADER_SCAN_MS = 4e3;
@@ -1958,7 +1958,7 @@ function _measureClock() {
 }
 var _localToServer = (t) => t + _offsetMs;
 var _serverToLocal = (t) => t - _offsetMs;
-var PEER_WAIT_TIMEOUT_MS = 2e4;
+var PEER_WAIT_TIMEOUT_MS = 6e3;
 function _waitPeers() {
   if (_role2 === "follower") return Promise.resolve();
   return new Promise((resolve) => {
@@ -2161,7 +2161,7 @@ async function _resyncLeader() {
     _resyncInProgress = false;
   }
 }
-function _scheduleFollowerResync(delayMs = 8e3) {
+function _scheduleFollowerResync(delayMs = 4e3) {
   if (_followerResyncTimer) clearTimeout(_followerResyncTimer);
   _followerResyncTimer = setTimeout(() => {
     _followerResyncTimer = null;
@@ -2263,6 +2263,8 @@ var Player = class {
     this.calendarPushHandlers = /* @__PURE__ */ new Map();
     this.syncActive = false;
     this.platform = "";
+    /** DB UUID decoded from JWT sub — used as sync relay deviceId so leaderPriority comparison works. */
+    this.dbDeviceId = "";
     // Screenshot state — mirrors Tizen/Windows behaviour
     this.screenshotIntervalHandle = null;
     this.liveIntervalHandle = null;
@@ -2300,7 +2302,7 @@ var Player = class {
     this.api = new Api(this.cfg.apiBase, () => this.token);
   }
   async start() {
-    var _a;
+    var _a, _b;
     const info = await this.cfg.adapter.getDeviceInfo();
     this.deviceId = info.deviceId;
     this.platform = info.platform || "";
@@ -2312,12 +2314,19 @@ var Player = class {
     this.initSettingsGesture(info);
     this.token = await this.ensurePaired();
     logger.info(`[Player] paired (token: ${this.token ? "ok" : "none"})`);
+    if (this.token) {
+      try {
+        const payload = JSON.parse(atob(this.token.split(".")[1]));
+        this.dbDeviceId = String((_a = payload["sub"]) != null ? _a : "");
+      } catch (e) {
+      }
+    }
     if (!this.tryLoadCachedSchedule()) this.showIdle("Waiting for content\u2026");
     this.connectWs();
     void this.sendHeartbeat();
     this.heartbeatTimer = setInterval(
       () => this.sendHeartbeat().catch((e) => logger.warn(`[Player] heartbeat: ${e}`)),
-      (_a = this.cfg.heartbeatMs) != null ? _a : 3e4
+      (_b = this.cfg.heartbeatMs) != null ? _b : 3e4
     );
     void this.loadContent();
     this.contentRefreshTimer = setInterval(() => void this.loadContent(), 5 * 6e4);
@@ -3323,11 +3332,12 @@ var Player = class {
       this.playlistItems = items;
       this.playlistIdx = 0;
       this.lastContentSignature = this.getContentSignature(items);
-      void this.preCacheItems(items).catch(() => {
+      this.preCacheItems(items).catch(() => {
+      }).finally(() => {
+        if (this.syncActive) return;
+        this.cancelPlayback();
+        void this.renderPlaylist();
       });
-      if (this.syncActive) return true;
-      this.cancelPlayback();
-      void this.renderPlaylist();
       return true;
     } catch (e) {
       return false;
@@ -3335,7 +3345,7 @@ var Player = class {
   }
   // ── Main content loader (mirrors Tizen loadContent) ──────────────────────────
   async loadContent() {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g;
     logger.info("[Player] loadContent");
     try {
       const schedule = await this.api.getCurrentContent(this.deviceId);
@@ -3351,7 +3361,20 @@ var Player = class {
       const isPlaying2 = !!this.playlistItems.length && !!(this.playbackCancel && !this.playbackCancel.signal.aborted) || this.syncActive;
       if (newSig === this.lastContentSignature && this.playlistItems.length && isPlaying2) {
         logger.info("[Player] content unchanged, still playing \u2014 skip");
-        if (this.localUrlCache.size === 0) {
+        const sg2 = schedule;
+        if (!this.syncActive && sg2["allTizen"] === false && sg2["relayUrl"]) {
+          logger.info("[Player] re-entering sync group after restart");
+          void this.initSyncGroup({
+            groupId: String((_c = sg2["syncGroupId"]) != null ? _c : ""),
+            relayUrl: String(sg2["relayUrl"]),
+            leaderPriority: ((_d = sg2["peers"]) != null ? _d : []).sort((a, b) => {
+              var _a2, _b2;
+              return ((_a2 = a.leaderPriority) != null ? _a2 : 999) - ((_b2 = b.leaderPriority) != null ? _b2 : 999);
+            }).map((p) => p.deviceId),
+            expectedPeers: Math.max(1, ((_e = sg2["peers"]) != null ? _e : []).length - 1),
+            syncRelayMode: "cloud"
+          });
+        } else if (this.localUrlCache.size === 0) {
           void this.preCacheItems(this.playlistItems).catch(() => {
           });
         }
@@ -3366,13 +3389,13 @@ var Player = class {
       logger.info(`[Player] new content (${schedule.items.length} items), downloading\u2026`);
       const sg = schedule;
       if (sg["allTizen"] === false && sg["relayUrl"]) {
-        const rawPeers = (_c = sg["peers"]) != null ? _c : [];
+        const rawPeers = (_f = sg["peers"]) != null ? _f : [];
         const sortedPeers = [...rawPeers].sort((a, b) => {
           var _a2, _b2;
           return ((_a2 = a.leaderPriority) != null ? _a2 : 999) - ((_b2 = b.leaderPriority) != null ? _b2 : 999);
         });
         this._pendingSyncRelayInfo = {
-          groupId: String((_d = sg["syncGroupId"]) != null ? _d : ""),
+          groupId: String((_g = sg["syncGroupId"]) != null ? _g : ""),
           relayUrl: String(sg["relayUrl"]),
           leaderPriority: sortedPeers.map((p) => p.deviceId),
           peerCount: Math.max(1, sortedPeers.length - 1)
@@ -4038,7 +4061,7 @@ var Player = class {
     }
   }
   async initSyncGroup(msg) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     if (this.syncActive) {
       try {
         stop();
@@ -4068,13 +4091,16 @@ var Player = class {
     await initEngine(container);
     setPlaylist(urls);
     const net = await this.cfg.adapter.getNetworkInfo();
+    const pinnedLeaderId = (_c = leaderPriority[0]) != null ? _c : "";
     this.syncActive = true;
+    const syncDeviceId = this.dbDeviceId || this.deviceId;
     init({
       wsUrl,
       groupId,
-      deviceId: this.deviceId,
-      selfIp: (_c = net.ipAddress) != null ? _c : "",
+      deviceId: syncDeviceId,
+      selfIp: (_d = net.ipAddress) != null ? _d : "",
       expectedPeers,
+      pinnedLeaderId,
       onStatus: (s) => logger.info(`[Sync] ${s}`),
       // Android WebView has higher video decode startup latency (~100ms).
       // Negative selfLatency tells the engine to call play() that many ms earlier

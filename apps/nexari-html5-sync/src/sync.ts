@@ -70,7 +70,7 @@ export interface SyncConfig {
 
 const CLOCK_SAMPLES      = 7;
 const CLOCK_RESYNC_MS    = 60_000;
-const GO_AHEAD_MS        = 5000;
+const GO_AHEAD_MS        = 1500;
 
 const PLAYHEAD_TICK_MS   = 600;   // faster ticks → <50ms steady-state accuracy
 const PEER_FRESH_MS      = 4000;
@@ -284,7 +284,7 @@ const _serverToLocal = (t: number) => t - _offsetMs;
 // ── Peer discovery ─────────────────────────────────────────────────────────────
 
 // How long to wait for ALL expected peers before proceeding with whoever joined.
-const PEER_WAIT_TIMEOUT_MS = 20_000;
+const PEER_WAIT_TIMEOUT_MS = 6_000;
 
 function _waitPeers(): Promise<void> {
   // Followers with a pre-elected leader skip peer-wait entirely — they just
@@ -514,7 +514,7 @@ async function _resyncLeader(): Promise<void> {
  * The leader handles RESYNC_REQUEST by calling _resyncLeader(), which
  * re-broadcasts LOAD_URL + GO so the late-joining follower can start playing.
  */
-function _scheduleFollowerResync(delayMs = 8000): void {
+function _scheduleFollowerResync(delayMs = 4000): void {
   if (_followerResyncTimer) clearTimeout(_followerResyncTimer);
   _followerResyncTimer = setTimeout(() => {
     _followerResyncTimer = null;

@@ -123,9 +123,10 @@ export async function registerPlugins(app: FastifyInstance) {
     const urlPath = req.url.split('?')[0] ?? req.url;
     // Portal-only route prefixes (platform owner / management admin).
     // These routes use sa_access_token + sa_csrf_token regardless of URL prefix stripping.
-    // NOTE: /logs is listed here because all its mutation endpoints require authenticatePlatformOwner.
-    const PORTAL_SEGMENTS = ['/superadmin', '/player-releases', '/monitoring', '/logs'];
-    const isPortalRequest = PORTAL_SEGMENTS.some((seg) => urlPath.includes(seg));
+    const PORTAL_SEGMENTS = ['/superadmin', '/player-releases', '/monitoring'];
+    // '/logs' alone would also match /devices/:id/logs — only treat as portal if NOT a device sub-route
+    const isLogsPortalRoute = urlPath.includes('/logs') && !urlPath.includes('/devices/');
+    const isPortalRequest = PORTAL_SEGMENTS.some((seg) => urlPath.includes(seg)) || isLogsPortalRoute;
     if (isPortalRequest) {
       return {
         accessCookie: SA_ACCESS_COOKIE,
