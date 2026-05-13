@@ -28,3 +28,11 @@ Docs/sample/
 apps/nexari-android/android/keystore.properties
 Docs/cert/nexari-android.jks
 Docs/cert/nexari-android.pwd
+
+# Player build outputs (binaries / release artifacts)
+apps/nexari-windows/release/
+apps/nexari-windows/dist/
+apps/nexari-tizen/*.wgt
+apps/nexari-epaper/*.wgt
+apps/nexari-html5-sync/*.wgt
+*.wgt
