@@ -6,7 +6,7 @@ import { logBus } from '../services/log-bus.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
-const VALID_SOURCES = ['api', 'ds', 'tizen', 'tizen-sbb', 'epaper'] as const;
+const VALID_SOURCES = ['api', 'ds', 'tizen', 'tizen-sbb', 'epaper', 'windows', 'android'] as const;
 const VALID_LEVELS  = ['debug', 'info', 'warn', 'error'] as const;
 const LEVEL_ORDER   = { debug: 0, info: 1, warn: 2, error: 3 } as const;
 
@@ -75,7 +75,14 @@ export async function logsRoutes(app: FastifyInstance) {
       resolvedDeviceId = payload.sub;
       resolvedOrgId    = payload.orgId;
       const src = (req.body as { source?: string })?.source ?? payload.source;
-      resolvedSource = (src === 'tizen-sbb' ? 'tizen-sbb' : src === 'epaper' ? 'epaper' : 'tizen') as typeof VALID_SOURCES[number];
+      const srcMap: Record<string, typeof VALID_SOURCES[number]> = {
+        'tizen-sbb': 'tizen-sbb',
+        'epaper':    'epaper',
+        'windows':   'windows',
+        'android':   'android',
+        'tizen':     'tizen',
+      };
+      resolvedSource = srcMap[src ?? ''] ?? 'tizen';
     } else {
       // User session: validate via cookie / user JWT
       try {

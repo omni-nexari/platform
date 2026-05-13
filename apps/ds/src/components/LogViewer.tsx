@@ -56,9 +56,12 @@ const LEVEL_STYLES: Record<string, string> = {
 };
 
 const SOURCE_LABELS: Record<string, string> = {
-  api:    'API',
-  ds:     'Dashboard',
-  tizen:  'Tizen',
+  api:     'API',
+  ds:      'Dashboard',
+  tizen:   'Tizen',
+  windows: 'Windows',
+  android: 'Android',
+  epaper:  'ePaper',
 };
 
 function LevelBadge({ level }: { level: string }) {
@@ -190,14 +193,16 @@ function StatsBanner({ stats }: { stats: LogStats }) {
     { label: 'Total',  value: fmt(stats.total),                   cls: 'text-[var(--text)]'       },
     { label: 'Errors', value: fmt(stats.byLevel['error']  ?? 0),  cls: 'text-red-600'             },
     { label: 'Warns',  value: fmt(stats.byLevel['warn']   ?? 0),  cls: 'text-yellow-600'          },
-    { label: 'Tizen',  value: fmt(stats.bySource['tizen'] ?? 0),  cls: 'text-[var(--text-muted)]' },
-    { label: 'API',    value: fmt(stats.bySource['api']   ?? 0),  cls: 'text-[var(--text-muted)]' },
+    { label: 'Tizen',   value: fmt((stats.bySource['tizen'] ?? 0) + (stats.bySource['tizen-sbb'] ?? 0)), cls: 'text-[var(--text-muted)]' },
+    { label: 'Windows', value: fmt(stats.bySource['windows'] ?? 0), cls: 'text-[var(--text-muted)]', hide: !stats.bySource['windows'] },
+    { label: 'Android', value: fmt(stats.bySource['android'] ?? 0), cls: 'text-[var(--text-muted)]', hide: !stats.bySource['android'] },
+    { label: 'API',     value: fmt(stats.bySource['api']   ?? 0),  cls: 'text-[var(--text-muted)]' },
   ];
 
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-[var(--card-border)] bg-[var(--bg2)] px-4 py-2.5 text-sm">
       <BarChart2 size={14} className="shrink-0 text-[var(--text-muted)]" />
-      {items.map((item) => (
+      {items.filter((item) => !item.hide).map((item) => (
         <span key={item.label} className="flex items-baseline gap-1.5">
           <span className={`font-semibold tabular-nums ${item.cls}`}>{item.value}</span>
           <span className="text-xs text-[var(--text-muted)]">{item.label}</span>
@@ -519,6 +524,9 @@ export default function LogViewer({
                 <option value="api">API</option>
                 <option value="ds">Dashboard</option>
                 <option value="tizen">Tizen</option>
+                <option value="windows">Windows</option>
+                <option value="android">Android</option>
+                <option value="epaper">ePaper</option>
               </select>
             </div>
 
