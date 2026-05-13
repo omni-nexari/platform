@@ -963,10 +963,20 @@ export function DeviceDetailContent({
     retry: false,
   });
 
-  type PlayerRelease = { id: string; version: string; downloadUrl: string; releaseNotes: string | null; isLatest: boolean; publishedAt: string };
+  type PlayerRelease = {
+    id: string;
+    version: string;
+    downloadUrl: string;
+    releaseNotes: string | null;
+    isLatest: boolean;
+    superadminApproved: boolean;
+    managementApproved: boolean;
+    publishedAt: string;
+  };
+  const devicePlatform = (deviceQuery.data?.device?.platform ?? 'tizen') as string;
   const { data: latestRelease } = useQuery<PlayerRelease | null>({
-    queryKey: ['player-releases-latest'],
-    queryFn: () => api.get('/player-releases/latest'),
+    queryKey: ['player-releases-latest', devicePlatform],
+    queryFn: () => api.get(`/player-releases/latest?platform=${encodeURIComponent(devicePlatform)}`),
     enabled: bootstrapped && !!user,
     staleTime: 60_000,
     retry: false,
@@ -2969,15 +2979,24 @@ export function DeviceDetailContent({
                 <span className="font-mono text-xs text-[var(--text)]">{device.playerVersion ? `v${device.playerVersion}` : '—'}</span>
                 {latestRelease && device.playerVersion && latestRelease.version !== device.playerVersion && (
                   <>
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                      Update available: v{latestRelease.version}
-                    </span>
-                    <ActionButton
-                      type="button"
-                      onClick={() => sendCmd({ command: 'update_player', payload: { version: latestRelease.version, downloadUrl: latestRelease.downloadUrl } })}
-                      disabled={cmdDisabled}
-                      tone="primary" className="px-3 py-1 text-xs shrink-0"
-                    >Apply Update</ActionButton>
+                    {latestRelease.managementApproved ? (
+                      <>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                          Update available: v{latestRelease.version}
+                        </span>
+                        <ActionButton
+                          type="button"
+                          onClick={() => sendCmd({ command: 'update_player', payload: { version: latestRelease.version, downloadUrl: latestRelease.downloadUrl } })}
+                          disabled={cmdDisabled}
+                          tone="primary" className="px-3 py-1 text-xs shrink-0"
+                        >Apply Update</ActionButton>
+                      </>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">
+                        v{latestRelease.version} available
+                        {!latestRelease.superadminApproved ? ' · awaiting platform approval' : ' · awaiting reseller approval'}
+                      </span>
+                    )}
                   </>
                 )}
                 {latestRelease && device.playerVersion === latestRelease.version && (

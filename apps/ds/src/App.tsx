@@ -31,6 +31,7 @@ import ManagementSupportPage from './pages/management/ManagementSupportPage.js';
 import ManagementSupportTicketDetailPage from './pages/management/ManagementSupportTicketDetailPage.js';
 import ManagementBrandingPage from './pages/management/ManagementBrandingPage.js';
 import ManagementLogsPage from './pages/management/ManagementLogsPage.js';
+import ManagementReleasesPage from './pages/management/ManagementReleasesPage.js';
 import OrgSupportPage from './pages/support/OrgSupportPage.js';
 import OrgSupportTicketDetailPage from './pages/support/OrgSupportTicketDetailPage.js';
 import AcceptManagementCompanyInvitePage from './pages/auth/AcceptManagementCompanyInvitePage.js';
@@ -298,6 +299,7 @@ export default function App() {
         <Route path="analytics" element={<ManagementAnalyticsPage />} />
         <Route path="notifications" element={<ManagementNotificationsPage />} />
         <Route path="logs" element={<ManagementLogsPage />} />
+        <Route path="releases" element={<ManagementReleasesPage />} />
         <Route path="support" element={<ManagementSupportPage />} />
         <Route path="support/:id" element={<ManagementSupportTicketDetailPage />} />
       </Route>

@@ -8,6 +8,7 @@ import {
   bigint,
   doublePrecision,
   jsonb,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { organisations } from './auth.js';
 import { workspaces } from './workspaces.js';
@@ -164,7 +165,26 @@ export const playerReleases = pgTable('player_releases', {
   /** Installer file SHA-512 (Base64) — required by electron-updater. */
   sha512: text('sha512'),
   sizeBytes: bigint('size_bytes', { mode: 'number' }),
-  isLatest: boolean('is_latest').notNull().default(false),
-  publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  isLatest:              boolean('is_latest').notNull().default(false),
+  /** Set by platform owner when the release is approved for resellers to see. */
+  superadminApprovedAt:  timestamp('superadmin_approved_at', { withTimezone: true }),
+  publishedAt:           timestamp('published_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt:             timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Per-management-company approval of a player release.
+ *  Created when a management-company admin clicks "Approve for clients".
+ *  One row per (release, management_company) — unique constraint enforced. */
+export const playerReleaseApprovals = pgTable(
+  'player_release_approvals',
+  {
+    id:                  uuid('id').primaryKey().defaultRandom(),
+    releaseId:           uuid('release_id').notNull().references(() => playerReleases.id, { onDelete: 'cascade' }),
+    managementCompanyId: uuid('management_company_id').notNull(),
+    approvedAt:          timestamp('approved_at', { withTimezone: true }).notNull().defaultNow(),
+    approvedBy:          uuid('approved_by'),
+  },
+  (t) => [
+    uniqueIndex('uq_player_release_approvals_release_company').on(t.releaseId, t.managementCompanyId),
+  ],
+);

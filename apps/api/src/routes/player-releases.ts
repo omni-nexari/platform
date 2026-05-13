@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { db, playerReleases, devices } from '@signage/db';
-import { eq, desc, and, isNull, inArray } from 'drizzle-orm';
+import { db, playerReleases, playerReleaseApprovals, devices } from '@signage/db';
+import { eq, desc, and, isNull, inArray, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { sendCommand } from '../services/ws.js';
+import { organisations } from '@signage/db';
 
 const PLATFORMS = ['tizen', 'windows', 'epaper', 'android'] as const;
 type ReleasePlatform = typeof PLATFORMS[number];
@@ -26,7 +27,7 @@ function parsePlatform(value: unknown): ReleasePlatform {
 
 export async function playerReleasesRoutes(app: FastifyInstance) {
   /** Public read: any authenticated user can fetch the latest release for a platform.
-   *  Defaults to 'tizen' for back-compat with the existing Tizen player. */
+   *  Returns approval status: superadminApproved + managementApproved (for this user's company). */
   app.get('/latest', { onRequest: [app.authenticate] }, async (req, reply) => {
     const platform = parsePlatform((req.query as { platform?: string })?.platform);
     const [release] = await db
@@ -35,7 +36,35 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
       .where(and(eq(playerReleases.platform, platform), eq(playerReleases.isLatest, true)))
       .limit(1);
 
-    return reply.send(release ?? null);
+    if (!release) return reply.send(null);
+
+    // Determine management company for the calling user (orgId → org.managementCompanyId)
+    const caller = req.user as { sub: string; orgId?: string; role?: string; type?: string };
+    let managementApproved = false;
+    if (caller.orgId) {
+      const org = await db.query.organisations.findFirst({
+        where: eq(organisations.id, caller.orgId),
+        columns: { managementCompanyId: true },
+      });
+      if (org?.managementCompanyId) {
+        const approval = await db.query.playerReleaseApprovals.findFirst({
+          where: and(
+            eq(playerReleaseApprovals.releaseId, release.id),
+            eq(playerReleaseApprovals.managementCompanyId, org.managementCompanyId),
+          ),
+        });
+        managementApproved = !!approval;
+      } else {
+        // Org not under a management company (direct platform owner org) — treat as approved
+        managementApproved = true;
+      }
+    }
+
+    return reply.send({
+      ...release,
+      superadminApproved: !!release.superadminApprovedAt,
+      managementApproved,
+    });
   });
 
   /** Superadmin: list all releases (optional ?platform=) */
@@ -128,5 +157,68 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
     }
 
     return reply.send({ releaseId: id, version: release.version, platform: release.platform, sentToDevices: sent });
+  });
+
+  // ── POST /player-releases/:id/approve  (platform owner) ──────────────────
+  app.post('/:id/approve', { onRequest: [app.authenticatePlatformOwner] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const [updated] = await db
+      .update(playerReleases)
+      .set({ superadminApprovedAt: new Date() })
+      .where(eq(playerReleases.id, id))
+      .returning();
+    if (!updated) return reply.status(404).send({ error: 'Release not found' });
+    return reply.send(updated);
+  });
+
+  // ── GET /player-releases/management-list  (management admin) ─────────────
+  // Returns all superadmin-approved releases with this company's approval status.
+  app.get('/management-list', { onRequest: [app.authenticateManagementCompanyAdmin] }, async (req, reply) => {
+    const caller = req.user as { managementCompanyId: string };
+    const platformFilter = (req.query as { platform?: string })?.platform;
+
+    const rows = platformFilter && (PLATFORMS as readonly string[]).includes(platformFilter)
+      ? await db.select().from(playerReleases)
+          .where(and(isNotNull(playerReleases.superadminApprovedAt), eq(playerReleases.platform, platformFilter)))
+          .orderBy(desc(playerReleases.publishedAt))
+      : await db.select().from(playerReleases)
+          .where(isNotNull(playerReleases.superadminApprovedAt))
+          .orderBy(desc(playerReleases.publishedAt));
+
+    // Fetch this company's approvals in one query
+    const releaseIds = rows.map((r) => r.id);
+    const approvals = releaseIds.length > 0
+      ? await db.select({ releaseId: playerReleaseApprovals.releaseId })
+          .from(playerReleaseApprovals)
+          .where(and(
+            inArray(playerReleaseApprovals.releaseId, releaseIds),
+            eq(playerReleaseApprovals.managementCompanyId, caller.managementCompanyId),
+          ))
+      : [];
+    const approvedSet = new Set(approvals.map((a) => a.releaseId));
+
+    return reply.send(rows.map((r) => ({ ...r, managementApproved: approvedSet.has(r.id) })));
+  });
+
+  // ── POST /player-releases/:id/management-approve  (management admin) ─────
+  app.post('/:id/management-approve', { onRequest: [app.authenticateManagementCompanyAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const caller = req.user as { sub: string; managementCompanyId: string };
+
+    const release = await db.query.playerReleases.findFirst({ where: eq(playerReleases.id, id) });
+    if (!release) return reply.status(404).send({ error: 'Release not found' });
+    if (!release.superadminApprovedAt) return reply.status(422).send({ error: 'Release not yet approved by platform owner' });
+
+    // Upsert: insert or ignore duplicate
+    await db
+      .insert(playerReleaseApprovals)
+      .values({
+        releaseId: id,
+        managementCompanyId: caller.managementCompanyId,
+        approvedBy: caller.sub,
+      })
+      .onConflictDoNothing();
+
+    return reply.send({ ok: true });
   });
 }
