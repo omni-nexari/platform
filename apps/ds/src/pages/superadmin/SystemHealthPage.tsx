@@ -73,6 +73,7 @@ interface SystemHealth {
       latencyMs: number;
       host: string | null;
       database: string | null;
+      dbSizeBytes: number | null;
       error: string | null;
     };
     redis: {
@@ -280,6 +281,9 @@ export default function SystemHealthPage() {
                     <ServiceStatus ok={data.services.postgres.ok} label={data.services.postgres.ok ? 'Connected' : 'Error'} />
                   </div>
                   <MetricRow label="Latency" value={formatLatency(data.services.postgres.latencyMs)} />
+                  {data.services.postgres.dbSizeBytes != null ? (
+                    <MetricRow label="Database size" value={formatBytes(data.services.postgres.dbSizeBytes)} />
+                  ) : null}
                   {data.services.postgres.error ? (
                     <p className="text-xs text-[var(--danger)] mt-2">{data.services.postgres.error}</p>
                   ) : null}

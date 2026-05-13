@@ -1152,8 +1152,11 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
       const postgresStartedAt = Date.now();
       let postgresError: string | null = null;
+      let postgresDbSizeBytes: number | null = null;
       try {
-        await db.execute(sql`select 1`);
+        const sizeResult = await db.execute(sql`SELECT pg_database_size(current_database()) AS size`);
+        const sizeRow = (sizeResult as unknown as Array<{ size: string | number }>)[0];
+        postgresDbSizeBytes = sizeRow ? Number(sizeRow.size) : null;
       } catch (error) {
         postgresError = error instanceof Error ? error.message : 'Unknown PostgreSQL error';
       }
@@ -1388,6 +1391,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
             latencyMs: postgresLatencyMs,
             host: databaseConnection.host,
             database: databaseConnection.database,
+            dbSizeBytes: postgresDbSizeBytes,
             error: postgresError,
           },
           redis: {

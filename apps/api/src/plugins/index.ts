@@ -118,7 +118,10 @@ export async function registerPlugins(app: FastifyInstance) {
     // via nginx, or /superadmin/... if the prefix was stripped). Check for the segment
     // rather than using startsWith so it works regardless of any leading prefix.
     const urlPath = req.url.split('?')[0] ?? req.url;
-    if (urlPath.includes('/superadmin')) {
+    // Also detect portal sessions via cookie presence — portal routes like /player-releases/,
+    // /monitoring/, /logs/ don't contain '/superadmin' in the URL but use sa_access_token.
+    const isPortalRequest = urlPath.includes('/superadmin') || Boolean(req.cookies?.[SA_ACCESS_COOKIE]);
+    if (isPortalRequest) {
       return {
         accessCookie: SA_ACCESS_COOKIE,
         refreshCookie: null,
