@@ -19,6 +19,12 @@ import Hls from 'hls.js';
 import * as PdfjsLib from 'pdfjs-dist';
 import * as ApiClient from './api.js';
 import type { Playlist, PlaylistItem, NormalizedContent } from './api.js';
+import {
+  initPlayerSettings,
+  onAutoUpdateAvailable,
+  onAutoUpdateDownloaded,
+  setWsStatus as psSetWsStatus,
+} from './player-settings.js';
 
 // PDF.js worker (Vite copies the worker asset)
 PdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -1341,6 +1347,9 @@ window.nexari.onMessage('CMD_SLEEP', () => {
   root.style.background = '#000';
 });
 
+// WS connection state (updated by main process messages)
+let _wsConnected = false;
+
 window.nexari.onMessage('CMD_DISPLAY_POWER', (data: any) => {
   document.body.style.visibility = data?.on !== false ? 'visible' : 'hidden';
 });
@@ -1402,19 +1411,28 @@ window.nexari.onMessage('WS_MESSAGE', (msg: any) => {
       loadContent();
       break;
     }
+    case 'update_player': {
+      const { version, downloadUrl } = (msg?.payload ?? {}) as { version?: string; downloadUrl?: string };
+      console.info(`[Player] update_player received: v${version}`);
+      // Trigger electron-updater via IPC — it will download + apply the update.
+      window.nexari.checkForUpdates?.();
+      break;
+    }
   }
 });
 
-// ── Auto-update banner ───────────────────────────────────────────────────────
+// ── Auto-update banner + settings overlay ───────────────────────────────────
 window.nexari.onMessage('UPDATE_AVAILABLE', (data: any) => {
   banner.textContent = `Update v${data?.version ?? ''} downloading…`;
   banner.classList.add('visible');
+  onAutoUpdateAvailable(String(data?.version ?? ''));
 });
 window.nexari.onMessage('UPDATE_PROGRESS', (data: any) => {
   banner.textContent = `Updating… ${data?.percent ?? 0}%`;
 });
 window.nexari.onMessage('UPDATE_DOWNLOADED', () => {
   banner.textContent = 'Update ready — will install on next restart.';
+  onAutoUpdateDownloaded();
 });
 
 // ── Remote log commands ──────────────────────────────────────────────────────
@@ -1443,6 +1461,18 @@ showIdle('Loading content…');
     if (cfg.deviceId)    localStorage.setItem('deviceId',    cfg.deviceId);
     const ver = (cfg as any).appVersion || '0.1.0';
     console.info(`[Player] Boot: platform=windows version=${ver} deviceId=${cfg.deviceId || '(none)'} apiBase=${cfg.apiBase || '(none)'}`);
+
+    // Init settings overlay after config is loaded
+    initPlayerSettings({
+      getDeviceId:     () => localStorage.getItem('deviceId') || '',
+      getDeviceName:   () => localStorage.getItem('deviceName') || 'Nexari Windows',
+      getApiBase:      () => localStorage.getItem('apiBase') || '',
+      getWsConnected:  () => _wsConnected,
+      getVersion:      () => ver,
+      onReloadContent: () => loadContent(),
+      onClearCache:    () => { localStorage.removeItem('contentCache'); loadContent(); },
+      onCheckForUpdates: () => { window.nexari.checkForUpdates?.(); },
+    });
   } catch (e) {
     console.warn('[Player] getConfig IPC failed:', e);
   }

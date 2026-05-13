@@ -140,6 +140,87 @@ export class Player {
     void this.loadContent();
     this.contentRefreshTimer = setInterval(() => void this.loadContent(), 5 * 60_000);
     this.logStreamTimer = setInterval(() => this.flushLogStream(), 5_000);
+
+    // Android: 10-tap top-left corner within 3s opens a settings overlay
+    if (info.platform === 'android') {
+      this.initAndroidSettingsTap(info);
+    }
+  }
+
+  /** Android 10-tap trigger + lightweight settings overlay. */
+  private initAndroidSettingsTap(info: { platform: string; deviceId: string; modelName?: string; modelCode?: string }): void {
+    let tapCount = 0;
+    let tapTimer: ReturnType<typeof setTimeout> | null = null;
+    const ZONE = 80; // px top-left corner
+
+    document.addEventListener('touchstart', (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (!t || t.clientX > ZONE || t.clientY > ZONE) return;
+      tapCount++;
+      if (tapTimer) clearTimeout(tapTimer);
+      tapTimer = setTimeout(() => { tapCount = 0; }, 3000);
+      if (tapCount >= 10) {
+        tapCount = 0;
+        if (tapTimer) { clearTimeout(tapTimer); tapTimer = null; }
+        this.showAndroidSettingsOverlay(info);
+      }
+    }, { passive: true });
+  }
+
+  private _androidOverlayEl: HTMLElement | null = null;
+
+  private showAndroidSettingsOverlay(info: { platform: string; deviceId: string; modelName?: string; modelCode?: string }): void {
+    if (this._androidOverlayEl) { this._androidOverlayEl.remove(); }
+    const wsOk = !!(this.ws && this.ws.readyState === 1);
+    const el = document.createElement('div');
+    el.style.cssText =
+      'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;';
+
+    const panel = document.createElement('div');
+    panel.style.cssText =
+      'background:rgba(16,20,32,.97);border-radius:16px;padding:28px 36px;min-width:320px;' +
+      'max-width:90vw;color:#fff;font-family:sans-serif;box-shadow:0 20px 50px rgba(0,0,0,.8);';
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:17px;font-weight:700;color:#c8d8ff;margin-bottom:18px;';
+    title.textContent = '⚙ Player Settings';
+    panel.appendChild(title);
+
+    const rows: [string, string][] = [
+      ['Device', info.modelName || info.modelCode || 'Android'],
+      ['Device ID', info.deviceId],
+      ['Platform', 'Android'],
+      ['WebSocket', wsOk ? '● Connected' : '● Disconnected'],
+      ['Server', this.cfg.apiBase],
+    ];
+    for (const [label, val] of rows) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:13px;';
+      row.innerHTML = `<span style="color:rgba(200,215,255,.5);font-size:12px;">${label}</span><span style="color:#dde8ff;text-align:right;font-size:12px;">${val}</span>`;
+      panel.appendChild(row);
+    }
+
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;gap:10px;margin-top:20px;flex-wrap:wrap;';
+
+    const mkBtn = (label: string, bg: string, color: string, onClick: () => void) => {
+      const b = document.createElement('button');
+      b.style.cssText = `padding:9px 18px;border-radius:8px;border:none;background:${bg};color:${color};font-size:13px;font-weight:600;cursor:pointer;`;
+      b.textContent = label;
+      b.addEventListener('click', onClick);
+      return b;
+    };
+
+    actions.appendChild(mkBtn('Reload Content', 'rgba(255,255,255,.1)', '#d0deff', () => {
+      el.remove(); void this.loadContent();
+    }));
+    actions.appendChild(mkBtn('Close', 'rgba(255,255,255,.08)', '#d0deff', () => el.remove()));
+    panel.appendChild(actions);
+
+    el.appendChild(panel);
+    el.addEventListener('click', (ev) => { if (ev.target === el) el.remove(); });
+    document.body.appendChild(el);
+    this._androidOverlayEl = el;
   }
 
   stop(): void {
@@ -564,6 +645,19 @@ export class Player {
         return;
       }
       case 'dump_logs': case 'request_log_burst': this.flushLogStream(); return;
+      case 'update_player': {
+        const url     = String(payload?.['downloadUrl'] ?? payload?.['wgtUrl'] ?? payload?.['apkUrl'] ?? '');
+        const version = String(payload?.['version'] ?? '');
+        if (!url || !version) { logger.warn('[Player] update_player: missing url/version'); return; }
+        logger.info(`[Player] update_player → v${version} url=${url}`);
+        const result = await a.installUpdate({
+          url, version,
+          sha256: payload?.['sha256'] as string | undefined,
+          onProgress: (p) => this.sendOta(p),
+        });
+        this.sendOta(result);
+        return;
+      }
       default: logger.warn(`[Player] unhandled command: ${command}`);
     }
   }

@@ -177,6 +177,11 @@ app.on('ready', async () => {
       : 'https://ds.chiho.app/api/v1'
   );
 
+  // Allow renderer to trigger an update check manually (from settings overlay)
+  ipcMain.handle('app:checkForUpdates', () => {
+    autoUpdater.checkForUpdates().catch(() => {});
+  });
+
   // Set Content-Security-Policy on all renderer responses to silence Electron's
   // "Insecure CSP" dev warning and enforce a sensible policy at runtime.
   // Allows: file+blob scripts (Vite bundle + HLS.js workers), any fetch/WS

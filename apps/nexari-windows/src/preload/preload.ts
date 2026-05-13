@@ -35,12 +35,17 @@ const api = {
       'CMD_LOAD_URL', 'CMD_SLEEP', 'CMD_DISPLAY_POWER',
       'CMD_SET_DISPLAY', 'CMD_DUMP_LOGS', 'WS_MESSAGE',
       'UPDATE_AVAILABLE', 'UPDATE_PROGRESS', 'UPDATE_DOWNLOADED',
+      'CHECK_FOR_UPDATES',
     ];
     if (!allowed.includes(channel)) return;
     const handler = (_event: Electron.IpcRendererEvent, data: unknown) => cb(data);
     ipcRenderer.on(channel, handler);
     return () => ipcRenderer.removeListener(channel, handler);
   },
+
+  // ── Updates ─────────────────────────────────────────────────────────────
+  /** Trigger autoUpdater.checkForUpdates() in the main process. */
+  checkForUpdates: (): Promise<void> => ipcRenderer.invoke('app:checkForUpdates'),
 
   // ── Remote logging ────────────────────────────────────────────────────────
   /** Send a batch of console log lines to the API via the device WebSocket. */

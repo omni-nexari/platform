@@ -130,6 +130,21 @@ window.EpaperWS = (function() {
         }
         break;
 
+      case 'update_player':
+        // Alias for app_update — forward to EpaperUpdater with downloadUrl normalised to wgtUrl
+        if (window.EpaperUpdater && typeof EpaperUpdater.handle === 'function') {
+          var updatePayload = msg.payload || {};
+          if (!updatePayload.wgtUrl && updatePayload.downloadUrl) {
+            updatePayload = Object.assign({}, updatePayload, { wgtUrl: updatePayload.downloadUrl });
+          }
+          EpaperUpdater.handle(updatePayload, function(type, data) {
+            send(Object.assign({ type: type, deviceId: state.deviceId }, data || {}));
+          });
+        } else {
+          logger.warn('[WS] EpaperUpdater not loaded for update_player');
+        }
+        break;
+
       // Generic commands the e-paper player still respects:
       case 'reboot':
         try { tizen.application.getCurrentApplication().exit(); } catch (_) { location.reload(); }

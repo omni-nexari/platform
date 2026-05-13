@@ -344,6 +344,28 @@ const Player = {
     // Setup refresh interval
     this.startContentRefresh();
     this.startLogStream();
+
+    // Initialize player settings overlay
+    try {
+      const self = this;
+      const tizSettings = (window as any).PlayerSettings;
+      if (typeof tizSettings !== 'undefined') {
+        const cfg: any = (window as any).CONFIG;
+        tizSettings.init({
+          getDeviceId:       () => String(self.deviceId || ''),
+          getDeviceName:     () => String(self.deviceName || ''),
+          getApiBase:        () => (cfg && cfg.API_BASE) ? String(cfg.API_BASE) : '',
+          getWsConnected:    () => !!(self.wsConnection && self.wsConnection.readyState === 1),
+          getIpAddress:      () => String((window as any).DeviceState?.lastIpAddress || ''),
+          getCurrentVersion: () => String(((window as any).PLAYER_BUILD_INFO || {}).version || ''),
+          onClearCache:      () => self.executeCommand({ type: 'CLEAR_CACHE' }),
+          onReloadContent:   () => void self.loadContent(),
+        });
+        logger.info('[PlayerSettings] overlay initialized');
+      }
+    } catch (e: any) {
+      logger.warn('[PlayerSettings] init failed:', e?.message || e);
+    }
     // Phase 2 MDC setup — apply initial display settings, persist MDC ID to DB
     setTimeout(() => { this.runPostPairingMdcSetup(); }, 5000);
 
@@ -1619,6 +1641,10 @@ const Player = {
       statusIndicator.style.color = connected ? '#10b981' : '#ef4444';
       statusIndicator.title = connected ? 'Connected' : 'Disconnected';
     }
+    try {
+      const tizSettings = (window as any).PlayerSettings;
+      if (typeof tizSettings !== 'undefined') tizSettings.setWsStatus(connected);
+    } catch (_) {}
   },
 
   // Start heartbeat

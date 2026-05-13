@@ -127,6 +127,14 @@ window.RemoteControl = {
       return;
     }
 
+    // When the player settings overlay is open, RETURN/EXIT closes it
+    if (typeof PlayerSettings !== 'undefined' && PlayerSettings.isVisible()) {
+      if (keyCode === this.KEYS.RETURN || keyCode === this.KEYS.EXIT || keyCode === this.KEYS.NUM_2) {
+        PlayerSettings.hide();
+        return;
+      }
+    }
+
     // When log console is open, NUM_1 closes it, UP/DOWN scroll, LEFT/RIGHT/ENTER control filter buttons
     if (typeof UiLog !== 'undefined' && UiLog._visible) {
       if (keyCode === this.KEYS.NUM_1) {
@@ -212,9 +220,11 @@ window.RemoteControl = {
             logger.info('Manual pairing retry triggered');
             Pairing.init();
           }
-        } else if (typeof Player !== 'undefined' && Player.loadContent) {
-          logger.info('Force content refresh');
-          Player.loadContent();
+        } else {
+          // Open / close player settings overlay
+          if (typeof PlayerSettings !== 'undefined') {
+            PlayerSettings.toggle();
+          }
         }
         return true;
 
