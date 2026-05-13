@@ -54,8 +54,18 @@ class PlayerView(context: Context) : FrameLayout(context) {
         @Suppress("DEPRECATION")
         s.allowUniversalAccessFromFileURLs = false
         s.mediaPlaybackRequiresUserGesture = false
-        // The page is now an https:// origin; never allow mixed content.
-        s.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        // The page is served on https://appassets.androidplatform.net. For
+        // production (https API) we never allow mixed content. For dev builds
+        // that talk to a cleartext LAN API (http://192.168.1.17), the WebView
+        // would otherwise block fetch/WS calls as mixed-content even though the
+        // network security config permits the cleartext. Detect that and fall
+        // back to compatibility mode for the dev case only.
+        val apiIsCleartext = BuildConfig.DEFAULT_API_BASE.startsWith("http://") ||
+                              BuildConfig.DEFAULT_WS_BASE.startsWith("ws://")
+        s.mixedContentMode = if (apiIsCleartext)
+            android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        else
+            android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
         s.userAgentString = s.userAgentString + " NexariPlayer/${BuildConfig.VERSION_NAME}"
         s.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
         webView.setBackgroundColor(0xFF000000.toInt())

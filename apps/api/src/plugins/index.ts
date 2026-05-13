@@ -57,11 +57,14 @@ export async function registerPlugins(app: FastifyInstance) {
       }
 
       // Tizen / packaged .wgt apps send Origin: "null" (file:// equivalent)
-      // Also allow any file:// or app:// scheme used by local TV apps
+      // Also allow any file:// or app:// scheme used by local TV apps.
+      // Android WebViewAssetLoader serves bundled apps from
+      // https://appassets.androidplatform.net — allow that too.
       if (
         origin === 'null' ||
         origin.startsWith('file://') ||
-        origin.startsWith('app://')
+        origin.startsWith('app://') ||
+        origin === 'https://appassets.androidplatform.net'
       ) {
         callback(null, true);
         return;

@@ -38,6 +38,7 @@ export declare class Player {
     private localUrlCache;
     private calendarPushHandlers;
     private syncActive;
+    private platform;
     private screenshotIntervalHandle;
     private liveIntervalHandle;
     private liveCaptureActive;
@@ -73,13 +74,22 @@ export declare class Player {
     private sendHeartbeat;
     /**
      * Arm the technician 10-tap gesture: ten taps inside the top-left ZONE
-     * within a 3-second window open the platform's native settings overlay
-     * (delegated to `adapter.openSettings()`). Uses capture-phase listeners on
-     * `touchstart`, `pointerdown`, and `click` so taps on fullscreen content
-     * (video, iframes, images) still register, and accepts touch as well as
-     * mouse for desktop QA.
+     * within a 3-second window open the in-player settings overlay. Uses
+     * capture-phase listeners on `touchstart`, `pointerdown`, and `click` so
+     * taps on fullscreen content (video, iframes, images) still register, and
+     * accepts touch as well as mouse for desktop QA.
      */
     private initSettingsGesture;
+    /**
+     * In-player settings overlay. Renders device/network/config info, a tail of
+     * recent log lines, and technician actions (Re-pair, Reload, Clear logs,
+     * open native system settings). Auto-refreshes the log tail every second
+     * while visible.
+     */
+    private settingsOverlayEl;
+    private settingsLogTimer;
+    private showSettingsOverlay;
+    private hideSettingsOverlay;
     private flushLogStream;
     private getContentSignature;
     private preCacheItems;

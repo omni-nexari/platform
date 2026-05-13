@@ -304,9 +304,14 @@ function scheduleAdvance(durationSec: number) {
 // ---------------------------------------------------------------------------
 function renderContent(item: PlaylistItem) {
   const c = item.content!;
-  clearRoot();
-
   const durationSec = item.duration || 10;
+
+  // For VIDEO→VIDEO transitions, don't clear root first — renderVideo will
+  // append the new element on top and remove the old one only after first frame.
+  // For all other types, clear root immediately.
+  const isVideo = c.type === 'VIDEO' || c.type === 'OVERLAY' || c.type === 'PRESENTATION';
+  const hasExistingVideo = isVideo && !!root.querySelector('video');
+  if (!hasExistingVideo) clearRoot();
 
   switch (c.type) {
     case 'IMAGE':
@@ -407,9 +412,11 @@ async function renderImage(c: NormalizedContent, durationSec: number) {
 // ---------------------------------------------------------------------------
 async function renderVideo(c: NormalizedContent, durationSec: number) {
   const url = await downloadFirst(c.url);
+  const prev = root.querySelector('video') as HTMLVideoElement | null;
   const vid = document.createElement('video');
   Object.assign(vid.style, {
     width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block',
+    position: 'absolute', inset: '0',
   });
   vid.src    = url;
   vid.autoplay  = true;
@@ -417,16 +424,38 @@ async function renderVideo(c: NormalizedContent, durationSec: number) {
   vid.playsInline = true;
   vid.controls  = false;
 
-  vid.onended = () => advancePlaylist();
+  // Cancel the safety timer before advancing so it cannot fire a second time
+  // and corrupt the playlist index.
+  vid.onended = () => { cancelPlayback(); advancePlaylist(); };
   vid.onerror = () => {
     console.error('[Player] Video error:', c.url);
-    scheduleAdvance(durationSec);
+    cancelPlayback();
+    advancePlaylist();
   };
+
+  // Seamless swap: append new video on top, wait for first frame, then remove old.
+  // This prevents the black flash that occurs during the async downloadFirst() gap.
+  root.style.position = 'relative';
+  root.appendChild(vid);
+
+  const removeOld = () => {
+    if (prev && prev.parentNode) {
+      try { prev.pause(); } catch { /* ignore */ }
+      prev.remove();
+    }
+  };
+
+  vid.addEventListener('playing', removeOld, { once: true });
+  vid.addEventListener('error', removeOld, { once: true });
+  // Safety: remove old after 2 s regardless
+  setTimeout(removeOld, 2000);
 
   // Videos play to their natural end (onended). The playlist-configured
   // `durationSec` is only a floor for the safety fallback — if the video's
   // intrinsic duration is longer, we extend the timer to match. This way a
   // 30-second clip set to "5s" in the playlist still plays in full.
+  // Clear the initial 60 s fallback before setting the accurate one so we
+  // never have two overlapping timers.
   vid.onloadedmetadata = () => {
     const intrinsic = isFinite(vid.duration) ? vid.duration : 0;
     const safety = Math.max(durationSec, Math.ceil(intrinsic) + 2);
@@ -434,8 +463,12 @@ async function renderVideo(c: NormalizedContent, durationSec: number) {
   };
   // Initial fallback in case metadata never loads
   scheduleAdvance(Math.max(durationSec, 60));
-  root.appendChild(vid);
-  vid.play().catch(() => {});
+  vid.play().catch(e => {
+    // Autoplay blocked (unlikely in Electron but guard it): advance so we don't stall.
+    console.warn('[Player] Video play() rejected:', e);
+    cancelPlayback();
+    advancePlaylist();
+  });
 }
 
 // ---------------------------------------------------------------------------

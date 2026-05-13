@@ -23,9 +23,18 @@ interface BufferEntry {
 const MAX_BUF = 2000;
 const ringBuffer: BufferEntry[] = [];
 
+// Non-draining tail buffer for the in-app settings overlay. Survives
+// `LogBuffer.drain()` calls so we can always show the last N lines to a
+// technician on-screen.
+const MAX_TAIL = 400;
+const tailBuffer: BufferEntry[] = [];
+
 function appendBuf(level: Level, message: string): void {
   if (ringBuffer.length >= MAX_BUF) ringBuffer.shift();
-  ringBuffer.push({ level, message, timestamp: new Date().toISOString() });
+  const entry: BufferEntry = { level, message, timestamp: new Date().toISOString() };
+  ringBuffer.push(entry);
+  if (tailBuffer.length >= MAX_TAIL) tailBuffer.shift();
+  tailBuffer.push(entry);
 }
 
 // Exposed on window so player.ts flushLogStream() can drain it
@@ -34,6 +43,12 @@ function appendBuf(level: Level, message: string): void {
     const take = Math.min(n, ringBuffer.length);
     return take > 0 ? ringBuffer.splice(0, take) : [];
   },
+  /** Returns the last `n` entries without consuming them — for in-app log viewers. */
+  tail(n: number): BufferEntry[] {
+    const take = Math.min(n, tailBuffer.length);
+    return take > 0 ? tailBuffer.slice(tailBuffer.length - take) : [];
+  },
+  clear(): void { tailBuffer.length = 0; },
 };
 
 // ── HTTP fallback flush (for Pi / headless deployments) ───────────────────────

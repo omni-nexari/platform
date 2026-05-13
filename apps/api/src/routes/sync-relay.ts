@@ -152,7 +152,7 @@ export async function syncRelayRoutes(app: FastifyInstance) {
         set.add(String(msg.deviceId || client.deviceId));
 
         const expected = clientsInGroup(gid).filter((c) => !!c.deviceId).length;
-        if (expected >= 2 && set.size >= expected) {
+        if (expected >= 1 && set.size >= expected) {
           loopReady.set(gid, new Set());                    // reset for next loop
           const playAt = Date.now() + 400;
           broadcastGroup(gid, { type: 'LOOP_GO', playAt }, null);

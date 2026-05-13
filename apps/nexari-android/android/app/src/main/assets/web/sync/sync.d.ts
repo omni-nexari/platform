@@ -12,6 +12,12 @@ export interface SyncConfig {
     /** When this device is elected leader, call this to get its own local URL. */
     fetchVideoUrl?: () => Promise<string>;
     /**
+     * Platform startup latency compensation in milliseconds. Negative = call play()
+     * earlier to compensate for a slow decoder (e.g. Android WebView). Positive =
+     * delay play() to hold back a fast device. Overrides DEVICE_LATENCY_MS table.
+     */
+    selfLatency?: number;
+    /**
      * Pre-elected leader deviceId from the manifest's leaderPriority[0].
      * When set, role is determined immediately (no lexicographic election needed).
      * Followers skip peer-wait entirely; the leader still waits for peers.

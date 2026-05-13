@@ -108,6 +108,7 @@ export class Player {
 
   private calendarPushHandlers = new Map<string, (events: CalendarEvent[]) => void>();
   private syncActive = false;
+  private platform = '';
 
   // Screenshot state — mirrors Tizen/Windows behaviour
   private screenshotIntervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -144,6 +145,7 @@ export class Player {
   async start(): Promise<void> {
     const info = await this.cfg.adapter.getDeviceInfo();
     this.deviceId = info.deviceId;
+    this.platform  = info.platform || '';
     this.deviceDisplayName = info.modelName || info.modelCode || '';
     initLogger({ apiBase: this.cfg.apiBase, deviceId: info.deviceId });
     logger.info(`[Player] starting deviceId=${info.deviceId} platform=${info.platform}`);
@@ -725,18 +727,12 @@ export class Player {
 
   /**
    * Arm the technician 10-tap gesture: ten taps inside the top-left ZONE
-   * within a 3-second window open the platform's native settings overlay
-   * (delegated to `adapter.openSettings()`). Uses capture-phase listeners on
-   * `touchstart`, `pointerdown`, and `click` so taps on fullscreen content
-   * (video, iframes, images) still register, and accepts touch as well as
-   * mouse for desktop QA.
+   * within a 3-second window open the in-player settings overlay. Uses
+   * capture-phase listeners on `touchstart`, `pointerdown`, and `click` so
+   * taps on fullscreen content (video, iframes, images) still register, and
+   * accepts touch as well as mouse for desktop QA.
    */
   private initSettingsGesture(info: { platform?: string }): void {
-    const a = this.cfg.adapter;
-    if (typeof a.openSettings !== 'function') {
-      logger.info(`[Settings] gesture not armed — adapter.openSettings unavailable (platform=${info.platform})`);
-      return;
-    }
     const ZONE = 120; // px from top-left corner
     const WINDOW_MS = 3000;
     const TARGET = 10;
@@ -747,7 +743,9 @@ export class Player {
       count = 0;
       if (resetTimer) { clearTimeout(resetTimer); resetTimer = null; }
       logger.info('[Settings] 10-tap gesture fired — opening settings overlay');
-      Promise.resolve(a.openSettings!()).catch(e => logger.warn(`[Settings] openSettings failed: ${(e as Error).message}`));
+      try { this.showSettingsOverlay(); } catch (e) {
+        logger.warn(`[Settings] overlay failed: ${(e as Error).message}`);
+      }
     };
 
     const note = (x: number, y: number) => {
@@ -773,6 +771,139 @@ export class Player {
     }, { capture: true });
 
     logger.info(`[Settings] 10-tap gesture armed (zone=${ZONE}px top-left, window=${WINDOW_MS}ms, platform=${info.platform})`);
+  }
+
+  /**
+   * In-player settings overlay. Renders device/network/config info, a tail of
+   * recent log lines, and technician actions (Re-pair, Reload, Clear logs,
+   * open native system settings). Auto-refreshes the log tail every second
+   * while visible.
+   */
+  private settingsOverlayEl: HTMLDivElement | null = null;
+  private settingsLogTimer: ReturnType<typeof setInterval> | null = null;
+
+  private async showSettingsOverlay(): Promise<void> {
+    if (this.settingsOverlayEl) return; // already open
+
+    const adapter = this.cfg.adapter;
+    let info: Awaited<ReturnType<PlatformAdapter['getDeviceInfo']>> | null = null;
+    let net: Awaited<ReturnType<PlatformAdapter['getNetworkInfo']>> | null = null;
+    try { info = await adapter.getDeviceInfo(); } catch (e) { logger.warn(`[Settings] getDeviceInfo failed: ${(e as Error).message}`); }
+    try { net  = await adapter.getNetworkInfo(); } catch (e) { logger.warn(`[Settings] getNetworkInfo failed: ${(e as Error).message}`); }
+
+    const cachedToken = (window as unknown as Record<string, unknown>)['__nexariToken'] as string | undefined
+      ?? localStorage.getItem('nexariToken');
+
+    const overlay = document.createElement('div');
+    overlay.id = 'nexari-settings-overlay';
+    overlay.setAttribute('style', [
+      'position:fixed', 'inset:0', 'z-index:2147483646',
+      'background:rgba(0,0,0,0.92)', 'color:#e6e6e6',
+      'font-family:Menlo,Consolas,monospace', 'font-size:14px',
+      'display:flex', 'flex-direction:column', 'padding:24px', 'box-sizing:border-box',
+    ].join(';'));
+
+    const esc = (s: unknown): string => String(s ?? '').replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    } as Record<string, string>)[c] ?? c);
+
+    const tokenDisp = cachedToken ? `${cachedToken.slice(0, 8)}…${cachedToken.slice(-6)}` : '(none)';
+    const rows: [string, string][] = [
+      ['Device ID',    esc(info?.deviceId)],
+      ['Serial',       esc(info?.serialNumber)],
+      ['Model',        esc(info?.modelName || info?.modelCode)],
+      ['Platform',     esc(info?.platform)],
+      ['Player ver',   esc(info?.playerVersion)],
+      ['Firmware',     esc(info?.firmwareVersion)],
+      ['IP',           esc(net?.ipAddress)],
+      ['SSID',         esc(net?.ssid)],
+      ['Conn type',    esc(net?.connectionType)],
+      ['API',          esc(this.cfg.apiBase)],
+      ['WS',           esc(this.cfg.wsBase)],
+      ['Token',        esc(tokenDisp)],
+      ['WS state',     this.wsReady ? 'connected' : 'disconnected'],
+    ];
+
+    overlay.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div style="font-size:20px;font-weight:600">Nexari Player — Settings</div>
+        <button id="nx-set-close" style="padding:8px 16px;background:#444;color:#fff;border:0;border-radius:4px;font-size:14px;cursor:pointer">Close ✕</button>
+      </div>
+      <div style="display:grid;grid-template-columns:140px 1fr;gap:4px 16px;margin-bottom:16px;background:#1a1a1a;padding:12px;border-radius:6px">
+        ${rows.map(([k, v]) => `<div style="color:#888">${k}</div><div style="word-break:break-all">${v}</div>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <button id="nx-set-repair" style="padding:10px 16px;background:#a02020;color:#fff;border:0;border-radius:4px;font-size:14px;cursor:pointer">Re-pair (clear token)</button>
+        <button id="nx-set-reload" style="padding:10px 16px;background:#2c5fa0;color:#fff;border:0;border-radius:4px;font-size:14px;cursor:pointer">Reload player</button>
+        <button id="nx-set-clearlog" style="padding:10px 16px;background:#444;color:#fff;border:0;border-radius:4px;font-size:14px;cursor:pointer">Clear logs</button>
+        <button id="nx-set-syspref" style="padding:10px 16px;background:#444;color:#fff;border:0;border-radius:4px;font-size:14px;cursor:pointer">System settings</button>
+        <button id="nx-set-pause" style="padding:10px 16px;background:#444;color:#fff;border:0;border-radius:4px;font-size:14px;cursor:pointer">Pause auto-refresh</button>
+      </div>
+      <div style="color:#888;font-size:12px;margin-bottom:4px">Recent logs (latest at bottom):</div>
+      <pre id="nx-set-logs" style="flex:1;overflow:auto;background:#0a0a0a;padding:12px;border-radius:6px;margin:0;white-space:pre-wrap;word-break:break-all;font-size:12px;line-height:1.4"></pre>
+    `;
+
+    document.body.appendChild(overlay);
+    this.settingsOverlayEl = overlay;
+
+    const close = () => this.hideSettingsOverlay();
+    overlay.querySelector('#nx-set-close')?.addEventListener('click', close);
+    overlay.querySelector('#nx-set-reload')?.addEventListener('click', () => {
+      logger.info('[Settings] Reload requested from overlay');
+      try { adapter.reloadRenderer?.(); } catch { /* ignore */ }
+      setTimeout(() => { try { location.reload(); } catch { /* ignore */ } }, 300);
+    });
+    overlay.querySelector('#nx-set-repair')?.addEventListener('click', () => {
+      if (!confirm('Clear pairing token and restart? The device will need to be paired again.')) return;
+      logger.info('[Settings] Re-pair requested — clearing token');
+      try { localStorage.removeItem('nexariToken'); } catch { /* ignore */ }
+      delete (window as unknown as Record<string, unknown>)['__nexariToken'];
+      setTimeout(() => {
+        try { adapter.reloadRenderer?.(); } catch { /* ignore */ }
+        try { location.reload(); } catch { /* ignore */ }
+      }, 200);
+    });
+    overlay.querySelector('#nx-set-clearlog')?.addEventListener('click', () => {
+      const buf = (window as unknown as Record<string, unknown>)['LogBuffer'] as { clear?: () => void } | undefined;
+      buf?.clear?.();
+      const pre = overlay.querySelector('#nx-set-logs') as HTMLPreElement | null;
+      if (pre) pre.textContent = '';
+    });
+    overlay.querySelector('#nx-set-syspref')?.addEventListener('click', () => {
+      if (typeof adapter.openSettings === 'function') {
+        logger.info('[Settings] Opening native system settings');
+        Promise.resolve(adapter.openSettings()).catch(e => logger.warn(`[Settings] openSettings failed: ${(e as Error).message}`));
+      } else {
+        logger.info('[Settings] System settings not available on this platform');
+      }
+    });
+    const pauseBtn = overlay.querySelector('#nx-set-pause') as HTMLButtonElement | null;
+    let paused = false;
+    pauseBtn?.addEventListener('click', () => {
+      paused = !paused;
+      pauseBtn.textContent = paused ? 'Resume auto-refresh' : 'Pause auto-refresh';
+    });
+
+    const renderLogs = () => {
+      if (paused) return;
+      const buf = (window as unknown as Record<string, unknown>)['LogBuffer'] as
+        { tail?: (n: number) => Array<{ level?: string; message?: string; timestamp?: string }> } | undefined;
+      const lines = buf?.tail?.(200) ?? [];
+      const pre = overlay.querySelector('#nx-set-logs') as HTMLPreElement | null;
+      if (!pre) return;
+      pre.textContent = lines.map(e => `${e.timestamp ?? ''} [${(e.level ?? 'info').toUpperCase()}] ${e.message ?? ''}`).join('\n');
+      pre.scrollTop = pre.scrollHeight;
+    };
+    renderLogs();
+    this.settingsLogTimer = setInterval(renderLogs, 1000);
+  }
+
+  private hideSettingsOverlay(): void {
+    if (this.settingsLogTimer) { clearInterval(this.settingsLogTimer); this.settingsLogTimer = null; }
+    if (this.settingsOverlayEl) {
+      try { this.settingsOverlayEl.remove(); } catch { /* ignore */ }
+      this.settingsOverlayEl = null;
+    }
   }
 
   private flushLogStream(): void {
@@ -1607,6 +1738,10 @@ export class Player {
     syncInit({
       wsUrl, groupId, deviceId: this.deviceId, selfIp: net.ipAddress ?? '',
       expectedPeers, onStatus: s => logger.info(`[Sync] ${s}`),
+      // Android WebView has higher video decode startup latency (~100ms).
+      // Negative selfLatency tells the engine to call play() that many ms earlier
+      // so the first rendered frame aligns with other devices.
+      selfLatency: this.platform === 'android' ? -100 : 0,
       prepareEngine: url => prepare(url),
       schedulePlay:  epochMs => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),
@@ -1672,6 +1807,7 @@ export class Player {
     syncInit({
       wsUrl, groupId, deviceId: this.deviceId, selfIp: net.ipAddress ?? '',
       expectedPeers, onStatus: s => logger.info(`[Sync/Wall] ${s}`),
+      selfLatency: this.platform === 'android' ? -100 : 0,
       prepareEngine: url => prepare(url),
       schedulePlay:  epochMs => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),

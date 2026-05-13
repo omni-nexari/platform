@@ -366,7 +366,33 @@ function _doPlayOrSwap(): void {
     return;
   }
 
-  // Swap path
+  // Single-item playlist (or bg never loaded): no swap possible — rewind fg and replay.
+  // _preloadNext() is a no-op when _playlist.length < 2, so bg.src is empty.
+  const bgV = _videos[1 - _fg];
+  if (_playlist.length <= 1 || !bgV.src) {
+    const fgV = _videos[_fg];
+    _prebuffered = false;
+    _looping = false;
+    _log('[Engine] single-item loop — rewinding fg(' + _fgLabel() + ')');
+    const doPlay = () => {
+      fgV.play().then(() => {
+        _durationMs = Math.round((fgV.duration || 0) * 1000);
+        _startEosWatch();
+      }).catch(e => _log('[Engine] rewind-play failed: ' + e));
+    };
+    if (fgV.currentTime > 0.05) {
+      let safetyClear = false;
+      const onSeeked = () => { if (!safetyClear) { safetyClear = true; doPlay(); } };
+      fgV.addEventListener('seeked', onSeeked, { once: true });
+      try { fgV.currentTime = 0; } catch { onSeeked(); return; }
+      setTimeout(() => { fgV.removeEventListener('seeked', onSeeked); if (!safetyClear) { safetyClear = true; doPlay(); } }, 1000);
+    } else {
+      doPlay();
+    }
+    return;
+  }
+
+  // Swap path (multi-item playlist — bg was preloaded by _preloadNext)
   const oldFg = _fg;
   const newFg = (1 - _fg) as 0 | 1;
   const oldV  = _videos[oldFg];

@@ -52,6 +52,13 @@ export interface SyncConfig {
    */
   fetchVideoUrl?: () => Promise<string>;
   /**
+   * Platform startup latency compensation in milliseconds. Negative = call play()
+   * earlier to compensate for a slow decoder (e.g. Android WebView). Positive =
+   * delay play() to hold back a fast device. Overrides DEVICE_LATENCY_MS table.
+   * Default: 0 (no adjustment).
+   */
+  selfLatency?: number;
+  /**
    * Pre-elected leader deviceId from the manifest's leaderPriority[0].
    * When set, role is determined immediately (no lexicographic election needed).
    * Followers skip peer-wait entirely; the leader still waits for peers.
@@ -112,6 +119,7 @@ let _peerWatchTimer: any  = null;
 let _resyncInProgress     = false;
 let _playlistUrls: string[] = [];
 let _wsGen            = 0;   // incremented each init(); old onclose closures bail on mismatch
+let _followerResyncTimer: any = null;
 
 // ── Public ─────────────────────────────────────────────────────────────────────
 
@@ -119,7 +127,8 @@ export async function init(cfg: SyncConfig): Promise<void> {
   _cfg = cfg; _stopped = false; _peers = [];
   _leaderReady = false; _followerReady = new Set(); _goSent = false; _loadReceived = false;
   _phaseStartedAt = 0; _ewma = 0; _ewmaN = 0;
-  _selfLatency = DEVICE_LATENCY_MS[cfg.deviceId] ?? 0;
+  if (_followerResyncTimer) { clearTimeout(_followerResyncTimer); _followerResyncTimer = null; }
+  _selfLatency = cfg.selfLatency ?? DEVICE_LATENCY_MS[cfg.deviceId] ?? 0;
 
   // Pre-determine role from manifest if the elected leader is known.
   // Setting _role early lets LOAD_URL / GO handlers fire correctly even
@@ -173,6 +182,9 @@ export async function init(cfg: SyncConfig): Promise<void> {
     _startPeerWatch();
   } else {
     cfg.onStatus('Follower — waiting for LOAD_URL from leader…');
+    // Guard: if the leader was already playing when we joined, it won't send
+    // LOAD_URL again unless we ask. Send RESYNC_REQUEST after 8 s if no LOAD_URL.
+    _scheduleFollowerResync();
   }
 }
 
@@ -180,6 +192,7 @@ export function stop(): void {
   _stopped = true;
   _stopPhase();
   _stopPeerWatch();
+  if (_followerResyncTimer) { clearTimeout(_followerResyncTimer); _followerResyncTimer = null; }
   if (_ws) { try { _ws.close(); } catch {} _ws = null; }
   logger.info('[Sync] stopped');
 }
@@ -331,6 +344,7 @@ function _dispatch(msg: any): void {
     if (_role !== 'follower') return;
     if (_loadReceived) { logger.info('[Sync] LOAD_URL dup — ignored'); return; }
     _loadReceived = true;
+    if (_followerResyncTimer) { clearTimeout(_followerResyncTimer); _followerResyncTimer = null; }
 
     // Use the follower's own locally-resolved URL for this playlist item.
     // The leader may be on a different OS with incompatible file:// paths.
@@ -393,6 +407,15 @@ function _dispatch(msg: any): void {
   if (msg.type === 'PLAYHEAD') {
     _peerHeads.set(from, { serverNow: msg.serverNow, posMs: msg.posMs, at: Date.now() });
     // Log for monitoring only — no drift correction (barrier sync handles alignment)
+    return;
+  }
+
+  if (msg.type === 'RESYNC_REQUEST') {
+    // A late-joining follower didn't receive the initial LOAD_URL + GO —
+    // trigger a full resync so the leader re-broadcasts LOAD_URL.
+    if (_role !== 'leader') return;
+    logger.info(`[Sync] RESYNC_REQUEST from ${from} — resyncing`);
+    _resyncLeader().catch(() => {});
     return;
   }
 
@@ -481,6 +504,31 @@ async function _resyncLeader(): Promise<void> {
     if (_playlistUrls.length > 0) setPlaylist(_playlistUrls);
     await _runLeader();
   } finally { _resyncInProgress = false; }
+}
+
+// ── Follower late-join resync ──────────────────────────────────────────────────
+
+/**
+ * Schedule a RESYNC_REQUEST if we haven't received LOAD_URL yet.
+ * Retries every 5 s until LOAD_URL arrives or stop() is called.
+ * The leader handles RESYNC_REQUEST by calling _resyncLeader(), which
+ * re-broadcasts LOAD_URL + GO so the late-joining follower can start playing.
+ */
+function _scheduleFollowerResync(delayMs = 8000): void {
+  if (_followerResyncTimer) clearTimeout(_followerResyncTimer);
+  _followerResyncTimer = setTimeout(() => {
+    _followerResyncTimer = null;
+    if (_loadReceived || _stopped) return;
+    if (_peers.length === 0) {
+      // No peers visible yet — try again shortly
+      _scheduleFollowerResync(3000);
+      return;
+    }
+    logger.info('[Sync] follower: no LOAD_URL after timeout — sending RESYNC_REQUEST');
+    _wsSend({ type: 'RESYNC_REQUEST', groupId: _cfg.groupId, deviceId: _cfg.deviceId });
+    // Retry in case the first request is dropped or the leader is mid-resync
+    _scheduleFollowerResync(5000);
+  }, delayMs);
 }
 
 // ── PLAYHEAD heartbeat + drift correction ──────────────────────────────────────

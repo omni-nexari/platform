@@ -271,6 +271,30 @@ function _doPlayOrSwap(): void {
     return;
   }
 
+  // Single-item playlist or bg not loaded: rewind fg and replay.
+  const bgV = _videos[1 - _fg]!;
+  if (_playlist.length <= 1 || !bgV.src) {
+    const fgV = _videos[_fg]!;
+    _prebuffered = false; _looping = false;
+    _log('[Engine] single-item loop — rewinding fg(' + _fgLabel() + ')');
+    const doPlay = () => {
+      fgV.play().then(() => {
+        _durationMs = Math.round((fgV.duration || 0) * 1000);
+        _startEosWatch();
+      }).catch(e => _log('[Engine] rewind-play failed: ' + e));
+    };
+    if (fgV.currentTime > 0.05) {
+      let done = false;
+      const onSeeked = () => { if (!done) { done = true; doPlay(); } };
+      fgV.addEventListener('seeked', onSeeked, { once: true });
+      try { fgV.currentTime = 0; } catch { onSeeked(); return; }
+      setTimeout(() => { fgV.removeEventListener('seeked', onSeeked); if (!done) { done = true; doPlay(); } }, 1000);
+    } else {
+      doPlay();
+    }
+    return;
+  }
+
   const oldFg = _fg;
   const newFg = (1 - _fg) as 0 | 1;
   const oldV  = _videos[oldFg]!;
@@ -325,13 +349,9 @@ function _stopEosWatch(): void {
 function _onEos(): void {
   _log('[Engine] EOS fg(' + _fgLabel() + ') idx=' + _idx);
   _prebuffered = false;
-  if (_playlist.length <= 1) {
-    // Loop single video
-    const v = _videos[_fg]!;
-    try { v.currentTime = 0; v.play(); } catch {}
-    _startEosWatch();
-    return;
-  }
+  // Always go through _rewindFgAndArm() so LOOP_READY is sent for the barrier,
+  // even for single-item playlists. _doPlayOrSwap() handles the rewind-replay
+  // path when bg isn’t loaded (single item).
   _rewindFgAndArm().then(() => {
     _preloadNext().catch(() => {});
   });

@@ -21,14 +21,27 @@ var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
 // src/logger.ts
 var MAX_BUF = 2e3;
 var ringBuffer = [];
+var MAX_TAIL = 400;
+var tailBuffer = [];
 function appendBuf(level, message) {
   if (ringBuffer.length >= MAX_BUF) ringBuffer.shift();
-  ringBuffer.push({ level, message, timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+  const entry = { level, message, timestamp: (/* @__PURE__ */ new Date()).toISOString() };
+  ringBuffer.push(entry);
+  if (tailBuffer.length >= MAX_TAIL) tailBuffer.shift();
+  tailBuffer.push(entry);
 }
 window["LogBuffer"] = {
   drain(n) {
     const take = Math.min(n, ringBuffer.length);
     return take > 0 ? ringBuffer.splice(0, take) : [];
+  },
+  /** Returns the last `n` entries without consuming them — for in-app log viewers. */
+  tail(n) {
+    const take = Math.min(n, tailBuffer.length);
+    return take > 0 ? tailBuffer.slice(tailBuffer.length - take) : [];
+  },
+  clear() {
+    tailBuffer.length = 0;
   }
 };
 var _apiBase = "";
@@ -1632,6 +1645,45 @@ function _doPlayOrSwap() {
     }).catch((e) => _log("[Engine] play() failed: " + e));
     return;
   }
+  const bgV = _videos[1 - _fg];
+  if (_playlist.length <= 1 || !bgV.src) {
+    const fgV = _videos[_fg];
+    _prebuffered = false;
+    _looping = false;
+    _log("[Engine] single-item loop \u2014 rewinding fg(" + _fgLabel() + ")");
+    const doPlay = () => {
+      fgV.play().then(() => {
+        _durationMs = Math.round((fgV.duration || 0) * 1e3);
+        _startEosWatch();
+      }).catch((e) => _log("[Engine] rewind-play failed: " + e));
+    };
+    if (fgV.currentTime > 0.05) {
+      let done = false;
+      const onSeeked = () => {
+        if (!done) {
+          done = true;
+          doPlay();
+        }
+      };
+      fgV.addEventListener("seeked", onSeeked, { once: true });
+      try {
+        fgV.currentTime = 0;
+      } catch (e) {
+        onSeeked();
+        return;
+      }
+      setTimeout(() => {
+        fgV.removeEventListener("seeked", onSeeked);
+        if (!done) {
+          done = true;
+          doPlay();
+        }
+      }, 1e3);
+    } else {
+      doPlay();
+    }
+    return;
+  }
   const oldFg = _fg;
   const newFg = 1 - _fg;
   const oldV = _videos[oldFg];
@@ -1698,16 +1750,6 @@ function _stopEosWatch() {
 function _onEos() {
   _log("[Engine] EOS fg(" + _fgLabel() + ") idx=" + _idx);
   _prebuffered = false;
-  if (_playlist.length <= 1) {
-    const v = _videos[_fg];
-    try {
-      v.currentTime = 0;
-      v.play();
-    } catch (e) {
-    }
-    _startEosWatch();
-    return;
-  }
   _rewindFgAndArm().then(() => {
     _preloadNext().catch(() => {
     });
@@ -1743,8 +1785,9 @@ var _peerWatchTimer = null;
 var _resyncInProgress = false;
 var _playlistUrls = [];
 var _wsGen = 0;
+var _followerResyncTimer = null;
 async function init(cfg) {
-  var _a, _b;
+  var _a, _b, _c;
   _cfg = cfg;
   _stopped = false;
   _peers = [];
@@ -1755,9 +1798,13 @@ async function init(cfg) {
   _phaseStartedAt = 0;
   _ewma = 0;
   _ewmaN = 0;
-  _selfLatency = (_a = DEVICE_LATENCY_MS[cfg.deviceId]) != null ? _a : 0;
+  if (_followerResyncTimer) {
+    clearTimeout(_followerResyncTimer);
+    _followerResyncTimer = null;
+  }
+  _selfLatency = (_b = (_a = cfg.selfLatency) != null ? _a : DEVICE_LATENCY_MS[cfg.deviceId]) != null ? _b : 0;
   _role2 = cfg.pinnedLeaderId ? cfg.pinnedLeaderId === cfg.deviceId ? "leader" : "follower" : "pending";
-  logger.info(`[Sync] init deviceId=${cfg.deviceId} group=${cfg.groupId} role=${_role2} pinned=${(_b = cfg.pinnedLeaderId) != null ? _b : "none"}`);
+  logger.info(`[Sync] init deviceId=${cfg.deviceId} group=${cfg.groupId} role=${_role2} pinned=${(_c = cfg.pinnedLeaderId) != null ? _c : "none"}`);
   cfg.onStatus("Connecting to relay\u2026");
   setOnLoop(() => {
     if (!_stopped) {
@@ -1792,12 +1839,17 @@ async function init(cfg) {
     _startPeerWatch();
   } else {
     cfg.onStatus("Follower \u2014 waiting for LOAD_URL from leader\u2026");
+    _scheduleFollowerResync();
   }
 }
 function stop() {
   _stopped = true;
   _stopPhase();
   _stopPeerWatch();
+  if (_followerResyncTimer) {
+    clearTimeout(_followerResyncTimer);
+    _followerResyncTimer = null;
+  }
   if (_ws) {
     try {
       _ws.close();
@@ -1961,6 +2013,10 @@ function _dispatch(msg) {
       return;
     }
     _loadReceived = true;
+    if (_followerResyncTimer) {
+      clearTimeout(_followerResyncTimer);
+      _followerResyncTimer = null;
+    }
     const localPlaylist = getPlaylistUrls();
     let localUrl;
     const msgIndex = typeof msg["index"] === "number" ? msg["index"] : -1;
@@ -2014,6 +2070,13 @@ function _dispatch(msg) {
       serverNow: Number(msg["serverNow"]),
       posMs: Number(msg["posMs"]),
       at: Date.now()
+    });
+    return;
+  }
+  if (msg["type"] === "RESYNC_REQUEST") {
+    if (_role2 !== "leader") return;
+    logger.info(`[Sync] RESYNC_REQUEST from ${from} \u2014 resyncing`);
+    _resyncLeader().catch(() => {
     });
     return;
   }
@@ -2097,6 +2160,20 @@ async function _resyncLeader() {
   } finally {
     _resyncInProgress = false;
   }
+}
+function _scheduleFollowerResync(delayMs = 8e3) {
+  if (_followerResyncTimer) clearTimeout(_followerResyncTimer);
+  _followerResyncTimer = setTimeout(() => {
+    _followerResyncTimer = null;
+    if (_loadReceived || _stopped) return;
+    if (_peers.length === 0) {
+      _scheduleFollowerResync(3e3);
+      return;
+    }
+    logger.info("[Sync] follower: no LOAD_URL after timeout \u2014 sending RESYNC_REQUEST");
+    _wsSend({ type: "RESYNC_REQUEST", groupId: _cfg.groupId, deviceId: _cfg.deviceId });
+    _scheduleFollowerResync(5e3);
+  }, delayMs);
 }
 function _startPhase() {
   if (_phaseTimer) return;
@@ -2185,6 +2262,7 @@ var Player = class {
     this.localUrlCache = /* @__PURE__ */ new Map();
     this.calendarPushHandlers = /* @__PURE__ */ new Map();
     this.syncActive = false;
+    this.platform = "";
     // Screenshot state — mirrors Tizen/Windows behaviour
     this.screenshotIntervalHandle = null;
     this.liveIntervalHandle = null;
@@ -2203,6 +2281,14 @@ var Player = class {
     this.pendingSignature = null;
     this.isDownloadingContent = false;
     this.deviceDisplayName = "";
+    /**
+     * In-player settings overlay. Renders device/network/config info, a tail of
+     * recent log lines, and technician actions (Re-pair, Reload, Clear logs,
+     * open native system settings). Auto-refreshes the log tail every second
+     * while visible.
+     */
+    this.settingsOverlayEl = null;
+    this.settingsLogTimer = null;
     // Cache for the pdfjsLib promise so we only inject the script tag once.
     this.pdfJsLibPromise = null;
     const savedApi = localStorage.getItem("PLAYER_API_BASE");
@@ -2217,6 +2303,7 @@ var Player = class {
     var _a;
     const info = await this.cfg.adapter.getDeviceInfo();
     this.deviceId = info.deviceId;
+    this.platform = info.platform || "";
     this.deviceDisplayName = info.modelName || info.modelCode || "";
     initLogger({ apiBase: this.cfg.apiBase, deviceId: info.deviceId });
     logger.info(`[Player] starting deviceId=${info.deviceId} platform=${info.platform}`);
@@ -2842,18 +2929,12 @@ var Player = class {
   }
   /**
    * Arm the technician 10-tap gesture: ten taps inside the top-left ZONE
-   * within a 3-second window open the platform's native settings overlay
-   * (delegated to `adapter.openSettings()`). Uses capture-phase listeners on
-   * `touchstart`, `pointerdown`, and `click` so taps on fullscreen content
-   * (video, iframes, images) still register, and accepts touch as well as
-   * mouse for desktop QA.
+   * within a 3-second window open the in-player settings overlay. Uses
+   * capture-phase listeners on `touchstart`, `pointerdown`, and `click` so
+   * taps on fullscreen content (video, iframes, images) still register, and
+   * accepts touch as well as mouse for desktop QA.
    */
   initSettingsGesture(info) {
-    const a = this.cfg.adapter;
-    if (typeof a.openSettings !== "function") {
-      logger.info(`[Settings] gesture not armed \u2014 adapter.openSettings unavailable (platform=${info.platform})`);
-      return;
-    }
     const ZONE = 120;
     const WINDOW_MS = 3e3;
     const TARGET = 10;
@@ -2866,7 +2947,11 @@ var Player = class {
         resetTimer = null;
       }
       logger.info("[Settings] 10-tap gesture fired \u2014 opening settings overlay");
-      Promise.resolve(a.openSettings()).catch((e) => logger.warn(`[Settings] openSettings failed: ${e.message}`));
+      try {
+        this.showSettingsOverlay();
+      } catch (e) {
+        logger.warn(`[Settings] overlay failed: ${e.message}`);
+      }
     };
     const note = (x, y) => {
       if (x > ZONE || y > ZONE) return;
@@ -2891,6 +2976,170 @@ var Player = class {
       note(e.clientX, e.clientY);
     }, { capture: true });
     logger.info(`[Settings] 10-tap gesture armed (zone=${ZONE}px top-left, window=${WINDOW_MS}ms, platform=${info.platform})`);
+  }
+  async showSettingsOverlay() {
+    var _a, _b, _c, _d, _e, _f;
+    if (this.settingsOverlayEl) return;
+    const adapter = this.cfg.adapter;
+    let info = null;
+    let net = null;
+    try {
+      info = await adapter.getDeviceInfo();
+    } catch (e) {
+      logger.warn(`[Settings] getDeviceInfo failed: ${e.message}`);
+    }
+    try {
+      net = await adapter.getNetworkInfo();
+    } catch (e) {
+      logger.warn(`[Settings] getNetworkInfo failed: ${e.message}`);
+    }
+    const cachedToken = (_a = window["__nexariToken"]) != null ? _a : localStorage.getItem("nexariToken");
+    const overlay = document.createElement("div");
+    overlay.id = "nexari-settings-overlay";
+    overlay.setAttribute("style", [
+      "position:fixed",
+      "inset:0",
+      "z-index:2147483646",
+      "background:rgba(0,0,0,0.92)",
+      "color:#e6e6e6",
+      "font-family:Menlo,Consolas,monospace",
+      "font-size:14px",
+      "display:flex",
+      "flex-direction:column",
+      "padding:24px",
+      "box-sizing:border-box"
+    ].join(";"));
+    const esc = (s) => String(s != null ? s : "").replace(/[&<>"']/g, (c) => {
+      var _a2;
+      return (_a2 = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      }[c]) != null ? _a2 : c;
+    });
+    const tokenDisp = cachedToken ? `${cachedToken.slice(0, 8)}\u2026${cachedToken.slice(-6)}` : "(none)";
+    const rows = [
+      ["Device ID", esc(info == null ? void 0 : info.deviceId)],
+      ["Serial", esc(info == null ? void 0 : info.serialNumber)],
+      ["Model", esc((info == null ? void 0 : info.modelName) || (info == null ? void 0 : info.modelCode))],
+      ["Platform", esc(info == null ? void 0 : info.platform)],
+      ["Player ver", esc(info == null ? void 0 : info.playerVersion)],
+      ["Firmware", esc(info == null ? void 0 : info.firmwareVersion)],
+      ["IP", esc(net == null ? void 0 : net.ipAddress)],
+      ["SSID", esc(net == null ? void 0 : net.ssid)],
+      ["Conn type", esc(net == null ? void 0 : net.connectionType)],
+      ["API", esc(this.cfg.apiBase)],
+      ["WS", esc(this.cfg.wsBase)],
+      ["Token", esc(tokenDisp)],
+      ["WS state", this.wsReady ? "connected" : "disconnected"]
+    ];
+    overlay.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div style="font-size:20px;font-weight:600">Nexari Player \u2014 Settings</div>
+        <button id="nx-set-close" style="padding:8px 16px;background:#444;color:#fff;border:0;border-radius:4px;font-size:14px;cursor:pointer">Close \u2715</button>
+      </div>
+      <div style="display:grid;grid-template-columns:140px 1fr;gap:4px 16px;margin-bottom:16px;background:#1a1a1a;padding:12px;border-radius:6px">
+        ${rows.map(([k, v]) => `<div style="color:#888">${k}</div><div style="word-break:break-all">${v}</div>`).join("")}
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <button id="nx-set-repair" style="padding:10px 16px;background:#a02020;color:#fff;border:0;border-radius:4px;font-size:14px;cursor:pointer">Re-pair (clear token)</button>
+        <button id="nx-set-reload" style="padding:10px 16px;background:#2c5fa0;color:#fff;border:0;border-radius:4px;font-size:14px;cursor:pointer">Reload player</button>
+        <button id="nx-set-clearlog" style="padding:10px 16px;background:#444;color:#fff;border:0;border-radius:4px;font-size:14px;cursor:pointer">Clear logs</button>
+        <button id="nx-set-syspref" style="padding:10px 16px;background:#444;color:#fff;border:0;border-radius:4px;font-size:14px;cursor:pointer">System settings</button>
+        <button id="nx-set-pause" style="padding:10px 16px;background:#444;color:#fff;border:0;border-radius:4px;font-size:14px;cursor:pointer">Pause auto-refresh</button>
+      </div>
+      <div style="color:#888;font-size:12px;margin-bottom:4px">Recent logs (latest at bottom):</div>
+      <pre id="nx-set-logs" style="flex:1;overflow:auto;background:#0a0a0a;padding:12px;border-radius:6px;margin:0;white-space:pre-wrap;word-break:break-all;font-size:12px;line-height:1.4"></pre>
+    `;
+    document.body.appendChild(overlay);
+    this.settingsOverlayEl = overlay;
+    const close = () => this.hideSettingsOverlay();
+    (_b = overlay.querySelector("#nx-set-close")) == null ? void 0 : _b.addEventListener("click", close);
+    (_c = overlay.querySelector("#nx-set-reload")) == null ? void 0 : _c.addEventListener("click", () => {
+      var _a2;
+      logger.info("[Settings] Reload requested from overlay");
+      try {
+        (_a2 = adapter.reloadRenderer) == null ? void 0 : _a2.call(adapter);
+      } catch (e) {
+      }
+      setTimeout(() => {
+        try {
+          location.reload();
+        } catch (e) {
+        }
+      }, 300);
+    });
+    (_d = overlay.querySelector("#nx-set-repair")) == null ? void 0 : _d.addEventListener("click", () => {
+      if (!confirm("Clear pairing token and restart? The device will need to be paired again.")) return;
+      logger.info("[Settings] Re-pair requested \u2014 clearing token");
+      try {
+        localStorage.removeItem("nexariToken");
+      } catch (e) {
+      }
+      delete window["__nexariToken"];
+      setTimeout(() => {
+        var _a2;
+        try {
+          (_a2 = adapter.reloadRenderer) == null ? void 0 : _a2.call(adapter);
+        } catch (e) {
+        }
+        try {
+          location.reload();
+        } catch (e) {
+        }
+      }, 200);
+    });
+    (_e = overlay.querySelector("#nx-set-clearlog")) == null ? void 0 : _e.addEventListener("click", () => {
+      var _a2;
+      const buf = window["LogBuffer"];
+      (_a2 = buf == null ? void 0 : buf.clear) == null ? void 0 : _a2.call(buf);
+      const pre = overlay.querySelector("#nx-set-logs");
+      if (pre) pre.textContent = "";
+    });
+    (_f = overlay.querySelector("#nx-set-syspref")) == null ? void 0 : _f.addEventListener("click", () => {
+      if (typeof adapter.openSettings === "function") {
+        logger.info("[Settings] Opening native system settings");
+        Promise.resolve(adapter.openSettings()).catch((e) => logger.warn(`[Settings] openSettings failed: ${e.message}`));
+      } else {
+        logger.info("[Settings] System settings not available on this platform");
+      }
+    });
+    const pauseBtn = overlay.querySelector("#nx-set-pause");
+    let paused = false;
+    pauseBtn == null ? void 0 : pauseBtn.addEventListener("click", () => {
+      paused = !paused;
+      pauseBtn.textContent = paused ? "Resume auto-refresh" : "Pause auto-refresh";
+    });
+    const renderLogs = () => {
+      var _a2, _b2;
+      if (paused) return;
+      const buf = window["LogBuffer"];
+      const lines = (_b2 = (_a2 = buf == null ? void 0 : buf.tail) == null ? void 0 : _a2.call(buf, 200)) != null ? _b2 : [];
+      const pre = overlay.querySelector("#nx-set-logs");
+      if (!pre) return;
+      pre.textContent = lines.map((e) => {
+        var _a3, _b3, _c2;
+        return `${(_a3 = e.timestamp) != null ? _a3 : ""} [${((_b3 = e.level) != null ? _b3 : "info").toUpperCase()}] ${(_c2 = e.message) != null ? _c2 : ""}`;
+      }).join("\n");
+      pre.scrollTop = pre.scrollHeight;
+    };
+    renderLogs();
+    this.settingsLogTimer = setInterval(renderLogs, 1e3);
+  }
+  hideSettingsOverlay() {
+    if (this.settingsLogTimer) {
+      clearInterval(this.settingsLogTimer);
+      this.settingsLogTimer = null;
+    }
+    if (this.settingsOverlayEl) {
+      try {
+        this.settingsOverlayEl.remove();
+      } catch (e) {
+      }
+      this.settingsOverlayEl = null;
+    }
   }
   flushLogStream() {
     var _a, _b;
@@ -3827,6 +4076,10 @@ var Player = class {
       selfIp: (_c = net.ipAddress) != null ? _c : "",
       expectedPeers,
       onStatus: (s) => logger.info(`[Sync] ${s}`),
+      // Android WebView has higher video decode startup latency (~100ms).
+      // Negative selfLatency tells the engine to call play() that many ms earlier
+      // so the first rendered frame aligns with other devices.
+      selfLatency: this.platform === "android" ? -100 : 0,
       prepareEngine: (url) => prepare(url),
       schedulePlay: (epochMs) => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),
@@ -3915,6 +4168,7 @@ var Player = class {
       selfIp: (_q = net.ipAddress) != null ? _q : "",
       expectedPeers,
       onStatus: (s) => logger.info(`[Sync/Wall] ${s}`),
+      selfLatency: this.platform === "android" ? -100 : 0,
       prepareEngine: (url) => prepare(url),
       schedulePlay: (epochMs) => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),
