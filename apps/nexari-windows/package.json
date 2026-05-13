@@ -70,7 +70,7 @@
     },
     "publish": {
       "provider": "generic",
-      "url": "https://ds.chiho.app/api/v1/downloads/windows",
+      "url": "https://ds.chiho.app/windows",
       "channel": "latest"
     }
   }

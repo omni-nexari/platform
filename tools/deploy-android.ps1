@@ -46,7 +46,13 @@ $AppDir      = Join-Path $RepoRoot "apps\nexari-android"
 $AndroidDir  = Join-Path $AppDir "android"
 $AdbPath     = "C:\Users\chiho\Projects\Platform\Docs\Android\platform-tools\adb.exe"
 $ApkPath     = Join-Path $AndroidDir "app\build\outputs\apk\self\release\app-self-release.apk"
+$UnsignedApkPath = Join-Path $AndroidDir "app\build\outputs\apk\self\release\app-self-release-unsigned.apk"
 $PackageName = "app.chiho.nexari"
+$KeystoreDir  = Join-Path $RepoRoot "Docs\cert"
+$KeystoreFile = Join-Path $KeystoreDir "nexari-android.jks"
+$KeystorePwdFile = Join-Path $KeystoreDir "nexari-android.pwd"
+$KeystorePropsFile = Join-Path $AndroidDir "keystore.properties"
+$KeyAlias     = "nexari"
 
 $adbArgs = if ($Device) { @("-s", $Device) } else { @() }
 
@@ -67,6 +73,43 @@ function Ensure-GradleWrapper {
         Write-Host "gradle-wrapper.jar downloaded."
     }
 }
+
+# --- Ensure keystore exists ---
+Write-Host ""
+Write-Host "=== Checking release keystore ==="
+if (-not (Test-Path $KeystoreFile)) {
+    Write-Host "  Keystore not found. Generating new release keystore at:" -ForegroundColor Cyan
+    Write-Host "  $KeystoreFile" -ForegroundColor Cyan
+    $KeystorePassword = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 20 | ForEach-Object { [char]$_ })
+    New-Item -ItemType Directory -Force -Path $KeystoreDir | Out-Null
+    $keytool = "keytool"
+    if (-not (Get-Command $keytool -ErrorAction SilentlyContinue)) {
+        # Try JDK bundled with Android Studio
+        $jdkKeytool = "C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe"
+        if (Test-Path $jdkKeytool) { $keytool = $jdkKeytool }
+        else { throw "keytool not found - add JDK bin to PATH or install Android Studio" }
+    }
+    & $keytool -genkeypair -v `
+        -keystore $KeystoreFile `
+        -alias $KeyAlias `
+        -keyalg RSA -keysize 2048 -validity 10000 `
+        -storepass $KeystorePassword -keypass $KeystorePassword `
+        -dname "CN=Nexari Player, OU=Nexari, O=Chiho, L=Unknown, ST=Unknown, C=AU"
+    if ($LASTEXITCODE -ne 0) { throw "keytool failed to generate keystore" }
+    Set-Content $KeystorePwdFile $KeystorePassword -Encoding UTF8 -NoNewline
+    Write-Host "  Keystore generated. Password saved to: $KeystorePwdFile" -ForegroundColor Green
+} else {
+    Write-Host "  Found existing keystore: $KeystoreFile" -ForegroundColor Green
+}
+
+$KeystorePassword = (Get-Content $KeystorePwdFile -Raw).Trim()
+
+# Write keystore.properties for Gradle
+# Path is relative to the app module dir (android/app/) where file() resolves
+$relativeJks = "../../../../Docs/cert/nexari-android.jks"
+$keystorePropsContent = "storeFile=$relativeJks`nstorePassword=$KeystorePassword`nkeyAlias=$KeyAlias`nkeyPassword=$KeystorePassword`n"
+[System.IO.File]::WriteAllText($KeystorePropsFile, $keystorePropsContent, [System.Text.UTF8Encoding]::new($false))
+Write-Host "  keystore.properties written for Gradle." -ForegroundColor DarkGray
 
 # --- Build ---
 if (-not $SkipBuild) {
@@ -125,6 +168,9 @@ if (-not $SkipBuild) {
 }
 
 if (-not (Test-Path $ApkPath)) {
+    if (Test-Path $UnsignedApkPath) {
+        throw "Signed APK not found - signing config may be missing. Found unsigned APK at: $UnsignedApkPath`nEnsure keystore.properties exists at $KeystorePropsFile and re-run."
+    }
     Write-Error "APK not found: $ApkPath"
     exit 1
 }
