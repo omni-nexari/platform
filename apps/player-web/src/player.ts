@@ -18,7 +18,7 @@ import { renderMenuBoard } from './renderers/menu-board.js';
 import { renderDataSync,  type DataSyncHandle } from './renderers/datasync.js';
 import {
   initEngine, prepare, schedulePlayAt, playFromPrebuffer, destroyEngine,
-  setPlaylist, getPlaylistUrls, getDuration, setWallCrop,
+  setPlaylist, getDuration, setWallCrop,
 } from './sync/engine.js';
 import { init as syncInit, stop as syncStop } from './sync/sync.js';
 
@@ -140,87 +140,6 @@ export class Player {
     void this.loadContent();
     this.contentRefreshTimer = setInterval(() => void this.loadContent(), 5 * 60_000);
     this.logStreamTimer = setInterval(() => this.flushLogStream(), 5_000);
-
-    // Android: 10-tap top-left corner within 3s opens a settings overlay
-    if (info.platform === 'android') {
-      this.initAndroidSettingsTap(info);
-    }
-  }
-
-  /** Android 10-tap trigger + lightweight settings overlay. */
-  private initAndroidSettingsTap(info: { platform: string; deviceId: string; modelName?: string; modelCode?: string }): void {
-    let tapCount = 0;
-    let tapTimer: ReturnType<typeof setTimeout> | null = null;
-    const ZONE = 80; // px top-left corner
-
-    document.addEventListener('touchstart', (e: TouchEvent) => {
-      const t = e.touches[0];
-      if (!t || t.clientX > ZONE || t.clientY > ZONE) return;
-      tapCount++;
-      if (tapTimer) clearTimeout(tapTimer);
-      tapTimer = setTimeout(() => { tapCount = 0; }, 3000);
-      if (tapCount >= 10) {
-        tapCount = 0;
-        if (tapTimer) { clearTimeout(tapTimer); tapTimer = null; }
-        this.showAndroidSettingsOverlay(info);
-      }
-    }, { passive: true });
-  }
-
-  private _androidOverlayEl: HTMLElement | null = null;
-
-  private showAndroidSettingsOverlay(info: { platform: string; deviceId: string; modelName?: string; modelCode?: string }): void {
-    if (this._androidOverlayEl) { this._androidOverlayEl.remove(); }
-    const wsOk = !!(this.ws && this.ws.readyState === 1);
-    const el = document.createElement('div');
-    el.style.cssText =
-      'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;';
-
-    const panel = document.createElement('div');
-    panel.style.cssText =
-      'background:rgba(16,20,32,.97);border-radius:16px;padding:28px 36px;min-width:320px;' +
-      'max-width:90vw;color:#fff;font-family:sans-serif;box-shadow:0 20px 50px rgba(0,0,0,.8);';
-
-    const title = document.createElement('div');
-    title.style.cssText = 'font-size:17px;font-weight:700;color:#c8d8ff;margin-bottom:18px;';
-    title.textContent = '⚙ Player Settings';
-    panel.appendChild(title);
-
-    const rows: [string, string][] = [
-      ['Device', info.modelName || info.modelCode || 'Android'],
-      ['Device ID', info.deviceId],
-      ['Platform', 'Android'],
-      ['WebSocket', wsOk ? '● Connected' : '● Disconnected'],
-      ['Server', this.cfg.apiBase],
-    ];
-    for (const [label, val] of rows) {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:13px;';
-      row.innerHTML = `<span style="color:rgba(200,215,255,.5);font-size:12px;">${label}</span><span style="color:#dde8ff;text-align:right;font-size:12px;">${val}</span>`;
-      panel.appendChild(row);
-    }
-
-    const actions = document.createElement('div');
-    actions.style.cssText = 'display:flex;gap:10px;margin-top:20px;flex-wrap:wrap;';
-
-    const mkBtn = (label: string, bg: string, color: string, onClick: () => void) => {
-      const b = document.createElement('button');
-      b.style.cssText = `padding:9px 18px;border-radius:8px;border:none;background:${bg};color:${color};font-size:13px;font-weight:600;cursor:pointer;`;
-      b.textContent = label;
-      b.addEventListener('click', onClick);
-      return b;
-    };
-
-    actions.appendChild(mkBtn('Reload Content', 'rgba(255,255,255,.1)', '#d0deff', () => {
-      el.remove(); void this.loadContent();
-    }));
-    actions.appendChild(mkBtn('Close', 'rgba(255,255,255,.08)', '#d0deff', () => el.remove()));
-    panel.appendChild(actions);
-
-    el.appendChild(panel);
-    el.addEventListener('click', (ev) => { if (ev.target === el) el.remove(); });
-    document.body.appendChild(el);
-    this._androidOverlayEl = el;
   }
 
   stop(): void {
@@ -645,19 +564,6 @@ export class Player {
         return;
       }
       case 'dump_logs': case 'request_log_burst': this.flushLogStream(); return;
-      case 'update_player': {
-        const url     = String(payload?.['downloadUrl'] ?? payload?.['wgtUrl'] ?? payload?.['apkUrl'] ?? '');
-        const version = String(payload?.['version'] ?? '');
-        if (!url || !version) { logger.warn('[Player] update_player: missing url/version'); return; }
-        logger.info(`[Player] update_player → v${version} url=${url}`);
-        const result = await a.installUpdate({
-          url, version,
-          sha256: payload?.['sha256'] as string | undefined,
-          onProgress: (p) => this.sendOta(p),
-        });
-        this.sendOta(result);
-        return;
-      }
       default: logger.warn(`[Player] unhandled command: ${command}`);
     }
   }
@@ -1014,7 +920,7 @@ export class Player {
         const rawPeers = (sg['peers'] as Array<{ deviceId: string; leaderPriority?: number | null }>) ?? [];
         const sortedPeers = [...rawPeers].sort((a, b) => (a.leaderPriority ?? 999) - (b.leaderPriority ?? 999));
         this._pendingSyncRelayInfo = {
-          groupId: String(sg['id'] ?? sg['syncGroupId'] ?? ''),  // 'id' is the UUID key in API response
+          groupId: String(sg['syncGroupId'] ?? ''),
           relayUrl: String(sg['relayUrl']),
           leaderPriority: sortedPeers.map(p => p.deviceId),
           peerCount: Math.max(1, sortedPeers.length - 1), // count of OTHER peers
@@ -1564,18 +1470,11 @@ export class Player {
 
   private async initSyncGroup(msg: Record<string, unknown>): Promise<void> {
     if (this.syncActive) { try { syncStop(); } catch {} this.syncActive = false; }
-    // Use UUID (syncGroupId) if present; fall back to numeric groupId for compat.
-    const groupId = String(msg['syncGroupId'] ?? msg['groupId'] ?? '');
+    const groupId       = String(msg['groupId'] ?? '');
+    const expectedPeers = Number(msg['expectedPeers'] ?? 1);
 
-    // Derive expectedPeers: prefer explicit field, otherwise count from peer arrays.
-    const peerList = Array.isArray(msg['peers']) ? msg['peers'] as unknown[]
-                   : Array.isArray(msg['leaderPriority']) ? msg['leaderPriority'] as unknown[]
-                   : [];
-    const expectedPeers = Number(msg['expectedPeers'] ?? Math.max(1, peerList.length - 1));
-
-    // Leader is leaderPriority[0] — already sorted by UI/platform priority on the server.
+    // Determine if this device is the elected leader.
     const leaderPriority = Array.isArray(msg['leaderPriority']) ? msg['leaderPriority'] as string[] : [];
-    const pinnedLeaderId = leaderPriority[0] ?? '';
 
     // Always derive relay URL from this device's own API base + token so it connects
     // to the same host it already uses (LAN IP or cloud). The manifest's relayUrl
@@ -1584,7 +1483,7 @@ export class Player {
     const wsBase = this.cfg.apiBase
       .replace(/\/api\/v1\/?$/, '')   // strip /api/v1 suffix
       .replace(/^http/, 'ws');         // http→ws, https→wss
-    const wsUrl = `${wsBase}/api/v1/sync-relay/ws${tok ? '?token=' + encodeURIComponent(tok) : ''}`;
+    const wsUrl = `${wsBase}/api/v1/sync-relay${tok ? '?token=' + encodeURIComponent(tok) : ''}`;
     logger.info(`[Sync] relay URL: ${wsUrl}`);
 
     let urls = this.playlistItems.map(i => this.resolveLocalUrl(i.content?.url) || '').filter(Boolean);
@@ -1605,10 +1504,7 @@ export class Player {
     this.syncActive = true;
     syncInit({
       wsUrl, groupId, deviceId: this.deviceId, selfIp: net.ipAddress ?? '',
-      expectedPeers, pinnedLeaderId,
-      onStatus: s => logger.info(`[Sync] ${s}`),
-      // Android-specific URL resolver: always use the locally-downloaded file path.
-      fetchVideoUrl: () => Promise.resolve(getPlaylistUrls()[0] ?? urls[0] ?? ''),
+      expectedPeers, onStatus: s => logger.info(`[Sync] ${s}`),
       prepareEngine: url => prepare(url),
       schedulePlay:  epochMs => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),
@@ -1654,7 +1550,7 @@ export class Player {
     const leaderPriority = Array.isArray(msg['leaderPriority']) ? msg['leaderPriority'] as string[] : [];
     const tok2 = this.token;
     const wsBase2 = this.cfg.apiBase.replace(/\/api\/v1\/?$/, '').replace(/^http/, 'ws');
-    const wsUrl = `${wsBase2}/api/v1/sync-relay/ws${tok2 ? '?token=' + encodeURIComponent(tok2) : ''}`;
+    const wsUrl = `${wsBase2}/api/v1/sync-relay${tok2 ? '?token=' + encodeURIComponent(tok2) : ''}`;
 
     // 4. Start sync engine — same flow as initSyncGroup.
     const groupId      = String(msg['deviceGroupId'] ?? msg['groupId'] ?? '');
@@ -1674,8 +1570,6 @@ export class Player {
     syncInit({
       wsUrl, groupId, deviceId: this.deviceId, selfIp: net.ipAddress ?? '',
       expectedPeers, onStatus: s => logger.info(`[Sync/Wall] ${s}`),
-      // Android-specific URL resolver: always use the locally-downloaded file path.
-      fetchVideoUrl: () => Promise.resolve(getPlaylistUrls()[0] ?? urls[0] ?? ''),
       prepareEngine: url => prepare(url),
       schedulePlay:  epochMs => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),
