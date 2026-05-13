@@ -171,7 +171,7 @@ async function stopSyncIfActive() {
 
 function getSignature(pl: Playlist | null): string {
   if (!pl) return '';
-  return JSON.stringify({ id: pl.id, items: pl.items.map((i) => i.id) });
+  return JSON.stringify({ id: pl.id, items: pl.items.map((i) => i.id), syncGroupId: pl.syncGroupId ?? null });
 }
 
 // ---------------------------------------------------------------------------

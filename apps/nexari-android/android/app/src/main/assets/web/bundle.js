@@ -3719,7 +3719,7 @@ var Player = class {
     const leaderPriority = Array.isArray(msg["leaderPriority"]) ? msg["leaderPriority"] : [];
     const tok = this.token;
     const wsBase = this.cfg.apiBase.replace(/\/api\/v1\/?$/, "").replace(/^http/, "ws");
-    const wsUrl = `${wsBase}/api/v1/sync-relay${tok ? "?token=" + encodeURIComponent(tok) : ""}`;
+    const wsUrl = `${wsBase}/api/v1/sync-relay/ws${tok ? "?token=" + encodeURIComponent(tok) : ""}`;
     logger.info(`[Sync] relay URL: ${wsUrl}`);
     let urls = this.playlistItems.map((i) => {
       var _a2;
