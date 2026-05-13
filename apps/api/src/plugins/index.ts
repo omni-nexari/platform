@@ -118,9 +118,11 @@ export async function registerPlugins(app: FastifyInstance) {
     // via nginx, or /superadmin/... if the prefix was stripped). Check for the segment
     // rather than using startsWith so it works regardless of any leading prefix.
     const urlPath = req.url.split('?')[0] ?? req.url;
-    // Also detect portal sessions via cookie presence — portal routes like /player-releases/,
-    // /monitoring/, /logs/ don't contain '/superadmin' in the URL but use sa_access_token.
-    const isPortalRequest = urlPath.includes('/superadmin') || Boolean(req.cookies?.[SA_ACCESS_COOKIE]);
+    // Portal-only route prefixes (platform owner / management admin).
+    // These routes use sa_access_token + sa_csrf_token regardless of URL prefix stripping.
+    // NOTE: /logs is listed here because all its mutation endpoints require authenticatePlatformOwner.
+    const PORTAL_SEGMENTS = ['/superadmin', '/player-releases', '/monitoring', '/logs'];
+    const isPortalRequest = PORTAL_SEGMENTS.some((seg) => urlPath.includes(seg));
     if (isPortalRequest) {
       return {
         accessCookie: SA_ACCESS_COOKIE,
