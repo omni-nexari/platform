@@ -1,6 +1,6 @@
 {
   "name": "nexari-windows",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "description": "Nexari Windows Player — Electron-based digital signage player with cross-platform syncplay, kiosk lockdown, and signed auto-update.",
   "private": true,
   "main": "dist/main/main.js",
@@ -41,6 +41,7 @@
     "appId": "app.chiho.nexari-windows",
     "productName": "Nexari Player",
     "asar": true,
+    "npmRebuild": false,
     "files": [
       "dist/**/*",
       "package.json",
@@ -52,7 +53,14 @@
       "buildResources": "build"
     },
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "publisherName": "Chiho App",
       "artifactName": "nexari-windows-${version}-setup.${ext}",
       "icon": "build/icon.ico"
@@ -66,7 +74,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Nexari Player",
       "include": "build/installer.nsh",
-      "license": "build/LICENSE.txt"
+      "license": "build/LICENSE.txt",
+      "warningsAsErrors": false
     },
     "publish": {
       "provider": "generic",

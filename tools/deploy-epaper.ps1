@@ -41,7 +41,7 @@ param(
     [int]$SshPort         = 5551,
     [string]$PanelHost    = "192.168.1.100:26101",
 
-    [string]$SuperadminEmail    = "",
+    [string]$SuperadminEmail    = "chiho.lee23@gmail.com",
     [string]$SuperadminPassword = "",
     [string]$ReleaseNotes       = "",
 
@@ -223,6 +223,11 @@ if ($InstallOnPanel) {
 }
 
 # -- Optional: publish player release ------------------------------------------
+if ($SuperadminEmail -ne "" -and $SuperadminPassword -eq "") {
+    $secPwd = Read-Host "Superadmin password for $SuperadminEmail" -AsSecureString
+    $SuperadminPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secPwd))
+}
 if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
     $ApiBase     = "https://ds.chiho.app"
     $DownloadUrl = "https://ds.chiho.app/tizen/epaper/NexariEPaper.wgt"

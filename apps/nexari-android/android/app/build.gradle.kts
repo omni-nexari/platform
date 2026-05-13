@@ -23,8 +23,8 @@ android {
         applicationId = "app.chiho.nexari"
         minSdk = 24
         targetSdk = 34
-        versionCode = 107
-        versionName = "0.1.7"
+        versionCode = 111
+        versionName = "0.1.11"
 
         // Allow http://192.168.x.x dev API base over plain HTTP.
         manifestPlaceholders["usesCleartextTraffic"] = "true"
@@ -111,6 +111,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.google.code.gson:gson:2.11.0")
 }
+
+
+
+
 
 
 

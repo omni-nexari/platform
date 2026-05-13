@@ -21,8 +21,7 @@
     .\tools\deploy-windows.ps1 -PiHost 192.168.1.17 -NoUpload    # build only, skip Pi SCP
 #>
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$PiHost,
+    [string]$PiHost  = "192.168.1.17",
 
     [string]$PiUser  = "chiho",
     [int]$SshPort    = 5551,
@@ -30,7 +29,7 @@ param(
     [switch]$SkipBuild,
     [switch]$NoUpload,
 
-    [string]$SuperadminEmail    = "",
+    [string]$SuperadminEmail    = "chiho.lee23@gmail.com",
     [string]$SuperadminPassword = "",
     [string]$ApiBase            = "https://ds.chiho.app/api/v1",
     [string]$ReleaseNotes       = ""
@@ -84,7 +83,7 @@ $InstallerPath = Get-ChildItem $ReleaseDir -Filter "nexari-windows-*-setup.exe" 
     Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 
 if (-not $InstallerPath) {
-    Write-Error "Installer not found in $ReleaseDir — run without -SkipBuild first."
+    Write-Error "Installer not found in $ReleaseDir - run without -SkipBuild first."
     exit 1
 }
 
@@ -134,6 +133,11 @@ if (-not $NoUpload) {
 }
 
 # --- Publish release record to DS API (optional) ---
+if ($SuperadminEmail -ne "" -and $SuperadminPassword -eq "") {
+    $secPwd = Read-Host "Superadmin password for $SuperadminEmail" -AsSecureString
+    $SuperadminPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secPwd))
+}
 if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
     $ApiBase = $ApiBase.TrimEnd('/')
     $DownloadUrl = "https://ds.chiho.app/windows/nexari-windows-setup.exe"

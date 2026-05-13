@@ -32,7 +32,7 @@ param(
     [int]$SshPort = 5551,
     [switch]$NoUpload,
 
-    [string]$SuperadminEmail = "",
+    [string]$SuperadminEmail = "chiho.lee23@gmail.com",
     [string]$SuperadminPassword = "",
     [string]$ApiBase = "https://ds.chiho.app/api/v1",
     [string]$ReleaseNotes = "",
@@ -196,38 +196,53 @@ if ($Install) {
 }
 
 # --- Publish OTA release (optional) ---
+if ($SuperadminEmail -ne "" -and $SuperadminPassword -eq "") {
+    $secPwd = Read-Host "Superadmin password for $SuperadminEmail" -AsSecureString
+    $SuperadminPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secPwd))
+}
 if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
     Write-Host ""
     Write-Host "=== Publishing OTA release to DS API ==="
 
+    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     $loginBody = @{ email = $SuperadminEmail; password = $SuperadminPassword } | ConvertTo-Json
-    $loginResp = Invoke-RestMethod -Method Post `
-        -Uri "$ApiBase/auth/login" `
-        -ContentType "application/json" `
-        -Body $loginBody
-    $token = $loginResp.token
-    if (-not $token) { Write-Error "Login failed -- check credentials."; exit 1 }
-    Write-Host "Logged in as $SuperadminEmail"
-
-    $releaseBody = @{
-        platform     = "android"
-        version      = $newVersion
-        packageId    = $PackageName
-        downloadUrl  = $OtaUrl
-        releaseNotes = $ReleaseNotes
-        mandatory    = $false
-    } | ConvertTo-Json
-    $headers = @{ Authorization = "Bearer $token" }
-
     try {
-        $releaseResp = Invoke-RestMethod -Method Post `
-            -Uri "$ApiBase/admin/player-releases" `
+        $null = Invoke-WebRequest -Method Post `
+            -Uri "$ApiBase/superadmin/auth/login" `
             -ContentType "application/json" `
-            -Headers $headers `
-            -Body $releaseBody
-        Write-Host "Release published: id=$($releaseResp.id) version=$newVersion"
+            -Body $loginBody `
+            -WebSession $session `
+            -UseBasicParsing
     } catch {
-        Write-Warning "Release publish failed: $_"
+        Write-Host "WARNING: Superadmin login failed - skipping release publish. $_" -ForegroundColor Yellow
+        $session = $null
+    }
+
+    if ($session) {
+        Write-Host "Logged in as $SuperadminEmail"
+        $releaseBody = @{
+            platform     = "android"
+            version      = $newVersion
+            downloadUrl  = $OtaUrl
+            releaseNotes = $ReleaseNotes
+        } | ConvertTo-Json
+
+        try {
+            $releaseResp = Invoke-RestMethod -Method Post `
+                -Uri "$ApiBase/player-releases" `
+                -ContentType "application/json" `
+                -WebSession $session `
+                -Body $releaseBody
+            Write-Host "  Release published: v$($releaseResp.version) (id=$($releaseResp.id))" -ForegroundColor Green
+        } catch {
+            $errBody = $_.ErrorDetails.Message
+            if ($errBody -and ($errBody | ConvertFrom-Json -ErrorAction SilentlyContinue).code -eq '23505') {
+                Write-Host "  Release v$newVersion already exists - skipping publish." -ForegroundColor DarkGray
+            } else {
+                Write-Host "WARNING: Failed to publish release - $_" -ForegroundColor Yellow
+            }
+        }
     }
 }
 

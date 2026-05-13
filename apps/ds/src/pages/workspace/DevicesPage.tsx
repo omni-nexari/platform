@@ -461,18 +461,20 @@ function PairInstructions() {
         {tab === 'android' && (
           <div className="space-y-3">
             <p className="text-xs text-[var(--text-muted)]">Download the Nexari Android APK and sideload it onto your device.</p>
-            {androidRelease ? (
-              <a
-                href={androidRelease.downloadUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 w-full justify-center rounded-lg bg-[var(--blue)] hover:bg-[var(--blue-hover,#2563eb)] text-white text-sm font-semibold px-4 py-2.5 transition-colors"
-              >
-                <Download size={14} /> Download APK {androidRelease.version && <span className="font-normal opacity-80">v{androidRelease.version}</span>}
-              </a>
-            ) : (
-              <p className="text-xs text-[var(--text-muted)] italic">No Android release published yet.</p>
-            )}
+            {(() => {
+              const url = androidRelease?.downloadUrl ?? 'https://ds.chiho.app/android/nexari-android.apk';
+              const version = androidRelease?.version;
+              return (
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 w-full justify-center rounded-lg bg-[var(--blue)] hover:bg-[var(--blue-hover,#2563eb)] text-white text-sm font-semibold px-4 py-2.5 transition-colors"
+                >
+                  <Download size={14} /> Download APK {version && <span className="font-normal opacity-80">v{version}</span>}
+                </a>
+              );
+            })()}
             <ol className="space-y-1.5 text-xs text-[var(--text-muted)] list-none">
               <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">1</span>On the Android device open <strong className="text-[var(--text)]">Settings → Security</strong> and enable <strong className="text-[var(--text)]">Install unknown apps</strong>.</li>
               <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">2</span>Download the APK above (or transfer it via USB) and tap to install.</li>
@@ -484,19 +486,21 @@ function PairInstructions() {
 
         {tab === 'windows' && (
           <div className="space-y-3">
-            <p className="text-xs text-[var(--text-muted)]">Download and run the Nexari Windows installer.</p>
-            {windowsRelease ? (
-              <a
-                href={windowsRelease.downloadUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 w-full justify-center rounded-lg bg-[var(--blue)] hover:bg-[var(--blue-hover,#2563eb)] text-white text-sm font-semibold px-4 py-2.5 transition-colors"
-              >
-                <Download size={14} /> Download Installer {windowsRelease.version && <span className="font-normal opacity-80">v{windowsRelease.version}</span>}
-              </a>
-            ) : (
-              <p className="text-xs text-[var(--text-muted)] italic">No Windows release published yet.</p>
-            )}
+            <p className="text-xs text-[var(--text-muted)]">Download and run the Nexari Windows installer on the signage PC.</p>
+            {(() => {
+              const url = windowsRelease?.downloadUrl ?? 'https://ds.chiho.app/windows/nexari-windows-setup.exe';
+              const version = windowsRelease?.version;
+              return (
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 w-full justify-center rounded-lg bg-[var(--blue)] hover:bg-[var(--blue-hover,#2563eb)] text-white text-sm font-semibold px-4 py-2.5 transition-colors"
+                >
+                  <Download size={14} /> Download Installer {version && <span className="font-normal opacity-80">v{version}</span>}
+                </a>
+              );
+            })()}
             <ol className="space-y-1.5 text-xs text-[var(--text-muted)] list-none">
               <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">1</span>Download the installer above and run it on the Windows PC.</li>
               <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">2</span>Follow the setup wizard — <strong className="text-[var(--text)]">Nexari Player</strong> launches automatically on finish.</li>

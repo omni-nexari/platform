@@ -43,13 +43,12 @@
     .\tools\deploy-tizen.ps1 -PiHost 192.168.1.17 -NoBuild
 #>
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$PiHost,
+    [string]$PiHost = "192.168.1.17",
 
     [string]$User = "chiho",
     [int]$SshPort = 5551,
 
-    [string]$SuperadminEmail = "",
+    [string]$SuperadminEmail = "chiho.lee23@gmail.com",
     [string]$SuperadminPassword = "",
     [string]$ApiBase = "",
     [string]$ReleaseNotes = "",
@@ -262,6 +261,11 @@ ssh @sshPortArgs $SshTarget "ls -lh '$RemoteDir/'"
 if ($LASTEXITCODE -ne 0) { throw "Remote verification failed" }
 
 # -- Publish release to DS API (optional) -------------------------------------
+if ($SuperadminEmail -ne "" -and $SuperadminPassword -eq "") {
+    $secPwd = Read-Host "Superadmin password for $SuperadminEmail" -AsSecureString
+    $SuperadminPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secPwd))
+}
 if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
     $ApiBase = $ApiBase.TrimEnd('/')
 
