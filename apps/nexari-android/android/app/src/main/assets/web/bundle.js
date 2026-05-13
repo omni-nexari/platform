@@ -1744,10 +1744,9 @@ var _resyncInProgress = false;
 var _playlistUrls = [];
 var _wsGen = 0;
 async function init(cfg) {
-  var _a;
+  var _a, _b;
   _cfg = cfg;
   _stopped = false;
-  _role2 = "pending";
   _peers = [];
   _leaderReady = false;
   _followerReady = /* @__PURE__ */ new Set();
@@ -1757,7 +1756,8 @@ async function init(cfg) {
   _ewma = 0;
   _ewmaN = 0;
   _selfLatency = (_a = DEVICE_LATENCY_MS[cfg.deviceId]) != null ? _a : 0;
-  logger.info(`[Sync] init deviceId=${cfg.deviceId} group=${cfg.groupId}`);
+  _role2 = cfg.pinnedLeaderId ? cfg.pinnedLeaderId === cfg.deviceId ? "leader" : "follower" : "pending";
+  logger.info(`[Sync] init deviceId=${cfg.deviceId} group=${cfg.groupId} role=${_role2} pinned=${(_b = cfg.pinnedLeaderId) != null ? _b : "none"}`);
   cfg.onStatus("Connecting to relay\u2026");
   setOnLoop(() => {
     if (!_stopped) {
@@ -1908,11 +1908,14 @@ var _localToServer = (t) => t + _offsetMs;
 var _serverToLocal = (t) => t - _offsetMs;
 var PEER_WAIT_TIMEOUT_MS = 2e4;
 function _waitPeers() {
+  if (_role2 === "follower") return Promise.resolve();
   return new Promise((resolve) => {
     const deadline = Date.now() + PEER_WAIT_TIMEOUT_MS;
     const elect = () => {
-      const all = [..._peers, _cfg.deviceId].sort();
-      _role2 = all[all.length - 1] === _cfg.deviceId ? "leader" : "follower";
+      if (_role2 === "pending") {
+        const all = [..._peers, _cfg.deviceId].sort();
+        _role2 = all[all.length - 1] === _cfg.deviceId ? "leader" : "follower";
+      }
     };
     const check = () => {
       if (_stopped) {
@@ -3000,7 +3003,7 @@ var Player = class {
   }
   // ── Main content loader (mirrors Tizen loadContent) ──────────────────────────
   async loadContent() {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     logger.info("[Player] loadContent");
     try {
       const schedule = await this.api.getCurrentContent(this.deviceId);
@@ -3037,7 +3040,8 @@ var Player = class {
           return ((_a2 = a.leaderPriority) != null ? _a2 : 999) - ((_b2 = b.leaderPriority) != null ? _b2 : 999);
         });
         this._pendingSyncRelayInfo = {
-          groupId: String((_d = sg["syncGroupId"]) != null ? _d : ""),
+          groupId: String((_e = (_d = sg["id"]) != null ? _d : sg["syncGroupId"]) != null ? _e : ""),
+          // 'id' is the UUID key in API response
           relayUrl: String(sg["relayUrl"]),
           leaderPriority: sortedPeers.map((p) => p.deviceId),
           peerCount: Math.max(1, sortedPeers.length - 1)
@@ -3703,7 +3707,7 @@ var Player = class {
     }
   }
   async initSyncGroup(msg) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e;
     if (this.syncActive) {
       try {
         stop();
@@ -3711,9 +3715,11 @@ var Player = class {
       }
       this.syncActive = false;
     }
-    const groupId = String((_a = msg["groupId"]) != null ? _a : "");
-    const expectedPeers = Number((_b = msg["expectedPeers"]) != null ? _b : 1);
+    const groupId = String((_b = (_a = msg["syncGroupId"]) != null ? _a : msg["groupId"]) != null ? _b : "");
+    const peerList = Array.isArray(msg["peers"]) ? msg["peers"] : Array.isArray(msg["leaderPriority"]) ? msg["leaderPriority"] : [];
+    const expectedPeers = Number((_c = msg["expectedPeers"]) != null ? _c : Math.max(1, peerList.length - 1));
     const leaderPriority = Array.isArray(msg["leaderPriority"]) ? msg["leaderPriority"] : [];
+    const pinnedLeaderId = (_d = leaderPriority[0]) != null ? _d : "";
     const tok = this.token;
     const wsBase = this.cfg.apiBase.replace(/\/api\/v1\/?$/, "").replace(/^http/, "ws");
     const wsUrl = `${wsBase}/api/v1/sync-relay/ws${tok ? "?token=" + encodeURIComponent(tok) : ""}`;
@@ -3738,8 +3744,9 @@ var Player = class {
       wsUrl,
       groupId,
       deviceId: this.deviceId,
-      selfIp: (_c = net.ipAddress) != null ? _c : "",
+      selfIp: (_e = net.ipAddress) != null ? _e : "",
       expectedPeers,
+      pinnedLeaderId,
       onStatus: (s) => logger.info(`[Sync] ${s}`),
       // Android-specific URL resolver: always use the locally-downloaded file path.
       fetchVideoUrl: () => {

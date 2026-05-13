@@ -447,7 +447,7 @@ export default function WorkspaceDashboardPage() {
         <Modal onClose={() => { setPairOpen(false); reset({ workspaceId: wsId ?? '' }); }} size="sm">
           <ModalHeader
             title="Pair a Device"
-            subtitle="Turn on your Samsung display and enter the 6-character code shown on screen."
+            subtitle="Power on your display or launch Nexari Player, then enter the 6-character code shown on screen."
             onClose={() => { setPairOpen(false); reset({ workspaceId: wsId ?? '' }); }}
           />
           <ModalBody>

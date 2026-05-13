@@ -10,19 +10,27 @@
     1. Builds @signage/player-web.
     2. Syncs the bundle into Android assets.
     3. Runs Gradle assembleSelfRelease (prod API: https://ds.chiho.app).
-    4. Optionally installs the APK on a USB-connected device via ADB.
-    5. Optionally publishes an OTA release record to the DS API.
+    4. Uploads the APK to the Pi at /var/signage/android/nexari-android.apk.
+    5. Optionally installs the APK on a USB-connected device via ADB.
+    6. Optionally publishes an OTA release record to the DS API.
 
 .EXAMPLE
-    .\tools\deploy-android.ps1
-    .\tools\deploy-android.ps1 -Install
-    .\tools\deploy-android.ps1 -Install -SuperadminEmail chiho.lee23@gmail.com -SuperadminPassword q1w2e3r4
-    .\tools\deploy-android.ps1 -Install -SkipBuild
+    .\.tools\deploy-android.ps1 -PiHost 192.168.1.17
+    .\tools\deploy-android.ps1 -PiHost 192.168.1.17 -Install
+    .\tools\deploy-android.ps1 -PiHost 192.168.1.17 -Install -SuperadminEmail chiho.lee23@gmail.com -SuperadminPassword q1w2e3r4
+    .\tools\deploy-android.ps1 -PiHost 192.168.1.17 -Install -SkipBuild
+    .\tools\deploy-android.ps1 -PiHost 192.168.1.17 -NoUpload   # skip Pi SCP, just build/install locally
 #>
 param(
     [switch]$Install,
     [switch]$SkipBuild,
     [string]$Device = "",
+
+    # Pi upload (mirrors deploy-tizen.ps1)
+    [string]$PiHost = "192.168.1.17",
+    [string]$PiUser = "chiho",
+    [int]$SshPort = 5551,
+    [switch]$NoUpload,
 
     [string]$SuperadminEmail = "",
     [string]$SuperadminPassword = "",
@@ -177,12 +185,37 @@ if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
     }
 }
 
+# --- Upload APK to Pi (OTA endpoint) ---
+if (-not $NoUpload) {
+    Write-Host ""
+    Write-Host "=== Uploading APK to Pi ==="
+    $RemoteAndroidDir = "/var/signage/android"
+    $SshTarget = "$PiUser@$PiHost"
+    $sshPortArgs = @("-p", $SshPort)
+
+    foreach ($cmd in @("ssh", "scp")) {
+        if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
+            throw "Required command not found: $cmd - install OpenSSH client from Windows Optional Features"
+        }
+    }
+
+    ssh @sshPortArgs $SshTarget "sudo mkdir -p '$RemoteAndroidDir' && sudo chown '${PiUser}:${PiUser}' '$RemoteAndroidDir'"
+    if ($LASTEXITCODE -ne 0) { throw "Failed to create remote directory $RemoteAndroidDir" }
+
+    scp -P $SshPort "$ApkPath" "${SshTarget}:${RemoteAndroidDir}/nexari-android.apk"
+    if ($LASTEXITCODE -ne 0) { throw "SCP upload failed" }
+
+    Write-Host "Verifying file on Pi..."
+    ssh @sshPortArgs $SshTarget "ls -lh '$RemoteAndroidDir/'"
+    if ($LASTEXITCODE -ne 0) { throw "Remote verification failed" }
+    Write-Host "Upload complete." -ForegroundColor Green
+} else {
+    Write-Host "(-NoUpload set - skipping Pi upload)" -ForegroundColor DarkGray
+}
+
 Write-Host ""
 Write-Host "=================================================="
 Write-Host "  nexari-android  $newVersion  PROD build complete"
 Write-Host "  APK: $ApkPath"
-if ($OtaUrl) { Write-Host "  OTA URL: $OtaUrl" }
+if ($OtaUrl) { Write-Host "  OTA URL: $OtaUrl" -ForegroundColor Green }
 Write-Host "=================================================="
-Write-Host ""
-Write-Host "Next step -- upload APK to OTA endpoint:"
-Write-Host "  scp `"$ApkPath`" chiho@192.168.1.17:/var/signage/android/nexari-android.apk"

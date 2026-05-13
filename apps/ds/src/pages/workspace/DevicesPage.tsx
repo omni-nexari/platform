@@ -9,7 +9,7 @@ import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
 
 type PairFormInput = Omit<ClaimDeviceInput, 'workspaceId'>;
-import { Grid2x2, Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon, Copy, CheckCheck, Battery, Play, CalendarDays, Image, Moon } from 'lucide-react';
+import { Grid2x2, Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon, Copy, CheckCheck, Battery, Play, CalendarDays, Image, Moon, Download, Smartphone, Tv2 } from 'lucide-react';
 
 // Shows the device thumbnail using the DB-backed screenshot record.
 // Re-renders automatically when the device list poll returns a new latestScreenshotId.
@@ -382,9 +382,24 @@ function SyncGroupCard({
   );
 }
 
+type PlatformTab = 'tizen' | 'android' | 'windows';
+
 function PairInstructions() {
+  const [tab, setTab] = useState<PlatformTab>('tizen');
   const [copied, setCopied] = useState(false);
   const playerUrl = `${window.location.origin}/tizen`;
+
+  const { data: androidRelease } = useQuery<{ version: string; downloadUrl: string } | null>({
+    queryKey: ['player-release', 'android'],
+    queryFn: () => api.get('/player-releases/latest?platform=android'),
+    staleTime: 5 * 60_000,
+  });
+
+  const { data: windowsRelease } = useQuery<{ version: string; downloadUrl: string } | null>({
+    queryKey: ['player-release', 'windows'],
+    queryFn: () => api.get('/player-releases/latest?platform=windows'),
+    staleTime: 5 * 60_000,
+  });
 
   function copy() {
     navigator.clipboard.writeText(playerUrl).then(() => {
@@ -393,22 +408,103 @@ function PairInstructions() {
     });
   }
 
+  const tabs: { id: PlatformTab; label: string; Icon: React.ElementType }[] = [
+    { id: 'tizen', label: 'Tizen / Samsung', Icon: Tv2 },
+    { id: 'android', label: 'Android', Icon: Smartphone },
+    { id: 'windows', label: 'Windows', Icon: Monitor },
+  ];
+
   return (
-    <div className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-3">
-      <div>
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">Player URL (Tizen / URL Launcher)</p>
-        <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
-          <span className="flex-1 font-mono text-xs text-[var(--text)] truncate select-all">{playerUrl}</span>
+    <div className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+      {/* Tab bar */}
+      <div className="flex border-b border-[var(--border)]">
+        {tabs.map(({ id, label, Icon }) => (
           <button
+            key={id}
             type="button"
-            onClick={copy}
-            className="shrink-0 flex items-center gap-1 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors text-xs"
-            title="Copy URL"
+            onClick={() => setTab(id)}
+            className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors ${
+              tab === id
+                ? 'text-[var(--text)] bg-[var(--card)] border-b-2 border-[var(--blue)]'
+                : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--card)]/50'
+            }`}
           >
-            {copied ? <CheckCheck size={14} className="text-emerald-400" /> : <Copy size={14} />}
-            {copied ? 'Copied' : 'Copy'}
+            <Icon size={13} />{label}
           </button>
-        </div>
+        ))}
+      </div>
+
+      <div className="p-4 space-y-3">
+        {tab === 'tizen' && (
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">Player URL (Tizen / URL Launcher)</p>
+            <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+              <span className="flex-1 font-mono text-xs text-[var(--text)] truncate select-all">{playerUrl}</span>
+              <button
+                type="button"
+                onClick={copy}
+                className="shrink-0 flex items-center gap-1 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors text-xs"
+                title="Copy URL"
+              >
+                {copied ? <CheckCheck size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <ol className="mt-3 space-y-1.5 text-xs text-[var(--text-muted)] list-none">
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">1</span>Open <strong className="text-[var(--text)]">URL Launcher</strong> on the Samsung display.</li>
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">2</span>Enter the URL above — the pairing code appears on screen.</li>
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">3</span>Enter that code in the <strong className="text-[var(--text)]">Pairing Code</strong> field below.</li>
+            </ol>
+          </div>
+        )}
+
+        {tab === 'android' && (
+          <div className="space-y-3">
+            <p className="text-xs text-[var(--text-muted)]">Download the Nexari Android APK and sideload it onto your device.</p>
+            {androidRelease ? (
+              <a
+                href={androidRelease.downloadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 w-full justify-center rounded-lg bg-[var(--blue)] hover:bg-[var(--blue-hover,#2563eb)] text-white text-sm font-semibold px-4 py-2.5 transition-colors"
+              >
+                <Download size={14} /> Download APK {androidRelease.version && <span className="font-normal opacity-80">v{androidRelease.version}</span>}
+              </a>
+            ) : (
+              <p className="text-xs text-[var(--text-muted)] italic">No Android release published yet.</p>
+            )}
+            <ol className="space-y-1.5 text-xs text-[var(--text-muted)] list-none">
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">1</span>On the Android device open <strong className="text-[var(--text)]">Settings → Security</strong> and enable <strong className="text-[var(--text)]">Install unknown apps</strong>.</li>
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">2</span>Download the APK above (or transfer it via USB) and tap to install.</li>
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">3</span>Open <strong className="text-[var(--text)]">Nexari Player</strong> — the pairing code appears on screen.</li>
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">4</span>Enter that code in the <strong className="text-[var(--text)]">Pairing Code</strong> field below.</li>
+            </ol>
+          </div>
+        )}
+
+        {tab === 'windows' && (
+          <div className="space-y-3">
+            <p className="text-xs text-[var(--text-muted)]">Download and run the Nexari Windows installer.</p>
+            {windowsRelease ? (
+              <a
+                href={windowsRelease.downloadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 w-full justify-center rounded-lg bg-[var(--blue)] hover:bg-[var(--blue-hover,#2563eb)] text-white text-sm font-semibold px-4 py-2.5 transition-colors"
+              >
+                <Download size={14} /> Download Installer {windowsRelease.version && <span className="font-normal opacity-80">v{windowsRelease.version}</span>}
+              </a>
+            ) : (
+              <p className="text-xs text-[var(--text-muted)] italic">No Windows release published yet.</p>
+            )}
+            <ol className="space-y-1.5 text-xs text-[var(--text-muted)] list-none">
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">1</span>Download the installer above and run it on the Windows PC.</li>
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">2</span>Follow the setup wizard — <strong className="text-[var(--text)]">Nexari Player</strong> launches automatically on finish.</li>
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">3</span>The pairing code is shown on the player window.</li>
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">4</span>Enter that code in the <strong className="text-[var(--text)]">Pairing Code</strong> field below.</li>
+            </ol>
+          </div>
+        )}
       </div>
     </div>
   );

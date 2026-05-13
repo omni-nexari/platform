@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
@@ -11,8 +11,8 @@ android {
         applicationId = "app.chiho.nexari"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 101
+        versionName = "0.1.1"
 
         // Allow http://192.168.x.x dev API base over plain HTTP.
         manifestPlaceholders["usesCleartextTraffic"] = "true"
@@ -30,7 +30,7 @@ android {
 
     flavorDimensions += "channel"
     productFlavors {
-        // Dev build — points at LAN nginx on 192.168.1.17:80 (same as Tizen build:dev).
+        // Dev build â€” points at LAN nginx on 192.168.1.17:80 (same as Tizen build:dev).
         // nginx proxies / to 127.0.0.1:3000 and upgrades WS automatically.
         create("dev") {
             dimension = "channel"
@@ -47,7 +47,7 @@ android {
             buildConfigField("String",  "DEFAULT_WS_BASE",  "\"wss://ds.chiho.app\"")
             buildConfigField("String",  "DEFAULT_OTA_URL",  "\"https://ds.chiho.app/android/update.json\"")
         }
-        // Google Play / Managed Play — Play handles updates.
+        // Google Play / Managed Play â€” Play handles updates.
         create("play") {
             dimension = "channel"
             buildConfigField("boolean", "OTA_ENABLED", "false")
@@ -85,3 +85,4 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.google.code.gson:gson:2.11.0")
 }
+
