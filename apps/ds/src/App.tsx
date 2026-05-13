@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Routes, Route, Navigate, useLocation } from 'react-router';
+import { Routes, Route, Navigate, useLocation, useParams } from 'react-router';
 import { useAuthStore } from './lib/auth.js';
 import { useSAStore, type SAUser } from './lib/superadmin-auth.js';
 import LoginPage from './pages/auth/LoginPage.js';
@@ -167,13 +167,21 @@ function RequirePlatformOwner({ children }: { children: React.ReactNode }) {
 function RequireManagementAdmin({ children }: { children: React.ReactNode }) {
   const { bootstrapped, user } = useSAStore();
   if (!bootstrapped) return null;
-  if (!user) return <Navigate to="/management/login" replace />;
-  if (user?.type !== 'management_company_admin') return <Navigate to="/superadmin" replace />;
+  // Not logged in OR logged in as platform_owner → send to generic management login.
+  if (!user || user.type !== 'management_company_admin') {
+    return <Navigate to="/management/login" replace />;
+  }
   return <>{children}</>;
 }
 
 function isPortalPath(pathname: string) {
-  return pathname.startsWith('/superadmin') || pathname.startsWith('/management') || pathname.startsWith('/m/');
+  return (
+    pathname.startsWith('/superadmin') ||
+    pathname.startsWith('/management') ||
+    pathname.startsWith('/m/') ||
+    // /:slug/login — management portal login via short URL
+    /^\/[a-z0-9][a-z0-9-]*\/login(?:\/.*)?$/.test(pathname)
+  );
 }
 
 function isMainPublicAuthPath(pathname: string) {
@@ -192,7 +200,8 @@ function isMainPublicAuthPath(pathname: string) {
 function isPortalPublicAuthPath(pathname: string) {
   return pathname === '/superadmin/login'
     || pathname === '/management/login'
-    || /^\/m\/[^/]+(?:\/login)?$/.test(pathname);
+    || /^\/m\/[^/]+(?:\/login)?$/.test(pathname)
+    || /^\/[a-z0-9][a-z0-9-]*\/login$/.test(pathname); // /:slug/login short URL
 }
 
 function PortalAuthBootstrap({ children }: { children: React.ReactNode }) {
@@ -235,6 +244,12 @@ function PortalAuthBootstrap({ children }: { children: React.ReactNode }) {
 
   if (isPortalPath(location.pathname) && !bootstrapped) return null;
   return <>{children}</>;
+}
+
+/** Redirects /m/:slug/login → /:slug/login (backward compat for old links) */
+function MSlugLoginRedirect() {
+  const { slug } = useParams<{ slug: string }>();
+  return <Navigate to={`/${slug}/login`} replace />;
 }
 
 export default function App() {
@@ -280,9 +295,11 @@ export default function App() {
         <Route path="support/:id" element={<SuperAdminSupportTicketDetailPage />} />
       </Route>
 
-      {/* Management Company portal */}
-      <Route path="/m/:slug" element={<Navigate to="login" replace />} />
-      <Route path="/m/:slug/login" element={<ManagementLoginPage />} />
+      {/* Management Company portal — short URL: /:slug/login */}
+      <Route path="/:slug/login" element={<ManagementLoginPage />} />
+      {/* Backward compat: /m/:slug/login → /:slug/login */}
+      <Route path="/m/:slug/login" element={<MSlugLoginRedirect />} />
+      <Route path="/m/:slug" element={<MSlugLoginRedirect />} />
       <Route path="/management/login" element={<ManagementLoginPage />} />
       <Route
         path="/management"

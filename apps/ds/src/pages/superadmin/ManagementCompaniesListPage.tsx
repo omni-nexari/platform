@@ -37,7 +37,7 @@ interface CompanyRow {
 
 function getResellerPortalPath(slug: string): string | null {
   if (!slug || slug.startsWith('pending-')) return null;
-  return `/m/${slug}/login`;
+  return `/${slug}/login`;
 }
 
 const PLAN_TONES = {

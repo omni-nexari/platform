@@ -41,7 +41,7 @@ export default function ManagementLayout() {
       // Clear local state even if the server-side cookie is already gone.
     }
     clearAuth();
-    navigate(slug ? `/m/${slug}/login` : '/management/login');
+    navigate(slug ? `/${slug}/login` : '/management/login');
   };
 
   return (

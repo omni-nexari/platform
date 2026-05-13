@@ -97,7 +97,7 @@ function normalizeNullable(value: string): string | null {
 
 function getResellerPortalPath(slug: string): string | null {
   if (!slug || slug.startsWith('pending-')) return null;
-  return `/m/${slug}/login`;
+  return `/${slug}/login`;
 }
 
 const ROLE_TONES = {
@@ -657,7 +657,7 @@ export default function ManagementCompanyDetailPage() {
                       ) : null}
                       <div className="min-w-0">
                         <p className="management-heading text-sm font-semibold truncate">{normalizeNullable(brandingForm.watch('portalTitle')) || company.name}</p>
-                        <p className="text-xs text-[var(--text-muted)] truncate">/m/{company.slug}</p>
+                        <p className="text-xs text-[var(--text-muted)] truncate">/{company.slug}/login</p>
                       </div>
                     </div>
                     <div className="mt-4 space-y-2">

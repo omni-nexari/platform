@@ -242,7 +242,7 @@ export default function AcceptManagementCompanyInvitePage() {
           : 'Account created! Sign in to your portal.',
       );
       if (res.companySlug && !res.companySlug.startsWith('pending-')) {
-        navigate(`/m/${res.companySlug}/login`);
+        navigate(`/${res.companySlug}/login`);
       } else {
         navigate('/management/login');
       }
@@ -371,7 +371,7 @@ export default function AcceptManagementCompanyInvitePage() {
                     className="px-3 flex items-center text-sm rounded-l-lg border border-r-0 text-[var(--text-muted)] select-none"
                     style={{ background: 'var(--bg2)', borderColor: 'var(--card-border)' }}
                   >
-                    /m/
+                    /
                   </span>
                   <input
                     {...register('companyPortalUrl')}

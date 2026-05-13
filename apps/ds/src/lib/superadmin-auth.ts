@@ -99,7 +99,7 @@ async function ensurePortalCsrfToken() {
 function getPortalLoginPath() {
   const storeUser = useSAStore.getState().user;
   if (storeUser?.type === 'management_company_admin') {
-    return storeUser.companySlug ? `/m/${storeUser.companySlug}/login` : '/management/login';
+    return storeUser.companySlug ? `/${storeUser.companySlug}/login` : '/management/login';
   }
 
   return '/superadmin/login';
