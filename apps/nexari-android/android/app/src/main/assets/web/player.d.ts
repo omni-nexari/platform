@@ -71,6 +71,15 @@ export declare class Player {
     /** Live-view capture loop (setTimeout chain, not setInterval — prevents concurrent calls). */
     private scheduleLiveCapture;
     private sendHeartbeat;
+    /**
+     * Arm the technician 10-tap gesture: ten taps inside the top-left ZONE
+     * within a 3-second window open the platform's native settings overlay
+     * (delegated to `adapter.openSettings()`). Uses capture-phase listeners on
+     * `touchstart`, `pointerdown`, and `click` so taps on fullscreen content
+     * (video, iframes, images) still register, and accepts touch as well as
+     * mouse for desktop QA.
+     */
+    private initSettingsGesture;
     private flushLogStream;
     private getContentSignature;
     private preCacheItems;

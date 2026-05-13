@@ -151,6 +151,10 @@ export class Player {
     this.showIdle('Connecting…');
     void this.syncNtp();
 
+    // Arm the top-left 10-tap gesture as early as possible so technicians can
+    // open the settings overlay even if pairing or boot stalls.
+    this.initSettingsGesture(info);
+
     this.token = await this.ensurePaired();
     logger.info(`[Player] paired (token: ${this.token ? 'ok' : 'none'})`);
 
@@ -717,6 +721,58 @@ export class Player {
     } catch (e) {
       logger.warn(`[Heartbeat] failed: ${(e as Error).message}`);
     }
+  }
+
+  /**
+   * Arm the technician 10-tap gesture: ten taps inside the top-left ZONE
+   * within a 3-second window open the platform's native settings overlay
+   * (delegated to `adapter.openSettings()`). Uses capture-phase listeners on
+   * `touchstart`, `pointerdown`, and `click` so taps on fullscreen content
+   * (video, iframes, images) still register, and accepts touch as well as
+   * mouse for desktop QA.
+   */
+  private initSettingsGesture(info: { platform?: string }): void {
+    const a = this.cfg.adapter;
+    if (typeof a.openSettings !== 'function') {
+      logger.info(`[Settings] gesture not armed — adapter.openSettings unavailable (platform=${info.platform})`);
+      return;
+    }
+    const ZONE = 120; // px from top-left corner
+    const WINDOW_MS = 3000;
+    const TARGET = 10;
+    let count = 0;
+    let resetTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const trigger = () => {
+      count = 0;
+      if (resetTimer) { clearTimeout(resetTimer); resetTimer = null; }
+      logger.info('[Settings] 10-tap gesture fired — opening settings overlay');
+      Promise.resolve(a.openSettings!()).catch(e => logger.warn(`[Settings] openSettings failed: ${(e as Error).message}`));
+    };
+
+    const note = (x: number, y: number) => {
+      if (x > ZONE || y > ZONE) return;
+      count++;
+      logger.info(`[Settings] tap ${count}/${TARGET} at (${x | 0},${y | 0})`);
+      if (resetTimer) clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => { count = 0; resetTimer = null; }, WINDOW_MS);
+      if (count >= TARGET) trigger();
+    };
+
+    // Capture phase so fullscreen content (video, iframe, image) doesn't
+    // swallow the event before it bubbles to document.
+    document.addEventListener('touchstart', (e: TouchEvent) => {
+      const t = e.touches[0]; if (!t) return;
+      note(t.clientX, t.clientY);
+    }, { capture: true, passive: true });
+    document.addEventListener('pointerdown', (e: PointerEvent) => {
+      note(e.clientX, e.clientY);
+    }, { capture: true, passive: true });
+    document.addEventListener('click', (e: MouseEvent) => {
+      note(e.clientX, e.clientY);
+    }, { capture: true });
+
+    logger.info(`[Settings] 10-tap gesture armed (zone=${ZONE}px top-left, window=${WINDOW_MS}ms, platform=${info.platform})`);
   }
 
   private flushLogStream(): void {

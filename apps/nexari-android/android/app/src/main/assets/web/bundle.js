@@ -2131,6 +2131,16 @@ async function _fetchPlaylistUrls() {
 function escapeHtml3(s) {
   return String(s != null ? s : "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+var UPDATE_HOST_ALLOWLIST = ["ds.chiho.app", "updates.chiho.app"];
+function isAllowedUpdateUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+    return UPDATE_HOST_ALLOWLIST.indexOf(u.hostname) !== -1;
+  } catch (e) {
+    return false;
+  }
+}
 function parseMetadata3(content) {
   if (!content.metadata) return {};
   if (typeof content.metadata === "string") {
@@ -2212,6 +2222,7 @@ var Player = class {
     logger.info(`[Player] starting deviceId=${info.deviceId} platform=${info.platform}`);
     this.showIdle("Connecting\u2026");
     void this.syncNtp();
+    this.initSettingsGesture(info);
     this.token = await this.ensurePaired();
     logger.info(`[Player] paired (token: ${this.token ? "ok" : "none"})`);
     if (!this.tryLoadCachedSchedule()) this.showIdle("Waiting for content\u2026");
@@ -2600,6 +2611,10 @@ var Player = class {
           this.send({ type: "app_update_failed", error: "missing url/version" });
           return;
         }
+        if (!isAllowedUpdateUrl(url)) {
+          this.send({ type: "app_update_failed", error: "Download URL host not allowed" });
+          return;
+        }
         const result = await this.cfg.adapter.installUpdate({
           url,
           version,
@@ -2621,7 +2636,7 @@ var Player = class {
     }
   }
   async dispatchCommand(command, payload) {
-    var _a;
+    var _a, _b, _c, _d, _e;
     const a = this.cfg.adapter;
     logger.info(`[Player] command ${command}`);
     switch (command) {
@@ -2705,6 +2720,22 @@ var Player = class {
       case "request_log_burst":
         this.flushLogStream();
         return;
+      case "update_player": {
+        const url = String((_d = (_c = (_b = payload == null ? void 0 : payload["downloadUrl"]) != null ? _b : payload == null ? void 0 : payload["apkUrl"]) != null ? _c : payload == null ? void 0 : payload["wgtUrl"]) != null ? _d : "");
+        const version = String((_e = payload == null ? void 0 : payload["version"]) != null ? _e : "");
+        const sha256 = payload == null ? void 0 : payload["sha256"];
+        if (!url || !version) {
+          this.send({ type: "app_update_failed", error: "missing url/version" });
+          return;
+        }
+        if (!isAllowedUpdateUrl(url)) {
+          this.send({ type: "app_update_failed", error: "Download URL host not allowed" });
+          return;
+        }
+        const result = await a.installUpdate({ url, version, sha256, onProgress: (p) => this.sendOta(p) });
+        this.sendOta(result);
+        return;
+      }
       default:
         logger.warn(`[Player] unhandled command: ${command}`);
     }
@@ -2808,6 +2839,58 @@ var Player = class {
     } catch (e) {
       logger.warn(`[Heartbeat] failed: ${e.message}`);
     }
+  }
+  /**
+   * Arm the technician 10-tap gesture: ten taps inside the top-left ZONE
+   * within a 3-second window open the platform's native settings overlay
+   * (delegated to `adapter.openSettings()`). Uses capture-phase listeners on
+   * `touchstart`, `pointerdown`, and `click` so taps on fullscreen content
+   * (video, iframes, images) still register, and accepts touch as well as
+   * mouse for desktop QA.
+   */
+  initSettingsGesture(info) {
+    const a = this.cfg.adapter;
+    if (typeof a.openSettings !== "function") {
+      logger.info(`[Settings] gesture not armed \u2014 adapter.openSettings unavailable (platform=${info.platform})`);
+      return;
+    }
+    const ZONE = 120;
+    const WINDOW_MS = 3e3;
+    const TARGET = 10;
+    let count = 0;
+    let resetTimer = null;
+    const trigger = () => {
+      count = 0;
+      if (resetTimer) {
+        clearTimeout(resetTimer);
+        resetTimer = null;
+      }
+      logger.info("[Settings] 10-tap gesture fired \u2014 opening settings overlay");
+      Promise.resolve(a.openSettings()).catch((e) => logger.warn(`[Settings] openSettings failed: ${e.message}`));
+    };
+    const note = (x, y) => {
+      if (x > ZONE || y > ZONE) return;
+      count++;
+      logger.info(`[Settings] tap ${count}/${TARGET} at (${x | 0},${y | 0})`);
+      if (resetTimer) clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => {
+        count = 0;
+        resetTimer = null;
+      }, WINDOW_MS);
+      if (count >= TARGET) trigger();
+    };
+    document.addEventListener("touchstart", (e) => {
+      const t = e.touches[0];
+      if (!t) return;
+      note(t.clientX, t.clientY);
+    }, { capture: true, passive: true });
+    document.addEventListener("pointerdown", (e) => {
+      note(e.clientX, e.clientY);
+    }, { capture: true, passive: true });
+    document.addEventListener("click", (e) => {
+      note(e.clientX, e.clientY);
+    }, { capture: true });
+    logger.info(`[Settings] 10-tap gesture armed (zone=${ZONE}px top-left, window=${WINDOW_MS}ms, platform=${info.platform})`);
   }
   flushLogStream() {
     var _a, _b;

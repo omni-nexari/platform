@@ -51,6 +51,11 @@ class PlatformBridge(
     private val kiosk    = KioskController(context)
     private val ota      = OtaInstaller(context)
 
+    // Pairing token persisted in SharedPreferences so it survives WebView origin
+    // changes (e.g. file:// → https://appassets.androidplatform.net) and app
+    // data wipes that target the WebView storage only.
+    private val tokenPrefs = context.getSharedPreferences("nexari_pairing", Context.MODE_PRIVATE)
+
     @Volatile private var relayServer: SyncRelayServer? = null
 
     fun shutdown() { stopRelayInternal() }
@@ -188,6 +193,18 @@ class PlatformBridge(
     @JavascriptInterface
     fun reloadRenderer(): String { main.post { webView.reload() }; return "{}" }
 
+    // ── Pairing token persistence ──────────────────────────────────────────────
+
+    @JavascriptInterface
+    fun getToken(): String? = tokenPrefs.getString("token", null)
+
+    @JavascriptInterface
+    fun setToken(token: String?) {
+        val e = tokenPrefs.edit()
+        if (token.isNullOrEmpty()) e.remove("token") else e.putString("token", token)
+        e.apply()
+    }
+
     @JavascriptInterface
     fun openSettings(): String {
         try {
@@ -235,6 +252,29 @@ class PlatformBridge(
   if (window.AndroidBridge && !window.AndroidBridge.makeJsAdapter) {
     const b = window.AndroidBridge;
     const p = (s) => Promise.resolve(JSON.parse(s));
+    // Seed pairing token from native SharedPreferences so the player skips the
+    // pair flow across WebView origin changes (file:// → https://appassets…).
+    // Also mirror localStorage writes for the 'nexariToken' key back into
+    // native storage so the next launch is preserved regardless of origin.
+    try {
+      const nativeToken = b.getToken && b.getToken();
+      if (nativeToken && !window.__nexariToken) window.__nexariToken = nativeToken;
+      if (nativeToken) { try { localStorage.setItem('nexariToken', nativeToken); } catch (e) {} }
+      const ls = window.localStorage;
+      if (ls && !ls.__nexariPatched) {
+        const origSet = ls.setItem.bind(ls);
+        const origRem = ls.removeItem.bind(ls);
+        ls.setItem = function(k, v) {
+          if (k === 'nexariToken') { try { b.setToken && b.setToken(v); } catch (e) {} window.__nexariToken = v; }
+          return origSet(k, v);
+        };
+        ls.removeItem = function(k) {
+          if (k === 'nexariToken') { try { b.setToken && b.setToken(null); } catch (e) {} delete window.__nexariToken; }
+          return origRem(k);
+        };
+        Object.defineProperty(ls, '__nexariPatched', { value: true });
+      }
+    } catch (e) { /* non-fatal */ }
     const otaCbs = window.__nexariOtaCbs = (window.__nexariOtaCbs || {});
     window.__nexariOta = (id, prog) => {
       const cb = otaCbs[id]; if (!cb) return;
