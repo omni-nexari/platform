@@ -34,6 +34,35 @@ function escapeHtml(s: unknown): string {
   return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+/** Hosts permitted as origin for OTA installer downloads (player-web shells). */
+const UPDATE_HOST_ALLOWLIST: readonly string[] = ['ds.chiho.app', 'updates.chiho.app'];
+
+/** Return true if `url` is an http(s) URL whose host is in UPDATE_HOST_ALLOWLIST. */
+function isAllowedUpdateUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    return UPDATE_HOST_ALLOWLIST.indexOf(u.hostname) !== -1;
+  } catch {
+    return false;
+  }
+}
+
+/** Strip ?token=…/access_token=… from a URL before logging. */
+function redactUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const params = u.searchParams;
+    for (const k of ['token', 'access_token', 'auth', 'apiKey', 'api_key']) {
+      if (params.has(k)) params.set(k, '***');
+    }
+    u.search = params.toString();
+    return u.toString();
+  } catch {
+    return url.replace(/([?&](?:token|access_token|auth|apiKey|api_key))=[^&]+/gi, '$1=***');
+  }
+}
+
 function parseMetadata(content: ContentRecord): Record<string, unknown> {
   if (!content.metadata) return {};
   if (typeof content.metadata === 'string') { try { return JSON.parse(content.metadata); } catch { return {}; } }
@@ -485,6 +514,10 @@ export class Player {
         const url = String(msg['apkUrl'] ?? msg['wgtUrl'] ?? '');
         const version = String(msg['version'] ?? '');
         if (!url || !version) { this.send({ type:'app_update_failed', error:'missing url/version' }); return; }
+        if (!isAllowedUpdateUrl(url)) {
+          this.send({ type:'app_update_failed', error:'Download URL host not allowed' });
+          return;
+        }
         const result = await this.cfg.adapter.installUpdate({
           url, version, sha256: msg['sha256'] as string|undefined,
           onProgress: p => this.sendOta(p),
@@ -564,6 +597,19 @@ export class Player {
         return;
       }
       case 'dump_logs': case 'request_log_burst': this.flushLogStream(); return;
+      case 'update_player': {
+        const url = String(payload?.['downloadUrl'] ?? payload?.['apkUrl'] ?? payload?.['wgtUrl'] ?? '');
+        const version = String(payload?.['version'] ?? '');
+        const sha256 = payload?.['sha256'] as string | undefined;
+        if (!url || !version) { this.send({ type:'app_update_failed', error:'missing url/version' }); return; }
+        if (!isAllowedUpdateUrl(url)) {
+          this.send({ type:'app_update_failed', error:'Download URL host not allowed' });
+          return;
+        }
+        const result = await a.installUpdate({ url, version, sha256, onProgress: p => this.sendOta(p) });
+        this.sendOta(result);
+        return;
+      }
       default: logger.warn(`[Player] unhandled command: ${command}`);
     }
   }

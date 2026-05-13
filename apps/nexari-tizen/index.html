@@ -251,13 +251,22 @@
     <script src="js/modules/sync-engine.js"></script>
     <!-- Load the correct PDF.js build based on Tizen version.
          Tizen 4 (legacy, Chromium <60): use v1.10 which is fully ES5.
-         Tizen 5+ (modern): use v2.16 legacy build (ES5-transpiled with modern API). -->
+         Tizen 5+ (modern): use v2.16 legacy build (ES5-transpiled with modern API).
+         Inserted via createElement (not document.write) — src is whitelisted to
+         one of exactly two literal values. async=false preserves ordering
+         relative to other script-injected scripts; PDF.js itself is invoked
+         lazily by the renderer when PDF content arrives, so load order vs.
+         later <script> tags is not critical. -->
     <script>
     (function() {
-      var src = (window.Platform && window.Platform.isLegacy)
-        ? 'js/modules/pdf-legacy.min.js'
-        : 'js/modules/pdf.min.js';
-      document.write('<scr' + 'ipt src="' + src + '"><\/scr' + 'ipt>');
+      var legacy = !!(window.Platform && window.Platform.isLegacy);
+      var src = legacy ? 'js/modules/pdf-legacy.min.js' : 'js/modules/pdf.min.js';
+      // Strict whitelist guard — defence in depth.
+      if (src !== 'js/modules/pdf-legacy.min.js' && src !== 'js/modules/pdf.min.js') return;
+      var s = document.createElement('script');
+      s.src = src;
+      s.async = false;
+      (document.currentScript && document.currentScript.parentNode || document.head).appendChild(s);
     })();
     </script>
     <script src="js/modules/wall-engine.js"></script>

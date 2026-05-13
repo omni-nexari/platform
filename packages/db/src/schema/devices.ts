@@ -164,6 +164,8 @@ export const playerReleases = pgTable('player_releases', {
   manifestUrl: text('manifest_url'),
   /** Installer file SHA-512 (Base64) — required by electron-updater. */
   sha512: text('sha512'),
+  /** Installer file SHA-256 (hex) — used by Tizen/ePaper/player-web installers for integrity verification. */
+  sha256: text('sha256'),
   sizeBytes: bigint('size_bytes', { mode: 'number' }),
   isLatest:              boolean('is_latest').notNull().default(false),
   /** Set by platform owner when the release is approved for resellers to see. */

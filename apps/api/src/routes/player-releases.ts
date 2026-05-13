@@ -15,6 +15,7 @@ const CreateReleaseSchema = z.object({
   platform: z.enum(PLATFORMS).default('tizen'),
   manifestUrl: z.string().url().optional(),
   sha512: z.string().optional(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
   sizeBytes: z.number().int().positive().optional(),
 });
 
@@ -85,7 +86,7 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
     const body = CreateReleaseSchema.safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
-    const { version, downloadUrl, releaseNotes, platform, manifestUrl, sha512, sizeBytes } = body.data;
+    const { version, downloadUrl, releaseNotes, platform, manifestUrl, sha512, sha256, sizeBytes } = body.data;
 
     // Clear existing latest flag for this platform only
     await db
@@ -99,6 +100,7 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
         platform, version, downloadUrl, releaseNotes,
         manifestUrl: manifestUrl ?? null,
         sha512: sha512 ?? null,
+        sha256: sha256 ?? null,
         sizeBytes: sizeBytes ?? null,
         isLatest: true,
       })
@@ -151,6 +153,7 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
         payload: {
           version: release.version,
           downloadUrl: release.downloadUrl,
+          ...(release.sha256 ? { sha256: release.sha256 } : {}),
         },
       });
       sent++;

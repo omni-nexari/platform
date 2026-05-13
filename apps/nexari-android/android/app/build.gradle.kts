@@ -26,8 +26,11 @@ android {
         versionCode = 111
         versionName = "0.1.11"
 
-        // Allow http://192.168.x.x dev API base over plain HTTP.
-        manifestPlaceholders["usesCleartextTraffic"] = "true"
+        // Manifest-wide opt-in is now off; res/xml/network_security.xml is the
+        // single source of truth and permits HTTP only to whitelisted LAN hosts
+        // (192.168.1.17, 10.0.2.2, localhost, 127.0.0.1). Production traffic to
+        // ds.chiho.app remains HTTPS-only.
+        manifestPlaceholders["usesCleartextTraffic"] = "false"
     }
 
     signingConfigs {

@@ -195,7 +195,7 @@ export const DeviceCommandSchema = z.discriminatedUnion('command', [
   z.object({ command: z.literal('clear_on_timer'), payload: z.object({ slot: z.number().int().min(1).max(7) }) }),
   z.object({ command: z.literal('clear_off_timer'), payload: z.object({ slot: z.number().int().min(1).max(7) }) }),
   z.object({ command: z.literal('update_tv_firmware') }),
-  z.object({ command: z.literal('update_player'), payload: z.object({ version: z.string(), downloadUrl: z.string() }) }),
+  z.object({ command: z.literal('update_player'), payload: z.object({ version: z.string(), downloadUrl: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional() }) }),
   z.object({ command: z.literal('clear_cache') }),
   z.object({ command: z.literal('dump_logs') }),
   z.object({ command: z.literal('open_settings') }),

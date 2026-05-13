@@ -137,6 +137,10 @@ window.EpaperWS = (function() {
           if (!updatePayload.wgtUrl && updatePayload.downloadUrl) {
             updatePayload = Object.assign({}, updatePayload, { wgtUrl: updatePayload.downloadUrl });
           }
+          // API sends sha256 (hex); EpaperUpdater consumes it as `checksum`.
+          if (!updatePayload.checksum && updatePayload.sha256) {
+            updatePayload = Object.assign({}, updatePayload, { checksum: updatePayload.sha256 });
+          }
           EpaperUpdater.handle(updatePayload, function(type, data) {
             send(Object.assign({ type: type, deviceId: state.deviceId }, data || {}));
           });

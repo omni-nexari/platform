@@ -442,6 +442,13 @@
             "when": 1778610000000,
             "tag": "0062_player_release_approvals",
             "breakpoints": true
+        },
+        {
+            "idx": 63,
+            "version": "7",
+            "when": 1778700000000,
+            "tag": "0063_player_release_sha256",
+            "breakpoints": true
         }
     ]
 }

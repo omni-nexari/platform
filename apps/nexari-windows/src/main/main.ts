@@ -182,11 +182,30 @@ app.on('ready', async () => {
     autoUpdater.checkForUpdates().catch(() => {});
   });
 
-  // Set Content-Security-Policy on all renderer responses to silence Electron's
-  // "Insecure CSP" dev warning and enforce a sensible policy at runtime.
-  // Allows: file+blob scripts (Vite bundle + HLS.js workers), any fetch/WS
-  // target (dynamic API base), iframes from any origin (HTML5 content), media
-  // from any source (HLS streams, images), and unsafe-inline styles only.
+  // Set Content-Security-Policy on all renderer responses.
+  // Locked-down policy:
+  //   - script-src removes 'unsafe-inline'; Vite bundles all scripts.
+  //   - connect-src is restricted to the configured apiBase host + ws/wss
+  //     variants; localhost is included for dev/HMR.
+  //   - frame-src remains permissive because user content may include
+  //     arbitrary iframes (HTML5 ads, calendars, dashboards).
+  const apiBase = (getStore().get('apiBase') as string | undefined)
+    || (process.env.NEXARI_DEV === '1' ? 'http://192.168.1.17/api/v1' : 'https://ds.chiho.app/api/v1');
+  const connectSrcHosts = new Set<string>(['ws://localhost:*', 'http://localhost:*', 'https://localhost:*']);
+  try {
+    const u = new URL(apiBase);
+    const isHttps = u.protocol === 'https:';
+    const httpOrigin = `${u.protocol}//${u.host}`;
+    const wsScheme = isHttps ? 'wss:' : 'ws:';
+    const wsOrigin = `${wsScheme}//${u.host}`;
+    connectSrcHosts.add(httpOrigin);
+    connectSrcHosts.add(wsOrigin);
+  } catch { /* ignore — apiBase malformed */ }
+  // Always permit production hosts so a re-pair after CSP install still works.
+  connectSrcHosts.add('https://ds.chiho.app');
+  connectSrcHosts.add('wss://ds.chiho.app');
+  const connectSrc = ["'self'", ...Array.from(connectSrcHosts)].join(' ');
+
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
@@ -194,14 +213,16 @@ app.on('ready', async () => {
         'Content-Security-Policy': [
           [
             "default-src 'self' file: blob: data:",
-            "script-src 'self' file: blob: 'unsafe-inline'",
+            "script-src 'self' file: blob:",
             "style-src 'self' 'unsafe-inline'",
             "img-src * data: blob:",
             "media-src * blob: data:",
-            "connect-src * ws: wss:",
+            `connect-src ${connectSrc}`,
             "frame-src * blob: file:",
             "worker-src blob: 'self' file:",
             "font-src * data:",
+            "object-src 'none'",
+            "base-uri 'self'",
           ].join('; '),
         ],
       },

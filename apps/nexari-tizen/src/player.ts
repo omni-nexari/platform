@@ -35,6 +35,23 @@ declare const tizen: any;
 declare const TVControl: any;
 declare const Pairing: any;
 
+/** Redact sensitive query parameters (token, access_token, auth, apiKey)
+ *  from a URL before logging. Returns the original string if not parseable. */
+function redactUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const params = u.searchParams;
+    const sensitive = ['token', 'access_token', 'auth', 'apiKey', 'api_key'];
+    for (let i = 0; i < sensitive.length; i++) {
+      if (params.has(sensitive[i])) params.set(sensitive[i], '***');
+    }
+    u.search = params.toString();
+    return u.toString();
+  } catch {
+    return String(url).replace(/([?&](?:token|access_token|auth|apiKey|api_key))=[^&]+/gi, '$1=***');
+  }
+}
+
 // Extend webapis with syncplay (not in official types yet)
 // Based on Samsung Syncplay API (Since 6.5): https://developer.samsung.com/smarttv/develop/api-references/samsung-product-api-references/syncplay-api.html?device=signage
 type SyncplayRotate = 'ON' | 'OFF';
@@ -384,7 +401,7 @@ const Player = {
     try {
       const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
       const wsUrl = `${CONFIG.WS_URL}/api/v1/devices/ws/device?token=${encodeURIComponent(token)}`;
-      logger.info('Connecting to WebSocket:', wsUrl);
+      logger.info('Connecting to WebSocket:', redactUrl(wsUrl));
       
       this.wsConnection = new WebSocket(wsUrl);
       
@@ -797,7 +814,14 @@ const Player = {
         case 'update_player':
           logger.info('update_player command received:', message.payload);
           if (typeof AppUpdater !== 'undefined') {
-            AppUpdater.handle({ type: 'APP_UPDATE', ...message }, (statusType: string, data?: Record<string, unknown>) => {
+            const p = (message.payload || {}) as { version?: string; downloadUrl?: string; sha256?: string; packageId?: string };
+            AppUpdater.handle({
+              type: 'APP_UPDATE',
+              wgtUrl: p.downloadUrl || '',
+              version: p.version || '',
+              checksum: p.sha256,
+              packageId: p.packageId || p.version || '',
+            } as any, (statusType: string, data?: Record<string, unknown>) => {
               if (this.wsConnection && this.wsConnection.readyState === (this.wsConnection as any).OPEN) {
                 this.wsConnection.send(JSON.stringify({ type: statusType, deviceId: this.deviceId, ...(data || {}) }));
               }

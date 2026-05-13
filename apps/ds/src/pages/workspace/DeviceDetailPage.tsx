@@ -972,6 +972,7 @@ export function DeviceDetailContent({
     superadminApproved: boolean;
     managementApproved: boolean;
     publishedAt: string;
+    sha256?: string | null;
   };
   const devicePlatform = (data?.device?.platform ?? 'tizen') as string;
   const { data: latestRelease } = useQuery<PlayerRelease | null>({
@@ -2986,7 +2987,7 @@ export function DeviceDetailContent({
                         </span>
                         <ActionButton
                           type="button"
-                          onClick={() => sendCmd({ command: 'update_player', payload: { version: latestRelease.version, downloadUrl: latestRelease.downloadUrl } })}
+                          onClick={() => sendCmd({ command: 'update_player', payload: { version: latestRelease.version, downloadUrl: latestRelease.downloadUrl, sha256: latestRelease.sha256 ?? undefined } })}
                           disabled={cmdDisabled}
                           tone="primary" className="px-3 py-1 text-xs shrink-0"
                         >Apply Update</ActionButton>

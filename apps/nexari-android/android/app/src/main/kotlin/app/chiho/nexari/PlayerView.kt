@@ -6,20 +6,30 @@ import android.util.Log
 import android.view.View
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import androidx.webkit.WebViewAssetLoader
 
 /**
- * Single-WebView wrapper. The WebView loads
- * `file:///android_asset/web/index.html`, which boots the
- * @signage/player-web bundle and connects to the host via
- * `window.AndroidBridge` (see [PlatformBridge]).
+ * Single-WebView wrapper. The WebView loads the bundled player-web assets via
+ * an in-process [WebViewAssetLoader] mapped to
+ * `https://appassets.androidplatform.net/`. Serving the SPA over an https://
+ * origin lets us turn off the dangerous `allowFileAccessFromFileURLs` /
+ * `allowUniversalAccessFromFileURLs` flags and enforce `MIXED_CONTENT_NEVER_ALLOW`
+ * while still letting the page reach the bundle, ES modules, and the
+ * `window.AndroidBridge` JS interface (see [PlatformBridge]).
  */
 class PlayerView(context: Context) : FrameLayout(context) {
 
     private val webView: WebView = WebView(context)
     private val bridge: PlatformBridge
+    private val assetLoader: WebViewAssetLoader = WebViewAssetLoader.Builder()
+        .setDomain(ASSET_DOMAIN)
+        .addPathHandler("/", WebViewAssetLoader.AssetsPathHandler(context))
+        .build()
 
     init {
         addView(webView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -34,18 +44,28 @@ class PlayerView(context: Context) : FrameLayout(context) {
         s.javaScriptEnabled = true
         s.domStorageEnabled = true
         s.databaseEnabled = true
-        s.allowFileAccess = true
+        // file:// access is no longer required because the app is served via
+        // WebViewAssetLoader on an https:// origin. Disabling these closes the
+        // file://-origin SOP bypass that would otherwise combine with the
+        // AndroidBridge JS interface.
+        s.allowFileAccess = false
         @Suppress("DEPRECATION")
-        s.allowFileAccessFromFileURLs = true   // required for ES module imports from file://
+        s.allowFileAccessFromFileURLs = false
         @Suppress("DEPRECATION")
-        s.allowUniversalAccessFromFileURLs = true
+        s.allowUniversalAccessFromFileURLs = false
         s.mediaPlaybackRequiresUserGesture = false
-        s.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        // The page is now an https:// origin; never allow mixed content.
+        s.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
         s.userAgentString = s.userAgentString + " NexariPlayer/${BuildConfig.VERSION_NAME}"
         s.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
         webView.setBackgroundColor(0xFF000000.toInt())
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-        webView.webViewClient = WebViewClient()
+        webView.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: WebResourceRequest
+            ): WebResourceResponse? = assetLoader.shouldInterceptRequest(request.url)
+        }
         webView.webChromeClient = object : WebChromeClient() {
             override fun getDefaultVideoPoster(): android.graphics.Bitmap? {
                 // Return an empty transparent bitmap to hide the giant play button
@@ -65,7 +85,7 @@ class PlayerView(context: Context) : FrameLayout(context) {
     }
 
     fun boot() {
-        webView.loadUrl("file:///android_asset/web/index.html")
+        webView.loadUrl("https://$ASSET_DOMAIN/web/index.html")
     }
 
     fun shutdown() {
@@ -73,5 +93,9 @@ class PlayerView(context: Context) : FrameLayout(context) {
         try { webView.removeAllViews() } catch (_: Throwable) {}
         try { webView.destroy() } catch (_: Throwable) {}
         bridge.shutdown()
+    }
+
+    private companion object {
+        const val ASSET_DOMAIN = "appassets.androidplatform.net"
     }
 }
