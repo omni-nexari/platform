@@ -973,7 +973,7 @@ export function DeviceDetailContent({
     managementApproved: boolean;
     publishedAt: string;
   };
-  const devicePlatform = (deviceQuery.data?.device?.platform ?? 'tizen') as string;
+  const devicePlatform = (data?.device?.platform ?? 'tizen') as string;
   const { data: latestRelease } = useQuery<PlayerRelease | null>({
     queryKey: ['player-releases-latest', devicePlatform],
     queryFn: () => api.get(`/player-releases/latest?platform=${encodeURIComponent(devicePlatform)}`),
