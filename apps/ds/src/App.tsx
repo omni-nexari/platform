@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Routes, Route, Navigate, useLocation, useParams } from 'react-router';
+import { Routes, Route, Navigate, useLocation } from 'react-router';
 import { useAuthStore } from './lib/auth.js';
 import { useSAStore, type SAUser } from './lib/superadmin-auth.js';
 import LoginPage from './pages/auth/LoginPage.js';

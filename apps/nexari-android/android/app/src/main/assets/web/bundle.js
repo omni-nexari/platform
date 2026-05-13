@@ -3003,7 +3003,7 @@ var Player = class {
   }
   // ── Main content loader (mirrors Tizen loadContent) ──────────────────────────
   async loadContent() {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d;
     logger.info("[Player] loadContent");
     try {
       const schedule = await this.api.getCurrentContent(this.deviceId);
@@ -3040,8 +3040,7 @@ var Player = class {
           return ((_a2 = a.leaderPriority) != null ? _a2 : 999) - ((_b2 = b.leaderPriority) != null ? _b2 : 999);
         });
         this._pendingSyncRelayInfo = {
-          groupId: String((_e = (_d = sg["id"]) != null ? _d : sg["syncGroupId"]) != null ? _e : ""),
-          // 'id' is the UUID key in API response
+          groupId: String((_d = sg["syncGroupId"]) != null ? _d : ""),
           relayUrl: String(sg["relayUrl"]),
           leaderPriority: sortedPeers.map((p) => p.deviceId),
           peerCount: Math.max(1, sortedPeers.length - 1)
@@ -3707,7 +3706,7 @@ var Player = class {
     }
   }
   async initSyncGroup(msg) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c;
     if (this.syncActive) {
       try {
         stop();
@@ -3715,14 +3714,12 @@ var Player = class {
       }
       this.syncActive = false;
     }
-    const groupId = String((_b = (_a = msg["syncGroupId"]) != null ? _a : msg["groupId"]) != null ? _b : "");
-    const peerList = Array.isArray(msg["peers"]) ? msg["peers"] : Array.isArray(msg["leaderPriority"]) ? msg["leaderPriority"] : [];
-    const expectedPeers = Number((_c = msg["expectedPeers"]) != null ? _c : Math.max(1, peerList.length - 1));
+    const groupId = String((_a = msg["groupId"]) != null ? _a : "");
+    const expectedPeers = Number((_b = msg["expectedPeers"]) != null ? _b : 1);
     const leaderPriority = Array.isArray(msg["leaderPriority"]) ? msg["leaderPriority"] : [];
-    const pinnedLeaderId = (_d = leaderPriority[0]) != null ? _d : "";
     const tok = this.token;
     const wsBase = this.cfg.apiBase.replace(/\/api\/v1\/?$/, "").replace(/^http/, "ws");
-    const wsUrl = `${wsBase}/api/v1/sync-relay/ws${tok ? "?token=" + encodeURIComponent(tok) : ""}`;
+    const wsUrl = `${wsBase}/api/v1/sync-relay${tok ? "?token=" + encodeURIComponent(tok) : ""}`;
     logger.info(`[Sync] relay URL: ${wsUrl}`);
     let urls = this.playlistItems.map((i) => {
       var _a2;
@@ -3744,15 +3741,9 @@ var Player = class {
       wsUrl,
       groupId,
       deviceId: this.deviceId,
-      selfIp: (_e = net.ipAddress) != null ? _e : "",
+      selfIp: (_c = net.ipAddress) != null ? _c : "",
       expectedPeers,
-      pinnedLeaderId,
       onStatus: (s) => logger.info(`[Sync] ${s}`),
-      // Android-specific URL resolver: always use the locally-downloaded file path.
-      fetchVideoUrl: () => {
-        var _a2, _b2;
-        return Promise.resolve((_b2 = (_a2 = getPlaylistUrls()[0]) != null ? _a2 : urls[0]) != null ? _b2 : "");
-      },
       prepareEngine: (url) => prepare(url),
       schedulePlay: (epochMs) => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),
@@ -3815,7 +3806,7 @@ var Player = class {
     const leaderPriority = Array.isArray(msg["leaderPriority"]) ? msg["leaderPriority"] : [];
     const tok2 = this.token;
     const wsBase2 = this.cfg.apiBase.replace(/\/api\/v1\/?$/, "").replace(/^http/, "ws");
-    const wsUrl = `${wsBase2}/api/v1/sync-relay/ws${tok2 ? "?token=" + encodeURIComponent(tok2) : ""}`;
+    const wsUrl = `${wsBase2}/api/v1/sync-relay${tok2 ? "?token=" + encodeURIComponent(tok2) : ""}`;
     const groupId = String((_p = (_o = msg["deviceGroupId"]) != null ? _o : msg["groupId"]) != null ? _p : "");
     const peers = Array.isArray(msg["peers"]) ? msg["peers"] : [];
     const expectedPeers = peers.length - 1 || 1;
@@ -3841,11 +3832,6 @@ var Player = class {
       selfIp: (_q = net.ipAddress) != null ? _q : "",
       expectedPeers,
       onStatus: (s) => logger.info(`[Sync/Wall] ${s}`),
-      // Android-specific URL resolver: always use the locally-downloaded file path.
-      fetchVideoUrl: () => {
-        var _a2, _b2;
-        return Promise.resolve((_b2 = (_a2 = getPlaylistUrls()[0]) != null ? _a2 : urls[0]) != null ? _b2 : "");
-      },
       prepareEngine: (url) => prepare(url),
       schedulePlay: (epochMs) => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),
