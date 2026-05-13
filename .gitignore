@@ -36,3 +36,10 @@ apps/nexari-tizen/*.wgt
 apps/nexari-epaper/*.wgt
 apps/nexari-html5-sync/*.wgt
 *.wgt
+
+# Android build outputs and Gradle caches
+apps/nexari-android/android/app/build/
+apps/nexari-android/android/.gradle/
+apps/nexari-android/android/build/
+*.apk
+*.aab
