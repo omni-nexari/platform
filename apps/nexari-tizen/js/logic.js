@@ -47,6 +47,55 @@ module.exports = function startServer() {
   // logs[deviceId] = [ { deviceId, level, msg, ts, ... } ]
   var logs    = {};
 
+  // ── Live Link Face UDP relay state ───────────────────────────────────────
+  var llfUdpSocket = null; // dgram socket or null when stopped
+  var llfUdpPort   = 0;
+
+  // ARKit 52 blendshape names as sent by the Epic Live Link Face iOS app.
+  var LLF_BLENDSHAPE_NAMES = [
+    'eyeBlinkLeft','eyeLookDownLeft','eyeLookInLeft','eyeLookOutLeft','eyeLookUpLeft',
+    'eyeSquintLeft','eyeWideLeft','eyeBlinkRight','eyeLookDownRight','eyeLookInRight',
+    'eyeLookOutRight','eyeLookUpRight','eyeSquintRight','eyeWideRight',
+    'jawForward','jawLeft','jawRight','jawOpen',
+    'mouthClose','mouthFunnel','mouthPucker','mouthLeft','mouthRight',
+    'mouthSmileLeft','mouthSmileRight','mouthFrownLeft','mouthFrownRight',
+    'mouthDimpleLeft','mouthDimpleRight','mouthStretchLeft','mouthStretchRight',
+    'mouthRollLower','mouthRollUpper','mouthShrugLower','mouthShrugUpper',
+    'mouthPressLeft','mouthPressRight','mouthLowerDownLeft','mouthLowerDownRight',
+    'mouthUpperUpLeft','mouthUpperUpRight',
+    'browDownLeft','browDownRight','browInnerUp','browOuterUpLeft','browOuterUpRight',
+    'cheekPuff','cheekSquintLeft','cheekSquintRight',
+    'noseSneerLeft','noseSneerRight','tongueOut',
+  ];
+
+  // Parse the binary UDP packet emitted by the Live Link Face iOS app.
+  // Packet layout (big-endian):
+  //   4 bytes  — version / magic
+  //   6 bytes  — UUID (ignored)
+  //   1 byte   — blendshape count
+  //   count×4  — float32 blendshape values
+  //   4+4+4    — float32 head pitch, yaw, roll
+  function parseLiveLinkPacket(buf) {
+    var offset = 0;
+    offset += 4; // version
+    offset += 6; // UUID
+    var count = buf[offset]; offset += 1;
+    var blendshapes = {};
+    for (var i = 0; i < count && i < LLF_BLENDSHAPE_NAMES.length; i++) {
+      var val = buf.readFloatBE(offset); offset += 4;
+      blendshapes[LLF_BLENDSHAPE_NAMES[i]] = Math.round(val * 10000) / 10000;
+    }
+    var headPitch = buf.readFloatBE(offset); offset += 4;
+    var headYaw   = buf.readFloatBE(offset); offset += 4;
+    var headRoll  = buf.readFloatBE(offset);
+    return {
+      blendshapes: blendshapes,
+      headPitch:   Math.round(headPitch * 10000) / 10000,
+      headYaw:     Math.round(headYaw   * 10000) / 10000,
+      headRoll:    Math.round(headRoll  * 10000) / 10000,
+    };
+  }
+
   // LOOP_READY barrier -- per-group map of deviceId -> true for devices that have
   // finished prebuffering at frame 0. When all peers are ready, relay broadcasts LOOP_GO.
   var loopReady = {};
@@ -231,6 +280,77 @@ module.exports = function startServer() {
       if (!dev2) return send(res, 400, { error: 'deviceId required' });
       delete logs[dev2];
       res.writeHead(204); return res.end();
+    }
+
+    // ── Live Link Face UDP relay ─────────────────────────────────────────
+    // POST /live-link-face/start  { port: number }
+    //   Binds a UDP socket on the given port. Parses Epic Live Link Face binary
+    //   packets and broadcasts blendshape JSON to all WS clients registered in
+    //   the special groupId '__llf__' (the in-browser renderer joins that group).
+    // POST /live-link-face/stop
+    //   Closes the active UDP socket.
+
+    if (req.method === 'POST' && path === '/live-link-face/start') {
+      return readJson(req, function(err, body) {
+        if (err) return send(res, 400, { error: 'bad json' });
+        var udpPort = parseInt(body.port || '11111', 10);
+        if (!udpPort || udpPort < 1 || udpPort > 65535) {
+          return send(res, 400, { error: 'invalid port' });
+        }
+
+        // Close any existing socket first
+        if (llfUdpSocket) {
+          try { llfUdpSocket.close(); } catch (_) {}
+          llfUdpSocket = null;
+        }
+
+        var dgram = require('dgram');
+        var sock  = dgram.createSocket('udp4');
+
+        sock.on('message', function(msg) {
+          try {
+            var parsed = parseLiveLinkPacket(msg);
+            var frame  = wsEncodeText(JSON.stringify({ type: 'LLF_FRAME', data: parsed }));
+            wsClients.forEach(function(c) {
+              if (c.groupId === '__llf__') {
+                try { c.socket.write(frame); } catch (_) {}
+              }
+            });
+          } catch (e) {
+            console.log('[llf] parse error: ' + (e && e.message));
+          }
+        });
+
+        sock.on('error', function(e) {
+          console.log('[llf] UDP error: ' + (e && e.message));
+          llfUdpSocket = null;
+        });
+
+        sock.bind(udpPort, '0.0.0.0', function() {
+          console.log('[llf] UDP listening on port ' + udpPort);
+        });
+
+        llfUdpSocket = sock;
+        llfUdpPort   = udpPort;
+        return send(res, 200, { ok: true, port: udpPort });
+      });
+    }
+
+    if (req.method === 'POST' && path === '/live-link-face/stop') {
+      if (llfUdpSocket) {
+        try { llfUdpSocket.close(); } catch (_) {}
+        llfUdpSocket = null;
+        llfUdpPort   = 0;
+      }
+      return send(res, 200, { ok: true });
+    }
+
+    if (req.method === 'GET' && path === '/live-link-face/status') {
+      return send(res, 200, {
+        active:   !!llfUdpSocket,
+        port:     llfUdpPort,
+        clients:  wsClients.filter(function(c) { return c.groupId === '__llf__'; }).length,
+      });
     }
 
     send(res, 404, { error: 'not found', path: path });

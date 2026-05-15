@@ -332,6 +332,11 @@ window.API = {
       // Clear metadata injection — server handles extraction, no TV-side ZIP work needed
     }
 
+    // Live Link Face: all data is in metadata; there is no server file to fetch.
+    if (normalized.type === 'LIVE_LINK_FACE') {
+      normalized.url = '';
+    }
+
     // Channel groups carry an embedded list of IPTV channels in metadata —
     // surface them as first-class fields so the player can tune without
     // re-parsing JSON on every key press.

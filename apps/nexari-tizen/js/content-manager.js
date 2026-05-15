@@ -902,7 +902,9 @@ window.ContentManager = {
         }
 
         // Config-only content stores its runtime data in metadata; there is no file to download
-        if (content.type === 'ZONE_LAYOUT' || content.type === 'MENU_BOARD') {
+        if (content.type === 'ZONE_LAYOUT' || content.type === 'MENU_BOARD' ||
+            content.type === 'CALENDAR' || content.type === 'DATASYNC' ||
+            content.type === 'LIVE_LINK_FACE') {
           logger.info(`Skipping download for ${content.type} (config-only):`, content.name);
           downloadedItems.push(item);
           continue;

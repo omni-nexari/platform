@@ -718,6 +718,58 @@ export async function contentRoutes(app: FastifyInstance) {
     }
   });
 
+  // ── POST /content/live-link-face ─────────────────────────────────────────
+  app.post('/live-link-face', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as {
+      workspaceId?: string;
+      name?: string;
+      udpPort?: number;
+      avatarPreset?: string;
+      sourceIp?: string;
+      duration?: number;
+    };
+    const wsId = body.workspaceId;
+    if (!wsId)              return reply.status(400).send({ error: 'workspaceId required' });
+    if (!body.name?.trim()) return reply.status(400).send({ error: 'name required' });
+
+    const udpPort = Number(body.udpPort ?? 11111);
+    if (!Number.isInteger(udpPort) || udpPort < 1 || udpPort > 65535) {
+      return reply.status(400).send({ error: 'udpPort must be an integer 1–65535' });
+    }
+
+    const preset = body.avatarPreset ?? 'face';
+    if (!['face', 'emoji', 'minimal'].includes(preset)) {
+      return reply.status(400).send({ error: 'avatarPreset must be face | emoji | minimal' });
+    }
+
+    const member = await checkWorkspaceAccess(wsId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+    const wsRowLlf = await db.query.workspaces.findFirst({ where: eq(workspaces.id, wsId), columns: { settings: true } });
+    let wsSettingsLlf: { approvalRequired?: boolean } = {};
+    try { wsSettingsLlf = JSON.parse(wsRowLlf?.settings ?? '{}'); } catch { /* ignore */ }
+    const initialApprovalState = wsSettingsLlf.approvalRequired && !APPROVE_ROLES.has(user.role) ? 'draft' : 'approved';
+
+    const [item] = await db.insert(contentItems).values({
+      workspaceId: wsId,
+      uploadedBy:  user.sub,
+      type:        'live_link_face',
+      name:        body.name.trim(),
+      duration:    body.duration ?? 0,
+      status:      'ready',
+      approvalState: initialApprovalState,
+      metadata: JSON.stringify({
+        udpPort,
+        avatarPreset: preset,
+        ...(body.sourceIp ? { sourceIp: body.sourceIp } : {}),
+      }),
+    }).returning();
+
+    return reply.status(201).send(item);
+  });
+
   // ── POST /content/menu-board ──────────────────────────────────────────────
   app.post('/menu-board', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;

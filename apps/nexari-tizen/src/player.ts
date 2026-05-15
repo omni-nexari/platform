@@ -2922,6 +2922,11 @@ const Player = {
       DataSyncRenderer.disconnect();
     }
 
+    // Stop any active Live Link Face renderer
+    if (typeof LiveLinkFaceRenderer !== 'undefined') {
+      LiveLinkFaceRenderer.stop();
+    }
+
     // Clear existing content
     container.innerHTML = '';
     (container as HTMLElement & { _menuBoardRequestId?: string })._menuBoardRequestId = undefined;
@@ -3019,6 +3024,10 @@ const Player = {
         void this.renderCalendar(container, content);
         break;
       }
+
+      case 'LIVE_LINK_FACE':
+        this.renderLiveLinkFace(container, content);
+        break;
         
       default:
         logger.warn('Unknown content type:', content.type);
@@ -6266,6 +6275,15 @@ const Player = {
     DataSyncRenderer.render(String(content.id), cmsUrl, this.deviceId);
   },
 
+  renderLiveLinkFace(container, content) {
+    if (typeof (window as any).LiveLinkFaceRenderer === 'undefined') {
+      logger.warn('LiveLinkFaceRenderer not loaded — ensure js/modules/live-link-face-renderer.js is included');
+      this.showIdleScreen();
+      return;
+    }
+    (window as any).LiveLinkFaceRenderer.start(container, content);
+  },
+
   // Render PDF or Office document via PDF.js (single backend, works on Tizen 4/5/6.5+).
   // Office docs are expected to be pre-converted to PDF on the server side.
   renderDocument(container: HTMLElement, content: any) {
@@ -6600,7 +6618,7 @@ const Player = {
     }
 
     // Content types that don't use a static URL (they fetch/render data themselves)
-    const urlNotRequired = new Set(['CALENDAR', 'DATASYNC', 'ZONE_LAYOUT', 'MENU_BOARD']);
+    const urlNotRequired = new Set(['CALENDAR', 'DATASYNC', 'ZONE_LAYOUT', 'MENU_BOARD', 'LIVE_LINK_FACE']);
 
     // Filter out items without URLs, but keep types that don't need one
     const playableItems = playlist.items.filter(
@@ -7375,6 +7393,13 @@ const Player = {
           scheduleNext(duration * 1000);
           break;
         }
+
+        case 'LIVE_LINK_FACE': {
+          this.renderLiveLinkFace(container, content);
+          this.lastRenderedItemKey = itemKey;
+          scheduleNext(duration * 1000);
+          break;
+        }
           
         default:
           logger.warn('Unknown content type:', content.type);
@@ -7390,6 +7415,11 @@ const Player = {
     if (this.currentPlaylistController) {
       this.currentPlaylistController.cancelled = true;
       this.currentPlaylistController = null;
+    }
+
+    // Stop Live Link Face renderer (closes UDP socket + WS connection)
+    if (typeof (window as any).LiveLinkFaceRenderer !== 'undefined') {
+      try { (window as any).LiveLinkFaceRenderer.stop(); } catch (_) {}
     }
 
     // Tear down any firmware SyncPlay session � idempotent / no-op if not

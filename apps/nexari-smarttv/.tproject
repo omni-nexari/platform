@@ -1,12 +1,5 @@
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <tproject xmlns="http://www.tizen.org/tproject">
-    <platforms>
-        <platform>
-            <name>tv-samsung-10.0</name>
-        </platform>
-    </platforms>
-    <package>
-        <blacklist/>
-        <resFallback autoGen="true"/>
-    </package>
+    <platforms><platform><name>tv-samsung-6.5</name></platform></platforms>
+    <package><blacklist/><resFallback autoGen="true"/></package>
 </tproject>
