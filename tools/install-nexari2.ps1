@@ -6,6 +6,7 @@ $tizen      = "C:\tizen-studio\tools\ide\bin\tizen.bat"
 $sdb        = "C:\tizen-studio\tools\sdb.exe"
 $tvQBC      = "192.168.1.11:26101"
 $tvSBB      = "192.168.1.39:26101"
+$tvNew      = "192.168.1.53:26101"
 $appId      = "fmDBbBnvJM.NexariTizen"
 $pi         = "chiho@192.168.1.17"
 $piPort     = 5551
@@ -267,20 +268,27 @@ Install-NexariOnTV -tv $tvQBC -label "QBC"
 Install-NexariOnTV -tv $tvSBB -label "SBB TV"
 
 # ============================================================
-# STEP 4: OPTIONAL REBOOT (triggers SSSP auto-update on boot)
+# STEP 4: DEPLOY TO NEW TEST TV (192.168.1.53)
+# ============================================================
+Install-NexariOnTV -tv $tvNew -label "New TV"
+
+# ============================================================
+# STEP 5: OPTIONAL REBOOT (triggers SSSP auto-update on boot)
 # ============================================================
 Write-Host ""
 Write-Host "Pi has the latest build ($appVer). Rebooting a screen will trigger SSSP" -ForegroundColor Cyan
 Write-Host "auto-update if the version in sssp_config.xml is newer than what is installed." -ForegroundColor Cyan
 Write-Host ""
-$rebootChoice = Read-Host "Reboot screens via MDC? [A]ll / [Q]BC only / [S]BB only / [N]o"
+$rebootChoice = Read-Host "Reboot screens via MDC? [A]ll / [Q]BC only / [S]BB only / [T]hird (192.168.1.53) / [N]o"
 switch ($rebootChoice.Trim().ToUpper()) {
     "A" {
         Send-MdcReboot -ip "192.168.1.11" -label "QBC"
         Send-MdcReboot -ip "192.168.1.39" -label "SBB TV"
+        Send-MdcReboot -ip "192.168.1.53" -label "New TV"
     }
     "Q" { Send-MdcReboot -ip "192.168.1.11" -label "QBC" }
     "S" { Send-MdcReboot -ip "192.168.1.39" -label "SBB TV" }
+    "T" { Send-MdcReboot -ip "192.168.1.53" -label "New TV" }
     default { Write-Host "Skipping reboot." }
 }
 

@@ -931,6 +931,14 @@ export default function ContentPage() {
           iconClassName: 'bg-indigo-500/15 text-indigo-400',
           onClick: () => navigate(`/workspaces/${wsId}/calendar/new`),
         },
+        {
+          id: 'live-link-face',
+          label: 'Live Link Face',
+          description: 'Stream face data from Epic Live Link iOS app',
+          icon: <Scan size={18} />,
+          iconClassName: 'bg-pink-500/15 text-pink-400',
+          onClick: () => navigate(`/workspaces/${wsId}/live-link-face/new`),
+        },
       ]
     : [];
 

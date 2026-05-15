@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { X, Upload, Globe, Code2, CloudUpload, Tv, Trash2, Plus, Star, FileCode2, Scan } from 'lucide-react';
+import { X, Upload, Globe, Code2, CloudUpload, Tv, Trash2, Plus, Star, FileCode2 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import {
   startBackgroundDeviceUpload,
@@ -27,7 +27,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = 'device' | 'html5' | 'template' | 'weburl' | 'iptv' | 'livelink';
+type Tab = 'device' | 'html5' | 'template' | 'weburl' | 'iptv';
 
 interface ChannelRow {
   rowId: string;
@@ -107,12 +107,6 @@ export default function UploadModal({ workspaceId, onClose }: Props) {
   const [wName, setWName] = useState('');
   const [wUrl, setWUrl] = useState('');
   const [wRefresh, setWRefresh] = useState(3600);
-
-  // ── Live Link Face tab state ──────────────────────────────────────────────
-  const [llfName, setLlfName] = useState('');
-  const [llfPort, setLlfPort] = useState(11111);
-  const [llfPreset, setLlfPreset] = useState<'face' | 'emoji' | 'minimal'>('face');
-  const [llfSourceIp, setLlfSourceIp] = useState('');
 
   // ── Upload progress (simple per-file state) ───────────────────────────────
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
@@ -279,24 +273,6 @@ export default function UploadModal({ workspaceId, onClose }: Props) {
     return nums.has(iptvDefault);
   })();
 
-  // ── Live Link Face ────────────────────────────────────────────────────────
-  const addLiveLinkFaceMut = useMutation({
-    mutationFn: () =>
-      api.post('/content/live-link-face', {
-        workspaceId,
-        name:         llfName.trim(),
-        udpPort:      llfPort,
-        avatarPreset: llfPreset,
-        ...(llfSourceIp.trim() ? { sourceIp: llfSourceIp.trim() } : {}),
-      }),
-    onSuccess: () => {
-      toast.success('Live Link Face content created');
-      void invalidate();
-      onClose();
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : 'Failed'),
-  });
-  const llfCanSave = !!llfName.trim() && llfPort >= 1 && llfPort <= 65535;
   // ── Drag-and-drop ──────────────────────────────────────────────────────────
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -321,7 +297,6 @@ export default function UploadModal({ workspaceId, onClose }: Props) {
     { id: 'template', label: 'TEMPLATE',   icon: <FileCode2 size={14} /> },
     { id: 'weburl',   label: 'WEB (URL)',  icon: <Globe size={14} /> },
     { id: 'iptv',     label: 'IPTV',       icon: <Tv size={14} /> },
-    { id: 'livelink', label: 'LIVE LINK',  icon: <Scan size={14} /> },
   ];
 
   const displayedFiles = backgroundTask
@@ -340,8 +315,7 @@ export default function UploadModal({ workspaceId, onClose }: Props) {
     addWebUrlMut.isPending ||
     addChannelGroupMut.isPending ||
     importM3uMut.isPending ||
-    createFromTemplateMut.isPending ||
-    addLiveLinkFaceMut.isPending;
+    createFromTemplateMut.isPending;
   const overallProgress = displayedFiles.length
     ? Math.round(displayedFiles.reduce((sum, item) => sum + item.progress, 0) / displayedFiles.length * 100)
     : 0;
@@ -792,81 +766,6 @@ export default function UploadModal({ workspaceId, onClose }: Props) {
                 className="w-full py-2.5 rounded-lg text-sm font-semibold bg-[var(--accent)] text-white disabled:opacity-40 hover:opacity-90 transition-opacity"
               >
                 {addChannelGroupMut.isPending ? 'Saving…' : `Save Channel Group (${iptvRows.length})`}
-              </button>
-            </>
-          )}
-
-          {/* ── Live Link Face tab ── */}
-          {tab === 'livelink' && (
-            <>
-              <p className="text-xs text-[var(--text-muted)] mb-4">
-                Streams real-time face data from the <strong>Epic Live Link Face</strong> iOS app over UDP.
-                The TV receives the ARKit blendshape data and animates an avatar on screen.
-              </p>
-
-              {/* Name */}
-              <label className="block mb-3">
-                <span className="text-xs text-[var(--text-muted)] mb-1 block">Name</span>
-                <input
-                  type="text"
-                  value={llfName}
-                  onChange={(e) => setLlfName(e.target.value)}
-                  placeholder="e.g. Reception Avatar"
-                  className="input w-full"
-                />
-              </label>
-
-              {/* Avatar Preset */}
-              <label className="block mb-3">
-                <span className="text-xs text-[var(--text-muted)] mb-1 block">Avatar Preset</span>
-                <select
-                  value={llfPreset}
-                  onChange={(e) => setLlfPreset(e.target.value as 'face' | 'emoji' | 'minimal')}
-                  className="input w-full"
-                >
-                  <option value="face">Face (CSS SVG — eyes, mouth, brows)</option>
-                  <option value="emoji">Emoji (expression-mapped emoji)</option>
-                  <option value="minimal">Minimal (blendshape debug bars)</option>
-                </select>
-              </label>
-
-              {/* UDP Port */}
-              <label className="block mb-3">
-                <span className="text-xs text-[var(--text-muted)] mb-1 block">UDP Port</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={65535}
-                  value={llfPort}
-                  onChange={(e) => setLlfPort(Number(e.target.value))}
-                  className="input w-full"
-                />
-                <p className="text-xs text-[var(--text-muted)] mt-1">
-                  In the iOS app: <strong>Settings → Target → Port</strong>. Default is 11111.
-                </p>
-              </label>
-
-              {/* Source IP (informational) */}
-              <label className="block mb-4">
-                <span className="text-xs text-[var(--text-muted)] mb-1 block">iOS Device IP <span className="opacity-60">(optional, for reference)</span></span>
-                <input
-                  type="text"
-                  value={llfSourceIp}
-                  onChange={(e) => setLlfSourceIp(e.target.value)}
-                  placeholder="e.g. 192.168.1.42"
-                  className="input w-full"
-                />
-                <p className="text-xs text-[var(--text-muted)] mt-1">
-                  Set the TV's IP as the <strong>Target IP</strong> in the Live Link Face iOS app.
-                </p>
-              </label>
-
-              <button
-                onClick={() => addLiveLinkFaceMut.mutate()}
-                disabled={!llfCanSave || busy}
-                className="w-full py-2.5 rounded-lg text-sm font-semibold bg-[var(--accent)] text-white disabled:opacity-40 hover:opacity-90 transition-opacity"
-              >
-                {addLiveLinkFaceMut.isPending ? 'Creating…' : 'Create Live Link Face'}
               </button>
             </>
           )}

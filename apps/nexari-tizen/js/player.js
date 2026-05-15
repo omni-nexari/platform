@@ -20,6 +20,24 @@ var __rest = (this && this.__rest) || function (s, e) {
         }
     return t;
 };
+/** Redact sensitive query parameters (token, access_token, auth, apiKey)
+ *  from a URL before logging. Returns the original string if not parseable. */
+function redactUrl(url) {
+    try {
+        const u = new URL(url);
+        const params = u.searchParams;
+        const sensitive = ['token', 'access_token', 'auth', 'apiKey', 'api_key'];
+        for (let i = 0; i < sensitive.length; i++) {
+            if (params.has(sensitive[i]))
+                params.set(sensitive[i], '***');
+        }
+        u.search = params.toString();
+        return u.toString();
+    }
+    catch (_a) {
+        return String(url).replace(/([?&](?:token|access_token|auth|apiKey|api_key))=[^&]+/gi, '$1=***');
+    }
+}
 const Player = {
     deviceId: null,
     deviceName: null,
@@ -296,6 +314,28 @@ const Player = {
             // Setup refresh interval
             this.startContentRefresh();
             this.startLogStream();
+            // Initialize player settings overlay
+            try {
+                const self = this;
+                const tizSettings = window.PlayerSettings;
+                if (typeof tizSettings !== 'undefined') {
+                    const cfg = window.CONFIG;
+                    tizSettings.init({
+                        getDeviceId: () => String(self.deviceId || ''),
+                        getDeviceName: () => String(self.deviceName || ''),
+                        getApiBase: () => (cfg && cfg.API_BASE) ? String(cfg.API_BASE) : '',
+                        getWsConnected: () => !!(self.wsConnection && self.wsConnection.readyState === 1),
+                        getIpAddress: () => { var _a; return String(((_a = window.DeviceState) === null || _a === void 0 ? void 0 : _a.lastIpAddress) || ''); },
+                        getCurrentVersion: () => String((window.PLAYER_BUILD_INFO || {}).version || ''),
+                        onClearCache: () => self.executeCommand({ type: 'CLEAR_CACHE' }),
+                        onReloadContent: () => void self.loadContent(),
+                    });
+                    logger.info('[PlayerSettings] overlay initialized');
+                }
+            }
+            catch (e) {
+                logger.warn('[PlayerSettings] init failed:', (e === null || e === void 0 ? void 0 : e.message) || e);
+            }
             // Phase 2 MDC setup — apply initial display settings, persist MDC ID to DB
             setTimeout(() => { this.runPostPairingMdcSetup(); }, 5000);
             logger.info('Player initialized successfully');
@@ -312,7 +352,7 @@ const Player = {
         try {
             const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
             const wsUrl = `${CONFIG.WS_URL}/api/v1/devices/ws/device?token=${encodeURIComponent(token)}`;
-            logger.info('Connecting to WebSocket:', wsUrl);
+            logger.info('Connecting to WebSocket:', redactUrl(wsUrl));
             this.wsConnection = new WebSocket(wsUrl);
             this.wsConnection.onopen = () => {
                 logger.info('WebSocket connected');
@@ -740,7 +780,14 @@ const Player = {
                 case 'update_player':
                     logger.info('update_player command received:', message.payload);
                     if (typeof AppUpdater !== 'undefined') {
-                        AppUpdater.handle(Object.assign({ type: 'APP_UPDATE' }, message), (statusType, data) => {
+                        const p = (message.payload || {});
+                        AppUpdater.handle({
+                            type: 'APP_UPDATE',
+                            wgtUrl: p.downloadUrl || '',
+                            version: p.version || '',
+                            checksum: p.sha256,
+                            packageId: p.packageId || p.version || '',
+                        }, (statusType, data) => {
                             if (this.wsConnection && this.wsConnection.readyState === this.wsConnection.OPEN) {
                                 this.wsConnection.send(JSON.stringify(Object.assign({ type: statusType, deviceId: this.deviceId }, (data || {}))));
                             }
@@ -1645,6 +1692,12 @@ const Player = {
             statusIndicator.style.color = connected ? '#10b981' : '#ef4444';
             statusIndicator.title = connected ? 'Connected' : 'Disconnected';
         }
+        try {
+            const tizSettings = window.PlayerSettings;
+            if (typeof tizSettings !== 'undefined')
+                tizSettings.setWsStatus(connected);
+        }
+        catch (_) { }
     },
     // Start heartbeat
     startHeartbeat() {
@@ -2922,6 +2975,10 @@ const Player = {
         if (typeof DataSyncRenderer !== 'undefined') {
             DataSyncRenderer.disconnect();
         }
+        // Stop any active Live Link Face renderer
+        if (typeof LiveLinkFaceRenderer !== 'undefined') {
+            LiveLinkFaceRenderer.stop();
+        }
         // Clear existing content
         container.innerHTML = '';
         container._menuBoardRequestId = undefined;
@@ -3005,6 +3062,9 @@ const Player = {
                 void this.renderCalendar(container, content);
                 break;
             }
+            case 'LIVE_LINK_FACE':
+                this.renderLiveLinkFace(container, content);
+                break;
             default:
                 logger.warn('Unknown content type:', content.type);
                 this.showIdleScreen();
@@ -6155,6 +6215,14 @@ const Player = {
         const cmsUrl = (CONFIG.API_BASE || '').replace(/\/api\/v1\/?$/, '');
         DataSyncRenderer.render(String(content.id), cmsUrl, this.deviceId);
     },
+    renderLiveLinkFace(container, content) {
+        if (typeof window.LiveLinkFaceRenderer === 'undefined') {
+            logger.warn('LiveLinkFaceRenderer not loaded — ensure js/modules/live-link-face-renderer.js is included');
+            this.showIdleScreen();
+            return;
+        }
+        window.LiveLinkFaceRenderer.start(container, content);
+    },
     // Render PDF or Office document via PDF.js (single backend, works on Tizen 4/5/6.5+).
     // Office docs are expected to be pre-converted to PDF on the server side.
     renderDocument(container, content) {
@@ -6491,7 +6559,7 @@ const Player = {
             return;
         }
         // Content types that don't use a static URL (they fetch/render data themselves)
-        const urlNotRequired = new Set(['CALENDAR', 'DATASYNC', 'ZONE_LAYOUT', 'MENU_BOARD']);
+        const urlNotRequired = new Set(['CALENDAR', 'DATASYNC', 'ZONE_LAYOUT', 'MENU_BOARD', 'LIVE_LINK_FACE']);
         // Filter out items without URLs, but keep types that don't need one
         const playableItems = playlist.items.filter(item => item.content.url || urlNotRequired.has(item.content.type));
         if (playableItems.length === 0) {
@@ -7266,6 +7334,12 @@ const Player = {
                     scheduleNext(duration * 1000);
                     break;
                 }
+                case 'LIVE_LINK_FACE': {
+                    this.renderLiveLinkFace(container, content);
+                    this.lastRenderedItemKey = itemKey;
+                    scheduleNext(duration * 1000);
+                    break;
+                }
                 default:
                     logger.warn('Unknown content type:', content.type);
                     // Skip to next item
@@ -7278,6 +7352,13 @@ const Player = {
         if (this.currentPlaylistController) {
             this.currentPlaylistController.cancelled = true;
             this.currentPlaylistController = null;
+        }
+        // Stop Live Link Face renderer (closes UDP socket + WS connection)
+        if (typeof window.LiveLinkFaceRenderer !== 'undefined') {
+            try {
+                window.LiveLinkFaceRenderer.stop();
+            }
+            catch (_) { }
         }
         // Tear down any firmware SyncPlay session � idempotent / no-op if not
         // active. Must come before AVPlay close so the video plane is released.
