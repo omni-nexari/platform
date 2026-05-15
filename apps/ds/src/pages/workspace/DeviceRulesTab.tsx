@@ -216,7 +216,7 @@ export default function DeviceRulesTab({
         <div className="flex items-center gap-2">
           <ActionButton
             onClick={() => setScanOpen(v => !v)}
-            tone="neutral"
+            tone="default"
             className="px-3 py-1.5 text-xs"
           >
             <Radio className="w-3.5 h-3.5" />
@@ -254,7 +254,7 @@ export default function DeviceRulesTab({
               <ActionButton
                 onClick={() => triggerScan.mutate()}
                 disabled={!isOnline || triggerScan.isPending || scanning}
-                tone="neutral"
+                tone="default"
                 className="px-3 py-1.5 text-xs"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${scanning ? 'animate-spin' : ''}`} />
@@ -344,7 +344,7 @@ export default function DeviceRulesTab({
                     <div className="flex items-center gap-2 shrink-0">
                       <ToggleSwitch
                         checked={rule.enabled}
-                        onChange={v => toggleRule.mutate({ ruleId: rule.id, enabled: v })}
+                        onChange={() => toggleRule.mutate({ ruleId: rule.id, enabled: !rule.enabled })}
                       />
                       <button
                         type="button"
@@ -453,7 +453,7 @@ function RuleEditorModal({
         children: [{
           type: 'ble_beacon',
           uuid: beaconUuid.trim(),
-          name: beaconName.trim() || undefined,
+          name: beaconName.trim() || '',
           distanceMinCm: distanceMinCm,
           distanceMaxCm: distanceMaxCm,
         }],
@@ -670,7 +670,7 @@ function RuleEditorModal({
         {/* Enabled toggle */}
         <div className="flex items-center justify-between">
           <span className="text-sm text-[var(--text)]">Rule enabled</span>
-          <ToggleSwitch checked={enabled} onChange={setEnabled} />
+          <ToggleSwitch checked={enabled} onChange={() => setEnabled(v => !v)} />
         </div>
 
       </ModalBody>
