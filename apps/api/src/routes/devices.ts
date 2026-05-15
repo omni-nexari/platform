@@ -519,7 +519,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     }
     if (!code) return reply.status(503).send({ error: 'Code generation failed, retry' });
 
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 min
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
 
     let device;
     if (existing) {
@@ -584,6 +584,12 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!device) return reply.status(404).send({ error: 'Code not found or expired' });
 
     if (!device.orgId || !device.deviceToken) {
+      // Slide the expiry window forward so the code stays valid while the TV shows it.
+      // The code only actually expires if the TV goes offline and stops polling.
+      await db
+        .update(devices)
+        .set({ pairingExpiresAt: new Date(Date.now() + 15 * 60 * 1000), updatedAt: new Date() })
+        .where(eq(devices.id, device.id));
       return reply.send({ status: 'pending' });
     }
 
