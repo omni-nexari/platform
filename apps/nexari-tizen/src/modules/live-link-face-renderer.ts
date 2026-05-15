@@ -103,7 +103,7 @@ namespace LiveLinkFaceRenderer {
   // ── Relay control (HTTP to Node sidecar) ──────────────────────────────────
 
   function _startRelay(port: number): void {
-    const url = 'http://localhost:9616/live-link-face/start';
+    const url = 'http://127.0.0.1:9616/live-link-face/start';
     fetch(url, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -120,7 +120,7 @@ namespace LiveLinkFaceRenderer {
   }
 
   function _stopRelay(): void {
-    fetch('http://localhost:9616/live-link-face/stop', { method: 'POST' })
+    fetch('http://127.0.0.1:9616/live-link-face/stop', { method: 'POST' })
       .catch(() => { /* best-effort */ });
   }
 
@@ -131,7 +131,7 @@ namespace LiveLinkFaceRenderer {
     _cancelReconnect();
 
     try {
-      const ws = new WebSocket('ws://localhost:9616');
+      const ws = new WebSocket('ws://127.0.0.1:9616');
       _ws = ws;
 
       ws.onopen = () => {

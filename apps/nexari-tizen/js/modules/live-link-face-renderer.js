@@ -78,7 +78,7 @@ var LiveLinkFaceRenderer;
     LiveLinkFaceRenderer.stop = stop;
     // ── Relay control (HTTP to Node sidecar) ──────────────────────────────────
     function _startRelay(port) {
-        const url = 'http://localhost:9616/live-link-face/start';
+        const url = 'http://127.0.0.1:9616/live-link-face/start';
         fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -96,7 +96,7 @@ var LiveLinkFaceRenderer;
         });
     }
     function _stopRelay() {
-        fetch('http://localhost:9616/live-link-face/stop', { method: 'POST' })
+        fetch('http://127.0.0.1:9616/live-link-face/stop', { method: 'POST' })
             .catch(() => { });
     }
     // ── WebSocket connection ──────────────────────────────────────────────────
@@ -106,7 +106,7 @@ var LiveLinkFaceRenderer;
             return;
         _cancelReconnect();
         try {
-            const ws = new WebSocket('ws://localhost:9616');
+            const ws = new WebSocket('ws://127.0.0.1:9616');
             _ws = ws;
             ws.onopen = () => {
                 llfLog('WS connected — joining __llf__ group');
