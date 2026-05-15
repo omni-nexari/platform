@@ -294,11 +294,11 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('network_info'),
     payload: z.object({
-      mac: z.string(),
-      ip: z.string(),
+      mac: z.string().optional(),
+      ip: z.string().optional(),
       gateway: z.string().optional(),
       dns: z.string().optional(),
-      connectionType: z.enum(['wifi', 'ethernet']),
+      connectionType: z.enum(['wifi', 'ethernet']).optional(),
       wifiSsid: z.string().optional(),
       wifiStrength: z.number().int().optional(),
     }),

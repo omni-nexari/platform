@@ -6221,6 +6221,8 @@ const Player = {
             this.showIdleScreen();
             return;
         }
+        // Ensure the Node sidecar (port 9616) is running — needed for UDP relay and WS
+        this._startWallNodeRelay();
         window.LiveLinkFaceRenderer.start(container, content);
     },
     // Render PDF or Office document via PDF.js (single backend, works on Tizen 4/5/6.5+).

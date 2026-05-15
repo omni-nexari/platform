@@ -6281,6 +6281,8 @@ const Player = {
       this.showIdleScreen();
       return;
     }
+    // Ensure the Node sidecar (port 9616) is running — needed for UDP relay and WS
+    this._startWallNodeRelay();
     (window as any).LiveLinkFaceRenderer.start(container, content);
   },
 
