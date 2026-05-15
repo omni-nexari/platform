@@ -127,7 +127,7 @@ export class Player {
   private pendingItems: ScheduleItem[] | null = null;
   private _pendingSyncGroupMsg: Record<string, unknown> | null = null;
   // Relay info stored when loadContent() finds a cross-OS sync group; consumed by swapToPending().
-  private _pendingSyncRelayInfo: { groupId: string; relayUrl: string; leaderPriority: string[]; peerCount: number } | null = null;
+  private _pendingSyncRelayInfo: { groupId: string; relayUrl: string; leaderPriority: string[]; peerCount: number; syncRelayMode: string } | null = null;
   private pendingSignature: string | null = null;
   private isDownloadingContent = false;
   private deviceDisplayName = '';
@@ -1087,7 +1087,7 @@ export class Player {
         relayUrl: info.relayUrl,
         leaderPriority: info.leaderPriority,
         expectedPeers: info.peerCount,
-        syncRelayMode: 'cloud', // API relay — no device-side relay server needed
+        syncRelayMode: info.syncRelayMode,
       });
       return;
     }
@@ -1158,7 +1158,7 @@ export class Player {
               .sort((a, b) => (a.leaderPriority ?? 999) - (b.leaderPriority ?? 999))
               .map(p => p.deviceId),
             expectedPeers: Math.max(1, ((sg['peers'] as unknown[]) ?? []).length - 1),
-            syncRelayMode: 'cloud',
+            syncRelayMode: String(sg['syncRelayMode'] ?? 'cloud'),
           });
         } else if (this.localUrlCache.size === 0) {
           void this.preCacheItems(this.playlistItems).catch(() => {});
@@ -1187,6 +1187,7 @@ export class Player {
           relayUrl: String(sg['relayUrl']),
           leaderPriority: sortedPeers.map(p => p.deviceId),
           peerCount: Math.max(1, sortedPeers.length - 1), // count of OTHER peers
+          syncRelayMode: String(sg['syncRelayMode'] ?? 'cloud'),
         };
         logger.info(`[Player] cross-OS sync group relay stored: ${this._pendingSyncRelayInfo.relayUrl}`);
       } else {
@@ -1739,15 +1740,22 @@ export class Player {
     // Determine if this device is the elected leader.
     const leaderPriority = Array.isArray(msg['leaderPriority']) ? msg['leaderPriority'] as string[] : [];
 
-    // Always derive relay URL from this device's own API base + token so it connects
-    // to the same host it already uses (LAN IP or cloud). The manifest's relayUrl
-    // is built server-side from APP_URL and may point to the wrong host/scheme.
     const tok = this.token;
-    const wsBase = this.cfg.apiBase
-      .replace(/\/api\/v1\/?$/, '')   // strip /api/v1 suffix
-      .replace(/^http/, 'ws');         // http→ws, https→wss
-    const wsUrl = `${wsBase}/api/v1/sync-relay/ws${tok ? '?token=' + encodeURIComponent(tok) : ''}`;
-    logger.info(`[Sync] relay URL: ${wsUrl}`);
+    const syncRelayMode = String(msg['syncRelayMode'] ?? 'cloud');
+    const lanRelayUrl   = String(msg['relayUrl'] ?? '');
+    let wsUrl: string;
+    if (syncRelayMode === 'lan' && lanRelayUrl) {
+      // LAN mode: connect directly to the leader's built-in relay (no auth token needed).
+      wsUrl = lanRelayUrl;
+    } else {
+      // Cloud mode: derive URL from this device's own apiBase so scheme/host is correct
+      // for this device's network (handles LAN IP vs domain, http vs https).
+      const wsBase = this.cfg.apiBase
+        .replace(/\/api\/v1\/?$/, '')   // strip /api/v1 suffix
+        .replace(/^http/, 'ws');         // http→ws, https→wss
+      wsUrl = `${wsBase}/api/v1/sync-relay/ws${tok ? '?token=' + encodeURIComponent(tok) : ''}`;
+    }
+    logger.info(`[Sync] relay URL (mode=${syncRelayMode}): ${wsUrl}`);
 
     let urls = this.playlistItems.map(i => this.resolveLocalUrl(i.content?.url) || '').filter(Boolean);
     if (!urls.length) {

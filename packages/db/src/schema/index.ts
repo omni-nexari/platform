@@ -26,3 +26,5 @@ export * from './logs.js';
 export * from './pos.js';
 export * from './integrations.js';
 export * from './support.js';
+export * from './triggerRules.js';
+export * from './bleScanResults.js';

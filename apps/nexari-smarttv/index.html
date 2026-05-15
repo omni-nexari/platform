@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexri-tv</title>
+    <!-- Early error banner: catches any JS crash before logger/UiLog are ready -->
+    <script>
+    (function() {
+      function showErr(msg) {
+        var show = function() {
+          var b = document.getElementById('_jserr');
+          if (!b) {
+            b = document.createElement('div');
+            b.id = '_jserr';
+            b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#b00040;color:#fff;padding:10px 16px;font:13px monospace;word-break:break-all;white-space:pre-line;max-height:35vh;overflow-y:auto;';
+            (document.body || document.documentElement).appendChild(b);
+          }
+          b.textContent += msg + '\n';
+        };
+        if (document.body) show(); else document.addEventListener('DOMContentLoaded', show);
+      }
+      window.onerror = function(msg, src, line) {
+        showErr('[JS ERROR] ' + msg + '\n  ' + src + ':' + line);
+        return false;
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        var r = e.reason;
+        showErr('[REJECTION] ' + (r && r.message ? r.message : String(r)));
+      });
+    })();
+    </script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Pairing Screen -->
+    <div id="pairing-screen" class="screen">
+        <div class="pairing-container">
+            <div class="logo">
+                <img src="logo.png" alt="Nexari" />
+            </div>
+            <h1>Nexari Signage</h1>
+            <div class="pairing-code-container">
+                <p class="pairing-label">Enter this code in your dashboard:</p>
+                <div id="pairing-code" class="pairing-code">------</div>
+                <div id="pairing-status" class="pairing-status">Generating code...</div>
+            </div>
+            <div class="device-info">
+                <div id="device-model" class="info-item">Model: Detecting...</div>
+                <div id="device-ip" class="info-item">IP: Connecting...</div>
+                <div id="device-serial" class="info-item">Serial: Detecting...</div>
+                <div id="device-panel" class="info-item">Panel: Detecting...</div>
+            </div>
+
+            <!-- Connection Settings (collapsible) -->
+            <div class="conn-settings-wrap">
+                <button id="conn-settings-toggle" class="conn-settings-toggle" onclick="PairingSettings.toggle()">
+                    &#9881; Connection settings <span id="conn-settings-arrow">&#9660;</span>
+                </button>
+                <div id="conn-settings-panel" class="conn-settings-panel hidden">
+                    <p class="conn-settings-hint">
+                        Enter the <strong>backend server</strong> address the device should connect to.
+                    </p>
+                    <div class="conn-field">
+                        <label for="input-api-base">CMS / API Base URL</label>
+                        <input id="input-api-base" type="url" spellcheck="false"
+                               placeholder="http://192.168.1.10:3000" />
+                        <span class="conn-hint">e.g. http://192.168.1.10:3000 — no trailing slash</span>
+                    </div>
+                    <div class="conn-field">
+                        <label for="input-ws-url">WebSocket URL</label>
+                        <input id="input-ws-url" type="url" spellcheck="false"
+                               placeholder="ws://192.168.1.10:3000" />
+                        <span class="conn-hint">Auto-derived from CMS URL — change http → ws (or https → wss)</span>
+                    </div>
+                    <div class="conn-actions">
+                        <button class="conn-btn conn-btn-apply" onclick="PairingSettings.apply()">Save &amp; Reconnect</button>
+                        <button class="conn-btn conn-btn-reset" onclick="PairingSettings.reset()">Reset to Default</button>
+                    </div>
+                    <div id="conn-settings-msg" class="conn-settings-msg"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Player Screen -->
+    <div id="player-screen" class="screen hidden">
+        <div id="content-container"></div>
+        <div id="status-bar" class="status-bar">
+            <span id="device-name">Device</span>
+            <span id="connection-status">●</span>
+        </div>
+
+        <!-- Telemetry Overlay (toggleable with remote key) -->
+        <div id="telemetry-overlay" class="telemetry-overlay">
+            <h3>⚡ Device Telemetry</h3>
+            <div class="telemetry-item">
+                <span class="telemetry-label">Model:</span>
+                <span class="telemetry-value" id="telem-model">--</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="telemetry-label">Serial:</span>
+                <span class="telemetry-value" id="telem-serial">--</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="telemetry-label">Panel:</span>
+                <span class="telemetry-value" id="telem-panel">--</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="telemetry-label">IP Address:</span>
+                <span class="telemetry-value" id="telem-ip">--</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="telemetry-label">Network:</span>
+                <span class="telemetry-value" id="telem-network">--</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="telemetry-label">Memory:</span>
+                <span class="telemetry-value" id="telem-memory">--</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="telemetry-label">Storage:</span>
+                <span class="telemetry-value" id="telem-storage">--</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="telemetry-label">Uptime:</span>
+                <span class="telemetry-value" id="telem-uptime">--</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="telemetry-label">CPU Load:</span>
+                <span class="telemetry-value" id="telem-cpu">--</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="telemetry-label">Current Playlist:</span>
+                <span class="telemetry-value" id="telem-playlist">--</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="telemetry-label">Playback Status:</span>
+                <span class="telemetry-value" id="telem-playback">--</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="telemetry-label">Download Progress:</span>
+                <span class="telemetry-value" id="telem-download">--</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="telemetry-label">BLE Beacons:</span>
+                <span class="telemetry-value" id="telem-ble">--</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Screen -->
+    <div id="error-screen" class="screen hidden">
+        <div class="error-container">
+            <div class="error-icon">⚠</div>
+            <h2 id="error-title">Connection Error</h2>
+            <p id="error-message">Unable to connect to server</p>
+            <button id="retry-button" class="retry-button">Retry</button>
+        </div>
+    </div>
+
+    <!-- On-screen Log Console (INFO button toggles) -->
+    <div id="ui-log-panel">
+        <div class="ui-log-header">
+            <span>Log Console</span>
+            <div class="ui-log-controls">
+                <button id="ui-log-filter-all" class="ui-log-btn" onclick="UiLog.setFilter('all')">All</button>
+                <button id="ui-log-filter-error" class="ui-log-btn" onclick="UiLog.setFilter('error')">Error</button>
+                <button id="ui-log-filter-warn" class="ui-log-btn" onclick="UiLog.setFilter('warn')">Warn</button>
+                <button id="ui-log-filter-info" class="ui-log-btn" onclick="UiLog.setFilter('info')">Info</button>
+                <button id="ui-log-filter-debug" class="ui-log-btn" onclick="UiLog.setFilter('debug')">Debug</button>
+                <button id="ui-log-top" class="ui-log-btn" onclick="UiLog.scrollToTop()">Top</button>
+                <button id="ui-log-older" class="ui-log-btn" onclick="UiLog.scrollOlder()">Older</button>
+                <button id="ui-log-newer" class="ui-log-btn" onclick="UiLog.scrollNewer()">Newer</button>
+                <button id="ui-log-latest" class="ui-log-btn" onclick="UiLog.scrollToBottom()">Latest</button>
+                <button id="ui-log-clear" class="ui-log-btn" onclick="UiLog.clear()">Clear</button>
+            </div>
+            <span id="ui-log-status" class="ui-log-status">Live</span>
+            <span class="ui-log-hint">UP/DOWN scroll &nbsp;|&nbsp; LEFT/RIGHT select &nbsp;|&nbsp; ENTER run &nbsp;|&nbsp; [1] close</span>
+        </div>
+        <div id="ui-log-list"></div>
+    </div>
+
+    <!-- Tools Overlay (TOOLS button toggles) -->
+    <div id="tools-overlay" class="tools-overlay hidden">
+        <div class="tools-header">
+            <span class="tools-title">&#9881; Remote &amp; Status</span>
+            <span class="tools-close">TOOLS to close</span>
+        </div>
+        <div class="tools-body">
+            <div class="tools-section">
+                <div class="tools-section-title">Remote Control</div>
+                <div class="tools-row"><span class="tools-key">TOOLS</span><span class="tools-desc">Open / close this panel</span></div>
+                <div class="tools-row"><span class="tools-key">INFO</span><span class="tools-desc">Open / close log console</span></div>
+                <div class="tools-row"><span class="tools-key">RETURN</span><span class="tools-desc">Back / device info</span></div>
+            </div>
+            <div class="tools-section">
+                <div class="tools-section-title">Server Connectivity</div>
+                <div class="tools-row"><span class="tools-key">API</span><span class="tools-desc" id="tools-api-url">--</span></div>
+                <div class="tools-row"><span class="tools-key">Status</span><span class="tools-desc" id="tools-api-status">Checking...</span></div>
+                <div class="tools-row"><span class="tools-key">WS</span><span class="tools-desc" id="tools-ws-status">--</span></div>
+            </div>
+            <div class="tools-section">
+                <div class="tools-section-title">Bluetooth</div>
+                <div class="tools-row"><span class="tools-key">BLE</span><span class="tools-desc" id="tools-ble-status">Initialising...</span></div>
+                <div class="tools-row"><span class="tools-key">Beacons</span><span class="tools-desc" id="tools-ble-beacons">--</span></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/platform.js"></script>
+    <script src="js/build-info.js"></script>
+    <script src="js/config.js"></script>
+    <script type="text/javascript" src="$WEBAPIS/webapis/webapis.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/telemetry.js"></script>
+    <script src="js/content-manager.js"></script>
+    <script src="js/remote-control.js"></script>
+    <script src="js/modules/app-updater.js"></script>
+    <script src="js/modules/player-settings.js"></script>
+    <script src="js/modules/sync-engine.js"></script>
+    <script src="js/modules/ble-manager.js"></script>
+    <!-- PDF.js — Tizen 6.5+ (Chromium 76+): use modern build only -->
+    <script src="js/modules/pdf.min.js"></script>
+    <script src="js/player.js"></script>
+    <script src="js/pairing.js"></script>
+    <script src="js/log-viewer.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

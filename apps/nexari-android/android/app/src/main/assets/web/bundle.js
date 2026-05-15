@@ -3313,8 +3313,7 @@ var Player = class {
         relayUrl: info.relayUrl,
         leaderPriority: info.leaderPriority,
         expectedPeers: info.peerCount,
-        syncRelayMode: "cloud"
-        // API relay — no device-side relay server needed
+        syncRelayMode: info.syncRelayMode
       });
       return;
     }
@@ -3345,7 +3344,7 @@ var Player = class {
   }
   // ── Main content loader (mirrors Tizen loadContent) ──────────────────────────
   async loadContent() {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     logger.info("[Player] loadContent");
     try {
       const schedule = await this.api.getCurrentContent(this.deviceId);
@@ -3372,7 +3371,7 @@ var Player = class {
               return ((_a2 = a.leaderPriority) != null ? _a2 : 999) - ((_b2 = b.leaderPriority) != null ? _b2 : 999);
             }).map((p) => p.deviceId),
             expectedPeers: Math.max(1, ((_e = sg2["peers"]) != null ? _e : []).length - 1),
-            syncRelayMode: "cloud"
+            syncRelayMode: String((_f = sg2["syncRelayMode"]) != null ? _f : "cloud")
           });
         } else if (this.localUrlCache.size === 0) {
           void this.preCacheItems(this.playlistItems).catch(() => {
@@ -3389,17 +3388,18 @@ var Player = class {
       logger.info(`[Player] new content (${schedule.items.length} items), downloading\u2026`);
       const sg = schedule;
       if (sg["allTizen"] === false && sg["relayUrl"]) {
-        const rawPeers = (_f = sg["peers"]) != null ? _f : [];
+        const rawPeers = (_g = sg["peers"]) != null ? _g : [];
         const sortedPeers = [...rawPeers].sort((a, b) => {
           var _a2, _b2;
           return ((_a2 = a.leaderPriority) != null ? _a2 : 999) - ((_b2 = b.leaderPriority) != null ? _b2 : 999);
         });
         this._pendingSyncRelayInfo = {
-          groupId: String((_g = sg["syncGroupId"]) != null ? _g : ""),
+          groupId: String((_h = sg["syncGroupId"]) != null ? _h : ""),
           relayUrl: String(sg["relayUrl"]),
           leaderPriority: sortedPeers.map((p) => p.deviceId),
-          peerCount: Math.max(1, sortedPeers.length - 1)
+          peerCount: Math.max(1, sortedPeers.length - 1),
           // count of OTHER peers
+          syncRelayMode: String((_i = sg["syncRelayMode"]) != null ? _i : "cloud")
         };
         logger.info(`[Player] cross-OS sync group relay stored: ${this._pendingSyncRelayInfo.relayUrl}`);
       } else {
@@ -4061,7 +4061,7 @@ var Player = class {
     }
   }
   async initSyncGroup(msg) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f;
     if (this.syncActive) {
       try {
         stop();
@@ -4073,9 +4073,16 @@ var Player = class {
     const expectedPeers = Number((_b = msg["expectedPeers"]) != null ? _b : 1);
     const leaderPriority = Array.isArray(msg["leaderPriority"]) ? msg["leaderPriority"] : [];
     const tok = this.token;
-    const wsBase = this.cfg.apiBase.replace(/\/api\/v1\/?$/, "").replace(/^http/, "ws");
-    const wsUrl = `${wsBase}/api/v1/sync-relay/ws${tok ? "?token=" + encodeURIComponent(tok) : ""}`;
-    logger.info(`[Sync] relay URL: ${wsUrl}`);
+    const syncRelayMode = String((_c = msg["syncRelayMode"]) != null ? _c : "cloud");
+    const lanRelayUrl = String((_d = msg["relayUrl"]) != null ? _d : "");
+    let wsUrl;
+    if (syncRelayMode === "lan" && lanRelayUrl) {
+      wsUrl = lanRelayUrl;
+    } else {
+      const wsBase = this.cfg.apiBase.replace(/\/api\/v1\/?$/, "").replace(/^http/, "ws");
+      wsUrl = `${wsBase}/api/v1/sync-relay/ws${tok ? "?token=" + encodeURIComponent(tok) : ""}`;
+    }
+    logger.info(`[Sync] relay URL (mode=${syncRelayMode}): ${wsUrl}`);
     let urls = this.playlistItems.map((i) => {
       var _a2;
       return this.resolveLocalUrl((_a2 = i.content) == null ? void 0 : _a2.url) || "";
@@ -4091,14 +4098,14 @@ var Player = class {
     await initEngine(container);
     setPlaylist(urls);
     const net = await this.cfg.adapter.getNetworkInfo();
-    const pinnedLeaderId = (_c = leaderPriority[0]) != null ? _c : "";
+    const pinnedLeaderId = (_e = leaderPriority[0]) != null ? _e : "";
     this.syncActive = true;
     const syncDeviceId = this.dbDeviceId || this.deviceId;
     init({
       wsUrl,
       groupId,
       deviceId: syncDeviceId,
-      selfIp: (_d = net.ipAddress) != null ? _d : "",
+      selfIp: (_f = net.ipAddress) != null ? _f : "",
       expectedPeers,
       pinnedLeaderId,
       onStatus: (s) => logger.info(`[Sync] ${s}`),

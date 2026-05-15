@@ -47,6 +47,8 @@ export interface Playlist {
   relayUrl?: string | null;
   /** False when group contains non-Tizen peers — use relay engine, not b2bsyncplay. */
   allTizen?: boolean;
+  /** 'cloud' = centralised API relay; 'lan' = ws://leaderIp:9616 built-in relay. */
+  syncRelayMode?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +230,7 @@ function _normalizeSyncPlaylist(syncPlaylist: any, groupId: any, syncGroup: any)
     syncGroupId: syncGroup?.id || null,
     relayUrl: syncGroup?.relayUrl || null,
     allTizen: syncGroup?.allTizen ?? true,
+    syncRelayMode: syncGroup?.syncRelayMode ?? 'cloud',
   };
 }
 

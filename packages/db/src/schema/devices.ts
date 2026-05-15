@@ -38,7 +38,7 @@ export const devices = pgTable('devices', {
   // type: what the device is used for
   type: text('device_type').notNull().default('signage'), // signage | kiosk | kitchen
   // platform: the Player OS/runtime
-  platform: text('platform').notNull().default('tizen'),  // tizen | tizen-sbb | browser | android | webos | linux | windows
+  platform: text('platform').notNull().default('tizen'),  // tizen | tizen-sbb | tizen-consumer | browser | android | webos | linux | windows
 
   // ── Windows / desktop player extras (kind='tv', platform='windows') ────────
   osVersion: text('os_version'),

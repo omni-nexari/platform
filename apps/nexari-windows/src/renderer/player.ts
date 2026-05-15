@@ -233,6 +233,8 @@ async function startSyncGroupPlayback(content: Playlist) {
     const expectedPeers = Math.max(1, peers.length - 1);
     // peers is already sorted by leaderPriority asc from the API; peers[0] is the designated leader.
     const pinnedLeaderId = peers[0]?.deviceId ?? '';
+    const syncRelayMode = (content as any).syncRelayMode ?? 'cloud';
+    const relayUrl      = (content as any).relayUrl ?? null;
 
     const urls = content.items
       .map(i => i.content?.url || i.content?.fileUrl || '')
@@ -249,6 +251,8 @@ async function startSyncGroupPlayback(content: Playlist) {
       groupId: content.syncGroupId!,
       expectedPeers,
       pinnedLeaderId,
+      syncRelayMode,
+      relayUrl,
       container: root,
       playlist: urls,
       onStatus: (s) => console.info(`[Sync] ${s}`),

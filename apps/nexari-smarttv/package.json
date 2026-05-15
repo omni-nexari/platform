@@ -1,0 +1,17 @@
+{
+  "name": "nexari-smarttv",
+  "version": "1.0.0",
+  "description": "Nexari Signage — Consumer Samsung Smart TV player (Tizen 6.5+)",
+  "scripts": {
+    "build": "cross-env API_BASE=https://ds.chiho.app/api/v1 WS_URL=wss://ds.chiho.app tsc",
+    "build:dev": "cross-env API_BASE=http://192.168.1.17/api/v1 WS_URL=ws://192.168.1.17 tsc",
+    "watch": "tsc --watch"
+  },
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/tizen-tv-webapis": "^2.0.9",
+    "cross-env": "^10.1.0",
+    "tizen-tv-webapis": "^2.0.0",
+    "typescript": "^5.9.3"
+  }
+}

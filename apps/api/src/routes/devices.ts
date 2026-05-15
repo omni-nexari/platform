@@ -2024,7 +2024,7 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     // Resolve sync group + its sync playlist when publishedSyncGroupId is set
     let publishedSyncGroup: {
-      id: string; groupId: number; mode: string; allTizen: boolean; relayUrl: string | null;
+      id: string; groupId: number; mode: string; allTizen: boolean; relayUrl: string | null; syncRelayMode: string;
       peers: Array<{ deviceId: string; ipAddress: string | null; leaderPriority: number; platform: string | null }>;
       syncPlaylist: { id: string; name: string; items: Array<{ id: string; contentId: string | null; durationSeconds: number | null; sortOrder: number; content: typeof contentItems.$inferSelect | null }> } | null;
     } | null = null;
@@ -2059,9 +2059,16 @@ export async function deviceRoutes(app: FastifyInstance) {
           // Sort by leaderPriority (ascending) so peers[0] is always the elected leader
           peers.sort((a, b) => (a.leaderPriority ?? 999) - (b.leaderPriority ?? 999));
           const allTizen = peers.length > 0 && peers.every((p) => p.platform === 'tizen' || p.platform === 'tizen-sbb');
-          // For cross-OS groups use the centralised API relay (always running, reachable by all platforms).
           const appUrl = (process.env['APP_URL'] ?? 'http://localhost:3000').replace(/\/$/, '');
-          const relayUrl = !allTizen ? appUrl.replace(/^http/, 'ws') + '/api/v1/sync-relay/ws' : null;
+          const sgRelayMode: string = (sg as any).syncRelayMode ?? 'cloud';
+          // LAN mode: route through leader's built-in relay (ws://leaderIp:9616).
+          // Cloud mode (or fallback when leader has no IP): use centralised API relay.
+          const leaderPeer = peers[0]; // already sorted by leaderPriority asc
+          const relayUrl = allTizen
+            ? null
+            : sgRelayMode === 'lan' && leaderPeer?.ipAddress
+              ? `ws://${leaderPeer.ipAddress}:9616`
+              : appUrl.replace(/^http/, 'ws') + '/api/v1/sync-relay/ws';
 
           publishedSyncGroup = {
             id: sg.id,
@@ -2069,6 +2076,7 @@ export async function deviceRoutes(app: FastifyInstance) {
             mode: sg.mode,
             allTizen,
             relayUrl,
+            syncRelayMode: sgRelayMode,
             peers,
             syncPlaylist: {
               id: sp.id,

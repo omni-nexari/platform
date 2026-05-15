@@ -33,6 +33,7 @@ Docs/cert/nexari-android.pwd
 apps/nexari-windows/release/
 apps/nexari-windows/dist/
 apps/nexari-tizen/*.wgt
+apps/nexari-smarttv/*.wgt
 apps/nexari-epaper/*.wgt
 apps/nexari-html5-sync/*.wgt
 *.wgt

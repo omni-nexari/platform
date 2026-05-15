@@ -437,12 +437,15 @@ export async function syncGroupRoutes(app: FastifyInstance) {
       const plat = (m.device as any)?.platform ?? 'tizen';
       return plat === 'tizen' || plat === 'tizen-sbb';
     });
-    // For cross-OS groups always use the centralised API relay so no device needs
-    // to host its own relay server (Windows has none; Android's bridge is optional).
     const appUrl = (process.env['APP_URL'] ?? 'http://localhost:3000').replace(/\/$/, '');
-    const relayUrl = !allTizen
-      ? appUrl.replace(/^http/, 'ws') + '/api/v1/sync-relay/ws'
-      : null;
+    // LAN mode: route through the leader's built-in relay (ws://leaderIp:9616).
+    // Cloud mode (default for cross-OS): use the centralised API relay.
+    const leaderPeer = peers[0]; // already sorted by leaderPriority asc
+    const relayUrl = allTizen
+      ? null
+      : syncRelayMode === 'lan' && (leaderPeer?.lastKnownIp ?? null)
+        ? `ws://${leaderPeer!.lastKnownIp}:9616`
+        : appUrl.replace(/^http/, 'ws') + '/api/v1/sync-relay/ws';
 
     const manifest = {
       type: 'SYNC_GROUP_INIT' as const,

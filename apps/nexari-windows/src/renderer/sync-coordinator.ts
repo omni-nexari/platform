@@ -23,6 +23,10 @@ export interface WindowsSyncConfig {
   expectedPeers:  number;
   /** Pre-elected leader deviceId from manifest leaderPriority[0]. Skips lexicographic election. */
   pinnedLeaderId?: string;
+  /** Relay mode: 'cloud' uses the centralised API relay, 'lan' uses ws://leaderIp:9616 built-in relay. */
+  syncRelayMode?: string;
+  /** LAN relay URL (used when syncRelayMode === 'lan'). */
+  relayUrl?: string | null;
   container:      HTMLElement;
   playlist:       string[];          // array of video URLs
   onStatus:       (msg: string) => void;
@@ -32,9 +36,16 @@ export async function startSync(cfg: WindowsSyncConfig): Promise<void> {
   if (_active) await stopSync();
   _active = true;
 
-  // Build the WS relay URL pointing at the centralized relay
+  // Build the WS relay URL based on the configured relay mode.
+  // LAN mode: connect directly to the leader's built-in relay (ws://leaderIp:9616, no auth).
+  // Cloud mode (default): use the centralised API relay with token auth.
   const wsBase = cfg.apiBase.replace(/^http/, 'ws');
-  const wsUrl  = `${wsBase}/sync-relay/ws?token=${encodeURIComponent(cfg.token)}`;
+  let wsUrl: string;
+  if ((cfg.syncRelayMode ?? 'cloud') === 'lan' && cfg.relayUrl) {
+    wsUrl = cfg.relayUrl;
+  } else {
+    wsUrl = `${wsBase}/sync-relay/ws?token=${encodeURIComponent(cfg.token)}`;
+  }
 
   // Dynamically import the engine so it attaches to the passed container
   const { initEngine, prepare, schedulePlayAt, destroyEngine } = await import('@sync/engine.js');

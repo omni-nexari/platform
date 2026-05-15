@@ -449,6 +449,27 @@
             "when": 1778700000000,
             "tag": "0063_player_release_sha256",
             "breakpoints": true
+        },
+        {
+            "idx": 64,
+            "version": "7",
+            "when": 1778710000000,
+            "tag": "0064_tizen_consumer_platform",
+            "breakpoints": true
+        },
+        {
+            "idx": 65,
+            "version": "7",
+            "when": 1778720000000,
+            "tag": "0065_trigger_rules",
+            "breakpoints": true
+        },
+        {
+            "idx": 66,
+            "version": "7",
+            "when": 1778730000000,
+            "tag": "0066_ble_scan_results",
+            "breakpoints": true
         }
     ]
 }
