@@ -287,12 +287,12 @@ window.BleManager = (function () {
 
   function _postScanResults(beaconList) {
     try {
-      var apiBase = (typeof window._apiBase !== 'undefined' && window._apiBase)
-        || (typeof window.__DS_API_BASE !== 'undefined' && window.__DS_API_BASE)
-        || localStorage.getItem('_apiBase')
+      var apiBase = (typeof CONFIG !== 'undefined' && CONFIG.API_BASE)
+        || (typeof window.CONFIG !== 'undefined' && window.CONFIG.API_BASE)
         || '';
-      var token   = localStorage.getItem('_deviceToken')
-        || (typeof window._deviceToken !== 'undefined' ? window._deviceToken : null);
+      var token   = localStorage.getItem('deviceToken')
+        || (typeof window.NexariPlayer !== 'undefined' ? window.NexariPlayer.deviceToken : null)
+        || '';
 
       if (!apiBase || !token) {
         _log('warn', 'Cannot post scan results — missing apiBase or deviceToken');
@@ -306,7 +306,7 @@ window.BleManager = (function () {
       });
 
       var xhr = new XMLHttpRequest();
-      xhr.open('POST', apiBase + '/api/v1/devices/device/ble-scan-result', true);
+      xhr.open('POST', apiBase + '/devices/device/ble-scan-result', true);
       xhr.setRequestHeader('Content-Type', 'application/json');
       xhr.setRequestHeader('Authorization', 'Bearer ' + token);
       xhr.onload = function () {

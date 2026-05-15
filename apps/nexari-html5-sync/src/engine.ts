@@ -93,6 +93,59 @@ export function getCurrentPosMs(): number {
 
 export function getDuration(): number { return _durationMs; }
 
+// ---------------------------------------------------------------------------
+// Play-latency probe — used for cross-device sync auto-calibration
+// ---------------------------------------------------------------------------
+
+// Cached result; null until first call. Reset by destroyEngine().
+let _playLatencyMs: number | null = null;
+
+/**
+ * measurePlayLatencyMs — measure the time from video.play() to the first
+ * rendered frame on this hardware. The relay distributes all latencies via
+ * PEERS so each device can compute selfLatency = max(group) - own, ensuring
+ * the slowest device is the reference and all first-frames align.
+ *
+ * Uses requestVideoFrameCallback (Chromium ≥83 / Electron) for frame-level
+ * accuracy; falls back to timeupdate for older platforms (Tizen WebKit).
+ * Result is cached; repeated calls return immediately.
+ */
+export async function measurePlayLatencyMs(url?: string): Promise<number> {
+  if (_playLatencyMs !== null) return _playLatencyMs;
+  const src = url ?? _playlist[0];
+  if (!src) { _playLatencyMs = 100; return 100; }
+
+  return new Promise<number>((resolve) => {
+    const v = document.createElement('video');
+    v.muted = true; v.preload = 'auto'; v.src = src;
+
+    const done = (ms: number) => {
+      clearTimeout(timer);
+      try { v.pause(); v.src = ''; if (v.parentNode) v.parentNode.removeChild(v); } catch {}
+      _playLatencyMs = Math.max(10, ms);
+      _log('[Engine] play-latency probe: ' + _playLatencyMs + 'ms');
+      resolve(_playLatencyMs);
+    };
+    const timer = setTimeout(() => done(150), 4000);
+
+    v.addEventListener('canplaythrough', () => {
+      const t0 = performance.now();
+      if (typeof (v as any).requestVideoFrameCallback === 'function') {
+        // Chromium/Electron: fires on actual frame paint — sub-ms accurate.
+        (v as any).requestVideoFrameCallback(() => done(Math.round(performance.now() - t0)));
+      } else {
+        // Tizen WebKit fallback: timeupdate fires when decoded pixels are available.
+        v.addEventListener('timeupdate', () => done(Math.round(performance.now() - t0)), { once: true });
+      }
+      v.play().catch(() => {});
+    }, { once: true });
+    v.load();
+  });
+}
+
+/** Returns the cached play-latency, or 100 ms if not yet measured. */
+export function getPlayLatencyMs(): number { return _playLatencyMs ?? 100; }
+
 export function initEngine(container: HTMLElement): Promise<void> {
   if (_videos.length) return Promise.resolve();
   _container = container;
@@ -208,6 +261,7 @@ export function destroyEngine(): void {
   _looping = false;
   _firstPlay = true;
   _fg = 0;
+  _playLatencyMs = null; // reset so next session re-measures on this hardware
   _idx = 0;
 }
 
