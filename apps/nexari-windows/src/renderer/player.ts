@@ -250,6 +250,11 @@ async function startSyncGroupPlayback(content: Playlist) {
 
     if (!urls.length) { console.warn('[Sync] no video URLs'); playCurrentItem(); return; }
 
+    // Chromium/Electron decodes and presents the first frame faster than Tizen
+    // WebKit. Positive value holds Windows back so all screens align.
+    // Tune in 20 ms steps: increase if Windows is still ahead, decrease if behind.
+    const WINDOWS_SELF_LATENCY_MS = 120;
+
     console.info(`[Sync] starting relay sync groupId=${content.syncGroupId} peers=${expectedPeers} pinnedLeader=${effectiveLeaderId} (manifest=${pinnedLeaderId} allTizen=${content.allTizen})`);
     _syncActive = true;
     await startSync({
@@ -261,6 +266,7 @@ async function startSyncGroupPlayback(content: Playlist) {
       pinnedLeaderId: effectiveLeaderId,
       syncRelayMode,
       relayUrl,
+      selfLatency: WINDOWS_SELF_LATENCY_MS,
       container: root,
       playlist: urls,
       onStatus: (s) => console.info(`[Sync] ${s}`),

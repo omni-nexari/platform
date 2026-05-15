@@ -27,6 +27,13 @@ export interface WindowsSyncConfig {
   syncRelayMode?: string;
   /** LAN relay URL (used when syncRelayMode === 'lan'). */
   relayUrl?: string | null;
+  /**
+   * Platform startup-latency compensation in ms. Positive = hold this device back
+   * (use for fast decoders like Windows/Chromium that render the first frame earlier
+   * than Tizen WebKit). Negative = advance this device (slow decoders).
+   * Tune in 20 ms increments until all screens are frame-aligned.
+   */
+  selfLatency?: number;
   container:      HTMLElement;
   playlist:       string[];          // array of video URLs
   onStatus:       (msg: string) => void;
@@ -66,6 +73,7 @@ export async function startSync(cfg: WindowsSyncConfig): Promise<void> {
     selfIp:         '',            // not used by centralized relay
     expectedPeers:  cfg.expectedPeers,
     pinnedLeaderId: cfg.pinnedLeaderId,
+    selfLatency:    cfg.selfLatency,
     onStatus:       cfg.onStatus,
     // OS-specific URL resolver: Windows uses its own local file paths so the
     // leader always broadcasts a valid local path + playlist index.

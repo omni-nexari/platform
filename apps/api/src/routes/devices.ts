@@ -3046,7 +3046,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!device) return reply.status(404).send({ error: 'Not found' });
 
     const rows = await db.query.deviceRules.findMany({
-      where: and(eq(deviceRules.workspaceId, device.workspaceId), eq(deviceRules.deviceId, id)),
+      where: and(eq(deviceRules.workspaceId, device.workspaceId!), eq(deviceRules.deviceId, id)),
       orderBy: [desc(deviceRules.priority), asc(deviceRules.createdAt)],
     });
     return reply.send({ rules: rows });
@@ -3074,7 +3074,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     }
 
     const [row] = await db.insert(deviceRules).values({
-      workspaceId: device.workspaceId,
+      workspaceId: device.workspaceId!,
       deviceId: id,
       name: body.name,
       enabled: body.enabled ?? true,
@@ -3153,7 +3153,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     }
 
     const rows = await db.query.deviceRules.findMany({
-      where: and(eq(deviceRules.workspaceId, device.workspaceId), eq(deviceRules.deviceId, id)),
+      where: and(eq(deviceRules.workspaceId, device.workspaceId!), eq(deviceRules.deviceId, id)),
       orderBy: [desc(deviceRules.priority), asc(deviceRules.createdAt)],
     });
 

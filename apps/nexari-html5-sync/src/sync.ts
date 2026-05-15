@@ -421,9 +421,9 @@ function _dispatch(msg: any): void {
 
   if (msg.type === 'LOOP_GO') {
     // Relay has confirmed all devices are prebuffered — play simultaneously.
-    const localPlayAt = _serverToLocal(msg.playAt);
+    const localPlayAt = _serverToLocal(msg.playAt) + _selfLatency;
     const wait = Math.round(localPlayAt - Date.now());
-    logger.info(`[Sync] LOOP_GO playAt=${msg.playAt} localPlayAt=${localPlayAt} T-${wait}ms`);
+    logger.info(`[Sync] LOOP_GO playAt=${msg.playAt} localPlayAt=${localPlayAt} T-${wait}ms latency=${_selfLatency}ms`);
     _cfg.onStatus(`LOOP_GO -- playing in ${(Math.round(wait / 100) * 100) / 1000}s`);
     _cfg.schedulePlay(localPlayAt);
     // Reset phase tracker so PLAYHEAD monitoring starts fresh after loop boundary

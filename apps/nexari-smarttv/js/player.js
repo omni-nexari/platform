@@ -73,10 +73,6 @@ const Player = {
     _onTimerSupported: true, // Set to false after first NAK; skips on_timer_get in subsequent polls
     _clockSupported: true, // Set to false after first NAK; skips get_clock / set_clock
     _lastClockSyncAt: 0, // Timestamp of last set_clock; rate-limited to once per 24h
-    _liveCaptureActive: false, // live-view capture running
-    _liveCaptureIntervalMs: 1000, // requested cadence
-    _liveCaptureBusy: false, // captureScreen in progress — prevents overlapping calls
-    _liveInterval: undefined, // setTimeout handle (NOT setInterval — Samsung captureScreen cannot overlap)
     // ── IPTV channel group runtime state ───────────────────────────────────
     currentChannelGroup: null,
     _channelDigitBuffer: '',
@@ -375,14 +371,6 @@ const Player = {
                         }
                     }
                 }
-                // Take a screenshot shortly after connect to populate the device card thumbnail,
-                // but ONLY if content is already playing (loaded from cache). If nothing is playing
-                // yet, _thumbnailOnItemStart will fire once the first item renders.
-                setTimeout(() => {
-                    if (this.currentContent) {
-                        this.takeScreenshotWithTrigger('content_change');
-                    }
-                }, 5000);
                 // Refresh MDC poll after startup MDC setup completes (Phase 1 scan can take up to 8s)
                 setTimeout(() => { this.runMdcPoll(); }, 20000);
             };
@@ -651,144 +639,6 @@ const Player = {
                     logger.info('dump_logs command received');
                     this.executeCommand({ type: 'REQUEST_LOG_BURST' });
                     break;
-                case 'screenshot':
-                    logger.info('screenshot command received');
-                    this.executeCommand({ type: 'SCREENSHOT' });
-                    break;
-                case 'screenshot_auto':
-                    logger.info('screenshot_auto command received');
-                    this.executeCommand({ type: 'SCREENSHOT_AUTO' });
-                    break;
-                case 'start_live_capture': {
-                    const intervalMs = Math.max(1000, Number((_a = message.payload) === null || _a === void 0 ? void 0 : _a.intervalMs) || 1000);
-                    logger.info('start_live_capture received, intervalMs:', intervalMs);
-                    // Stop any existing capture loop
-                    if (this._liveInterval) {
-                        clearTimeout(this._liveInterval);
-                        this._liveInterval = undefined;
-                    }
-                    this._liveCaptureActive = true;
-                    this._liveCaptureIntervalMs = intervalMs;
-                    this._liveCaptureBusy = false;
-                    // Use setTimeout chaining (NOT setInterval) — Samsung captureScreen cannot handle
-                    // concurrent calls; each capture must complete before the next is scheduled.
-                    const self = this;
-                    const scheduleNext = (delayMs) => {
-                        self._liveInterval = setTimeout(function liveTick() {
-                            if (!self._liveCaptureActive)
-                                return;
-                            if (self._liveCaptureBusy) {
-                                scheduleNext(200);
-                                return;
-                            }
-                            self._liveCaptureBusy = true;
-                            const ws = self.wsConnection;
-                            if (!ws || ws.readyState !== WebSocket.OPEN) {
-                                self._liveCaptureBusy = false;
-                                scheduleNext(Math.max(1000, self._liveCaptureIntervalMs));
-                                return;
-                            }
-                            const done = () => {
-                                self._liveCaptureBusy = false;
-                                if (self._liveCaptureActive)
-                                    scheduleNext(Math.max(1000, self._liveCaptureIntervalMs));
-                            };
-                            const send = (dataBase64) => {
-                                ws.send(JSON.stringify({ type: 'screenshot_data', payload: { dataBase64, trigger: 'live', contentId: null } }));
-                                done();
-                            };
-                            const canvasFallback = () => {
-                                try {
-                                    const canvas = document.createElement('canvas');
-                                    canvas.width = window.innerWidth || 1920;
-                                    canvas.height = window.innerHeight || 1080;
-                                    const ctx = canvas.getContext('2d');
-                                    if (!ctx)
-                                        throw new Error('No 2d context');
-                                    ctx.fillStyle = '#000';
-                                    ctx.fillRect(0, 0, canvas.width, canvas.height);
-                                    const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-                                    const base64 = dataUrl.split(',')[1];
-                                    send(base64);
-                                }
-                                catch (canvasErr) {
-                                    logger.warn('[LiveCapture] canvas fallback failed:', canvasErr);
-                                    done();
-                                }
-                            };
-                            try {
-                                const b2b = typeof window.b2bapis !== 'undefined' ? window.b2bapis.b2bcontrol : null;
-                                if (b2b && typeof b2b.captureScreen === 'function') {
-                                    b2b.captureScreen((filePath) => {
-                                        try {
-                                            const normalizedPath = String(filePath || '').replace(/^file:\/\//, '');
-                                            const platform = window.Platform;
-                                            if (platform && platform.isLegacy) {
-                                                // Tizen 4: use filesystem.resolve + openStream
-                                                window.tizen.filesystem.resolve(normalizedPath, (file) => {
-                                                    file.openStream('r', (stream) => {
-                                                        try {
-                                                            const bytes = stream.readBytes(file.fileSize);
-                                                            stream.close();
-                                                            let binary = '';
-                                                            for (let i = 0; i < bytes.length; i++)
-                                                                binary += String.fromCharCode(bytes[i]);
-                                                            send(btoa(binary));
-                                                        }
-                                                        catch (e) {
-                                                            logger.warn('[LiveCapture] read stream bytes failed:', e);
-                                                            done();
-                                                        }
-                                                    }, (e) => { logger.warn('[LiveCapture] openStream error:', e); done(); }, 'ISO-8859-1');
-                                                }, (e) => { logger.warn('[LiveCapture] filesystem.resolve failed:', e); done(); }, 'r');
-                                            }
-                                            else {
-                                                const fh = window.tizen.filesystem.openFile(normalizedPath, 'r');
-                                                try {
-                                                    const bytes = fh.readData();
-                                                    let binary = '';
-                                                    for (let i = 0; i < bytes.length; i++)
-                                                        binary += String.fromCharCode(bytes[i]);
-                                                    send(btoa(binary));
-                                                }
-                                                finally {
-                                                    try {
-                                                        fh.close();
-                                                    }
-                                                    catch (_) { }
-                                                }
-                                            }
-                                        }
-                                        catch (e) {
-                                            logger.warn('[LiveCapture] filesystem failed:', e);
-                                            canvasFallback(); // b2b captured but read failed — send canvas frame
-                                        }
-                                    }, (e) => {
-                                        logger.warn('[LiveCapture] captureScreen error:', e);
-                                        canvasFallback(); // b2b error callback — send canvas frame instead of nothing
-                                    });
-                                    return;
-                                }
-                            }
-                            catch (e) {
-                                logger.warn('[LiveCapture] b2b threw:', e);
-                            }
-                            // b2b API unavailable — canvas fallback (captures DOM/2D content, not HW-decoded video)
-                            canvasFallback();
-                        }, delayMs);
-                    };
-                    scheduleNext(0);
-                    break;
-                }
-                case 'stop_live_capture':
-                    logger.info('stop_live_capture received');
-                    if (this._liveInterval) {
-                        clearTimeout(this._liveInterval);
-                        this._liveInterval = undefined;
-                    }
-                    this._liveCaptureActive = false;
-                    this._liveCaptureBusy = false;
-                    break;
                 case 'update_player':
                     logger.info('update_player command received:', message.payload);
                     if (typeof AppUpdater !== 'undefined') {
@@ -856,7 +706,6 @@ const Player = {
                 case 'set_off_timer':
                 case 'clear_on_timer':
                 case 'clear_off_timer':
-                case 'set_screenshot_interval':
                 case 'set_zones':
                 case 'update_tv_firmware':
                     logger.info(`Command received: ${messageType}`, message.payload);
@@ -2932,20 +2781,10 @@ const Player = {
         // playlist gets a clean container.
         if (this._zoneMode)
             this.stopZoneMode();
-        // Reset thumbnail throttle so the first item of the new playlist always captures.
-        this._lastThumbAt = 0;
-        if (this._thumbTimer) {
-            clearTimeout(this._thumbTimer);
-            this._thumbTimer = undefined;
-        }
         this.renderPlaylist(playlistToPlay);
         this.currentContent = playlistToPlay;
         this.lastContentSignature = signatureToSet;
         this.cachePlaylist(playlistToPlay, signatureToSet);
-        // For NativeSync playlists, Samsung controls item transitions natively so
-        // _thumbnailOnItemStart never fires. Take a screenshot after a short delay
-        // to capture the new content regardless of playback mode.
-        setTimeout(() => { this.takeScreenshotWithTrigger('content_change'); }, 8000);
     },
     // Download content in background without interrupting playback
     downloadContentInBackground(content, newSignature) {
@@ -7059,8 +6898,6 @@ const Player = {
                 }
                 catch (_) { }
                 logger.info(`[Seamless] Now playing ${currentIndex + 1}/${playableItems.length}`);
-                // Refresh device-card thumbnail on each seamless transition (throttled).
-                this._thumbnailOnItemStart();
                 const playersAfter = this.getSeamlessPlayers();
                 const idle = playersAfter.next;
                 const upcoming = (_a = playableItems[upcomingIndex]) === null || _a === void 0 ? void 0 : _a.content;
@@ -7166,8 +7003,6 @@ const Player = {
                 this._activeSyncVideo = null;
                 this._syncCurrentItemIndex = currentIndex;
             }
-            // Refresh device-card thumbnail on each item transition (throttled).
-            this._thumbnailOnItemStart();
             const itemKey = this.getPlaylistItemKey(content);
             const isDocumentContent = content.type === 'PDF' || content.type === 'OFFICE';
             const canReuseImage = content.type === 'IMAGE' &&
@@ -7752,27 +7587,6 @@ const Player = {
                 this.sendLocalMdcXhr('on_timer_set', { slot, onEnable: 0, offEnable: 0 })
                     .then((r) => logger.info('[cmd] CLEAR_OFF_TIMER slot', slot, r.ok))
                     .catch((e) => logger.warn('[cmd] CLEAR_OFF_TIMER failed:', e));
-                break;
-            }
-            case 'SCREENSHOT':
-                this.takeScreenshot();
-                break;
-            case 'SCREENSHOT_AUTO':
-                // Server-initiated on-connect shot — stored in-memory only, no disk write
-                this.takeScreenshotWithTrigger('content_change');
-                break;
-            case 'SET_SCREENSHOT_INTERVAL': {
-                // API sends { minutes: N } — set up a periodic takeScreenshot loop on the device.
-                // Clears any existing timer first.
-                if (this._screenshotIntervalHandle) {
-                    clearInterval(this._screenshotIntervalHandle);
-                    this._screenshotIntervalHandle = undefined;
-                }
-                const minutes = Math.max(1, Number(payload === null || payload === void 0 ? void 0 : payload.minutes) || 5);
-                logger.info('[Screenshot] interval set to', minutes, 'min');
-                // Take one immediately, then repeat
-                setTimeout(() => this.takeScreenshotWithTrigger('interval'), 3000);
-                this._screenshotIntervalHandle = setInterval(() => this.takeScreenshotWithTrigger('interval'), minutes * 60000);
                 break;
             }
             case 'SET_VOLUME':
@@ -8796,141 +8610,6 @@ const Player = {
             logger.debug('Failed to persist lock state:', error);
         }
         logger.info(kind + ' updated', { enabled: value });
-    },
-    takeScreenshotWithTrigger(trigger) {
-        this._captureScreenshot(trigger);
-    },
-    takeScreenshot() {
-        this._captureScreenshot('manual');
-    },
-    // Schedule a throttled content_change capture ~3s after a per-item transition
-    // so the device-card thumbnail reflects whatever is currently on screen.
-    // Rate-limited to at most one capture per 10s (matches PROJECT_PLAN �3.1).
-    _thumbnailOnItemStart() {
-        const now = Date.now();
-        const lastAt = this._lastThumbAt || 0;
-        if (now - lastAt < 10000)
-            return;
-        // Cancel any pending timer and reschedule so the LATEST item start wins.
-        if (this._thumbTimer) {
-            clearTimeout(this._thumbTimer);
-            this._thumbTimer = undefined;
-        }
-        this._thumbTimer = setTimeout(() => {
-            this._thumbTimer = undefined;
-            this._lastThumbAt = Date.now();
-            try {
-                this.takeScreenshotWithTrigger('content_change');
-            }
-            catch (e) {
-                logger.warn('[Screenshot] item-start capture failed:', e);
-            }
-        }, 3000);
-    },
-    _captureScreenshot(trigger) {
-        const ws = this.wsConnection;
-        if (!ws || ws.readyState !== 1) {
-            logger.warn('[Screenshot] WebSocket not connected, cannot send screenshot');
-            return;
-        }
-        const send = (dataBase64) => {
-            ws.send(JSON.stringify({
-                type: 'screenshot_data',
-                payload: { dataBase64, trigger, contentId: null },
-            }));
-            logger.info('[Screenshot] screenshot_data sent, bytes:', dataBase64.length);
-        };
-        // Try b2bcontrol.captureScreen first (returns file path on Samsung LFD)
-        try {
-            const b2b = typeof window.b2bapis !== 'undefined' ? window.b2bapis.b2bcontrol : null;
-            if (b2b && typeof b2b.captureScreen === 'function') {
-                b2b.captureScreen((filePath) => {
-                    logger.info('[Screenshot] captureScreen succeeded, path:', filePath);
-                    try {
-                        const normalizedPath = String(filePath || '').replace(/^file:\/\//, '');
-                        const platform = window.Platform;
-                        if (platform && platform.isLegacy) {
-                            // Tizen 4: filesystem.openFile does not exist � use resolve + openStream
-                            tizen.filesystem.resolve(normalizedPath, (file) => {
-                                file.openStream('r', (stream) => {
-                                    try {
-                                        const bytes = stream.readBytes(file.fileSize);
-                                        stream.close();
-                                        let binary = '';
-                                        for (let i = 0; i < bytes.length; i++)
-                                            binary += String.fromCharCode(bytes[i]);
-                                        send(btoa(binary));
-                                    }
-                                    catch (e) {
-                                        logger.warn('[Screenshot] read stream bytes failed, trying canvas:', e);
-                                        this._canvasFallbackScreenshot(send);
-                                    }
-                                }, (e) => {
-                                    logger.warn('[Screenshot] openStream error, trying canvas:', e);
-                                    this._canvasFallbackScreenshot(send);
-                                }, 'ISO-8859-1');
-                            }, (e) => {
-                                logger.warn('[Screenshot] filesystem.resolve failed, trying canvas:', e);
-                                this._canvasFallbackScreenshot(send);
-                            }, 'r');
-                        }
-                        else {
-                            try {
-                                const fh = tizen.filesystem.openFile(normalizedPath, 'r');
-                                try {
-                                    const bytes = fh.readData();
-                                    let binary = '';
-                                    for (let i = 0; i < bytes.length; i++)
-                                        binary += String.fromCharCode(bytes[i]);
-                                    send(btoa(binary));
-                                }
-                                finally {
-                                    try {
-                                        fh.close();
-                                    }
-                                    catch (_) { }
-                                }
-                            }
-                            catch (e) {
-                                logger.warn('[Screenshot] openFile failed, trying canvas:', e);
-                                this._canvasFallbackScreenshot(send);
-                            }
-                        }
-                    }
-                    catch (e) {
-                        logger.warn('[Screenshot] filesystem access failed, trying canvas:', e);
-                        this._canvasFallbackScreenshot(send);
-                    }
-                }, (e) => {
-                    logger.warn('[Screenshot] captureScreen error, trying canvas:', (e && e.message) || e);
-                    this._canvasFallbackScreenshot(send);
-                });
-                return;
-            }
-        }
-        catch (e) {
-            logger.warn('[Screenshot] b2b captureScreen threw:', e);
-        }
-        // Fallback: HTML5 canvas DOM capture
-        this._canvasFallbackScreenshot(send);
-    },
-    _canvasFallbackScreenshot(send) {
-        try {
-            const canvas = document.createElement('canvas');
-            canvas.width = window.innerWidth || 1920;
-            canvas.height = window.innerHeight || 1080;
-            const ctx = canvas.getContext('2d');
-            if (!ctx)
-                throw new Error('No 2d context');
-            ctx.fillStyle = '#000';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-            const base64 = dataUrl.split(',')[1];
-            send(base64);
-        }
-        catch (e) {
-            logger.warn('[Screenshot] Canvas fallback failed:', e);
-        }
     },
     // Select an AVPlay profile based on resolution and stream type
     selectAvPlayProfile(content) {

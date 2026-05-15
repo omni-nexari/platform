@@ -154,7 +154,9 @@ export async function syncRelayRoutes(app: FastifyInstance) {
         const expected = clientsInGroup(gid).filter((c) => !!c.deviceId).length;
         if (expected >= 1 && set.size >= expected) {
           loopReady.set(gid, new Set());                    // reset for next loop
-          const playAt = Date.now() + 400;
+          // 800 ms gives Tizen WebKit enough headroom to execute play() precisely.
+          // Tighter windows cause platform-specific first-frame latency to bleed through.
+          const playAt = Date.now() + 800;
           broadcastGroup(gid, { type: 'LOOP_GO', playAt }, null);
         }
         return;
