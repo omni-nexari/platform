@@ -228,6 +228,21 @@ function TypeBadge({ type }: { type: Device['type'] }) {
   return <Badge tone={t.tone}>{t.label}</Badge>;
 }
 
+function platformLabel(p: string): string {
+  const map: Record<string, string> = {
+    'tizen': 'Tizen',
+    'tizen-sbb': 'Tizen SBB',
+    'tizen-tv': 'Tizen TV',
+    'tizen-consumer': 'Tizen TV',
+    'android': 'Android',
+    'windows': 'Windows',
+    'linux': 'Linux',
+    'browser': 'Browser',
+    'webos': 'WebOS',
+  };
+  return map[p] ?? p;
+}
+
 interface DeviceGroupListItem {
   id: string;
   name: string;
@@ -830,7 +845,7 @@ export default function DevicesPage() {
                       <div className="flex flex-wrap gap-1.5">
                         <StatusBadge status={device.status} />
                         {device.platform && device.platform !== 'tizen' && (
-                          <Badge tone="neutral">{device.platform}</Badge>
+                          <Badge tone="neutral">{platformLabel(device.platform)}</Badge>
                         )}
                         {device.kind === 'epaper' && (
                           <Badge tone="info">E-Paper</Badge>

@@ -2,11 +2,11 @@
 <widget xmlns:tizen="http://tizen.org/ns/widgets" xmlns="http://www.w3.org/ns/widgets" id="http://nexari.app/tizen/NexariTV" version="1.0.0" viewmodes="maximized">
     <access origin="*" subdomains="true"></access>
     <tizen:allow-navigation>*</tizen:allow-navigation>
-    <tizen:application id="zBkMAo0wLV.Nexritv" package="zBkMAo0wLV" required_version="6.5"/>
+    <tizen:application id="zBkMAo0wLV.Nexritv" package="zBkMAo0wLV" required_version="8.0"/>
     <content src="index.html"/>
     <tizen:content-security-policy>default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; img-src * data: blob:; frame-src *; style-src * 'unsafe-inline';</tizen:content-security-policy>
     <tizen:content-security-policy-report-only></tizen:content-security-policy-report-only>
-    <description>Nexri-tv — Nexari Signage for Consumer Samsung Smart TVs </description>
+    <description>Nexri-tv — Nexari Signage for Consumer Samsung Smart TVs</description>
     <feature name="http://tizen.org/feature/screen.size.all"/>
     <icon src="icon.png"/>
     <tizen:metadata key="http://samsung.com/tv/metadata/use.network" value="true"/>
@@ -29,7 +29,6 @@
     <tizen:privilege name="http://tizen.org/privilege/power"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/productinfo"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/tvinfo"/>
-    <tizen:privilege name="http://developer.samsung.com/privilege/systemcontrol"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/widgetdata"/>
     <tizen:privilege name="http://samsung.com/privilege/documentplay"/>
     <tizen:privilege name="http://tizen.org/privilege/bluetooth"/>

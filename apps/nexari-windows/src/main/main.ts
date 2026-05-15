@@ -117,6 +117,7 @@ app.on('ready', async () => {
       deviceToken: s.get('deviceToken') || '',
       deviceId:    s.get('deviceId')    || '',
       appVersion:  app.getVersion(),
+      isDev:       isDev,
     };
   });
 
@@ -201,9 +202,12 @@ app.on('ready', async () => {
     connectSrcHosts.add(httpOrigin);
     connectSrcHosts.add(wsOrigin);
   } catch { /* ignore — apiBase malformed */ }
-  // Always permit production hosts so a re-pair after CSP install still works.
-  connectSrcHosts.add('https://ds.chiho.app');
-  connectSrcHosts.add('wss://ds.chiho.app');
+  // In production always permit the cloud hosts; skip them in dev so only the
+  // local API server (192.168.1.17) is in the allowlist.
+  if (!isDev) {
+    connectSrcHosts.add('https://ds.chiho.app');
+    connectSrcHosts.add('wss://ds.chiho.app');
+  }
   const connectSrc = ["'self'", ...Array.from(connectSrcHosts)].join(' ');
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

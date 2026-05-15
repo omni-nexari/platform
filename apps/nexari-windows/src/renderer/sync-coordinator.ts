@@ -11,7 +11,7 @@
  */
 import { init as syncInit, stop as syncStop } from '@sync/sync.js';
 import type { SyncConfig } from '@sync/sync.js';
-import { setPlaylist, getPlaylistUrls } from '@sync/engine.js';
+import { setPlaylist, getPlaylistUrls, getDuration } from '@sync/engine.js';
 
 let _active = false;
 
@@ -76,8 +76,6 @@ export async function startSync(cfg: WindowsSyncConfig): Promise<void> {
     prepareEngine:     (url: string) => prepare(url),
     schedulePlay:      (epochMs: number) => schedulePlayAt(epochMs),
     getEngineDuration: () => {
-      // duration returned from engine
-      const { getDuration } = require('@sync/engine.js');
       return getDuration();
     },
     restartEngine: () => {

@@ -13,7 +13,7 @@ const api = {
 
   // ── Config ──────────────────────────────────────────────────────────────
   getDefaultApiBase: (): Promise<string> => ipcRenderer.invoke('app:getDefaultApiBase'),
-  getConfig: (): Promise<{ apiBase: string; deviceToken: string; deviceId: string; appVersion: string }> =>
+  getConfig: (): Promise<{ apiBase: string; deviceToken: string; deviceId: string; appVersion: string; isDev: boolean }> =>
     ipcRenderer.invoke('app:getConfig'),
   /** Clear stored credentials and return to the pairing screen. */
   unpair: (): Promise<void> => ipcRenderer.invoke('app:unpair'),

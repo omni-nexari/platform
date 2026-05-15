@@ -490,6 +490,21 @@ function StatusBadge({ status }: { status: Device['status'] }) {
   return <Badge tone={meta.tone}>{meta.label}</Badge>;
 }
 
+function platformLabel(p: string): string {
+  const map: Record<string, string> = {
+    'tizen': 'Tizen',
+    'tizen-sbb': 'Tizen SBB',
+    'tizen-tv': 'Tizen TV',
+    'tizen-consumer': 'Tizen TV',
+    'android': 'Android',
+    'windows': 'Windows',
+    'linux': 'Linux',
+    'browser': 'Browser',
+    'webos': 'WebOS',
+  };
+  return map[p] ?? p;
+}
+
 function InfoRow({ icon: Icon, label, value }: {
   icon: React.ElementType;
   label: string;
@@ -1554,7 +1569,7 @@ export function DeviceDetailContent({
             </Badge>
           )}
           {device.platform && (
-            <Badge tone="neutral" className="capitalize">{device.platform}</Badge>
+            <Badge tone="neutral">{platformLabel(device.platform)}</Badge>
           )}
           {device.manufacturer && (
             <Badge tone="neutral">{device.manufacturer}</Badge>

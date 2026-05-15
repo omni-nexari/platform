@@ -2995,7 +2995,6 @@ const Player = {
     // Load current content
     loadContent() {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a;
             if (this._loadInFlight) {
                 logger.debug('loadContent skipped (already in flight)');
                 return;
@@ -3009,25 +3008,6 @@ const Player = {
                     const isPlaying = !!(this.currentPlaylistController && !this.currentPlaylistController.cancelled) || this._zoneMode || this._nativeSyncActive;
                     logger.info(`Content signature: ${newSignature}, Last: ${this.lastContentSignature}`);
                     logger.info(`Currently playing: ${isPlaying} (controller=${!!(this.currentPlaylistController && !this.currentPlaylistController.cancelled)}, zone=${this._zoneMode}, nativeSync=${this._nativeSyncActive})`);
-                    // Cross-OS relay dead-check: if this is a cross-OS sync group but the relay
-                    // was never started (_syncGroupRelayStop is null), force re-render so
-                    // renderPlaylist can call _startSyncGroupRelay even when the signature matches.
-                    const isCrossOsSync = !!(this.currentContent &&
-                        ((_a = this.currentContent.syncPlay) === null || _a === void 0 ? void 0 : _a.allTizen) === false);
-                    if (isCrossOsSync &&
-                        !this._syncGroupRelayStop &&
-                        newSignature &&
-                        this.lastContentSignature &&
-                        newSignature === this.lastContentSignature &&
-                        this.currentContent &&
-                        isPlaying) {
-                        logger.warn('[Sync] Cross-OS relay never started — forcing re-render to start relay');
-                        this.cancelCurrentPlayback();
-                        if (this._zoneMode)
-                            this.stopZoneMode();
-                        this.renderPlaylist(this.currentContent);
-                        return;
-                    }
                     if (newSignature &&
                         this.lastContentSignature &&
                         newSignature === this.lastContentSignature &&
@@ -6735,8 +6715,6 @@ const Player = {
                 // Connect (or reconnect) to the relay WS for this cross-OS sync group.
                 // Use the manifest cached from SYNC_GROUP_INIT if available, otherwise
                 // derive relayUrl from the peer IP list in syncPlayInfo.
-                // NOTE: _startSyncGroupRelay always derives its own URL from CONFIG.API_BASE
-                // (cloud relay), so we call it unconditionally — no relayUrl hint required.
                 const manifest = this._lastSyncGroupManifest;
                 const relayUrl = (manifest && manifest['relayUrl']) ||
                     (() => {
@@ -6749,13 +6727,18 @@ const Player = {
                         const leaderIp = ((_a = sorted[0]) === null || _a === void 0 ? void 0 : _a.ipAddress) || ((_b = sorted[0]) === null || _b === void 0 ? void 0 : _b.lastKnownIp) || null;
                         return leaderIp ? `ws://${leaderIp}:9616` : null;
                     })();
-                this._startSyncGroupRelay(Object.assign(Object.assign({}, (manifest || {})), { relayUrl, syncGroupId: syncGroupId || (manifest && manifest['syncGroupId']), leaderPriority: (manifest && manifest['leaderPriority']) ||
-                        (() => {
-                            const peers = Array.isArray(syncPlayInfo && syncPlayInfo.peers) ? syncPlayInfo.peers : [];
-                            return [...peers]
-                                .sort((a, b) => { var _a, _b; return ((_a = a.leaderPriority) !== null && _a !== void 0 ? _a : 0) - ((_b = b.leaderPriority) !== null && _b !== void 0 ? _b : 0); })
-                                .map((p) => p.deviceId);
-                        })() }));
+                if (relayUrl) {
+                    this._startSyncGroupRelay(Object.assign(Object.assign({}, (manifest || {})), { relayUrl, syncGroupId: syncGroupId || (manifest && manifest['syncGroupId']), leaderPriority: (manifest && manifest['leaderPriority']) ||
+                            (() => {
+                                const peers = Array.isArray(syncPlayInfo && syncPlayInfo.peers) ? syncPlayInfo.peers : [];
+                                return [...peers]
+                                    .sort((a, b) => { var _a, _b; return ((_a = a.leaderPriority) !== null && _a !== void 0 ? _a : 0) - ((_b = b.leaderPriority) !== null && _b !== void 0 ? _b : 0); })
+                                    .map((p) => p.deviceId);
+                            })() }));
+                }
+                else {
+                    logger.warn('[Sync] Cross-OS group: no relayUrl available, falling back to standard render');
+                }
                 this.renderPlaylistStandard(playableItems, container);
                 return;
             }

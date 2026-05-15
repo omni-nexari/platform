@@ -233,8 +233,16 @@ async function startSyncGroupPlayback(content: Playlist) {
     const expectedPeers = Math.max(1, peers.length - 1);
     // peers is already sorted by leaderPriority asc from the API; peers[0] is the designated leader.
     const pinnedLeaderId = peers[0]?.deviceId ?? '';
-    const syncRelayMode = (content as any).syncRelayMode ?? 'cloud';
-    const relayUrl      = (content as any).relayUrl ?? null;
+    // In cross-OS groups (allTizen===false), the Tizen relay implementation is
+    // follower-only: it can't send LOAD_URL or GO. The Windows player must be
+    // the leader so it broadcasts LOAD_URL and sends GO. Force ourselves as
+    // leader by pinning to our own deviceId whenever allTizen===false.
+    const effectiveLeaderId = (content.allTizen === false) ? deviceId : pinnedLeaderId;
+    // In dev mode force cloud relay so sync goes through the local API server
+    // (192.168.1.17) rather than a direct LAN connection to the leader device,
+    // which may not be in the CSP allowlist.
+    const syncRelayMode = cfg.isDev ? 'cloud' : ((content as any).syncRelayMode ?? 'cloud');
+    const relayUrl      = cfg.isDev ? null     : ((content as any).relayUrl ?? null);
 
     const urls = content.items
       .map(i => i.content?.url || i.content?.fileUrl || '')
@@ -242,7 +250,7 @@ async function startSyncGroupPlayback(content: Playlist) {
 
     if (!urls.length) { console.warn('[Sync] no video URLs'); playCurrentItem(); return; }
 
-    console.info(`[Sync] starting relay sync groupId=${content.syncGroupId} peers=${expectedPeers} pinnedLeader=${pinnedLeaderId}`);
+    console.info(`[Sync] starting relay sync groupId=${content.syncGroupId} peers=${expectedPeers} pinnedLeader=${effectiveLeaderId} (manifest=${pinnedLeaderId} allTizen=${content.allTizen})`);
     _syncActive = true;
     await startSync({
       apiBase,
@@ -250,7 +258,7 @@ async function startSyncGroupPlayback(content: Playlist) {
       deviceId,
       groupId: content.syncGroupId!,
       expectedPeers,
-      pinnedLeaderId,
+      pinnedLeaderId: effectiveLeaderId,
       syncRelayMode,
       relayUrl,
       container: root,
