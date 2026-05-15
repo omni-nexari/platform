@@ -4,7 +4,7 @@ import { createReadStream, existsSync, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import AdmZip from 'adm-zip';
-import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents, deviceGroupMembers, deviceGroups, calendarConnections } from '@signage/db';
+import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents, deviceGroupMembers, deviceGroups, calendarConnections, deviceRules, bleScanResults } from '@signage/db';
 import { eq, and, isNull, desc, asc, inArray, sql, ilike, gte, lte, lt } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -3031,6 +3031,199 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
 
     return reply.status(201).send({ inserted: rows.length });
+  });
+
+  // ── Device Rules (BLE trigger rules evaluated on-device) ──────────────────
+
+  // GET /devices/:id/rules
+  app.get('/:id/rules', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    const rows = await db.query.deviceRules.findMany({
+      where: and(eq(deviceRules.workspaceId, device.workspaceId), eq(deviceRules.deviceId, id)),
+      orderBy: [desc(deviceRules.priority), asc(deviceRules.createdAt)],
+    });
+    return reply.send({ rules: rows });
+  });
+
+  // POST /devices/:id/rules
+  app.post('/:id/rules', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    const body = req.body as {
+      name: string;
+      enabled?: boolean;
+      conditions: unknown;
+      action: unknown;
+      priority?: number;
+    };
+    if (!body.name || !body.conditions || !body.action) {
+      return reply.status(400).send({ error: 'name, conditions, and action are required' });
+    }
+
+    const [row] = await db.insert(deviceRules).values({
+      workspaceId: device.workspaceId,
+      deviceId: id,
+      name: body.name,
+      enabled: body.enabled ?? true,
+      conditions: body.conditions as never,
+      action: body.action as never,
+      priority: body.priority ?? 0,
+    }).returning();
+    return reply.status(201).send(row);
+  });
+
+  // PUT /devices/:id/rules/:ruleId
+  app.put('/:id/rules/:ruleId', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id, ruleId } = req.params as { id: string; ruleId: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Device not found' });
+
+    const existing = await db.query.deviceRules.findFirst({
+      where: and(eq(deviceRules.id, ruleId), eq(deviceRules.deviceId, id)),
+    });
+    if (!existing) return reply.status(404).send({ error: 'Rule not found' });
+
+    const body = req.body as {
+      name?: string;
+      enabled?: boolean;
+      conditions?: unknown;
+      action?: unknown;
+      priority?: number;
+    };
+
+    const [updated] = await db.update(deviceRules)
+      .set({
+        ...(body.name       !== undefined && { name:       body.name }),
+        ...(body.enabled    !== undefined && { enabled:    body.enabled }),
+        ...(body.conditions !== undefined && { conditions: body.conditions as never }),
+        ...(body.action     !== undefined && { action:     body.action     as never }),
+        ...(body.priority   !== undefined && { priority:   body.priority }),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(deviceRules.id, ruleId), eq(deviceRules.deviceId, id)))
+      .returning();
+    return reply.send(updated);
+  });
+
+  // DELETE /devices/:id/rules/:ruleId
+  app.delete('/:id/rules/:ruleId', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id, ruleId } = req.params as { id: string; ruleId: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Device not found' });
+
+    await db.delete(deviceRules).where(
+      and(eq(deviceRules.id, ruleId), eq(deviceRules.deviceId, id)),
+    );
+    return reply.status(204).send();
+  });
+
+  // POST /devices/:id/rules/publish — push all rules to TV via WebSocket
+  app.post('/:id/rules/publish', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    if (!isDeviceOnline(id)) {
+      return reply.status(409).send({ error: 'Device is offline' });
+    }
+
+    const rows = await db.query.deviceRules.findMany({
+      where: and(eq(deviceRules.workspaceId, device.workspaceId), eq(deviceRules.deviceId, id)),
+      orderBy: [desc(deviceRules.priority), asc(deviceRules.createdAt)],
+    });
+
+    sendCommand(id, { type: 'device_rules', rules: rows } as never);
+    return reply.send({ published: true, ruleCount: rows.length });
+  });
+
+  // POST /devices/:id/ble-scan — tell TV to run a BLE scan and post results back
+  app.post('/:id/ble-scan', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    if (!isDeviceOnline(id)) {
+      return reply.status(409).send({ error: 'Device is offline' });
+    }
+
+    sendCommand(id, { type: 'ble_scan' } as never);
+    return reply.send({ sent: true });
+  });
+
+  // GET /devices/:id/ble-scan/latest — fetch most recent scan results
+  app.get('/:id/ble-scan/latest', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    const row = await db.query.bleScanResults.findFirst({
+      where: eq(bleScanResults.deviceId, id),
+      orderBy: [desc(bleScanResults.scannedAt)],
+    });
+    return reply.send(row ?? null);
+  });
+
+  // POST /device/ble-scan-result — device posts BLE scan results back (device-auth)
+  app.post('/device/ble-scan-result', async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+
+    const body = req.body as { beacons?: unknown };
+    if (!Array.isArray(body.beacons)) {
+      return reply.status(400).send({ error: 'beacons array required' });
+    }
+
+    // Insert new scan result
+    await db.insert(bleScanResults).values({
+      deviceId: auth.deviceId,
+      beacons: body.beacons as never,
+    });
+
+    // Prune: keep only the 5 most recent rows per device
+    const allRows = await db.query.bleScanResults.findMany({
+      where: eq(bleScanResults.deviceId, auth.deviceId),
+      orderBy: [desc(bleScanResults.scannedAt)],
+      columns: { id: true },
+    });
+    if (allRows.length > 5) {
+      const toDelete = allRows.slice(5).map(r => r.id);
+      await db.delete(bleScanResults).where(inArray(bleScanResults.id, toDelete));
+    }
+
+    return reply.status(201).send({ stored: true });
   });
 }
 

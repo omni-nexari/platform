@@ -22,8 +22,22 @@ export type BleBeaconCondition = {
   uuid: string;
   major?: number;
   minor?: number;
+  /** Human-readable beacon name (display only, not used for matching). */
+  name?: string;
   /** RSSI floor in dBm — beacon must be stronger than this to match. Default -75. */
   rssiThreshold?: number;
+  /**
+   * Minimum proximity distance in centimetres (inclusive lower bound).
+   * If set, the estimated beacon distance must be >= distanceMinCm.
+   * null / undefined = no lower bound.
+   */
+  distanceMinCm?: number | null;
+  /**
+   * Maximum proximity distance in centimetres (inclusive upper bound).
+   * If set, the estimated beacon distance must be <= distanceMaxCm.
+   * null / undefined = no upper bound.
+   */
+  distanceMaxCm?: number | null;
 };
 
 export type TimeWindowCondition = {
@@ -57,7 +71,12 @@ export type PlayPlaylistAction = {
   playlistId: string;
 };
 
-export type TriggerAction = PlayPlaylistAction;
+export type PlayContentAction = {
+  type: 'play_content';
+  contentId: string;
+};
+
+export type TriggerAction = PlayPlaylistAction | PlayContentAction;
 
 // ── Table ─────────────────────────────────────────────────────────────────────
 // NOTE: The sensor-based 'trigger_rules' table already exists in sensors.ts.

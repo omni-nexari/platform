@@ -623,6 +623,18 @@ const Player = {
                     logger.info('relaunch_app command received');
                     this.executeCommand({ type: 'RELAUNCH_APP' });
                     break;
+                case 'device_rules':
+                    logger.info('device_rules received:', (message.rules || []).length, 'rules');
+                    if (typeof BleManager !== 'undefined') {
+                        BleManager.setRules(message.rules || []);
+                    }
+                    break;
+                case 'ble_scan':
+                    logger.info('ble_scan command received');
+                    if (typeof BleManager !== 'undefined') {
+                        BleManager.triggerOnDemandScan();
+                    }
+                    break;
                 case 'power_off':
                     logger.info('power_off command received');
                     this.executeCommand({ type: 'POWER_OFF' });
