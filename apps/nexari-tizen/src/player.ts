@@ -1,4 +1,4 @@
-// Content Player Module - TypeScript Edition
+﻿// Content Player Module - TypeScript Edition
 /// <reference types="tizen-tv-webapis" />
 
 // Type definitions
@@ -1731,6 +1731,18 @@ const Player = {
     return null;
   },
 
+  // Returns the rect and rotation to pass to b2bsyncplay.startSyncPlay().
+  // Samsung firmware spec: rect MUST be (0,0,1920,1080) — portrait/other dims
+  // are out of spec ("Invalid Rect"). For portrait-mounted panels, pass
+  // rotation='ON' so the firmware rotates the 1920x1080 plane to fit the
+  // physical 1080x1920 screen. Landscape uses rotation='OFF'.
+  _getSyncPlayRect(): { x: number; y: number; w: number; h: number; rotation: string } {
+    const vw = window.innerWidth || 1920;
+    const vh = window.innerHeight || 1080;
+    const rotation = vh > vw ? 'ON' : 'OFF';
+    return { x: 0, y: 0, w: 1920, h: 1080, rotation };
+  },
+
   // Render a sync-group playlist via Samsung firmware SyncPlay. All TVs that
   // share the same numeric groupID and call startSyncPlay() with the same
   // playlist play in lockstep � firmware handles peer discovery, clock
@@ -1812,29 +1824,46 @@ const Player = {
       }
     };
 
-    // Defensive cleanup: only clearSyncPlayList (resets playlist data).
-    // DO NOT call stopSyncPlay() here � it is queued by the firmware and
-    // can fire *after* the new startSyncPlay() session begins, killing it.
-    // stopSyncPlay() is reserved for explicit teardown in stopNativeSyncPlay().
-    let started = false;
-    const begin = (reason: string) => {
-      if (started) return;
-      started = true;
-      logger.info('[NativeSync] begin (' + reason + ') ? calling makeSyncPlayList');
-      startNativeSync();
+    // Sequential teardown -> rebuild -> start prevents "Can't register callback".
+    // stopSyncPlay unregisters any live firmware onChange from a previous session
+    // (including ghost sessions after a page reload). clearSyncPlayList resets the
+    // playlist. Only after both complete do we call makeSyncPlayList + startSyncPlay.
+    // Per-step fallback timeouts prevent stalls if a callback never fires.
+    let cleared = false;
+    const doClear = (reason: string) => {
+      if (cleared) return;
+      cleared = true;
+      logger.info('[NativeSync] doClear (' + reason + ') -> clearSyncPlayList');
+      let started = false;
+      const begin = (r: string) => {
+        if (started) return;
+        started = true;
+        logger.info('[NativeSync] begin (' + r + ') -> makeSyncPlayList');
+        startNativeSync();
+      };
+      try {
+        api.clearSyncPlayList(
+          () => { logger.info('[NativeSync] clearSyncPlayList ok'); begin('clear-ok'); },
+          () => { logger.warn('[NativeSync] clearSyncPlayList err'); begin('clear-err'); },
+        );
+      } catch (e: any) {
+        logger.warn('[NativeSync] clearSyncPlayList threw: ' + (e?.message || e));
+        begin('clear-throw');
+      }
+      setTimeout(() => begin('clear-timeout'), 500);
     };
+    // Always stop first: unregisters any live onChange callback in the firmware.
     try {
-      api.clearSyncPlayList(
-        () => { logger.info('[NativeSync] clearSyncPlayList ok'); begin('clear-ok'); },
-        () => { logger.warn('[NativeSync] clearSyncPlayList err'); begin('clear-err'); },
+      api.stopSyncPlay(
+        () => { logger.info('[NativeSync] stopSyncPlay ok'); setTimeout(() => doClear('stop-ok'), 50); },
+        () => { logger.warn('[NativeSync] stopSyncPlay err'); doClear('stop-err'); },
       );
     } catch (e: any) {
-      logger.warn('[NativeSync] clearSyncPlayList threw: ' + (e?.message || e));
-      begin('clear-throw');
+      logger.warn('[NativeSync] stopSyncPlay threw: ' + (e?.message || e));
+      doClear('stop-throw');
     }
-    setTimeout(() => begin('timeout'), 600);
+    setTimeout(() => doClear('stop-timeout'), 600);
   },
-
   // Start the on-TV Node relay (b2bcontrol.startNodeServer → js/logic.js on :9616).
   // Safe to call multiple times — guarded by _wallRelayStarted flag.
   _startWallNodeRelay() {
@@ -2216,49 +2245,60 @@ const Player = {
     };
 
     // -- Rect & rotation -------------------------------------------------
-    // b2bsyncplay's startSyncPlay() rect uses PHYSICAL panel pixel
-    // coordinates, NOT AVPlay's fixed 1920�1080 logical space.
-    //
-    // Evidence: with (0,0,1920,1080) the video fills only the top-left
-    // physical quarter of a 3840�2160 UHD panel, appearing as a 960�540
-    // region that ends at the logical centre (960,540). Passing the full
-    // physical resolution (0,0,3840,2160) is required for full-screen.
-    //
-    // Source of rect:
-    //   1. _physicalPanelWidth/Height � queried at init via
-    //      tizen.systeminfo DISPLAY.resolutionWidth/Height (physical px).
-    //   2. window.screen.width * window.devicePixelRatio � DPR-scaled.
-    //   3. Hard-coded 3840�2160 UHD fallback.
-    //
-    // Rotation arg is for firmware content rotation on top of panel
-    // orientation; we always pass "OFF" and let the CMS supply pre-rotated
-    // assets for portrait layouts.
+    // Use CSS viewport dimensions so the video fills the physical panel.
+    // _getSyncPlayRect() auto-detects portrait (innerHeight > innerWidth) and
+    // returns rotation='90' with swapped dims so b2bsyncplay fills the screen.
+    const { x: rectX, y: rectY, w: rectW, h: rectH, rotation } = this._getSyncPlayRect();
 
-    // b2bsyncplay uses a CENTER-ORIGIN coordinate system in logical CSS
-    // pixels (same space as window.innerWidth/innerHeight = 1920�1080).
-    //
-    // Evidence:
-    //   (0, 0, 1920, 1080) ? video appears at screen (960,540), size 960�540
-    //     because posX=0 ? screen_x = 0+960 = 960, width 1920 clipped at 1920 ? 960px wide
-    //   (0, 0, 3840, 2160) ? BLACK: rect starts at center (960,540) and extends
-    //     3840px right ? entirely off the 1920-wide screen
-    //
-    // For full-screen: origin must be at top-left (0,0) of screen, so
-    //   posX = -(vpW/2), posY = -(vpH/2), width = vpW, height = vpH
-    //
-    // dforum sample (0,0,960,540) = 480�540-sized rect starting at (960,540)
-    //   � a deliberate demo sub-rect, not a full-screen call.
-
-    const rotation = 'OFF';
-    // b2bsyncplay uses CENTER-ORIGIN coords (posX/posY = offset from screen center).
-    // For full-screen: posX = -(vpW/2), posY = -(vpH/2), width = vpW, height = vpH
-    const vpW = (typeof window !== 'undefined' && window.innerWidth)  || 1920;
-    const vpH = (typeof window !== 'undefined' && window.innerHeight) || 1080;
-    const rectX = -Math.round(vpW / 2);
-    const rectY = -Math.round(vpH / 2);
+    // -- Diagnostic: log everything about the display coordinate space -----
     try {
-      logger.info('[NativeSync] startSyncPlay rect=' + rectX + ',' + rectY + ',' + vpW + ',' + vpH + ' groupID=' + groupId);
-      const handle = api.startSyncPlay(rectX, rectY, vpW, vpH, 5, rotation, onChange);
+      const dpr = window.devicePixelRatio || 1;
+      const sw = (screen as any).width || '?';
+      const sh = (screen as any).height || '?';
+      const iw = window.innerWidth || '?';
+      const ih = window.innerHeight || '?';
+      const docW = document.documentElement ? document.documentElement.clientWidth : '?';
+      const docH = document.documentElement ? document.documentElement.clientHeight : '?';
+      const bodyW = document.body ? document.body.clientWidth : '?';
+      const bodyH = document.body ? document.body.clientHeight : '?';
+      logger.info('[NativeSync-DIAG] screen=' + sw + 'x' + sh + ' inner=' + iw + 'x' + ih + ' dpr=' + dpr + ' docClient=' + docW + 'x' + docH + ' body=' + bodyW + 'x' + bodyH);
+
+      // Try Tizen system display info
+      try {
+        const ti = (window as any).tizen;
+        if (ti && ti.systeminfo && ti.systeminfo.getPropertyValue) {
+          ti.systeminfo.getPropertyValue('DISPLAY', (info: any) => {
+            logger.info('[NativeSync-DIAG] tizen DISPLAY resW=' + (info && info.resolutionWidth) + ' resH=' + (info && info.resolutionHeight) + ' dotsPerInch=' + (info && info.dotsPerInch));
+          }, (err: any) => {
+            logger.warn('[NativeSync-DIAG] tizen DISPLAY err: ' + (err && err.message));
+          });
+        }
+      } catch (tizenErr: any) {
+        logger.warn('[NativeSync-DIAG] tizen sysinfo threw: ' + tizenErr.message);
+      }
+
+      // Log DOM state of player-screen at moment of startSyncPlay
+      const ps = document.getElementById('player-screen');
+      if (ps) {
+        const psCR = ps.getBoundingClientRect();
+        logger.info('[NativeSync-DIAG] player-screen classList="' + ps.className + '" display="' + ps.style.display + '" rect=' + psCR.left + ',' + psCR.top + ',' + psCR.width + 'x' + psCR.height);
+      }
+      const body = document.body;
+      if (body) {
+        logger.info('[NativeSync-DIAG] body style: w=' + body.style.width + ' h=' + body.style.height + ' bg=' + body.style.background);
+      }
+      const html = document.documentElement;
+      if (html) {
+        logger.info('[NativeSync-DIAG] html style: w=' + html.style.width + ' h=' + html.style.height);
+      }
+    } catch (diagErr: any) {
+      logger.warn('[NativeSync-DIAG] diagnostic threw: ' + diagErr.message);
+    }
+    // ----------------------------------------------------------------------
+
+    try {
+      logger.info('[NativeSync] startSyncPlay rect=' + rectX + ',' + rectY + ',' + rectW + ',' + rectH + ' rotation=' + rotation + ' groupID=' + groupId);
+      const handle = api.startSyncPlay(rectX, rectY, rectW, rectH, 1, rotation, onChange);
       this._nativeSyncActive = true;
       this._nativeSyncGroupId = groupId;
       logger.info('[NativeSync] startSyncPlay invoked (groupID=' + groupId + ', handle=' + handle + ')');
@@ -2269,7 +2309,6 @@ const Player = {
       this.setAvPlayVisualMode(false);
     }
   },
-
   // Stop and clear any active firmware SyncPlay session. Idempotent.
   stopNativeSyncPlay() {
     if (!this._nativeSyncActive) return;
@@ -2295,6 +2334,8 @@ const Player = {
     const root = document.documentElement as HTMLElement | null;
     const body = document.body as HTMLElement | null;
     const playerScreen = document.getElementById('player-screen') as HTMLElement | null;
+    const pairingScreen = document.getElementById('pairing-screen') as HTMLElement | null;
+    const errorScreen = document.getElementById('error-screen') as HTMLElement | null;
     const contentContainer = document.getElementById('content-container') as HTMLElement | null;
     const transparent = active ? 'transparent' : '';
 
@@ -2302,22 +2343,77 @@ const Player = {
       body.classList.toggle('avplay-active', active);
       body.style.background = transparent;
       body.style.backgroundColor = transparent;
+      // Force document canvas to 1920x1080 when sync active so the b2bsyncplay
+      // rect (0,0,1920,1080) is not clipped by a portrait viewport (1080 wide).
+      // Firmware rotation='ON' then maps this 1920x1080 plane to the panel.
+      if (active) {
+        body.style.width = '1920px';
+        body.style.height = '1080px';
+        body.style.minWidth = '1920px';
+        body.style.minHeight = '1080px';
+        body.style.overflow = 'hidden';
+      } else {
+        body.style.width = '';
+        body.style.height = '';
+        body.style.minWidth = '';
+        body.style.minHeight = '';
+        body.style.overflow = '';
+      }
     }
 
     if (root) {
       root.style.background = transparent;
       root.style.backgroundColor = transparent;
+      if (active) {
+        root.style.width = '1920px';
+        root.style.height = '1080px';
+        root.style.overflow = 'hidden';
+      } else {
+        root.style.width = '';
+        root.style.height = '';
+        root.style.overflow = '';
+      }
     }
 
-    if (playerScreen) {
-      playerScreen.style.background = transparent;
-      playerScreen.style.backgroundColor = transparent;
+    // Aggressively hide ALL screen divs when sync is active so the hardware
+    // video overlay plane has no DOM layout above it that could constrain its
+    // rendering region. Restore prior display values on deactivate.
+    const screens: Array<HTMLElement | null> = [playerScreen, pairingScreen, errorScreen];
+    for (const el of screens) {
+      if (!el) continue;
+      if (active) {
+        if (!el.dataset.prevDisplay) {
+          el.dataset.prevDisplay = el.style.display || '';
+        }
+        // Strip the .screen class entirely while active so the
+        // `.screen { width:100vw; height:100vh }` rule cannot constrain
+        // the hardware overlay plane to portrait viewport bounds.
+        if (el.classList.contains('screen')) {
+          el.dataset.prevHadScreenClass = '1';
+          el.classList.remove('screen');
+        }
+        el.style.background = transparent;
+        el.style.backgroundColor = transparent;
+        el.style.display = 'none';
+      } else {
+        el.style.background = '';
+        el.style.backgroundColor = '';
+        el.style.display = el.dataset.prevDisplay || '';
+        delete el.dataset.prevDisplay;
+        if (el.dataset.prevHadScreenClass === '1') {
+          el.classList.add('screen');
+          delete el.dataset.prevHadScreenClass;
+        }
+      }
     }
 
     if (contentContainer) {
       contentContainer.style.background = transparent;
       contentContainer.style.backgroundColor = transparent;
-      contentContainer.style.visibility = active ? 'hidden' : '';
+      contentContainer.style.display = active ? 'none' : '';
+      if (active) {
+        try { contentContainer.innerHTML = ''; } catch (_) {}
+      }
     }
 
     if (body) {

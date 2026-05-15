@@ -2129,6 +2129,16 @@ var server = http.createServer(function(req, res) {
     console.log('[mdc-bridge] Listening on 0.0.0.0:' + HTTP_PORT);
   });
 
+  // ── Sync/LiveLinkFace relay on port 9616 ─────────────────────────────────
+  // The signed stub only loads mdc.js, so we boot logic.js from here.
+  // If this mdc.js is loaded a second time (e.g. WallRelay startNodeServer call)
+  // logic.js will simply get EADDRINUSE on 9616 — handled by its own error handler.
+  try {
+    require('./logic.js')();
+  } catch (e) {
+    console.log('[mdc-bridge] logic relay start error: ' + (e && e.message || e));
+  }
+
   // ── SyncPlay LAN mesh: cold-start manifest load ─────────────────────────
   fs.readFile(MANIFEST_PATH, 'utf8', function(err, data) {
     if (err) {
