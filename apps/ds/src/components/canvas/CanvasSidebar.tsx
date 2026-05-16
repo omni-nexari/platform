@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import {
   Type, Square, Circle, Minus, Layers,
-  Image as ImageIcon,
+  Image as ImageIcon, Tag,
 } from 'lucide-react';
 import { useCanvasStore } from '../../lib/canvasStore.js';
 import {
@@ -9,6 +10,7 @@ import {
   createCircleElement,
   createLineElement,
 } from '../../lib/canvasTypes.js';
+import MediaLibraryPanel from './MediaLibraryPanel.js';
 
 const TABS = [
   { id: 'shapes' as const, label: 'Shapes', icon: Square },
@@ -114,10 +116,12 @@ const TEXT_ITEMS = [
 
 // ── Sidebar component ────────────────────────────────────────────────────
 
-export default function CanvasSidebar() {
-  const { activeSidebarTab, setActiveSidebarTab, addElement, pages, selectedPageId, selectedElementIds, selectElements, removeElements, bringForward, sendBackward, bringToFront, sendToBack } = useCanvasStore();
+export default function CanvasSidebar({ workspaceId }: { workspaceId: string }) {
+  const { activeSidebarTab, setActiveSidebarTab, addElement, pages, selectedPageId, selectedElementIds, selectElements } = useCanvasStore();
   const page = pages.find((p) => p.id === selectedPageId);
   const elements = page?.elements ?? [];
+
+  const [layerTagFilter, setLayerTagFilter] = useState('');
 
   return (
     <div className="w-60 shrink-0 flex flex-col border-r border-[var(--border)] bg-[var(--card)]">
@@ -194,19 +198,14 @@ export default function CanvasSidebar() {
         )}
 
         {activeSidebarTab === 'media' && (
-          <div>
+          <div className="flex flex-col h-full">
             <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-3">
               Media
             </p>
-            <div className="rounded-lg border border-dashed border-[var(--border)] p-6 text-center">
-              <ImageIcon size={32} className="mx-auto text-[var(--text-muted)] mb-2" />
-              <p className="text-xs text-[var(--text-muted)]">
-                Media library coming in Phase 2
-              </p>
-              <p className="text-[10px] text-[var(--text-muted)] mt-1">
-                You'll be able to drag images and videos from your content library
-              </p>
-            </div>
+            <MediaLibraryPanel
+              workspaceId={workspaceId}
+              onSelect={(el) => addElement(el)}
+            />
           </div>
         )}
 
@@ -215,34 +214,78 @@ export default function CanvasSidebar() {
             <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-3">
               Layers
             </p>
+
+            {/* Tag filter */}
+            <div className="relative mb-2">
+              <Tag
+                size={11}
+                className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none"
+              />
+              <input
+                value={layerTagFilter}
+                onChange={(e) => setLayerTagFilter(e.target.value)}
+                placeholder="Filter by tag…"
+                className="w-full pl-6 pr-2 py-1 rounded border border-[var(--border)] bg-[var(--surface)] text-xs text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--blue)]"
+              />
+            </div>
+
             {elements.length === 0 ? (
               <p className="text-xs text-[var(--text-muted)] text-center py-4">
                 No elements on this page yet
               </p>
             ) : (
               <div className="space-y-0.5">
-                {[...elements].reverse().map((el, reversedIdx) => {
+                {[...elements].reverse()
+                  .filter((el) => {
+                    if (!layerTagFilter.trim()) return true;
+                    return el.tags?.some((t) =>
+                      t.toLowerCase().includes(layerTagFilter.trim().toLowerCase()),
+                    );
+                  })
+                  .map((el) => {
                   const isSelected = selectedElementIds.includes(el.id);
+                  const visibleTags = el.tags?.slice(0, 2) ?? [];
+                  const overflow = (el.tags?.length ?? 0) - visibleTags.length;
                   return (
                     <div
                       key={el.id}
                       onClick={() => selectElements([el.id])}
-                      className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer transition-colors ${
+                      className={`flex flex-col gap-0.5 px-2 py-1.5 rounded text-xs cursor-pointer transition-colors ${
                         isSelected
                           ? 'bg-[var(--blue)]/15 text-[var(--blue)]'
                           : 'text-[var(--text-muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]'
                       }`}
                     >
-                      {el.type === 'text' && <Type size={12} />}
-                      {el.type === 'rect' && <Square size={12} />}
-                      {el.type === 'circle' && <Circle size={12} />}
-                      {el.type === 'line' && <Minus size={12} />}
-                      <span className="flex-1 truncate">{el.name}</span>
-                      {el.locked && (
-                        <span className="text-[10px] text-amber-400">Locked</span>
-                      )}
-                      {!el.visible && (
-                        <span className="text-[10px] text-red-400">Hidden</span>
+                      <div className="flex items-center gap-2">
+                        {el.type === 'text' && <Type size={12} />}
+                        {el.type === 'rect' && <Square size={12} />}
+                        {el.type === 'circle' && <Circle size={12} />}
+                        {el.type === 'line' && <Minus size={12} />}
+                        {el.type === 'image' && <ImageIcon size={12} />}
+                        <span className="flex-1 truncate">{el.name}</span>
+                        {el.locked && (
+                          <span className="text-[10px] text-amber-400">Locked</span>
+                        )}
+                        {!el.visible && (
+                          <span className="text-[10px] text-red-400">Hidden</span>
+                        )}
+                      </div>
+                      {visibleTags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 pl-5">
+                          {visibleTags.map((tag) => (
+                            <span
+                              key={tag}
+                              className="px-1.5 py-0.5 rounded-full bg-[var(--accent)]/10 text-[var(--accent)] text-[9px] leading-tight"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                          {overflow > 0 && (
+                            <span className="text-[9px] text-[var(--text-muted)]">
+                              +{overflow}
+                            </span>
+                          )}
+                        </div>
                       )}
                     </div>
                   );

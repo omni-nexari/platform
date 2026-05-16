@@ -120,7 +120,7 @@ export default function CanvasEditorPage() {
 
       {/* Main area: sidebar + stage + property panel */}
       <div className="flex flex-1 min-h-0">
-        <CanvasSidebar />
+        <CanvasSidebar workspaceId={wsId ?? ''} />
         <CanvasStage />
         <CanvasPropertyPanel />
       </div>

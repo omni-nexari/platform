@@ -1,9 +1,9 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
-import { Stage, Layer, Rect, Circle, Text, Line, Transformer } from 'react-konva';
+import { useRef, useEffect, useState, useCallback, useReducer } from 'react';
+import { Stage, Layer, Rect, Circle, Text, Line, Transformer, Image as KonvaImage } from 'react-konva';
 import type Konva from 'konva';
 import { useCanvasStore } from '../../lib/canvasStore.js';
 import { sanitizeCanvasElement } from '../../lib/canvasTypes.js';
-import type { CanvasElement } from '../../lib/canvasTypes.js';
+import type { CanvasElement, ImageElement } from '../../lib/canvasTypes.js';
 import type { ReactNode } from 'react';
 
 function finite(value: number, fallback = 0) {
@@ -13,6 +13,70 @@ function finite(value: number, fallback = 0) {
 function positive(value: number, fallback = 1) {
   const next = finite(value, fallback);
   return next > 0 ? next : fallback;
+}
+
+/**
+ * Loads HTMLImageElement instances for all ImageElements on the canvas.
+ * Fetches using session credentials (same pattern as AuthImg) so
+ * authenticated /content/:id/thumbnail URLs work without CORS.
+ */
+function useKonvaImages(elements: CanvasElement[]) {
+  const loadedRef = useRef(new Map<string, HTMLImageElement>());
+  const blobUrlRef = useRef(new Map<string, string>());
+  const loadingRef = useRef(new Set<string>());
+  const [, forceUpdate] = useReducer((n: number) => n + 1, 0);
+
+  const imageEls = elements.filter((el): el is ImageElement => el.type === 'image');
+
+  useEffect(() => {
+    for (const el of imageEls) {
+      const cacheKey = `${el.id}:${el.src}`;
+      if (loadedRef.current.has(el.id) || loadingRef.current.has(cacheKey) || !el.src) continue;
+
+      loadingRef.current.add(cacheKey);
+      void fetch(el.src, { credentials: 'include' })
+        .then(async (res) => {
+          if (!res.ok) { loadingRef.current.delete(cacheKey); return; }
+          const blob = await res.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          const img = new window.Image();
+          img.onload = () => {
+            loadingRef.current.delete(cacheKey);
+            // Revoke old blob URL if src changed for same element
+            const old = blobUrlRef.current.get(el.id);
+            if (old) URL.revokeObjectURL(old);
+            blobUrlRef.current.set(el.id, blobUrl);
+            loadedRef.current.set(el.id, img);
+            forceUpdate();
+          };
+          img.onerror = () => {
+            loadingRef.current.delete(cacheKey);
+            URL.revokeObjectURL(blobUrl);
+          };
+          img.src = blobUrl;
+        })
+        .catch(() => { loadingRef.current.delete(cacheKey); });
+    }
+
+    // Evict stale entries for removed elements
+    for (const [id, blobUrl] of blobUrlRef.current) {
+      if (!imageEls.find((el) => el.id === id)) {
+        URL.revokeObjectURL(blobUrl);
+        blobUrlRef.current.delete(id);
+        loadedRef.current.delete(id);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageEls.map((el) => `${el.id}:${el.src}`).join('|')]);
+
+  // Revoke all blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      for (const url of blobUrlRef.current.values()) URL.revokeObjectURL(url);
+    };
+  }, []);
+
+  return loadedRef.current;
 }
 
 /** Renders the Konva stage with all elements for the current page */
@@ -34,6 +98,8 @@ export default function CanvasStage() {
 
   const page = pages.find((p) => p.id === selectedPageId);
   const elements = page?.elements ?? [];
+
+  const loadedImages = useKonvaImages(elements);
 
   const stageRef = useRef<Konva.Stage>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
@@ -244,6 +310,21 @@ export default function CanvasStage() {
             lineJoin={safeElement.lineJoin}
           />
         );
+
+      case 'image': {
+        const htmlImage = loadedImages.get(safeElement.id);
+        return (
+          <KonvaImage
+            key={safeElement.id}
+            {...common}
+            image={htmlImage}
+            width={positive(safeElement.width)}
+            height={positive(safeElement.height)}
+            // Placeholder fill when image hasn't loaded yet
+            fill={htmlImage ? '' : '#1e293b'}
+          />
+        );
+      }
 
       default:
         return null;

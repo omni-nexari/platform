@@ -69,6 +69,7 @@ interface CanvasState {
   removeElements: (ids: string[]) => void;
   selectElements: (ids: string[]) => void;
   clearSelection: () => void;
+  selectByTag: (tag: string) => void;
   duplicateSelected: () => void;
   bringForward: (id: string) => void;
   sendBackward: (id: string) => void;
@@ -314,6 +315,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   selectElements: (ids) => set({ selectedElementIds: ids }),
   clearSelection: () => set({ selectedElementIds: [] }),
+
+  selectByTag: (tag) => set((s) => {
+    const page = s.pages.find((p) => p.id === s.selectedPageId);
+    if (!page) return s;
+    const ids = page.elements
+      .filter((el) => el.tags?.includes(tag))
+      .map((el) => el.id);
+    return { selectedElementIds: ids };
+  }),
 
   duplicateSelected: () => set((s) => {
     if (s.selectedElementIds.length === 0) return s;

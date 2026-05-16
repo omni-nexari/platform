@@ -17,6 +17,7 @@ export interface BaseElement {
   locked: boolean;
   visible: boolean;
   name: string;
+  tags: string[];
 }
 
 export interface TextElement extends BaseElement {
@@ -166,6 +167,9 @@ function sanitizeBaseElement<T extends BaseElement>(element: T): T {
     locked: Boolean(element.locked),
     visible: element.visible !== false,
     name: typeof element.name === 'string' && element.name.trim() ? element.name : 'Element',
+    tags: Array.isArray((element as BaseElement & { tags?: unknown }).tags)
+      ? ((element as BaseElement & { tags?: unknown }).tags as unknown[]).filter((t): t is string => typeof t === 'string').slice(0, 20)
+      : [],
   };
 }
 
@@ -298,6 +302,7 @@ export function createTextElement(overrides?: Partial<TextElement>): TextElement
     locked: false,
     visible: true,
     name: 'Text',
+    tags: [],
     text: 'Double-click to edit',
     fontSize: 32,
     fontFamily: 'Inter',
@@ -326,6 +331,7 @@ export function createRectElement(overrides?: Partial<RectElement>): RectElement
     locked: false,
     visible: true,
     name: 'Rectangle',
+    tags: [],
     fill: '#3b82f6',
     stroke: '',
     strokeWidth: 0,
@@ -347,6 +353,7 @@ export function createCircleElement(overrides?: Partial<CircleElement>): CircleE
     locked: false,
     visible: true,
     name: 'Circle',
+    tags: [],
     fill: '#8b5cf6',
     stroke: '',
     strokeWidth: 0,
@@ -367,11 +374,33 @@ export function createLineElement(overrides?: Partial<LineElement>): LineElement
     locked: false,
     visible: true,
     name: 'Line',
+    tags: [],
     points: [0, 0, 200, 0],
     stroke: '#ffffff',
     strokeWidth: 2,
     lineCap: 'round',
     lineJoin: 'round',
+    ...overrides,
+  };
+}
+
+export function createImageElement(overrides?: Partial<ImageElement>): ImageElement {
+  return {
+    id: crypto.randomUUID(),
+    type: 'image',
+    x: 100,
+    y: 100,
+    width: 320,
+    height: 200,
+    rotation: 0,
+    opacity: 1,
+    locked: false,
+    visible: true,
+    name: 'Image',
+    tags: [],
+    contentItemId: null,
+    src: '',
+    objectFit: 'cover',
     ...overrides,
   };
 }

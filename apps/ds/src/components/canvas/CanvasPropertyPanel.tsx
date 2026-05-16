@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useCanvasStore } from '../../lib/canvasStore.js';
 import type { CanvasElement, TextElement, RectElement, CircleElement, LineElement } from '../../lib/canvasTypes.js';
+import TagInputEditor from '../TagInputEditor.js';
 
 // ── Color input helper ──────────────────────────────────────────────────
 
@@ -190,6 +191,8 @@ export default function CanvasPropertyPanel() {
   const el = selected[0]!;
   const update = (changes: Partial<CanvasElement>) => updateElement(el.id, changes);
 
+  const [tagInput, setTagInput] = useState('');
+
   return (
     <div className="w-64 shrink-0 border-l border-[var(--border)] bg-[var(--card)] overflow-y-auto">
       <div className="p-3">
@@ -267,6 +270,23 @@ export default function CanvasPropertyPanel() {
         {el.type === 'rect' && <RectProperties el={el as RectElement} update={update} />}
         {el.type === 'circle' && <CircleProperties el={el as CircleElement} update={update} />}
         {el.type === 'line' && <LineProperties el={el as LineElement} update={update} />}
+
+        {/* Tags */}
+        <Section title="Tags">
+          <TagInputEditor
+            tags={el.tags ?? []}
+            tagInput={tagInput}
+            setTagInput={setTagInput}
+            addTag={() => {
+              const trimmed = tagInput.trim();
+              if (!trimmed || el.tags?.includes(trimmed)) return;
+              update({ tags: [...(el.tags ?? []), trimmed] });
+              setTagInput('');
+            }}
+            removeTag={(tag) => update({ tags: (el.tags ?? []).filter((t) => t !== tag) })}
+            placeholder="Add label…"
+          />
+        </Section>
       </div>
     </div>
   );
