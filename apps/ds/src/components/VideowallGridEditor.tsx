@@ -4,7 +4,7 @@
  * Shows the videowall grid, lets the user assign devices to cells, configure
  * per-edge bezel compensation (mm), and push the manifest to online devices.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Save, Radio, ChevronDown, X } from 'lucide-react';
@@ -132,8 +132,9 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
   const [relayMode,      setRelayMode]      = useState<'lan' | 'cloud'>(group.syncRelayMode ?? 'lan');
   const [pinnedLeaderId, setPinnedLeaderId] = useState<string>(group.pinnedLeaderId ?? '');
 
-  // Open dropdown cell
+  // Open dropdown cell + anchor rect for fixed positioning (escapes overflow:hidden clip)
   const [openCell, setOpenCell] = useState<string | null>(null);
+  const [dropdownRect, setDropdownRect] = useState<{ top: number; left: number } | null>(null);
 
   // Re-initialise when group data changes (e.g. after a query refetch)
   useEffect(() => {
@@ -177,8 +178,8 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
         colSpan: 1,
         rowSpan: 1,
         tileRotation: rot,
-        nativeWidthPx:  rot === '90' ? 1080 : 1920,
-        nativeHeightPx: rot === '90' ? 1920 : 1080,
+        nativeWidthPx:  1920,  // always native; panelLogicalW/H swaps for 90°
+        nativeHeightPx: 1080,
       });
     }
   }
@@ -345,7 +346,7 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
                 return (
                   <div
                     key={key}
-                    className="relative flex flex-col overflow-hidden"
+                    className="relative flex flex-col"
                     style={{ background: 'var(--bg)' }}
                   >
                     {/* Cell header */}
@@ -389,7 +390,12 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
 
                     {/* Device name or picker trigger */}
                     <button
-                      onClick={() => setOpenCell(openCell === key ? null : key)}
+                      onClick={(e) => {
+                        if (openCell === key) { setOpenCell(null); setDropdownRect(null); return; }
+                        const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        setDropdownRect({ top: r.bottom + 4, left: r.left });
+                        setOpenCell(key);
+                      }}
                       className="flex-1 flex items-center gap-2 px-2 pb-2 text-left min-h-0"
                     >
                       {device ? (
@@ -403,11 +409,16 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
                       )}
                     </button>
 
-                    {/* Dropdown */}
-                    {openCell === key && (
+                    {/* Dropdown — rendered fixed to escape overflow:hidden clipping */}
+                    {openCell === key && dropdownRect && (
                       <div
-                        className="absolute top-full left-0 z-20 mt-1 w-56 rounded-lg border shadow-xl overflow-y-auto max-h-52"
-                        style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+                        className="fixed z-50 w-56 rounded-lg border shadow-xl overflow-y-auto max-h-52"
+                        style={{
+                          background: 'var(--surface)',
+                          borderColor: 'var(--border)',
+                          top: dropdownRect.top,
+                          left: dropdownRect.left,
+                        }}
                       >
                         {/* Clear option */}
                         <button
