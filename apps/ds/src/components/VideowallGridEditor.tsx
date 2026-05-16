@@ -313,14 +313,24 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
           </div>
         </div>
 
-        <div className="p-5 overflow-x-auto">
+        <div className="p-5">
+          {/* Outer wall frame — proportional to the actual canvas aspect ratio */}
           <div
-            className="grid gap-2"
+            className="rounded border overflow-hidden mx-auto"
+            style={{
+              maxWidth: 560,
+              width: '100%',
+              aspectRatio: `${totalW} / ${totalH}`,
+              background: '#111', // gap/bezel colour shows through grid gaps
+              borderColor: 'var(--border)',
+            }}
+          >
+          <div
+            className="grid w-full h-full"
             style={{
               gridTemplateColumns: colFrs,
               gridTemplateRows: rowFrs,
-              maxWidth: cols * 160,
-              minWidth: cols * 80,
+              gap: '2px',
             }}
           >
             {Array.from({ length: rows }, (_, r) =>
@@ -335,17 +345,12 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
                 return (
                   <div
                     key={key}
-                    className="relative rounded-lg border flex flex-col"
-                    style={{
-                      background: 'var(--bg)',
-                      borderColor: 'var(--border)',
-                      minHeight: isPortrait ? 60 : 45,
-                      aspectRatio: isPortrait ? '9/16' : '16/9',
-                    }}
+                    className="relative flex flex-col overflow-hidden"
+                    style={{ background: 'var(--bg)' }}
                   >
                     {/* Cell header */}
-                    <div className="px-2 pt-1.5 flex items-center justify-between gap-1">
-                      <span className="text-[10px] font-mono text-[var(--text-faint)]">
+                    <div className="px-2 pt-1 flex items-center justify-between gap-1 shrink-0">
+                      <span className="text-[9px] font-mono text-[var(--text-faint)]">
                         C{c} R{r}
                       </span>
                       <div className="flex items-center gap-1 ml-auto">
@@ -375,7 +380,7 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
 
                     {/* Preset badge */}
                     {preset && (
-                      <div className="px-2">
+                      <div className="px-2 shrink-0">
                         <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 truncate block max-w-full">
                           {preset.label}
                         </span>
@@ -385,7 +390,7 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
                     {/* Device name or picker trigger */}
                     <button
                       onClick={() => setOpenCell(openCell === key ? null : key)}
-                      className="flex-1 flex items-center gap-2 px-2 pb-2 text-left"
+                      className="flex-1 flex items-center gap-2 px-2 pb-2 text-left min-h-0"
                     >
                       {device ? (
                         <>
