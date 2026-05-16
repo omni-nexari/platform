@@ -1461,6 +1461,32 @@ const Player = {
         }, CONFIG.HEARTBEAT_INTERVAL);
     },
     // Report installed applications to the server via WebSocket (once per connect)
+    // Well-known Samsung TV app IDs — maps alphanumerical ↔ numerical so both
+    // tizen.application.launch() path can be tried when the primary ID fails.
+    // Numerical IDs are required to LAUNCH some Samsung Smart Hub apps (e.g.
+    // Prime Video), even though getAppsInfo() returns their alphanumerical ID.
+    _SAMSUNG_APP_ID_ALT: {
+        // Streaming — alphanumerical → numerical
+        'org.tizen.netflix-app':   '11101200001',
+        'org.tizen.ignition':      '3201512006785', // Prime Video
+        'org.tizen.youtube.tv':    '111299001912',
+        'org.tizen.youtube':       '111299001912',
+        'org.tizen.hbomax':        '3201601007625', // Max / HBO Max
+        'org.tizen.disneyplus':    '3201807016597', // Disney+
+        'org.tizen.apple':         '3201807016577', // Apple TV+
+        'org.tizen.hulu':          '3201601007625',
+        'org.tizen.tubi':          '3201504001058',
+        'org.tizen.plutotv':       '3202112024396',
+        'org.tizen.espnplus':      '3202103013969',
+        'org.tizen.peacock':       '3202011022079',
+        // Numerical → alphanumerical (reverse, for completeness)
+        '11101200001':    'org.tizen.netflix-app',
+        '3201512006785':  'org.tizen.ignition',
+        '111299001912':   'org.tizen.youtube.tv',
+        '3201601007625':  'org.tizen.hbomax',
+        '3201807016597':  'org.tizen.disneyplus',
+        '3201807016577':  'org.tizen.apple',
+    },
     launchTizenApp(appId) {
         if (!appId) return;
         try {
@@ -1469,10 +1495,40 @@ const Player = {
                 return;
             }
             logger.info('[Apps] Launching Tizen app: ' + appId);
+            const altId = this._SAMSUNG_APP_ID_ALT[appId] || null;
+            const _tryLaunchAppControl = (id) => {
+                try {
+                    const appControl = new tizen.ApplicationControl(
+                        'http://tizen.org/appcontrol/operation/main', null, null, null
+                    );
+                    tizen.application.launchAppControl(
+                        appControl, id,
+                        () => logger.info('[Apps] launchAppControl succeeded: ' + id),
+                        (e2) => logger.warn('[Apps] launchAppControl failed: ' + (e2 && e2.message || e2)),
+                        null
+                    );
+                } catch (fe) { logger.warn('[Apps] launchAppControl error:', fe); }
+            };
             tizen.application.launch(
                 appId,
                 () => logger.info('[Apps] Launched: ' + appId),
-                (err) => logger.warn('[Apps] Launch failed: ' + (err && err.message || err))
+                (err) => {
+                    logger.warn('[Apps] launch() failed for ' + appId + ': ' + (err && err.message || err));
+                    if (altId) {
+                        // Try alternate (numerical ↔ alphanumerical) ID
+                        logger.info('[Apps] Retrying with alt ID: ' + altId);
+                        tizen.application.launch(
+                            altId,
+                            () => logger.info('[Apps] Launched via alt ID: ' + altId),
+                            (err2) => {
+                                logger.warn('[Apps] Alt ID also failed: ' + (err2 && err2.message || err2) + ' — trying launchAppControl');
+                                _tryLaunchAppControl(appId);
+                            }
+                        );
+                    } else {
+                        _tryLaunchAppControl(appId);
+                    }
+                }
             );
         }
         catch (e) {

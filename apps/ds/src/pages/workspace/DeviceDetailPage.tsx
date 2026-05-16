@@ -1860,6 +1860,7 @@ export function DeviceDetailContent({
                   )}
                   <div className="min-w-0">
                     <p className="text-xs font-medium text-[var(--text)] truncate" title={app.name}>{app.name}</p>
+                    <p className="text-[10px] text-[var(--text-muted)] font-mono truncate" title={app.id}>{app.id}</p>
                     {app.version && <p className="text-[10px] text-[var(--text-muted)]">{app.version}</p>}
                   </div>
                 </button>
