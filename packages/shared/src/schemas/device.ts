@@ -450,6 +450,17 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('calendar_unsubscribe'),
     payload: z.object({ contentId: z.string().uuid() }),
   }),
+  z.object({
+    type: z.literal('installed_apps'),
+    payload: z.array(z.object({
+      id: z.string(),
+      name: z.string(),
+      version: z.string().nullable().optional(),
+      iconPath: z.string().nullable().optional(),
+      show: z.boolean().optional(),
+      categories: z.array(z.string()).optional(),
+    })),
+  }),
 ]);
 export type DeviceMessage = z.infer<typeof DeviceMessageSchema>;
 
