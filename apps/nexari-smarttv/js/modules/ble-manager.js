@@ -5,9 +5,9 @@ window.BleManager = (function () {
   'use strict';
 
   // ── Constants ──────────────────────────────────────────────────────────────
-  var PERIODIC_INTERVAL_MS  = 30000;  // rule evaluation scan every 30s
+  var PERIODIC_INTERVAL_MS  = 15000;  // rule evaluation scan every 15s
   var ON_DEMAND_SCAN_MS     = 10000;  // on-demand scan duration
-  var PERIODIC_SCAN_MS      = 5000;   // periodic scan duration
+  var PERIODIC_SCAN_MS      = 8000;   // periodic scan duration
   var TX_POWER_DEFAULT      = -65;    // RSSI at 1m (typical iBeacon default)
   var PATH_N                = 2;      // path-loss exponent (free space)
 
@@ -153,25 +153,16 @@ window.BleManager = (function () {
       return;
     }
 
-    // Stop scan after duration
+    // Stop scan after duration.
+    // Complete the scan immediately when the timer fires — don't block on
+    // stopScan's callback, which silently never fires on some Tizen builds.
     _scanTimer = setTimeout(function () {
-      try {
-        _adapter.stopScan(
-          function () {
-            _log('info', 'Scan finished, ' + Object.keys(_beacons).length + ' beacon(s) found');
-            _scanning = false;
-            if (onDone) onDone(_flattenBeacons());
-          },
-          function (err) {
-            _log('warn', 'stopScan error: ' + (err && err.message || err));
-            _scanning = false;
-            if (onDone) onDone(_flattenBeacons());
-          }
-        );
-      } catch (e) {
-        _scanning = false;
-        if (onDone) onDone(_flattenBeacons());
-      }
+      _scanning = false;
+      var results = _flattenBeacons();
+      _log('info', 'Scan finished, ' + results.length + ' beacon(s) found');
+      if (onDone) onDone(results);
+      // Best-effort cleanup — ignore whether it succeeds
+      try { _adapter.stopScan(function () {}, function () {}); } catch (e) {}
     }, durationMs);
   }
 
@@ -398,6 +389,14 @@ window.BleManager = (function () {
      */
     triggerOnDemandScan: function () {
       _log('info', 'On-demand scan requested');
+      // If a periodic (or stuck) scan is already running, force-stop it so the
+      // on-demand scan can start immediately.
+      if (_scanning) {
+        _log('info', 'Interrupting in-progress scan for on-demand request');
+        if (_scanTimer) { clearTimeout(_scanTimer); _scanTimer = null; }
+        try { if (_adapter) { _adapter.stopScan(function () {}, function () {}); } } catch (e) {}
+        _scanning = false;
+      }
       _runScan(ON_DEMAND_SCAN_MS, function (beaconList) {
         _log('info', 'On-demand scan complete: ' + beaconList.length + ' beacon(s)');
         _postScanResults(beaconList);

@@ -11,7 +11,7 @@
  */
 import { init as syncInit, stop as syncStop } from '@sync/sync.js';
 import type { SyncConfig } from '@sync/sync.js';
-import { setPlaylist, getPlaylistUrls, getDuration } from '@sync/engine.js';
+import { setPlaylist, getPlaylistUrls, getDuration, measurePlayLatencyMs } from '@sync/engine.js';
 
 let _active = false;
 
@@ -66,6 +66,10 @@ export async function startSync(cfg: WindowsSyncConfig): Promise<void> {
     setPlaylist(cfg.playlist);
   }
 
+  // Measure this device's play→first-frame latency once. The relay distributes
+  // all latencies via PEERS so every device auto-computes its selfLatency offset.
+  const playLatencyMs = await measurePlayLatencyMs(cfg.playlist[0]);
+
   const syncCfg: SyncConfig = {
     wsUrl,
     groupId:        cfg.groupId,
@@ -73,7 +77,7 @@ export async function startSync(cfg: WindowsSyncConfig): Promise<void> {
     selfIp:         '',            // not used by centralized relay
     expectedPeers:  cfg.expectedPeers,
     pinnedLeaderId: cfg.pinnedLeaderId,
-    selfLatency:    cfg.selfLatency,
+    playLatencyMs,                 // triggers auto-cal — no hardcoded selfLatency
     onStatus:       cfg.onStatus,
     // OS-specific URL resolver: Windows uses its own local file paths so the
     // leader always broadcasts a valid local path + playlist index.

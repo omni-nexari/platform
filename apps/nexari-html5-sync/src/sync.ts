@@ -31,7 +31,7 @@ import {
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface PeerInfo { deviceId: string; ip: string; registeredAt: number; }
+interface PeerInfo { deviceId: string; ip: string; registeredAt: number; playLatencyMs?: number; }
 
 export interface SyncConfig {
   wsUrl:         string;   // e.g. "ws://192.168.1.11:9616"
@@ -44,6 +44,14 @@ export interface SyncConfig {
   schedulePlay:      (epochMs: number) => void;
   getEngineDuration: () => number;
   restartEngine?:    () => void;
+  /**
+   * Measured play→first-frame latency for this device (ms). Distributed to all
+   * peers via PEERS. Each device computes selfLatency = max(all) - own so the
+   * slowest decoder is the reference and all first-frames align automatically.
+   * Works for any hardware mix (PC, Android, Tizen). Takes precedence over the
+   * DEVICE_LATENCY_MS table. If omitted, falls back to selfLatency or table.
+   */
+  playLatencyMs?: number;
   /**
    * OS-specific resolver called by the leader to obtain the URL it should load
    * and broadcast. Each platform provides its own implementation so the leader
@@ -121,6 +129,10 @@ let _playlistUrls: string[] = [];
 let _wsGen            = 0;   // incremented each init(); old onclose closures bail on mismatch
 let _followerResyncTimer: any = null;
 
+// Auto-calibration: measured play latencies, populated via PEERS messages.
+let _ownLatencyMs    = 0;
+let _peerLatencies   = new Map<string, number>(); // deviceId → measured latency ms
+
 // ── Public ─────────────────────────────────────────────────────────────────────
 
 export async function init(cfg: SyncConfig): Promise<void> {
@@ -128,7 +140,10 @@ export async function init(cfg: SyncConfig): Promise<void> {
   _leaderReady = false; _followerReady = new Set(); _goSent = false; _loadReceived = false;
   _phaseStartedAt = 0; _ewma = 0; _ewmaN = 0;
   if (_followerResyncTimer) { clearTimeout(_followerResyncTimer); _followerResyncTimer = null; }
-  _selfLatency = cfg.selfLatency ?? DEVICE_LATENCY_MS[cfg.deviceId] ?? 0;
+  _ownLatencyMs  = cfg.playLatencyMs ?? 0;
+  _peerLatencies = new Map();
+  // Manual selfLatency override wins; otherwise auto-cal sets it once PEERS arrives.
+  _selfLatency = cfg.selfLatency ?? (cfg.playLatencyMs == null ? (DEVICE_LATENCY_MS[cfg.deviceId] ?? 0) : 0);
 
   // Pre-determine role from manifest if the elected leader is known.
   // Setting _role early lets LOAD_URL / GO handlers fire correctly even
@@ -213,7 +228,7 @@ function _connectWs(): Promise<void> {
           if (_wsGen !== myGen) { try { ws.close(); } catch {} return; }  // superseded by a newer init()
           _wsReady = true;
           logger.info('[Sync] WS connected');
-          _wsSend({ type: 'WS_REGISTER', deviceId: _cfg.deviceId, groupId: _cfg.groupId, ip: _cfg.selfIp });
+          _wsSend({ type: 'WS_REGISTER', deviceId: _cfg.deviceId, groupId: _cfg.groupId, ip: _cfg.selfIp, playLatencyMs: _ownLatencyMs });
           resolve();
         };
         ws.onmessage = (ev) => {
@@ -335,6 +350,16 @@ function _dispatch(msg: any): void {
       _peers = others;
       logger.info(`[Sync] peers: [${_peers.join(', ')}]`);
     }
+    // Auto-calibration: collect peer latencies and recompute selfLatency.
+    // Only active when this device reported its own playLatencyMs at init.
+    if (msg.type === 'PEERS' && _cfg.playLatencyMs != null) {
+      for (const p of (msg.peers as PeerInfo[])) {
+        if (p.deviceId !== _cfg.deviceId && p.playLatencyMs != null) {
+          _peerLatencies.set(p.deviceId, p.playLatencyMs);
+        }
+      }
+      _recomputeSelfLatency();
+    }
     return;
   }
 
@@ -429,6 +454,26 @@ function _dispatch(msg: any): void {
     // Reset phase tracker so PLAYHEAD monitoring starts fresh after loop boundary
     _phaseStartedAt = Date.now(); _ewma = 0; _ewmaN = 0;
     return;
+  }
+}
+
+// ── Latency auto-calibration ──────────────────────────────────────────────────
+
+/**
+ * Recompute _selfLatency from collected peer latencies.
+ * selfLatency = max(all devices' latencies) - own latency.
+ * The slowest device gets selfLatency=0 (reference); every faster device
+ * delays its play() call by the offset so all first-frames coincide.
+ * cfg.selfLatency (manual override) always takes precedence.
+ */
+function _recomputeSelfLatency(): void {
+  if (_cfg.selfLatency != null) return; // manual override wins
+  const allMs = [..._peerLatencies.values(), _ownLatencyMs];
+  const maxMs = Math.max(...allMs, 0);
+  const prev  = _selfLatency;
+  _selfLatency = Math.max(0, maxMs - _ownLatencyMs);
+  if (_selfLatency !== prev) {
+    logger.info(`[Sync] latency-cal own=${_ownLatencyMs}ms max=${maxMs}ms selfLatency=${_selfLatency}ms peers=${JSON.stringify(Object.fromEntries(_peerLatencies))}`);
   }
 }
 

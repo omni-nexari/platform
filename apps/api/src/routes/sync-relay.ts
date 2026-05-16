@@ -27,6 +27,8 @@ interface WsLikeClient {
   groupId: string;
   ip: string;
   registeredAt: number;
+  /** Measured play→first-frame latency reported by the device on registration. */
+  playLatencyMs: number;
 }
 
 const clients = new Set<WsLikeClient>();
@@ -54,7 +56,7 @@ function broadcastGroup(groupId: string, obj: unknown, exclude: any | null): voi
 function sendPeers(groupId: string): void {
   const groupClients = clientsInGroup(groupId);
   const peers = groupClients.map((c) => ({
-    deviceId: c.deviceId, ip: c.ip, registeredAt: c.registeredAt,
+    deviceId: c.deviceId, ip: c.ip, registeredAt: c.registeredAt, playLatencyMs: c.playLatencyMs,
   }));
   for (const c of groupClients) {
     send(c.socket, { type: 'PEERS', groupId, peers, serverTimeMs: Date.now() });
@@ -104,6 +106,7 @@ export async function syncRelayRoutes(app: FastifyInstance) {
       groupId: '',
       ip: (req.ip as string) || '',
       registeredAt: 0,
+      playLatencyMs: 0,
     };
     clients.add(client);
 
@@ -133,6 +136,9 @@ export async function syncRelayRoutes(app: FastifyInstance) {
         client.groupId      = newGroupId;
         client.ip           = String(msg.ip || client.ip || '');
         client.registeredAt = Date.now();
+        client.playLatencyMs = (typeof msg.playLatencyMs === 'number' && msg.playLatencyMs > 0)
+          ? Math.min(msg.playLatencyMs, 2000) // cap at 2 s to guard bogus values
+          : 0;
         sendPeers(client.groupId);
         return;
       }

@@ -371,6 +371,9 @@ const Player = {
                         }
                     }
                 }
+                // Reload content on reconnect so any publish/unpublish that happened
+                // while the socket was down is picked up immediately.
+                void this.loadContent();
                 // Refresh MDC poll after startup MDC setup completes (Phase 1 scan can take up to 8s)
                 setTimeout(() => { this.runMdcPoll(); }, 20000);
             };
@@ -2853,7 +2856,10 @@ const Player = {
             this._loadInFlight = true;
             try {
                 logger.info('Loading content...');
-                const content = yield API.getCurrentContent(this.deviceId, this.deviceToken);
+                // BLE rule override takes priority over the normal schedule
+                const content = this._bleOverrideContent
+                    ? this._bleOverrideContent
+                    : yield API.getCurrentContent(this.deviceId, this.deviceToken);
                 if (content && content.items && content.items.length > 0) {
                     const newSignature = this.getContentSignature(content);
                     const isPlaying = !!(this.currentPlaylistController && !this.currentPlaylistController.cancelled) || this._zoneMode || this._nativeSyncActive;
@@ -9089,6 +9095,57 @@ const Player = {
             }
         }, 3000);
     },
+    // ── BLE Rule override ──────────────────────────────────────────────────
+    // Called by BleManager when a proximity rule matches.
+    // Fetches the rule's target playlist/content and starts playing it
+    // immediately, bypassing the normal schedule until the beacon leaves.
+    overridePlaylistForRule(ruleId, playlistId, contentId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                logger.info('[BLE] Applying rule override: ruleId=' + ruleId +
+                    ', playlistId=' + playlistId + ', contentId=' + contentId);
+                const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
+                let overrideContent = null;
+                if (playlistId) {
+                    const playlist = yield API.getPlaylistById(playlistId, token);
+                    overrideContent = API._normalizePlaylist(playlist, token);
+                } else if (contentId) {
+                    const content = yield API.getContentById(contentId, token);
+                    overrideContent = API._normalizeSingleContent(content, 'BLE Rule', token);
+                }
+                if (!overrideContent || !overrideContent.items || overrideContent.items.length === 0) {
+                    logger.warn('[BLE] overridePlaylistForRule: no content resolved for rule ' + ruleId);
+                    return;
+                }
+                this._bleOverrideContent = overrideContent;
+                // Clear signature cache so loadContent doesn't skip the new content
+                this.lastContentSignature = null;
+                this.pendingSignature = null;
+                this._loadInFlight = false;
+                yield this.loadContent();
+            }
+            catch (e) {
+                logger.error('[BLE] overridePlaylistForRule error:', e);
+            }
+        });
+    },
+    // Called by BleManager when no rule is active (beacon left the zone).
+    // Reverts to the normal schedule.
+    clearRuleOverride() {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                logger.info('[BLE] Clearing rule override, reverting to normal schedule');
+                this._bleOverrideContent = null;
+                this.lastContentSignature = null;
+                this.pendingSignature = null;
+                this._loadInFlight = false;
+                yield this.loadContent();
+            }
+            catch (e) {
+                logger.error('[BLE] clearRuleOverride error:', e);
+            }
+        });
+    },
     // Cleanup
     destroy() {
         if (this.heartbeatInterval)
@@ -9117,3 +9174,5 @@ const Player = {
 };
 // Export to window
 window.Player = Player;
+// BLE manager references the player as NexariPlayer
+window.NexariPlayer = Player;

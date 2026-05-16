@@ -18,7 +18,7 @@ import { renderMenuBoard } from './renderers/menu-board.js';
 import { renderDataSync,  type DataSyncHandle } from './renderers/datasync.js';
 import {
   initEngine, prepare, schedulePlayAt, playFromPrebuffer, destroyEngine,
-  setPlaylist, getDuration, setWallCrop,
+  setPlaylist, getDuration, setWallCrop, measurePlayLatencyMs,
 } from './sync/engine.js';
 import { init as syncInit, stop as syncStop } from './sync/sync.js';
 
@@ -1779,13 +1779,11 @@ export class Player {
     // Use DB UUID (from JWT sub) as sync deviceId so leader election compares correctly
     // against leaderPriority array which contains DB UUIDs. Falls back to hardware deviceId.
     const syncDeviceId = this.dbDeviceId || this.deviceId;
+    const playLatencyMs = await measurePlayLatencyMs(urls[0]);
     syncInit({
       wsUrl, groupId, deviceId: syncDeviceId, selfIp: net.ipAddress ?? '',
       expectedPeers, pinnedLeaderId, onStatus: s => logger.info(`[Sync] ${s}`),
-      // Android WebView has higher video decode startup latency (~100ms).
-      // Negative selfLatency tells the engine to call play() that many ms earlier
-      // so the first rendered frame aligns with other devices.
-      selfLatency: this.platform === 'android' ? -100 : 0,
+      playLatencyMs, // auto-cal: relay distributes all latencies, each device computes offset
       prepareEngine: url => prepare(url),
       schedulePlay:  epochMs => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),
@@ -1848,10 +1846,11 @@ export class Player {
 
     const net = await this.cfg.adapter.getNetworkInfo();
     this.syncActive = true;
+    const wallPlayLatencyMs = await measurePlayLatencyMs(urls[0]);
     syncInit({
       wsUrl, groupId, deviceId: this.deviceId, selfIp: net.ipAddress ?? '',
       expectedPeers, onStatus: s => logger.info(`[Sync/Wall] ${s}`),
-      selfLatency: this.platform === 'android' ? -100 : 0,
+      playLatencyMs: wallPlayLatencyMs,
       prepareEngine: url => prepare(url),
       schedulePlay:  epochMs => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),

@@ -1935,7 +1935,7 @@ const Player = {
 
       ws.onopen = () => {
         readySent = false;
-        sendIfOpen(ws, { type: 'WS_REGISTER', deviceId, groupId });
+        sendIfOpen(ws, { type: 'WS_REGISTER', deviceId, groupId, playLatencyMs: 200 });
         logger.info('[MixedWall] registered → ' + relayUrl);
         // Poll until content is loaded, then send READY.
         const pollReady = () => {
@@ -2064,6 +2064,7 @@ const Player = {
     let reconnTimer: any = null;
     let readySent = false;
     let currentItemIndex = 0;
+    let selfLatencyMs = 0; // computed from PEERS: max(group latencies) - 200 (own baseline)
     // Clock offset: serverTime = localTime + _relayClockOffset
     let _relayClockOffset = 0;
 
@@ -2122,10 +2123,12 @@ const Player = {
 
     // Schedule playback at an absolute epoch ms (server time from relay).
     const schedulePlayAt = (serverPlayAt: number) => {
-      // Convert server epoch to local time using measured clock offset.
-      const localPlayAt = serverPlayAt - _relayClockOffset;
+      // Convert server epoch to local time using measured clock offset,
+      // then add selfLatencyMs to defer play() if this Tizen is faster than
+      // the slowest device in the group (selfLatencyMs=0 when Tizen is slowest).
+      const localPlayAt = serverPlayAt - _relayClockOffset + selfLatencyMs;
       const delay = Math.max(0, localPlayAt - Date.now());
-      logger.info('[SyncRelay] scheduled play in ' + delay + 'ms (serverEpoch=' + serverPlayAt + ' offset=' + _relayClockOffset + ')');
+      logger.info('[SyncRelay] scheduled play in ' + delay + 'ms (serverEpoch=' + serverPlayAt + ' offset=' + _relayClockOffset + ' selfLatency=' + selfLatencyMs + ')');
       if (goTimer) clearTimeout(goTimer);
       goTimer = setTimeout(() => {
         if (stopped) return;
@@ -2163,7 +2166,7 @@ const Player = {
         // Measure clock offset first, then register + start polling.
         measureClockOffset(ws).then(() => {
           if (stopped) return;
-          sendIfOpen(ws, { type: 'WS_REGISTER', deviceId, groupId });
+          sendIfOpen(ws, { type: 'WS_REGISTER', deviceId, groupId, playLatencyMs: 200 });
           logger.info('[SyncRelay] registered → ' + relayUrl);
           pollAndSendReady(ws);
         });
@@ -2194,7 +2197,14 @@ const Player = {
         }
 
         if (t === 'PEERS') {
-          logger.info('[SyncRelay] PEERS: ' + JSON.stringify(msg.peers));
+          // Auto-calibration: selfLatencyMs = max(all group latencies) - own(200ms).
+          // Tizen uses 200ms as baseline (AVPlay/WebKit typical first-frame latency).
+          // If a slower device (e.g. old Android) is in the group, Tizen defers too.
+          const allLatencies = (msg.peers as any[]).map((p: any) => typeof p.playLatencyMs === 'number' ? p.playLatencyMs : 0);
+          allLatencies.push(200); // include own
+          const maxLatency = Math.max(...allLatencies, 0);
+          selfLatencyMs = Math.max(0, maxLatency - 200);
+          logger.info('[SyncRelay] PEERS: latency-cal selfLatency=' + selfLatencyMs + 'ms (group max=' + maxLatency + 'ms)');
           return;
         }
 

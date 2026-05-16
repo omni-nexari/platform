@@ -23,7 +23,7 @@ import {
   getPlaylistUrls,
 } from './engine.js';
 
-interface PeerInfo { deviceId: string; ip: string; registeredAt: number; }
+interface PeerInfo { deviceId: string; ip: string; registeredAt: number; playLatencyMs?: number; }
 
 export interface SyncConfig {
   wsUrl:             string;
@@ -38,6 +38,13 @@ export interface SyncConfig {
   restartEngine?:    () => void;
   /** When this device is elected leader, call this to get its own local URL. */
   fetchVideoUrl?:    () => Promise<string>;
+  /**
+   * Measured play→first-frame latency for this device (ms). Distributed to all
+   * peers via PEERS. Each device computes selfLatency = max(all) - own so the
+   * slowest decoder is the reference. Works for any hardware mix.
+   * Takes precedence over selfLatency when provided.
+   */
+  playLatencyMs?:    number;
   /**
    * Platform startup latency compensation in milliseconds. Negative = call play()
    * earlier to compensate for a slow decoder (e.g. Android WebView). Positive =
@@ -85,6 +92,10 @@ let _playlistUrls: string[] = [];
 let _wsGen = 0;  // incremented each init(); stale onclose closures bail on mismatch
 let _followerResyncTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Auto-calibration: play latencies per device, populated from PEERS messages.
+let _ownLatencyMs    = 0;
+let _peerLatencies   = new Map<string, number>(); // deviceId → measured latency ms
+
 // ── Public ─────────────────────────────────────────────────────────────────────
 
 export async function init(cfg: SyncConfig): Promise<void> {
@@ -92,7 +103,9 @@ export async function init(cfg: SyncConfig): Promise<void> {
   _leaderReady = false; _followerReady = new Set(); _goSent = false; _loadReceived = false;
   _phaseStartedAt = 0; _ewma = 0; _ewmaN = 0;
   if (_followerResyncTimer) { clearTimeout(_followerResyncTimer); _followerResyncTimer = null; }
-  _selfLatency = cfg.selfLatency ?? DEVICE_LATENCY_MS[cfg.deviceId] ?? 0;
+  _ownLatencyMs  = cfg.playLatencyMs ?? 0;
+  _peerLatencies = new Map();
+  _selfLatency = cfg.selfLatency ?? (cfg.playLatencyMs == null ? (DEVICE_LATENCY_MS[cfg.deviceId] ?? 0) : 0);
 
   // Pre-determine role from manifest if the elected leader is known.
   // Setting _role early lets LOAD_URL / GO handlers fire correctly even
@@ -165,7 +178,7 @@ function _connectWs(): Promise<void> {
           if (_wsGen !== myGen) { try { ws.close(); } catch {} return; }  // superseded
           _wsReady = true;
           logger.info('[Sync] WS connected');
-          _wsSend({ type: 'WS_REGISTER', deviceId: _cfg.deviceId, groupId: _cfg.groupId, ip: _cfg.selfIp });
+          _wsSend({ type: 'WS_REGISTER', deviceId: _cfg.deviceId, groupId: _cfg.groupId, ip: _cfg.selfIp, playLatencyMs: _ownLatencyMs });
           resolve();
         };
         ws.onmessage = (ev) => {
@@ -284,6 +297,14 @@ function _dispatch(msg: Record<string, unknown>): void {
       _peers = others;
       logger.info(`[Sync] peers: [${_peers.join(', ')}]`);
     }
+    if (msg['type'] === 'PEERS' && _cfg.playLatencyMs != null) {
+      for (const p of (msg['peers'] as PeerInfo[])) {
+        if (p.deviceId !== _cfg.deviceId && p.playLatencyMs != null) {
+          _peerLatencies.set(p.deviceId, p.playLatencyMs);
+        }
+      }
+      _recomputeSelfLatency();
+    }
     return;
   }
 
@@ -371,6 +392,19 @@ function _dispatch(msg: Record<string, unknown>): void {
     _cfg.schedulePlay(localPlayAt);
     _phaseStartedAt = Date.now(); _ewma = 0; _ewmaN = 0;
     return;
+  }
+}
+
+// ── Latency auto-calibration ──────────────────────────────────────────────────
+
+function _recomputeSelfLatency(): void {
+  if (_cfg.selfLatency != null) return;
+  const allMs = [..._peerLatencies.values(), _ownLatencyMs];
+  const maxMs = Math.max(...allMs, 0);
+  const prev  = _selfLatency;
+  _selfLatency = Math.max(0, maxMs - _ownLatencyMs);
+  if (_selfLatency !== prev) {
+    logger.info(`[Sync] latency-cal own=${_ownLatencyMs}ms max=${maxMs}ms selfLatency=${_selfLatency}ms peers=${JSON.stringify(Object.fromEntries(_peerLatencies))}`);
   }
 }
 
