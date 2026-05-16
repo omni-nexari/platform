@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Lock, Unlock, Eye, EyeOff, Trash2, Copy,
   ArrowUp, ArrowDown, ChevronsUp, ChevronsDown,
@@ -117,6 +117,11 @@ export default function CanvasPropertyPanel() {
 
   const selected = elements.filter((el) => selectedElementIds.includes(el.id));
 
+  // Must be declared before early returns — React hooks must always be called in the same order
+  const [tagInput, setTagInput] = useState('');
+  const selectedSingleId = selected.length === 1 ? selected[0]!.id : null;
+  useEffect(() => { setTagInput(''); }, [selectedSingleId]);
+
   // ── No selection → show canvas settings ────────────────────────────────
 
   if (selected.length === 0) {
@@ -190,8 +195,6 @@ export default function CanvasPropertyPanel() {
 
   const el = selected[0]!;
   const update = (changes: Partial<CanvasElement>) => updateElement(el.id, changes);
-
-  const [tagInput, setTagInput] = useState('');
 
   return (
     <div className="w-64 shrink-0 border-l border-[var(--border)] bg-[var(--card)] overflow-y-auto">
