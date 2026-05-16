@@ -1829,11 +1829,28 @@ export function DeviceDetailContent({
               <Tv2 className="w-3.5 h-3.5" />Installed Apps
               <Badge tone="neutral">{device.installedApps.length}</Badge>
             </h2>
+            <button
+              type="button"
+              disabled={cmdDisabled}
+              onClick={() => sendCmd({ command: 'relaunch_app' })}
+              title="Return to Nexari player"
+              className="ml-auto text-xs px-2.5 py-1 rounded-md bg-[var(--blue)] text-white disabled:opacity-40 hover:opacity-90 transition-opacity"
+            >
+              Return to Nexari
+            </button>
           </SectionCardHeader>
           <SectionCardBody>
+            <p className="text-[11px] text-[var(--text-muted)] mb-3">Click an app to launch it on the TV. Use <strong>Return to Nexari</strong> to bring the player back.</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
               {device.installedApps.map((app) => (
-                <div key={app.id} className="flex items-center gap-2 p-2 rounded-lg bg-[var(--surface)] border border-[var(--border)]">
+                <button
+                  key={app.id}
+                  type="button"
+                  disabled={cmdDisabled}
+                  onClick={() => sendCmd({ command: 'launch_app', payload: { appId: app.id } })}
+                  title={`Launch ${app.name}`}
+                  className="flex items-center gap-2 p-2 rounded-lg bg-[var(--surface)] border border-[var(--border)] text-left hover:border-[var(--blue)] hover:bg-[var(--blue)]/5 disabled:opacity-50 disabled:cursor-not-allowed transition-colors w-full"
+                >
                   {app.iconPath ? (
                     <img src={app.iconPath} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
                   ) : (
@@ -1845,7 +1862,7 @@ export function DeviceDetailContent({
                     <p className="text-xs font-medium text-[var(--text)] truncate" title={app.name}>{app.name}</p>
                     {app.version && <p className="text-[10px] text-[var(--text-muted)]">{app.version}</p>}
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </SectionCardBody>

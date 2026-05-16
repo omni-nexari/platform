@@ -609,6 +609,12 @@ const Player = {
                     logger.info('relaunch_app command received');
                     this.executeCommand({ type: 'RELAUNCH_APP' });
                     break;
+                case 'launch_app': {
+                    const appId = message.payload && message.payload.appId;
+                    logger.info('[Apps] launch_app command received: ' + appId);
+                    this.launchTizenApp(appId);
+                    break;
+                }
                 case 'device_rules':
                     logger.info('device_rules received:', (message.rules || []).length, 'rules');
                     if (typeof BleManager !== 'undefined') {
@@ -1455,6 +1461,24 @@ const Player = {
         }, CONFIG.HEARTBEAT_INTERVAL);
     },
     // Report installed applications to the server via WebSocket (once per connect)
+    launchTizenApp(appId) {
+        if (!appId) return;
+        try {
+            if (typeof tizen === 'undefined' || !tizen.application) {
+                logger.warn('[Apps] tizen.application not available');
+                return;
+            }
+            logger.info('[Apps] Launching Tizen app: ' + appId);
+            tizen.application.launch(
+                appId,
+                () => logger.info('[Apps] Launched: ' + appId),
+                (err) => logger.warn('[Apps] Launch failed: ' + (err && err.message || err))
+            );
+        }
+        catch (e) {
+            logger.warn('[Apps] launchTizenApp error:', e);
+        }
+    },
     reportInstalledApps() {
         try {
             if (typeof tizen === 'undefined' || !tizen.application) return;

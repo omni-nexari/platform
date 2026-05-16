@@ -171,6 +171,7 @@ export const DeviceCommandSchema = z.discriminatedUnion('command', [
   z.object({ command: z.literal('emergency_start'), payload: z.object({ text: z.string().optional(), contentItemId: z.string().uuid().optional() }) }),
   z.object({ command: z.literal('emergency_clear') }),
   z.object({ command: z.literal('relaunch_app') }),
+  z.object({ command: z.literal('launch_app'), payload: z.object({ appId: z.string().min(1) }) }),
   z.object({ command: z.literal('power_off') }),
   z.object({ command: z.literal('power_on') }),
   // ── OS-level commands (Windows + Linux desktop) ────────────────────────
