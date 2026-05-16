@@ -171,6 +171,12 @@ const Player = {
     // Reseller branding: populated from /device/workspace → resellerBranding.
     // When set, replaces the default Nexari SVG logo on the idle screen.
     resellerBrandingLogoUrl: null,
+    // BLE rule override — set by BleManager when a proximity rule triggers.
+    // While set, loadContent() skips the normal schedule API call and plays
+    // this content instead. Cleared when the beacon moves out of range.
+    _bleOverrideContent: null,
+    _preOverrideContent: null, // content playing before the rule was applied
+    _preOverrideSignature: null, // lastContentSignature before override
     // Initialize player
     init(device) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -386,6 +392,13 @@ const Player = {
                 }, 5000);
                 // Refresh MDC poll after startup MDC setup completes (Phase 1 scan can take up to 8s)
                 setTimeout(() => { this.runMdcPoll(); }, 20000);
+                // Start BLE proximity scanning (Tizen 5.5+ only — gated inside BleManager.start)
+                if (typeof window.BleManager !== 'undefined') {
+                    window.BleManager.start();
+                }
+                else {
+                    logger.warn('[BLE] BleManager not loaded — ble-manager.js missing from WGT?');
+                }
             };
             this.wsConnection.onmessage = (event) => {
                 this.lastWsMessageAt = Date.now();
@@ -1650,6 +1663,21 @@ const Player = {
                     sendTizenCommandResult(false, undefined, `Unknown action: ${tcAction}`);
                     break;
                 }
+                case 'device_rules':
+                    logger.info('[BLE] device_rules received:', (message.rules || []).length, 'rule(s)');
+                    if (typeof window.BleManager !== 'undefined') {
+                        window.BleManager.setRules(message.rules || []);
+                    }
+                    if (message.rules && message.rules.length > 0) {
+                        this.preloadRulesContent(message.rules);
+                    }
+                    break;
+                case 'ble_scan':
+                    logger.info('[BLE] on-demand scan requested');
+                    if (typeof window.BleManager !== 'undefined') {
+                        window.BleManager.triggerOnDemandScan();
+                    }
+                    break;
                 default:
                     logger.debug('Unknown message type:', messageType);
             }
@@ -2832,6 +2860,15 @@ const Player = {
             var _a, _b;
             if (this._loadInFlight) {
                 logger.debug('loadContent skipped (already in flight)');
+                return;
+            }
+            // BLE rule override — bypass normal schedule fetch while a rule is active.
+            if (this._bleOverrideContent) {
+                logger.info('[BLE] Using BLE rule content: ' + (this._bleOverrideContent.playlistName || '(unnamed)'));
+                const overrideSig = 'ble-rule-' + this.getContentSignature(this._bleOverrideContent);
+                if (this.lastContentSignature !== overrideSig) {
+                    this.downloadContentInBackground(this._bleOverrideContent, overrideSig);
+                }
                 return;
             }
             this._loadInFlight = true;
@@ -9209,6 +9246,107 @@ const Player = {
                 location.reload(); // Reload to restart pairing process
             }
         }, 3000);
+    },
+    // ── BLE rule override ─────────────────────────────────────────────────
+    overridePlaylistForRule(ruleId, playlistId, contentId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                logger.info('[BLE] overridePlaylistForRule ruleId=' + ruleId + ' playlistId=' + playlistId + ' contentId=' + contentId);
+                const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
+                if (!this._bleOverrideContent && this.currentContent) {
+                    this._preOverrideContent = this.currentContent;
+                    this._preOverrideSignature = this.lastContentSignature;
+                }
+                let overrideContent = null;
+                if (playlistId) {
+                    const playlist = yield API.getPlaylistById(playlistId, token);
+                    if (playlist)
+                        overrideContent = API._normalizePlaylist(playlist, token);
+                }
+                else if (contentId) {
+                    const rawContent = yield API.getContentById(contentId, token);
+                    if (rawContent)
+                        overrideContent = API._normalizeSingleContent(rawContent, 'BLE Rule', token);
+                }
+                if (!overrideContent || !overrideContent.items || overrideContent.items.length === 0) {
+                    logger.warn('[BLE] overridePlaylistForRule: no content resolved for rule ' + ruleId);
+                    return;
+                }
+                this._bleOverrideContent = overrideContent;
+                this.lastContentSignature = null;
+                this.pendingSignature = null;
+                this._loadInFlight = false;
+                yield this.loadContent();
+            }
+            catch (e) {
+                logger.error('[BLE] overridePlaylistForRule error:', e);
+            }
+        });
+    },
+    clearRuleOverride() {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                logger.info('[BLE] Clearing BLE rule override — restoring normal schedule');
+                this._bleOverrideContent = null;
+                const restore = this._preOverrideContent;
+                const restoreSig = this._preOverrideSignature;
+                this._preOverrideContent = null;
+                this._preOverrideSignature = null;
+                this.lastContentSignature = null;
+                this.pendingSignature = null;
+                this._loadInFlight = false;
+                if (restore && restore.items && restore.items.length > 0) {
+                    logger.info('[BLE] Restoring pre-override content: ' + (restore.playlistName || '(unnamed)'));
+                    this.pendingPlaylist = restore;
+                    this.pendingSignature = restoreSig || this.getContentSignature(restore);
+                    this.trySwapToPendingContent(true);
+                }
+                yield this.loadContent();
+            }
+            catch (e) {
+                logger.error('[BLE] clearRuleOverride error:', e);
+            }
+        });
+    },
+    preloadRulesContent(rules) {
+        if (!Array.isArray(rules) || rules.length === 0)
+            return;
+        const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
+        for (const rule of rules) {
+            if (!rule || !rule.enabled || !rule.action)
+                continue;
+            try {
+                if (rule.action.type === 'play_playlist' && rule.action.playlistId) {
+                    API.getPlaylistById(rule.action.playlistId, token)
+                        .then((playlist) => {
+                        if (!playlist)
+                            return;
+                        const content = API._normalizePlaylist(playlist, token);
+                        if (content && content.items && content.items.length > 0) {
+                            ContentManager.downloadPlaylist(content)
+                                .catch((e) => logger.warn('[BLE] Pre-cache playlist failed:', e));
+                        }
+                    })
+                        .catch((e) => logger.warn('[BLE] Pre-cache getPlaylistById failed:', e));
+                }
+                else if (rule.action.type === 'play_content' && rule.action.contentId) {
+                    API.getContentById(rule.action.contentId, token)
+                        .then((rawContent) => {
+                        if (!rawContent)
+                            return;
+                        const content = API._normalizeSingleContent(rawContent, 'BLE Rule', token);
+                        if (content && content.items && content.items.length > 0) {
+                            ContentManager.downloadPlaylist(content)
+                                .catch((e) => logger.warn('[BLE] Pre-cache content download failed:', e));
+                        }
+                    })
+                        .catch((e) => logger.warn('[BLE] Pre-cache getContentById failed:', e));
+                }
+            }
+            catch (e) {
+                logger.warn('[BLE] preloadRulesContent error for rule', rule.name, e);
+            }
+        }
     },
     // Cleanup
     destroy() {
