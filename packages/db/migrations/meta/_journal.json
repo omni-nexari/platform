@@ -474,7 +474,7 @@
         {
             "idx": 67,
             "version": "7",
-            "when": 1747526400000,
+            "when": 1778740000000,
             "tag": "0067_display_physical_dims",
             "breakpoints": true
         }

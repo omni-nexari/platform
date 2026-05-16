@@ -100,33 +100,7 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
     setOrientations({});
   }
 
-  // ── Proportional grid dimensions ─────────────────────────────────────────
-
-  const wallMembersForLayout: WallMember[] = [];
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const key = ck(c, r);
-      const rot = orientations[key] ?? '0';
-      wallMembersForLayout.push({
-        deviceId: cells[key] ?? `empty-${key}`,
-        positionCol: c,
-        positionRow: r,
-        colSpan: 1,
-        rowSpan: 1,
-        tileRotation: rot,
-        nativeWidthPx:  rot === '90' ? 1080 : 1920,
-        nativeHeightPx: rot === '90' ? 1920 : 1080,
-      });
-    }
-  }
-  const colWidths  = computeColWidths(wallMembersForLayout,  cols);
-  const rowHeights = computeRowHeights(wallMembersForLayout, rows);
-  const totalW = colWidths.reduce((s, w) => s + w, 0) || 1;
-  const totalH = rowHeights.reduce((s, h) => s + h, 0) || 1;
-  const colFrs = colWidths.map((w) => (w / totalW * 100).toFixed(1) + '%').join(' ');
-  const rowFrs = rowHeights.map((h) => (h / totalH * 100).toFixed(1) + '%').join(' ');
-
-  // Map from "col,row" → deviceId
+  // ── Derived ──────────────────────────────────────────────────────────────────
   const [cells, setCells] = useState<Record<string, string>>(() => {
     const map: Record<string, string> = {};
     for (const m of group.members) {
@@ -190,6 +164,30 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
   // ── Derived ──────────────────────────────────────────────────────────────────
 
   const deviceById = Object.fromEntries(availableDevices.map((d) => [d.id, d]));
+
+  // Proportional grid dimensions (depends on cells + orientations state)
+  const wallMembersForLayout: WallMember[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const key = ck(c, r);
+      const rot = orientations[key] ?? '0';
+      wallMembersForLayout.push({
+        positionCol: c,
+        positionRow: r,
+        colSpan: 1,
+        rowSpan: 1,
+        tileRotation: rot,
+        nativeWidthPx:  rot === '90' ? 1080 : 1920,
+        nativeHeightPx: rot === '90' ? 1920 : 1080,
+      });
+    }
+  }
+  const colWidths  = computeColWidths(wallMembersForLayout,  cols);
+  const rowHeights = computeRowHeights(wallMembersForLayout, rows);
+  const totalW = colWidths.reduce((s, w) => s + w, 0) || 1;
+  const totalH = rowHeights.reduce((s, h) => s + h, 0) || 1;
+  const colFrs = colWidths.map((w) => (w / totalW * 100).toFixed(1) + '%').join(' ');
+  const rowFrs = rowHeights.map((h) => (h / totalH * 100).toFixed(1) + '%').join(' ');
 
   // Which deviceIds are already assigned (across any cell)
   function assignedExcept(excludeKey: string) {
