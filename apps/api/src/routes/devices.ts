@@ -1908,6 +1908,16 @@ export async function deviceRoutes(app: FastifyInstance) {
     }
   }
 
+  // ── POST /devices/device/ble-scan-result ─ device self-reports BLE scan ─────
+  app.post('/device/ble-scan-result', async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+    const body = req.body as { beacons?: unknown[] };
+    const beacons = Array.isArray(body?.beacons) ? body.beacons : [];
+    await db.insert(bleScanResults).values({ deviceId: auth.deviceId, beacons: beacons as never, scannedAt: new Date() });
+    return reply.send({ ok: true });
+  });
+
   // ── GET /devices/device/schedule ─ full schedule + content manifest ─────────
   app.get('/device/schedule', async (req, reply) => {
     const auth = authenticateDevice(req as never, reply as never);
