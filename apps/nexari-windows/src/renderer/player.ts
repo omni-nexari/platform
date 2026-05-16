@@ -19,6 +19,7 @@ import Hls from 'hls.js';
 import * as PdfjsLib from 'pdfjs-dist';
 import * as ApiClient from './api.js';
 import type { Playlist, PlaylistItem, NormalizedContent } from './api.js';
+import { computeTileCssTransform, type WallMember } from '@signage/shared';
 import {
   initPlayerSettings,
   onAutoUpdateAvailable,
@@ -694,49 +695,59 @@ async function renderPdf(c: NormalizedContent, durationSec: number) {
 // VIDEOWALL — HTML5 video with CSS clip/transform for this panel's region
 // ---------------------------------------------------------------------------
 async function renderVideowall(c: NormalizedContent, durationSec: number) {
-  const url  = await downloadFirst(c.url);
-  let meta: any = {};
-  try { meta = JSON.parse(c.metadata || '{}'); } catch { /* ignore */ }
+  const url = await downloadFirst(c.url);
 
   const vid = document.createElement('video');
-  Object.assign(vid.style, {
-    display: 'block', background: '#000',
-    position: 'absolute',
-  });
+  vid.playsInline = true;
+  vid.autoplay = false;
+  vid.muted = false;
+  vid.loop = true;
+  vid.controls = false;
 
   const pw = root.clientWidth;
   const ph = root.clientHeight;
 
-  // Prefer geometry from wall manifest (cross-platform path).
-  // Fall back to legacy offsetX/offsetY/cropW/cropH from content metadata.
-  let scaleX: number, scaleY: number, tx: number, ty: number;
+  // Compute CSS wall transform via shared math.
+  let cssTransform: { canvasW: number; canvasH: number; translateX: number; translateY: number; scaleX: number; scaleY: number; rotation: number };
   const manifest = _wallManifest;
   if (manifest?.geometry && manifest?.myCell) {
     const geo = manifest.geometry;
     const mc  = manifest.myCell;
-    const col = mc.positionCol; const row = mc.positionRow;
-    const colSpan = mc.colSpan || 1; const rowSpan = mc.rowSpan || 1;
-    let offsetXPx = 0; for (let ci = 0; ci < col; ci++) offsetXPx += (geo.colWidths[ci] || 0);
-    let offsetYPx = 0; for (let ri = 0; ri < row; ri++) offsetYPx += (geo.rowHeights[ri] || 0);
-    let cellW = 0; for (let ci = col; ci < col + colSpan; ci++) cellW += (geo.colWidths[ci] || 0);
-    let cellH = 0; for (let ri = row; ri < row + rowSpan; ri++) cellH += (geo.rowHeights[ri] || 0);
-    const cW = geo.canvasW || pw; const cH = geo.canvasH || ph;
-    scaleX = cW / cellW;
-    scaleY = cH / cellH;
-    tx     = -(offsetXPx / cW) * cW * scaleX;
-    ty     = -(offsetYPx / cH) * cH * scaleY;
+    const bezelOffsets = geo.bezelOffsets ?? null;
+    const member: WallMember = {
+      deviceId:       String(mc.deviceId      ?? ''),
+      positionCol:    Number(mc.positionCol   ?? 0),
+      positionRow:    Number(mc.positionRow   ?? 0),
+      colSpan:        Number(mc.colSpan        ?? 1),
+      rowSpan:        Number(mc.rowSpan        ?? 1),
+      tileRotation:   String(mc.tileRotation  ?? '0'),
+      nativeWidthPx:  Number(mc.nativeWidthPx  ?? pw),
+      nativeHeightPx: Number(mc.nativeHeightPx ?? ph),
+    };
+    cssTransform = computeTileCssTransform(member, geo.colWidths ?? [], geo.rowHeights ?? [], bezelOffsets);
   } else {
+    // Legacy flat metadata path.
+    let meta: any = {};
+    try { meta = JSON.parse(c.metadata || '{}'); } catch { /* ignore */ }
     const { offsetX = 0, offsetY = 0, cropW = 1, cropH = 1 } = meta;
-    scaleX = 1 / cropW;
-    scaleY = 1 / cropH;
-    tx     = -offsetX * pw * scaleX;
-    ty     = -offsetY * ph * scaleY;
+    const sX = 1 / cropW; const sY = 1 / cropH;
+    cssTransform = { canvasW: pw, canvasH: ph, translateX: -offsetX * pw, translateY: -offsetY * ph, scaleX: sX, scaleY: sY, rotation: 0 };
   }
 
-  vid.style.width     = pw + 'px';
-  vid.style.height    = ph + 'px';
-  vid.style.transform = `scale(${scaleX},${scaleY}) translate(${tx / scaleX}px,${ty / scaleY}px)`;
-  vid.style.transformOrigin = '0 0';
+  const { canvasW, canvasH, translateX: tx, translateY: ty, scaleX, scaleY, rotation } = cssTransform;
+
+  // Outer clip window (panel logical size = screen size here).
+  const outer = document.createElement('div');
+  outer.style.cssText = `position:absolute;top:0;left:0;width:${pw}px;height:${ph}px;overflow:hidden;background:#000;`;
+  // Inner rotation + bezel scale.
+  const inner = document.createElement('div');
+  inner.style.cssText = `position:absolute;top:0;left:0;width:100%;height:100%;` +
+    `transform:rotate(${rotation}deg) scale(${scaleX},${scaleY});transform-origin:center;`;
+  outer.appendChild(inner);
+
+  // Video element — full canvas, translated to expose this cell.
+  vid.style.cssText = `position:absolute;top:0;left:0;width:${canvasW}px;height:${canvasH}px;` +
+    `transform:translate(${tx}px,${ty}px);transform-origin:0 0;object-fit:fill;background:#000;`;
 
   vid.src      = url;
   vid.autoplay = true;
@@ -746,7 +757,8 @@ async function renderVideowall(c: NormalizedContent, durationSec: number) {
   vid.onended  = advancePlaylist;
   vid.onerror  = () => scheduleAdvance(durationSec);
 
-  root.appendChild(vid);
+  inner.appendChild(vid);
+  root.appendChild(outer);
   vid.play().catch(() => {});
   scheduleAdvance(durationSec);
 }

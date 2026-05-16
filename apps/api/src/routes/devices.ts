@@ -9,7 +9,7 @@ import { eq, and, isNull, desc, asc, inArray, sql, ilike, gte, lte, lt } from 'd
 import { z } from 'zod';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
-import { ClaimDeviceSchema, UpdateDeviceSchema, DeviceCommandSchema, PairRequestSchema, buildWallGeometry, WindowsPlayerSettingsSchema } from '@signage/shared';
+import { ClaimDeviceSchema, UpdateDeviceSchema, DeviceCommandSchema, PairRequestSchema, buildWallGeometry, WindowsPlayerSettingsSchema, lookupDisplayPreset, bezelPx, type WallBezels, type WallMember } from '@signage/shared';
 import type { WallMember, WallBezels } from '@signage/shared';
 import { writeAuditLog } from '../services/audit.js';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
@@ -437,6 +437,12 @@ export async function deviceRoutes(app: FastifyInstance) {
     const epaperOrientation = body.data.orientation ?? null;
     const epaperApiVersion = body.data.epaperApiVersion ?? null;
 
+    // Display preset: auto-populate physical dimensions from known commercial models.
+    const displayPreset = lookupDisplayPreset(modelCode);
+    const presetPhysical = displayPreset
+      ? { physicalWidthMm: displayPreset.activeAreaMm[0], physicalHeightMm: displayPreset.activeAreaMm[1] }
+      : {};
+
     // If this DUID (or serial as fallback) already has a live device token, auto-resume without re-pairing.
     // NOTE: DUID lookup intentionally omits isNull(deletedAt) — a soft-deleted row still holds the unique
     // DUID constraint. If we only search non-deleted rows we get null and then INSERT, which hits the
@@ -462,6 +468,8 @@ export async function deviceRoutes(app: FastifyInstance) {
           lastSeen: new Date(),
           updatedAt: new Date(),
           mdcNetworkStandby: null,
+          // Only write preset physical dims if the device doesn't already have them set
+          ...(displayPreset && !existing.physicalWidthMm ? presetPhysical : {}),
           ...(epaperKind ? { kind: epaperKind } : {}),
           ...(epaperPlatform ? { platform: epaperPlatform } : {}),
           ...(epaperPanelW ? { panelW: epaperPanelW } : {}),
@@ -493,6 +501,7 @@ export async function deviceRoutes(app: FastifyInstance) {
           updatedAt: new Date(),
           deletedAt: null,
           mdcNetworkStandby: null,
+          ...(displayPreset && !existing.physicalWidthMm ? presetPhysical : {}),
           ...(epaperKind ? { kind: epaperKind } : {}),
           ...(epaperPlatform ? { platform: epaperPlatform } : {}),
           ...(epaperPanelW ? { panelW: epaperPanelW } : {}),
@@ -538,6 +547,7 @@ export async function deviceRoutes(app: FastifyInstance) {
           ipAddress: req.ip ?? null,
           updatedAt: new Date(),
           deletedAt: null,
+          ...(displayPreset && !existing.physicalWidthMm ? presetPhysical : {}),
           ...(epaperKind ? { kind: epaperKind } : {}),
           ...(epaperPlatform ? { platform: epaperPlatform } : {}),
           ...(epaperPanelW ? { panelW: epaperPanelW } : {}),
@@ -561,6 +571,7 @@ export async function deviceRoutes(app: FastifyInstance) {
           firmwareVersion: firmwareVersion ?? null,
           ipAddress: req.ip ?? null,
           kind: epaperKind ?? 'tv',
+          ...presetPhysical,
           ...(epaperPlatform ? { platform: epaperPlatform } : {}),
           panelW: epaperPanelW ?? null,
           panelH: epaperPanelH ?? null,
@@ -1762,7 +1773,23 @@ export async function deviceRoutes(app: FastifyInstance) {
               ? { topMm: Number(group.bezelTopMm ?? 0), rightMm: Number(group.bezelRightMm ?? 0), bottomMm: Number(group.bezelBottomMm ?? 0), leftMm: Number(group.bezelLeftMm ?? 0) }
               : null;
 
-          const geometry = buildWallGeometry(wallMembers, group.videoWallCols, group.videoWallRows, bezels);
+          // Compute bezel px offsets using physical dims from the first available member device.
+          let wallBezelOffsets: { left: number; right: number; top: number; bottom: number } | null = null;
+          if (bezels) {
+            const refDeviceRow = Object.values(deviceMap).find((d: any) => d.physicalWidthMm && d.physicalHeightMm) as any;
+            const refMember = allMembers.find((m) => refDeviceRow && m.deviceId === refDeviceRow.id);
+            if (refDeviceRow) {
+              wallBezelOffsets = bezelPx(
+                bezels,
+                refMember?.nativeWidthPx ?? 1920,
+                refMember?.nativeHeightPx ?? 1080,
+                refDeviceRow.physicalWidthMm,
+                refDeviceRow.physicalHeightMm,
+              );
+            }
+          }
+
+          const geometry = buildWallGeometry(wallMembers, group.videoWallCols, group.videoWallRows, bezels, wallBezelOffsets);
           const sortedMembers = [...allMembers]
             .filter((m) => m.positionCol != null && m.positionRow != null)
             .sort((a, b) => {

@@ -114,6 +114,13 @@ export const devices = pgTable('devices', {
   ntpTimezone: text('ntp_timezone'),
   clockDriftMs: integer('clock_drift_ms'),
 
+  // ── Physical panel dimensions (mm) ────────────────────────────────────────
+  // Active (viewable) area in millimetres. Used to convert bezel mm → px for
+  // videowall bezel compensation. Populated automatically from display presets
+  // on pairing when the modelCode is recognised.
+  physicalWidthMm: doublePrecision('physical_width_mm'),
+  physicalHeightMm: doublePrecision('physical_height_mm'),
+
   // ── Location ───────────────────────────────────────────────────────────────
   latitude: doublePrecision('latitude'),
   longitude: doublePrecision('longitude'),

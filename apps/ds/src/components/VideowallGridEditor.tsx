@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Save, Radio, ChevronDown, X } from 'lucide-react';
+import { lookupDisplayPreset, computeColWidths, computeRowHeights, type WallMember } from '@signage/shared';
 
 // ── Grid size stepper ─────────────────────────────────────────────────────────
 
@@ -39,6 +40,7 @@ export interface GridDevice {
   id: string;
   name: string;
   status: string;
+  modelCode?: string | null;
 }
 
 export interface GridMember {
@@ -95,7 +97,34 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
     setGridCols(newCols);
     setGridRows(newRows);
     setCells({});  // clear assignments — they're invalid for the new dimensions
+    setOrientations({});
   }
+
+  // ── Proportional grid dimensions ─────────────────────────────────────────
+
+  const wallMembersForLayout: WallMember[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const key = ck(c, r);
+      const rot = orientations[key] ?? '0';
+      wallMembersForLayout.push({
+        deviceId: cells[key] ?? `empty-${key}`,
+        positionCol: c,
+        positionRow: r,
+        colSpan: 1,
+        rowSpan: 1,
+        tileRotation: rot,
+        nativeWidthPx:  rot === '90' ? 1080 : 1920,
+        nativeHeightPx: rot === '90' ? 1920 : 1080,
+      });
+    }
+  }
+  const colWidths  = computeColWidths(wallMembersForLayout,  cols);
+  const rowHeights = computeRowHeights(wallMembersForLayout, rows);
+  const totalW = colWidths.reduce((s, w) => s + w, 0) || 1;
+  const totalH = rowHeights.reduce((s, h) => s + h, 0) || 1;
+  const colFrs = colWidths.map((w) => (w / totalW * 100).toFixed(1) + '%').join(' ');
+  const rowFrs = rowHeights.map((h) => (h / totalH * 100).toFixed(1) + '%').join(' ');
 
   // Map from "col,row" → deviceId
   const [cells, setCells] = useState<Record<string, string>>(() => {
@@ -103,6 +132,17 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
     for (const m of group.members) {
       if (m.positionCol != null && m.positionRow != null) {
         map[ck(m.positionCol, m.positionRow)] = m.deviceId;
+      }
+    }
+    return map;
+  });
+
+  // Map from "col,row" → tileRotation ('0' = landscape, '90' = portrait)
+  const [orientations, setOrientations] = useState<Record<string, '0' | '90'>>(() => {
+    const map: Record<string, '0' | '90'> = {};
+    for (const m of group.members) {
+      if (m.positionCol != null && m.positionRow != null) {
+        map[ck(m.positionCol, m.positionRow)] = (m.tileRotation === '90' || m.tileRotation === '270') ? '90' : '0';
       }
     }
     return map;
@@ -132,6 +172,13 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
       }
     }
     setCells(map);
+    const omap: Record<string, '0' | '90'> = {};
+    for (const m of group.members) {
+      if (m.positionCol != null && m.positionRow != null) {
+        omap[ck(m.positionCol, m.positionRow)] = (m.tileRotation === '90' || m.tileRotation === '270') ? '90' : '0';
+      }
+    }
+    setOrientations(omap);
     setBezelTop(String(group.bezelTopMm ?? ''));
     setBezelRight(String(group.bezelRightMm ?? ''));
     setBezelBottom(String(group.bezelBottomMm ?? ''));
@@ -169,6 +216,7 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
           const existing = group.members.find(
             (m) => m.positionCol === c && m.positionRow === r,
           );
+          const rotation = orientations[key] ?? '0';
           return {
             deviceId,
             position: idx,
@@ -176,9 +224,9 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
             positionRow: r,
             colSpan:      existing?.colSpan      ?? 1,
             rowSpan:      existing?.rowSpan      ?? 1,
-            tileRotation: existing?.tileRotation ?? '0',
-            nativeWidthPx:  existing?.nativeWidthPx  ?? null,
-            nativeHeightPx: existing?.nativeHeightPx ?? null,
+            tileRotation: rotation,
+            nativeWidthPx:  rotation === '90' ? 1080 : 1920,
+            nativeHeightPx: rotation === '90' ? 1920 : 1080,
           };
         });
       return api.put(`/device-groups/${groupId}/members`, members);
@@ -271,8 +319,9 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
           <div
             className="grid gap-2"
             style={{
-              gridTemplateColumns: `repeat(${cols}, minmax(120px, 1fr))`,
-              minWidth: cols * 130,
+              gridTemplateColumns: colFrs,
+              gridTemplateRows: rowFrs,
+              minWidth: cols * 120,
             }}
           >
             {Array.from({ length: rows }, (_, r) =>
@@ -281,27 +330,58 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
                 const deviceId = cells[key];
                 const device = deviceId ? deviceById[deviceId] : null;
                 const alreadyUsed = assignedExcept(key);
+                const isPortrait = (orientations[key] ?? '0') === '90';
+                const preset = device?.modelCode ? lookupDisplayPreset(device.modelCode) : null;
 
                 return (
                   <div
                     key={key}
-                    className="relative rounded-lg border flex flex-col min-h-[72px]"
-                    style={{ background: 'var(--bg)', borderColor: 'var(--border)' }}
+                    className="relative rounded-lg border flex flex-col"
+                    style={{
+                      background: 'var(--bg)',
+                      borderColor: 'var(--border)',
+                      minHeight: isPortrait ? 100 : 72,
+                      aspectRatio: isPortrait ? '9/16' : '16/9',
+                    }}
                   >
                     {/* Cell header */}
-                    <div className="px-2 pt-1.5 flex items-center justify-between">
+                    <div className="px-2 pt-1.5 flex items-center justify-between gap-1">
                       <span className="text-[10px] font-mono text-[var(--text-faint)]">
                         C{c} R{r}
                       </span>
-                      {deviceId && (
+                      <div className="flex items-center gap-1 ml-auto">
+                        {/* L/P orientation toggle */}
                         <button
-                          onClick={() => setCells((prev) => { const n = { ...prev }; delete n[key]; return n; })}
-                          className="text-[var(--text-faint)] hover:text-red-400 transition-colors"
+                          type="button"
+                          title={isPortrait ? 'Portrait — click to switch to Landscape' : 'Landscape — click to switch to Portrait'}
+                          onClick={() => setOrientations((prev) => ({ ...prev, [key]: isPortrait ? '0' : '90' }))}
+                          className={`px-1 py-0.5 rounded text-[9px] font-bold border transition-colors ${
+                            isPortrait
+                              ? 'border-blue-400 bg-blue-400/15 text-blue-300'
+                              : 'border-[var(--border)] text-[var(--text-faint)] hover:border-[var(--accent)]'
+                          }`}
                         >
-                          <X className="w-3 h-3" />
+                          {isPortrait ? 'P' : 'L'}
                         </button>
-                      )}
+                        {deviceId && (
+                          <button
+                            onClick={() => setCells((prev) => { const n = { ...prev }; delete n[key]; return n; })}
+                            className="text-[var(--text-faint)] hover:text-red-400 transition-colors"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
                     </div>
+
+                    {/* Preset badge */}
+                    {preset && (
+                      <div className="px-2">
+                        <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 truncate block max-w-full">
+                          {preset.label}
+                        </span>
+                      </div>
+                    )}
 
                     {/* Device name or picker trigger */}
                     <button

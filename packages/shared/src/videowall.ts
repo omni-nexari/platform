@@ -68,6 +68,22 @@ export interface TileCssTransform {
   translateX: number;
   /** translateY to apply (negative — shifts video up to show correct region). */
   translateY: number;
+  /**
+   * X scale for bezel compensation on the overflow:hidden container.
+   * 1.0 = no bezel correction.
+   */
+  scaleX: number;
+  /**
+   * Y scale for bezel compensation on the overflow:hidden container.
+   * 1.0 = no bezel correction.
+   */
+  scaleY: number;
+  /**
+   * Panel rotation in degrees (0 | 90 | 180 | 270).
+   * Apply as rotate(Xdeg) on the inner container when the OS does not handle
+   * display rotation itself (common on Tizen / Windows in landscape-only mode).
+   */
+  rotation: number;
 }
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
@@ -259,23 +275,41 @@ export function computeCellRect(
  * container.style.height = panelLogicalH(member) + 'px';
  * ```
  *
- * @param member      The panel/member to render on.
- * @param colWidths   Output of {@link computeColWidths}.
- * @param rowHeights  Output of {@link computeRowHeights}.
+ * @param member        The panel/member to render on.
+ * @param colWidths     Output of {@link computeColWidths}.
+ * @param rowHeights    Output of {@link computeRowHeights}.
+ * @param bezelOffsets  Pre-computed per-edge bezel pixel offsets (from
+ *                      {@link bezelPx}).  Omit or pass null for no correction.
  */
 export function computeTileCssTransform(
   member: WallMember,
   colWidths: number[],
   rowHeights: number[],
+  bezelOffsets?: { left: number; right: number; top: number; bottom: number } | null,
 ): TileCssTransform {
   const rect = computeCellRect(member, colWidths, rowHeights);
   const { canvasW, canvasH } = computeCanvasSize(colWidths, rowHeights);
+
+  const panelW = panelLogicalW(member);
+  const panelH = panelLogicalH(member);
+
+  const scaleX = bezelOffsets
+    ? (panelW + bezelOffsets.left + bezelOffsets.right) / panelW
+    : 1;
+  const scaleY = bezelOffsets
+    ? (panelH + bezelOffsets.top + bezelOffsets.bottom) / panelH
+    : 1;
+
+  const rotation = parseInt(member.tileRotation ?? '0', 10) || 0;
 
   return {
     canvasW,
     canvasH,
     translateX: -rect.x,
     translateY: -rect.y,
+    scaleX,
+    scaleY,
+    rotation,
   };
 }
 
@@ -322,6 +356,12 @@ export interface WallGeometry {
   colWidths: number[];
   rowHeights: number[];
   bezels: WallBezels | null;
+  /**
+   * Pre-computed bezel pixel offsets (converted from mm by the API using each
+   * device's physical dimensions).  Null when physical dimensions are unknown.
+   * Players pass this to computeTileCssTransform() for bezel scale correction.
+   */
+  bezelOffsets: { left: number; right: number; top: number; bottom: number } | null;
 }
 
 /**
@@ -334,12 +374,17 @@ export function buildWallGeometry(
   gridCols: number,
   gridRows: number,
   bezels: WallBezels | null,
+  bezelOffsets?: { left: number; right: number; top: number; bottom: number } | null,
 ): WallGeometry {
   const colWidths  = computeColWidths(members, gridCols);
   const rowHeights = computeRowHeights(members, gridRows);
   const { canvasW, canvasH } = computeCanvasSize(colWidths, rowHeights);
 
-  return { gridCols, gridRows, canvasW, canvasH, colWidths, rowHeights, bezels: bezels ?? null };
+  return {
+    gridCols, gridRows, canvasW, canvasH, colWidths, rowHeights,
+    bezels: bezels ?? null,
+    bezelOffsets: bezelOffsets ?? null,
+  };
 }
 
 // ── AVPlay setVideoRoi crop (Tizen 6.0+ B2B/LFD) ─────────────────────────────

@@ -28,6 +28,7 @@ interface DeviceLite {
   latestScreenshotId: string | null;
   latestFrameAt: number | null;
   modelName: string | null;
+  modelCode: string | null;
   ipAddress: string | null;
 }
 

@@ -18,8 +18,9 @@ import { renderMenuBoard } from './renderers/menu-board.js';
 import { renderDataSync,  type DataSyncHandle } from './renderers/datasync.js';
 import {
   initEngine, prepare, schedulePlayAt, playFromPrebuffer, destroyEngine,
-  setPlaylist, getDuration, setWallCrop, measurePlayLatencyMs,
+  setPlaylist, getDuration, setWallTransform, measurePlayLatencyMs,
 } from './sync/engine.js';
+import { computeTileCssTransform, type WallMember } from '@signage/shared';
 import { init as syncInit, stop as syncStop } from './sync/sync.js';
 
 export interface PlayerConfig {
@@ -1802,32 +1803,28 @@ export class Player {
   }
 
   private async initVideoWall(msg: Record<string, unknown>): Promise<void> {
-    // 1. Compute wall crop — prefer new geometry+myCell format, fall back to legacy flat fields.
-    let srcX = 0, srcY = 0, srcW = window.innerWidth, srcH = window.innerHeight;
-    let dstW = window.innerWidth, dstH = window.innerHeight;
+    // 1. Compute CSS wall transform from VIDEOWALL_INIT geometry.
     const geo    = msg['geometry']  as Record<string, unknown> | null | undefined;
     const myCell = msg['myCell']    as Record<string, unknown> | null | undefined;
-    if (geo && myCell) {
-      const colWidths  = (geo['colWidths']  as number[]) ?? [];
-      const rowHeights = (geo['rowHeights'] as number[]) ?? [];
-      const col     = Number(myCell['positionCol'] ?? 0);
-      const row     = Number(myCell['positionRow'] ?? 0);
-      const colSpan = Number(myCell['colSpan']      ?? 1);
-      const rowSpan = Number(myCell['rowSpan']      ?? 1);
-      let offsetX = 0; for (let c = 0; c < col; c++) offsetX += (colWidths[c]  || 0);
-      let offsetY = 0; for (let r = 0; r < row; r++) offsetY += (rowHeights[r] || 0);
-      let cellW = 0; for (let c = col; c < col + colSpan; c++) cellW += (colWidths[c]  || 0);
-      let cellH = 0; for (let r = row; r < row + rowSpan; r++) cellH += (rowHeights[r] || 0);
-      srcX = offsetX; srcY = offsetY; srcW = cellW; srcH = cellH;
-      dstW = Number(geo['canvasW'] ?? window.innerWidth);
-      dstH = Number(geo['canvasH'] ?? window.innerHeight);
-    } else {
-      srcX = Number(msg['srcX'] ?? 0);              srcY = Number(msg['srcY'] ?? 0);
-      srcW = Number(msg['srcW'] ?? window.innerWidth); srcH = Number(msg['srcH'] ?? window.innerHeight);
-      dstW = Number(msg['dstW'] ?? window.innerWidth); dstH = Number(msg['dstH'] ?? window.innerHeight);
-    }
-    setWallCrop(srcX, srcY, srcW, srcH, dstW, dstH);
-    logger.info(`[Player] videowall crop srcX=${srcX} srcY=${srcY} srcW=${srcW} srcH=${srcH} canvas ${dstW}x${dstH}`);
+    if (!geo || !myCell) { logger.warn('[Player] videowall: missing geometry/myCell'); return; }
+
+    const colWidths  = (geo['colWidths']  as number[]) ?? [];
+    const rowHeights = (geo['rowHeights'] as number[]) ?? [];
+    const bezelOffsets = (geo['bezelOffsets'] as { left: number; right: number; top: number; bottom: number } | null | undefined) ?? null;
+
+    const member: WallMember = {
+      deviceId:      String(myCell['deviceId']      ?? ''),
+      positionCol:   Number(myCell['positionCol']   ?? 0),
+      positionRow:   Number(myCell['positionRow']   ?? 0),
+      colSpan:       Number(myCell['colSpan']        ?? 1),
+      rowSpan:       Number(myCell['rowSpan']        ?? 1),
+      tileRotation:  String(myCell['tileRotation']  ?? '0'),
+      nativeWidthPx:  Number(myCell['nativeWidthPx']  ?? 1920),
+      nativeHeightPx: Number(myCell['nativeHeightPx'] ?? 1080),
+    };
+    const t = computeTileCssTransform(member, colWidths, rowHeights, bezelOffsets);
+    setWallTransform(t);
+    logger.info(`[Player] videowall transform set canvas=${t.canvasW}×${t.canvasH} tx=${t.translateX} ty=${t.translateY}`);
 
     // 2. Stop any previous sync/relay before starting new session.
     if (this.syncActive) { try { syncStop(); } catch {} this.syncActive = false; }

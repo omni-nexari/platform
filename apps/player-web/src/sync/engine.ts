@@ -1,21 +1,20 @@
 /**
  * engine.ts — A/B HTML5 <video> engine for multi-clip sync playback.
  *
- * Ported verbatim from apps/nexari-html5-sync/src/engine.ts; only the
- * logger import path is adjusted for the player-web package layout.
- *
  * Two persistent <video> elements (A and B):
  *   foreground (fg) — currently playing the active clip
  *   background (bg) — hidden, paused at frame 0 of the *next* clip
  *
  * Non-wall mode: fg is visible via CSS opacity/zIndex; bg hidden.
  *
- * Wall mode (CSS transforms don't crop HW video planes on Samsung Tizen 4):
- *   Both <video> elements are kept off-DOM (display:none). A single <canvas>
- *   is displayed fullscreen. A requestAnimationFrame loop draws the active fg
- *   video with drawImage(), applying the crop rect.
+ * Wall mode (CSS transforms):
+ *   Three-element structure per panel:
+ *     outer (overflow:hidden, panel logical size)
+ *     inner (rotate+scale for orientation+bezel)
+ *     <video> (full canvas, translated to expose this cell)
  */
 import { logger } from '../logger.js';
+import type { TileCssTransform } from '@signage/shared';
 
 type Role = 'leader' | 'follower';
 
@@ -36,10 +35,9 @@ let _firstPlay = true;
 let _eosWatchTimer: ReturnType<typeof setInterval> | null = null;
 let _playTimer: ReturnType<typeof setTimeout> | null = null;
 
-let _wallCrop: { srcX: number; srcY: number; srcW: number; srcH: number; dstW: number; dstH: number } | null = null;
-let _canvas: HTMLCanvasElement | null = null;
-let _ctx: CanvasRenderingContext2D | null = null;
-let _rafId: number | null = null;
+let _wallTransform: TileCssTransform | null = null;
+let _wallOuter: HTMLElement | null = null;  // overflow:hidden clip wrapper
+let _wallInner: HTMLElement | null = null;  // rotate+scale wrapper
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -52,12 +50,9 @@ export function setPlaylist(urls: string[]): void {
 }
 export function getPlaylistUrls(): string[] { return _playlist; }
 
-export function setWallCrop(
-  srcX: number, srcY: number, srcW: number, srcH: number, dstW: number, dstH: number,
-): void {
-  _wallCrop = { srcX, srcY, srcW, srcH, dstW, dstH };
-  _log(`[Engine] wall crop set srcX=${srcX} srcY=${srcY} srcW=${srcW} srcH=${srcH} → canvas ${dstW}×${dstH}`);
-  if (_canvas) { _canvas.width = dstW; _canvas.height = dstH; }
+export function setWallTransform(t: TileCssTransform): void {
+  _wallTransform = t;
+  _log(`[Engine] wall transform set canvas=${t.canvasW}×${t.canvasH} tx=${t.translateX} ty=${t.translateY} scaleX=${t.scaleX} scaleY=${t.scaleY} rot=${t.rotation}`);
 }
 
 export function isPlaying(): boolean {
@@ -127,15 +122,6 @@ export function initEngine(container: HTMLElement): Promise<void> {
   for (let i = 0; i < 2; i++) {
     const v = document.createElement('video');
     v.id = 'nexari-player-' + (i === 0 ? 'A' : 'B');
-    if (!_wallCrop) {
-      v.style.cssText = [
-        'position:absolute', 'top:0', 'left:0', 'width:100%', 'height:100%',
-        'object-fit:contain', 'background:#000',
-      ].join(';');
-      v.style.zIndex  = i === 0 ? '2' : '1';
-      v.style.opacity = i === 0 ? '1' : '0';
-      container.appendChild(v);
-    }
     v.playsInline = true;
     v.autoplay    = false;
     v.muted       = false;
@@ -144,16 +130,37 @@ export function initEngine(container: HTMLElement): Promise<void> {
     _videos.push(v);
   }
 
-  if (_wallCrop) {
-    const { dstW, dstH } = _wallCrop;
-    _canvas = document.createElement('canvas');
-    _canvas.width  = dstW;
-    _canvas.height = dstH;
-    _canvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;background:#000;';
-    container.appendChild(_canvas);
-    _ctx = _canvas.getContext('2d');
-    _log(`[Engine] initialised (canvas wall mode, ${dstW}×${dstH})`);
+  if (_wallTransform) {
+    const t = _wallTransform;
+    // Outer clip window — matches this panel's logical size.
+    _wallOuter = document.createElement('div');
+    _wallOuter.style.cssText = `position:absolute;top:0;left:0;width:${t.canvasW}px;height:${t.canvasH}px;overflow:hidden;background:#000;`;
+    // Inner wrapper — rotation + bezel scale.
+    _wallInner = document.createElement('div');
+    _wallInner.style.cssText = `position:absolute;top:0;left:0;width:100%;height:100%;` +
+      `transform:rotate(${t.rotation}deg) scale(${t.scaleX},${t.scaleY});transform-origin:center;`;
+    _wallOuter.appendChild(_wallInner);
+    container.appendChild(_wallOuter);
+    // Both video elements go inside inner; only fg is visible.
+    for (let i = 0; i < _videos.length; i++) {
+      const v = _videos[i]!;
+      v.style.cssText = `position:absolute;top:0;left:0;width:${t.canvasW}px;height:${t.canvasH}px;` +
+        `transform:translate(${t.translateX}px,${t.translateY}px);transform-origin:0 0;object-fit:fill;`;
+      v.style.opacity = i === _fg ? '1' : '0';
+      _wallInner.appendChild(v);
+    }
+    _log(`[Engine] initialised (CSS wall mode, canvas=${t.canvasW}×${t.canvasH})`);
   } else {
+    for (let i = 0; i < _videos.length; i++) {
+      const v = _videos[i]!;
+      v.style.cssText = [
+        'position:absolute', 'top:0', 'left:0', 'width:100%', 'height:100%',
+        'object-fit:contain', 'background:#000',
+      ].join(';');
+      v.style.zIndex  = i === 0 ? '2' : '1';
+      v.style.opacity = i === 0 ? '1' : '0';
+      container.appendChild(v);
+    }
     _log('[Engine] initialised (HTML5 A/B-swap)');
   }
 
@@ -201,15 +208,14 @@ export function playFromPrebuffer(): void { _doPlayOrSwap(); }
 
 export function destroyEngine(): void {
   _stopEosWatch();
-  _stopRaf();
   if (_playTimer !== null) { clearTimeout(_playTimer); _playTimer = null; }
   for (const v of _videos) {
     try { v.pause(); } catch {}
     if (v.parentNode) v.parentNode.removeChild(v);
   }
   _videos = [];
-  if (_canvas && _canvas.parentNode) _canvas.parentNode.removeChild(_canvas);
-  _canvas = null; _ctx = null;
+  if (_wallOuter && _wallOuter.parentNode) _wallOuter.parentNode.removeChild(_wallOuter);
+  _wallOuter = null; _wallInner = null;
   _durationMs = 0; _prebuffered = false; _looping = false;
   _firstPlay = true; _fg = 0; _idx = 0;
   _playLatencyMs = null; // reset so next session re-measures
@@ -218,20 +224,6 @@ export function destroyEngine(): void {
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 function _log(msg: string): void { logger.info(msg); }
-
-function _startRaf(): void {
-  if (!_wallCrop || !_ctx || _rafId !== null) return;
-  const { srcX, srcY, srcW, srcH, dstW, dstH } = _wallCrop;
-  const draw = () => {
-    const v = _videos[_fg];
-    if (v && v.readyState >= 2) _ctx!.drawImage(v, srcX, srcY, srcW, srcH, 0, 0, dstW, dstH);
-    _rafId = requestAnimationFrame(draw);
-  };
-  _rafId = requestAnimationFrame(draw);
-}
-function _stopRaf(): void {
-  if (_rafId !== null) { cancelAnimationFrame(_rafId); _rafId = null; }
-}
 
 function _fgLabel(): string { return _fg === 0 ? 'A' : 'B'; }
 function _bgLabel(): string { return _fg === 0 ? 'B' : 'A'; }
@@ -295,7 +287,7 @@ function _preloadNext(): Promise<void> {
   if (bg.src === nextUrl && bg.readyState >= 2 && Math.abs(bg.currentTime) < 0.05) return Promise.resolve();
 
   _log('[Engine] bg(' + _bgLabel() + ') preload: ' + nextUrl.split('/').pop());
-  if (!_wallCrop) { bg.style.opacity = '0'; bg.style.zIndex = '1'; }
+  if (!_wallTransform) { bg.style.opacity = '0'; bg.style.zIndex = '1'; }
   try { bg.pause(); } catch {}
 
   const loadOrReuse = (bg.src === nextUrl) ? Promise.resolve() : _loadSrc(bg, nextUrl);
@@ -316,7 +308,6 @@ function _doPlayOrSwap(): void {
     _videos[_fg]!.play().then(() => {
       _log('[Engine] play() fg(' + _fgLabel() + ') OK');
       _durationMs = Math.round((_videos[_fg]!.duration || 0) * 1000);
-      if (_wallCrop) _startRaf();
       _startEosWatch();
     }).catch(e => _log('[Engine] play() failed: ' + e));
     return;
@@ -353,15 +344,11 @@ function _doPlayOrSwap(): void {
 
   newV.play().then(() => {
     _log('[Engine] swap: now playing fg(' + (newFg === 0 ? 'A' : 'B') + ')');
-    if (_wallCrop) {
-      _fg = newFg;
-      try { oldV.pause(); } catch {}
-    } else {
-      newV.style.zIndex  = '2'; newV.style.opacity = '1';
-      oldV.style.zIndex  = '1'; oldV.style.opacity = '0';
-      try { oldV.pause(); } catch {}
-      _fg = newFg;
-    }
+    newV.style.opacity = '1';
+    oldV.style.opacity = '0';
+    if (!_wallTransform) { newV.style.zIndex = '2'; oldV.style.zIndex = '1'; }
+    try { oldV.pause(); } catch {}
+    _fg = newFg;
     _idx = (_idx + 1) % _playlist.length;
     _durationMs = Math.round((newV.duration || 0) * 1000);
     _prebuffered = false; _looping = false;
@@ -369,10 +356,9 @@ function _doPlayOrSwap(): void {
     _preloadNext().catch((e) => _log('[Engine] preload-after-swap failed: ' + e));
   }).catch(e => {
     _log('[Engine] swap play() failed: ' + e);
-    if (!_wallCrop) {
-      oldV.style.zIndex = '2'; oldV.style.opacity = '1';
-      newV.style.zIndex = '1'; newV.style.opacity = '0';
-    }
+    oldV.style.opacity = '1';
+    newV.style.opacity = '0';
+    if (!_wallTransform) { oldV.style.zIndex = '2'; newV.style.zIndex = '1'; }
   });
 }
 

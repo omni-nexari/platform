@@ -6,7 +6,7 @@ import {
 } from '@signage/db';
 import { eq, and, isNull, inArray, asc } from 'drizzle-orm';
 import { DeviceCommandSchema } from '@signage/shared';
-import { buildWallGeometry, type WallMember, type WallBezels } from '@signage/shared';
+import { buildWallGeometry, bezelPx, type WallMember, type WallBezels } from '@signage/shared';
 import { sendCommand, isDeviceOnline } from '../services/ws.js';
 import { writeAuditLog } from '../services/audit.js';
 import { allocateSyncPlayGroupId } from '../services/syncplay-allocator.js';
@@ -98,11 +98,28 @@ async function buildAndPushWallManifest(
         }
       : null;
 
+  // Compute bezel px offsets using physical dims from the first available member device.
+  let bezelOffsets: { left: number; right: number; top: number; bottom: number } | null = null;
+  if (bezels) {
+    const refDeviceRow = Object.values(deviceMap).find((d: any) => d.physicalWidthMm && d.physicalHeightMm) as any;
+    const refMember = wallMembers.find((m) => refDeviceRow && memberRows.find((r) => r.deviceId === refDeviceRow.id));
+    if (refDeviceRow) {
+      bezelOffsets = bezelPx(
+        bezels,
+        refMember?.nativeWidthPx ?? 1920,
+        refMember?.nativeHeightPx ?? 1080,
+        refDeviceRow.physicalWidthMm,
+        refDeviceRow.physicalHeightMm,
+      );
+    }
+  }
+
   const geometry = buildWallGeometry(
     wallMembers,
     group.videoWallCols!,
     group.videoWallRows!,
     bezels,
+    bezelOffsets,
   );
 
   // Sort positioned members: pinned leader first (priority 0), then by platform
@@ -798,11 +815,27 @@ export async function deviceGroupsRoutes(app: FastifyInstance) {
           }
         : null;
 
+    let manifestBezelOffsets: { left: number; right: number; top: number; bottom: number } | null = null;
+    if (bezels) {
+      const refDeviceRow = Object.values(deviceMap).find((d: any) => d.physicalWidthMm && d.physicalHeightMm) as any;
+      const refMember = wallMembers.find((m) => refDeviceRow && memberRows.find((r) => r.deviceId === refDeviceRow.id));
+      if (refDeviceRow) {
+        manifestBezelOffsets = bezelPx(
+          bezels,
+          refMember?.nativeWidthPx ?? 1920,
+          refMember?.nativeHeightPx ?? 1080,
+          refDeviceRow.physicalWidthMm,
+          refDeviceRow.physicalHeightMm,
+        );
+      }
+    }
+
     const geometry = buildWallGeometry(
       wallMembers,
       group.videoWallCols,
       group.videoWallRows,
       bezels,
+      manifestBezelOffsets,
     );
 
     // Peer list: pinned leader first, then by platform priority, then grid pos.
