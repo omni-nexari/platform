@@ -438,6 +438,7 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
               })
             )}
           </div>
+          </div>{/* end wall frame */}
         </div>
       </div>
 
