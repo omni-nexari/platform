@@ -10,7 +10,6 @@ import { z } from 'zod';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 import { ClaimDeviceSchema, UpdateDeviceSchema, DeviceCommandSchema, PairRequestSchema, buildWallGeometry, WindowsPlayerSettingsSchema, lookupDisplayPreset, bezelPx, type WallBezels, type WallMember } from '@signage/shared';
-import type { WallMember, WallBezels } from '@signage/shared';
 import { writeAuditLog } from '../services/audit.js';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
 import { MDC_ALL_COMMAND_NAMES } from '../services/mdc.js';
