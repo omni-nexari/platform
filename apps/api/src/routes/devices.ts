@@ -4,7 +4,7 @@ import { createReadStream, existsSync, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import AdmZip from 'adm-zip';
-import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents, deviceGroupMembers, deviceGroups, calendarConnections, deviceRules, bleScanResults } from '@signage/db';
+import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents, deviceGroupMembers, deviceGroups, calendarConnections, deviceRules, bleScanResults, organisations, managementCompanies } from '@signage/db';
 import { eq, and, isNull, desc, asc, inArray, sql, ilike, gte, lte, lt } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -1993,6 +1993,24 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
     if (!workspace) return reply.status(404).send({ error: 'Workspace not found' });
 
+    // Resolve reseller branding: org → managementCompany → logoUrl/name
+    let resellerBranding: { name: string; logoUrl: string } | null = null;
+    try {
+      const org = await db.query.organisations.findFirst({
+        where: eq(organisations.id, workspace.orgId),
+        columns: { managementCompanyId: true },
+      });
+      if (org?.managementCompanyId) {
+        const company = await db.query.managementCompanies.findFirst({
+          where: eq(managementCompanies.id, org.managementCompanyId),
+          columns: { name: true, logoUrl: true },
+        });
+        if (company?.logoUrl) {
+          resellerBranding = { name: company.name, logoUrl: company.logoUrl };
+        }
+      }
+    } catch { /* non-fatal — players degrade to default Nexari branding */ }
+
     // Resolve device-level default playlist override before workspace fallback.
     let defaultPlaylist = null;
     const effectiveDefaultPlaylistId = device.defaultPlaylistId ?? workspace.defaultPlaylistId;
@@ -2125,6 +2143,7 @@ export async function deviceRoutes(app: FastifyInstance) {
       publishedSchedule,
       publishedSyncGroup,
       zones: device.zones ?? [],
+      resellerBranding,
     });
   });
 

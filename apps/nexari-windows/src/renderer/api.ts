@@ -96,6 +96,13 @@ export async function getCurrentContent(): Promise<Playlist | null> {
     getWorkspaceInfo().catch(() => ({ workspace: null, defaultPlaylist: null })),
   ]);
 
+  const rb = workspaceData?.resellerBranding as { logoUrl?: string } | null | undefined;
+  if (rb?.logoUrl) {
+    localStorage.setItem('resellerBrandingLogoUrl', rb.logoUrl);
+  } else {
+    localStorage.removeItem('resellerBrandingLogoUrl');
+  }
+
   return _resolveActivePlaylist(scheduleData.schedules, workspaceData.defaultPlaylist, {
     publishedContent: workspaceData.publishedContent || null,
     publishedPlaylist: workspaceData.publishedPlaylist || null,

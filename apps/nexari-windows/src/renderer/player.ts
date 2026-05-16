@@ -103,12 +103,10 @@ function showIdle(statusText = 'Waiting for content…') {
   clearRoot();
   root.style.background = '';
   const deviceName = localStorage.getItem('deviceName') || '';
-  root.innerHTML = `
-    <div class="idle-screen">
-      <div class="idle-bg-grid"></div>
-      <div class="idle-card">
-        <div class="idle-brand">
-          <svg class="idle-logo" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  const resellerLogoUrl = localStorage.getItem('resellerBrandingLogoUrl');
+  const brandHtml = resellerLogoUrl
+    ? `<img class="idle-logo" src="${resellerLogoUrl}" alt="Logo" style="max-height:56px;max-width:240px;object-fit:contain;" onerror="this.style.display='none'">`
+    : `<svg class="idle-logo" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
             <defs>
               <linearGradient id="nexariGrad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
                 <stop offset="0%" stop-color="#3a7bff"/>
@@ -118,7 +116,13 @@ function showIdle(statusText = 'Waiting for content…') {
             <rect x="4" y="4" width="56" height="56" rx="14" stroke="url(#nexariGrad)" stroke-width="2.5"/>
             <path d="M20 44 V20 L44 44 V20" stroke="url(#nexariGrad)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          <div class="idle-wordmark">NEXARI</div>
+          <div class="idle-wordmark">NEXARI</div>`;
+  root.innerHTML = `
+    <div class="idle-screen">
+      <div class="idle-bg-grid"></div>
+      <div class="idle-card">
+        <div class="idle-brand">
+          ${brandHtml}
         </div>
         ${deviceName ? `<div class="idle-device">${deviceName}</div>` : ''}
         <div class="idle-divider"></div>

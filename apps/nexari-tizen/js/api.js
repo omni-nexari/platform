@@ -144,6 +144,9 @@ window.API = {
         publishedSyncGroup: workspaceData.publishedSyncGroup || null,
       }
     );
+    if (playlist && workspaceData.resellerBranding) {
+      playlist.resellerBranding = workspaceData.resellerBranding;
+    }
     return playlist || null;
   },
 

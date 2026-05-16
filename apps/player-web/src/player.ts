@@ -131,6 +131,7 @@ export class Player {
   private pendingSignature: string | null = null;
   private isDownloadingContent = false;
   private deviceDisplayName = '';
+  private resellerBrandingLogoUrl: string | null = null;
 
   constructor(cfg: PlayerConfig) {
     // Allow the connection settings panel to override apiBase/wsBase via localStorage
@@ -1129,6 +1130,9 @@ export class Player {
     logger.info('[Player] loadContent');
     try {
       const schedule = await this.api.getCurrentContent(this.deviceId);
+      if (schedule?.resellerBranding?.logoUrl) {
+        this.resellerBrandingLogoUrl = schedule.resellerBranding.logoUrl;
+      }
       if (!schedule || !Array.isArray(schedule.items) || !schedule.items.length) {
         logger.warn(`[Player] loadContent: no items (schedule=${schedule ? 'ok' : 'null'} items=${schedule?.items?.length ?? 0})`);
         // Content was unpublished — cancel whatever is playing and show idle.
@@ -1888,9 +1892,11 @@ export class Player {
         <!-- card -->
         <div style="position:relative;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:24px;padding:48px 64px;text-align:center;min-width:340px;">
 
-          <!-- Nexari logo -->
+          <!-- Logo -->
           <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:${deviceLabel ? '8px' : '24px'};">
-            <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:48px;height:48px;" aria-hidden="true">
+            ${this.resellerBrandingLogoUrl
+              ? `<img src="${this.resellerBrandingLogoUrl}" alt="Logo" style="max-height:48px;max-width:200px;object-fit:contain;" onerror="this.style.display='none'">`
+              : `<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:48px;height:48px;" aria-hidden="true">
               <defs>
                 <linearGradient id="ng" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
                   <stop offset="0%" stop-color="#3a7bff"/>
@@ -1900,7 +1906,8 @@ export class Player {
               <rect x="4" y="4" width="56" height="56" rx="14" stroke="url(#ng)" stroke-width="2.5"/>
               <path d="M20 44 V20 L44 44 V20" stroke="url(#ng)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
-            <div style="font-size:28px;font-weight:700;letter-spacing:.2em;background:linear-gradient(90deg,#3a7bff,#4ff2d1);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">NEXARI</div>
+            <div style="font-size:28px;font-weight:700;letter-spacing:.2em;background:linear-gradient(90deg,#3a7bff,#4ff2d1);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">NEXARI</div>`
+            }
           </div>
 
           ${deviceLabel ? `<div style="font-size:13px;color:#666;margin-bottom:20px;">${deviceLabel}</div>` : ''}

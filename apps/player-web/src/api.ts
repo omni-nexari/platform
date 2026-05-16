@@ -26,6 +26,7 @@ export class Api {
 
     // If device has a sync group published, return that playlist with priority.
     const wsBody = wsRes?.ok ? await wsRes.json().catch(() => null) as Record<string, unknown> | null : null;
+    const resellerBranding = (wsBody?.['resellerBranding'] as ResellerBranding | null) ?? null;
     const publishedSyncGroup = wsBody?.['publishedSyncGroup'] as Record<string, unknown> | null | undefined;
     if (publishedSyncGroup) {
       const sg = publishedSyncGroup;
@@ -50,6 +51,7 @@ export class Api {
             allTizen: !!(sg['allTizen']),
             relayUrl: (sg['relayUrl'] as string | null) ?? null,
             peers: (sg['peers'] as unknown[]) ?? [],
+            resellerBranding,
           } as unknown as Schedule;
         }
       }
@@ -82,7 +84,7 @@ export class Api {
         duration: contentRaw['duration'] as number | undefined, content: c }];
     });
 
-    return { ...(raw as unknown as Schedule), items };
+    return { ...(raw as unknown as Schedule), items, resellerBranding };
   }
 
   private enrichContent(content: Record<string, unknown> | null, token: string | null): ContentRecord | null {
@@ -256,6 +258,11 @@ export interface ContentRecord {
   [key: string]: unknown;
 }
 
+export interface ResellerBranding {
+  name: string;
+  logoUrl: string;
+}
+
 export interface Schedule {
   id?: string;
   playlistId?: string;
@@ -263,6 +270,7 @@ export interface Schedule {
   syncGroupId?: string;
   syncPlay?: unknown;
   items: ScheduleItem[];
+  resellerBranding?: ResellerBranding | null;
 }
 
 export interface PosMenu {
