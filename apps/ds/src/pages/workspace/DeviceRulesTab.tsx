@@ -543,7 +543,7 @@ function RuleEditorModal({
       const action: RuleAction = actionType === 'play_playlist'
         ? { type: 'play_playlist', playlistId }
         : actionType === 'launch_app'
-          ? { type: 'launch_app', appId, appName: installedApps.find(a => a.id === appId)?.name }
+          ? { type: 'launch_app', appId, ...(installedApps.find(a => a.id === appId)?.name ? { appName: installedApps.find(a => a.id === appId)!.name } : {}) }
           : { type: 'play_content',  contentId };
 
       const payload = { name: name.trim(), enabled, conditions, action };
