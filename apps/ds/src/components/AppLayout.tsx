@@ -65,11 +65,26 @@ interface EmergencyOverride {
 }
 
 export default function AppLayout() {
-  const { user, bootstrapped, clearAuth } = useAuthStore();
+  const { user, bootstrapped, clearAuth, setUser } = useAuthStore();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const queryClient = useQueryClient();
   const { theme, setTheme } = useTheme();
+
+  // Keep org.settings fresh — re-fetch /auth/me on window focus so module
+  // changes made by an admin are reflected without requiring a full logout.
+  const { data: meData } = useQuery<{ user: typeof user; org: { id: string; name: string; slug: string; plan: string; settings: string } | null }>({
+    queryKey: ['me'],
+    queryFn: () => api.get('/auth/me'),
+    enabled: bootstrapped && !!user,
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
+  });
+  useEffect(() => {
+    if (meData?.user && meData.org !== undefined) {
+      setUser(meData.user, meData.org);
+    }
+  }, [meData, setUser]);
 
   const isImpersonating = Boolean(user?.impersonatedBy);
 
