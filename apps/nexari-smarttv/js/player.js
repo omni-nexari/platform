@@ -41,6 +41,7 @@ function redactUrl(url) {
 const Player = {
     deviceId: null,
     deviceName: null,
+    resellerBrandingLogoUrl: null,
     heartbeatInterval: null,
     telemetryInterval: null,
     commandPollInterval: null,
@@ -2484,6 +2485,9 @@ const Player = {
                 const content = this._bleOverrideContent
                     ? this._bleOverrideContent
                     : yield API.getCurrentContent(this.deviceId, this.deviceToken);
+                if (content && content.resellerBranding && content.resellerBranding.logoUrl) {
+                    this.resellerBrandingLogoUrl = content.resellerBranding.logoUrl;
+                }
                 if (content && content.items && content.items.length > 0) {
                     const newSignature = this.getContentSignature(content);
                     const isPlaying = !!(this.currentPlaylistController && !this.currentPlaylistController.cancelled) || this._zoneMode || this._nativeSyncActive;
@@ -7045,12 +7049,9 @@ const Player = {
         }
         container._menuBoardRequestId = undefined;
         const deviceLabel = (this.deviceName || '').trim();
-        container.innerHTML = `
-      <div class="idle-screen">
-        <div class="idle-bg-grid"></div>
-        <div class="idle-card">
-          <div class="idle-brand">
-            <svg class="idle-logo" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        const brandHtml = this.resellerBrandingLogoUrl
+            ? `<img src="${this.resellerBrandingLogoUrl}" alt="Logo" style="max-height:56px;max-width:240px;object-fit:contain;" onerror="this.style.display='none'">`
+            : `<svg class="idle-logo" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
               <defs>
                 <linearGradient id="nexariGrad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
                   <stop offset="0%" stop-color="#3a7bff"/>
@@ -7060,7 +7061,13 @@ const Player = {
               <rect x="4" y="4" width="56" height="56" rx="14" stroke="url(#nexariGrad)" stroke-width="2.5"/>
               <path d="M20 44 V20 L44 44 V20" stroke="url(#nexariGrad)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
-            <div class="idle-wordmark">NEXARI</div>
+            <div class="idle-wordmark">NEXARI</div>`;
+        container.innerHTML = `
+      <div class="idle-screen">
+        <div class="idle-bg-grid"></div>
+        <div class="idle-card">
+          <div class="idle-brand">
+            ${brandHtml}
           </div>
           ${deviceLabel ? `<div class="idle-device">${deviceLabel}</div>` : ''}
           <div class="idle-divider"></div>
@@ -8675,6 +8682,7 @@ const Player = {
         // Reset device info
         this.deviceId = null;
         this.deviceName = null;
+        this.resellerBrandingLogoUrl = null;
         // Show idle screen with message
         this.showIdleScreen();
         // Restart pairing after a short delay
