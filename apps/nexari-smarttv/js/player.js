@@ -607,6 +607,7 @@ const Player = {
                     if (typeof BleManager !== 'undefined') {
                         BleManager.setRules(message.rules || []);
                     }
+                    this.preloadRulesContent(message.rules || []);
                     break;
                 case 'ble_scan':
                     logger.info('ble_scan command received');
@@ -8693,6 +8694,41 @@ const Player = {
         }, 3000);
     },
     // ── BLE Rule override ──────────────────────────────────────────────────
+    // Pre-download content for all enabled rules so it plays instantly when triggered.
+    preloadRulesContent(rules) {
+        if (!rules || !rules.length) return;
+        const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
+        for (const rule of rules) {
+            if (!rule.enabled || !rule.action) continue;
+            try {
+                if (rule.action.type === 'play_playlist' && rule.action.playlistId) {
+                    API.getPlaylistById(rule.action.playlistId, token)
+                        .then(playlist => {
+                            const normalized = API._normalizePlaylist(playlist, token);
+                            if (normalized && normalized.items && normalized.items.length > 0) {
+                                ContentManager.downloadPlaylist(normalized)
+                                    .then(() => logger.info('[BLE] Pre-cached playlist for rule:', rule.name))
+                                    .catch(e => logger.warn('[BLE] Pre-cache playlist failed:', e));
+                            }
+                        })
+                        .catch(e => logger.warn('[BLE] Pre-cache fetch playlist failed:', e));
+                } else if (rule.action.type === 'play_content' && rule.action.contentId) {
+                    API.getContentById(rule.action.contentId, token)
+                        .then(content => {
+                            const normalized = API._normalizeSingleContent(content, 'BLE Rule', token);
+                            if (normalized && normalized.items && normalized.items.length > 0) {
+                                ContentManager.downloadPlaylist(normalized)
+                                    .then(() => logger.info('[BLE] Pre-cached content for rule:', rule.name))
+                                    .catch(e => logger.warn('[BLE] Pre-cache content failed:', e));
+                            }
+                        })
+                        .catch(e => logger.warn('[BLE] Pre-cache fetch content failed:', e));
+                }
+            } catch (e) {
+                logger.warn('[BLE] preloadRulesContent error for rule', rule.name, e);
+            }
+        }
+    },
     // Called by BleManager when a proximity rule matches.
     // Fetches the rule's target playlist/content and starts playing it
     // immediately, bypassing the normal schedule until the beacon leaves.
@@ -8702,6 +8738,15 @@ const Player = {
                 logger.info('[BLE] Applying rule override: ruleId=' + ruleId +
                     ', playlistId=' + playlistId + ', contentId=' + contentId);
                 const token = this.deviceToken || localStorage.getItem('deviceToken') || '';
+                // Save the currently-playing content so we can restore it instantly
+                // when the rule ends. Only save if we are NOT already in an override
+                // (switching between rules should keep the original pre-rule content).
+                if (!this._bleOverrideContent && this.currentContent) {
+                    this._preOverrideContent = this.currentContent;
+                    this._preOverrideSignature = this.lastContentSignature;
+                    logger.info('[BLE] Saved pre-override content for restore: ' +
+                        (this.currentContent.playlistName || '(unnamed)'));
+                }
                 let overrideContent = null;
                 if (playlistId) {
                     const playlist = yield API.getPlaylistById(playlistId, token);
@@ -8733,10 +8778,29 @@ const Player = {
             try {
                 logger.info('[BLE] Clearing rule override, reverting to normal schedule');
                 this._bleOverrideContent = null;
+                // Grab the saved pre-rule content (if any) and clear the saved refs
+                const restore = this._preOverrideContent;
+                const restoreSig = this._preOverrideSignature;
+                this._preOverrideContent = null;
+                this._preOverrideSignature = null;
                 this.lastContentSignature = null;
                 this.pendingSignature = null;
                 this._loadInFlight = false;
-                yield this.loadContent();
+                if (restore && restore.items && restore.items.length > 0) {
+                    // Instantly swap back — content is already on disk, no re-download needed
+                    logger.info('[BLE] Restoring pre-override content: ' +
+                        (restore.playlistName || '(unnamed)'));
+                    this.pendingPlaylist = restore;
+                    this.pendingSignature = restoreSig || this.getContentSignature(restore);
+                    this.trySwapToPendingContent(true);
+                    // Background refresh: if the schedule changed while the rule was
+                    // active, loadContent() will detect the new signature and swap.
+                    void this.loadContent();
+                } else {
+                    // No saved pre-override content (e.g. device booted straight into a
+                    // rule) — fetch fresh from the API
+                    yield this.loadContent();
+                }
             }
             catch (e) {
                 logger.error('[BLE] clearRuleOverride error:', e);

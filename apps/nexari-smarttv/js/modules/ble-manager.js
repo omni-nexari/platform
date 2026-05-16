@@ -376,11 +376,25 @@ window.BleManager = (function () {
     setRules: function (rules) {
       _rules = Array.isArray(rules) ? rules : [];
       _log('info', 'Rules updated: ' + _rules.length + ' rule(s)');
+      // Reset active rule so re-published rules always re-evaluate from scratch
+      _activeRuleId = null;
       // If rules were cleared, clear any active override
-      if (_rules.length === 0) _clearActiveRule();
-      // Start periodic scan if we now have rules
-      if (_rules.length > 0 && _checkSupport() && !_periodicTimer) {
-        _startPeriodicScan();
+      if (_rules.length === 0) { _clearActiveRule(); return; }
+      if (!_checkSupport()) return;
+      // Start periodic scan if not already running
+      _startPeriodicScan();
+      // Evaluate immediately — don't wait up to 15 s for the first periodic tick
+      if (!_scanning) {
+        _runScan(PERIODIC_SCAN_MS, function (beaconList) {
+          _postScanResults(beaconList);
+          var matched = _evaluateRules(beaconList);
+          if (matched) {
+            _activeRuleId = matched.id;
+            _applyRule(matched);
+          } else {
+            _clearActiveRule();
+          }
+        });
       }
     },
 
