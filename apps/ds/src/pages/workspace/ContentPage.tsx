@@ -10,6 +10,10 @@ import {
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import UploadModal from '../../components/UploadModal.js';
+import IptvModal from '../../components/IptvModal.js';
+import TemplatePickerModal from '../../components/TemplatePickerModal.js';
+import DatasyncModal from '../../components/DatasyncModal.js';
+import DatalinkModal from '../../components/DatalinkModal.js';
 
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import AuthImg from '../../components/AuthImg.js';
@@ -781,12 +785,11 @@ export default function ContentPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
 
-  const [uploadOpen, setUploadOpen]         = useState(false);
-  const [uploadTab, setUploadTab]           = useState<'device' | 'html5' | 'template' | 'weburl' | 'iptv'>('device');
-  const openUpload = (tab: 'device' | 'html5' | 'template' | 'weburl' | 'iptv' = 'device') => {
-    setUploadTab(tab);
-    setUploadOpen(true);
-  };
+  const [uploadOpen, setUploadOpen]   = useState(false);
+  const [iptvOpen, setIptvOpen]         = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [datasyncOpen, setDatasyncOpen] = useState(false);
+  const [datalinkOpen, setDatalinkOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -935,7 +938,7 @@ export default function ContentPage() {
           description: 'Upload files and media',
           icon: <Plus size={16} />,
           iconClassName: 'bg-[var(--blue)]/15 text-[var(--blue)]',
-          onClick: () => openUpload('device'),
+          onClick: () => setUploadOpen(true),
         },
         {
           id: 'create-design',
@@ -975,7 +978,7 @@ export default function ContentPage() {
           description: 'Live TV channels',
           icon: <Tv size={16} />,
           iconClassName: 'bg-orange-500/15 text-orange-400',
-          onClick: () => openUpload('iptv'),
+          onClick: () => setIptvOpen(true),
         },
         {
           id: 'template',
@@ -983,7 +986,7 @@ export default function ContentPage() {
           description: 'Start from a template',
           icon: <FileCode2 size={16} />,
           iconClassName: 'bg-cyan-500/15 text-cyan-400',
-          onClick: () => openUpload('template'),
+          onClick: () => setTemplateOpen(true),
         },
         {
           id: 'datasync',
@@ -991,7 +994,7 @@ export default function ContentPage() {
           description: 'JSON / RSS / Sheets feed',
           icon: <Database size={16} />,
           iconClassName: 'bg-lime-500/15 text-lime-400',
-          onClick: () => toast.info('Datasync — coming soon'),
+          onClick: () => setDatasyncOpen(true),
         },
         {
           id: 'datalink',
@@ -999,7 +1002,7 @@ export default function ContentPage() {
           description: 'Live data stream overlay',
           icon: <Link2 size={16} />,
           iconClassName: 'bg-amber-500/15 text-amber-400',
-          onClick: () => toast.info('Datalink — coming soon'),
+          onClick: () => setDatalinkOpen(true),
         },
       ]
     : [];
@@ -1194,7 +1197,7 @@ export default function ContentPage() {
               icon={<Image size={40} />}
               title="No content yet"
               description="Add content to start building playlists and schedules."
-              action={<button onClick={() => openUpload()} className="workspace-page-action">Add Content</button>}
+              action={<button onClick={() => setUploadOpen(true)} className="workspace-page-action">Add Content</button>}
             />
           ) : view === 'list' ? (
             <div className="space-y-2">
@@ -1317,7 +1320,19 @@ export default function ContentPage() {
 
       {/* ── Upload modal ── */}
       {uploadOpen && wsId && (
-        <UploadModal workspaceId={wsId} initialTab={uploadTab} onClose={() => setUploadOpen(false)} />
+        <UploadModal workspaceId={wsId} onClose={() => setUploadOpen(false)} />
+      )}
+      {iptvOpen && wsId && (
+        <IptvModal workspaceId={wsId} onClose={() => setIptvOpen(false)} />
+      )}
+      {templateOpen && wsId && (
+        <TemplatePickerModal workspaceId={wsId} onClose={() => setTemplateOpen(false)} />
+      )}
+      {datasyncOpen && wsId && (
+        <DatasyncModal workspaceId={wsId} onClose={() => setDatasyncOpen(false)} />
+      )}
+      {datalinkOpen && wsId && (
+        <DatalinkModal workspaceId={wsId} onClose={() => setDatalinkOpen(false)} />
       )}
 
       {bulkTagOpen && wsId && (
