@@ -163,6 +163,7 @@ export default function DeviceRulesTab({
   const { data: latestScan, refetch: refetchScan } = useQuery<{ beacons: BleBeacon[]; scannedAt: string } | null>({
     queryKey: ['ble-scan', deviceId],
     queryFn: () => api.get(`/devices/${deviceId}/ble-scan/latest`),
+    refetchInterval: 16000, // match TV scan cycle (15s interval)
   });
 
   const triggerScan = useMutation({
@@ -284,11 +285,10 @@ export default function DeviceRulesTab({
             ) : (
               <div className="space-y-1.5">
                 {latestScan && (
-                  <p className="text-[10px] text-[var(--text-muted)] mb-0.5">
+                  <p className="text-[10px] text-[var(--text-muted)] mb-2">
                     Scanned {new Date(latestScan.scannedAt).toLocaleTimeString()} · {beaconOptions.length} beacon{beaconOptions.length !== 1 ? 's' : ''} found
                   </p>
                 )}
-                <p className="text-[10px] text-[var(--text-muted)] mb-2">Auto-scan: every 15 s · 8 s duration</p>
                 {beaconOptions.map((b, i) => (
                   <div key={i} className="flex items-center justify-between rounded-lg bg-[var(--surface)] px-3 py-2 text-xs">
                     <div>
@@ -316,6 +316,9 @@ export default function DeviceRulesTab({
       )}
 
       {/* ── Rule list ───────────────────────────────────────────────────── */}
+      {rules.length > 0 && (
+        <p className="text-[10px] text-[var(--text-muted)]">Device auto-scans every 15 s · status updates every 16 s</p>
+      )}
       {rulesLoading ? (
         <div className="text-sm text-[var(--text-muted)]">Loading rules…</div>
       ) : rules.length === 0 ? (
