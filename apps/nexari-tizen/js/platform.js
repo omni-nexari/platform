@@ -13,6 +13,8 @@ window.Platform = (function() {
   var minor = parseInt(parts[1], 10) || 0;
   // webapis.document API (native PDF/PPT) requires Tizen 6.5+
   var supportsDocumentApi = major > 6 || (major === 6 && minor >= 5);
+  // Bluetooth LE scanning (getLEAdapter) is available from Tizen 5.5+
+  var supportsBle = major > 5 || (major === 5 && minor >= 5);
   return {
     tizenVersion       : ver,     // e.g. '4.0.0', '6.5.0'
     tizenMajor         : major,
@@ -20,5 +22,6 @@ window.Platform = (function() {
     isLegacy           : major < 5,   // Tizen ≤4 — old filesystem API + b2bapis era; B2BDoc for documents
     isModern           : major >= 5,  // Tizen 5+ — new FileSystemManager path API
     supportsDocumentApi: supportsDocumentApi, // Tizen 6.5+ — webapis available
+    supportsBle        : supportsBle,         // Tizen 5.5+ — tizen.bluetooth.getLEAdapter()
   };
 })();

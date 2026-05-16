@@ -204,6 +204,7 @@ interface Device {
     type: 'content' | 'playlist' | 'schedule';
     name: string;
   } | null;
+  hasRules?: boolean;
 }
 
 function StatusBadge({ status }: { status: Device['status'] }) {
@@ -866,6 +867,9 @@ export default function DevicesPage() {
                         )}
                         {isPortrait(device.resolution) && (
                           <Badge tone="neutral">Portrait</Badge>
+                        )}
+                        {device.hasRules && (
+                          <Badge tone="info">Rules</Badge>
                         )}
                       </div>
 

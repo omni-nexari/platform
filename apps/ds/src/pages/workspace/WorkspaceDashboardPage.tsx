@@ -46,6 +46,7 @@ interface Device {
     type: 'content' | 'playlist' | 'schedule';
     name: string;
   } | null;
+  hasRules?: boolean;
 }
 
 function StatusBadge({ status }: { status: Device['status'] }) {
@@ -326,6 +327,9 @@ export default function WorkspaceDashboardPage() {
                     <Badge tone={device.powerState === 'on' ? 'success' : device.powerState === 'standby' ? 'warning' : 'neutral'}>
                       Power {device.powerState}
                     </Badge>
+                  )}
+                  {device.hasRules && (
+                    <Badge tone="info">Rules</Badge>
                   )}
                 </div>
 

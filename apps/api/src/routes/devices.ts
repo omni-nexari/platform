@@ -688,8 +688,17 @@ export async function deviceRoutes(app: FastifyInstance) {
       : {};
     const publishedTargetMap = await resolvePublishedTargetMap(list);
 
-    // Latest screenshot per device
+    // Which devices have at least one enabled rule?
     const deviceIds = list.map((d) => d.id);
+    const enabledRuleRows = deviceIds.length > 0
+      ? await db
+          .select({ deviceId: deviceRules.deviceId })
+          .from(deviceRules)
+          .where(and(inArray(deviceRules.deviceId, deviceIds), eq(deviceRules.enabled, true)))
+      : [];
+    const devicesWithRules = new Set(enabledRuleRows.map((r) => r.deviceId));
+
+    // Latest screenshot per device
     const screenshotRows = deviceIds.length > 0
       ? await db
           .select({ deviceId: deviceScreenshots.deviceId, id: deviceScreenshots.id, takenAt: deviceScreenshots.takenAt })
@@ -729,6 +738,7 @@ export async function deviceRoutes(app: FastifyInstance) {
       // In-memory timestamp: changes on every new screenshot even if DB row hasn't updated yet.
       // Used by the portal as a ?t= cache-buster so the browser re-fetches the image file.
       latestFrameAt: getLatestFrame(d.id)?.updatedAt?.getTime() ?? null,
+      hasRules: devicesWithRules.has(d.id),
     }));
 
     const result = status ? enriched.filter((d) => d.status === status) : enriched;

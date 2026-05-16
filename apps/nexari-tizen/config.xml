@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://nexari.app/tizen/NexariPlayer" version="1.0.110" viewmodes="maximized">
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="http://nexari.app/tizen/NexariPlayer" version="1.0.111" viewmodes="maximized">
     <access origin="*" subdomains="true"></access>
     <tizen:allow-navigation>*</tizen:allow-navigation>
     <tizen:application id="fmDBbBnvJM.NexariTizen" package="fmDBbBnvJM" required_version="4.0"/>
@@ -38,6 +38,7 @@
     <tizen:privilege name="http://developer.samsung.com/privilege/syncplay"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/b2bsyncplay"/>
     <tizen:privilege name="http://tizen.org/privilege/websetting"/>
+    <tizen:privilege name="http://tizen.org/privilege/bluetooth"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/network.softAP"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/widgetdata"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/was.partner"/>
