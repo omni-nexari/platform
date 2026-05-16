@@ -3971,7 +3971,13 @@ const Player = {
   },
 
   renderIptvAVPlay(container, content) {
-    const url = content.url;
+    // SSSP commercial panels support UDP multicast; normalise udp://239.x → udp://@239.x
+    // so the panel sends an IGMP join. Consumer SmartTV does not support UDP from web apps.
+    let url = content.url;
+    if (/^udp:\/\/(?!@)(2(?:2[4-9]|3[0-9])\.)/.test(url)) {
+      url = url.replace('udp://', 'udp://@');
+      logger.debug('IPTV: normalised multicast URL to', url);
+    }
     const proto = this.detectIptvProtocol(url, content.protocol);
     const isUdp = proto === 'udp' || proto === 'rtp';
     const isRtsp = proto === 'rtsp';
@@ -4005,18 +4011,11 @@ const Player = {
 
       const rect = videoContainer.getBoundingClientRect();
 
-      // CRITICAL: Follow Samsung's official sequence
-      // 1. Open FIRST
+      // Official Samsung sequence: open → setListener → setDisplayRect → setStreamingProperty → prepareAsync → play
+      // 1. Open
       webapis.avplay.open(url);
 
-      // Apply profile after open (more reliable on some firmwares)
-      this.applyAvPlayProfile(content);
-
-      // 2. Set display rect SECOND (Samsung samples do this before setListener)
-      webapis.avplay.setDisplayRect(rect.left, rect.top, rect.width, rect.height);
-      logger.debug('AVPlay: Display rect set for IPTV', rect);
-
-      // 3. Set listener THIRD (after open and setDisplayRect, before prepare)
+      // 2. Set listener (before setDisplayRect per Samsung docs)
       webapis.avplay.setListener({
         onbufferingstart: () => {
           logger.debug('IPTV buffering start');
@@ -4033,7 +4032,6 @@ const Player = {
             Telemetry.updateIptvStats({ lastError: String(e || 'unknown') });
           }
           this._stopIptvWatchdog();
-          // If we're inside a channel group, attempt reconnect; else fall back to idle.
           if (this.currentChannelGroup) {
             this._scheduleIptvReconnect('avplay-error');
           } else {
@@ -4045,7 +4043,6 @@ const Player = {
           logger.info('IPTV stream completed');
           this._stopIptvWatchdog();
           if (this.currentChannelGroup) {
-            // Multicast streams shouldn't "complete"; treat as drop and reconnect.
             this._scheduleIptvReconnect('stream-completed');
           } else {
             document.body.classList.remove('avplay-active');
@@ -4053,11 +4050,13 @@ const Player = {
         },
       });
 
-      // 4. Configure per protocol. UDP/RTP need a tighter buffer timeout for
-      //    low-latency multicast; HLS/DASH need their streamtype hint plus the
-      //    adaptive resolution clamp; RTSP relies on AVPlay defaults.
+      // 3. Set display rect
+      webapis.avplay.setDisplayRect(rect.left, rect.top, rect.width, rect.height);
+      logger.debug('AVPlay: Display rect set for IPTV', rect);
+
+      // 4. Protocol-specific streaming properties (IDLE state only, before prepare)
       try {
-        webapis.avplay.setTimeoutForBuffering(isUdp ? 4 : 10);
+        webapis.avplay.setTimeoutForBuffering(10);
       } catch (err) {
         logger.debug('setTimeoutForBuffering not supported');
       }
@@ -4069,15 +4068,8 @@ const Player = {
         logger.debug('setBufferingParam not supported');
       }
 
-      if (isUdp) {
+      if (isHls) {
         try {
-          (webapis.avplay as any).setStreamingProperty('SET_STREAMTYPE', 'UDP');
-        } catch (err) {
-          logger.debug('setStreamingProperty UDP failed');
-        }
-      } else if (isHls) {
-        try {
-          (webapis.avplay as any).setStreamingProperty('SET_STREAMTYPE', 'HLS');
           (webapis.avplay as any).setStreamingProperty('ADAPTIVE_INFO', 'FIXED_MAX_RESOLUTION=FULL_HD');
         } catch (err) {
           logger.debug('setStreamingProperty HLS failed');
@@ -4088,12 +4080,12 @@ const Player = {
         } catch (err) {
           logger.debug('setStreamingProperty DASH failed');
         }
-      } else if (isRtsp) {
-        logger.debug('IPTV: RTSP stream — using AVPlay defaults');
+      } else if (isRtsp || isUdp) {
+        logger.debug('IPTV: RTSP/UDP stream — using AVPlay defaults');
       }
+
       webapis.avplay.prepareAsync(() => {
         try {
-          // Align with the other AVPlay flows: set display method after prepare succeeds
           try {
             webapis.avplay.setDisplayMethod('PLAYER_DISPLAY_MODE_FULL_SCREEN');
           } catch (methodErr) {
@@ -6540,7 +6532,7 @@ const Player = {
     }
 
     // Content types that don't use a static URL (they fetch/render data themselves)
-    const urlNotRequired = new Set(['CALENDAR', 'DATASYNC', 'ZONE_LAYOUT', 'MENU_BOARD', 'LIVE_LINK_FACE']);
+    const urlNotRequired = new Set(['CALENDAR', 'DATASYNC', 'ZONE_LAYOUT', 'MENU_BOARD', 'LIVE_LINK_FACE', 'CHANNEL_GROUP']);
 
     // Filter out items without URLs, but keep types that don't need one
     const playableItems = playlist.items.filter(
@@ -7320,6 +7312,21 @@ const Player = {
           scheduleNext(duration * 1000);
           break;
         }
+
+        case 'IPTV':
+        case 'LIVE_STREAM':
+          // Single IPTV/live stream item: play indefinitely (no scheduleNext —
+          // a refresh_schedule or content-change event ends playback).
+          this.renderIptv(container, content);
+          this.lastRenderedItemKey = itemKey;
+          break;
+
+        case 'CHANNEL_GROUP':
+          // Channel group (IPTV bundle): runs indefinitely; renderChannelGroup
+          // manages its own lifecycle via tuneChannel / AVPlay.
+          this.renderChannelGroup(container, content);
+          this.lastRenderedItemKey = itemKey;
+          break;
           
         default:
           logger.warn('Unknown content type:', content.type);

@@ -330,9 +330,15 @@ window.API = {
     // (scripts, stylesheets, images) inside the HTML5 app are automatically
     // served by the same route without additional auth wiring.
     if (normalized.type === 'HTML5') {
-      normalized.url = `${CONFIG.API_BASE}/devices/device/content/${content.id}/html5/${encodeURIComponent(token)}/index.html`;
+      // Use the content's startPage from metadata (default: index.html) so
+      // packages with a non-default entry point load correctly.
+      let h5StartPage = 'index.html';
+      try {
+        const h5Meta = JSON.parse(normalized.metadata || '{}');
+        if (h5Meta.startPage) h5StartPage = h5Meta.startPage.replace(/^\/+/, '');
+      } catch (_e) {}
+      normalized.url = `${CONFIG.API_BASE}/devices/device/content/${content.id}/html5/${encodeURIComponent(token)}/${h5StartPage}`;
       normalized.webUrl = null;
-      // Clear metadata injection — server handles extraction, no TV-side ZIP work needed
     }
 
     // Live Link Face: all data is in metadata; there is no server file to fetch.

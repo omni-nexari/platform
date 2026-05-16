@@ -1801,6 +1801,23 @@ export async function deviceRoutes(app: FastifyInstance) {
       }
     }, 4_000);
 
+    // Push BLE rules so the TV starts rule evaluation immediately on connect/reconnect.
+    // Without this the TV only gets rules when the portal manually hits /rules/publish.
+    setTimeout(async () => {
+      try {
+        const rules = await db.query.deviceRules.findMany({
+          where: and(eq(deviceRules.workspaceId, device.workspaceId!), eq(deviceRules.deviceId, deviceId)),
+          orderBy: [desc(deviceRules.priority), asc(deviceRules.createdAt)],
+        });
+        sendCommand(deviceId, { type: 'device_rules', rules } as never);
+        if (rules.length > 0) {
+          app.log.info({ deviceId, count: rules.length }, 'BLE rules pushed on device connect');
+        }
+      } catch (e) {
+        app.log.warn({ deviceId, err: e }, 'Failed to push BLE rules on device connect');
+      }
+    }, 3_000);
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     socket.on('message', async (rawData: any) => {
       const rawText = rawData.toString() as string;
@@ -2535,7 +2552,16 @@ export async function deviceRoutes(app: FastifyInstance) {
   // The device token is embedded in the path (not query string) so that all
   // relative asset requests (scripts, stylesheets, images) made by the iframe
   // automatically carry the token and are served from the same route.
-  app.get('/device/content/:id/html5/:token/*', async (req, reply) => {
+  app.get('/device/content/:id/html5/:token/*', {
+    // TV player apps (Tizen WGT) run at app:// origin and load this in an iframe.
+    // Explicitly override any upstream X-Frame-Options / CSP that would block framing,
+    // regardless of whether the nginx HTML5 location override has been deployed.
+    onSend: async (_req, reply) => {
+      reply.removeHeader('X-Frame-Options');
+      reply.header('Content-Security-Policy', 'frame-ancestors *;');
+      reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
+    },
+  }, async (req, reply) => {
     const { id, token } = req.params as { id: string; token: string; '*': string };
     const filePath = ((req.params as Record<string, string>)['*'] || 'index.html').replace(/\.\./g, '');
 
@@ -2566,10 +2592,20 @@ export async function deviceRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Package file not found on disk' });
     }
 
-    // Extract ZIP to temp dir keyed by content id (cached across requests)
+    // Extract ZIP to temp dir keyed by content id (cached across requests).
+    // Use the metadata startPage (default 'index.html') to detect whether the
+    // package has already been extracted rather than hardcoding index.html.
+    let startPage = 'index.html';
+    try {
+      const meta = JSON.parse(item.metadata ?? '{}') as Record<string, unknown>;
+      if (typeof meta.startPage === 'string' && meta.startPage) {
+        startPage = meta.startPage.replace(/^\/+/, '').replace(/\.\./g, '');
+      }
+    } catch { /* ignore bad metadata */ }
+
     const extractDir = path.join(os.tmpdir(), 'nexari-html5', id);
-    const indexPath = path.join(extractDir, 'index.html');
-    if (!existsSync(indexPath)) {
+    const startPagePath = path.join(extractDir, startPage);
+    if (!existsSync(startPagePath)) {
       await fsPromises.mkdir(extractDir, { recursive: true });
       try {
         const zip = new AdmZip(zipPath);

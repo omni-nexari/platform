@@ -366,6 +366,11 @@ const Player = {
                 void this.loadContent();
                 // Report installed apps once per connect (list changes rarely)
                 setTimeout(() => { this.reportInstalledApps(); }, 3000);
+                // Start BLE periodic scan — server pushes device_rules ~3 s after connect.
+                // _startPeriodicScan guards against double-start on reconnect.
+                if (typeof BleManager !== 'undefined') {
+                    BleManager.start();
+                }
             };
             this.wsConnection.onmessage = (event) => {
                 this.lastWsMessageAt = Date.now();
@@ -3714,7 +3719,13 @@ const Player = {
         return 'http';
     },
     renderIptvAVPlay(container, content) {
-        const url = content.url;
+        // Normalise udp://239.x → udp://@239.x so AVPlay sends an IGMP join for multicast.
+        // The @-prefix is required by AVPlay on both consumer and commercial Samsung platforms.
+        let url = content.url;
+        if (/^udp:\/\/(?!@)(2(?:2[4-9]|3[0-9])\.)/.test(url)) {
+            url = url.replace('udp://', 'udp://@');
+            logger.debug('IPTV: normalised multicast URL to', url);
+        }
         const proto = this.detectIptvProtocol(url, content.protocol);
         const isUdp = proto === 'udp' || proto === 'rtp';
         const isRtsp = proto === 'rtsp';
@@ -3742,15 +3753,10 @@ const Player = {
             videoContainer.style.left = '0';
             container.appendChild(videoContainer);
             const rect = videoContainer.getBoundingClientRect();
-            // CRITICAL: Follow Samsung's official sequence
-            // 1. Open FIRST
+            // Official Samsung sequence: open → setListener → setDisplayRect → setStreamingProperty → prepareAsync → play
+            // 1. Open
             webapis.avplay.open(url);
-            // Apply profile after open (more reliable on some firmwares)
-            this.applyAvPlayProfile(content);
-            // 2. Set display rect SECOND (Samsung samples do this before setListener)
-            webapis.avplay.setDisplayRect(rect.left, rect.top, rect.width, rect.height);
-            logger.debug('AVPlay: Display rect set for IPTV', rect);
-            // 3. Set listener THIRD (after open and setDisplayRect, before prepare)
+            // 2. Set listener (before setDisplayRect per Samsung docs)
             webapis.avplay.setListener({
                 onbufferingstart: () => {
                     var _a, _b;
@@ -3768,7 +3774,6 @@ const Player = {
                         Telemetry.updateIptvStats({ lastError: String(e || 'unknown') });
                     }
                     this._stopIptvWatchdog();
-                    // If we're inside a channel group, attempt reconnect; else fall back to idle.
                     if (this.currentChannelGroup) {
                         this._scheduleIptvReconnect('avplay-error');
                     }
@@ -3781,7 +3786,6 @@ const Player = {
                     logger.info('IPTV stream completed');
                     this._stopIptvWatchdog();
                     if (this.currentChannelGroup) {
-                        // Multicast streams shouldn't "complete"; treat as drop and reconnect.
                         this._scheduleIptvReconnect('stream-completed');
                     }
                     else {
@@ -3789,11 +3793,12 @@ const Player = {
                     }
                 },
             });
-            // 4. Configure per protocol. UDP/RTP need a tighter buffer timeout for
-            //    low-latency multicast; HLS/DASH need their streamtype hint plus the
-            //    adaptive resolution clamp; RTSP relies on AVPlay defaults.
+            // 3. Set display rect
+            webapis.avplay.setDisplayRect(rect.left, rect.top, rect.width, rect.height);
+            logger.debug('AVPlay: Display rect set for IPTV', rect);
+            // 4. Protocol-specific streaming properties (IDLE state only, before prepare)
             try {
-                webapis.avplay.setTimeoutForBuffering(isUdp ? 4 : 10);
+                webapis.avplay.setTimeoutForBuffering(10);
             }
             catch (err) {
                 logger.debug('setTimeoutForBuffering not supported');
@@ -3805,17 +3810,8 @@ const Player = {
             catch (err) {
                 logger.debug('setBufferingParam not supported');
             }
-            if (isUdp) {
+            if (isHls) {
                 try {
-                    webapis.avplay.setStreamingProperty('SET_STREAMTYPE', 'UDP');
-                }
-                catch (err) {
-                    logger.debug('setStreamingProperty UDP failed');
-                }
-            }
-            else if (isHls) {
-                try {
-                    webapis.avplay.setStreamingProperty('SET_STREAMTYPE', 'HLS');
                     webapis.avplay.setStreamingProperty('ADAPTIVE_INFO', 'FIXED_MAX_RESOLUTION=FULL_HD');
                 }
                 catch (err) {
@@ -3830,12 +3826,11 @@ const Player = {
                     logger.debug('setStreamingProperty DASH failed');
                 }
             }
-            else if (isRtsp) {
-                logger.debug('IPTV: RTSP stream — using AVPlay defaults');
+            else if (isRtsp || isUdp) {
+                logger.debug('IPTV: RTSP/UDP stream — using AVPlay defaults');
             }
             webapis.avplay.prepareAsync(() => {
                 try {
-                    // Align with the other AVPlay flows: set display method after prepare succeeds
                     try {
                         webapis.avplay.setDisplayMethod('PLAYER_DISPLAY_MODE_FULL_SCREEN');
                     }
@@ -6180,7 +6175,7 @@ const Player = {
             return;
         }
         // Content types that don't use a static URL (they fetch/render data themselves)
-        const urlNotRequired = new Set(['CALENDAR', 'DATASYNC', 'ZONE_LAYOUT', 'MENU_BOARD', 'LIVE_LINK_FACE']);
+        const urlNotRequired = new Set(['CALENDAR', 'DATASYNC', 'ZONE_LAYOUT', 'MENU_BOARD', 'LIVE_LINK_FACE', 'CHANNEL_GROUP']);
         // Filter out items without URLs, but keep types that don't need one
         const playableItems = playlist.items.filter(item => item.content.url || urlNotRequired.has(item.content.type));
         if (playableItems.length === 0) {
@@ -6957,6 +6952,15 @@ const Player = {
                     scheduleNext(duration * 1000);
                     break;
                 }
+                case 'IPTV':
+                case 'LIVE_STREAM':
+                    this.renderIptv(container, content);
+                    this.lastRenderedItemKey = itemKey;
+                    break;
+                case 'CHANNEL_GROUP':
+                    this.renderChannelGroup(container, content);
+                    this.lastRenderedItemKey = itemKey;
+                    break;
                 default:
                     logger.warn('Unknown content type:', content.type);
                     // Skip to next item

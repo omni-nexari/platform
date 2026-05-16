@@ -155,12 +155,10 @@ const Player = {
     // peers via the shared 16-bit groupID and aligns frames in firmware.
     _nativeSyncActive: false,
     _nativeSyncGroupId: null,
-    // Videowall Phase 2 (wall-engine + wall-sync subsystem)
-    _videowallCurrentUrl: null,
+    // CrossOS videowall CSS transform — set by VIDEOWALL_INIT; consumed by _renderWallVideo.
+    _wallCss: null,
+    // Node relay guard (also used by renderLiveLinkFace for its own sidecar).
     _wallRelayStarted: false,
-    // Mixed-platform videowall: WS relay client (used when allTizen === false)
-    _mixedRelayWs: null,
-    _mixedRelayStop: null,
     // Cross-OS sync group relay (same JSON protocol, separate connection)
     _syncGroupRelayWs: null,
     _syncGroupRelayStop: null,
@@ -485,78 +483,50 @@ const Player = {
                     }
                     this.loadContent();
                     break;
-                case 'VIDEOWALL_INIT':
-                    // The API sends all wall data as top-level fields on the WS message
-                    // (not nested under .payload). Store the whole message as the manifest.
+                case 'VIDEOWALL_INIT': {
+                    // CrossOS wall engine: compute CSS transform from geometry and cache.
                     logger.info('Videowall init received:', message);
-                    this._videowallManifest = message;
-                    // Reuse the P2P SyncEngine for wall sync – feed it the peer/priority
-                    // list from the videowall manifest.  groupId is the device group UUID
-                    // (treated as an opaque string by the engine).
-                    if (typeof SyncEngine !== 'undefined' && message.geometry) {
-                        SyncEngine.setManifest({
-                            groupId: message.deviceGroupId,
-                            version: Date.now(),
-                            leaderPriority: message.leaderPriority,
-                            peers: message.peers,
-                        });
-                    }
-                    // Phase 2: configure WallEngine ROI + start WallSync
-                    if (message.geometry && message.myCell) {
-                        const geo = message.geometry;
-                        const mc = message.myCell;
+                    const geo = message.geometry;
+                    const mc = message.myCell;
+                    if (geo && mc) {
                         const col = mc.positionCol;
                         const row = mc.positionRow;
                         const colSpan = mc.colSpan || 1;
                         const rowSpan = mc.rowSpan || 1;
-                        let offsetX = 0;
+                        const colW = geo.colWidths || [];
+                        const rowH = geo.rowHeights || [];
+                        const canvasW = geo.canvasW || 0;
+                        const canvasH = geo.canvasH || 0;
+                        // Cell top-left offset and size on the virtual canvas.
+                        let tx = 0;
                         for (let c = 0; c < col; c++)
-                            offsetX += (geo.colWidths[c] || 0);
-                        let offsetY = 0;
+                            tx += (colW[c] || 0);
+                        let ty = 0;
                         for (let r = 0; r < row; r++)
-                            offsetY += (geo.rowHeights[r] || 0);
+                            ty += (rowH[r] || 0);
                         let cellW = 0;
                         for (let c = col; c < col + colSpan; c++)
-                            cellW += (geo.colWidths[c] || 0);
+                            cellW += (colW[c] || 0);
                         let cellH = 0;
                         for (let r = row; r < row + rowSpan; r++)
-                            cellH += (geo.rowHeights[r] || 0);
-                        if (geo.canvasW && geo.canvasH && typeof WallEngine !== 'undefined') {
-                            WallEngine.setWallCrop(offsetX / geo.canvasW, offsetY / geo.canvasH, cellW / geo.canvasW, cellH / geo.canvasH);
-                            WallEngine.initEngine();
-                        }
-                        if (typeof WallSync !== 'undefined' && !WallSync.isRunning()
-                            && message.leaderPriority && message.peers
-                            && message.allTizen !== false) {
-                            const leaderDeviceId = message.leaderPriority[0];
-                            const leaderPeer = message.peers.find((p) => p.deviceId === leaderDeviceId);
-                            // Prefer explicit relayUrl from manifest; fall back to deriving from lastKnownIp.
-                            const wsUrl = message.relayUrl
-                                || ((leaderPeer === null || leaderPeer === void 0 ? void 0 : leaderPeer.lastKnownIp) ? `ws://${leaderPeer.lastKnownIp}:9616` : null);
-                            if (wsUrl) {
-                                this._startWallNodeRelay();
-                                WallSync.init({
-                                    wsUrl,
-                                    groupId: message.deviceGroupId,
-                                    deviceId: this.deviceId,
-                                    expectedPeers: message.peers.length,
-                                    onStatus: (msg) => logger.info('[WallSync] ' + msg),
-                                    getContentUrl: () => this._videowallCurrentUrl || null,
-                                });
-                            }
-                        }
-                        // Mixed-platform videowall: allTizen===false → connect to RFC 6455 relay.
-                        if (message.allTizen === false && message.leaderPriority && message.peers) {
-                            const isLeader = message.leaderPriority[0] === this.deviceId;
-                            if (isLeader)
-                                this._startWallNodeRelay();
-                            this._startMixedWallSync(message);
-                        }
+                            cellH += (rowH[r] || 0);
+                        // Panel logical dimensions (swapped for portrait orientation).
+                        const rotation = parseInt(mc.tileRotation || '0', 10) || 0;
+                        const logicalW = (rotation === 90 || rotation === 270) ? (mc.nativeHeightPx || 1080) : (mc.nativeWidthPx || 1920);
+                        const logicalH = (rotation === 90 || rotation === 270) ? (mc.nativeWidthPx || 1920) : (mc.nativeHeightPx || 1080);
+                        // Bezel scale correction (pre-computed by server in geometry.bezelOffsets).
+                        const bo = geo.bezelOffsets || null;
+                        const scaleX = bo ? (logicalW + bo.left + bo.right) / logicalW : 1;
+                        const scaleY = bo ? (logicalH + bo.top + bo.bottom) / logicalH : 1;
+                        this._wallCss = { videoW: canvasW, videoH: canvasH, tx: -tx, ty: -ty, scaleX, scaleY, rotation, logicalW, logicalH };
+                        logger.info('[Wall] CSS transform set:', JSON.stringify(this._wallCss));
                     }
-                    // Re-check content so any pending videowall content starts rendering
-                    // now that the manifest (crop geometry) is available.
+                    // CrossOS sync: wall always uses the cloud/LAN relay.
+                    this._syncMode = true;
+                    this._startSyncGroupRelay(message);
                     this.loadContent();
                     break;
+                }
                 case 'SESSION_CONFIG':
                     logger.info('SyncPlay session config received - refreshing content');
                     this.loadContent();
@@ -1913,152 +1883,6 @@ const Player = {
         }
     },
     /**
-     * Mixed-platform videowall sync — connects to the RFC 6455 relay as a WS
-     * client using the same JSON protocol as sync.ts (cloud relay).
-     * Used when allTizen===false (Windows/Android leader or mixed group).
-     */
-    _startMixedWallSync(manifest) {
-        // Tear down any previous connection.
-        if (this._mixedRelayStop) {
-            try {
-                this._mixedRelayStop();
-            }
-            catch (_a) { }
-            this._mixedRelayStop = null;
-        }
-        // Derive relay URL from this device's own API base (not manifest.relayUrl which may
-        // be the cloud domain while devices are on a local network).
-        const tizenApiBase = (typeof CONFIG !== 'undefined' && CONFIG.API_BASE) || '';
-        const tizenWsBase = tizenApiBase.replace(/^http/, 'ws').replace(/\/api\/v1\/?$/, '');
-        const tizenToken = this.deviceToken || localStorage.getItem('deviceToken') || '';
-        const relayUrl = tizenWsBase
-            ? `${tizenWsBase}/api/v1/sync-relay/ws?token=${encodeURIComponent(tizenToken)}`
-            : manifest.relayUrl;
-        const groupId = manifest.deviceGroupId;
-        const deviceId = this.deviceId;
-        if (!relayUrl)
-            return;
-        const self = this;
-        let stopped = false;
-        let goTimer = null;
-        let reconnTimer = null;
-        let readySent = false;
-        const sendIfOpen = (ws, obj) => {
-            if (ws.readyState === 1)
-                try {
-                    ws.send(JSON.stringify(obj));
-                }
-                catch (_a) { }
-        };
-        const connect = () => {
-            if (stopped)
-                return;
-            const ws = new WebSocket(relayUrl);
-            self._mixedRelayWs = ws;
-            ws.onopen = () => {
-                readySent = false;
-                sendIfOpen(ws, { type: 'WS_REGISTER', deviceId, groupId, playLatencyMs: 200 });
-                logger.info('[MixedWall] registered → ' + relayUrl);
-                // Poll until content is loaded, then send READY.
-                const pollReady = () => {
-                    if (stopped || readySent)
-                        return;
-                    if (self._videowallCurrentUrl) {
-                        readySent = true;
-                        sendIfOpen(ws, { type: 'READY' });
-                        logger.info('[MixedWall] READY sent');
-                    }
-                    else {
-                        setTimeout(pollReady, 500);
-                    }
-                };
-                pollReady();
-            };
-            ws.onmessage = (ev) => {
-                let msg;
-                try {
-                    msg = JSON.parse(ev.data);
-                }
-                catch (_a) {
-                    return;
-                }
-                if (msg.type === 'LOAD_URL') {
-                    // Leader says "load this URL" — Tizen already loads from schedule,
-                    // but reset readySent so we re-confirm when our content is ready.
-                    readySent = false;
-                    const pollReady = () => {
-                        if (stopped || readySent)
-                            return;
-                        if (self._videowallCurrentUrl) {
-                            readySent = true;
-                            sendIfOpen(ws, { type: 'READY' });
-                            logger.info('[MixedWall] READY re-sent (LOAD_URL trigger)');
-                        }
-                        else {
-                            setTimeout(pollReady, 500);
-                        }
-                    };
-                    setTimeout(pollReady, 100);
-                    return;
-                }
-                if (msg.type === 'GO' || msg.type === 'LOOP_GO') {
-                    const playAt = Number(msg.playAt);
-                    const delay = Math.max(0, playAt - Date.now());
-                    logger.info('[MixedWall] ' + msg.type + ' in ' + delay + 'ms');
-                    if (goTimer)
-                        clearTimeout(goTimer);
-                    goTimer = setTimeout(() => {
-                        // Seek current AVPlay instance to 0 and play for synchronized start.
-                        const player = self.currentAvPlayer === 'player1' ? self.avPlayer1 : self.avPlayer2;
-                        if (player) {
-                            try {
-                                player.seek(0);
-                            }
-                            catch (_a) { }
-                            try {
-                                player.play();
-                            }
-                            catch (_b) { }
-                        }
-                        logger.info('[MixedWall] play triggered');
-                        // After loop starts playing, send LOOP_READY for next loop barrier.
-                        const dur = player ? (player.getDuration() || 10000) : 10000;
-                        setTimeout(() => {
-                            if (!stopped && ws.readyState === 1) {
-                                sendIfOpen(ws, { type: 'LOOP_READY', groupId, deviceId });
-                                logger.info('[MixedWall] LOOP_READY sent');
-                            }
-                        }, Math.max(dur - 1000, 500));
-                    }, delay);
-                    return;
-                }
-            };
-            ws.onerror = () => logger.warn('[MixedWall] WS error');
-            ws.onclose = () => {
-                self._mixedRelayWs = null;
-                if (!stopped) {
-                    reconnTimer = setTimeout(connect, 2000);
-                    logger.warn('[MixedWall] WS closed — reconnecting');
-                }
-            };
-        };
-        this._mixedRelayStop = () => {
-            stopped = true;
-            if (goTimer)
-                clearTimeout(goTimer);
-            if (reconnTimer)
-                clearTimeout(reconnTimer);
-            if (self._mixedRelayWs) {
-                try {
-                    self._mixedRelayWs.close();
-                }
-                catch (_a) { }
-                self._mixedRelayWs = null;
-            }
-        };
-        connect();
-    },
-    /**
      * Cross-OS sync group relay — WS client using the same Node.js relay JSON
      * protocol as Android/Windows (WS_REGISTER, PING/PONG, READY/GO, LOOP_READY/LOOP_GO).
      * Used when allTizen===false (mixed Tizen + Android/Windows group).
@@ -2094,9 +1918,6 @@ const Player = {
         // Determine if this device is the relay leader.
         const leaderPriority = Array.isArray(manifest.leaderPriority) ? manifest.leaderPriority : [];
         const isLeader = leaderPriority.length > 0 && leaderPriority[0] === deviceId;
-        // If this Tizen device is the leader, start the Node relay server (b2bcontrol).
-        if (isLeader)
-            this._startWallNodeRelay();
         const self = this;
         let stopped = false;
         let goTimer = null;
@@ -3377,36 +3198,11 @@ const Player = {
         }
         return btoa(binary);
     },
-    // Render video content using Samsung AVPlay API for better performance
+    // Render video content — routes to wall CSS renderer, HTML5 sync path, or AVPlay.
     renderVideo(container, content) {
-        // Clean up wall subsystem when switching away from VIDEOWALL content
-        if (!content || content.type !== 'VIDEOWALL') {
-            if (typeof WallSync !== 'undefined' && WallSync.isRunning()) {
-                try {
-                    WallSync.stop();
-                }
-                catch (_a) { }
-            }
-            if (typeof WallEngine !== 'undefined' && WallEngine.isInitialised()) {
-                try {
-                    WallEngine.destroyEngine();
-                }
-                catch (_b) { }
-            }
-            if (this._mixedRelayStop) {
-                try {
-                    this._mixedRelayStop();
-                }
-                catch (_c) { }
-                this._mixedRelayStop = null;
-            }
-            this._videowallCurrentUrl = null;
-        }
-        // Videowall mode: CSS-crop the full-wall video to this panel's region.
-        // Guard on content.type so regular video items in a playlist aren't
-        // accidentally rendered in crop mode if a manifest is still in memory.
-        if (this._videowallManifest && content && content.type === 'VIDEOWALL') {
-            this._renderVideowallContent(container, content);
+        // CrossOS wall mode: use HTML5 <video> with CSS transform crop.
+        if (this._wallCss && content && content.type === 'VIDEOWALL') {
+            this._renderWallVideo(container, content);
             return;
         }
         // SyncPlay forces HTML5 path (per-frame currentTime control + playbackRate
@@ -3424,69 +3220,42 @@ const Player = {
             this.renderVideoHTML5(container, content);
         }
     },
-    // -- Videowall AVPlay setVideoRoi renderer (Tizen 6.0+ B2B/LFD) -------------
-    // All panels in the wall download the same full-canvas-resolution video.
-    // Each panel uses AVPlay setVideoRoi to crop its assigned sub-rectangle of
-    // the decoded frame � no DOM/CSS clipping, no HW overlay mismatch.
-    // SyncEngine handles P2P drift correction so frames stay aligned.
-    _renderVideowallContent(container, content) {
-        const mf = this._videowallManifest;
-        if (!mf || !mf.geometry || !mf.myCell) {
-            logger.warn('[Videowall] manifest incomplete � falling back to normal AVPlay');
-            this.renderVideoAVPlay(container, content);
+    // -- CrossOS wall CSS renderer -------------------------------------------
+    // All panels download the full-canvas video. Three nested elements create
+    // the virtual-canvas crop:
+    //   outerWrapper  overflow:hidden  — clips to this panel's logical size
+    //   innerWrapper  rotate + scale   — handles orientation + bezel correction
+    //   <video>       translate        — positions the full canvas
+    _renderWallVideo(container, content) {
+        const css = this._wallCss;
+        if (!css || !content || !content.url) {
+            logger.warn('[Wall] _wallCss not set — falling back to HTML5');
+            this.renderVideoHTML5(container, content);
             return;
         }
-        const geo = mf.geometry; // { colWidths, rowHeights, canvasW, canvasH }
-        const myCell = mf.myCell; // { positionCol, positionRow, colSpan, rowSpan, ... }
-        const col = myCell.positionCol;
-        const row = myCell.positionRow;
-        const colSpan = myCell.colSpan || 1;
-        const rowSpan = myCell.rowSpan || 1;
-        // Compute this cell's top-left offset and size on the virtual canvas.
-        let offsetX = 0;
-        for (let c = 0; c < col; c++)
-            offsetX += (geo.colWidths[c] || 0);
-        let offsetY = 0;
-        for (let r = 0; r < row; r++)
-            offsetY += (geo.rowHeights[r] || 0);
-        let cellW = 0;
-        for (let c = col; c < col + colSpan; c++)
-            cellW += (geo.colWidths[c] || 0);
-        let cellH = 0;
-        for (let r = row; r < row + rowSpan; r++)
-            cellH += (geo.rowHeights[r] || 0);
-        const canvasW = geo.canvasW;
-        const canvasH = geo.canvasH;
-        logger.info(`[Videowall] cell(${col},${row}) offset(${offsetX},${offsetY}) cell(${cellW}x${cellH}) canvas(${canvasW}x${canvasH})`);
-        if (!canvasW || !canvasH) {
-            logger.warn('[Videowall] canvas dimensions zero � falling back to normal AVPlay');
-            this.renderVideoAVPlay(container, content);
-            return;
-        }
-        // Store ROI ratios; consumed once inside renderVideoAVPlay's prepareAsync
-        // callback after the player reaches READY state.
-        this._pendingVideoRoi = {
-            xR: offsetX / canvasW,
-            yR: offsetY / canvasH,
-            wR: cellW / canvasW,
-            hR: cellH / canvasH,
-        };
-        logger.info(`[Videowall] ROI ratios x=${this._pendingVideoRoi.xR.toFixed(4)}` +
-            ` y=${this._pendingVideoRoi.yR.toFixed(4)}` +
-            ` w=${this._pendingVideoRoi.wR.toFixed(4)}` +
-            ` h=${this._pendingVideoRoi.hR.toFixed(4)}`);
-        // Phase 2: if WallSync is running, hand the URL to the sync engine
-        // (it will call WallEngine.prepare + schedule play via LOAD_URL/GO).
-        // Otherwise fall back to Phase 1 direct AVPlay rendering.
-        this._videowallCurrentUrl = content.url;
-        if (typeof WallSync !== 'undefined' && WallSync.isRunning()) {
-            container.innerHTML = '';
-            WallSync.handleNewContent(content.url);
-        }
-        else {
-            // Phase 1 fallback: direct AVPlay with setVideoRoi via _pendingVideoRoi
-            this.renderVideoAVPlay(container, content);
-        }
+        logger.info('[Wall] rendering wall tile, url=' + redactUrl(content.url));
+        container.innerHTML = '';
+        // Outer clip window — matches this panel's logical (physical) size.
+        const outer = document.createElement('div');
+        outer.style.cssText = `position:absolute;top:0;left:0;width:${css.logicalW}px;height:${css.logicalH}px;overflow:hidden;`;
+        // Inner wrapper — applies panel rotation and bezel scale correction.
+        const inner = document.createElement('div');
+        inner.style.cssText = `position:absolute;top:0;left:0;width:100%;height:100%;` +
+            `transform:rotate(${css.rotation}deg) scale(${css.scaleX},${css.scaleY});transform-origin:center;`;
+        // Full-canvas <video> element — translated so this panel's region is visible.
+        const video = document.createElement('video');
+        video.style.cssText = `position:absolute;top:0;left:0;width:${css.videoW}px;height:${css.videoH}px;` +
+            `transform:translate(${css.tx}px,${css.ty}px);transform-origin:0 0;object-fit:fill;`;
+        video.src = content.url;
+        video.autoplay = false;
+        video.muted = false;
+        video.loop = false;
+        video.playsInline = true;
+        this._activeSyncVideo = video;
+        inner.appendChild(video);
+        outer.appendChild(inner);
+        container.appendChild(outer);
+        logger.info('[Wall] DOM ready, waiting for sync GO');
     },
     // Render video using Samsung AVPlay API
     renderVideoAVPlay(container, content) {
@@ -3584,20 +3353,6 @@ const Player = {
                     // Apply videowall ROI crop when this is a wall tile.
                     // setVideoRoi is B2B/LFD only (Tizen 6.0+) and must be called after
                     // prepareAsync completes (player is in READY state).
-                    if (this._pendingVideoRoi) {
-                        try {
-                            const roi = this._pendingVideoRoi;
-                            this._pendingVideoRoi = null;
-                            webapis.avplay.setVideoRoi(roi.xR, roi.yR, roi.wR, roi.hR);
-                            logger.info(`[Videowall] setVideoRoi applied: x=${roi.xR.toFixed(4)}` +
-                                ` y=${roi.yR.toFixed(4)}` +
-                                ` w=${roi.wR.toFixed(4)}` +
-                                ` h=${roi.hR.toFixed(4)}`);
-                        }
-                        catch (roiErr) {
-                            logger.warn('[Videowall] setVideoRoi failed (not B2B/LFD or Tizen <6):', roiErr);
-                        }
-                    }
                     this.setAvPlayVisualMode(true);
                     logger.debug('Enabled AVPlay visual mode');
                     // Start playback
@@ -4234,7 +3989,13 @@ const Player = {
         return 'http';
     },
     renderIptvAVPlay(container, content) {
-        const url = content.url;
+        // SSSP commercial panels support UDP multicast; normalise udp://239.x → udp://@239.x
+        // so the panel sends an IGMP join. Consumer SmartTV does not support UDP from web apps.
+        let url = content.url;
+        if (/^udp:\/\/(?!@)(2(?:2[4-9]|3[0-9])\.)/.test(url)) {
+            url = url.replace('udp://', 'udp://@');
+            logger.debug('IPTV: normalised multicast URL to', url);
+        }
         const proto = this.detectIptvProtocol(url, content.protocol);
         const isUdp = proto === 'udp' || proto === 'rtp';
         const isRtsp = proto === 'rtsp';
@@ -4262,15 +4023,10 @@ const Player = {
             videoContainer.style.left = '0';
             container.appendChild(videoContainer);
             const rect = videoContainer.getBoundingClientRect();
-            // CRITICAL: Follow Samsung's official sequence
-            // 1. Open FIRST
+            // Official Samsung sequence: open → setListener → setDisplayRect → setStreamingProperty → prepareAsync → play
+            // 1. Open
             webapis.avplay.open(url);
-            // Apply profile after open (more reliable on some firmwares)
-            this.applyAvPlayProfile(content);
-            // 2. Set display rect SECOND (Samsung samples do this before setListener)
-            webapis.avplay.setDisplayRect(rect.left, rect.top, rect.width, rect.height);
-            logger.debug('AVPlay: Display rect set for IPTV', rect);
-            // 3. Set listener THIRD (after open and setDisplayRect, before prepare)
+            // 2. Set listener (before setDisplayRect per Samsung docs)
             webapis.avplay.setListener({
                 onbufferingstart: () => {
                     var _a, _b;
@@ -4288,7 +4044,6 @@ const Player = {
                         Telemetry.updateIptvStats({ lastError: String(e || 'unknown') });
                     }
                     this._stopIptvWatchdog();
-                    // If we're inside a channel group, attempt reconnect; else fall back to idle.
                     if (this.currentChannelGroup) {
                         this._scheduleIptvReconnect('avplay-error');
                     }
@@ -4301,7 +4056,6 @@ const Player = {
                     logger.info('IPTV stream completed');
                     this._stopIptvWatchdog();
                     if (this.currentChannelGroup) {
-                        // Multicast streams shouldn't "complete"; treat as drop and reconnect.
                         this._scheduleIptvReconnect('stream-completed');
                     }
                     else {
@@ -4309,11 +4063,12 @@ const Player = {
                     }
                 },
             });
-            // 4. Configure per protocol. UDP/RTP need a tighter buffer timeout for
-            //    low-latency multicast; HLS/DASH need their streamtype hint plus the
-            //    adaptive resolution clamp; RTSP relies on AVPlay defaults.
+            // 3. Set display rect
+            webapis.avplay.setDisplayRect(rect.left, rect.top, rect.width, rect.height);
+            logger.debug('AVPlay: Display rect set for IPTV', rect);
+            // 4. Protocol-specific streaming properties (IDLE state only, before prepare)
             try {
-                webapis.avplay.setTimeoutForBuffering(isUdp ? 4 : 10);
+                webapis.avplay.setTimeoutForBuffering(10);
             }
             catch (err) {
                 logger.debug('setTimeoutForBuffering not supported');
@@ -4325,17 +4080,8 @@ const Player = {
             catch (err) {
                 logger.debug('setBufferingParam not supported');
             }
-            if (isUdp) {
+            if (isHls) {
                 try {
-                    webapis.avplay.setStreamingProperty('SET_STREAMTYPE', 'UDP');
-                }
-                catch (err) {
-                    logger.debug('setStreamingProperty UDP failed');
-                }
-            }
-            else if (isHls) {
-                try {
-                    webapis.avplay.setStreamingProperty('SET_STREAMTYPE', 'HLS');
                     webapis.avplay.setStreamingProperty('ADAPTIVE_INFO', 'FIXED_MAX_RESOLUTION=FULL_HD');
                 }
                 catch (err) {
@@ -4350,12 +4096,11 @@ const Player = {
                     logger.debug('setStreamingProperty DASH failed');
                 }
             }
-            else if (isRtsp) {
-                logger.debug('IPTV: RTSP stream — using AVPlay defaults');
+            else if (isRtsp || isUdp) {
+                logger.debug('IPTV: RTSP/UDP stream — using AVPlay defaults');
             }
             webapis.avplay.prepareAsync(() => {
                 try {
-                    // Align with the other AVPlay flows: set display method after prepare succeeds
                     try {
                         webapis.avplay.setDisplayMethod('PLAYER_DISPLAY_MODE_FULL_SCREEN');
                     }
@@ -6700,7 +6445,7 @@ const Player = {
             return;
         }
         // Content types that don't use a static URL (they fetch/render data themselves)
-        const urlNotRequired = new Set(['CALENDAR', 'DATASYNC', 'ZONE_LAYOUT', 'MENU_BOARD', 'LIVE_LINK_FACE']);
+        const urlNotRequired = new Set(['CALENDAR', 'DATASYNC', 'ZONE_LAYOUT', 'MENU_BOARD', 'LIVE_LINK_FACE', 'CHANNEL_GROUP']);
         // Filter out items without URLs, but keep types that don't need one
         const playableItems = playlist.items.filter(item => item.content.url || urlNotRequired.has(item.content.type));
         if (playableItems.length === 0) {
@@ -7478,6 +7223,19 @@ const Player = {
                     scheduleNext(duration * 1000);
                     break;
                 }
+                case 'IPTV':
+                case 'LIVE_STREAM':
+                    // Single IPTV/live stream item: play indefinitely (no scheduleNext —
+                    // a refresh_schedule or content-change event ends playback).
+                    this.renderIptv(container, content);
+                    this.lastRenderedItemKey = itemKey;
+                    break;
+                case 'CHANNEL_GROUP':
+                    // Channel group (IPTV bundle): runs indefinitely; renderChannelGroup
+                    // manages its own lifecycle via tuneChannel / AVPlay.
+                    this.renderChannelGroup(container, content);
+                    this.lastRenderedItemKey = itemKey;
+                    break;
                 default:
                     logger.warn('Unknown content type:', content.type);
                     // Skip to next item
