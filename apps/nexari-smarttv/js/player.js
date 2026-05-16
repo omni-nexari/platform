@@ -325,6 +325,22 @@ const Player = {
                 logger.warn('[PlayerSettings] init failed:', (e === null || e === void 0 ? void 0 : e.message) || e);
             }
             logger.info('Player initialized successfully');
+            // ── App lifecycle: reconnect WS when Nexari returns to foreground ───────
+            // On Tizen, launching another app suspends (or kills) Nexari.
+            // visibilitychange fires when the app comes back to foreground.
+            // appcontrol fires when the app is re-activated (launched again after being killed).
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) {
+                    logger.info('[Lifecycle] App foregrounded — checking WS');
+                    const ws = this.wsConnection;
+                    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+                        logger.info('[Lifecycle] WS closed — reconnecting immediately');
+                        this.connectWebSocket();
+                    }
+                    // Also reload content in case something changed while away
+                    setTimeout(() => { void this.loadContent(); }, 1000);
+                }
+            });
         });
     },
     // Show player screen

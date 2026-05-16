@@ -1355,6 +1355,12 @@ export function DeviceDetailContent({
 
   const sendCmd = (cmd: DeviceCommandInput) => cmdMutation.mutate(cmd);
 
+  const returnToPlayer = useMutation({
+    mutationFn: () => api.post(`/devices/${deviceId}/return-to-player`, {}),
+    onSuccess: () => toast.success('Returning to Nexari…'),
+    onError: () => toast.error('Could not reach the TV'),
+  });
+
   // Screenshot mutations
   const [screenshotsOpen, setScreenshotsOpen] = useState(false);
 
@@ -1831,12 +1837,12 @@ export function DeviceDetailContent({
             </h2>
             <button
               type="button"
-              disabled={cmdDisabled}
-              onClick={() => sendCmd({ command: 'relaunch_app' })}
-              title="Return to Nexari player"
+              disabled={returnToPlayer.isPending}
+              onClick={() => returnToPlayer.mutate()}
+              title={isOnline ? 'Return to Nexari player' : 'Relaunch Nexari via Samsung Remote Control (TV may be running another app)'}
               className="ml-auto text-xs px-2.5 py-1 rounded-md bg-[var(--blue)] text-white disabled:opacity-40 hover:opacity-90 transition-opacity"
             >
-              Return to Nexari
+              {returnToPlayer.isPending ? 'Launching…' : 'Return to Nexari'}
             </button>
           </SectionCardHeader>
           <SectionCardBody>

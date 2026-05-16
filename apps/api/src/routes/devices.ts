@@ -3214,6 +3214,61 @@ export async function deviceRoutes(app: FastifyInstance) {
     return reply.send({ ok: true });
   });
 
+  // ── POST /:id/return-to-player — relaunch Nexari on the TV ─────────────
+  // Tries WS first (device is online), then falls back to Samsung Remote
+  // Control WebSocket API on port 8001 (works even when Nexari is killed).
+  app.post('/:id/return-to-player', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    // Method 1: WS command (works if Nexari is suspended, not killed)
+    sendCommand(id, { type: 'relaunch_app' } as never);
+
+    // Method 2: Samsung Remote Control API on port 8001 (works even when app is killed)
+    const tvIp = device.ipAddress;
+    if (tvIp) {
+      try {
+        const { WebSocket: WsClient } = await import('ws') as typeof import('ws');
+        const appId = 'zBkMAo0wLV.Nexritv';
+        const appName = Buffer.from('Nexari').toString('base64');
+        await new Promise<void>((resolve, reject) => {
+          const ws = new WsClient(
+            `ws://${tvIp}:8001/api/v2/channels/samsung.remote.control?name=${appName}`,
+            { handshakeTimeout: 3000 }
+          );
+          let settled = false;
+          const done = (err?: Error) => {
+            if (settled) return;
+            settled = true;
+            try { ws.close(); } catch (_) {}
+            err ? reject(err) : resolve();
+          };
+          ws.on('open', () => {
+            ws.send(JSON.stringify({
+              method: 'ms.channel.emit',
+              params: { event: 'ed.apps.launch', to: 'host', data: { appId } },
+            }));
+            setTimeout(() => done(), 500);
+          });
+          ws.on('message', () => done());
+          ws.on('error', (e: Error) => done(e));
+          setTimeout(() => done(new Error('timeout')), 4000);
+        });
+        app.log.info({ deviceId: id, tvIp }, 'Samsung Remote Control launch sent');
+        return reply.send({ ok: true, method: 'remote_control' });
+      } catch (e: any) {
+        app.log.warn({ deviceId: id, tvIp, err: e?.message }, 'Samsung Remote Control launch failed — WS command already sent');
+        return reply.send({ ok: true, method: 'ws_only', warning: e?.message });
+      }
+    }
+
+    return reply.send({ ok: true, method: 'ws_only' });
+  });
+
   // ── POST /:id/ble-scan — tell device to run a BLE scan ──────────────────
   app.post('/:id/ble-scan', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
