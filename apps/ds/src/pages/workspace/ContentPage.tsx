@@ -64,7 +64,7 @@ interface ContentList {
 // ── Constants ─────────────────────────────────────────────────────────────────
 type FilterType = 'all' | ContentItem['type'];
 type ViewMode = 'grid-lg' | 'grid-sm' | 'list';
-type KnownContentType = 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout' | 'calendar' | 'live_link_face';
+type KnownContentType = 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout' | 'calendar' | 'live_link_face' | 'canvas';
 
 const TYPE_FILTERS: { id: FilterType; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -77,6 +77,7 @@ const TYPE_FILTERS: { id: FilterType; label: string }[] = [
   { id: 'zone_layout',    label: 'Zone Layout' },
   { id: 'calendar',       label: 'Calendar' },
   { id: 'live_link_face', label: 'Live Link' },
+  { id: 'canvas',         label: 'Canvas' },
 ];
 
 const TYPE_META: Record<KnownContentType, { label: string; color: string; icon: React.ReactNode }> = {
@@ -89,6 +90,7 @@ const TYPE_META: Record<KnownContentType, { label: string; color: string; icon: 
   zone_layout:    { label: 'Zone Layout', color: 'bg-teal-500/80',     icon: <LayoutGrid size={10} /> },
   calendar:        { label: 'Calendar',   color: 'bg-indigo-500/80',   icon: <CalendarDays size={10} /> },
   live_link_face:  { label: 'Live Link',  color: 'bg-pink-500/80',     icon: <Scan size={10} /> },
+  canvas:          { label: 'Canvas',     color: 'bg-blue-500/80',     icon: <Paintbrush size={10} /> },
 };
 
 const UNKNOWN_TYPE_META = {
@@ -813,6 +815,29 @@ export default function ContentPage() {
     }
   };
 
+  // Canvas items navigate to the canvas editor instead of opening the detail panel.
+  const handleCardSelect = async (item: ContentItem) => {
+    if (item.type === 'canvas') {
+      let canvasProjectId: string | null = null;
+      try {
+        const meta = JSON.parse(item.metadata ?? '{}') as Record<string, unknown>;
+        canvasProjectId = (meta.canvasProjectId as string) ?? null;
+      } catch { /* ignore */ }
+      if (!canvasProjectId) {
+        // Fallback: look up by contentItemId (pre-fix canvas items won't have it in metadata)
+        try {
+          const project = await api.get<{ id: string }>(`/canvas?contentItemId=${item.id}`);
+          canvasProjectId = project?.id ?? null;
+        } catch { /* ignore */ }
+      }
+      if (canvasProjectId) {
+        navigate(`/workspaces/${wsId}/canvas/${canvasProjectId}`);
+      }
+      return;
+    }
+    setSelectedId(selectedId === item.id ? null : item.id);
+  };
+
   const currentFilters = {
     filterType,
     selectedTagIds,
@@ -1150,7 +1175,7 @@ export default function ContentPage() {
                   key={item.id}
                   item={item}
                   selected={selectedId === item.id}
-                  onSelect={() => setSelectedId(selectedId === item.id ? null : item.id)}
+                  onSelect={() => handleCardSelect(item)}
                   onDelete={() => {
                     setConfirmDeleteId(item.id);
                     setConfirmDeleteName(item.name);
@@ -1168,7 +1193,7 @@ export default function ContentPage() {
                   item={item}
                   large={view === 'grid-lg'}
                   selected={selectedId === item.id}
-                  onSelect={() => setSelectedId(selectedId === item.id ? null : item.id)}
+                  onSelect={() => handleCardSelect(item)}
                   onDelete={() => {
                     setConfirmDeleteId(item.id);
                     setConfirmDeleteName(item.name);

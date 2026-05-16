@@ -15,10 +15,22 @@ async function checkWorkspaceAccess(workspaceId: string, userId: string) {
 
 export async function canvasRoutes(app: FastifyInstance) {
 
-  // ── GET /canvas?workspaceId= ─────────────────────────────────────────────
+  // ── GET /canvas?workspaceId=&contentItemId= ─────────────────────────────
   app.get('/', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
-    const { workspaceId, search } = req.query as { workspaceId?: string; search?: string };
+    const { workspaceId, search, contentItemId } = req.query as { workspaceId?: string; search?: string; contentItemId?: string };
+
+    // Single-item lookup by content item ID (no workspaceId required)
+    if (contentItemId) {
+      const project = await db.query.canvasProjects.findFirst({
+        where: and(eq(canvasProjects.contentItemId, contentItemId), isNull(canvasProjects.deletedAt)),
+      });
+      if (!project) return reply.status(404).send({ error: 'Not found' });
+      const member = await checkWorkspaceAccess(project.workspaceId, user.sub);
+      if (!member) return reply.status(403).send({ error: 'Forbidden' });
+      return reply.send(project);
+    }
+
     if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
 
     const member = await checkWorkspaceAccess(workspaceId, user.sub);
@@ -118,6 +130,12 @@ export async function canvasRoutes(app: FastifyInstance) {
       sceneData: defaultScene,
       settings: defaultSettings,
     }).returning();
+
+    // Back-fill the canvas project ID into the content item metadata so the
+    // content library can navigate directly to the canvas editor.
+    await db.update(contentItems)
+      .set({ metadata: JSON.stringify({ canvasProject: true, canvasProjectId: project!.id }) })
+      .where(eq(contentItems.id, contentItem!.id));
 
     return reply.status(201).send(project);
   });
