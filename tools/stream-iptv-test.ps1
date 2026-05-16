@@ -136,7 +136,7 @@ if ($doUdp) {
         '-b:v','5M','-maxrate','6M','-bufsize','10M',
         '-pix_fmt','yuv420p','-g','60',
         '-c:a','aac','-b:a','128k',
-        '-f','mpegts','udp://239.0.0.1:1234?pkt_size=1316'
+        '-f', 'mpegts', 'udp://239.0.0.1:1234?pkt_size=1316&ttl=128'
     ) -WindowStyle Hidden -PassThru
 
     $u2 = Start-Process ffmpeg -ArgumentList @(
@@ -145,7 +145,7 @@ if ($doUdp) {
         '-i',"video=`"$Webcam`"",
         '-c:v','libx264','-preset','ultrafast','-tune','zerolatency',
         '-b:v','3M','-pix_fmt','yuv420p','-g','60','-an',
-        '-f','mpegts','udp://239.0.0.2:1234?pkt_size=1316'
+        '-f', 'mpegts', 'udp://239.0.0.2:1234?pkt_size=1316&ttl=128'
     ) -WindowStyle Hidden -PassThru
 
     $allPids += $u1.Id,$u2.Id

@@ -3744,15 +3744,10 @@ const Player = {
             logger.info('Starting IPTV via AVPlay:', url);
             this.resetAvPlay();
             logger.info('IPTV AVPlay init');
-            const videoContainer = document.createElement('div');
-            videoContainer.id = 'avplay-iptv-container';
-            videoContainer.style.position = 'absolute';
-            videoContainer.style.width = '100%';
-            videoContainer.style.height = '100%';
-            videoContainer.style.top = '0';
-            videoContainer.style.left = '0';
-            container.appendChild(videoContainer);
-            const rect = videoContainer.getBoundingClientRect();
+            // Use the cached panel coordinate space (1920×1080 per Samsung API spec).
+            // getBoundingClientRect() returns 0,0,0,0 on freshly-appended elements.
+            const viewportWidth = this._panelWidth;
+            const viewportHeight = this._panelHeight;
             // Official Samsung sequence: open → setListener → setDisplayRect → setStreamingProperty → prepareAsync → play
             // 1. Open
             webapis.avplay.open(url);
@@ -3774,6 +3769,13 @@ const Player = {
                         Telemetry.updateIptvStats({ lastError: String(e || 'unknown') });
                     }
                     this._stopIptvWatchdog();
+                    // NOT_SUPPORTED_FORMAT fires from both prepareAsync error AND onerror.
+                    // Suppress reconnect here; the prepareAsync handler shows the overlay.
+                    const eMsg = String(e || '');
+                    if (eMsg.includes('NOT_SUPPORTED_FORMAT') || eMsg.includes('NOT_SUPPORTED_FILE')) {
+                        logger.warn('IPTV onerror: protocol not supported — suppressing reconnect');
+                        return;
+                    }
                     if (this.currentChannelGroup) {
                         this._scheduleIptvReconnect('avplay-error');
                     }
@@ -3793,9 +3795,9 @@ const Player = {
                     }
                 },
             });
-            // 3. Set display rect
-            webapis.avplay.setDisplayRect(rect.left, rect.top, rect.width, rect.height);
-            logger.debug('AVPlay: Display rect set for IPTV', rect);
+            // 3. Set display rect (full screen, 1920×1080 logical coordinate space)
+            webapis.avplay.setDisplayRect(0, 0, viewportWidth, viewportHeight);
+            logger.debug('AVPlay: Display rect set for IPTV', viewportWidth, viewportHeight);
             // 4. Protocol-specific streaming properties (IDLE state only, before prepare)
             try {
                 webapis.avplay.setTimeoutForBuffering(10);
@@ -3841,8 +3843,8 @@ const Player = {
                     logger.debug('Added avplay-active class for IPTV');
                     // Re-apply rect after prepare in case layout changed
                     try {
-                        webapis.avplay.setDisplayRect(rect.left, rect.top, rect.width, rect.height);
-                        logger.debug('AVPlay: Display rect set after prepare (IPTV)', rect);
+                        webapis.avplay.setDisplayRect(0, 0, viewportWidth, viewportHeight);
+                        logger.debug('AVPlay: Display rect set after prepare (IPTV)', viewportWidth, viewportHeight);
                     }
                     catch (rectErr) {
                         logger.warn('AVPlay: setDisplayRect after prepare (IPTV) failed', rectErr);
@@ -3869,6 +3871,14 @@ const Player = {
             }, (prepErr) => {
                 logger.error('IPTV prepare failed:', prepErr);
                 this._stopIptvWatchdog();
+                // NOT_SUPPORTED_FORMAT means the protocol is unsupported by this firmware.
+                // Retrying will never succeed — show a permanent error instead.
+                const errMsg = String((prepErr === null || prepErr === void 0 ? void 0 : prepErr.message) || prepErr || '');
+                if (errMsg.includes('NOT_SUPPORTED_FORMAT') || errMsg.includes('NOT_SUPPORTED_FILE')) {
+                    logger.warn('IPTV: protocol not supported on this firmware — stopping reconnect');
+                    this._showIptvOverlay('Not supported on this firmware');
+                    return;
+                }
                 if (this.currentChannelGroup) {
                     this._scheduleIptvReconnect('prepare-failed');
                 }
@@ -3886,6 +3896,10 @@ const Player = {
     resetAvPlay() {
         try {
             this._stopIptvWatchdog();
+            // Always clear IPTV overlay and pending reconnect timer when resetting AVPlay.
+            // This ensures overlays don't bleed into non-IPTV content renders.
+            this._clearIptvReconnect();
+            this._hideIptvOverlay();
             if (typeof webapis !== 'undefined' && webapis.avplay) {
                 try {
                     webapis.avplay.stop();
@@ -6974,6 +6988,9 @@ const Player = {
             this.currentPlaylistController.cancelled = true;
             this.currentPlaylistController = null;
         }
+        // Clear any IPTV reconnect timer and overlay before tearing down.
+        // Must happen before AVPlay stop so the overlay element is removed cleanly.
+        this._cleanupChannelGroup({ keepContainer: false });
         // Stop Live Link Face renderer (closes UDP socket + WS connection)
         if (typeof window.LiveLinkFaceRenderer !== 'undefined') {
             try {
