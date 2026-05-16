@@ -6,7 +6,7 @@ import {
   Plus, Grid3X3, Grid2X2, List, Image, Video,
   Globe, Code2, FileText, Presentation, Clock, Trash2,
   MoreVertical, Film, AlertTriangle, Check, Paintbrush, Monitor,
-  LayoutGrid, ListVideo, CalendarDays, Scan,
+  LayoutGrid, ListVideo, CalendarDays, Scan, Tv, Database, Link2, FileCode2,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import UploadModal from '../../components/UploadModal.js';
@@ -782,6 +782,11 @@ export default function ContentPage() {
   const queryClient = useQueryClient();
 
   const [uploadOpen, setUploadOpen]         = useState(false);
+  const [uploadTab, setUploadTab]           = useState<'device' | 'html5' | 'template' | 'weburl' | 'iptv'>('device');
+  const openUpload = (tab: 'device' | 'html5' | 'template' | 'weburl' | 'iptv' = 'device') => {
+    setUploadTab(tab);
+    setUploadOpen(true);
+  };
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -928,41 +933,73 @@ export default function ContentPage() {
           id: 'add-content',
           label: 'Add Content',
           description: 'Upload files and media',
-          icon: <Plus size={18} />,
+          icon: <Plus size={16} />,
           iconClassName: 'bg-[var(--blue)]/15 text-[var(--blue)]',
-          onClick: () => setUploadOpen(true),
+          onClick: () => openUpload('device'),
         },
         {
           id: 'create-design',
           label: 'Create Design',
-          description: 'Build a new canvas layout',
-          icon: <Paintbrush size={18} />,
+          description: 'Build a canvas layout',
+          icon: <Paintbrush size={16} />,
           iconClassName: 'bg-violet-500/15 text-violet-400',
           onClick: () => navigate(`/workspaces/${wsId}/canvas/new`),
         },
         {
           id: 'zone-layout',
           label: 'Zone Layout',
-          description: 'Compose multi-zone signage',
-          icon: <LayoutGrid size={18} />,
+          description: 'Multi-zone signage',
+          icon: <LayoutGrid size={16} />,
           iconClassName: 'bg-teal-500/15 text-teal-400',
           onClick: () => navigate(`/workspaces/${wsId}/zone-layout/new`),
         },
         {
           id: 'calendar',
           label: 'Calendar',
-          description: 'Show upcoming events or a meeting room',
-          icon: <CalendarDays size={18} />,
+          description: 'Events & meeting room',
+          icon: <CalendarDays size={16} />,
           iconClassName: 'bg-indigo-500/15 text-indigo-400',
           onClick: () => navigate(`/workspaces/${wsId}/calendar/new`),
         },
         {
           id: 'live-link-face',
           label: 'Live Link Face',
-          description: 'Stream face data from Epic Live Link iOS app',
-          icon: <Scan size={18} />,
+          description: 'Epic Live Link stream',
+          icon: <Scan size={16} />,
           iconClassName: 'bg-pink-500/15 text-pink-400',
           onClick: () => navigate(`/workspaces/${wsId}/live-link-face/new`),
+        },
+        {
+          id: 'iptv',
+          label: 'IPTV',
+          description: 'Live TV channels',
+          icon: <Tv size={16} />,
+          iconClassName: 'bg-orange-500/15 text-orange-400',
+          onClick: () => openUpload('iptv'),
+        },
+        {
+          id: 'template',
+          label: 'Template',
+          description: 'Start from a template',
+          icon: <FileCode2 size={16} />,
+          iconClassName: 'bg-cyan-500/15 text-cyan-400',
+          onClick: () => openUpload('template'),
+        },
+        {
+          id: 'datasync',
+          label: 'Datasync',
+          description: 'JSON / RSS / Sheets feed',
+          icon: <Database size={16} />,
+          iconClassName: 'bg-lime-500/15 text-lime-400',
+          onClick: () => toast.info('Datasync — coming soon'),
+        },
+        {
+          id: 'datalink',
+          label: 'Datalink',
+          description: 'Live data stream overlay',
+          icon: <Link2 size={16} />,
+          iconClassName: 'bg-amber-500/15 text-amber-400',
+          onClick: () => toast.info('Datalink — coming soon'),
         },
       ]
     : [];
@@ -998,19 +1035,19 @@ export default function ContentPage() {
       />
 
       {quickActions.length > 0 && (
-        <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <div className="mb-5 grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9">
           {quickActions.map((action) => (
             <button
               key={action.id}
               type="button"
               onClick={action.onClick}
-              className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 text-left transition-colors hover:bg-[var(--surface)]"
+              className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-2.5 text-left transition-colors hover:bg-[var(--surface)]"
             >
-              <div className={`mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl ${action.iconClassName}`}>
+              <div className={`mb-2 inline-flex h-7 w-7 items-center justify-center rounded-lg ${action.iconClassName}`}>
                 {action.icon}
               </div>
-              <p className="text-sm font-semibold text-[var(--text)]">{action.label}</p>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">{action.description}</p>
+              <p className="text-xs font-semibold text-[var(--text)] leading-tight">{action.label}</p>
+              <p className="mt-0.5 text-[10px] text-[var(--text-muted)] leading-tight">{action.description}</p>
             </button>
           ))}
         </div>
@@ -1157,7 +1194,7 @@ export default function ContentPage() {
               icon={<Image size={40} />}
               title="No content yet"
               description="Add content to start building playlists and schedules."
-              action={<button onClick={() => setUploadOpen(true)} className="workspace-page-action">Add Content</button>}
+              action={<button onClick={() => openUpload()} className="workspace-page-action">Add Content</button>}
             />
           ) : view === 'list' ? (
             <div className="space-y-2">
@@ -1280,7 +1317,7 @@ export default function ContentPage() {
 
       {/* ── Upload modal ── */}
       {uploadOpen && wsId && (
-        <UploadModal workspaceId={wsId} onClose={() => setUploadOpen(false)} />
+        <UploadModal workspaceId={wsId} initialTab={uploadTab} onClose={() => setUploadOpen(false)} />
       )}
 
       {bulkTagOpen && wsId && (

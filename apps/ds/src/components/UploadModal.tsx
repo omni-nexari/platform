@@ -25,6 +25,7 @@ function extractIptvHost(url: string): string | null {
 interface Props {
   workspaceId: string;
   onClose: () => void;
+  initialTab?: Tab;
 }
 
 type Tab = 'device' | 'html5' | 'template' | 'weburl' | 'iptv';
@@ -80,8 +81,8 @@ function uploadStatusLabel(status: QueuedFile['status'], progress: number): stri
   return 'Waiting';
 }
 
-export default function UploadModal({ workspaceId, onClose }: Props) {
-  const [tab, setTab] = useState<Tab>('device');
+export default function UploadModal({ workspaceId, onClose, initialTab = 'device' }: Props) {
+  const [tab, setTab] = useState<Tab>(initialTab);
   const queryClient = useQueryClient();
 
   // ── Device tab state ──────────────────────────────────────────────────────
