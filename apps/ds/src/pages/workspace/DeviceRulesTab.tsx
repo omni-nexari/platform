@@ -94,6 +94,20 @@ function rssiToEstimatedCm(rssi: number): number {
   return Math.round(100 * Math.pow(10, (txPower - rssi) / (10 * n)));
 }
 
+// Match a rule's beacon condition against the latest scan results
+function findBeaconInScan(
+  bc: BleBeaconCondition,
+  latestScan: { beacons: BleBeacon[] } | null | undefined,
+): BleBeacon | null {
+  if (!latestScan) return null;
+  return latestScan.beacons.find(
+    b =>
+      b.uuid.toUpperCase() === bc.uuid.toUpperCase() &&
+      (bc.major == null || b.major === bc.major) &&
+      (bc.minor == null || b.minor === bc.minor),
+  ) ?? null;
+}
+
 // ── Unit toggle ───────────────────────────────────────────────────────────────
 
 type DistUnit = 'cm' | 'm';
@@ -270,10 +284,11 @@ export default function DeviceRulesTab({
             ) : (
               <div className="space-y-1.5">
                 {latestScan && (
-                  <p className="text-[10px] text-[var(--text-muted)] mb-2">
+                  <p className="text-[10px] text-[var(--text-muted)] mb-0.5">
                     Scanned {new Date(latestScan.scannedAt).toLocaleTimeString()} · {beaconOptions.length} beacon{beaconOptions.length !== 1 ? 's' : ''} found
                   </p>
                 )}
+                <p className="text-[10px] text-[var(--text-muted)] mb-2">Auto-scan: every 15 s · 8 s duration</p>
                 {beaconOptions.map((b, i) => (
                   <div key={i} className="flex items-center justify-between rounded-lg bg-[var(--surface)] px-3 py-2 text-xs">
                     <div>
@@ -314,6 +329,8 @@ export default function DeviceRulesTab({
         <div className="space-y-3">
           {rules.map(rule => {
             const bc = extractBeaconCondition(rule);
+            const detectedBeacon = bc ? findBeaconInScan(bc, latestScan) : null;
+            const isDetected = detectedBeacon != null;
             return (
               <SectionCard key={rule.id}>
                 <SectionCardBody>
@@ -322,6 +339,11 @@ export default function DeviceRulesTab({
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium text-[var(--text)] text-sm">{rule.name}</span>
                         {!rule.enabled && <Badge tone="neutral">disabled</Badge>}
+                        {latestScan && bc && (
+                          <Badge tone={isDetected ? 'success' : 'neutral'}>
+                            {isDetected ? '● nearby' : '○ not detected'}
+                          </Badge>
+                        )}
                       </div>
                       {bc && (
                         <div className="text-xs text-[var(--text-muted)] space-y-0.5">
@@ -332,6 +354,11 @@ export default function DeviceRulesTab({
                           <div>
                             <span className="text-[var(--text)]">Distance:</span>{' '}
                             {cmLabel(bc.distanceMinCm, bc.distanceMaxCm)}
+                            {detectedBeacon && (
+                              <span className="ml-2 text-green-500 font-medium">
+                                · now ~{rssiToEstimatedCm(detectedBeacon.rssi)} cm
+                              </span>
+                            )}
                           </div>
                           <div>
                             <span className="text-[var(--text)]">Action:</span>{' '}

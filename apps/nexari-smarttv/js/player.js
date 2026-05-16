@@ -1,4 +1,4 @@
-// Content Player Module - TypeScript Edition
+﻿// Content Player Module - TypeScript Edition
 /// <reference types="tizen-tv-webapis" />
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
@@ -2380,253 +2380,6 @@ const Player = {
                 logger.debug('Failed to close stale WebSocket:', error);
             }
         }, CONFIG.HEARTBEAT_INTERVAL || 30000);
-    },
-    // ── placeholder so the old MDC helper block is gone ─────────────────────
-    _mdcRemoved: true,
-    // (MDC helpers removed — consumer TV, no RS-232 bridge needed)
-    trySwapToPendingContent_PLACEHOLDER_DELETE_ME: null,
-    sendLocalMdcXhr_PLACEHOLDER: null,
-
-            xhr.setRequestHeader('Content-Type', 'application/json');
-            // Scan actions probe up to 10 IDs × 500ms each ≈ 5s; give a generous budget.
-            xhr.timeout = (action === 'mdc_id_scan' || action === 'mdc_conn_type_fix') ? 15000 : 8000;
-            xhr.onload = function () {
-                try {
-                    resolve(JSON.parse(xhr.responseText));
-                }
-                catch (_a) {
-                    reject(new Error('parse error'));
-                }
-            };
-            xhr.onerror = function () { reject(new Error('XHR error')); };
-            xhr.ontimeout = function () { reject(new Error('timeout')); };
-            xhr.send(JSON.stringify(Object.assign({ action }, payload)));
-        });
-    },
-    // Phase 1: run at startup (app.js), before pairing — no WS/deviceId needed
-    runStartupMdcSetup() {
-        logger.info('[mdc-startup] Phase 1: conn type, ID scan, network standby...');
-        const self = this;
-        self.sendLocalMdcXhr('mdc_conn_type_set', { value: 1 })
-            .then((r) => { logger.info('[mdc-startup] conn type RJ45:', r.ok); })
-            .catch(() => { });
-        self.sendLocalMdcXhr('mdc_id_scan')
-            .then((r) => {
-            if (r.ok) {
-                logger.info('[mdc-startup] MDC ID found:', r.displayId);
-                self._scannedMdcId = typeof r.displayId === 'number' ? r.displayId : null;
-            }
-            else {
-                logger.warn('[mdc-startup] MDC ID scan failed:', r.error);
-            }
-            self._mdcStartupDone = true;
-        })
-            .catch(() => { self._mdcStartupDone = true; /* non-blocking */ });
-        self.sendLocalMdcXhr('network_standby_set', { value: 1 })
-            .then((r) => { logger.info('[mdc-startup] network standby ON:', r.ok); })
-            .catch(() => { });
-    },
-    // Phase 2: run after pairing + WS connected — persists MDC ID, sets display state
-    // Commands are run sequentially (not concurrently) so Samsung MDC firmware never
-    // sees more than one TCP connection at a time on port 1515.
-    runPostPairingMdcSetup() {
-        const ws = this.wsConnection;
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-            setTimeout(() => { this.runPostPairingMdcSetup(); }, 3000);
-            return;
-        }
-        logger.info('[mdc-startup] Phase 2: persisting MDC ID, network standby on, standby off, OSD overlays off...');
-        const self = this;
-        if (self._scannedMdcId != null) {
-            ws.send(JSON.stringify({ type: 'mdc_id_persist', payload: { mdcId: self._scannedMdcId } }));
-            logger.info('[mdc-startup] mdc_id_persist sent, mdcId=', self._scannedMdcId);
-        }
-        // Build sequential command list — one MDC TCP connection at a time
-        const phase2Commands = [
-            ['network_standby_set', { value: 1 }],
-            ['standby_set', { value: 0 }],
-            ['osd_display_set', { osdType: 0, osdOnOff: 0 }],
-            ['osd_display_set', { osdType: 2, osdOnOff: 0 }],
-            ['osd_display_set', { osdType: 3, osdOnOff: 0 }],
-            ['osd_display_set', { osdType: 4, osdOnOff: 0 }],
-        ];
-        self._mdcPhase2InFlight = phase2Commands.length;
-        function runNext(idx) {
-            if (idx >= phase2Commands.length)
-                return;
-            const [action, payload] = phase2Commands[idx];
-            self.sendLocalMdcXhr(action, payload)
-                .then((r) => { logger.info('[mdc-startup] phase2', action, 'ok:', r.ok); })
-                .catch(() => { })
-                .then(() => {
-                self._mdcPhase2InFlight = Math.max(0, self._mdcPhase2InFlight - 1);
-                runNext(idx + 1);
-            });
-        }
-        runNext(0);
-    },
-    // Phase 3 (every 30s): get MDC status → send mdc_heartbeat WS message
-    sendMdcHeartbeat() {
-        if (!this._mdcStartupDone)
-            return; // Wait until Phase 1 ID scan completes
-        if (this._mdcHeartbeatInFlight)
-            return; // Never overlap — Samsung firmware allows only one MDC TCP conn
-        if (this._mdcPhase2InFlight > 0)
-            return; // Wait for Phase 2 sequential commands to complete
-        const now = Date.now();
-        if (now - this._lastMdcHeartbeatAt < (CONFIG.HEARTBEAT_INTERVAL || 30000))
-            return; // rate-limit
-        const ws = this.wsConnection;
-        if (!ws || ws.readyState !== WebSocket.OPEN)
-            return;
-        this._mdcHeartbeatInFlight = true;
-        this._lastMdcHeartbeatAt = now;
-        this.sendLocalMdcXhr('status_get')
-            .then((r) => {
-            if (!r.ok || !r.status)
-                return;
-            if (ws.readyState !== WebSocket.OPEN)
-                return;
-            const s = r.status;
-            ws.send(JSON.stringify({
-                type: 'mdc_heartbeat',
-                payload: { power: s.power, volume: s.volume, mute: s.mute, input: s.input },
-            }));
-        })
-            .catch(() => { })
-            .then(() => { this._mdcHeartbeatInFlight = false; });
-    },
-    // Phase 4 (every 5min): run all MDC GETs → send mdc_poll WS message
-    runMdcPoll() {
-        const ws = this.wsConnection;
-        if (!ws || ws.readyState !== WebSocket.OPEN)
-            return;
-        // Sync panel HW RTC to device (web) time every poll — fire-and-forget
-        // Rate-limited to once per 24h. _lastClockSyncAt=0 ensures it fires on first boot.
-        // Frequent clock adjustments via MDC interrupt b2bsyncplay � do not lower this interval.
-        const CLOCK_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
-        if (this._clockSupported && (Date.now() - this._lastClockSyncAt > CLOCK_SYNC_INTERVAL_MS)) {
-            this._lastClockSyncAt = Date.now();
-            this.sendLocalMdcXhr('set_clock', {})
-                .then((r) => {
-                if (r.supported === false) {
-                    this._clockSupported = false;
-                    logger.info('[mdc-clock] set_clock not supported on this model');
-                }
-                else {
-                    logger.info('[mdc-clock] HW clock sync ok (next sync in 24h)');
-                }
-            })
-                .catch(() => { });
-        }
-        const commands = [
-            'standby_get', 'osd_display_get', 'network_standby_get',
-            'menu_orientation_get', 'src_orientation_get',
-            'remote_control_get', 'safety_lock_get', 'sw_version_get', 'display_status_get',
-            'url_launcher_address_get',
-            ...(this._clockSupported ? ['get_clock'] : []),
-            ...(this._luxSupported ? ['light_sensor_get'] : []),
-            ...(this._onTimerSupported ? ['on_timer_get'] : []),
-        ];
-        const TIMER_SLOTS = [1, 2, 3, 4, 5, 6, 7];
-        const results = {};
-        const self = this;
-        // Build flat sequence: 9 GET actions + 7 on_timer_get slots
-        // Run SEQUENTIALLY — Samsung MDC firmware allows only one TCP connection
-        // at a time on port 1515; the server-side queue serialises them, but
-        // concurrent XHRs can time-out while waiting in that queue.
-        const sequence = [
-            ...commands.map(a => ({ action: a, key: a })),
-            ...TIMER_SLOTS.map(s => ({ action: 'on_timer_get', key: `timer_${s}`, payload: { slot: s } })),
-        ];
-        function runNext(idx) {
-            var _a, _b, _c, _d, _f;
-            if (idx >= sequence.length) {
-                // All done — build and send mdc_poll
-                if (ws.readyState !== WebSocket.OPEN)
-                    return;
-                const p = {};
-                if (((_a = results.standby_get) === null || _a === void 0 ? void 0 : _a.ok) && results.standby_get.data)
-                    p.standby = results.standby_get.data[0];
-                if (((_b = results.osd_display_get) === null || _b === void 0 ? void 0 : _b.ok) && results.osd_display_get.data)
-                    p.osdStatus = results.osd_display_get.data[0];
-                if (((_c = results.network_standby_get) === null || _c === void 0 ? void 0 : _c.ok) && results.network_standby_get.data)
-                    p.networkStandby = results.network_standby_get.data[0];
-                const mo = results.menu_orientation_get;
-                if ((mo === null || mo === void 0 ? void 0 : mo.ok) && mo.data && mo.data.length >= 2)
-                    p.menuOrientation = mo.data[1];
-                const so = results.src_orientation_get;
-                p.srcOrientation = ((so === null || so === void 0 ? void 0 : so.ok) && so.data && so.data.length >= 2) ? so.data[1] : null;
-                if (((_d = results.remote_control_get) === null || _d === void 0 ? void 0 : _d.ok) && results.remote_control_get.data)
-                    p.remoteControl = results.remote_control_get.data[0];
-                if (((_f = results.safety_lock_get) === null || _f === void 0 ? void 0 : _f.ok) && results.safety_lock_get.data)
-                    p.safetyLock = results.safety_lock_get.data[0];
-                const sw = results.sw_version_get;
-                if ((sw === null || sw === void 0 ? void 0 : sw.ok) && sw.data) {
-                    p.softwareVersion = sw.data.filter(b => b > 0).map(b => String.fromCharCode(b)).join('').trim() || null;
-                }
-                const ds = results.display_status_get;
-                if ((ds === null || ds === void 0 ? void 0 : ds.ok) && ds.data && ds.data[4] != null)
-                    p.temperatureC = ds.data[4];
-                const urlR = results.url_launcher_address_get;
-                if ((urlR === null || urlR === void 0 ? void 0 : urlR.ok) && urlR.data) {
-                    const bytes = urlR.data;
-                    const offset = bytes.length > 0 && bytes[0] === 0x82 ? 1 : 0;
-                    const addr = bytes.slice(offset).filter(b => b > 0).map(b => String.fromCharCode(b)).join('');
-                    if (addr)
-                        p.urlLauncherAddress = addr;
-                }
-                const luxR = results.light_sensor_get;
-                if (luxR) {
-                    if (luxR.ok && typeof luxR.lux === 'number') {
-                        p.luxValue = luxR.lux;
-                    }
-                    else if (luxR.supported === false) {
-                        self._luxSupported = false; // skip on all future polls
-                        logger.info('[mdc-poll] light sensor not supported on this model');
-                    }
-                }
-                const clkR = results.get_clock;
-                if (clkR) {
-                    if (clkR.ok && typeof clkR.time === 'string') {
-                        p.hwClock = clkR.time;
-                    }
-                    else if (clkR.supported === false) {
-                        self._clockSupported = false;
-                        logger.info('[mdc-poll] get_clock not supported on this model');
-                    }
-                }
-                // Check if any on_timer_get NAKed — disable all slots permanently
-                if (self._onTimerSupported) {
-                    const anyTimerNak = TIMER_SLOTS.some(s => { var _a; return ((_a = results[`timer_${s}`]) === null || _a === void 0 ? void 0 : _a.supported) === false; });
-                    if (anyTimerNak) {
-                        self._onTimerSupported = false;
-                        logger.info('[mdc-poll] on_timer_get not supported on this model');
-                    }
-                }
-                p.timers = TIMER_SLOTS.map((s) => {
-                    var _a, _b, _c, _d, _f, _g, _h, _j;
-                    const r = results[`timer_${s}`];
-                    if (!(r === null || r === void 0 ? void 0 : r.ok))
-                        return null;
-                    return {
-                        onHour: Number((_a = r.onHour) !== null && _a !== void 0 ? _a : 0), onMin: Number((_b = r.onMin) !== null && _b !== void 0 ? _b : 0), onEnable: !!r.onEnable,
-                        offHour: Number((_c = r.offHour) !== null && _c !== void 0 ? _c : 0), offMin: Number((_d = r.offMin) !== null && _d !== void 0 ? _d : 0), offEnable: !!r.offEnable,
-                        repeat: Number((_f = r.repeat) !== null && _f !== void 0 ? _f : 1), volume: Number((_g = r.volume) !== null && _g !== void 0 ? _g : 20),
-                        source: Number((_h = r.source) !== null && _h !== void 0 ? _h : 0x01), manualDays: Number((_j = r.manualDays) !== null && _j !== void 0 ? _j : 0),
-                    };
-                });
-                ws.send(JSON.stringify({ type: 'mdc_poll', payload: p }));
-                logger.debug('[mdc-poll] mdc_poll sent');
-                return;
-            }
-            const { action, key, payload } = sequence[idx];
-            self.sendLocalMdcXhr(action, payload || {})
-                .then((r) => { results[key] = r; })
-                .catch(() => { results[key] = { ok: false }; })
-                .then(() => { runNext(idx + 1); });
-        }
-        runNext(0);
     },
     trySwapToPendingContent(force = false) {
         if (!this.pendingPlaylist || !this.pendingSignature) {
@@ -7374,13 +7127,7 @@ const Player = {
                 break;
             }
             case 'POWER_OFF':
-                // Use MDC standby_set via Node bridge (LFD 6.5 — no hospitality/virtualStandby)
-                this.sendLocalMdcXhr('standby_set', { value: 1 })
-                    .then(() => logger.info('[cmd] MDC standby_set 1 (power off)'))
-                    .catch(() => {
-                    // Fallback to webapis power chain
-                    this.invokeTVControl('powerOff', Object.assign({}, (payload || {})));
-                });
+                this.invokeTVControl('powerOff', Object.assign({}, (payload || {})));
                 break;
             case 'REQUEST_LOG_BURST': {
                 const max = (_a = payload === null || payload === void 0 ? void 0 : payload.max) !== null && _a !== void 0 ? _a : 200;
@@ -7420,13 +7167,7 @@ const Player = {
                 break;
             }
             case 'POWER_ON':
-                // Use MDC standby_set via Node bridge (LFD 6.5)
-                this.sendLocalMdcXhr('standby_set', { value: 0 })
-                    .then(() => logger.info('[cmd] MDC standby_set 0 (power on)'))
-                    .catch(() => {
-                    // Fallback to webapis power chain
-                    this.invokeTVControl('powerOn');
-                });
+                this.invokeTVControl('powerOn');
                 break;
             case 'SET_NTP':
                 this.applyNtpSettings(payload || {});
@@ -7437,35 +7178,12 @@ const Player = {
             case 'SET_BUTTON_LOCK':
                 this.applyLockSetting('buttonLock', payload === null || payload === void 0 ? void 0 : payload.lock);
                 break;
-            case 'SET_ON_TIMER': {
-                const slot = Math.max(1, Math.min(7, Number((_d = payload === null || payload === void 0 ? void 0 : payload.slot) !== null && _d !== void 0 ? _d : 1)));
-                this.sendLocalMdcXhr('on_timer_set', Object.assign({ slot }, (payload || {})))
-                    .then((r) => logger.info('[cmd] SET_ON_TIMER slot', slot, r.ok))
-                    .catch((e) => logger.warn('[cmd] SET_ON_TIMER failed:', e));
+            case 'SET_ON_TIMER':
+            case 'SET_OFF_TIMER':
+            case 'CLEAR_ON_TIMER':
+            case 'CLEAR_OFF_TIMER':
+                logger.info('[cmd] ' + messageType + ' not supported (MDC removed)');
                 break;
-            }
-            case 'SET_OFF_TIMER': {
-                const slot = Math.max(1, Math.min(7, Number((_f = payload === null || payload === void 0 ? void 0 : payload.slot) !== null && _f !== void 0 ? _f : 1)));
-                // off-timer is encoded as onEnable=0 + offEnable=1 in the same slot
-                this.sendLocalMdcXhr('on_timer_set', Object.assign({ slot, onEnable: 0, offEnable: 1 }, (payload || {})))
-                    .then((r) => logger.info('[cmd] SET_OFF_TIMER slot', slot, r.ok))
-                    .catch((e) => logger.warn('[cmd] SET_OFF_TIMER failed:', e));
-                break;
-            }
-            case 'CLEAR_ON_TIMER': {
-                const slot = Math.max(1, Math.min(7, Number((_g = payload === null || payload === void 0 ? void 0 : payload.slot) !== null && _g !== void 0 ? _g : 1)));
-                this.sendLocalMdcXhr('on_timer_set', { slot, onEnable: 0, offEnable: 0 })
-                    .then((r) => logger.info('[cmd] CLEAR_ON_TIMER slot', slot, r.ok))
-                    .catch((e) => logger.warn('[cmd] CLEAR_ON_TIMER failed:', e));
-                break;
-            }
-            case 'CLEAR_OFF_TIMER': {
-                const slot = Math.max(1, Math.min(7, Number((_h = payload === null || payload === void 0 ? void 0 : payload.slot) !== null && _h !== void 0 ? _h : 1)));
-                this.sendLocalMdcXhr('on_timer_set', { slot, onEnable: 0, offEnable: 0 })
-                    .then((r) => logger.info('[cmd] CLEAR_OFF_TIMER slot', slot, r.ok))
-                    .catch((e) => logger.warn('[cmd] CLEAR_OFF_TIMER failed:', e));
-                break;
-            }
             case 'SET_VOLUME':
                 this.invokeTVControl('setVolume', (_k = (_j = payload === null || payload === void 0 ? void 0 : payload.level) !== null && _j !== void 0 ? _j : command.level) !== null && _k !== void 0 ? _k : null);
                 break;
