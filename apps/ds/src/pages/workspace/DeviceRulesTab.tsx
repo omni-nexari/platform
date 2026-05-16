@@ -49,7 +49,8 @@ interface ConditionGroup {
 
 interface PlayPlaylistAction { type: 'play_playlist'; playlistId: string; }
 interface PlayContentAction  { type: 'play_content';  contentId: string; }
-type RuleAction = PlayPlaylistAction | PlayContentAction;
+interface LaunchAppAction    { type: 'launch_app';    appId: string; appName?: string; }
+type RuleAction = PlayPlaylistAction | PlayContentAction | LaunchAppAction;
 
 interface DeviceRule {
   id: string;
@@ -64,6 +65,7 @@ interface DeviceRule {
 
 interface PlaylistItem { id: string; name: string; }
 interface ContentItem  { id: string; name: string; type: string; }
+interface InstalledApp { id: string; name: string; }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -83,8 +85,9 @@ function extractBeaconCondition(rule: DeviceRule): BleBeaconCondition | null {
 function actionLabel(action: RuleAction, playlists: PlaylistItem[], content: ContentItem[]): string {
   if (action.type === 'play_playlist') {
     return playlists.find(p => p.id === action.playlistId)?.name ?? `Playlist ${action.playlistId.slice(0, 6)}…`;
-  }
-  return content.find(c => c.id === (action as PlayContentAction).contentId)?.name ?? `Content ${(action as PlayContentAction).contentId.slice(0, 6)}…`;
+  }  if (action.type === 'launch_app') {
+    return action.appName || action.appId;
+  }  return content.find(c => c.id === (action as PlayContentAction).contentId)?.name ?? `Content ${(action as PlayContentAction).contentId.slice(0, 6)}…`;
 }
 
 // Rough RSSI → estimated distance in cm (free-space path loss, N=2, TxPower=-65)
@@ -129,10 +132,12 @@ export default function DeviceRulesTab({
   deviceId,
   wsId,
   isOnline,
+  installedApps = [],
 }: {
   deviceId: string;
   wsId: string;
   isOnline: boolean;
+  installedApps?: InstalledApp[];
 }) {
   const qc = useQueryClient();
 
@@ -400,7 +405,9 @@ export default function DeviceRulesTab({
                           </div>
                           <div>
                             <span className="text-[var(--text)]">Action:</span>{' '}
-                            {rule.action.type === 'play_playlist' ? '▶ Playlist' : '▶ Content'}{' '}
+                            {rule.action.type === 'play_playlist' ? '\u25b6 Playlist'
+                              : rule.action.type === 'launch_app'   ? '\u{1F680} App'
+                              : '\u25b6 Content'}{' '}
                             <span className="font-medium">{actionLabel(rule.action, playlists, contentItems)}</span>
                           </div>
                         </div>
@@ -444,6 +451,7 @@ export default function DeviceRulesTab({
           rule={editTarget}
           playlists={playlists}
           contentItems={contentItems}
+          installedApps={installedApps}
           scannedBeacons={beaconOptions}
           onClose={() => setEditorOpen(false)}
           onSaved={() => {
@@ -465,6 +473,7 @@ function RuleEditorModal({
   rule,
   playlists,
   contentItems,
+  installedApps,
   scannedBeacons,
   onClose,
   onSaved,
@@ -474,6 +483,7 @@ function RuleEditorModal({
   rule: DeviceRule | null;
   playlists: PlaylistItem[];
   contentItems: ContentItem[];
+  installedApps: InstalledApp[];
   scannedBeacons: BleBeacon[];
   onClose: () => void;
   onSaved: () => void;
@@ -488,14 +498,19 @@ function RuleEditorModal({
   const [unit,         setUnit]         = useState<DistUnit>('cm');
   const [minVal,       setMinVal]       = useState(fromCm(bc?.distanceMinCm, unit));
   const [maxVal,       setMaxVal]       = useState(fromCm(bc?.distanceMaxCm, unit));
-  const [actionType,   setActionType]   = useState<'play_playlist' | 'play_content'>(
-    rule?.action.type === 'play_content' ? 'play_content' : 'play_playlist',
+  const [actionType,   setActionType]   = useState<'play_playlist' | 'play_content' | 'launch_app'>(
+    rule?.action.type === 'play_content' ? 'play_content'
+    : rule?.action.type === 'launch_app' ? 'launch_app'
+    : 'play_playlist',
   );
   const [playlistId,   setPlaylistId]   = useState(
     rule?.action.type === 'play_playlist' ? rule.action.playlistId : '',
   );
   const [contentId,    setContentId]    = useState(
     rule?.action.type === 'play_content' ? rule.action.contentId : '',
+  );
+  const [appId,        setAppId]        = useState(
+    rule?.action.type === 'launch_app' ? rule.action.appId : '',
   );
   const [beaconPickerOpen, setBeaconPickerOpen] = useState(false);
 
@@ -527,7 +542,9 @@ function RuleEditorModal({
 
       const action: RuleAction = actionType === 'play_playlist'
         ? { type: 'play_playlist', playlistId }
-        : { type: 'play_content',  contentId };
+        : actionType === 'launch_app'
+          ? { type: 'launch_app', appId, appName: installedApps.find(a => a.id === appId)?.name }
+          : { type: 'play_content',  contentId };
 
       const payload = { name: name.trim(), enabled, conditions, action };
 
@@ -549,6 +566,7 @@ function RuleEditorModal({
     if (!beaconUuid.trim()) return 'Beacon UUID is required';
     if (actionType === 'play_playlist' && !playlistId) return 'Select a playlist';
     if (actionType === 'play_content'  && !contentId)  return 'Select a content item';
+    if (actionType === 'launch_app'    && !appId)       return 'Select an app to launch';
     const minCm = toCm(minVal, unit);
     const maxCm = toCm(maxVal, unit);
     if (minCm != null && maxCm != null && minCm >= maxCm) return 'Min distance must be less than max';
@@ -694,7 +712,7 @@ function RuleEditorModal({
         <div className="space-y-2">
           <label className="text-xs font-medium text-[var(--text-muted)]">Action</label>
           <div className="flex gap-2">
-            {([['play_playlist', 'Playlist'], ['play_content', 'Content']] as const).map(([val, label]) => (
+            {([['play_playlist', 'Playlist'], ['play_content', 'Content'], ['launch_app', 'Launch app']] as const).map(([val, label]) => (
               <button
                 key={val}
                 type="button"
@@ -730,6 +748,33 @@ function RuleEditorModal({
                 <option key={c.id} value={c.id}>[{c.type.toUpperCase()}] {c.name}</option>
               ))}
             </select>
+          )}
+
+          {actionType === 'launch_app' && (
+            <>
+              {installedApps.length > 0 ? (
+                <select
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--blue)]/40"
+                  value={appId}
+                  onChange={e => setAppId(e.target.value)}
+                >
+                  <option value="">— Select app —</option>
+                  {installedApps.map(a => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--blue)]/40 font-mono"
+                  value={appId}
+                  onChange={e => setAppId(e.target.value.trim())}
+                  placeholder="e.g. org.tizen.netflix-app or 11101200001"
+                />
+              )}
+              <p className="text-[10px] text-[var(--text-muted)]">
+                The TV will launch this app when the beacon is in range and return to Nexari TV when the beacon leaves.
+              </p>
+            </>
           )}
         </div>
 

@@ -3028,7 +3028,7 @@ export function DeviceDetailContent({
 
       {/* ── Rules tab ───────────────────────────────────────────────────── */}
       {activeTab === 'rules' && (
-        <DeviceRulesTab deviceId={deviceId!} wsId={wsId!} isOnline={isOnline} />
+        <DeviceRulesTab deviceId={deviceId!} wsId={wsId!} isOnline={isOnline} installedApps={device?.installedApps ?? []} />
       )}
 
       {/* ── Tags tab ────────────────────────────────────────────────────── */}

@@ -19,7 +19,8 @@ window.BleManager = (function () {
   var _adapter    = null;
   var _periodicTimer = null;
   var _scanTimer   = null;
-  var _activeRuleId = null;  // currently triggered rule id (to detect changes)
+  var _activeRuleId         = null;  // currently triggered rule id (to detect changes)
+  var _activeRuleActionType = null;  // action.type of the currently active rule
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -243,6 +244,7 @@ window.BleManager = (function () {
     if (!action) return;
 
     _log('info', 'Applying rule: ' + rule.name + ' action=' + action.type);
+    _activeRuleActionType = action.type;
 
     try {
       if (action.type === 'play_playlist' && action.playlistId) {
@@ -252,6 +254,12 @@ window.BleManager = (function () {
       } else if (action.type === 'play_content' && action.contentId) {
         if (typeof NexariPlayer !== 'undefined' && NexariPlayer.overridePlaylistForRule) {
           NexariPlayer.overridePlaylistForRule(rule.id, null, action.contentId);
+        }
+      } else if (action.type === 'launch_app' && action.appId) {
+        // Launch the target app; NexariPlayer will handle returning to the
+        // player when the beacon leaves (via bringToFront in _clearActiveRule).
+        if (typeof NexariPlayer !== 'undefined' && NexariPlayer.launchAppForRule) {
+          NexariPlayer.launchAppForRule(rule.id, action.appId, action.appName || action.appId);
         }
       }
     } catch (e) {
@@ -264,11 +272,25 @@ window.BleManager = (function () {
    */
   function _clearActiveRule() {
     if (_activeRuleId != null) {
-      _log('info', 'No beacon match — clearing rule override');
+      _log('info', 'No beacon match — clearing rule override (was: ' + _activeRuleActionType + ')');
+      var wasAppLaunch = _activeRuleActionType === 'launch_app';
       _activeRuleId = null;
+      _activeRuleActionType = null;
       try {
-        if (typeof NexariPlayer !== 'undefined' && NexariPlayer.clearRuleOverride) {
-          NexariPlayer.clearRuleOverride();
+        if (wasAppLaunch) {
+          // Beacon left — bring Nexari TV back to the foreground, then
+          // refresh content so the normal schedule resumes.
+          if (typeof NexariPlayer !== 'undefined' && NexariPlayer.bringToFront) {
+            NexariPlayer.bringToFront();
+          }
+          // Also clear any override state so loadContent() picks up the schedule
+          if (typeof NexariPlayer !== 'undefined' && NexariPlayer.clearRuleOverride) {
+            NexariPlayer.clearRuleOverride();
+          }
+        } else {
+          if (typeof NexariPlayer !== 'undefined' && NexariPlayer.clearRuleOverride) {
+            NexariPlayer.clearRuleOverride();
+          }
         }
       } catch (e) {}
     }
@@ -378,6 +400,7 @@ window.BleManager = (function () {
       _log('info', 'Rules updated: ' + _rules.length + ' rule(s)');
       // Reset active rule so re-published rules always re-evaluate from scratch
       _activeRuleId = null;
+      _activeRuleActionType = null;
       // If rules were cleared, clear any active override
       if (_rules.length === 0) { _clearActiveRule(); return; }
       if (!_checkSupport()) return;

@@ -8973,6 +8973,35 @@ const Player = {
             }
         });
     },
+    // Called by BleManager when a launch_app rule fires.
+    // Uses the existing launchTizenApp path (with alt-ID and launchAppControl fallbacks).
+    launchAppForRule(ruleId, appId, appName) {
+        logger.info('[BLE] Launching app for rule: ruleId=' + ruleId +
+            ' appId=' + appId + ' appName=' + (appName || ''));
+        // Clear any content override state — when we return the normal schedule
+        // will pick up from clearRuleOverride().
+        this._bleOverrideContent = null;
+        this.launchTizenApp(appId);
+    },
+    // Re-launch this player app to bring it back to the foreground.
+    // Called by BleManager when a launch_app rule's beacon leaves the zone.
+    bringToFront() {
+        try {
+            if (typeof tizen === 'undefined' || !tizen.application) {
+                logger.warn('[BLE] bringToFront: tizen.application not available');
+                return;
+            }
+            const self_ = tizen.application.getCurrentApplication();
+            tizen.application.launch(
+                self_.appInfo.id,
+                () => logger.info('[BLE] bringToFront: re-launched self'),
+                (e) => logger.warn('[BLE] bringToFront launch error:', e && e.message || e)
+            );
+        }
+        catch (e) {
+            logger.warn('[BLE] bringToFront error:', e && e.message || e);
+        }
+    },
     // Cleanup
     destroy() {
         if (this.heartbeatInterval)

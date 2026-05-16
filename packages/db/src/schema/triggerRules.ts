@@ -76,7 +76,19 @@ export type PlayContentAction = {
   contentId: string;
 };
 
-export type TriggerAction = PlayPlaylistAction | PlayContentAction;
+/**
+ * Launch a specific app installed on the device when the rule triggers.
+ * The player returns to itself (Nexari TV) when the beacon leaves the zone.
+ */
+export type LaunchAppAction = {
+  type: 'launch_app';
+  /** Tizen application ID (e.g. 'org.tizen.netflix-app' or '11101200001'). */
+  appId: string;
+  /** Human-readable app name — display only, not used at runtime. */
+  appName?: string;
+};
+
+export type TriggerAction = PlayPlaylistAction | PlayContentAction | LaunchAppAction;
 
 // ── Table ─────────────────────────────────────────────────────────────────────
 // NOTE: The sensor-based 'trigger_rules' table already exists in sensors.ts.
