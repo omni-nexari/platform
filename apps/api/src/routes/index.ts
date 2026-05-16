@@ -28,7 +28,6 @@ import { deviceGroupsRoutes } from './device-groups.js';
 import { deviceConfigTemplatesRoutes } from './device-config-templates.js';
 import { webhooksRoutes } from './webhooks.js';
 import { sensorsRoutes } from './sensors.js';
-import { testSyncRoutes } from './test-sync.js';
 import { integrationsRoutes } from './integrations.js';
 import { monitoringRoutes } from './monitoring.js';
 import { supportRoutes } from './support.js';
@@ -63,7 +62,6 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(deviceConfigTemplatesRoutes, { prefix: '/device-config-templates' });
   await app.register(webhooksRoutes, { prefix: '/webhooks' });
   await app.register(sensorsRoutes, { prefix: '/sensors' });
-  await app.register(testSyncRoutes, { prefix: '/test-sync' });
   await app.register(integrationsRoutes, { prefix: '/integrations' });
   await app.register(monitoringRoutes, { prefix: '/monitoring' });
   await app.register(supportRoutes, { prefix: '/support' });
