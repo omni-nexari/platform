@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Bluetooth, Plus, Trash2, Edit2, Radio, Send, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { Bluetooth, Plus, Trash2, Edit2, Radio, Send, RefreshCw, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import {
   ActionButton,
@@ -188,11 +188,27 @@ export default function DeviceRulesTab({
     onError: () => toast.error('Failed to start BLE scan'),
   });
 
+  // ── publish state ──
+  const [rulesPublished, setRulesPublished] = useState(false);
+
   // ── publish ──
   const publishRules = useMutation({
     mutationFn: () => api.post(`/devices/${deviceId}/rules/publish`, {}),
-    onSuccess: (d: any) => toast.success(`Rules published to device (${d.ruleCount} rules)`),
+    onSuccess: (d: any) => {
+      setRulesPublished(true);
+      toast.success(`Rules published to device (${d.ruleCount} rules)`);
+    },
     onError: () => toast.error('Failed to publish rules'),
+  });
+
+  // ── unpublish ──
+  const unpublishRules = useMutation({
+    mutationFn: () => api.post(`/devices/${deviceId}/rules/unpublish`, {}),
+    onSuccess: () => {
+      setRulesPublished(false);
+      toast.success('Rules cleared from device');
+    },
+    onError: () => toast.error('Failed to unpublish rules'),
   });
 
   // ── delete rule ──
@@ -200,6 +216,7 @@ export default function DeviceRulesTab({
     mutationFn: (ruleId: string) => api.delete(`/devices/${deviceId}/rules/${ruleId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['device-rules', deviceId] });
+      setRulesPublished(false);
       toast.success('Rule deleted');
     },
     onError: () => toast.error('Failed to delete rule'),
@@ -209,7 +226,10 @@ export default function DeviceRulesTab({
   const toggleRule = useMutation({
     mutationFn: ({ ruleId, enabled }: { ruleId: string; enabled: boolean }) =>
       api.put(`/devices/${deviceId}/rules/${ruleId}`, { enabled }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['device-rules', deviceId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['device-rules', deviceId] });
+      setRulesPublished(false);
+    },
   });
 
   // ── editor state ──
@@ -247,15 +267,27 @@ export default function DeviceRulesTab({
           >
             <Plus className="w-3.5 h-3.5" /> Add rule
           </ActionButton>
-          <ActionButton
-            onClick={() => publishRules.mutate()}
-            disabled={!isOnline || publishRules.isPending || rules.length === 0}
-            tone="success"
-            className="px-3 py-1.5 text-xs"
-          >
-            <Send className="w-3.5 h-3.5" />
-            {publishRules.isPending ? 'Publishing…' : 'Publish rules'}
-          </ActionButton>
+          {rulesPublished ? (
+            <ActionButton
+              onClick={() => unpublishRules.mutate()}
+              disabled={!isOnline || unpublishRules.isPending}
+              tone="warning"
+              className="px-3 py-1.5 text-xs"
+            >
+              <X className="w-3.5 h-3.5" />
+              {unpublishRules.isPending ? 'Clearing…' : 'Unpublish rules'}
+            </ActionButton>
+          ) : (
+            <ActionButton
+              onClick={() => publishRules.mutate()}
+              disabled={!isOnline || publishRules.isPending || rules.length === 0}
+              tone="success"
+              className="px-3 py-1.5 text-xs"
+            >
+              <Send className="w-3.5 h-3.5" />
+              {publishRules.isPending ? 'Publishing…' : 'Publish rules'}
+            </ActionButton>
+          )}
         </div>
       </div>
 
@@ -416,6 +448,7 @@ export default function DeviceRulesTab({
           onClose={() => setEditorOpen(false)}
           onSaved={() => {
             setEditorOpen(false);
+            setRulesPublished(false);
             qc.invalidateQueries({ queryKey: ['device-rules', deviceId] });
           }}
         />

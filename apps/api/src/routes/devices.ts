@@ -3202,6 +3202,18 @@ export async function deviceRoutes(app: FastifyInstance) {
     return reply.send({ ok: true, ruleCount: rows.length });
   });
 
+  // ── POST /:id/rules/unpublish — clear rules from device via WS ────────────
+  app.post('/:id/rules/unpublish', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+    sendCommand(id, { type: 'device_rules', rules: [] } as never);
+    return reply.send({ ok: true });
+  });
+
   // ── POST /:id/ble-scan — tell device to run a BLE scan ──────────────────
   app.post('/:id/ble-scan', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
