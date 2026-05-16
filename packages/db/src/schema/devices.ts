@@ -143,6 +143,8 @@ export const devices = pgTable('devices', {
   alertThresholds: jsonb('alert_thresholds'),
   /** Per-device Windows player settings — see WindowsPlayerSettings shape in shared. */
   windowsSettings: jsonb('windows_settings'),
+  /** Installed apps reported by the player. Array of { id, name, version, iconPath }. */
+  installedApps: jsonb('installed_apps'),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

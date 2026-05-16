@@ -607,6 +607,13 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     return;
   }
 
+  // ── installed_apps: list of apps installed on the device ──────────────────
+  if (msg.type === 'installed_apps') {
+    const apps = Array.isArray(msg.payload) ? msg.payload : [];
+    await db.update(devices).set({ installedApps: apps, updatedAt: new Date() }).where(eq(devices.id, deviceId));
+    return;
+  }
+
   // ── mdc_heartbeat: 30s MDC status_get result → update powerState + live MDC state ─
   if (msg.type === 'mdc_heartbeat') {
     const mh = msg.payload as { power?: number; volume?: number; mute?: number; input?: number };

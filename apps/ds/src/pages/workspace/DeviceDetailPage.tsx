@@ -210,6 +210,14 @@ interface Device {
     batteryWarningIcon?: boolean;
     } | null;
   windowsSettings?: WindowsPlayerSettings | null;
+  installedApps?: Array<{
+    id: string;
+    name: string;
+    version: string | null;
+    iconPath: string | null;
+    show: boolean;
+    categories: string[];
+  }> | null;
 }
 
 interface DeviceLogEntry {
@@ -1812,6 +1820,37 @@ export function DeviceDetailContent({
           </SectionCardBody>
         </SectionCard>
       </div>
+
+      {/* ── Installed Apps ──────────────────────────────────────────────── */}
+      {device.installedApps && device.installedApps.length > 0 && (
+        <SectionCard>
+          <SectionCardHeader>
+            <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
+              <Tv2 className="w-3.5 h-3.5" />Installed Apps
+              <Badge tone="neutral">{device.installedApps.length}</Badge>
+            </h2>
+          </SectionCardHeader>
+          <SectionCardBody>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+              {device.installedApps.map((app) => (
+                <div key={app.id} className="flex items-center gap-2 p-2 rounded-lg bg-[var(--surface)] border border-[var(--border)]">
+                  {app.iconPath ? (
+                    <img src={app.iconPath} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                  ) : (
+                    <div className="w-8 h-8 rounded bg-[var(--surface-raised)] flex items-center justify-center flex-shrink-0">
+                      <Tv2 className="w-4 h-4 text-[var(--text-muted)]" />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-[var(--text)] truncate" title={app.name}>{app.name}</p>
+                    {app.version && <p className="text-[10px] text-[var(--text-muted)]">{app.version}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </SectionCardBody>
+        </SectionCard>
+      )}
 
         </div>
       )}

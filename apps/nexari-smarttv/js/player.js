@@ -364,6 +364,8 @@ const Player = {
                 // Reload content on reconnect so any publish/unpublish that happened
                 // while the socket was down is picked up immediately.
                 void this.loadContent();
+                // Report installed apps once per connect (list changes rarely)
+                setTimeout(() => { this.reportInstalledApps(); }, 3000);
             };
             this.wsConnection.onmessage = (event) => {
                 this.lastWsMessageAt = Date.now();
@@ -1446,6 +1448,34 @@ const Player = {
         this.heartbeatInterval = setInterval(() => {
             this.sendWebSocketHeartbeat();
         }, CONFIG.HEARTBEAT_INTERVAL);
+    },
+    // Report installed applications to the server via WebSocket (once per connect)
+    reportInstalledApps() {
+        try {
+            if (typeof tizen === 'undefined' || !tizen.application) return;
+            tizen.application.getAppsInfo(
+                (apps) => {
+                    const list = apps.map(a => ({
+                        id: a.id,
+                        name: a.name,
+                        version: a.version || null,
+                        iconPath: a.iconPath || null,
+                        show: a.show,
+                        categories: a.categories || [],
+                    }));
+                    if (this.wsConnection && this.wsConnection.readyState === 1) {
+                        this.wsConnection.send(JSON.stringify({
+                            type: 'installed_apps',
+                            payload: list,
+                        }));
+                        logger.info('[Apps] Reported ' + list.length + ' installed apps to server');
+                    }
+                },
+                (err) => { logger.warn('[Apps] getAppsInfo failed:', err.message); }
+            );
+        } catch (e) {
+            logger.warn('[Apps] reportInstalledApps error:', e);
+        }
     },
     // Build readiness payload for orchestration/readiness UI
     buildReadinessPayload() {

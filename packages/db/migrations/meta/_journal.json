@@ -477,6 +477,13 @@
             "when": 1778740000000,
             "tag": "0067_display_physical_dims",
             "breakpoints": true
+        },
+        {
+            "idx": 68,
+            "version": "7",
+            "when": 1778741800000,
+            "tag": "0068_device_installed_apps",
+            "breakpoints": true
         }
     ]
 }
