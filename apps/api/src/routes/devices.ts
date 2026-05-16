@@ -1705,6 +1705,23 @@ export async function deviceRoutes(app: FastifyInstance) {
       }, 4_000);
     }
 
+    // Re-push BLE rules so the device evaluates them immediately after (re)connect
+    // without requiring the user to click "Publish rules" again.
+    setTimeout(async () => {
+      try {
+        const rules = await db.query.deviceRules.findMany({
+          where: and(eq(deviceRules.workspaceId, device.workspaceId!), eq(deviceRules.deviceId, deviceId)),
+          orderBy: [desc(deviceRules.priority), asc(deviceRules.createdAt)],
+        });
+        if (rules.length > 0) {
+          sendCommand(deviceId, { type: 'device_rules', rules } as never);
+          app.log.info({ deviceId, ruleCount: rules.length }, 'Auto-pushed BLE rules on connect');
+        }
+      } catch (e) {
+        app.log.warn({ deviceId, err: e }, 'Failed to auto-push BLE rules on connect');
+      }
+    }, 6_000);
+
     // Re-push VIDEOWALL_INIT for any videowall group this device belongs to.
     // Without this, a device that reconnects after a reinstall plays full-screen
     // and never enters sync mode because it has no wall manifest.
