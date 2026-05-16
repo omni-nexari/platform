@@ -66,9 +66,14 @@ export async function startSync(cfg: WindowsSyncConfig): Promise<void> {
     setPlaylist(cfg.playlist);
   }
 
-  // Measure this device's play→first-frame latency once. The relay distributes
-  // all latencies via PEERS so every device auto-computes its selfLatency offset.
-  const playLatencyMs = await measurePlayLatencyMs(cfg.playlist[0]);
+  // Race the play-latency probe against an 800 ms deadline so sync startup
+  // is never blocked by a slow video load. 80 ms is the Chromium/Electron
+  // fallback (reasonable fast-decode default); the real value is used when
+  // the probe finishes in time. Result is cached so the second session is instant.
+  const playLatencyMs = await Promise.race([
+    measurePlayLatencyMs(cfg.playlist[0]),
+    new Promise<number>((res) => setTimeout(() => res(80), 800)),
+  ]);
 
   const syncCfg: SyncConfig = {
     wsUrl,

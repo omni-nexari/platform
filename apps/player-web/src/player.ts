@@ -1779,7 +1779,10 @@ export class Player {
     // Use DB UUID (from JWT sub) as sync deviceId so leader election compares correctly
     // against leaderPriority array which contains DB UUIDs. Falls back to hardware deviceId.
     const syncDeviceId = this.dbDeviceId || this.deviceId;
-    const playLatencyMs = await measurePlayLatencyMs(urls[0]);
+    const playLatencyMs = await Promise.race([
+      measurePlayLatencyMs(urls[0]),
+      new Promise<number>((res) => setTimeout(() => res(150), 800)), // 150 ms Android WebView default
+    ]);
     syncInit({
       wsUrl, groupId, deviceId: syncDeviceId, selfIp: net.ipAddress ?? '',
       expectedPeers, pinnedLeaderId, onStatus: s => logger.info(`[Sync] ${s}`),
@@ -1846,7 +1849,10 @@ export class Player {
 
     const net = await this.cfg.adapter.getNetworkInfo();
     this.syncActive = true;
-    const wallPlayLatencyMs = await measurePlayLatencyMs(urls[0]);
+    const wallPlayLatencyMs = await Promise.race([
+      measurePlayLatencyMs(urls[0]),
+      new Promise<number>((res) => setTimeout(() => res(150), 800)),
+    ]);
     syncInit({
       wsUrl, groupId, deviceId: this.deviceId, selfIp: net.ipAddress ?? '',
       expectedPeers, onStatus: s => logger.info(`[Sync/Wall] ${s}`),

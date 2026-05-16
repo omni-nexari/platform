@@ -64,15 +64,6 @@ const Player = {
     _loadInFlight: false,
     currentAvPlayProfileKey: null,
     deviceToken: null,
-    _scannedMdcId: null, // MDC device ID found by scan; persisted to DB once WS is open
-    _mdcStartupDone: false, // Set to true once Phase 1 ID scan completes; gates sendMdcHeartbeat
-    _mdcHeartbeatInFlight: false, // Prevents concurrent MDC heartbeat TCP connections
-    _mdcPhase2InFlight: 0, // Count of in-flight Phase 2 MDC commands; heartbeat waits until 0
-    _lastMdcHeartbeatAt: 0, // Timestamp of last MDC heartbeat; rate-limit to CONFIG.HEARTBEAT_INTERVAL
-    _luxSupported: true, // Set to false after first NAK; skips light_sensor_get in subsequent polls
-    _onTimerSupported: true, // Set to false after first NAK; skips on_timer_get in subsequent polls
-    _clockSupported: true, // Set to false after first NAK; skips get_clock / set_clock
-    _lastClockSyncAt: 0, // Timestamp of last set_clock; rate-limited to once per 24h
     // ── IPTV channel group runtime state ───────────────────────────────────
     currentChannelGroup: null,
     _channelDigitBuffer: '',
@@ -332,8 +323,6 @@ const Player = {
             catch (e) {
                 logger.warn('[PlayerSettings] init failed:', (e === null || e === void 0 ? void 0 : e.message) || e);
             }
-            // Phase 2 MDC setup — apply initial display settings, persist MDC ID to DB
-            setTimeout(() => { this.runPostPairingMdcSetup(); }, 5000);
             logger.info('Player initialized successfully');
         });
     },
@@ -374,8 +363,6 @@ const Player = {
                 // Reload content on reconnect so any publish/unpublish that happened
                 // while the socket was down is picked up immediately.
                 void this.loadContent();
-                // Refresh MDC poll after startup MDC setup completes (Phase 1 scan can take up to 8s)
-                setTimeout(() => { this.runMdcPoll(); }, 20000);
             };
             this.wsConnection.onmessage = (event) => {
                 this.lastWsMessageAt = Date.now();
@@ -659,30 +646,6 @@ const Player = {
                         });
                     }
                     break;
-                case 'remote_key': {
-                    const keyName = ((_c = (_b = message.payload) === null || _b === void 0 ? void 0 : _b.key) !== null && _c !== void 0 ? _c : '');
-                    logger.info('remote_key received:', keyName);
-                    const xhr = new XMLHttpRequest();
-                    xhr.open('POST', 'http://127.0.0.1:9615/remote-key', true);
-                    xhr.setRequestHeader('Content-Type', 'application/json');
-                    xhr.timeout = 5000;
-                    xhr.onload = function () {
-                        try {
-                            const d = JSON.parse(xhr.responseText);
-                            if (d.ok)
-                                logger.info('[mdc-bridge] remote_key ok:', keyName);
-                            else
-                                logger.warn('[mdc-bridge] remote_key NAK:', d.error);
-                        }
-                        catch (e) {
-                            logger.warn('[mdc-bridge] remote_key parse error');
-                        }
-                    };
-                    xhr.onerror = function () { logger.error('[mdc-bridge] remote_key XHR error - is Node server running?'); };
-                    xhr.ontimeout = function () { logger.error('[mdc-bridge] remote_key timeout'); };
-                    xhr.send(JSON.stringify({ key: keyName }));
-                    break;
-                }
                 case 'emergency_start':
                     logger.info('emergency_start received:', message.payload);
                     this.loadContent();
@@ -714,94 +677,6 @@ const Player = {
                     logger.info(`Command received: ${messageType}`, message.payload);
                     this.executeCommand({ type: messageType.toUpperCase().replace(/-/g, '_'), payload: message.payload });
                     break;
-                case 'mdc_control': {
-                    const mdcPayload = message.payload;
-                    if (mdcPayload && typeof mdcPayload.action === 'string') {
-                        const requestId = typeof mdcPayload.requestId === 'string' ? mdcPayload.requestId : null;
-                        const action = mdcPayload.action;
-                        const self = this;
-                        function sendMdcControlResponse(payload) {
-                            const replyWs = self.wsConnection;
-                            if (requestId && replyWs && replyWs.readyState === WebSocket.OPEN) {
-                                replyWs.send(JSON.stringify({
-                                    type: 'mdc_control_response',
-                                    payload: Object.assign({ requestId }, payload),
-                                }));
-                                logger.info('[mdc-bridge] mdc_control_response sent:', action, 'ok=', payload.ok);
-                            }
-                            else {
-                                logger.warn('[mdc-bridge] WS not open, cannot send mdc_control_response back', {
-                                    readyState: replyWs === null || replyWs === void 0 ? void 0 : replyWs.readyState,
-                                    action,
-                                    requestId,
-                                });
-                            }
-                        }
-                        const xhr = new XMLHttpRequest();
-                        xhr.open('POST', 'http://127.0.0.1:9615/mdc-control', true);
-                        xhr.setRequestHeader('Content-Type', 'application/json');
-                        // mdc_id_scan and mdc_conn_type_fix scan up to 10 IDs × 500ms each = ~5s;
-                        // give a generous budget so the XHR never races the scan to timeout.
-                        xhr.timeout = (action === 'mdc_id_scan' || action === 'mdc_conn_type_fix') ? 15000 : 10000;
-                        xhr.onload = function () {
-                            try {
-                                const response = JSON.parse(xhr.responseText);
-                                if (response.ok)
-                                    logger.info('[mdc-bridge] mdc_control ok:', action);
-                                else
-                                    logger.warn('[mdc-bridge] mdc_control error:', response.error);
-                                // Forward the full bridge response so fields like urlAddress, serial, etc. reach the API
-                                const { ok } = response, rest = __rest(response, ["ok"]);
-                                sendMdcControlResponse(Object.assign({ ok: !!ok }, rest));
-                            }
-                            catch (error) {
-                                logger.warn('[mdc-bridge] mdc_control parse error', error);
-                                sendMdcControlResponse({ ok: false, error: 'parse error' });
-                            }
-                        };
-                        xhr.onerror = function () {
-                            logger.error('[mdc-bridge] mdc_control XHR error - is Node bridge running?');
-                            sendMdcControlResponse({ ok: false, error: 'XHR error' });
-                        };
-                        xhr.ontimeout = function () {
-                            logger.error('[mdc-bridge] mdc_control timeout');
-                            sendMdcControlResponse({ ok: false, error: 'timeout' });
-                        };
-                        xhr.send(JSON.stringify(mdcPayload));
-                    }
-                    break;
-                }
-                case 'remote_status': {
-                    // Call /status-full to aggregate status, serial, device-name, model, IP and remote-ctrl
-                    // in a single round-trip (server.js performs the MDC commands sequentially).
-                    const rsRequestId = (_d = message.payload) === null || _d === void 0 ? void 0 : _d.requestId;
-                    const rsWs = this.wsConnection;
-                    function sendMdcStatusResponse(payload) {
-                        if (rsRequestId && rsWs && rsWs.readyState === WebSocket.OPEN) {
-                            rsWs.send(JSON.stringify({ type: 'mdc_status', payload: Object.assign({ requestId: rsRequestId }, payload) }));
-                        }
-                    }
-                    const rsXhr = new XMLHttpRequest();
-                    rsXhr.open('GET', 'http://127.0.0.1:9615/status-full', true);
-                    rsXhr.timeout = 20000; // sequential MDC calls can take ~3s each × 6
-                    rsXhr.onload = function () {
-                        try {
-                            const res = JSON.parse(rsXhr.responseText);
-                            sendMdcStatusResponse(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ ok: !!res.ok, nodeRunning: true }, (res.status !== undefined ? { status: res.status } : {})), (res.serial !== undefined ? { serial: res.serial } : {})), (res.deviceName !== undefined ? { deviceName: res.deviceName } : {})), (res.modelName !== undefined ? { modelName: res.modelName } : {})), (res.ipAddress !== undefined ? { ipAddress: res.ipAddress } : {})), (res.remoteControl !== undefined ? { remoteControl: res.remoteControl } : {})), (res.rawHex !== undefined ? { rawHex: res.rawHex } : {})), (res.error !== undefined ? { error: res.error } : {})));
-                        }
-                        catch (_e) {
-                            sendMdcStatusResponse({ ok: false, nodeRunning: true, error: 'parse error' });
-                        }
-                    };
-                    rsXhr.onerror = function () {
-                        sendMdcStatusResponse({ ok: false, nodeRunning: true, error: 'MDC bridge XHR error' });
-                    };
-                    rsXhr.ontimeout = function () {
-                        sendMdcStatusResponse({ ok: false, nodeRunning: true, error: 'MDC bridge timeout' });
-                    };
-                    rsXhr.send();
-                    break;
-                }
                 case 'tizen_probe': {
                     const tpRequestId = (_f = message.payload) === null || _f === void 0 ? void 0 : _f.requestId;
                     const tpWs = this.wsConnection;
@@ -2387,8 +2262,6 @@ const Player = {
             this.wsConnection.send(JSON.stringify({ type: 'heartbeat', payload }));
             this.lastReadinessPayload = serialized;
             this.lastReadinessAt = now;
-            // Fire MDC status_get and send mdc_heartbeat (non-blocking)
-            this.sendMdcHeartbeat();
         });
     },
     // Track download progress for readiness reporting
@@ -2438,8 +2311,6 @@ const Player = {
             catch (error) {
                 logger.warn('Telemetry failed:', error);
             }
-            // Run full MDC poll after each telemetry cycle
-            this.runMdcPoll();
         }), CONFIG.TELEMETRY_INTERVAL);
     },
     // Start command polling
@@ -2510,12 +2381,12 @@ const Player = {
             }
         }, CONFIG.HEARTBEAT_INTERVAL || 30000);
     },
-    // ── MDC helpers ───────────────────────────────────────────────────────────
-    // XHR to local server.js MDC bridge, returns a Promise
-    sendLocalMdcXhr(action, payload = {}) {
-        return new Promise((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', 'http://127.0.0.1:9615/mdc-control', true);
+    // ── placeholder so the old MDC helper block is gone ─────────────────────
+    _mdcRemoved: true,
+    // (MDC helpers removed — consumer TV, no RS-232 bridge needed)
+    trySwapToPendingContent_PLACEHOLDER_DELETE_ME: null,
+    sendLocalMdcXhr_PLACEHOLDER: null,
+
             xhr.setRequestHeader('Content-Type', 'application/json');
             // Scan actions probe up to 10 IDs × 500ms each ≈ 5s; give a generous budget.
             xhr.timeout = (action === 'mdc_id_scan' || action === 'mdc_conn_type_fix') ? 15000 : 8000;

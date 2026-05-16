@@ -118,6 +118,10 @@ export async function measurePlayLatencyMs(url?: string): Promise<number> {
   return new Promise<number>((resolve) => {
     const v = document.createElement('video');
     v.muted = true; v.preload = 'auto'; v.src = src;
+    // Attach to document so the compositor renders frames — required for
+    // requestVideoFrameCallback to fire. Removed in done().
+    v.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+    document.body.appendChild(v);
 
     const done = (ms: number) => {
       clearTimeout(timer);
@@ -126,7 +130,7 @@ export async function measurePlayLatencyMs(url?: string): Promise<number> {
       _log('[Engine] play-latency probe: ' + _playLatencyMs + 'ms');
       resolve(_playLatencyMs);
     };
-    const timer = setTimeout(() => done(150), 4000);
+    const timer = setTimeout(() => done(80), 2000); // 2 s max; 80 ms default for Chromium/Electron
 
     v.addEventListener('canplaythrough', () => {
       const t0 = performance.now();
