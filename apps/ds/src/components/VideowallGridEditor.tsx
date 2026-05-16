@@ -319,7 +319,8 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
             style={{
               gridTemplateColumns: colFrs,
               gridTemplateRows: rowFrs,
-              minWidth: cols * 120,
+              maxWidth: cols * 160,
+              minWidth: cols * 80,
             }}
           >
             {Array.from({ length: rows }, (_, r) =>
@@ -338,7 +339,7 @@ export default function VideowallGridEditor({ group, workspaceId, availableDevic
                     style={{
                       background: 'var(--bg)',
                       borderColor: 'var(--border)',
-                      minHeight: isPortrait ? 100 : 72,
+                      minHeight: isPortrait ? 60 : 45,
                       aspectRatio: isPortrait ? '9/16' : '16/9',
                     }}
                   >
