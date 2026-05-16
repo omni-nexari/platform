@@ -3225,8 +3225,8 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
     if (!device) return reply.status(404).send({ error: 'Not found' });
 
-    // Method 1: WS command (works if Nexari is suspended, not killed)
-    sendCommand(id, { type: 'relaunch_app' } as never);
+    // Method 1: WS command (works if background-support is enabled)
+    sendCommand(id, { type: 'bring_to_front' } as never);
 
     // Method 2: Samsung Remote Control API on port 8001 (works even when app is killed)
     const tvIp = device.ipAddress;

@@ -1172,7 +1172,10 @@ window.ContentManager = {
 
     const filePath = typeof metadata.filePath === 'string' ? metadata.filePath : null;
     const packagePath = typeof metadata.packagePath === 'string' ? metadata.packagePath : null;
-    const hasZip = filePath && /\.zip$/i.test(filePath);
+    // content.filePath is set by the API for server-uploaded ZIPs (the DB column).
+    // metadata.filePath may be absent when content was created via the upload route.
+    const contentFilePath = typeof content.filePath === 'string' ? content.filePath : null;
+    const hasZip = Boolean((filePath || contentFilePath) && /\.zip$/i.test(filePath || contentFilePath || ''));
     const isPackage = Boolean(metadata.isPackage || packagePath || hasZip);
 
     if (!isPackage) {
@@ -1185,7 +1188,7 @@ window.ContentManager = {
       content.id || content.contentId || '',
       content.updatedAt || content.updated_at || '',
       content.version || '',
-      filePath || '',
+      filePath || contentFilePath || '',
       packagePath || '',
       metadata.packageUrl || '',
       startPage,
@@ -1196,6 +1199,10 @@ window.ContentManager = {
       startPage,
       packageKey,
       signature: this.hashString(signatureSource),
+      // Use metadata-level filePath for buildPublicUrl when available; for
+      // server-uploaded ZIPs (content.filePath is a server-local relative path),
+      // fall back to content.fileUrl — the device /file?token= endpoint that
+      // streams the ZIP with proper auth.
       zipUrl: this.buildPublicUrl(metadata.packageZipUrl || filePath)
         || metadata.packageZipUrl
         || content.fileUrl

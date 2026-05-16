@@ -625,6 +625,21 @@ const Player = {
                     logger.info('relaunch_app command received');
                     this.executeCommand({ type: 'RELAUNCH_APP' });
                     break;
+                case 'bring_to_front': {
+                    // Bring Nexari back to foreground without restarting
+                    logger.info('[Apps] bring_to_front command received');
+                    try {
+                        const self_ = tizen.application.getCurrentApplication();
+                        tizen.application.launch(
+                            self_.appInfo.id,
+                            () => logger.info('[Apps] bring_to_front: launched self'),
+                            (e) => logger.warn('[Apps] bring_to_front launch error:', e && e.message || e)
+                        );
+                    } catch (e) {
+                        logger.warn('[Apps] bring_to_front error:', e && e.message || e);
+                    }
+                    break;
+                }
                 case 'launch_app': {
                     const appId = message.payload && message.payload.appId;
                     logger.info('[Apps] launch_app command received: ' + appId);
@@ -7084,6 +7099,10 @@ const Player = {
             this.currentPlaylistController.cancelled = true;
             this.currentPlaylistController = null;
         }
+        // Ensure the content-container and player-screen are visible.
+        // setAvPlayVisualMode(true) hides them for hardware overlay; always
+        // restore before rendering new content so images/HTML aren't invisible.
+        this.setAvPlayVisualMode(false);
         // Clear any IPTV reconnect timer and overlay before tearing down.
         // Must happen before AVPlay stop so the overlay element is removed cleanly.
         this._cleanupChannelGroup({ keepContainer: false });
