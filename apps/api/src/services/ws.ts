@@ -616,7 +616,7 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
 
   // ── ble_scan_result: BLE beacon scan result from device ───────────────────
   if (msg.type === 'ble_scan_result') {
-    const beacons = Array.isArray(msg.payload) ? msg.payload : [];
+    const beacons = msg.payload ?? [];
     await db.insert(bleScanResults).values({ deviceId, beacons: beacons as never, scannedAt: new Date() });
     return;
   }

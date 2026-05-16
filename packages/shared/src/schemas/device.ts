@@ -461,6 +461,16 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
       categories: z.array(z.string()).optional(),
     })),
   }),
+  z.object({
+    type: z.literal('ble_scan_result'),
+    payload: z.array(z.object({
+      uuid: z.string(),
+      major: z.number().optional(),
+      minor: z.number().optional(),
+      rssi: z.number(),
+      name: z.string().optional(),
+    })),
+  }),
 ]);
 export type DeviceMessage = z.infer<typeof DeviceMessageSchema>;
 
