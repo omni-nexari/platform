@@ -7,6 +7,15 @@ export declare function setWallCrop(srcX: number, srcY: number, srcW: number, sr
 export declare function isPlaying(): boolean;
 export declare function getCurrentPosMs(): number;
 export declare function getDuration(): number;
+/**
+ * measurePlayLatencyMs — measure the time from video.play() to the first
+ * rendered frame on this hardware. The relay distributes all latencies via
+ * PEERS so each device auto-computes selfLatency = max(group) - own.
+ * Result is cached; repeated calls return immediately.
+ */
+export declare function measurePlayLatencyMs(url?: string): Promise<number>;
+/** Returns the cached play-latency, or 100 ms if not yet measured. */
+export declare function getPlayLatencyMs(): number;
 export declare function initEngine(container: HTMLElement): Promise<void>;
 export declare function prepare(url: string): Promise<void>;
 export declare function schedulePlayAt(epochMs: number): void;

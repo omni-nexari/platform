@@ -66,6 +66,10 @@ export interface ContentRecord {
     channels?: unknown[];
     [key: string]: unknown;
 }
+export interface ResellerBranding {
+    name: string;
+    logoUrl: string;
+}
 export interface Schedule {
     id?: string;
     playlistId?: string;
@@ -73,6 +77,7 @@ export interface Schedule {
     syncGroupId?: string;
     syncPlay?: unknown;
     items: ScheduleItem[];
+    resellerBranding?: ResellerBranding | null;
 }
 export interface PosMenu {
     id: string;

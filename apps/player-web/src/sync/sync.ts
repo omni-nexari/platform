@@ -312,7 +312,10 @@ function _dispatch(msg: Record<string, unknown>): void {
 
   if (msg['type'] === 'LOAD_URL') {
     if (_role !== 'follower') return;
-    if (_loadReceived) { logger.info('[Sync] LOAD_URL dup — ignored'); return; }
+    // Do NOT dedup LOAD_URL — the leader re-sends it after every resync (new peer
+    // joined) and followers must re-prepare and re-send READY each time.  Keeping
+    // the old guard caused followers to silently ignore resync LOAD_URLs so READY
+    // was never re-sent and GO was never re-issued.
     _loadReceived = true;
     if (_followerResyncTimer) { clearTimeout(_followerResyncTimer); _followerResyncTimer = null; }
 
@@ -419,16 +422,21 @@ async function _runLeader(): Promise<void> {
   _wsSend({ type: 'LOAD_URL', url, index: _leaderIdx >= 0 ? _leaderIdx : 0 });
 
   _cfg.onStatus('Leader — preparing engine…');
-  _cfg.prepareEngine(url).then(() => {
-    if (_stopped) return;
-    logger.info('[Sync] leader engine READY');
-    _leaderReady = true;
-    _cfg.onStatus(`Leader ready — waiting for ${_peers.length} follower(s)…`);
-    _checkAllReady();
-  }).catch((e: unknown) => {
-    logger.error(`[Sync] leader prepare failed: ${(e as Error)?.message} — retry in 5s`);
-    if (!_stopped) setTimeout(() => { if (!_stopped) _runLeader(); }, 5000);
-  });
+  // Await prepareEngine so _resyncInProgress (set by _resyncLeader) stays true
+  // for the full prepare window.  The old fire-and-forget pattern let _peerScan
+  // fire every 4 s during prepare, see the joining device hadn't sent READY yet,
+  // and call _resyncLeader again → destroyEngine stopped the leader in a loop.
+  try {
+    await _cfg.prepareEngine(url);
+  } catch (e: unknown) {
+    logger.error(`[Sync] leader prepare failed: ${(e as Error)?.message} — will retry on next peer scan`);
+    return;
+  }
+  if (_stopped) return;
+  logger.info('[Sync] leader engine READY');
+  _leaderReady = true;
+  _cfg.onStatus(`Leader ready — waiting for ${_peers.length} follower(s)…`);
+  _checkAllReady();
 }
 
 function _checkAllReady(): void {

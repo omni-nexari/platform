@@ -101,7 +101,7 @@ var Api = class {
   // ── Schedule / content ────────────────────────────────────────────────────
   /** Returns the schedule object for this device.  Throws on non-2xx. */
   async getCurrentContent(_deviceId2) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     const t = this.token();
     const [schedRes, wsRes] = await Promise.all([
       fetch(`${this.base}/devices/device/schedule${t ? `?token=${encodeURIComponent(t)}` : ""}`),
@@ -110,11 +110,12 @@ var Api = class {
     if (schedRes.status === 404) return null;
     if (!schedRes.ok) throw Object.assign(new Error(`schedule HTTP ${schedRes.status}`), { status: schedRes.status });
     const wsBody = (wsRes == null ? void 0 : wsRes.ok) ? await wsRes.json().catch(() => null) : null;
+    const resellerBranding = (_a = wsBody == null ? void 0 : wsBody["resellerBranding"]) != null ? _a : null;
     const publishedSyncGroup = wsBody == null ? void 0 : wsBody["publishedSyncGroup"];
     if (publishedSyncGroup) {
       const sg = publishedSyncGroup;
       const sp = sg["syncPlaylist"];
-      const spItems = (_a = sp == null ? void 0 : sp["items"]) != null ? _a : [];
+      const spItems = (_b = sp == null ? void 0 : sp["items"]) != null ? _b : [];
       if (spItems.length > 0) {
         const items2 = spItems.map((item) => {
           var _a2;
@@ -130,12 +131,13 @@ var Api = class {
         if (items2.length > 0) {
           return {
             id: sp["id"],
-            playlistName: (_b = sp["name"]) != null ? _b : "Sync Playlist",
+            playlistName: (_c = sp["name"]) != null ? _c : "Sync Playlist",
             items: items2,
             syncGroupId: sg["id"],
             allTizen: !!sg["allTizen"],
-            relayUrl: (_c = sg["relayUrl"]) != null ? _c : null,
-            peers: (_d = sg["peers"]) != null ? _d : []
+            relayUrl: (_d = sg["relayUrl"]) != null ? _d : null,
+            peers: (_e = sg["peers"]) != null ? _e : [],
+            resellerBranding
           };
         }
       }
@@ -143,7 +145,7 @@ var Api = class {
     const body = await schedRes.json();
     if (!Array.isArray(body.schedules) || !body.schedules.length) return null;
     const raw = body.schedules[0];
-    const slots = (_e = raw.slots) != null ? _e : [];
+    const slots = (_f = raw.slots) != null ? _f : [];
     const items = slots.flatMap((slot) => {
       var _a2;
       const playlist = slot["playlist"];
@@ -169,7 +171,7 @@ var Api = class {
         content: c
       }];
     });
-    return __spreadProps(__spreadValues({}, raw), { items });
+    return __spreadProps(__spreadValues({}, raw), { items, resellerBranding });
   }
   enrichContent(content, token) {
     var _a;
@@ -1395,6 +1397,47 @@ function getCurrentPosMs() {
 function getDuration() {
   return _durationMs;
 }
+var _playLatencyMs = null;
+async function measurePlayLatencyMs(url) {
+  if (_playLatencyMs !== null) return _playLatencyMs;
+  const src = url != null ? url : _playlist[0];
+  if (!src) {
+    _playLatencyMs = 100;
+    return 100;
+  }
+  return new Promise((resolve) => {
+    const v = document.createElement("video");
+    v.muted = true;
+    v.preload = "auto";
+    v.src = src;
+    v.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;";
+    document.body.appendChild(v);
+    const done = (ms) => {
+      clearTimeout(timer);
+      try {
+        v.pause();
+        v.src = "";
+        if (v.parentNode) v.parentNode.removeChild(v);
+      } catch (e) {
+      }
+      _playLatencyMs = Math.max(10, ms);
+      _log("[Engine] play-latency probe: " + _playLatencyMs + "ms");
+      resolve(_playLatencyMs);
+    };
+    const timer = setTimeout(() => done(150), 2e3);
+    v.addEventListener("canplaythrough", () => {
+      const t0 = performance.now();
+      if (typeof v.requestVideoFrameCallback === "function") {
+        v.requestVideoFrameCallback(() => done(Math.round(performance.now() - t0)));
+      } else {
+        v.addEventListener("timeupdate", () => done(Math.round(performance.now() - t0)), { once: true });
+      }
+      v.play().catch(() => {
+      });
+    }, { once: true });
+    v.load();
+  });
+}
 function initEngine(container) {
   if (_videos.length) return Promise.resolve();
   _container = container;
@@ -1497,6 +1540,7 @@ function destroyEngine() {
   _firstPlay = true;
   _fg = 0;
   _idx = 0;
+  _playLatencyMs = null;
 }
 function _log(msg) {
   logger.info(msg);
@@ -1786,8 +1830,10 @@ var _resyncInProgress = false;
 var _playlistUrls = [];
 var _wsGen = 0;
 var _followerResyncTimer = null;
+var _ownLatencyMs = 0;
+var _peerLatencies = /* @__PURE__ */ new Map();
 async function init(cfg) {
-  var _a, _b, _c;
+  var _a, _b, _c, _d;
   _cfg = cfg;
   _stopped = false;
   _peers = [];
@@ -1802,9 +1848,11 @@ async function init(cfg) {
     clearTimeout(_followerResyncTimer);
     _followerResyncTimer = null;
   }
-  _selfLatency = (_b = (_a = cfg.selfLatency) != null ? _a : DEVICE_LATENCY_MS[cfg.deviceId]) != null ? _b : 0;
+  _ownLatencyMs = (_a = cfg.playLatencyMs) != null ? _a : 0;
+  _peerLatencies = /* @__PURE__ */ new Map();
+  _selfLatency = (_c = cfg.selfLatency) != null ? _c : cfg.playLatencyMs == null ? (_b = DEVICE_LATENCY_MS[cfg.deviceId]) != null ? _b : 0 : 0;
   _role2 = cfg.pinnedLeaderId ? cfg.pinnedLeaderId === cfg.deviceId ? "leader" : "follower" : "pending";
-  logger.info(`[Sync] init deviceId=${cfg.deviceId} group=${cfg.groupId} role=${_role2} pinned=${(_c = cfg.pinnedLeaderId) != null ? _c : "none"}`);
+  logger.info(`[Sync] init deviceId=${cfg.deviceId} group=${cfg.groupId} role=${_role2} pinned=${(_d = cfg.pinnedLeaderId) != null ? _d : "none"}`);
   cfg.onStatus("Connecting to relay\u2026");
   setOnLoop(() => {
     if (!_stopped) {
@@ -1879,7 +1927,7 @@ function _connectWs() {
           }
           _wsReady = true;
           logger.info("[Sync] WS connected");
-          _wsSend({ type: "WS_REGISTER", deviceId: _cfg.deviceId, groupId: _cfg.groupId, ip: _cfg.selfIp });
+          _wsSend({ type: "WS_REGISTER", deviceId: _cfg.deviceId, groupId: _cfg.groupId, ip: _cfg.selfIp, playLatencyMs: _ownLatencyMs });
           resolve();
         };
         ws.onmessage = (ev) => {
@@ -2003,15 +2051,19 @@ function _dispatch(msg) {
       _peers = others;
       logger.info(`[Sync] peers: [${_peers.join(", ")}]`);
     }
+    if (msg["type"] === "PEERS" && _cfg.playLatencyMs != null) {
+      for (const p of msg["peers"]) {
+        if (p.deviceId !== _cfg.deviceId && p.playLatencyMs != null) {
+          _peerLatencies.set(p.deviceId, p.playLatencyMs);
+        }
+      }
+      _recomputeSelfLatency();
+    }
     return;
   }
   logger.info(`[Sync] \u2190 ${msg["type"]} from=${from}`);
   if (msg["type"] === "LOAD_URL") {
     if (_role2 !== "follower") return;
-    if (_loadReceived) {
-      logger.info("[Sync] LOAD_URL dup \u2014 ignored");
-      return;
-    }
     _loadReceived = true;
     if (_followerResyncTimer) {
       clearTimeout(_followerResyncTimer);
@@ -2091,6 +2143,16 @@ function _dispatch(msg) {
     return;
   }
 }
+function _recomputeSelfLatency() {
+  if (_cfg.selfLatency != null) return;
+  const allMs = [..._peerLatencies.values(), _ownLatencyMs];
+  const maxMs = Math.max(...allMs, 0);
+  const prev = _selfLatency;
+  _selfLatency = Math.max(0, maxMs - _ownLatencyMs);
+  if (_selfLatency !== prev) {
+    logger.info(`[Sync] latency-cal own=${_ownLatencyMs}ms max=${maxMs}ms selfLatency=${_selfLatency}ms peers=${JSON.stringify(Object.fromEntries(_peerLatencies))}`);
+  }
+}
 async function _runLeader() {
   _cfg.onStatus("Leader \u2014 fetching video URL\u2026");
   const url = _cfg.fetchVideoUrl ? await _cfg.fetchVideoUrl() : await _fetchVideoUrl();
@@ -2099,18 +2161,17 @@ async function _runLeader() {
   const _leaderIdx = _leaderAllUrls.indexOf(url);
   _wsSend({ type: "LOAD_URL", url, index: _leaderIdx >= 0 ? _leaderIdx : 0 });
   _cfg.onStatus("Leader \u2014 preparing engine\u2026");
-  _cfg.prepareEngine(url).then(() => {
-    if (_stopped) return;
-    logger.info("[Sync] leader engine READY");
-    _leaderReady = true;
-    _cfg.onStatus(`Leader ready \u2014 waiting for ${_peers.length} follower(s)\u2026`);
-    _checkAllReady();
-  }).catch((e) => {
-    logger.error(`[Sync] leader prepare failed: ${e == null ? void 0 : e.message} \u2014 retry in 5s`);
-    if (!_stopped) setTimeout(() => {
-      if (!_stopped) _runLeader();
-    }, 5e3);
-  });
+  try {
+    await _cfg.prepareEngine(url);
+  } catch (e) {
+    logger.error(`[Sync] leader prepare failed: ${e == null ? void 0 : e.message} \u2014 will retry on next peer scan`);
+    return;
+  }
+  if (_stopped) return;
+  logger.info("[Sync] leader engine READY");
+  _leaderReady = true;
+  _cfg.onStatus(`Leader ready \u2014 waiting for ${_peers.length} follower(s)\u2026`);
+  _checkAllReady();
 }
 function _checkAllReady() {
   if (!_leaderReady || _followerReady.size < _peers.length || _goSent || _stopped) return;
@@ -2283,6 +2344,7 @@ var Player = class {
     this.pendingSignature = null;
     this.isDownloadingContent = false;
     this.deviceDisplayName = "";
+    this.resellerBrandingLogoUrl = null;
     /**
      * In-player settings overlay. Renders device/network/config info, a tail of
      * recent log lines, and technician actions (Re-pair, Reload, Clear logs,
@@ -3344,12 +3406,15 @@ var Player = class {
   }
   // ── Main content loader (mirrors Tizen loadContent) ──────────────────────────
   async loadContent() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     logger.info("[Player] loadContent");
     try {
       const schedule = await this.api.getCurrentContent(this.deviceId);
+      if ((_a = schedule == null ? void 0 : schedule.resellerBranding) == null ? void 0 : _a.logoUrl) {
+        this.resellerBrandingLogoUrl = schedule.resellerBranding.logoUrl;
+      }
       if (!schedule || !Array.isArray(schedule.items) || !schedule.items.length) {
-        logger.warn(`[Player] loadContent: no items (schedule=${schedule ? "ok" : "null"} items=${(_b = (_a = schedule == null ? void 0 : schedule.items) == null ? void 0 : _a.length) != null ? _b : 0})`);
+        logger.warn(`[Player] loadContent: no items (schedule=${schedule ? "ok" : "null"} items=${(_c = (_b = schedule == null ? void 0 : schedule.items) == null ? void 0 : _b.length) != null ? _c : 0})`);
         this.cancelPlayback();
         this.playlistItems = [];
         this.lastContentSignature = null;
@@ -3364,14 +3429,14 @@ var Player = class {
         if (!this.syncActive && sg2["allTizen"] === false && sg2["relayUrl"]) {
           logger.info("[Player] re-entering sync group after restart");
           void this.initSyncGroup({
-            groupId: String((_c = sg2["syncGroupId"]) != null ? _c : ""),
+            groupId: String((_d = sg2["syncGroupId"]) != null ? _d : ""),
             relayUrl: String(sg2["relayUrl"]),
-            leaderPriority: ((_d = sg2["peers"]) != null ? _d : []).sort((a, b) => {
+            leaderPriority: ((_e = sg2["peers"]) != null ? _e : []).sort((a, b) => {
               var _a2, _b2;
               return ((_a2 = a.leaderPriority) != null ? _a2 : 999) - ((_b2 = b.leaderPriority) != null ? _b2 : 999);
             }).map((p) => p.deviceId),
-            expectedPeers: Math.max(1, ((_e = sg2["peers"]) != null ? _e : []).length - 1),
-            syncRelayMode: String((_f = sg2["syncRelayMode"]) != null ? _f : "cloud")
+            expectedPeers: Math.max(1, ((_f = sg2["peers"]) != null ? _f : []).length - 1),
+            syncRelayMode: String((_g = sg2["syncRelayMode"]) != null ? _g : "cloud")
           });
         } else if (this.localUrlCache.size === 0) {
           void this.preCacheItems(this.playlistItems).catch(() => {
@@ -3388,18 +3453,18 @@ var Player = class {
       logger.info(`[Player] new content (${schedule.items.length} items), downloading\u2026`);
       const sg = schedule;
       if (sg["allTizen"] === false && sg["relayUrl"]) {
-        const rawPeers = (_g = sg["peers"]) != null ? _g : [];
+        const rawPeers = (_h = sg["peers"]) != null ? _h : [];
         const sortedPeers = [...rawPeers].sort((a, b) => {
           var _a2, _b2;
           return ((_a2 = a.leaderPriority) != null ? _a2 : 999) - ((_b2 = b.leaderPriority) != null ? _b2 : 999);
         });
         this._pendingSyncRelayInfo = {
-          groupId: String((_h = sg["syncGroupId"]) != null ? _h : ""),
+          groupId: String((_i = sg["syncGroupId"]) != null ? _i : ""),
           relayUrl: String(sg["relayUrl"]),
           leaderPriority: sortedPeers.map((p) => p.deviceId),
           peerCount: Math.max(1, sortedPeers.length - 1),
           // count of OTHER peers
-          syncRelayMode: String((_i = sg["syncRelayMode"]) != null ? _i : "cloud")
+          syncRelayMode: String((_j = sg["syncRelayMode"]) != null ? _j : "cloud")
         };
         logger.info(`[Player] cross-OS sync group relay stored: ${this._pendingSyncRelayInfo.relayUrl}`);
       } else {
@@ -4101,6 +4166,11 @@ var Player = class {
     const pinnedLeaderId = (_e = leaderPriority[0]) != null ? _e : "";
     this.syncActive = true;
     const syncDeviceId = this.dbDeviceId || this.deviceId;
+    const playLatencyMs = await Promise.race([
+      measurePlayLatencyMs(urls[0]),
+      new Promise((res) => setTimeout(() => res(150), 800))
+      // 150 ms Android WebView default
+    ]);
     init({
       wsUrl,
       groupId,
@@ -4109,10 +4179,8 @@ var Player = class {
       expectedPeers,
       pinnedLeaderId,
       onStatus: (s) => logger.info(`[Sync] ${s}`),
-      // Android WebView has higher video decode startup latency (~100ms).
-      // Negative selfLatency tells the engine to call play() that many ms earlier
-      // so the first rendered frame aligns with other devices.
-      selfLatency: this.platform === "android" ? -100 : 0,
+      playLatencyMs,
+      // auto-cal: relay distributes all latencies, each device computes offset
       prepareEngine: (url) => prepare(url),
       schedulePlay: (epochMs) => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),
@@ -4194,6 +4262,10 @@ var Player = class {
     setPlaylist(urls);
     const net = await this.cfg.adapter.getNetworkInfo();
     this.syncActive = true;
+    const wallPlayLatencyMs = await Promise.race([
+      measurePlayLatencyMs(urls[0]),
+      new Promise((res) => setTimeout(() => res(150), 800))
+    ]);
     init({
       wsUrl,
       groupId,
@@ -4201,7 +4273,7 @@ var Player = class {
       selfIp: (_q = net.ipAddress) != null ? _q : "",
       expectedPeers,
       onStatus: (s) => logger.info(`[Sync/Wall] ${s}`),
-      selfLatency: this.platform === "android" ? -100 : 0,
+      playLatencyMs: wallPlayLatencyMs,
       prepareEngine: (url) => prepare(url),
       schedulePlay: (epochMs) => schedulePlayAt(epochMs),
       getEngineDuration: () => getDuration(),
@@ -4233,9 +4305,9 @@ var Player = class {
         <!-- card -->
         <div style="position:relative;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:24px;padding:48px 64px;text-align:center;min-width:340px;">
 
-          <!-- Nexari logo -->
+          <!-- Logo -->
           <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:${deviceLabel ? "8px" : "24px"};">
-            <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:48px;height:48px;" aria-hidden="true">
+            ${this.resellerBrandingLogoUrl ? `<img src="${this.resellerBrandingLogoUrl}" alt="Logo" style="max-height:48px;max-width:200px;object-fit:contain;" onerror="this.style.display='none'">` : `<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:48px;height:48px;" aria-hidden="true">
               <defs>
                 <linearGradient id="ng" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
                   <stop offset="0%" stop-color="#3a7bff"/>
@@ -4245,7 +4317,7 @@ var Player = class {
               <rect x="4" y="4" width="56" height="56" rx="14" stroke="url(#ng)" stroke-width="2.5"/>
               <path d="M20 44 V20 L44 44 V20" stroke="url(#ng)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
-            <div style="font-size:28px;font-weight:700;letter-spacing:.2em;background:linear-gradient(90deg,#3a7bff,#4ff2d1);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">NEXARI</div>
+            <div style="font-size:28px;font-weight:700;letter-spacing:.2em;background:linear-gradient(90deg,#3a7bff,#4ff2d1);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">NEXARI</div>`}
           </div>
 
           ${deviceLabel ? `<div style="font-size:13px;color:#666;margin-bottom:20px;">${deviceLabel}</div>` : ""}

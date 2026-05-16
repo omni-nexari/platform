@@ -55,6 +55,7 @@ export declare class Player {
     private pendingSignature;
     private isDownloadingContent;
     private deviceDisplayName;
+    private resellerBrandingLogoUrl;
     constructor(cfg: PlayerConfig);
     start(): Promise<void>;
     stop(): void;

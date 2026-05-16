@@ -12,6 +12,13 @@ export interface SyncConfig {
     /** When this device is elected leader, call this to get its own local URL. */
     fetchVideoUrl?: () => Promise<string>;
     /**
+     * Measured play→first-frame latency for this device (ms). Distributed to all
+     * peers via PEERS. Each device computes selfLatency = max(all) - own so the
+     * slowest decoder is the reference. Works for any hardware mix.
+     * Takes precedence over selfLatency when provided.
+     */
+    playLatencyMs?: number;
+    /**
      * Platform startup latency compensation in milliseconds. Negative = call play()
      * earlier to compensate for a slow decoder (e.g. Android WebView). Positive =
      * delay play() to hold back a fast device. Overrides DEVICE_LATENCY_MS table.
