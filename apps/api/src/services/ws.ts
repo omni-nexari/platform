@@ -226,6 +226,27 @@ export function getLatestFrame(deviceId: string): { buf: Buffer; updatedAt: Date
 type LiveFrame = (dataBase64: string) => void;
 const liveViewers = new Map<string, Set<LiveFrame>>();
 
+// ── BLE scan-result SSE push ─────────────────────────────────────────────────
+type BleScanPush = (data: { beacons: unknown[]; scannedAt: string }) => void;
+const bleScanSubscribers = new Map<string, Set<BleScanPush>>();
+
+export function registerBleScanSubscriber(deviceId: string, cb: BleScanPush): void {
+  if (!bleScanSubscribers.has(deviceId)) bleScanSubscribers.set(deviceId, new Set());
+  bleScanSubscribers.get(deviceId)!.add(cb);
+}
+
+export function unregisterBleScanSubscriber(deviceId: string, cb: BleScanPush): void {
+  bleScanSubscribers.get(deviceId)?.delete(cb);
+  if (bleScanSubscribers.get(deviceId)?.size === 0) bleScanSubscribers.delete(deviceId);
+}
+
+export function emitBleScanResult(deviceId: string, beacons: unknown[], scannedAt: Date): void {
+  const subs = bleScanSubscribers.get(deviceId);
+  if (!subs || subs.size === 0) return;
+  const payload = { beacons, scannedAt: scannedAt.toISOString() };
+  for (const cb of subs) cb(payload);
+}
+
 export function registerLiveViewer(deviceId: string, cb: LiveFrame): void {
   if (!liveViewers.has(deviceId)) liveViewers.set(deviceId, new Set());
   liveViewers.get(deviceId)!.add(cb);
@@ -617,7 +638,9 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
   // ── ble_scan_result: BLE beacon scan result from device ───────────────────
   if (msg.type === 'ble_scan_result') {
     const beacons = msg.payload ?? [];
-    await db.insert(bleScanResults).values({ deviceId, beacons: beacons as never, scannedAt: new Date() });
+    const scannedAt = new Date();
+    await db.insert(bleScanResults).values({ deviceId, beacons: beacons as never, scannedAt });
+    emitBleScanResult(deviceId, beacons, scannedAt);
     return;
   }
 

@@ -31,6 +31,9 @@ import {
   registerLiveViewer,
   unregisterLiveViewer,
   getLatestFrame,
+  registerBleScanSubscriber,
+  unregisterBleScanSubscriber,
+  emitBleScanResult,
 } from '../services/ws.js';
 import { notifyDeviceStatusChange } from '../services/notifications.js';
 import { ensureEpaperVariant, type EpaperFitMode } from '../services/epaper-variants.js';
@@ -1914,8 +1917,46 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!auth) return;
     const body = req.body as { beacons?: unknown[] };
     const beacons = Array.isArray(body?.beacons) ? body.beacons : [];
-    await db.insert(bleScanResults).values({ deviceId: auth.deviceId, beacons: beacons as never, scannedAt: new Date() });
+    const scannedAt = new Date();
+    await db.insert(bleScanResults).values({ deviceId: auth.deviceId, beacons: beacons as never, scannedAt });
+    emitBleScanResult(auth.deviceId, beacons, scannedAt);
     return reply.send({ ok: true });
+  });
+
+  // ── GET /:id/ble-scan/stream ─ SSE push of live BLE scan results ───────────
+  app.get('/:id/ble-scan/stream', { config: { rateLimit: false }, onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    reply.raw.write(':\n\n');
+
+    const push = (data: { beacons: unknown[]; scannedAt: string }) => {
+      if (!reply.raw.writableEnded) reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+    registerBleScanSubscriber(id, push);
+
+    const heartbeat = setInterval(() => {
+      if (reply.raw.writableEnded) return;
+      reply.raw.write(':\n\n');
+    }, 15_000);
+
+    req.raw.on('close', () => {
+      clearInterval(heartbeat);
+      unregisterBleScanSubscriber(id, push);
+    });
+
+    await new Promise<void>((resolve) => { req.raw.on('close', resolve); });
   });
 
   // ── GET /devices/device/schedule ─ full schedule + content manifest ─────────

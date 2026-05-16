@@ -163,24 +163,27 @@ export default function DeviceRulesTab({
   const { data: latestScan, refetch: refetchScan } = useQuery<{ beacons: BleBeacon[]; scannedAt: string } | null>({
     queryKey: ['ble-scan', deviceId],
     queryFn: () => api.get(`/devices/${deviceId}/ble-scan/latest`),
-    refetchInterval: 16000, // match TV scan cycle (15s interval)
+    staleTime: Infinity, // SSE handles live updates; REST is only for initial load
   });
+
+  // Real-time BLE scan updates via SSE
+  useEffect(() => {
+    const es = new EventSource(`/api/devices/${deviceId}/ble-scan/stream`);
+    es.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data) as { beacons: BleBeacon[]; scannedAt: string };
+        qc.setQueryData(['ble-scan', deviceId], data);
+        setScanning(false);
+      } catch { /* ignore malformed events */ }
+    };
+    return () => es.close();
+  }, [deviceId, qc]);
 
   const triggerScan = useMutation({
     mutationFn: () => api.post(`/devices/${deviceId}/ble-scan`, {}),
     onSuccess: () => {
       setScanning(true);
-      toast.info('BLE scan started — results ready in ~15 seconds');
-      // Poll for results
-      let tries = 0;
-      const poll = setInterval(async () => {
-        tries++;
-        await refetchScan();
-        if (tries >= 6) {
-          clearInterval(poll);
-          setScanning(false);
-        }
-      }, 3000);
+      toast.info('BLE scan started — results will appear automatically');
     },
     onError: () => toast.error('Failed to start BLE scan'),
   });
@@ -317,7 +320,7 @@ export default function DeviceRulesTab({
 
       {/* ── Rule list ───────────────────────────────────────────────────── */}
       {rules.length > 0 && (
-        <p className="text-[10px] text-[var(--text-muted)]">Device auto-scans every 15 s · status updates every 16 s</p>
+        <p className="text-[10px] text-[var(--text-muted)]">Device auto-scans every 15 s · status updates in real-time</p>
       )}
       {rulesLoading ? (
         <div className="text-sm text-[var(--text-muted)]">Loading rules…</div>
