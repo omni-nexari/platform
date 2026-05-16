@@ -318,6 +318,7 @@ window.BleManager = (function () {
     if (_periodicTimer) return;
     _periodicTimer = setInterval(function () {
       _runScan(PERIODIC_SCAN_MS, function (beaconList) {
+        _postScanResults(beaconList);
         var matchedRule = _evaluateRules(beaconList);
         if (matchedRule) {
           if (_activeRuleId !== matchedRule.id) {
