@@ -13,6 +13,13 @@ interface ContentItem {
   mimeType?: string | null;
 }
 
+interface ContentListResponse {
+  items: ContentItem[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 interface Props {
   workspaceId: string;
   /** Called when the user clicks an image to add it to the canvas. */
@@ -24,8 +31,16 @@ export default function MediaLibraryPanel({ workspaceId, onSelect }: Props) {
 
   const { data, isLoading, isError } = useQuery<ContentItem[]>({
     queryKey: ['canvas-media', workspaceId],
-    queryFn: () =>
-      api.get<ContentItem[]>(`/content?workspaceId=${workspaceId}&type=image&limit=200`),
+    queryFn: async () => {
+      const res = await api.get<ContentListResponse | ContentItem[]>(
+        `/content?workspaceId=${workspaceId}&type=image&limit=200`,
+      );
+      // API returns paginated { items, total, ... }; handle both shapes defensively
+      if (res && !Array.isArray(res) && Array.isArray((res as ContentListResponse).items)) {
+        return (res as ContentListResponse).items;
+      }
+      return Array.isArray(res) ? res : [];
+    },
     enabled: !!workspaceId,
     staleTime: 60_000,
   });

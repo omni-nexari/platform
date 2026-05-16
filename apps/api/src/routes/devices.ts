@@ -4,7 +4,7 @@ import { createReadStream, existsSync, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import AdmZip from 'adm-zip';
-import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents, deviceGroupMembers, deviceGroups, calendarConnections } from '@signage/db';
+import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents, deviceGroupMembers, deviceGroups, calendarConnections, deviceRules, bleScanResults } from '@signage/db';
 import { eq, and, isNull, desc, asc, inArray, sql, ilike, gte, lte, lt } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -3025,6 +3025,121 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
 
     return reply.status(201).send({ inserted: rows.length });
+  });
+
+  // ── GET /:id/rules — list device BLE rules ──────────────────────────────
+  app.get('/:id/rules', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+    const rules = await db.query.deviceRules.findMany({
+      where: and(eq(deviceRules.workspaceId, device.workspaceId!), eq(deviceRules.deviceId, id)),
+      orderBy: [desc(deviceRules.priority), asc(deviceRules.createdAt)],
+    });
+    return reply.send({ rules });
+  });
+
+  // ── POST /:id/rules — create a BLE rule ─────────────────────────────────
+  app.post('/:id/rules', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const body = req.body as { name: string; enabled?: boolean; conditions: unknown; action: unknown; priority?: number };
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+    if (!body.name || !body.conditions || !body.action) return reply.status(400).send({ error: 'name, conditions and action are required' });
+    const [rule] = await db.insert(deviceRules).values({
+      workspaceId: device.workspaceId!,
+      deviceId: id,
+      name: body.name,
+      enabled: body.enabled ?? true,
+      conditions: body.conditions as never,
+      action: body.action as never,
+      priority: body.priority ?? 0,
+    }).returning();
+    return reply.status(201).send(rule);
+  });
+
+  // ── PUT /:id/rules/:ruleId — update a BLE rule ───────────────────────────
+  app.put('/:id/rules/:ruleId', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id, ruleId } = req.params as { id: string; ruleId: string };
+    const body = req.body as Partial<{ name: string; enabled: boolean; conditions: unknown; action: unknown; priority: number }>;
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+    const rule = await db.query.deviceRules.findFirst({
+      where: and(eq(deviceRules.id, ruleId), eq(deviceRules.deviceId, id)),
+    });
+    if (!rule) return reply.status(404).send({ error: 'Rule not found' });
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    if (body.name      != null) patch.name       = body.name;
+    if (body.enabled   != null) patch.enabled     = body.enabled;
+    if (body.conditions != null) patch.conditions = body.conditions;
+    if (body.action    != null) patch.action      = body.action;
+    if (body.priority  != null) patch.priority    = body.priority;
+    const [updated] = await db.update(deviceRules).set(patch as never).where(eq(deviceRules.id, ruleId)).returning();
+    return reply.send(updated);
+  });
+
+  // ── DELETE /:id/rules/:ruleId — delete a BLE rule ───────────────────────
+  app.delete('/:id/rules/:ruleId', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id, ruleId } = req.params as { id: string; ruleId: string };
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+    await db.delete(deviceRules).where(and(eq(deviceRules.id, ruleId), eq(deviceRules.deviceId, id)));
+    return reply.status(204).send();
+  });
+
+  // ── POST /:id/rules/publish — push rules to device via WS ───────────────
+  app.post('/:id/rules/publish', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+    const rows = await db.query.deviceRules.findMany({
+      where: and(eq(deviceRules.workspaceId, device.workspaceId!), eq(deviceRules.deviceId, id)),
+      orderBy: [desc(deviceRules.priority), asc(deviceRules.createdAt)],
+    });
+    sendCommand(id, { type: 'device_rules', rules: rows } as never);
+    return reply.send({ ok: true, ruleCount: rows.length });
+  });
+
+  // ── POST /:id/ble-scan — tell device to run a BLE scan ──────────────────
+  app.post('/:id/ble-scan', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+    sendCommand(id, { type: 'ble_scan' } as never);
+    return reply.send({ ok: true });
+  });
+
+  // ── GET /:id/ble-scan/latest — latest BLE scan result ───────────────────
+  app.get('/:id/ble-scan/latest', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+    const latest = await db.query.bleScanResults.findFirst({
+      where: eq(bleScanResults.deviceId, id),
+      orderBy: [desc(bleScanResults.scannedAt)],
+    });
+    return reply.send(latest ?? null);
   });
 }
 

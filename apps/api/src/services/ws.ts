@@ -1,4 +1,4 @@
-import { db, devices, deviceHeartbeats, deviceScreenshots, playEvents, syncGroupMembers, syncGroups } from '@signage/db';
+import { db, devices, deviceHeartbeats, deviceScreenshots, playEvents, syncGroupMembers, syncGroups, bleScanResults } from '@signage/db';
 import { eq, and } from 'drizzle-orm';
 import { DeviceMessageSchema } from '@signage/shared';
 import { writeFile, mkdir } from 'node:fs/promises';
@@ -611,6 +611,13 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
   if (msg.type === 'installed_apps') {
     const apps = Array.isArray(msg.payload) ? msg.payload : [];
     await db.update(devices).set({ installedApps: apps, updatedAt: new Date() }).where(eq(devices.id, deviceId));
+    return;
+  }
+
+  // ── ble_scan_result: BLE beacon scan result from device ───────────────────
+  if (msg.type === 'ble_scan_result') {
+    const beacons = Array.isArray(msg.payload) ? msg.payload : [];
+    await db.insert(bleScanResults).values({ deviceId, beacons: beacons as never, scannedAt: new Date() });
     return;
   }
 

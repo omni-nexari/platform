@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -35,10 +35,21 @@ export default function CanvasEditorPage() {
     }
   }, [project, loadProject]);
 
-  // Reset store on unmount
+  // Reset store only when genuinely navigating away (id changes or component truly unmounts).
+  // Using a ref so StrictMode's simulated remount doesn't wipe state before loadProject re-fires.
+  const idRef = useRef(id);
+  idRef.current = id;
   useEffect(() => {
-    return () => resetProject();
-  }, [resetProject]);
+    return () => {
+      // Defer to next microtask — if StrictMode immediately remounts with the same id,
+      // loadProject will have re-fired before reset takes effect.
+      const capturedId = idRef.current;
+      Promise.resolve().then(() => {
+        if (idRef.current === capturedId) resetProject();
+      });
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Keyboard shortcuts
   useCanvasShortcuts();
