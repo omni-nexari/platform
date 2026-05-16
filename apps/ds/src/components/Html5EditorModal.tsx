@@ -71,7 +71,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
-export default function Html5EditorModal({ contentId, contentName, onClose }: Props) {
+export default function Html5EditorModal({ contentId, contentName, onClose, embedded }: Props) {
   const qc = useQueryClient();
   const [view, setView] = useState<'edit' | 'preview'>('edit');
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
