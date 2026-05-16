@@ -6,12 +6,11 @@ import {
   Plus, Grid3X3, Grid2X2, List, Image, Video,
   Globe, Code2, FileText, Presentation, Clock, Trash2,
   MoreVertical, Film, AlertTriangle, Check, Paintbrush, Monitor,
-  LayoutGrid, ListVideo, CalendarDays, Scan, Tv, Database, Link2, FileCode2,
+  LayoutGrid, ListVideo, CalendarDays, Scan, Tv, Activity, FileCode2,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import UploadModal from '../../components/UploadModal.js';
-import DatasyncModal from '../../components/DatasyncModal.js';
-import DatalinkModal from '../../components/DatalinkModal.js';
+import LiveDataModal from '../../components/LiveDataModal.js';
 
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import AuthImg from '../../components/AuthImg.js';
@@ -783,9 +782,8 @@ export default function ContentPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
 
-  const [uploadOpen, setUploadOpen]   = useState(false);
-  const [datasyncOpen, setDatasyncOpen] = useState(false);
-  const [datalinkOpen, setDatalinkOpen] = useState(false);
+  const [uploadOpen, setUploadOpen]     = useState(false);
+  const [livedataOpen, setLivedataOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -985,20 +983,12 @@ export default function ContentPage() {
           onClick: () => navigate(`/workspaces/${wsId}/template/new`),
         },
         {
-          id: 'datasync',
-          label: 'Datasync',
-          description: 'JSON / RSS / Sheets feed',
-          icon: <Database size={16} />,
-          iconClassName: 'bg-lime-500/15 text-lime-400',
-          onClick: () => setDatasyncOpen(true),
-        },
-        {
-          id: 'datalink',
-          label: 'Datalink',
-          description: 'Live data stream overlay',
-          icon: <Link2 size={16} />,
-          iconClassName: 'bg-amber-500/15 text-amber-400',
-          onClick: () => setDatalinkOpen(true),
+          id: 'livedata',
+          label: 'LiveData',
+          description: 'Feeds & real-time streams',
+          icon: <Activity size={16} />,
+          iconClassName: 'bg-sky-500/15 text-sky-400',
+          onClick: () => setLivedataOpen(true),
         },
       ]
     : [];
@@ -1318,11 +1308,8 @@ export default function ContentPage() {
       {uploadOpen && wsId && (
         <UploadModal workspaceId={wsId} onClose={() => setUploadOpen(false)} />
       )}
-      {datasyncOpen && wsId && (
-        <DatasyncModal workspaceId={wsId} onClose={() => setDatasyncOpen(false)} />
-      )}
-      {datalinkOpen && wsId && (
-        <DatalinkModal workspaceId={wsId} onClose={() => setDatalinkOpen(false)} />
+      {livedataOpen && wsId && (
+        <LiveDataModal workspaceId={wsId} onClose={() => setLivedataOpen(false)} />
       )}
 
       {bulkTagOpen && wsId && (
