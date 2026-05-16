@@ -10,8 +10,6 @@ import {
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import UploadModal from '../../components/UploadModal.js';
-import IptvModal from '../../components/IptvModal.js';
-import TemplatePickerModal from '../../components/TemplatePickerModal.js';
 import DatasyncModal from '../../components/DatasyncModal.js';
 import DatalinkModal from '../../components/DatalinkModal.js';
 
@@ -786,8 +784,6 @@ export default function ContentPage() {
   const queryClient = useQueryClient();
 
   const [uploadOpen, setUploadOpen]   = useState(false);
-  const [iptvOpen, setIptvOpen]         = useState(false);
-  const [templateOpen, setTemplateOpen] = useState(false);
   const [datasyncOpen, setDatasyncOpen] = useState(false);
   const [datalinkOpen, setDatalinkOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -978,7 +974,7 @@ export default function ContentPage() {
           description: 'Live TV channels',
           icon: <Tv size={16} />,
           iconClassName: 'bg-orange-500/15 text-orange-400',
-          onClick: () => setIptvOpen(true),
+          onClick: () => navigate(`/workspaces/${wsId}/iptv/new`),
         },
         {
           id: 'template',
@@ -986,7 +982,7 @@ export default function ContentPage() {
           description: 'Start from a template',
           icon: <FileCode2 size={16} />,
           iconClassName: 'bg-cyan-500/15 text-cyan-400',
-          onClick: () => setTemplateOpen(true),
+          onClick: () => navigate(`/workspaces/${wsId}/template/new`),
         },
         {
           id: 'datasync',
@@ -1321,12 +1317,6 @@ export default function ContentPage() {
       {/* ── Upload modal ── */}
       {uploadOpen && wsId && (
         <UploadModal workspaceId={wsId} onClose={() => setUploadOpen(false)} />
-      )}
-      {iptvOpen && wsId && (
-        <IptvModal workspaceId={wsId} onClose={() => setIptvOpen(false)} />
-      )}
-      {templateOpen && wsId && (
-        <TemplatePickerModal workspaceId={wsId} onClose={() => setTemplateOpen(false)} />
       )}
       {datasyncOpen && wsId && (
         <DatasyncModal workspaceId={wsId} onClose={() => setDatasyncOpen(false)} />

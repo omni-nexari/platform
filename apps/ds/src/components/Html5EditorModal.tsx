@@ -44,6 +44,8 @@ interface Props {
   contentId: string;
   contentName: string;
   onClose: () => void;
+  /** When true, renders inline (no fixed overlay/backdrop) — used inside full-page wizards. */
+  embedded?: boolean;
 }
 
 function languageFor(path: string): string {
@@ -192,37 +194,26 @@ export default function Html5EditorModal({ contentId, contentName, onClose }: Pr
   const language = selectedPath ? languageFor(selectedPath) : 'plaintext';
   const editorReadOnly = !selectedPath || (body && !list?.files.find((f) => f.path === selectedPath)?.isText);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="modal-backdrop" onClick={tryClose} />
-      <div className="modal-shell" style={{ width: '95vw', maxWidth: 1400, height: '90vh' }}>
-        {/* Header */}
-        <div className="modal-header">
-          <h2 className="modal-title flex items-center gap-2">
-            <FileCode2 size={18} /> {contentName}
-            {dirty && <span className="text-xs text-amber-400">\u2022 unsaved</span>}
-          </h2>
-          <div className="flex items-center gap-2">
-            <div className="flex rounded-md overflow-hidden border border-[var(--border)]">
-              <button
-                onClick={() => setView('edit')}
-                className={`px-3 py-1 text-xs ${view === 'edit' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-muted)]'}`}
-              >
-                Edit
-              </button>
-              <button
-                onClick={() => { setView('preview'); setPreviewKey(Date.now()); }}
-                className={`px-3 py-1 text-xs flex items-center gap-1 ${view === 'preview' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-muted)]'}`}
-              >
-                <Eye size={12} /> Preview
-              </button>
-            </div>
-            <button onClick={tryClose} className="modal-close"><X size={20} /></button>
-          </div>
-        </div>
+  // ── Shared sub-elements ──────────────────────────────────────────────────
+  const viewToggle = (
+    <div className="flex rounded-md overflow-hidden border border-[var(--border)]">
+      <button
+        onClick={() => setView('edit')}
+        className={`px-3 py-1 text-xs ${view === 'edit' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-muted)]'}`}
+      >
+        Edit
+      </button>
+      <button
+        onClick={() => { setView('preview'); setPreviewKey(Date.now()); }}
+        className={`px-3 py-1 text-xs flex items-center gap-1 ${view === 'preview' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-muted)]'}`}
+      >
+        <Eye size={12} /> Preview
+      </button>
+    </div>
+  );
 
-        {/* Body */}
-        <div className="flex-1 min-h-0 flex">
+  const editorBody = (
+    <div className="flex-1 min-h-0 flex">
           {/* File tree */}
           <aside className="w-64 shrink-0 border-r border-[var(--border)] bg-[var(--surface)] flex flex-col">
             <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
@@ -341,7 +332,40 @@ export default function Html5EditorModal({ contentId, contentName, onClose }: Pr
               </div>
             )}
           </main>
+    </div>
+  );
+
+  if (embedded) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="modal-header">
+          <span className="modal-title flex items-center gap-2">
+            <FileCode2 size={18} /> {contentName}
+            {dirty && <span className="text-xs text-amber-400">\u2022 unsaved</span>}
+          </span>
+          {viewToggle}
         </div>
+        {editorBody}
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="modal-backdrop" onClick={tryClose} />
+      <div className="modal-shell" style={{ width: '95vw', maxWidth: 1400, height: '90vh' }}>
+        {/* Header */}
+        <div className="modal-header">
+          <h2 className="modal-title flex items-center gap-2">
+            <FileCode2 size={18} /> {contentName}
+            {dirty && <span className="text-xs text-amber-400">\u2022 unsaved</span>}
+          </h2>
+          <div className="flex items-center gap-2">
+            {viewToggle}
+            <button onClick={tryClose} className="modal-close"><X size={20} /></button>
+          </div>
+        </div>
+        {editorBody}
       </div>
     </div>
   );

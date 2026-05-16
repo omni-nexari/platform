@@ -68,6 +68,8 @@ import AnalyticsPage from './pages/workspace/AnalyticsPage.js';
 import SyncPlaylistEditorPage from './pages/workspace/SyncPlaylistEditorPage.js';
 import ZoneLayoutEditorPage from './pages/workspace/ZoneLayoutEditorPage.js';
 import CalendarEditorPage from './pages/workspace/CalendarEditorPage.js';
+import IptvEditorPage from './pages/workspace/IptvEditorPage.js';
+import TemplateEditorPage from './pages/workspace/TemplateEditorPage.js';
 import LiveLinkFaceEditorPage from './pages/workspace/LiveLinkFaceEditorPage.js';
 import { buildApiUrl } from './lib/api.js';
 import KioskDisplayPage from './pages/kiosk/KioskDisplayPage.js';
@@ -370,6 +372,8 @@ export default function App() {
         <Route path="/workspaces/:wsId/sync-groups" element={<Navigate to="../devices/groups" replace />} />
         <Route path="/workspaces/:wsId/zone-layout/:id" element={<ZoneLayoutEditorPage />} />
         <Route path="/workspaces/:wsId/calendar/:id" element={<CalendarEditorPage />} />
+        <Route path="/workspaces/:wsId/iptv/new" element={<IptvEditorPage />} />
+        <Route path="/workspaces/:wsId/template/new" element={<TemplateEditorPage />} />
         <Route path="/workspaces/:wsId/live-link-face/:id" element={<LiveLinkFaceEditorPage />} />
       </Route>
 
