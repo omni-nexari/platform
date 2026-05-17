@@ -1833,7 +1833,7 @@ export function DeviceDetailContent({
           <SectionCardHeader>
             <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
               <Tv2 className="w-3.5 h-3.5" />Installed Apps
-              <Badge tone="neutral">{device.installedApps.length}</Badge>
+              <Badge tone="neutral">{device.installedApps.filter(a => a.show).length}</Badge>
             </h2>
             <button
               type="button"
@@ -1848,7 +1848,7 @@ export function DeviceDetailContent({
           <SectionCardBody>
             <p className="text-[11px] text-[var(--text-muted)] mb-3">Click an app to launch it on the TV. Use <strong>Return to Nexari</strong> to bring the player back.</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-              {device.installedApps.map((app) => (
+              {device.installedApps.filter(a => a.show).map((app) => (
                 <button
                   key={app.id}
                   type="button"
