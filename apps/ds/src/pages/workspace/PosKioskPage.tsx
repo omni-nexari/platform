@@ -16,6 +16,7 @@ import {
   RotateCcw,
   ShoppingCart,
   Smartphone,
+  Tablet,
   Wifi,
   WifiOff,
 } from 'lucide-react';
@@ -145,7 +146,7 @@ export default function PosKioskPage() {
   const [lookupEmail, setLookupEmail] = useState('');
   const [verifyResult, setVerifyResult] = useState<KioskVerifyResponse | null>(null);
   const [redeemPoints, setRedeemPoints] = useState('');
-  const [copiedType, setCopiedType] = useState<'kiosk-portrait' | 'kiosk-landscape' | 'kitchen' | null>(null);
+  const [copiedType, setCopiedType] = useState<'kiosk-portrait' | 'kiosk-landscape' | 'kitchen' | 'waiter' | null>(null);
 
   const { data: displayTokens, refetch: refetchTokens } = useQuery<DisplayTokens>({
     queryKey: ['pos-display-tokens', wsId],
@@ -179,12 +180,17 @@ export default function PosKioskPage() {
     return `${base}/kitchen/${wsId}?dt=${token}`;
   }
 
-  async function handleCopy(type: 'kiosk-portrait' | 'kiosk-landscape' | 'kitchen', token: string) {
-    const text = buildDisplayUrl(type, token);
+  function buildPosUrl() {
+    const base = window.location.origin
+      .replace(/:5173$/, ':3000')
+      .replace(/:5174$/, ':3000');
+    return `${base}/workspaces/${wsId}/pos`;
+  }
+
+  async function copyText(text: string, type: typeof copiedType) {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text);
     } else {
-      // Fallback for non-secure HTTP contexts (e.g. LAN IP access)
       const ta = document.createElement('textarea');
       ta.value = text;
       ta.style.position = 'fixed';
@@ -197,6 +203,10 @@ export default function PosKioskPage() {
     }
     setCopiedType(type);
     setTimeout(() => setCopiedType(null), 2000);
+  }
+
+  async function handleCopy(type: 'kiosk-portrait' | 'kiosk-landscape' | 'kitchen', token: string) {
+    await copyText(buildDisplayUrl(type, token), type);
   }
 
   const { data: devices = [], isLoading: devicesLoading } = useQuery<DeviceListItem[]>({
@@ -320,7 +330,7 @@ export default function PosKioskPage() {
           </div>
         </SectionCardHeader>
         <SectionCardBody>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
             {/* Kiosk — Portrait */}
             <div className="space-y-3">
               <div className="flex items-center gap-2">
@@ -395,6 +405,30 @@ export default function PosKioskPage() {
               ) : (
                 <p className="text-xs text-[var(--text-muted)]">Generate a kiosk token first.</p>
               )}
+            </div>
+
+            {/* Waiter Tablet */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Tablet className="h-4 w-4 text-[var(--accent)]" />
+                <span className="text-sm font-semibold text-[var(--text)]">Waiter Tablet</span>
+              </div>
+              <p className="text-xs text-[var(--text-muted)]">Authenticated POS order page for staff tablets and stations.</p>
+              <div className="flex items-center gap-2">
+                <input
+                  readOnly
+                  value={buildPosUrl()}
+                  className="flex-1 truncate rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-muted)] outline-none"
+                />
+                <button
+                  className="ui-btn-secondary shrink-0 flex items-center gap-1.5 text-xs"
+                  onClick={() => void copyText(buildPosUrl(), 'waiter')}
+                >
+                  <Copy className="h-3.5 w-3.5" />{copiedType === 'waiter' ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+              <QrCanvas url={buildPosUrl()} />
+              <p className="text-xs text-[var(--text-muted)]">Staff must be logged in to use this URL.</p>
             </div>
 
             {/* Kitchen */}
