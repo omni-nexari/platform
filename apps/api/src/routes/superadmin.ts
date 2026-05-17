@@ -1781,6 +1781,33 @@ export async function superAdminRoutes(app: FastifyInstance) {
         .where(eq(managementCompanies.id, id))
         .returning();
 
+      // Cascade allowedModules → child organisations' settings.modules so
+      // their sidebars reflect the change immediately.
+      if (body.data.allowedModules !== undefined && body.data.allowedModules !== company.allowedModules) {
+        const childOrgs = await db
+          .select({ id: organisations.id, settings: organisations.settings })
+          .from(organisations)
+          .where(
+            and(
+              eq(organisations.managementCompanyId, id),
+              isNull(organisations.deletedAt),
+            ),
+          );
+        for (const org of childOrgs) {
+          let parsed: Record<string, unknown> = {};
+          try {
+            parsed = JSON.parse(org.settings || '{}') as Record<string, unknown>;
+          } catch {
+            parsed = {};
+          }
+          parsed.modules = body.data.allowedModules;
+          await db
+            .update(organisations)
+            .set({ settings: JSON.stringify(parsed), updatedAt: new Date() })
+            .where(eq(organisations.id, org.id));
+        }
+      }
+
       return reply.send(updated);
     },
   );
