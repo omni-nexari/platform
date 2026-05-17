@@ -32,6 +32,7 @@ import { integrationsRoutes } from './integrations.js';
 import { monitoringRoutes } from './monitoring.js';
 import { supportRoutes } from './support.js';
 import { datasyncRoutes } from './datasync.js';
+import { videowallPlaylistRoutes } from './videowall-playlists.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoute);
@@ -67,5 +68,6 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(monitoringRoutes, { prefix: '/monitoring' });
   await app.register(supportRoutes, { prefix: '/support' });
   await app.register(datasyncRoutes, { prefix: '/datasync' });
+  await app.register(videowallPlaylistRoutes, { prefix: '/videowall-playlists' });
 }
 

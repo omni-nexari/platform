@@ -15,6 +15,7 @@ export * from './content.js';
 export * from './content-versions.js';
 export * from './playlists.js';
 export * from './playlist-folders.js';
+export * from './videowall-playlists.js';
 export * from './schedules.js';
 export * from './tags.js';
 export * from './smart-views.js';

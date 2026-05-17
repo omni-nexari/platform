@@ -484,6 +484,13 @@
             "when": 1778741800000,
             "tag": "0068_device_installed_apps",
             "breakpoints": true
+        },
+        {
+            "idx": 69,
+            "version": "7",
+            "when": 1778743600000,
+            "tag": "0069_videowall_playlists",
+            "breakpoints": true
         }
     ]
 }

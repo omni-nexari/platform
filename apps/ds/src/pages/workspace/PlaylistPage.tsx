@@ -7,8 +7,8 @@ import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTag
 import BulkTagModal from '../../components/BulkTagModal.js';
 import DevicePickerModal from '../../components/DevicePickerModal.js';
 import {
-  Plus, Layers, Layers2, Clock, MoreVertical,
-  Copy, Trash2, Play, Check, Monitor, AlertTriangle,
+  Plus, Layers, Layers2, LayoutGrid, Clock, MoreVertical,
+  Copy, Trash2, Play, Check, Monitor, AlertTriangle, Send,
 } from 'lucide-react';
 import AuthImg from '../../components/AuthImg.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
@@ -53,11 +53,23 @@ interface SyncPlaylist {
   updatedAt: string;
 }
 
+interface VideoWallPlaylist {
+  id: string;
+  name: string;
+  groupId: string | null;
+  group: { id: string; name: string; videoWallCols: number | null; videoWallRows: number | null } | null;
+  slotCount: number;
+  previewContentIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 type UnifiedPlaylist =
   | (Playlist & { _type: 'general' })
-  | (SyncPlaylist & { _type: 'sync' });
+  | (SyncPlaylist & { _type: 'sync' })
+  | (VideoWallPlaylist & { _type: 'videowall' });
 
-type TypeFilter = 'all' | 'general' | 'sync';
+type TypeFilter = 'all' | 'general' | 'sync' | 'videowall';
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -358,6 +370,122 @@ function SyncPlaylistCard({ sp, onEdit, onDelete, onPublish }: {
   );
 }
 
+// ── VideoWall playlist card ───────────────────────────────────────────────
+
+function VideoWallPlaylistCard({ vwp, onEdit, onDelete }: {
+  vwp: VideoWallPlaylist;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
+
+  const cols = vwp.group?.videoWallCols ?? '?';
+  const rows = vwp.group?.videoWallRows ?? '?';
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onEdit}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => { setHovered(false); setMenuOpen(false); }}
+      onKeyDown={(e) => e.key === 'Enter' && onEdit()}
+      className="ui-entity-card relative flex flex-col cursor-pointer group"
+    >
+      {/* Thumbnail */}
+      <div className="ui-media-frame aspect-video">
+        {vwp.previewContentIds.length > 0 ? (
+          <div className="absolute inset-0 flex items-center justify-center bg-[var(--surface-raised)]">
+            <div className="flex items-center">
+              {vwp.previewContentIds.slice(0, 4).map((cid, idx) => (
+                <div
+                  key={cid}
+                  className="relative shrink-0 h-16 w-[72px] rounded-lg overflow-hidden border-2 border-[var(--card)] shadow-md"
+                  style={{ marginLeft: idx === 0 ? 0 : -18, zIndex: idx }}
+                >
+                  <AuthImg
+                    itemId={cid}
+                    className="w-full h-full object-cover"
+                    fallback={<div className="w-full h-full flex items-center justify-center bg-[var(--surface)]"><LayoutGrid size={16} className="text-[var(--text-muted)]" /></div>}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <LayoutGrid size={28} className="text-[var(--text-muted)]" />
+          </div>
+        )}
+
+        {/* Video Wall badge */}
+        <span
+          className="ui-media-badge absolute top-2 left-2 z-20"
+          style={{ background: 'rgba(20,184,166,0.9)', color: 'white' }}
+        >
+          Video Wall
+        </span>
+
+        {hovered && (
+          <div className="ui-media-hover-overlay">
+            <div className="ui-media-hover-play">
+              <LayoutGrid size={16} className="text-white" />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="ui-entity-card-body px-3 py-3">
+        <p className="ui-entity-card-title text-sm truncate" title={vwp.name}>
+          {vwp.name}
+        </p>
+        <div className="ui-entity-card-meta mt-1">
+          {vwp.group ? (
+            <span className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+              <LayoutGrid size={10} />
+              {vwp.group.name} · {cols}×{rows}
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+              <AlertTriangle size={10} />
+              No wall group
+            </span>
+          )}
+          <span className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+            {vwp.slotCount} cell{vwp.slotCount !== 1 ? 's' : ''} assigned
+          </span>
+        </div>
+      </div>
+
+      <button
+        onClick={(e) => { e.stopPropagation(); setMenuOpen((o) => !o); }}
+        className={`ui-media-icon-btn absolute top-2 right-2 z-20 transition-opacity ${hovered ? 'opacity-100' : 'opacity-0'}`}
+      >
+        <MoreVertical size={12} />
+      </button>
+
+      {menuOpen && (
+        <div
+          className="absolute top-11 right-2 z-20 rounded-xl shadow-lg border py-1 min-w-[130px]"
+          style={{ background: 'var(--modal-bg)', borderColor: 'var(--border)' }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button onClick={() => { setMenuOpen(false); onEdit(); }}
+            className="w-full text-left px-4 py-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-raised)]">
+            Edit
+          </button>
+          <div className="my-1 border-t" style={{ borderColor: 'var(--border)' }} />
+          <button onClick={() => { setMenuOpen(false); onDelete(); }}
+            className="w-full text-left px-4 py-1.5 text-xs text-red-400 hover:bg-red-500/10 flex items-center gap-2">
+            <Trash2 size={10} /> Delete
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function PlaylistPage() {
@@ -371,7 +499,7 @@ export default function PlaylistPage() {
   const [confirmDuplicateName, setConfirmDuplicateName] = useState('');
   const [newName, setNewName] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
-  const [createKind, setCreateKind] = useState<'general' | 'sync' | null>(null);
+  const [createKind, setCreateKind] = useState<'general' | 'sync' | 'videowall' | null>(null);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [confirmSyncDeleteId, setConfirmSyncDeleteId] = useState<string | null>(null);
   const [confirmSyncDeleteName, setConfirmSyncDeleteName] = useState('');
@@ -400,12 +528,20 @@ export default function PlaylistPage() {
   });
   const syncItems = syncPlaylistData ?? [];
 
+  const { data: videowallPlaylistData, isLoading: isLoadingVideowall } = useQuery<VideoWallPlaylist[]>({
+    queryKey: ['videowall-playlists', wsId],
+    queryFn: () => api.get<VideoWallPlaylist[]>(`/videowall-playlists?workspaceId=${wsId!}`),
+    enabled: !!wsId,
+  });
+  const videowallItems = videowallPlaylistData ?? [];
+
   // Merge into a single, type-aware list — sorted by updatedAt desc so the most
-  // recently touched playlist (general or sync) always lands at the top.
+  // recently touched playlist always lands at the top.
   const items: UnifiedPlaylist[] = (() => {
     const merged: UnifiedPlaylist[] = [
       ...generalItems.map((p) => ({ ...p, _type: 'general' as const })),
       ...syncItems.map((p) => ({ ...p, _type: 'sync' as const })),
+      ...videowallItems.map((p) => ({ ...p, _type: 'videowall' as const })),
     ];
     if (typeFilter !== 'all') {
       return merged.filter((it) => it._type === typeFilter);
@@ -451,6 +587,20 @@ export default function PlaylistPage() {
       void queryClient.invalidateQueries({ queryKey: ['sync-playlists', wsId] });
     },
     onError: () => toast.error('Failed to delete sync playlist'),
+  });
+
+  const [confirmVideowallDeleteId, setConfirmVideowallDeleteId] = useState<string | null>(null);
+  const [confirmVideowallDeleteName, setConfirmVideowallDeleteName] = useState('');
+
+  const deleteVideowallMut = useMutation({
+    mutationFn: (id: string) => api.delete(`/videowall-playlists/${id}`),
+    onSuccess: () => {
+      toast.success('Video wall playlist deleted');
+      setConfirmVideowallDeleteId(null);
+      setConfirmVideowallDeleteName('');
+      void queryClient.invalidateQueries({ queryKey: ['videowall-playlists', wsId] });
+    },
+    onError: () => toast.error('Failed to delete video wall playlist'),
   });
 
   const cloneMut = useMutation({
@@ -569,13 +719,15 @@ export default function PlaylistPage() {
           </div>
         )}
 
-        {/* Type filter — All / General / Sync */}
-        <div className="mb-5 flex items-center gap-2">
-          {(['all', 'general', 'sync'] as TypeFilter[]).map((t) => {
-            const label = t === 'all' ? 'All' : t === 'general' ? 'General' : 'Sync';
+        {/* Type filter — All / General / Sync / Video Wall */}
+        <div className="mb-5 flex items-center gap-2 flex-wrap">
+          {(['all', 'general', 'sync', 'videowall'] as TypeFilter[]).map((t) => {
+            const label = t === 'all' ? 'All' : t === 'general' ? 'General' : t === 'sync' ? 'Sync' : 'Video Wall';
             const count = t === 'all'
-              ? generalItems.length + syncItems.length
-              : t === 'general' ? generalItems.length : syncItems.length;
+              ? generalItems.length + syncItems.length + videowallItems.length
+              : t === 'general' ? generalItems.length
+              : t === 'sync' ? syncItems.length
+              : videowallItems.length;
             const active = typeFilter === t;
             return (
               <button
@@ -595,7 +747,7 @@ export default function PlaylistPage() {
           })}
         </div>
 
-        {(isLoading || isLoadingSync) ? (
+        {(isLoading || isLoadingSync || isLoadingVideowall) ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
             {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-36 rounded-2xl" />)}
           </div>
@@ -608,7 +760,17 @@ export default function PlaylistPage() {
           />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-            {items.map((it) => it._type === 'sync' ? (
+            {items.map((it) => it._type === 'videowall' ? (
+              <VideoWallPlaylistCard
+                key={`videowall-${it.id}`}
+                vwp={it}
+                onEdit={() => navigate(`/workspaces/${wsId!}/playlist/videowall/${it.id}`)}
+                onDelete={() => {
+                  setConfirmVideowallDeleteId(it.id);
+                  setConfirmVideowallDeleteName(it.name);
+                }}
+              />
+            ) : it._type === 'sync' ? (
               <SyncPlaylistCard
                 key={`sync-${it.id}`}
                 sp={it}
@@ -759,7 +921,7 @@ export default function PlaylistPage() {
           <ModalHeader title="New Playlist" onClose={() => setCreateOpen(false)} />
           <ModalBody>
             <p className="text-sm text-[var(--text-muted)] mb-4">Choose the playlist type.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <button
                 onClick={() => setCreateKind('general')}
                 className="text-left rounded-xl border p-4 transition-colors hover:border-[var(--accent)]"
@@ -780,6 +942,20 @@ export default function PlaylistPage() {
                 <div className="text-sm font-semibold text-[var(--text)]">Sync Playlist</div>
                 <div className="mt-1 text-xs text-[var(--text-muted)]">
                   Frame-aligned playback across multiple screens.
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  setCreateOpen(false);
+                  navigate(`/workspaces/${wsId!}/playlist/videowall/new`);
+                }}
+                className="text-left rounded-xl border p-4 transition-colors hover:border-[var(--accent)]"
+                style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+              >
+                <LayoutGrid size={22} className="mb-2" style={{ color: 'rgb(20,184,166)' }} />
+                <div className="text-sm font-semibold text-[var(--text)]">Video Wall Playlist</div>
+                <div className="mt-1 text-xs text-[var(--text-muted)]">
+                  Assign different content to each screen in a video wall.
                 </div>
               </button>
             </div>
@@ -893,6 +1069,23 @@ export default function PlaylistPage() {
         onClose={() => {
           setConfirmSyncDeleteId(null);
           setConfirmSyncDeleteName('');
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmVideowallDeleteId !== null}
+        title="Delete Video Wall Playlist"
+        message={`Delete "${confirmVideowallDeleteName}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        confirmPendingLabel="Deleting…"
+        isConfirming={deleteVideowallMut.isPending}
+        closeOnConfirm={false}
+        onConfirm={() => {
+          if (confirmVideowallDeleteId) deleteVideowallMut.mutate(confirmVideowallDeleteId);
+        }}
+        onClose={() => {
+          setConfirmVideowallDeleteId(null);
+          setConfirmVideowallDeleteName('');
         }}
       />
     </div>
