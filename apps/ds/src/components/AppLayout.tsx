@@ -77,8 +77,8 @@ export default function AppLayout() {
     queryKey: ['me'],
     queryFn: () => api.get('/auth/me'),
     enabled: bootstrapped && !!user,
-    staleTime: 60_000,
-    refetchOnWindowFocus: true,
+    staleTime: 0,
+    refetchOnWindowFocus: 'always',
   });
   useEffect(() => {
     if (meData?.user && meData.org !== undefined) {
@@ -371,19 +371,6 @@ export default function AppLayout() {
                   >
                     <CalendarDays className="w-4 h-4" />
                     Schedules
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/rule-sets`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <Zap className="w-4 h-4" />
-                    Rule Sets
                   </NavLink>
                   <NavLink
                     to={`/workspaces/${currentWsId}/canvas/new`}
