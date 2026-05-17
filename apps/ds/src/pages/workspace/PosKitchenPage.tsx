@@ -62,6 +62,16 @@ export default function PosKitchenPage() {
 
   const [configDraft, setConfigDraft] = useState<Partial<KitchenConfig>>({});
 
+  const generateTokenMut = useMutation({
+    mutationFn: () =>
+      api.post<{ token: string }>(`/pos/mgmt/display-tokens`, { displayType: 'kitchen', workspaceId: wsId }),
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: ['pos-display-tokens', wsId] });
+      window.open(`/kitchen/${wsId}?dt=${data.token}`, '_blank');
+    },
+    onError: () => toast.error('Failed to generate display token'),
+  });
+
   const saveConfigMut = useMutation({
     mutationFn: (patch: Partial<KitchenConfig>) =>
       api.put(`/pos/kitchen-config?workspaceId=${wsId}`, patch),
@@ -162,10 +172,14 @@ export default function PosKitchenPage() {
         action={
           <button
             className="ui-btn-secondary flex items-center gap-1.5"
+            disabled={generateTokenMut.isPending}
             onClick={() => {
               const token = displayTokens?.kitchen;
-              const url = token ? `/kitchen/${wsId}?dt=${token}` : `/kitchen/${wsId}`;
-              window.open(url, '_blank');
+              if (token) {
+                window.open(`/kitchen/${wsId}?dt=${token}`, '_blank');
+              } else {
+                generateTokenMut.mutate();
+              }
             }}
           >
             <ExternalLink className="w-4 h-4" />

@@ -120,7 +120,11 @@ export default function KitchenDisplayPage() {
 
   // â”€â”€ WebSocket connection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
-    if (!wsId || !displayToken) return;
+    if (!wsId || !displayToken) {
+      setLoading(false);
+      if (!displayToken) setError('No display token — open via Kitchen Monitor → Open Display');
+      return;
+    }
 
     let unmounted = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
