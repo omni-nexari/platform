@@ -16,16 +16,14 @@ export default function CanvasPageBar() {
     updatePage,
     zoom,
     setZoom,
-    setStagePosition,
+    fitCanvas,
     settings,
   } = useCanvasStore();
 
   const selectedIdx = pages.findIndex((p) => p.id === selectedPageId);
 
   function handleFitToScreen() {
-    // Reset zoom & center
-    setZoom(1);
-    setStagePosition(60, 30);
+    fitCanvas();
   }
 
   return (

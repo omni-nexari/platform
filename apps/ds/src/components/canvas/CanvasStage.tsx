@@ -5,6 +5,7 @@ import { useCanvasStore } from '../../lib/canvasStore.js';
 import { sanitizeCanvasElement } from '../../lib/canvasTypes.js';
 import type { CanvasElement, ImageElement } from '../../lib/canvasTypes.js';
 import type { ReactNode } from 'react';
+import { CanvasRulerH, CanvasRulerV, CanvasRulerCorner } from './CanvasRuler.js';
 
 function finite(value: number, fallback = 0) {
   return Number.isFinite(value) ? value : fallback;
@@ -94,6 +95,9 @@ export default function CanvasStage() {
     stageY,
     setZoom,
     setStagePosition,
+    setContainerSize,
+    fitCanvas,
+    projectId,
   } = useCanvasStore();
 
   const page = pages.find((p) => p.id === selectedPageId);
@@ -105,18 +109,34 @@ export default function CanvasStage() {
   const transformerRef = useRef<Konva.Transformer>(null);
   const layerRef = useRef<Konva.Layer>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const hasFittedRef = useRef(false);
   const [stageSize, setStageSize] = useState({ width: 800, height: 600 });
 
-  // Fit stage to container
+  // Fit stage to container; track size for rulers
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
-      setStageSize({ width: el.clientWidth, height: el.clientHeight });
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      setStageSize({ width: w, height: h });
+      setContainerSize(w, h);
+      if (!hasFittedRef.current && w > 0 && h > 0) {
+        hasFittedRef.current = true;
+        fitCanvas();
+      }
     });
     ro.observe(el);
     return () => ro.disconnect();
+  // fitCanvas and setContainerSize are stable store actions
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Re-fit whenever a project loads (loadProject resets zoom/stageX/Y)
+  useEffect(() => {
+    if (projectId) fitCanvas();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   // Attach transformer to selected nodes
   useEffect(() => {
@@ -353,7 +373,16 @@ export default function CanvasStage() {
   }
 
   return (
-    <div ref={containerRef} className="flex-1 overflow-hidden bg-[#0d0d1a] relative">
+    <div
+      ref={containerRef}
+      className="flex-1 overflow-hidden relative"
+      style={{
+        backgroundColor: '#1a1a2e',
+        backgroundImage:
+          'radial-gradient(circle, rgba(255,255,255,0.045) 1px, transparent 1px)',
+        backgroundSize: '24px 24px',
+      }}
+    >
       <Stage
         ref={stageRef}
         width={stageSize.width}
@@ -373,7 +402,7 @@ export default function CanvasStage() {
         }}
       >
         <Layer ref={layerRef}>
-          {/* Canvas background */}
+          {/* Canvas background with drop-shadow to look like a bounded page */}
           <Rect
             name="canvas-bg"
             x={0}
@@ -381,7 +410,23 @@ export default function CanvasStage() {
             width={settings.width}
             height={settings.height}
             fill={settings.background}
+            shadowColor="rgba(0,0,0,0.7)"
+            shadowBlur={28}
+            shadowOffsetX={0}
+            shadowOffsetY={8}
+            shadowEnabled={true}
             listening={true}
+          />
+          {/* Page boundary border (1px, drawn just inside the edge) */}
+          <Rect
+            x={0}
+            y={0}
+            width={settings.width}
+            height={settings.height}
+            fill=""
+            stroke="rgba(255,255,255,0.10)"
+            strokeWidth={1}
+            listening={false}
           />
 
           {/* Grid */}
@@ -414,6 +459,11 @@ export default function CanvasStage() {
           />
         </Layer>
       </Stage>
+
+      {/* Rulers overlaid on top of the stage */}
+      <CanvasRulerH />
+      <CanvasRulerV />
+      <CanvasRulerCorner />
     </div>
   );
 }

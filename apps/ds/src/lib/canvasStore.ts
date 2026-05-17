@@ -39,6 +39,8 @@ interface CanvasState {
   zoom: number;
   stageX: number;
   stageY: number;
+  containerWidth: number;
+  containerHeight: number;
 
   // Sidebar
   activeSidebarTab: 'shapes' | 'text' | 'media' | 'layers';
@@ -82,6 +84,8 @@ interface CanvasState {
   // Viewport
   setZoom: (zoom: number) => void;
   setStagePosition: (x: number, y: number) => void;
+  setContainerSize: (w: number, h: number) => void;
+  fitCanvas: () => void;
 
   // Sidebar
   setActiveSidebarTab: (tab: CanvasState['activeSidebarTab']) => void;
@@ -151,6 +155,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   zoom: 1,
   stageX: 0,
   stageY: 0,
+  containerWidth: 0,
+  containerHeight: 0,
 
   // Sidebar
   activeSidebarTab: 'shapes',
@@ -416,6 +422,20 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   setZoom: (zoom) => set({ zoom: Math.max(0.1, Math.min(5, Number.isFinite(zoom) ? zoom : 1)) }),
   setStagePosition: (x, y) => set({ stageX: Number.isFinite(x) ? x : 0, stageY: Number.isFinite(y) ? y : 0 }),
+  setContainerSize: (w, h) => set({ containerWidth: w, containerHeight: h }),
+  fitCanvas: () => {
+    const s = get();
+    const rulerSize = 24;
+    const padding = 40;
+    if (s.containerWidth < rulerSize + padding * 2 || s.containerHeight < rulerSize + padding * 2) return;
+    const usableW = s.containerWidth - rulerSize - padding * 2;
+    const usableH = s.containerHeight - rulerSize - padding * 2;
+    const fitZoom = Math.min(usableW / s.settings.width, usableH / s.settings.height, 1.0);
+    const zoom = Math.max(0.1, fitZoom);
+    const x = rulerSize + (s.containerWidth - rulerSize - s.settings.width * zoom) / 2;
+    const y = rulerSize + (s.containerHeight - rulerSize - s.settings.height * zoom) / 2;
+    set({ zoom, stageX: x, stageY: y });
+  },
 
   // ── Sidebar ─────────────────────────────────────────────────────────
 
