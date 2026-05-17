@@ -162,6 +162,9 @@ export default function OrgDetailPage() {
       setSelectedModules(null);
       void qc.invalidateQueries({ queryKey: ['sa-org', id] });
       void qc.invalidateQueries({ queryKey: ['sa-orgs'] });
+      // Invalidate the shared /auth/me cache so the sidebar module gates
+      // (cmsEnabled / posEnabled) update immediately without a page reload.
+      void qc.invalidateQueries({ queryKey: ['me'] });
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Update failed'),
   });
