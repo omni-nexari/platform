@@ -124,7 +124,7 @@ interface Device {
   name: string;
   status: 'unclaimed' | 'online' | 'offline' | 'error';
   type: 'signage' | 'kiosk' | 'kitchen';
-  platform: 'tizen' | 'tizen-sbb' | 'webos' | 'android' | 'linux' | 'browser' | 'windows' | 'other';
+  platform: 'tizen' | 'tizen-sbb' | 'tizen-consumer' | 'webos' | 'android' | 'linux' | 'browser' | 'windows' | 'other';
   manufacturer: string | null;
   lastSeen: string | null;
   playerVersion: string | null;
