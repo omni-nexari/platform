@@ -10,7 +10,6 @@ import {
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import UploadModal from '../../components/UploadModal.js';
-import LiveDataModal from '../../components/LiveDataModal.js';
 
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import AuthImg from '../../components/AuthImg.js';
@@ -783,7 +782,6 @@ export default function ContentPage() {
   const queryClient = useQueryClient();
 
   const [uploadOpen, setUploadOpen]     = useState(false);
-  const [livedataOpen, setLivedataOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -988,7 +986,7 @@ export default function ContentPage() {
           description: 'Feeds & real-time streams',
           icon: <Activity size={16} />,
           iconClassName: 'bg-sky-500/15 text-sky-400',
-          onClick: () => setLivedataOpen(true),
+          onClick: () => navigate(`/workspaces/${wsId}/livedata/new`),
         },
       ]
     : [];
@@ -1307,9 +1305,6 @@ export default function ContentPage() {
       {/* ── Upload modal ── */}
       {uploadOpen && wsId && (
         <UploadModal workspaceId={wsId} onClose={() => setUploadOpen(false)} />
-      )}
-      {livedataOpen && wsId && (
-        <LiveDataModal workspaceId={wsId} onClose={() => setLivedataOpen(false)} />
       )}
 
       {bulkTagOpen && wsId && (

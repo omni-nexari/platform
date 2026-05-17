@@ -2478,4 +2478,163 @@ export async function contentRoutes(app: FastifyInstance) {
 
     return reply.send(restored);
   });
+
+  // ── GET /content/datasync/preview ─────────────────────────────────────────
+  // Fetch a user-provided JSON URL server-side (avoids CORS in the browser) and
+  // return detected field names + up to 5 sample rows for the column picker.
+  app.get('/datasync/preview', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const q = req.query as { sourceUrl?: string; dataPath?: string; workspaceId?: string };
+    if (!q.workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (!q.sourceUrl)   return reply.status(400).send({ error: 'sourceUrl required' });
+    try { new URL(q.sourceUrl); } catch { return reply.status(400).send({ error: 'Invalid sourceUrl' }); }
+
+    const member = await checkWorkspaceAccess(q.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+
+    let json: unknown;
+    try {
+      const res = await fetch(q.sourceUrl, {
+        signal: AbortSignal.timeout(8_000),
+        headers: { 'Accept': 'application/json, */*' },
+      });
+      if (!res.ok) return reply.status(502).send({ error: `Source returned HTTP ${res.status}` });
+      json = await res.json();
+    } catch (err: any) {
+      return reply.status(502).send({ error: `Failed to fetch source: ${String(err?.message ?? err)}` });
+    }
+
+    // Navigate to optional dataPath (e.g. "data.rows")
+    let arr: unknown = json;
+    if (q.dataPath) {
+      for (const key of q.dataPath.split('.')) {
+        if (arr && typeof arr === 'object' && !Array.isArray(arr)) {
+          arr = (arr as Record<string, unknown>)[key];
+        } else { arr = undefined; break; }
+      }
+    }
+
+    // Auto-detect first array property if root is an object
+    if (!Array.isArray(arr)) {
+      if (arr && typeof arr === 'object') {
+        for (const val of Object.values(arr as Record<string, unknown>)) {
+          if (Array.isArray(val) && val.length > 0) { arr = val; break; }
+        }
+      }
+      if (!Array.isArray(arr)) {
+        return reply.status(422).send({ error: 'No array found in JSON response. Try specifying a dataPath.' });
+      }
+    }
+
+    const rows = (arr as unknown[]).slice(0, 5).filter((r) => r && typeof r === 'object') as Record<string, unknown>[];
+    if (rows.length === 0) return reply.status(422).send({ error: 'Array is empty or items are not objects' });
+
+    // Collect field names in order of first appearance
+    const fieldsSet = new Set<string>();
+    for (const row of rows) { for (const k of Object.keys(row)) fieldsSet.add(k); }
+
+    return reply.send({ fields: [...fieldsSet], sample: rows });
+  });
+
+  // ── POST /content/datasync ────────────────────────────────────────────────
+  // Create a datasync table content item. All config lives in the metadata
+  // JSON column — no file storage needed. The Tizen/Windows renderer fetches
+  // GET /devices/:deviceId/datasync/:contentId/table which transforms the live
+  // JSON URL into the DSTableData shape the renderer expects.
+  app.post('/datasync', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const body = req.body as {
+      workspaceId?: string;
+      name?: string;
+      sourceUrl?: string;
+      dataPath?: string;
+      labelField?: string;
+      columns?: { key: string; label: string }[];
+      title?: string;
+      subtitle?: string;
+      refreshSeconds?: number;
+    };
+
+    if (!body.workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    if (!body.name?.trim()) return reply.status(400).send({ error: 'name required' });
+    if (!body.sourceUrl)    return reply.status(400).send({ error: 'sourceUrl required' });
+    try { new URL(body.sourceUrl); } catch { return reply.status(400).send({ error: 'Invalid sourceUrl' }); }
+    if (!Array.isArray(body.columns) || body.columns.length === 0) {
+      return reply.status(400).send({ error: 'At least one column required' });
+    }
+
+    const member = await checkWorkspaceAccess(body.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+    if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions' });
+
+    const wsRow = await db.query.workspaces.findFirst({ where: eq(workspaces.id, body.workspaceId), columns: { settings: true } });
+    let wsSettings: { approvalRequired?: boolean } = {};
+    try { wsSettings = JSON.parse(wsRow?.settings ?? '{}'); } catch { /* ignore */ }
+    const approvalState = wsSettings.approvalRequired && !APPROVE_ROLES.has(user.role) ? 'draft' : 'approved';
+    const refreshSecs = Math.max(60, Number(body.refreshSeconds ?? 300));
+
+    const [item] = await db.insert(contentItems).values({
+      workspaceId: body.workspaceId,
+      uploadedBy: user.sub,
+      type: 'datasync',
+      name: body.name.trim(),
+      duration: refreshSecs,
+      status: 'ready',
+      approvalState,
+      metadata: JSON.stringify({
+        sourceUrl:      body.sourceUrl,
+        dataPath:       body.dataPath ?? '',
+        labelField:     body.labelField ?? '',
+        columns:        body.columns,
+        title:          body.title ?? body.name.trim(),
+        subtitle:       body.subtitle ?? '',
+        refreshSeconds: refreshSecs,
+      }),
+    }).returning();
+
+    return reply.status(201).send(item);
+  });
+
+  // ── PATCH /content/:id/datasync ───────────────────────────────────────────
+  app.patch('/:id/datasync', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+    const body = req.body as {
+      name?: string;
+      sourceUrl?: string;
+      dataPath?: string;
+      labelField?: string;
+      columns?: { key: string; label: string }[];
+      title?: string;
+      subtitle?: string;
+      refreshSeconds?: number;
+    };
+
+    const item = await db.query.contentItems.findFirst({ where: and(eq(contentItems.id, id), isNull(contentItems.deletedAt)) });
+    if (!item) return reply.status(404).send({ error: 'Not found' });
+    if (item.type !== 'datasync') return reply.status(400).send({ error: 'Not a datasync item' });
+
+    const member = await checkWorkspaceAccess(item.workspaceId, user.sub);
+    if (!member || member.role === 'viewer') return reply.status(403).send({ error: 'Forbidden' });
+    if (body.sourceUrl) { try { new URL(body.sourceUrl); } catch { return reply.status(400).send({ error: 'Invalid sourceUrl' }); } }
+
+    const current = (() => { try { return JSON.parse(item.metadata ?? '{}'); } catch { return {}; } })() as Record<string, unknown>;
+    const [patched] = await db.update(contentItems).set({
+      ...(body.name !== undefined && { name: body.name.trim() }),
+      ...(body.refreshSeconds !== undefined && { duration: Math.max(60, body.refreshSeconds) }),
+      metadata: JSON.stringify({
+        ...current,
+        ...(body.sourceUrl !== undefined      && { sourceUrl: body.sourceUrl }),
+        ...(body.dataPath !== undefined        && { dataPath: body.dataPath }),
+        ...(body.labelField !== undefined      && { labelField: body.labelField }),
+        ...(body.columns !== undefined         && { columns: body.columns }),
+        ...(body.title !== undefined           && { title: body.title }),
+        ...(body.subtitle !== undefined        && { subtitle: body.subtitle }),
+        ...(body.refreshSeconds !== undefined  && { refreshSeconds: Math.max(60, body.refreshSeconds) }),
+      }),
+      updatedAt: new Date(),
+    }).where(eq(contentItems.id, id)).returning();
+
+    return reply.send(patched);
+  });
 }

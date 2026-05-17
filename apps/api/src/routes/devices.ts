@@ -3305,5 +3305,134 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
     return reply.send(latest ?? null);
   });
+
+  // ── GET /:deviceId/datasync/:contentId/table ───────────────────────────────
+  // Serves a DSTableData payload to the Tizen/Windows datasync renderer.
+  // The renderer calls: GET /api/v1/devices/{deviceId}/datasync/{contentId}/table
+  // Device auth is via JWT (Bearer header). The deviceId path param is matched
+  // against the token subject for an extra sanity check.
+  //
+  // In-process cache keyed by contentId to avoid hammering the source URL.
+  const _datasyncCache = new Map<string, { hash: string; data: unknown; fetchedAt: number }>();
+
+  app.get('/:deviceId/datasync/:contentId/table', async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+
+    const { deviceId: urlDeviceId, contentId } = req.params as { deviceId: string; contentId: string };
+
+    // Extra check: token deviceId must match URL
+    if (auth.deviceId !== urlDeviceId) return reply.status(403).send({ error: 'Token / path mismatch' });
+
+    const item = await db.query.contentItems.findFirst({
+      where: and(eq(contentItems.id, contentId), isNull(contentItems.deletedAt)),
+    });
+    if (!item)                          return reply.status(404).send({ error: 'Content not found' });
+    if (item.type !== 'datasync')       return reply.status(400).send({ error: 'Not a datasync item' });
+    if (item.workspaceId !== auth.workspaceId) return reply.status(403).send({ error: 'Forbidden' });
+
+    const meta = (() => {
+      try { return JSON.parse(item.metadata ?? '{}'); } catch { return {}; }
+    })() as {
+      sourceUrl?: string;
+      dataPath?: string;
+      labelField?: string;
+      columns?: { key: string; label: string }[];
+      title?: string;
+      subtitle?: string;
+      refreshSeconds?: number;
+    };
+
+    if (!meta.sourceUrl) return reply.status(500).send({ error: 'Datasync item has no sourceUrl' });
+
+    const refreshSecs = Math.max(60, meta.refreshSeconds ?? 300);
+    const cached = _datasyncCache.get(contentId);
+    const now    = Date.now();
+
+    let rows: Record<string, unknown>[];
+
+    if (cached && now - cached.fetchedAt < refreshSecs * 1000) {
+      rows = cached.data as Record<string, unknown>[];
+    } else {
+      let json: unknown;
+      try {
+        const res = await fetch(meta.sourceUrl, {
+          signal: AbortSignal.timeout(10_000),
+          headers: { 'Accept': 'application/json, */*' },
+        });
+        if (!res.ok) return reply.status(502).send({ error: `Source returned HTTP ${res.status}` });
+        json = await res.json();
+      } catch (err: any) {
+        // If we have stale cache, return it rather than erroring
+        if (cached) { rows = cached.data as Record<string, unknown>[]; }
+        else return reply.status(502).send({ error: `Fetch failed: ${String(err?.message ?? err)}` });
+        rows = rows!;
+        json = null; // prevent further processing
+      }
+
+      if (json !== null) {
+        let arr: unknown = json;
+        if (meta.dataPath) {
+          for (const key of meta.dataPath.split('.')) {
+            if (arr && typeof arr === 'object' && !Array.isArray(arr)) {
+              arr = (arr as Record<string, unknown>)[key];
+            } else { arr = undefined; break; }
+          }
+        }
+        if (!Array.isArray(arr) && arr && typeof arr === 'object') {
+          for (const val of Object.values(arr as Record<string, unknown>)) {
+            if (Array.isArray(val)) { arr = val; break; }
+          }
+        }
+        rows = Array.isArray(arr)
+          ? (arr as unknown[]).filter((r) => r && typeof r === 'object') as Record<string, unknown>[]
+          : [];
+
+        const hash = JSON.stringify(rows);
+        _datasyncCache.set(contentId, { hash, data: rows, fetchedAt: now });
+      }
+    }
+
+    const columns   = Array.isArray(meta.columns) ? meta.columns : [];
+    const labelField = meta.labelField ?? '';
+
+    // Build DSTableData: trains = columns, stations = rows, cells = values
+    const trains = columns.map((col) => ({
+      id:     col.key,
+      number: col.label,
+      days:   null as string | null,
+      status: 'normal',
+    }));
+
+    const stations = rows!.map((row, i) => ({
+      id:       String(i),
+      name:     labelField && row[labelField] != null ? String(row[labelField]) : `Row ${i + 1}`,
+      tag:      null as string | null,
+      section:  null as string | null,
+      type:     'stop',
+      position: i,
+    }));
+
+    const cells = rows!.flatMap((row, i) =>
+      columns.map((col) => ({
+        id:        `${col.key}-${i}`,
+        trainId:   col.key,
+        stationId: String(i),
+        value:     row[col.key] != null ? String(row[col.key]) : null,
+        note:      null as string | null,
+        status:    'normal',
+        delayMins: null as number | null,
+      })),
+    );
+
+    reply.header('Cache-Control', `public, max-age=${refreshSecs}`);
+    return reply.send({
+      title:    meta.title    ?? item.name,
+      subtitle: meta.subtitle ?? '',
+      trains,
+      stations,
+      cells,
+    });
+  });
 }
 
