@@ -1,4 +1,5 @@
 import { db, devices, deviceHeartbeats, deviceScreenshots, playEvents, syncGroupMembers, syncGroups, bleScanResults } from '@signage/db';
+import type { CompiledRuleSet } from '@signage/db';
 import { eq, and } from 'drizzle-orm';
 import { DeviceMessageSchema } from '@signage/shared';
 import { writeFile, mkdir } from 'node:fs/promises';
@@ -163,7 +164,12 @@ export type WsCommand =
   // Force the panel to sleep now (admin override).
   | { type: 'epaper_force_sleep' }
   // Send a Wake-on-LAN magic packet to a target MAC address.
-  | { type: 'wake_on_lan'; payload: { targetMac: string } };
+  | { type: 'wake_on_lan'; payload: { targetMac: string } }
+  // ── Rule sets ──────────────────────────────────────────────────────────────
+  // Full replacement of the device's rule set list. Sent on connect and on save.
+  | { type: 'set_rule_sets'; payload: { ruleSets: CompiledRuleSet[] } }
+  // Server-side sensor condition matched — device should execute the action.
+  | { type: 'rule_set_trigger'; payload: { ruleSet: CompiledRuleSet } };
 
 const connections = new Map<string, Conn>();
 const deviceLogs = new Map<string, DeviceConsoleLogEntry[]>();

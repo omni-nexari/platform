@@ -1811,20 +1811,14 @@ export async function deviceRoutes(app: FastifyInstance) {
       }
     }, 4_000);
 
-    // Push BLE rules so the TV starts rule evaluation immediately on connect/reconnect.
-    // Without this the TV only gets rules when the portal manually hits /rules/publish.
+    // Push rule sets so the device starts evaluation immediately on connect/reconnect.
     setTimeout(async () => {
       try {
-        const rules = await db.query.deviceRules.findMany({
-          where: and(eq(deviceRules.workspaceId, device.workspaceId!), eq(deviceRules.deviceId, deviceId)),
-          orderBy: [desc(deviceRules.priority), asc(deviceRules.createdAt)],
-        });
-        sendCommand(deviceId, { type: 'device_rules', rules } as never);
-        if (rules.length > 0) {
-          app.log.info({ deviceId, count: rules.length }, 'BLE rules pushed on device connect');
-        }
+        const { publishRuleSetsToDevice } = await import('../services/rule-sets.js');
+        await publishRuleSetsToDevice(deviceId);
+        app.log.info({ deviceId }, 'Rule sets pushed on device connect');
       } catch (e) {
-        app.log.warn({ deviceId, err: e }, 'Failed to push BLE rules on device connect');
+        app.log.warn({ deviceId, err: e }, 'Failed to push rule sets on device connect');
       }
     }, 3_000);
 

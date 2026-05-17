@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, useSearchParams } from 'react-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
@@ -583,6 +583,31 @@ export default function DevicesPage() {
     refetchInterval: 30_000,
   });
 
+  // Fetch all rule sets for the workspace to show chips on device cards
+  const { data: ruleSetsData } = useQuery<{ ruleSets: Array<{ id: string; name: string; enabled: boolean; targets: Array<{ targetType: string; targetId: string }> }> }>({
+    queryKey: ['rule-sets', wsId],
+    queryFn: () => api.get(`/rule-sets?workspaceId=${wsId}`),
+    staleTime: 60_000,
+    enabled: !!wsId,
+  });
+
+  // Build deviceId → rule set names map
+  const deviceRuleSetMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    if (!ruleSetsData?.ruleSets) return map;
+    for (const rs of ruleSetsData.ruleSets) {
+      if (!rs.enabled) continue;
+      for (const t of rs.targets) {
+        if (t.targetType === 'device') {
+          const names = map.get(t.targetId) ?? [];
+          names.push(rs.name);
+          map.set(t.targetId, names);
+        }
+      }
+    }
+    return map;
+  }, [ruleSetsData]);
+
   const [liveViewDeviceId, setLiveViewDeviceId] = useState<string | null>(null);
 
   const filteredDevices = devices.filter((d) => {
@@ -868,9 +893,9 @@ export default function DevicesPage() {
                         {isPortrait(device.resolution) && (
                           <Badge tone="neutral">Portrait</Badge>
                         )}
-                        {device.hasRules && (
-                          <Badge tone="info">Rules</Badge>
-                        )}
+                        {(deviceRuleSetMap.get(device.id) ?? []).map((rsName) => (
+                          <Badge key={rsName} tone="info">⚡ {rsName}</Badge>
+                        ))}
                       </div>
 
                       {/* Meta */}

@@ -61,6 +61,7 @@ import ContentPage from './pages/workspace/ContentPage.js';
 import PlaylistPage from './pages/workspace/PlaylistPage.js';
 import PlaylistEditorPage from './pages/workspace/PlaylistEditorPage.js';
 import SchedulePage from './pages/workspace/SchedulePage.js';
+import RuleSetsPage from './pages/workspace/RuleSetsPage.js';
 import ScheduleEditorPage from './pages/workspace/ScheduleEditorPage.js';
 import TagsPage from './pages/workspace/TagsPage.js';
 import CanvasEditorPage from './pages/workspace/CanvasEditorPage.js';
@@ -364,6 +365,7 @@ export default function App() {
         <Route path="/workspaces/:wsId/playlist/sync/:id" element={<SyncPlaylistEditorPage />} />
         <Route path="/workspaces/:wsId/playlist/videowall/:id" element={<VideoWallPlaylistEditorPage />} />
         <Route path="/workspaces/:wsId/playlist/:id" element={<PlaylistEditorPage />} />
+        <Route path="/workspaces/:wsId/rule-sets" element={<RuleSetsPage />} />
         <Route path="/workspaces/:wsId/schedule" element={<SchedulePage />} />
         <Route path="/workspaces/:wsId/schedule/:id" element={<ScheduleEditorPage />} />
         <Route path="/workspaces/:wsId/tags" element={<TagsPage />} />

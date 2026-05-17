@@ -59,7 +59,7 @@ import {
 import { formatDistanceToNow } from '../utils/time.js';
 import WorkspaceTagPicker from '../../components/WorkspaceTagPicker.js';
 import EpaperTab from './EpaperTab.js';
-import DeviceRulesTab from './DeviceRulesTab.js';
+import BleProximityTab from './BleProximityTab.js';
 
 function isPortrait(resolution: string | null | undefined): boolean {
   if (!resolution) return false;
@@ -1550,7 +1550,7 @@ export function DeviceDetailContent({
           ...(deviceType === 'kitchen' ? [{ id: 'order-filter' as DeviceTabId, label: 'Order Filter' }] : []),
           { id: 'tags',         label: 'Tags' },
           ...(!isEpaper && deviceType === 'signage' ? [{ id: 'update' as DeviceTabId, label: 'Update' }] : []),
-          ...(!isEpaper ? [{ id: 'rules' as DeviceTabId, label: 'Rules' }] : []),
+          ...(!isEpaper ? [{ id: 'rules' as DeviceTabId, label: 'BLE Scan' }] : []),
           { id: 'logs',         label: 'Logs' },
         ];
         return (
@@ -3031,7 +3031,7 @@ export function DeviceDetailContent({
 
       {/* ── Rules tab ───────────────────────────────────────────────────── */}
       {activeTab === 'rules' && (
-        <DeviceRulesTab deviceId={deviceId!} wsId={wsId!} isOnline={isOnline} installedApps={device?.installedApps ?? []} />
+        <BleProximityTab deviceId={deviceId!} isOnline={isOnline} />
       )}
 
       {/* ── Tags tab ────────────────────────────────────────────────────── */}

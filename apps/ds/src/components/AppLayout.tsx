@@ -373,6 +373,19 @@ export default function AppLayout() {
                     Schedules
                   </NavLink>
                   <NavLink
+                    to={`/workspaces/${currentWsId}/rule-sets`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive
+                          ? 'bg-[var(--blue)] text-white'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`
+                    }
+                  >
+                    <Zap className="w-4 h-4" />
+                    Rule Sets
+                  </NavLink>
+                  <NavLink
                     to={`/workspaces/${currentWsId}/canvas/new`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${

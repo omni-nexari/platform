@@ -328,8 +328,13 @@ export async function sensorsRoutes(app: FastifyInstance) {
       .set({ lastReadingAt: new Date(), updatedAt: new Date() })
       .where(eq(sensorSources.id, id));
 
-    // Evaluate trigger rules asynchronously
+    // Evaluate trigger rules asynchronously (legacy)
     void evaluateTriggerRulesForSensor(id, value, orgId);
+
+    // Evaluate workspace rule sets with sensor_value conditions
+    void import('../services/rule-sets.js').then(({ evaluateSensorReading }) =>
+      evaluateSensorReading(sensor.workspaceId, id, value)
+    );
 
     // Dispatch outbound webhook event
     void dispatchWebhookEvent(orgId, 'sensor.reading', {
