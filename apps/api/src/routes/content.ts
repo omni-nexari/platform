@@ -115,37 +115,80 @@ export async function contentRoutes(app: FastifyInstance) {
   }
 
   app.get('/widgets/weather', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const { lat, lon, units = 'metric' } = req.query as { lat?: string; lon?: string; units?: string };
+    const { lat, lon, units = 'metric', mode = 'current' } = req.query as {
+      lat?: string; lon?: string; units?: string; mode?: string;
+    };
     if (!lat || !lon) return reply.status(400).send({ error: 'lat and lon are required' });
 
     const latNum = parseFloat(lat);
     const lonNum = parseFloat(lon);
     if (isNaN(latNum) || isNaN(lonNum)) return reply.status(400).send({ error: 'Invalid lat/lon' });
 
-    const cacheKey = `${latNum.toFixed(2)}_${lonNum.toFixed(2)}_${units}`;
+    const cacheKey = `${latNum.toFixed(2)}_${lonNum.toFixed(2)}_${units}_${mode}`;
     const cached = weatherCache.get(cacheKey);
     if (cached && Date.now() - cached.cachedAt < WEATHER_TTL_MS) {
       return reply.send(cached.data);
     }
 
     const tempUnit = units === 'imperial' ? 'fahrenheit' : 'celsius';
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${latNum}&longitude=${lonNum}&current=temperature_2m,weather_code&temperature_unit=${tempUnit}&timezone=auto`;
+    const unitLabel = units === 'imperial' ? '°F' : '°C';
+    const baseParams = `latitude=${latNum}&longitude=${lonNum}&temperature_unit=${tempUnit}&timezone=auto`;
+
+    let url: string;
+    if (mode === '7day') {
+      url = `https://api.open-meteo.com/v1/forecast?${baseParams}&daily=temperature_2m_max,temperature_2m_min,weather_code&forecast_days=7`;
+    } else if (mode === 'hourly') {
+      url = `https://api.open-meteo.com/v1/forecast?${baseParams}&hourly=temperature_2m,weather_code&forecast_hours=24`;
+    } else {
+      url = `https://api.open-meteo.com/v1/forecast?${baseParams}&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m`;
+    }
 
     const res = await fetch(url);
     if (!res.ok) return reply.status(502).send({ error: 'Weather service unavailable' });
 
     const raw = await res.json() as Record<string, unknown>;
-    const current = raw['current'] as Record<string, unknown> | undefined;
-    const code = typeof current?.['weather_code'] === 'number' ? current['weather_code'] : 0;
-    const temp = typeof current?.['temperature_2m'] === 'number' ? current['temperature_2m'] : null;
 
-    const data = {
-      temp,
-      unit: units === 'imperial' ? '°F' : '°C',
-      code,
-      label: weatherLabel(code),
-      icon: weatherIcon(code),
-    };
+    let data: unknown;
+
+    if (mode === '7day') {
+      const daily = raw['daily'] as Record<string, unknown> | undefined;
+      const dates   = (daily?.['time']                as string[] | undefined) ?? [];
+      const maxTemps = (daily?.['temperature_2m_max'] as number[] | undefined) ?? [];
+      const minTemps = (daily?.['temperature_2m_min'] as number[] | undefined) ?? [];
+      const codes    = (daily?.['weather_code']        as number[] | undefined) ?? [];
+      data = {
+        unit: unitLabel,
+        days: dates.map((d, i) => ({
+          date: d,
+          code: codes[i] ?? 0,
+          label: weatherLabel(codes[i] ?? 0),
+          icon:  weatherIcon(codes[i] ?? 0),
+          tempMax: maxTemps[i] ?? null,
+          tempMin: minTemps[i] ?? null,
+        })),
+      };
+    } else if (mode === 'hourly') {
+      const hourly = raw['hourly'] as Record<string, unknown> | undefined;
+      const times  = (hourly?.['time']           as string[] | undefined) ?? [];
+      const temps  = (hourly?.['temperature_2m'] as number[] | undefined) ?? [];
+      const codes  = (hourly?.['weather_code']   as number[] | undefined) ?? [];
+      data = {
+        unit: unitLabel,
+        hours: times.map((t, i) => ({
+          time: t,
+          code: codes[i] ?? 0,
+          icon: weatherIcon(codes[i] ?? 0),
+          temp: temps[i] ?? null,
+        })),
+      };
+    } else {
+      const current = raw['current'] as Record<string, unknown> | undefined;
+      const code = typeof current?.['weather_code'] === 'number' ? current['weather_code'] : 0;
+      const temp = typeof current?.['temperature_2m'] === 'number' ? current['temperature_2m'] : null;
+      const wind = typeof current?.['wind_speed_10m'] === 'number' ? current['wind_speed_10m'] : null;
+      const humidity = typeof current?.['relative_humidity_2m'] === 'number' ? current['relative_humidity_2m'] : null;
+      data = { temp, unit: unitLabel, code, label: weatherLabel(code), icon: weatherIcon(code), wind, humidity };
+    }
 
     weatherCache.set(cacheKey, { data, cachedAt: Date.now() });
     return reply.send(data);

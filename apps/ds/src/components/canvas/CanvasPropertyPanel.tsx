@@ -5,7 +5,10 @@ import {
   RotateCw,
 } from 'lucide-react';
 import { useCanvasStore } from '../../lib/canvasStore.js';
-import type { CanvasElement, TextElement, RectElement, CircleElement, LineElement } from '../../lib/canvasTypes.js';
+import type {
+  CanvasElement, TextElement, RectElement, CircleElement, LineElement,
+  ClockElement, WeatherElement, TickerElement, WebpageElement, YoutubeElement,
+} from '../../lib/canvasTypes.js';
 import TagInputEditor from '../TagInputEditor.js';
 
 // ── Color input helper ──────────────────────────────────────────────────
@@ -273,6 +276,11 @@ export default function CanvasPropertyPanel() {
         {el.type === 'rect' && <RectProperties el={el as RectElement} update={update} />}
         {el.type === 'circle' && <CircleProperties el={el as CircleElement} update={update} />}
         {el.type === 'line' && <LineProperties el={el as LineElement} update={update} />}
+        {el.type === 'clock' && <ClockProperties el={el as ClockElement} update={update} />}
+        {el.type === 'weather' && <WeatherProperties el={el as WeatherElement} update={update} />}
+        {el.type === 'ticker' && <TickerProperties el={el as TickerElement} update={update} />}
+        {el.type === 'webpage' && <WebpageProperties el={el as WebpageElement} update={update} />}
+        {el.type === 'youtube' && <YoutubeProperties el={el as YoutubeElement} update={update} />}
 
         {/* Tags */}
         <Section title="Tags">
@@ -405,5 +413,209 @@ function LineProperties({ el, update }: { el: LineElement; update: (c: Partial<C
         onChange={(v) => update({ lineCap: v as LineElement['lineCap'] })}
       />
     </Section>
+  );
+}
+
+// ── Clock widget properties ─────────────────────────────────────────────
+
+function ClockProperties({ el, update }: { el: ClockElement; update: (c: Partial<CanvasElement>) => void }) {
+  return (
+    <>
+      <Section title="Clock">
+        <SelectField
+          label="Style"
+          value={el.clockStyle}
+          options={[
+            { value: 'digital', label: 'Digital' },
+            { value: 'analog', label: 'Analog' },
+          ]}
+          onChange={(v) => update({ clockStyle: v as ClockElement['clockStyle'] })}
+        />
+        <SelectField
+          label="Format"
+          value={el.format}
+          options={[
+            { value: '24h', label: '24-hour' },
+            { value: '12h', label: '12-hour (AM/PM)' },
+          ]}
+          onChange={(v) => update({ format: v as ClockElement['format'] })}
+        />
+        <label className="flex items-center gap-2">
+          <span className="text-xs text-[var(--text-muted)] w-16 shrink-0">Timezone</span>
+          <input
+            type="text"
+            value={el.timezone}
+            onChange={(e) => update({ timezone: e.target.value })}
+            placeholder="e.g. America/New_York"
+            className="flex-1 px-2 py-1 rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-xs"
+          />
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <span className="text-xs text-[var(--text-muted)] w-16 shrink-0">Show date</span>
+          <input
+            type="checkbox"
+            checked={el.showDate}
+            onChange={(e) => update({ showDate: e.target.checked })}
+            className="w-4 h-4 accent-blue-500"
+          />
+        </label>
+      </Section>
+      <Section title="Appearance">
+        <ColorField label="Text" value={el.textColor} onChange={(v) => update({ textColor: v })} />
+        <ColorField label="Background" value={el.bgColor} onChange={(v) => update({ bgColor: v })} />
+      </Section>
+    </>
+  );
+}
+
+// ── Weather widget properties ───────────────────────────────────────────
+
+function WeatherProperties({ el, update }: { el: WeatherElement; update: (c: Partial<CanvasElement>) => void }) {
+  return (
+    <>
+      <Section title="Location">
+        <NumberField label="Latitude" value={el.lat} onChange={(v) => update({ lat: v })} step={0.0001} />
+        <NumberField label="Longitude" value={el.lon} onChange={(v) => update({ lon: v })} step={0.0001} />
+        {el.lat === 0 && el.lon === 0 && (
+          <p className="text-[10px] text-amber-400">⚠️ Set lat/lon to show live weather</p>
+        )}
+      </Section>
+      <Section title="Display">
+        <SelectField
+          label="Unit"
+          value={el.unit}
+          options={[
+            { value: 'C', label: '°C (Celsius)' },
+            { value: 'F', label: '°F (Fahrenheit)' },
+          ]}
+          onChange={(v) => update({ unit: v as WeatherElement['unit'] })}
+        />
+        <SelectField
+          label="Mode"
+          value={el.displayMode}
+          options={[
+            { value: 'current', label: 'Current conditions' },
+            { value: '7day', label: '7-day forecast' },
+            { value: 'hourly', label: 'Hourly (24h)' },
+          ]}
+          onChange={(v) => update({ displayMode: v as WeatherElement['displayMode'] })}
+        />
+        <label className="flex items-center gap-2 cursor-pointer">
+          <span className="text-xs text-[var(--text-muted)] w-16 shrink-0">Particles</span>
+          <input
+            type="checkbox"
+            checked={el.particles}
+            onChange={(e) => update({ particles: e.target.checked })}
+            className="w-4 h-4 accent-blue-500"
+          />
+        </label>
+        <ColorField label="Text" value={el.textColor} onChange={(v) => update({ textColor: v })} />
+      </Section>
+    </>
+  );
+}
+
+// ── Ticker widget properties ────────────────────────────────────────────
+
+function TickerProperties({ el, update }: { el: TickerElement; update: (c: Partial<CanvasElement>) => void }) {
+  return (
+    <>
+      <Section title="Content">
+        <label className="flex items-center gap-2">
+          <span className="text-xs text-[var(--text-muted)] w-16 shrink-0">RSS URL</span>
+          <input
+            type="url"
+            value={el.rssUrl}
+            onChange={(e) => update({ rssUrl: e.target.value })}
+            placeholder="https://feeds.example.com/rss"
+            className="flex-1 px-2 py-1 rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-xs"
+          />
+        </label>
+      </Section>
+      <Section title="Scroll">
+        <NumberField label="Speed" value={el.speed} onChange={(v) => update({ speed: Math.min(10, Math.max(1, v)) })} min={1} max={10} />
+        <SelectField
+          label="Direction"
+          value={el.direction}
+          options={[
+            { value: 'left', label: 'Left ←' },
+            { value: 'right', label: 'Right →' },
+          ]}
+          onChange={(v) => update({ direction: v as TickerElement['direction'] })}
+        />
+      </Section>
+      <Section title="Style">
+        <NumberField label="Font size" value={el.fontSize} onChange={(v) => update({ fontSize: Math.max(10, v) })} min={10} unit="px" />
+        <ColorField label="Text" value={el.textColor} onChange={(v) => update({ textColor: v })} />
+        <ColorField label="Background" value={el.bgColor} onChange={(v) => update({ bgColor: v })} />
+      </Section>
+    </>
+  );
+}
+
+// ── Webpage widget properties ───────────────────────────────────────────
+
+function WebpageProperties({ el, update }: { el: WebpageElement; update: (c: Partial<CanvasElement>) => void }) {
+  return (
+    <Section title="Web Page">
+      <label className="flex items-center gap-2">
+        <span className="text-xs text-[var(--text-muted)] w-16 shrink-0">URL</span>
+        <input
+          type="url"
+          value={el.url}
+          onChange={(e) => update({ url: e.target.value })}
+          placeholder="https://example.com"
+          className="flex-1 px-2 py-1 rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-xs"
+        />
+      </label>
+      <NumberField
+        label="Refresh"
+        value={el.refreshIntervalSec}
+        onChange={(v) => update({ refreshIntervalSec: Math.max(0, v) })}
+        min={0}
+        unit="sec"
+      />
+      {el.refreshIntervalSec === 0 && (
+        <p className="text-[10px] text-[var(--text-muted)]">0 = never auto-refresh</p>
+      )}
+    </Section>
+  );
+}
+
+// ── YouTube widget properties ───────────────────────────────────────────
+
+function YoutubeProperties({ el, update }: { el: YoutubeElement; update: (c: Partial<CanvasElement>) => void }) {
+  return (
+    <>
+      <Section title="Video">
+        <label className="flex items-center gap-2">
+          <span className="text-xs text-[var(--text-muted)] w-16 shrink-0">URL</span>
+          <input
+            type="url"
+            value={el.url}
+            onChange={(e) => update({ url: e.target.value })}
+            placeholder="https://youtube.com/watch?v=..."
+            className="flex-1 px-2 py-1 rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-xs"
+          />
+        </label>
+      </Section>
+      <Section title="Playback">
+        {([
+          { key: 'autoplay', label: 'Autoplay' },
+          { key: 'muted',    label: 'Muted' },
+          { key: 'loop',     label: 'Loop' },
+        ] as const).map(({ key, label }) => (
+          <label key={key} className="flex items-center gap-2 cursor-pointer">
+            <span className="text-xs text-[var(--text-muted)] w-16 shrink-0">{label}</span>
+            <input
+              type="checkbox"
+              checked={el[key]}
+              onChange={(e) => update({ [key]: e.target.checked })}
+              className="w-4 h-4 accent-blue-500"
+            />
+          </label>
+        ))}
+      </Section>
+    </>
   );
 }

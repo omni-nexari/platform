@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   Type, Square, Circle, Minus, Layers,
-  Image as ImageIcon, Tag,
+  Image as ImageIcon, Tag, Clock, Cloud, Globe, Newspaper, Youtube, LayoutGrid,
 } from 'lucide-react';
 import { useCanvasStore } from '../../lib/canvasStore.js';
 import {
@@ -9,6 +9,11 @@ import {
   createRectElement,
   createCircleElement,
   createLineElement,
+  createClockElement,
+  createWeatherElement,
+  createTickerElement,
+  createWebpageElement,
+  createYoutubeElement,
 } from '../../lib/canvasTypes.js';
 import MediaLibraryPanel from './MediaLibraryPanel.js';
 
@@ -16,6 +21,7 @@ const TABS = [
   { id: 'shapes' as const, label: 'Shapes', icon: Square },
   { id: 'text' as const, label: 'Text', icon: Type },
   { id: 'media' as const, label: 'Media', icon: ImageIcon },
+  { id: 'widgets' as const, label: 'Widgets', icon: LayoutGrid },
   { id: 'layers' as const, label: 'Layers', icon: Layers },
 ];
 
@@ -51,6 +57,46 @@ const SHAPE_ITEMS = [
     label: 'Square',
     icon: <Square size={24} />,
     create: () => createRectElement({ width: 150, height: 150, name: 'Square' }),
+  },
+] as const;
+
+// ── Widget gallery items ──────────────────────────────────────────────
+
+const WIDGET_ITEMS = [
+  {
+    id: 'clock',
+    label: 'Clock',
+    description: 'Live digital or analog clock',
+    icon: <Clock size={24} />,
+    create: () => createClockElement(),
+  },
+  {
+    id: 'weather',
+    label: 'Weather',
+    description: 'Live weather display',
+    icon: <Cloud size={24} />,
+    create: () => createWeatherElement(),
+  },
+  {
+    id: 'ticker',
+    label: 'News Ticker',
+    description: 'Scrolling RSS ticker',
+    icon: <Newspaper size={24} />,
+    create: () => createTickerElement(),
+  },
+  {
+    id: 'webpage',
+    label: 'Web Page',
+    description: 'Embedded website iframe',
+    icon: <Globe size={24} />,
+    create: () => createWebpageElement(),
+  },
+  {
+    id: 'youtube',
+    label: 'YouTube',
+    description: 'YouTube video player',
+    icon: <Youtube size={24} />,
+    create: () => createYoutubeElement(),
   },
 ] as const;
 
@@ -209,6 +255,27 @@ export default function CanvasSidebar({ workspaceId }: { workspaceId: string }) 
           </div>
         )}
 
+        {activeSidebarTab === 'widgets' && (
+          <div>
+            <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-3">
+              Live Widgets
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {WIDGET_ITEMS.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => addElement(item.create())}
+                  className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-[var(--border)] hover:border-[var(--blue)] hover:bg-[var(--surface)] transition-colors text-[var(--text-muted)] hover:text-[var(--blue)] text-left"
+                >
+                  {item.icon}
+                  <span className="text-[10px] font-semibold w-full text-center">{item.label}</span>
+                  <span className="text-[9px] opacity-60 text-center leading-tight">{item.description}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {activeSidebarTab === 'layers' && (
           <div>
             <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-3">
@@ -262,6 +329,11 @@ export default function CanvasSidebar({ workspaceId }: { workspaceId: string }) 
                         {el.type === 'circle' && <Circle size={12} />}
                         {el.type === 'line' && <Minus size={12} />}
                         {el.type === 'image' && <ImageIcon size={12} />}
+                        {el.type === 'clock' && <Clock size={12} />}
+                        {el.type === 'weather' && <Cloud size={12} />}
+                        {el.type === 'ticker' && <Newspaper size={12} />}
+                        {el.type === 'webpage' && <Globe size={12} />}
+                        {el.type === 'youtube' && <Youtube size={12} />}
                         <span className="flex-1 truncate">{el.name}</span>
                         {el.locked && (
                           <span className="text-[10px] text-amber-400">Locked</span>

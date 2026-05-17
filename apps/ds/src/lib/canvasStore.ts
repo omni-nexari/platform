@@ -43,7 +43,7 @@ interface CanvasState {
   containerHeight: number;
 
   // Sidebar
-  activeSidebarTab: 'shapes' | 'text' | 'media' | 'layers';
+  activeSidebarTab: 'shapes' | 'text' | 'media' | 'layers' | 'widgets';
 
   // History
   past: HistoryEntry[];

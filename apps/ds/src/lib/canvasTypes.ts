@@ -1,6 +1,8 @@
 // ── Canvas element & scene types ───────────────────────────────────────────
 
-export type ElementType = 'text' | 'rect' | 'circle' | 'line' | 'image' | 'group';
+export type ElementType =
+  | 'text' | 'rect' | 'circle' | 'line' | 'image' | 'group'
+  | 'clock' | 'weather' | 'ticker' | 'webpage' | 'youtube';
 
 export type TransitionEffect = 'none' | 'fade' | 'slide_left' | 'slide_right' | 'zoom';
 
@@ -71,13 +73,78 @@ export interface GroupElement extends BaseElement {
   children: CanvasElement[];
 }
 
+// ── Widget elements ───────────────────────────────────────────────────────
+
+export interface ClockElement extends BaseElement {
+  type: 'clock';
+  clockStyle: 'digital' | 'analog';
+  timezone: string;           // IANA timezone, e.g. 'Europe/London', '' = device local
+  format: '12h' | '24h';
+  showDate: boolean;
+  textColor: string;
+  bgColor: string;
+}
+
+export interface WeatherElement extends BaseElement {
+  type: 'weather';
+  lat: number;
+  lon: number;
+  unit: 'C' | 'F';
+  displayMode: 'current' | '7day' | 'hourly';
+  particles: boolean;
+  textColor: string;
+}
+
+export interface TickerElement extends BaseElement {
+  type: 'ticker';
+  rssUrl: string;
+  speed: number;              // 1–10
+  direction: 'left' | 'right';
+  textColor: string;
+  bgColor: string;
+  fontSize: number;
+}
+
+export interface WebpageElement extends BaseElement {
+  type: 'webpage';
+  url: string;
+  refreshIntervalSec: number; // 0 = never
+}
+
+export interface YoutubeElement extends BaseElement {
+  type: 'youtube';
+  url: string;                // full YouTube URL or bare video ID
+  autoplay: boolean;
+  muted: boolean;
+  loop: boolean;
+}
+
+export type WidgetElement =
+  | ClockElement
+  | WeatherElement
+  | TickerElement
+  | WebpageElement
+  | YoutubeElement;
+
+export const WIDGET_TYPES = ['clock', 'weather', 'ticker', 'webpage', 'youtube'] as const;
+export type WidgetType = typeof WIDGET_TYPES[number];
+
+export function isWidgetElement(el: CanvasElement): el is WidgetElement {
+  return (WIDGET_TYPES as readonly string[]).includes(el.type);
+}
+
 export type CanvasElement =
   | TextElement
   | RectElement
   | CircleElement
   | LineElement
   | ImageElement
-  | GroupElement;
+  | GroupElement
+  | ClockElement
+  | WeatherElement
+  | TickerElement
+  | WebpageElement
+  | YoutubeElement;
 
 // ── Page & Scene ──────────────────────────────────────────────────────────
 
@@ -152,7 +219,12 @@ function isElementType(value: unknown): value is ElementType {
     || value === 'circle'
     || value === 'line'
     || value === 'image'
-    || value === 'group';
+    || value === 'group'
+    || value === 'clock'
+    || value === 'weather'
+    || value === 'ticker'
+    || value === 'webpage'
+    || value === 'youtube';
 }
 
 function sanitizeBaseElement<T extends BaseElement>(element: T): T {
@@ -249,6 +321,65 @@ export function sanitizeCanvasElement(element: CanvasElement): CanvasElement | n
               .map((child) => sanitizeCanvasElement(child))
               .filter((child): child is CanvasElement => child != null)
           : [],
+      };
+    }
+
+    case 'clock': {
+      const base = sanitizeBaseElement(element);
+      return {
+        ...base,
+        clockStyle: element.clockStyle === 'analog' ? 'analog' : 'digital',
+        timezone: typeof element.timezone === 'string' ? element.timezone : '',
+        format: element.format === '12h' ? '12h' : '24h',
+        showDate: element.showDate !== false,
+        textColor: typeof element.textColor === 'string' && element.textColor ? element.textColor : '#ffffff',
+        bgColor: typeof element.bgColor === 'string' && element.bgColor ? element.bgColor : 'rgba(0,0,0,0.5)',
+      };
+    }
+
+    case 'weather': {
+      const base = sanitizeBaseElement(element);
+      return {
+        ...base,
+        lat: toFiniteNumber(element.lat, 51.5074),
+        lon: toFiniteNumber(element.lon, -0.1278),
+        unit: element.unit === 'F' ? 'F' : 'C',
+        displayMode: (['current', '7day', 'hourly'] as const).includes(element.displayMode as 'current') ? element.displayMode : 'current',
+        particles: element.particles !== false,
+        textColor: typeof element.textColor === 'string' && element.textColor ? element.textColor : '#ffffff',
+      };
+    }
+
+    case 'ticker': {
+      const base = sanitizeBaseElement(element);
+      return {
+        ...base,
+        rssUrl: typeof element.rssUrl === 'string' ? element.rssUrl : '',
+        speed: clamp(toFiniteNumber(element.speed, 5), 1, 10),
+        direction: element.direction === 'right' ? 'right' : 'left',
+        textColor: typeof element.textColor === 'string' && element.textColor ? element.textColor : '#ffffff',
+        bgColor: typeof element.bgColor === 'string' && element.bgColor ? element.bgColor : '#1e293b',
+        fontSize: Math.max(10, toFiniteNumber(element.fontSize, 20)),
+      };
+    }
+
+    case 'webpage': {
+      const base = sanitizeBaseElement(element);
+      return {
+        ...base,
+        url: typeof element.url === 'string' ? element.url : '',
+        refreshIntervalSec: Math.max(0, toFiniteNumber(element.refreshIntervalSec, 0)),
+      };
+    }
+
+    case 'youtube': {
+      const base = sanitizeBaseElement(element);
+      return {
+        ...base,
+        url: typeof element.url === 'string' ? element.url : '',
+        autoplay: element.autoplay === true,
+        muted: element.muted !== false,
+        loop: element.loop === true,
       };
     }
   }
@@ -401,6 +532,120 @@ export function createImageElement(overrides?: Partial<ImageElement>): ImageElem
     contentItemId: null,
     src: '',
     objectFit: 'cover',
+    ...overrides,
+  };
+}
+
+export function createClockElement(overrides?: Partial<ClockElement>): ClockElement {
+  return {
+    id: crypto.randomUUID(),
+    type: 'clock',
+    x: 100,
+    y: 100,
+    width: 320,
+    height: 180,
+    rotation: 0,
+    opacity: 1,
+    locked: false,
+    visible: true,
+    name: 'Clock',
+    tags: [],
+    clockStyle: 'digital',
+    timezone: '',
+    format: '24h',
+    showDate: true,
+    textColor: '#ffffff',
+    bgColor: 'rgba(0,0,0,0.5)',
+    ...overrides,
+  };
+}
+
+export function createWeatherElement(overrides?: Partial<WeatherElement>): WeatherElement {
+  return {
+    id: crypto.randomUUID(),
+    type: 'weather',
+    x: 100,
+    y: 100,
+    width: 340,
+    height: 200,
+    rotation: 0,
+    opacity: 1,
+    locked: false,
+    visible: true,
+    name: 'Weather',
+    tags: [],
+    lat: 51.5074,
+    lon: -0.1278,
+    unit: 'C',
+    displayMode: 'current',
+    particles: true,
+    textColor: '#ffffff',
+    ...overrides,
+  };
+}
+
+export function createTickerElement(overrides?: Partial<TickerElement>): TickerElement {
+  return {
+    id: crypto.randomUUID(),
+    type: 'ticker',
+    x: 0,
+    y: 900,
+    width: 1920,
+    height: 60,
+    rotation: 0,
+    opacity: 1,
+    locked: false,
+    visible: true,
+    name: 'News Ticker',
+    tags: [],
+    rssUrl: '',
+    speed: 5,
+    direction: 'left',
+    textColor: '#ffffff',
+    bgColor: '#1e293b',
+    fontSize: 20,
+    ...overrides,
+  };
+}
+
+export function createWebpageElement(overrides?: Partial<WebpageElement>): WebpageElement {
+  return {
+    id: crypto.randomUUID(),
+    type: 'webpage',
+    x: 100,
+    y: 100,
+    width: 640,
+    height: 400,
+    rotation: 0,
+    opacity: 1,
+    locked: false,
+    visible: true,
+    name: 'Web Page',
+    tags: [],
+    url: '',
+    refreshIntervalSec: 0,
+    ...overrides,
+  };
+}
+
+export function createYoutubeElement(overrides?: Partial<YoutubeElement>): YoutubeElement {
+  return {
+    id: crypto.randomUUID(),
+    type: 'youtube',
+    x: 100,
+    y: 100,
+    width: 640,
+    height: 360,
+    rotation: 0,
+    opacity: 1,
+    locked: false,
+    visible: true,
+    name: 'YouTube',
+    tags: [],
+    url: '',
+    autoplay: false,
+    muted: true,
+    loop: false,
     ...overrides,
   };
 }

@@ -448,6 +448,10 @@ const Player = {
         } else {
           logger.warn('[BLE] BleManager not loaded — ble-manager.js missing from WGT?');
         }
+        // Notify the server of consumer vs commercial TV so the portal can hide MDC-only controls
+        if (typeof (window as any).b2bapis === 'undefined') {
+          this.wsConnection.send(JSON.stringify({ type: 'platform_info', payload: { platform: 'tizen-consumer' } }));
+        }
       };
       
       this.wsConnection.onmessage = (event) => {

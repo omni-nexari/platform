@@ -628,6 +628,15 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     return;
   }
 
+  // ── platform_info: consumer vs commercial TV detection ────────────────────
+  if (msg.type === 'platform_info') {
+    const { platform } = (msg.payload ?? {}) as { platform?: string };
+    if (platform) {
+      await db.update(devices).set({ platform, updatedAt: new Date() }).where(eq(devices.id, deviceId));
+    }
+    return;
+  }
+
   // ── installed_apps: list of apps installed on the device ──────────────────
   if (msg.type === 'installed_apps') {
     const apps = Array.isArray(msg.payload) ? msg.payload : [];

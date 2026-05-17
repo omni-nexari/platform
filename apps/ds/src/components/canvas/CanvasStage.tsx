@@ -2,10 +2,15 @@ import { useRef, useEffect, useState, useCallback, useReducer } from 'react';
 import { Stage, Layer, Rect, Circle, Text, Line, Transformer, Image as KonvaImage } from 'react-konva';
 import type Konva from 'konva';
 import { useCanvasStore } from '../../lib/canvasStore.js';
-import { sanitizeCanvasElement } from '../../lib/canvasTypes.js';
-import type { CanvasElement, ImageElement } from '../../lib/canvasTypes.js';
+import { sanitizeCanvasElement, isWidgetElement } from '../../lib/canvasTypes.js';
+import type { CanvasElement, ImageElement, ClockElement, WeatherElement, TickerElement, WebpageElement, YoutubeElement } from '../../lib/canvasTypes.js';
 import type { ReactNode } from 'react';
 import { CanvasRulerH, CanvasRulerV, CanvasRulerCorner } from './CanvasRuler.js';
+import ClockWidget from './widgets/ClockWidget.js';
+import WeatherWidget from './widgets/WeatherWidget.js';
+import TickerWidget from './widgets/TickerWidget.js';
+import WebpageWidget from './widgets/WebpageWidget.js';
+import YoutubeWidget from './widgets/YoutubeWidget.js';
 
 function finite(value: number, fallback = 0) {
   return Number.isFinite(value) ? value : fallback;
@@ -346,6 +351,24 @@ export default function CanvasStage() {
         );
       }
 
+      // Widget types: render a transparent hit-target rect; HTML overlay handles visuals
+      case 'clock':
+      case 'weather':
+      case 'ticker':
+      case 'webpage':
+      case 'youtube':
+        return (
+          <Rect
+            key={safeElement.id}
+            {...common}
+            width={positive(safeElement.width)}
+            height={positive(safeElement.height)}
+            fill="rgba(0,0,0,0)"
+            stroke={selectedElementIds.includes(safeElement.id) ? 'rgba(59,130,246,0.5)' : 'rgba(255,255,255,0.15)'}
+            strokeWidth={1.5}
+          />
+        );
+
       default:
         return null;
     }
@@ -371,6 +394,10 @@ export default function CanvasStage() {
     }
     return <>{lines}</>;
   }
+
+  // ── Widget HTML overlay ─────────────────────────────────────────────────
+
+  const widgetElements = elements.filter(isWidgetElement);
 
   return (
     <div
@@ -464,6 +491,50 @@ export default function CanvasStage() {
       <CanvasRulerH />
       <CanvasRulerV />
       <CanvasRulerCorner />
+
+      {/* HTML widget overlay — renders live widgets above the Konva canvas */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: stageSize.width,
+          height: stageSize.height,
+          overflow: 'hidden',
+          pointerEvents: 'none',
+        }}
+      >
+        {widgetElements.map((el) => {
+          const safe = sanitizeCanvasElement(el);
+          if (!safe || !safe.visible) return null;
+          const left = stageX + safe.x * zoom;
+          const top  = stageY + safe.y * zoom;
+          const w = safe.width  * zoom;
+          const h = safe.height * zoom;
+          return (
+            <div
+              key={safe.id}
+              style={{
+                position: 'absolute',
+                left,
+                top,
+                width:  w,
+                height: h,
+                transform:       `rotate(${safe.rotation}deg)`,
+                transformOrigin: '0 0',
+                opacity: safe.opacity,
+                containerType: 'inline-size',
+              }}
+            >
+              {safe.type === 'clock'   && <ClockWidget   el={safe as ClockElement}   />}
+              {safe.type === 'weather' && <WeatherWidget  el={safe as WeatherElement} />}
+              {safe.type === 'ticker'  && <TickerWidget   el={safe as TickerElement}  />}
+              {safe.type === 'webpage' && <WebpageWidget  el={safe as WebpageElement} />}
+              {safe.type === 'youtube' && <YoutubeWidget  el={safe as YoutubeElement} />}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

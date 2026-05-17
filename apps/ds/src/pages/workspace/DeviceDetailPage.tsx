@@ -1418,9 +1418,10 @@ export function DeviceDetailContent({
   const { device, screenshots, latestHeartbeat: hb } = data;
   const isOnline    = device.status === 'online';
   const isEpaper    = device.kind === 'epaper';
-  const isWindows   = device.platform === 'windows';
-  const isAndroid   = ['android', 'androidtv', 'firetv'].includes(device.platform ?? '');
-  const isTizenTop  = ['tizen', 'tizen-sbb'].includes(device.platform ?? 'tizen');
+  const isWindows      = device.platform === 'windows';
+  const isAndroid      = ['android', 'androidtv', 'firetv'].includes(device.platform ?? '');
+  const isTizenTop     = ['tizen', 'tizen-sbb'].includes(device.platform ?? 'tizen');
+  const isConsumerTizen = device.platform === 'tizen-consumer';
   const cmdDisabled = !isOnline || cmdMutation.isPending;
   const fallbackNowPlaying = device.publishedTarget?.name ?? null;
   const fallbackNowPlayingType = device.publishedTarget?.type ?? null;
@@ -2377,6 +2378,7 @@ export function DeviceDetailContent({
                 className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]" />
             </div>
 
+            {!isConsumerTizen && (
             <div className="sm:col-span-2">
               <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Screenshot Interval</label>
               <select {...register('screenshotIntervalMin', { valueAsNumber: true })}
@@ -2388,9 +2390,10 @@ export function DeviceDetailContent({
                 <option value={60}>Every hour</option>
               </select>
             </div>
+            )}
 
             {/* ── Display Settings (MDC) ───────────────────────────────── */}
-            {!isEpaper && !isWindows && !isAndroid && (
+            {!isEpaper && !isWindows && !isAndroid && !isConsumerTizen && (
             <div className="sm:col-span-2 space-y-5">
 
               {/* 2×2 toggle grid */}
@@ -2654,7 +2657,7 @@ export function DeviceDetailContent({
       </SectionCard>
 
       {/* ── NTP & Timezone ───────────────────────────────────────────────── */}
-      <SectionCard>
+      {!isConsumerTizen && <SectionCard>
         <SectionCardHeader>
           <h2 className="text-sm font-semibold flex items-center gap-1.5 text-[var(--text)]">
             <Clock className="w-3.5 h-3.5" />NTP &amp; Timezone
@@ -2718,7 +2721,7 @@ export function DeviceDetailContent({
             </div>
           </div>
         </SectionCardBody>
-      </SectionCard>
+      </SectionCard>}
 
       {isWindows && (
         <WindowsSettingsCard
