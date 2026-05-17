@@ -339,6 +339,9 @@ function renderContent(item: PlaylistItem) {
     case 'VIDEO':
     case 'OVERLAY':
     case 'PRESENTATION':
+      // If a VIDEOWALL_INIT has been received, this device is a wall tile — use wall renderer
+      // even for VIDEO-typed content (videowall playlist slots are regular VIDEO items).
+      if (_wallManifest) { renderVideowall(c, durationSec); break; }
       renderVideo(c, durationSec);
       break;
 

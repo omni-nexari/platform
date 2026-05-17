@@ -3243,7 +3243,9 @@ const Player = {
   // Render video content — routes to wall CSS renderer, HTML5 sync path, or AVPlay.
   renderVideo(container, content) {
     // CrossOS wall mode: use HTML5 <video> with CSS transform crop.
-    if (this._wallCss && content && content.type === 'VIDEOWALL') {
+    // Apply whenever _wallCss is set — content.type may be VIDEO or VIDEOWALL
+    // (videowall playlist slots are regular VIDEO items; VIDEOWALL_INIT sets _wallCss).
+    if (this._wallCss && content) {
       this._renderWallVideo(container, content);
       return;
     }

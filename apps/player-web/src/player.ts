@@ -127,6 +127,8 @@ export class Player {
   private lastContentSignature: string | null = null;
   private pendingItems: ScheduleItem[] | null = null;
   private _pendingSyncGroupMsg: Record<string, unknown> | null = null;
+  // Stored VIDEOWALL_INIT payload — re-used when fresh content arrives via refresh_schedule.
+  private _lastWallMsg: Record<string, unknown> | null = null;
   // Relay info stored when loadContent() finds a cross-OS sync group; consumed by swapToPending().
   private _pendingSyncRelayInfo: { groupId: string; relayUrl: string; leaderPriority: string[]; peerCount: number; syncRelayMode: string } | null = null;
   private pendingSignature: string | null = null;
@@ -543,7 +545,7 @@ export class Player {
         return;
       }
       case 'SYNC_GROUP_INIT': await this.initSyncGroup(msg); return;
-      case 'VIDEOWALL_INIT':   await this.initVideoWall(msg); return;
+      case 'VIDEOWALL_INIT':   this._lastWallMsg = msg; await this.initVideoWall(msg); return;
       default:
         // The API sends device commands using the command name as the WS type
         // (e.g. type='reboot', type='screenshot', type='set_system_volume').
@@ -1094,6 +1096,11 @@ export class Player {
       return;
     }
     if (this.syncActive) return;
+    // If a VIDEOWALL_INIT was received earlier and new content just arrived via
+    // refresh_schedule, re-enter wall mode so the wall engine uses the fresh URLs.
+    if (this._lastWallMsg) {
+      void this.initVideoWall(this._lastWallMsg); return;
+    }
     this.cancelPlayback();
     void this.renderPlaylist();
   }
@@ -1291,6 +1298,10 @@ export class Player {
     switch (type) {
       case 'IMAGE':      await this.renderImage(container, record, signal); break;
       case 'VIDEO':      await this.renderVideo(container, record, signal); break;
+      case 'VIDEOWALL':
+        // VIDEOWALL-typed content: re-enter wall mode using stored VIDEOWALL_INIT geometry.
+        if (this._lastWallMsg) { await this.initVideoWall(this._lastWallMsg); return; }
+        await this.renderVideo(container, record, signal); break;
       case 'HTML':       await this.renderHTML(container, record, signal); break;
       case 'CANVAS':     await this.renderCanvas(container, record, signal); break;
       case 'MENU_BOARD': await renderMenuBoard(container, record, this.api); break;
