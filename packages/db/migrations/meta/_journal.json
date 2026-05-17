@@ -498,6 +498,13 @@
             "when": 1778745400000,
             "tag": "0070_videowall_playlist_pages",
             "breakpoints": true
+        },
+        {
+            "idx": 71,
+            "version": "7",
+            "when": 1747440000000,
+            "tag": "0071_workspace_rule_sets",
+            "breakpoints": true
         }
     ]
 }

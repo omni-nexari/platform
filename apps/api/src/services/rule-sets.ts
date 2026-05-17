@@ -133,8 +133,8 @@ export async function evaluateSensorReading(
   const now = new Date();
 
   for (const rs of ruleSets) {
-    if (!hasSensorCondition(rs.conditions, sensorId)) continue;
-    if (!evaluateConditionGroup(rs.conditions, value, sensorId)) continue;
+    if (!hasSensorCondition(rs.conditions as unknown as ConditionNode, sensorId)) continue;
+    if (!evaluateConditionGroup(rs.conditions as unknown as ConditionNode, value, sensorId)) continue;
 
     // Respect cooldown
     if (rs.cooldownSeconds > 0 && rs.lastFiredAt) {
