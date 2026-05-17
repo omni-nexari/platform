@@ -427,6 +427,9 @@ export default function OrgDashboardPage() {
     queryFn: () => api.get('/auth/me'),
     enabled: !!user,
     retry: false,
+    // Match AppLayout so the shared cache always reflects fresh server state.
+    staleTime: 0,
+    refetchOnWindowFocus: 'always',
   });
 
   const { data: workspaces = [] } = useQuery<Workspace[]>({
