@@ -14,6 +14,7 @@ import {
   Monitor,
   RefreshCw,
   RotateCcw,
+  ShoppingCart,
   Smartphone,
   Wifi,
   WifiOff,
@@ -297,11 +298,16 @@ export default function PosKioskPage() {
         title="Kiosk Ops"
         subtitle="Heartbeat monitoring and kiosk loyalty simulation"
         action={
-          selectedDeviceId ? (
-            <button className="ui-btn-secondary flex items-center gap-1.5" onClick={() => navigate(`/workspaces/${wsId}/devices/${selectedDeviceId}`)}>
-              <ArrowUpRight className="h-4 w-4" />Open Device Detail
+          <div className="flex items-center gap-2">
+            <button className="ui-btn-primary flex items-center gap-1.5" onClick={() => navigate(`/workspaces/${wsId}/pos`)}>
+              <ShoppingCart className="h-4 w-4" />New Order
             </button>
-          ) : undefined
+            {selectedDeviceId && (
+              <button className="ui-btn-secondary flex items-center gap-1.5" onClick={() => navigate(`/workspaces/${wsId}/devices/${selectedDeviceId}`)}>
+                <ArrowUpRight className="h-4 w-4" />Open Device Detail
+              </button>
+            )}
+          </div>
         }
       />
 
