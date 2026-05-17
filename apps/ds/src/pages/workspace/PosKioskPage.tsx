@@ -413,7 +413,6 @@ export default function PosKioskPage() {
                 <Tablet className="h-4 w-4 text-[var(--accent)]" />
                 <span className="text-sm font-semibold text-[var(--text)]">Waiter Tablet</span>
               </div>
-              <p className="text-xs text-[var(--text-muted)]">Authenticated POS order page for staff tablets and stations.</p>
               <div className="flex items-center gap-2">
                 <input
                   readOnly
@@ -428,7 +427,6 @@ export default function PosKioskPage() {
                 </button>
               </div>
               <QrCanvas url={buildPosUrl()} />
-              <p className="text-xs text-[var(--text-muted)]">Staff must be logged in to use this URL.</p>
             </div>
 
             {/* Kitchen */}
