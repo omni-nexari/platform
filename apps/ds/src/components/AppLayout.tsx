@@ -15,7 +15,7 @@ import {
   ModalPrimaryButton,
   ModalSecondaryButton,
 } from './UiPrimitives.js';
-import { useCmsEnabled, usePosEnabled, useOrgModules } from '../lib/modules.js';
+import { useOrgModules, type OrgModules } from '../lib/modules.js';
 import {
   LayoutDashboard,
   Monitor,
@@ -257,14 +257,20 @@ export default function AppLayout() {
   // Derive modules from the live query response (fresh from server) so the
   // sidebar updates immediately without waiting for the auth store to sync.
   const storeModules = useOrgModules();
-  const liveSettings = (meData as { org?: { settings?: string } } | undefined)?.org?.settings;
-  const activeModules = liveSettings !== undefined ? (() => {
-    try {
-      const s = JSON.parse(liveSettings ?? '{}') as { modules?: string };
-      if (s.modules === 'pos' || s.modules === 'both') return s.modules as 'pos' | 'both';
-    } catch { /* ignore */ }
-    return 'signage' as const;
-  })() : storeModules;
+  // Optional chaining handles both null and undefined, so no type cast needed.
+  const liveSettings = meData?.org?.settings;
+  const activeModules: OrgModules = (() => {
+    const raw = liveSettings !== undefined ? liveSettings : null;
+    if (raw !== null) {
+      try {
+        const s = JSON.parse(raw) as { modules?: string };
+        if (s.modules === 'pos') return 'pos';
+        if (s.modules === 'both') return 'both';
+        return 'signage';
+      } catch { /* fall through */ }
+    }
+    return storeModules;
+  })();
   const cmsEnabled = activeModules === 'signage' || activeModules === 'both';
   const posEnabled = activeModules === 'pos' || activeModules === 'both';
   const contentEnabled = cmsEnabled;
@@ -591,13 +597,24 @@ export default function AppLayout() {
               </p>
               {workspaces.map((ws) => {
                 const isActive = ws.id === currentWsId;
-                const defaultPath = posEnabled && !cmsEnabled
-                  ? `/workspaces/${ws.id}/pos/orders`
-                  : `/workspaces/${ws.id}/devices`;
                 return (
                   <button
                     key={ws.id}
-                    onClick={() => navigate(defaultPath)}
+                    onClick={() => {
+                      // Read modules from the live query cache at click time so we
+                      // always navigate to the right section even before the initial
+                      // meData render has settled.
+                      const cached = queryClient.getQueryData<{ org?: { settings?: string } | null }>(['me']);
+                      const cachedSettings = cached?.org?.settings;
+                      let isPosOnly = false;
+                      try {
+                        const s = JSON.parse(cachedSettings ?? '{}') as { modules?: string };
+                        isPosOnly = s.modules === 'pos';
+                      } catch { /* default to devices */ }
+                      navigate(isPosOnly
+                        ? `/workspaces/${ws.id}/pos/orders`
+                        : `/workspaces/${ws.id}/devices`);
+                    }}
                     className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors text-left ${
                       isActive
                         ? 'bg-[var(--blue)] text-white'
