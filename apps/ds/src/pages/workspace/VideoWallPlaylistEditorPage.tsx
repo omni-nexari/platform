@@ -54,13 +54,26 @@ interface ExistingPlaylist {
   id: string;
   name: string;
   groupId: string | null;
-  slots: Array<{
-    positionCol: number;
-    positionRow: number;
-    contentId: string | null;
-    objectFit: string;
-    content: { id: string; name: string; type: string } | null;
+  pages: Array<{
+    id: string;
+    pageIndex: number;
+    name: string;
+    durationMs: number;
+    slots: Array<{
+      positionCol: number;
+      positionRow: number;
+      contentId: string | null;
+      objectFit: string;
+      content: { id: string; name: string; type: string } | null;
+    }>;
   }>;
+}
+
+interface PageState {
+  id: string | null;
+  name: string;
+  durationMs: number;
+  slots: Record<string, SlotState>;
 }
 
 const stepNames = ['Select Wall', 'Assign Content'];
@@ -177,7 +190,8 @@ export default function VideoWallPlaylistEditorPage() {
   const [step, setStep] = useState(0);
   const [name, setName] = useState('New Video Wall Playlist');
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-  const [slots, setSlots] = useState<Record<string, SlotState>>({});
+  const [pages, setPages] = useState<PageState[]>([{ id: null, name: 'Page 1', durationMs: 5000, slots: {} }]);
+  const [selectedPageIdx, setSelectedPageIdx] = useState(0);
   const [savedId, setSavedId] = useState<string | null>(isNew ? null : (id ?? null));
   const [pickerCell, setPickerCell] = useState<{ col: number; row: number } | null>(null);
 
@@ -201,19 +215,27 @@ export default function VideoWallPlaylistEditorPage() {
     if (!existingPlaylist) return;
     setName(existingPlaylist.name);
     setSelectedGroupId(existingPlaylist.groupId);
-    const slotMap: Record<string, SlotState> = {};
-    for (const s of existingPlaylist.slots) {
-      if (s.contentId && s.content) {
-        slotMap[`${s.positionCol},${s.positionRow}`] = {
-          contentId: s.contentId,
-          contentName: s.content.name,
-          contentType: s.content.type,
-          thumbnailContentId: s.contentId,
-          objectFit: (s.objectFit as SlotState['objectFit']) ?? 'cover',
-        };
-      }
-    }
-    setSlots(slotMap);
+    const loadedPages: PageState[] = (existingPlaylist.pages ?? []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      durationMs: p.durationMs,
+      slots: Object.fromEntries(
+        p.slots
+          .filter((s) => s.contentId && s.content)
+          .map((s) => [
+            `${s.positionCol},${s.positionRow}`,
+            {
+              contentId: s.contentId!,
+              contentName: s.content!.name,
+              contentType: s.content!.type,
+              thumbnailContentId: s.contentId!,
+              objectFit: (s.objectFit as SlotState['objectFit']) ?? 'cover',
+            },
+          ]),
+      ),
+    }));
+    setPages(loadedPages.length > 0 ? loadedPages : [{ id: null, name: 'Page 1', durationMs: 5000, slots: {} }]);
+    setSelectedPageIdx(0);
     if (existingPlaylist.groupId) setStep(1);
   }, [existingPlaylist]);
 
@@ -258,6 +280,8 @@ export default function VideoWallPlaylistEditorPage() {
   const colFrs = colWidths.map((w)  => ((w / totalW) * 100).toFixed(1) + '%').join(' ');
   const rowFrs = rowHeights.map((h) => ((h / totalH) * 100).toFixed(1) + '%').join(' ');
 
+  const currentPage: PageState = pages[selectedPageIdx] ?? { id: null, name: 'Page 1', durationMs: 5000, slots: {} };
+  const slots = currentPage.slots;
   const filledCount = Object.keys(slots).length;
   const totalCells  = cols * rows;
   const canAdvance  = step === 0 ? !!selectedGroupId : true;
@@ -338,15 +362,6 @@ export default function VideoWallPlaylistEditorPage() {
   const saveMut = useMutation({
     mutationFn: async () => {
       let plId = savedId;
-      const slotPayload = Object.entries(slots).map(([key, s]) => {
-        const [col, row] = key.split(',').map(Number);
-        return {
-          positionCol: col,
-          positionRow: row,
-          contentId:   s.contentId,
-          objectFit:   s.objectFit,
-        };
-      });
 
       if (!plId) {
         const created = await api.post<{ id: string }>('/videowall-playlists', {
@@ -362,11 +377,31 @@ export default function VideoWallPlaylistEditorPage() {
         });
       }
 
-      await api.put(`/videowall-playlists/${plId}/slots`, slotPayload);
-      return plId;
+      const pagesPayload = pages.map((p, i) => ({
+        id: p.id ?? undefined,
+        pageIndex: i,
+        name: p.name,
+        durationMs: p.durationMs,
+        slots: Object.entries(p.slots).map(([key, s]) => {
+          const parts = key.split(',');
+          return {
+            positionCol: Number(parts[0] ?? 0),
+            positionRow: Number(parts[1] ?? 0),
+            contentId: s.contentId,
+            objectFit: s.objectFit,
+          };
+        }),
+      }));
+
+      const savedPages = await api.put<Array<{ id: string; pageIndex: number }>>(
+        `/videowall-playlists/${plId}/pages`,
+        pagesPayload,
+      );
+      return { plId, savedPages };
     },
-    onSuccess: (plId) => {
+    onSuccess: ({ plId, savedPages }) => {
       setSavedId(plId);
+      setPages((prev) => prev.map((p, i) => ({ ...p, id: savedPages[i]?.id ?? p.id ?? null })));
       qc.invalidateQueries({ queryKey: ['videowall-playlists', wsId] });
       toast.success('Saved');
       if (isNew) {
@@ -395,34 +430,66 @@ export default function VideoWallPlaylistEditorPage() {
     const item = items[0];
     if (!item || !pickerCell) return;
     const key = `${pickerCell.col},${pickerCell.row}`;
-    setSlots((prev) => ({
-      ...prev,
-      [key]: {
-        contentId:          item.id,
-        contentName:        item.name,
-        contentType:        item.contentType ?? item.type,
-        thumbnailContentId: item.thumbnailContentId ?? item.id,
-        objectFit:          prev[key]?.objectFit ?? 'cover',
-      },
-    }));
+    setPages((prev) =>
+      prev.map((p, i) =>
+        i !== selectedPageIdx ? p : {
+          ...p,
+          slots: {
+            ...p.slots,
+            [key]: {
+              contentId: item.id,
+              contentName: item.name,
+              contentType: item.contentType ?? item.type,
+              thumbnailContentId: item.thumbnailContentId ?? item.id,
+              objectFit: p.slots[key]?.objectFit ?? 'cover',
+            },
+          },
+        },
+      ),
+    );
     setPickerCell(null);
   }
 
   function clearCell(col: number, row: number) {
-    setSlots((prev) => {
-      const next = { ...prev };
-      delete next[`${col},${row}`];
-      return next;
-    });
+    setPages((prev) =>
+      prev.map((p, i) => {
+        if (i !== selectedPageIdx) return p;
+        const next = { ...p.slots };
+        delete next[`${col},${row}`];
+        return { ...p, slots: next };
+      }),
+    );
   }
 
   function cycleObjectFit(col: number, row: number) {
-    setSlots((prev) => {
-      const key = `${col},${row}`;
-      const s = prev[key];
-      if (!s) return prev;
-      const nextFit: SlotState['objectFit'] = FIT_CYCLE[(FIT_CYCLE.indexOf(s.objectFit) + 1) % FIT_CYCLE.length] ?? 'cover';
-      return { ...prev, [key]: { ...s, objectFit: nextFit } };
+    setPages((prev) =>
+      prev.map((p, i) => {
+        if (i !== selectedPageIdx) return p;
+        const key = `${col},${row}`;
+        const s = p.slots[key];
+        if (!s) return p;
+        const nextFit: SlotState['objectFit'] =
+          FIT_CYCLE[(FIT_CYCLE.indexOf(s.objectFit) + 1) % FIT_CYCLE.length] ?? 'cover';
+        return { ...p, slots: { ...p.slots, [key]: { ...s, objectFit: nextFit } } };
+      }),
+    );
+  }
+
+  // ── Page management ───────────────────────────────────────────────────────
+
+  function addPage() {
+    const newIdx = pages.length;
+    setPages((prev) => [...prev, { id: null, name: `Page ${prev.length + 1}`, durationMs: 5000, slots: {} }]);
+    setSelectedPageIdx(newIdx);
+  }
+
+  function deletePage(idx: number) {
+    if (pages.length <= 1) return;
+    setPages((prev) => prev.filter((_, i) => i !== idx));
+    setSelectedPageIdx((prev) => {
+      if (prev === idx) return Math.max(0, idx - 1);
+      if (prev > idx) return prev - 1;
+      return prev;
     });
   }
 
@@ -562,93 +629,164 @@ export default function VideoWallPlaylistEditorPage() {
 
       {/* ── Step 1: Assign Content ────────────────────────────────────────── */}
       {step === 1 && (
-        <>
-          {/* Toolbar strip */}
-          <div className="px-4 py-2 border-b border-[var(--border)] shrink-0 flex items-center justify-between gap-4">
-            <p className="text-sm text-[var(--text-muted)]">
-              Click a cell to assign content.{' '}
-              <span className="font-medium text-[var(--text)]">{filledCount}</span>
-              {' '}of{' '}
-              <span className="font-medium text-[var(--text)]">{totalCells}</span>
-              {' '}cells assigned.
-              {groupDetail && (
-                <span className="ml-2 opacity-60">· {groupDetail.name}</span>
-              )}
-            </p>
-            <div className="flex items-center gap-1 shrink-0">
-              <button
-                onClick={() => setViewport((v) => { const z = Math.max(0.05, v.zoom / 1.25); return { ...v, zoom: z }; })}
-                className="w-6 h-6 flex items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--surface)] text-base leading-none"
-              >−</button>
-              <span className="text-xs w-12 text-center text-[var(--text-muted)]">
-                {Math.round(viewport.zoom * 100)}%
-              </span>
-              <button
-                onClick={() => setViewport((v) => { const z = Math.min(10, v.zoom * 1.25); return { ...v, zoom: z }; })}
-                className="w-6 h-6 flex items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--surface)] text-base leading-none"
-              >+</button>
-              <button
-                onClick={fitView}
-                className="px-2 h-6 flex items-center justify-center rounded text-[10px] text-[var(--text-muted)] hover:bg-[var(--surface)] border border-[var(--border)] ml-1"
-              >Fit</button>
-            </div>
-          </div>
+        <div className="flex flex-1 overflow-hidden">
 
-          {/* Pan / zoom viewport */}
-          <div
-            ref={containerRef}
-            className="flex-1 overflow-hidden relative select-none"
-            style={{
-              cursor: isDragging ? 'grabbing' : 'grab',
-              backgroundColor: '#0a0a14',
-              backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.04) 1px, transparent 1px)',
-              backgroundSize: '24px 24px',
-            }}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-            onClickCapture={(e) => {
-              if (hasDraggedRef.current) {
-                e.stopPropagation();
-                hasDraggedRef.current = false;
-              }
-            }}
-          >
-            {/* Wall canvas at natural size, transformed */}
+          {/* ── Pages sidebar ─────────────────────────────────────────── */}
+          <aside className="w-24 shrink-0 border-r border-[var(--border)] bg-[var(--card)] overflow-y-auto flex flex-col p-2 gap-2">
+            {pages.map((page, idx) => {
+              const pageSlots = page.slots;
+              return (
+                <div key={idx} className="relative group">
+                  <button
+                    onClick={() => setSelectedPageIdx(idx)}
+                    className={`w-full rounded overflow-hidden border-2 transition-colors ${
+                      idx === selectedPageIdx
+                        ? 'border-sky-500'
+                        : 'border-transparent hover:border-[var(--border)]'
+                    }`}
+                    style={{ aspectRatio: `${cols} / ${rows}` }}
+                  >
+                    <div
+                      className="w-full h-full grid"
+                      style={{
+                        gridTemplateColumns: `repeat(${cols}, 1fr)`,
+                        gridTemplateRows: `repeat(${rows}, 1fr)`,
+                        gap: '1px',
+                        background: '#0e0e0e',
+                      }}
+                    >
+                      {Array.from({ length: rows }, (_, r) =>
+                        Array.from({ length: cols }, (_, c) => {
+                          const s = pageSlots[`${c},${r}`];
+                          return (
+                            <div key={`${c},${r}`} className="overflow-hidden bg-[#1a1a2e]">
+                              {s ? (
+                                <AuthImg
+                                  itemId={s.thumbnailContentId}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : null}
+                            </div>
+                          );
+                        }),
+                      )}
+                    </div>
+                  </button>
+                  <p className="text-[9px] text-center text-[var(--text-muted)] mt-0.5 truncate px-1">
+                    {page.name}
+                  </p>
+                  {pages.length > 1 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deletePage(idx); }}
+                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] items-center justify-center hidden group-hover:flex"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+            <button
+              onClick={addPage}
+              className="w-full border border-dashed border-[var(--border)] rounded py-2 text-[var(--text-muted)] hover:border-sky-500 hover:text-sky-500 flex items-center justify-center gap-1 text-xs transition-colors"
+            >
+              <Plus size={12} />Add
+            </button>
+          </aside>
+
+          {/* ── Canvas area ───────────────────────────────────────────── */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+
+            {/* Toolbar strip */}
+            <div className="px-4 py-2 border-b border-[var(--border)] shrink-0 flex items-center justify-between gap-4">
+              <p className="text-sm text-[var(--text-muted)]">
+                Click a cell to assign content.{' '}
+                <span className="font-medium text-[var(--text)]">{filledCount}</span>
+                {' '}of{' '}
+                <span className="font-medium text-[var(--text)]">{totalCells}</span>
+                {' '}cells · Page{' '}
+                <span className="font-medium text-[var(--text)]">{selectedPageIdx + 1}</span>
+                {' '}of{' '}
+                <span className="font-medium text-[var(--text)]">{pages.length}</span>
+                {groupDetail && (
+                  <span className="ml-2 opacity-60">· {groupDetail.name}</span>
+                )}
+              </p>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  onClick={() => setViewport((v) => { const z = Math.max(0.05, v.zoom / 1.25); return { ...v, zoom: z }; })}
+                  className="w-6 h-6 flex items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--surface)] text-base leading-none"
+                >−</button>
+                <span className="text-xs w-12 text-center text-[var(--text-muted)]">
+                  {Math.round(viewport.zoom * 100)}%
+                </span>
+                <button
+                  onClick={() => setViewport((v) => { const z = Math.min(10, v.zoom * 1.25); return { ...v, zoom: z }; })}
+                  className="w-6 h-6 flex items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--surface)] text-base leading-none"
+                >+</button>
+                <button
+                  onClick={fitView}
+                  className="px-2 h-6 flex items-center justify-center rounded text-[10px] text-[var(--text-muted)] hover:bg-[var(--surface)] border border-[var(--border)] ml-1"
+                >Fit</button>
+              </div>
+            </div>
+
+            {/* Pan / zoom viewport */}
             <div
+              ref={containerRef}
+              className="flex-1 overflow-hidden relative select-none"
               style={{
-                position: 'absolute',
-                left: 0,
-                top: 0,
-                width: naturalW,
-                height: naturalH,
-                transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
-                transformOrigin: '0 0',
-                background: '#0e0e0e',
-                border: '2px solid rgba(255,255,255,0.12)',
-                boxShadow: '0 8px 40px rgba(0,0,0,0.8)',
+                cursor: isDragging ? 'grabbing' : 'grab',
+                backgroundColor: '#0a0a14',
+                backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.04) 1px, transparent 1px)',
+                backgroundSize: '24px 24px',
+              }}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
+              onClickCapture={(e) => {
+                if (hasDraggedRef.current) {
+                  e.stopPropagation();
+                  hasDraggedRef.current = false;
+                }
               }}
             >
+              {/* Wall canvas at natural size, transformed */}
               <div
-                className="grid w-full h-full"
-                style={{ gridTemplateColumns: colFrs, gridTemplateRows: rowFrs, gap: '2px' }}
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  width: naturalW,
+                  height: naturalH,
+                  transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+                  transformOrigin: '0 0',
+                  background: '#0e0e0e',
+                  border: '2px solid rgba(255,255,255,0.12)',
+                  boxShadow: '0 8px 40px rgba(0,0,0,0.8)',
+                }}
               >
-                {Array.from({ length: rows }, (_, r) =>
-                  Array.from({ length: cols }, (_, c) => (
-                    <WallCell
-                      key={`${c},${r}`}
-                      slot={slots[`${c},${r}`] ?? null}
-                      onPickContent={() => setPickerCell({ col: c, row: r })}
-                      onClear={() => clearCell(c, r)}
-                      onCycleObjectFit={() => cycleObjectFit(c, r)}
-                    />
-                  )),
-                )}
+                <div
+                  className="grid w-full h-full"
+                  style={{ gridTemplateColumns: colFrs, gridTemplateRows: rowFrs, gap: '2px' }}
+                >
+                  {Array.from({ length: rows }, (_, r) =>
+                    Array.from({ length: cols }, (_, c) => (
+                      <WallCell
+                        key={`${c},${r}`}
+                        slot={slots[`${c},${r}`] ?? null}
+                        onPickContent={() => setPickerCell({ col: c, row: r })}
+                        onClear={() => clearCell(c, r)}
+                        onCycleObjectFit={() => cycleObjectFit(c, r)}
+                      />
+                    )),
+                  )}
+                </div>
               </div>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {/* ── Content picker modal ──────────────────────────────────────────── */}

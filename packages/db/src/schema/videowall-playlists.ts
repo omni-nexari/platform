@@ -20,11 +20,29 @@ export const videowallPlaylists = pgTable('videowall_playlists', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const videowallPlaylistPages = pgTable(
+  'videowall_playlist_pages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    playlistId: uuid('playlist_id').notNull().references(() => videowallPlaylists.id, { onDelete: 'cascade' }),
+    pageIndex: integer('page_index').notNull().default(0),
+    name: text('name').notNull().default('Page 1'),
+    /** Display duration for this page in milliseconds. */
+    durationMs: integer('duration_ms').notNull().default(5000),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqPage: unique().on(t.playlistId, t.pageIndex),
+  }),
+);
+
 export const videowallPlaylistSlots = pgTable(
   'videowall_playlist_slots',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     playlistId: uuid('playlist_id').notNull().references(() => videowallPlaylists.id, { onDelete: 'cascade' }),
+    pageId: uuid('page_id').notNull().references(() => videowallPlaylistPages.id, { onDelete: 'cascade' }),
     positionCol: integer('position_col').notNull(),
     positionRow: integer('position_row').notNull(),
     /** Content assigned to this cell. NULL = no content (cell is blank). */
@@ -35,7 +53,7 @@ export const videowallPlaylistSlots = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    uniqSlot: unique().on(t.playlistId, t.positionCol, t.positionRow),
+    uniqSlot: unique().on(t.pageId, t.positionCol, t.positionRow),
   }),
 );
 
@@ -54,6 +72,15 @@ export const videowallPlaylistsRelations = relations(videowallPlaylists, ({ one,
     fields: [videowallPlaylists.groupId],
     references: [deviceGroups.id],
   }),
+  pages: many(videowallPlaylistPages),
+  slots: many(videowallPlaylistSlots),
+}));
+
+export const videowallPlaylistPagesRelations = relations(videowallPlaylistPages, ({ one, many }) => ({
+  playlist: one(videowallPlaylists, {
+    fields: [videowallPlaylistPages.playlistId],
+    references: [videowallPlaylists.id],
+  }),
   slots: many(videowallPlaylistSlots),
 }));
 
@@ -61,6 +88,10 @@ export const videowallPlaylistSlotsRelations = relations(videowallPlaylistSlots,
   playlist: one(videowallPlaylists, {
     fields: [videowallPlaylistSlots.playlistId],
     references: [videowallPlaylists.id],
+  }),
+  page: one(videowallPlaylistPages, {
+    fields: [videowallPlaylistSlots.pageId],
+    references: [videowallPlaylistPages.id],
   }),
   content: one(contentItems, {
     fields: [videowallPlaylistSlots.contentId],

@@ -3,6 +3,7 @@ import {
   db,
   videowallPlaylists,
   videowallPlaylistSlots,
+  videowallPlaylistPages,
   deviceGroups,
   deviceGroupMembers,
   devices,
@@ -102,14 +103,23 @@ export async function videowallPlaylistRoutes(app: FastifyInstance) {
     const member = await checkWorkspaceAccess(pl.workspaceId, user.sub);
     if (!member) return reply.status(403).send({ error: 'Forbidden' });
 
-    // Fetch slots
-    const slots = await db.query.videowallPlaylistSlots.findMany({
-      where: eq(videowallPlaylistSlots.playlistId, id),
-      orderBy: [asc(videowallPlaylistSlots.positionRow), asc(videowallPlaylistSlots.positionCol)],
+    // Fetch pages ordered by index
+    const pages = await db.query.videowallPlaylistPages.findMany({
+      where: eq(videowallPlaylistPages.playlistId, id),
+      orderBy: [asc(videowallPlaylistPages.pageIndex)],
     });
 
+    // Fetch all slots across all pages
+    const pageIds = pages.map((p) => p.id);
+    const allSlots = pageIds.length > 0
+      ? await db.query.videowallPlaylistSlots.findMany({
+          where: inArray(videowallPlaylistSlots.pageId, pageIds),
+          orderBy: [asc(videowallPlaylistSlots.positionRow), asc(videowallPlaylistSlots.positionCol)],
+        })
+      : [];
+
     // Enrich with content info
-    const contentIds = [...new Set(slots.map((s) => s.contentId).filter((cid): cid is string => !!cid))];
+    const contentIds = [...new Set(allSlots.map((s) => s.contentId).filter((cid): cid is string => !!cid))];
     const contentRows = contentIds.length > 0
       ? await db.select({
           id: contentItems.id,
@@ -122,6 +132,12 @@ export async function videowallPlaylistRoutes(app: FastifyInstance) {
           .where(and(inArray(contentItems.id, contentIds), isNull(contentItems.deletedAt)))
       : [];
     const contentMap = Object.fromEntries(contentRows.map((c) => [c.id, c]));
+
+    // Group slots by page id
+    const slotsByPage: Record<string, typeof allSlots> = {};
+    for (const s of allSlots) {
+      (slotsByPage[s.pageId] ??= []).push(s);
+    }
 
     // Fetch group with member positions
     let group: (typeof deviceGroups.$inferSelect & {
@@ -143,9 +159,12 @@ export async function videowallPlaylistRoutes(app: FastifyInstance) {
     return reply.send({
       ...pl,
       group,
-      slots: slots.map((s) => ({
-        ...s,
-        content: s.contentId ? (contentMap[s.contentId] ?? null) : null,
+      pages: pages.map((p) => ({
+        ...p,
+        slots: (slotsByPage[p.id] ?? []).map((s) => ({
+          ...s,
+          content: s.contentId ? (contentMap[s.contentId] ?? null) : null,
+        })),
       })),
     });
   });
@@ -315,12 +334,18 @@ export async function videowallPlaylistRoutes(app: FastifyInstance) {
     });
     if (memberRows.length === 0) return reply.send({ updated: 0, pushed: 0, skipped: 0 });
 
-    // Build slot map: "col,row" → contentId
-    const slots = await db.query.videowallPlaylistSlots.findMany({
-      where: eq(videowallPlaylistSlots.playlistId, id),
+    // Build slot map from page 0 (first page) only
+    const firstPage = await db.query.videowallPlaylistPages.findFirst({
+      where: eq(videowallPlaylistPages.playlistId, id),
+      orderBy: [asc(videowallPlaylistPages.pageIndex)],
     });
+    const pageSlots = firstPage
+      ? await db.query.videowallPlaylistSlots.findMany({
+          where: eq(videowallPlaylistSlots.pageId, firstPage.id),
+        })
+      : [];
     const slotMap: Record<string, string | null> = {};
-    for (const s of slots) {
+    for (const s of pageSlots) {
       slotMap[`${s.positionCol},${s.positionRow}`] = s.contentId;
     }
 
