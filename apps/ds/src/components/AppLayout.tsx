@@ -15,7 +15,7 @@ import {
   ModalPrimaryButton,
   ModalSecondaryButton,
 } from './UiPrimitives.js';
-import { useOrgModules, type OrgModules } from '../lib/modules.js';
+import { useCmsEnabled, usePosEnabled } from '../lib/modules.js';
 import {
   LayoutDashboard,
   Monitor,
@@ -207,9 +207,6 @@ export default function AppLayout() {
     retry: false,
   });
 
-  // Fall back to first workspace so sidebar nav is always visible even from /dashboard
-  const effectiveWsId = currentWsId ?? workspaces[0]?.id ?? null;
-
   const { data: activeOverrides = [] } = useQuery<EmergencyOverride[]>({
     queryKey: ['emergency'],
     queryFn: () => api.get('/emergency'),
@@ -219,9 +216,9 @@ export default function AppLayout() {
   });
 
   const { data: currentWs } = useQuery<Workspace>({
-    queryKey: ['workspace', effectiveWsId],
-    queryFn: () => api.get(`/workspaces/${effectiveWsId}`),
-    enabled: bootstrapped && !!user && !!effectiveWsId,
+    queryKey: ['workspace', currentWsId],
+    queryFn: () => api.get(`/workspaces/${currentWsId}`),
+    enabled: bootstrapped && !!user && !!currentWsId,
     retry: false,
   });
 
@@ -253,26 +250,8 @@ export default function AppLayout() {
   }
 
   const canManageEmergency = user?.orgRole === 'owner' || user?.orgRole === 'admin';
-
-  // Derive modules from the live query response (fresh from server) so the
-  // sidebar updates immediately without waiting for the auth store to sync.
-  const storeModules = useOrgModules();
-  // Optional chaining handles both null and undefined, so no type cast needed.
-  const liveSettings = meData?.org?.settings;
-  const activeModules: OrgModules = (() => {
-    const raw = liveSettings !== undefined ? liveSettings : null;
-    if (raw !== null) {
-      try {
-        const s = JSON.parse(raw) as { modules?: string };
-        if (s.modules === 'pos') return 'pos';
-        if (s.modules === 'both') return 'both';
-        return 'signage';
-      } catch { /* fall through */ }
-    }
-    return storeModules;
-  })();
-  const cmsEnabled = activeModules === 'signage' || activeModules === 'both';
-  const posEnabled = activeModules === 'pos' || activeModules === 'both';
+  const cmsEnabled = useCmsEnabled();
+  const posEnabled = usePosEnabled();
   const contentEnabled = cmsEnabled;
 
   return (
@@ -322,7 +301,7 @@ export default function AppLayout() {
             <MessageSquare className="w-4 h-4" />
             Support
           </NavLink>
-          {effectiveWsId && (
+          {currentWsId && (
             <>
               <div className="pt-2 pb-1 px-3">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] truncate">
@@ -332,7 +311,7 @@ export default function AppLayout() {
 
               {/* Devices — always visible */}
               <NavLink
-                to={`/workspaces/${effectiveWsId}/devices`}
+                to={`/workspaces/${currentWsId}/devices`}
                 className={({ isActive }) =>
                   `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                     isActive
@@ -347,7 +326,7 @@ export default function AppLayout() {
 
               {contentEnabled && (
                 <NavLink
-                  to={`/workspaces/${effectiveWsId}/content`}
+                  to={`/workspaces/${currentWsId}/content`}
                   className={({ isActive }) =>
                     `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                       isActive
@@ -368,7 +347,7 @@ export default function AppLayout() {
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Signage</p>
                   </div>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/playlist`}
+                    to={`/workspaces/${currentWsId}/playlist`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -381,7 +360,7 @@ export default function AppLayout() {
                     Playlists
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/schedule`}
+                    to={`/workspaces/${currentWsId}/schedule`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -394,7 +373,7 @@ export default function AppLayout() {
                     Schedules
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/canvas/new`}
+                    to={`/workspaces/${currentWsId}/canvas/new`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -407,7 +386,7 @@ export default function AppLayout() {
                     Canvas
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/tags`}
+                    to={`/workspaces/${currentWsId}/tags`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -420,7 +399,7 @@ export default function AppLayout() {
                     Tags
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/analytics`}
+                    to={`/workspaces/${currentWsId}/analytics`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -442,7 +421,7 @@ export default function AppLayout() {
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Point of Sale</p>
                   </div>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/pos/orders`}
+                    to={`/workspaces/${currentWsId}/pos/orders`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -455,7 +434,7 @@ export default function AppLayout() {
                     Orders
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/pos/kiosk`}
+                    to={`/workspaces/${currentWsId}/pos/kiosk`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -468,7 +447,7 @@ export default function AppLayout() {
                     Kiosk
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/pos/kitchen`}
+                    to={`/workspaces/${currentWsId}/pos/kitchen`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -481,7 +460,7 @@ export default function AppLayout() {
                     Kitchen
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/pos/inventory`}
+                    to={`/workspaces/${currentWsId}/pos/inventory`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -494,7 +473,7 @@ export default function AppLayout() {
                     Inventory
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/pos/employees`}
+                    to={`/workspaces/${currentWsId}/pos/employees`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -507,7 +486,7 @@ export default function AppLayout() {
                     Employees
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/pos/loyalty`}
+                    to={`/workspaces/${currentWsId}/pos/loyalty`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -520,7 +499,7 @@ export default function AppLayout() {
                     Loyalty
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/pos/analytics`}
+                    to={`/workspaces/${currentWsId}/pos/analytics`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -533,7 +512,7 @@ export default function AppLayout() {
                     POS Analytics
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/pos/menu`}
+                    to={`/workspaces/${currentWsId}/pos/menu`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -546,7 +525,7 @@ export default function AppLayout() {
                     Menu Builder
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/pos/menu-boards`}
+                    to={`/workspaces/${currentWsId}/pos/menu-boards`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -559,7 +538,7 @@ export default function AppLayout() {
                     Menu Boards
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/pos/expenses`}
+                    to={`/workspaces/${currentWsId}/pos/expenses`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -572,7 +551,7 @@ export default function AppLayout() {
                     Expenses
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${effectiveWsId}/pos/purchase-orders`}
+                    to={`/workspaces/${currentWsId}/pos/purchase-orders`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -590,42 +569,21 @@ export default function AppLayout() {
           )}
 
           {/* Workspace picker */}
-          {workspaces.length > 0 && (
+          {workspaces.length > 0 && !currentWsId && (
             <div className="pt-2">
               <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 Workspaces
               </p>
-              {workspaces.map((ws) => {
-                const isActive = ws.id === currentWsId;
-                return (
-                  <button
-                    key={ws.id}
-                    onClick={() => {
-                      // Read modules from the live query cache at click time so we
-                      // always navigate to the right section even before the initial
-                      // meData render has settled.
-                      const cached = queryClient.getQueryData<{ org?: { settings?: string } | null }>(['me']);
-                      const cachedSettings = cached?.org?.settings;
-                      let isPosOnly = false;
-                      try {
-                        const s = JSON.parse(cachedSettings ?? '{}') as { modules?: string };
-                        isPosOnly = s.modules === 'pos';
-                      } catch { /* default to devices */ }
-                      navigate(isPosOnly
-                        ? `/workspaces/${ws.id}/pos/orders`
-                        : `/workspaces/${ws.id}/devices`);
-                    }}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors text-left ${
-                      isActive
-                        ? 'bg-[var(--blue)] text-white'
-                        : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                    }`}
-                  >
-                    <Monitor className="w-4 h-4" />
-                    <span className="truncate">{ws.name}</span>
-                  </button>
-                );
-              })}
+              {workspaces.map((ws) => (
+                <button
+                  key={ws.id}
+                  onClick={() => navigate(`/dashboard?workspaceId=${ws.id}`)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors text-left"
+                >
+                  <Monitor className="w-4 h-4" />
+                  <span className="truncate">{ws.name}</span>
+                </button>
+              ))}
             </div>
           )}
         </nav>
