@@ -569,21 +569,31 @@ export default function AppLayout() {
           )}
 
           {/* Workspace picker */}
-          {workspaces.length > 0 && !currentWsId && (
+          {workspaces.length > 0 && (
             <div className="pt-2">
               <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 Workspaces
               </p>
-              {workspaces.map((ws) => (
-                <button
-                  key={ws.id}
-                  onClick={() => navigate(`/dashboard?workspaceId=${ws.id}`)}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors text-left"
-                >
-                  <Monitor className="w-4 h-4" />
-                  <span className="truncate">{ws.name}</span>
-                </button>
-              ))}
+              {workspaces.map((ws) => {
+                const isActive = ws.id === currentWsId;
+                const defaultPath = posEnabled && !cmsEnabled
+                  ? `/workspaces/${ws.id}/pos/orders`
+                  : `/workspaces/${ws.id}/devices`;
+                return (
+                  <button
+                    key={ws.id}
+                    onClick={() => navigate(defaultPath)}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors text-left ${
+                      isActive
+                        ? 'bg-[var(--blue)] text-white'
+                        : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                    }`}
+                  >
+                    <Monitor className="w-4 h-4" />
+                    <span className="truncate">{ws.name}</span>
+                  </button>
+                );
+              })}
             </div>
           )}
         </nav>
