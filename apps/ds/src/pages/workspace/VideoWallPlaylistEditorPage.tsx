@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -181,6 +181,14 @@ export default function VideoWallPlaylistEditorPage() {
   const [savedId, setSavedId] = useState<string | null>(isNew ? null : (id ?? null));
   const [pickerCell, setPickerCell] = useState<{ col: number; row: number } | null>(null);
 
+  // ── Viewport (pan / zoom for step 1 canvas) ───────────────────────────────
+  const [viewport, setViewport] = useState({ zoom: 1, x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const viewportRef  = useRef({ zoom: 1, x: 0, y: 0 });
+  const dragStartRef = useRef<{ mx: number; my: number; px: number; py: number } | null>(null);
+  const hasDraggedRef = useRef(false);
+
   // ── Load existing playlist ────────────────────────────────────────────────
 
   const { data: existingPlaylist } = useQuery<ExistingPlaylist>({
@@ -253,6 +261,77 @@ export default function VideoWallPlaylistEditorPage() {
   const filledCount = Object.keys(slots).length;
   const totalCells  = cols * rows;
   const canAdvance  = step === 0 ? !!selectedGroupId : true;
+
+  // ── Pan / zoom helpers ────────────────────────────────────────────────────
+  const naturalW = 1200;
+  const naturalH = Math.round((totalH / totalW) * naturalW);
+
+  function fitView() {
+    const el = containerRef.current;
+    if (!el || el.clientWidth === 0) return;
+    const cw = el.clientWidth;
+    const ch = el.clientHeight;
+    const fitZ = Math.min((cw - 48) / naturalW, (ch - 48) / naturalH);
+    const nv = { zoom: fitZ, x: (cw - naturalW * fitZ) / 2, y: (ch - naturalH * fitZ) / 2 };
+    viewportRef.current = nv;
+    setViewport(nv);
+  }
+
+  // Keep ref in sync for wheel handler
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { viewportRef.current = viewport; }, [viewport]);
+
+  // Fit when entering step 1 or wall dimensions change
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (step === 1) fitView(); }, [step, naturalW, naturalH]);
+
+  // Non-passive wheel zoom
+  useEffect(() => {
+    if (step !== 1) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.1 : 0.9;
+      const rect = el.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const v = viewportRef.current;
+      const newZ = Math.max(0.05, Math.min(10, v.zoom * factor));
+      const nv = {
+        zoom: newZ,
+        x: cx - (cx - v.x) * (newZ / v.zoom),
+        y: cy - (cy - v.y) * (newZ / v.zoom),
+      };
+      viewportRef.current = nv;
+      setViewport(nv);
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, [step]);
+
+  function handleMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    hasDraggedRef.current = false;
+    dragStartRef.current = { mx: e.clientX, my: e.clientY, px: viewportRef.current.x, py: viewportRef.current.y };
+  }
+
+  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    if (!dragStartRef.current) return;
+    const dx = e.clientX - dragStartRef.current.mx;
+    const dy = e.clientY - dragStartRef.current.my;
+    if (!hasDraggedRef.current && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+    hasDraggedRef.current = true;
+    setIsDragging(true);
+    const nv = { ...viewportRef.current, x: dragStartRef.current.px + dx, y: dragStartRef.current.py + dy };
+    viewportRef.current = nv;
+    setViewport(nv);
+  }
+
+  function handleMouseUp() {
+    dragStartRef.current = null;
+    setIsDragging(false);
+  }
 
   // ── Mutations ─────────────────────────────────────────────────────────────
 
@@ -483,52 +562,93 @@ export default function VideoWallPlaylistEditorPage() {
 
       {/* ── Step 1: Assign Content ────────────────────────────────────────── */}
       {step === 1 && (
-        <div className="flex-1 overflow-y-auto p-6">
-          <p className="text-sm text-[var(--text-muted)] mb-4">
-            Click a cell to assign content.{' '}
-            <span className="font-medium text-[var(--text)]">{filledCount}</span>
-            {' '}of{' '}
-            <span className="font-medium text-[var(--text)]">{totalCells}</span>
-            {' '}cells assigned.
-          </p>
-
-          {/* Proportional canvas */}
-          <div
-            className="mx-auto overflow-hidden rounded-lg"
-            style={{
-              maxWidth: 900,
-              aspectRatio: `${totalW} / ${totalH}`,
-              background: '#0e0e0e',
-              border: '2px solid var(--border)',
-            }}
-          >
-            <div
-              className="grid w-full h-full"
-              style={{ gridTemplateColumns: colFrs, gridTemplateRows: rowFrs, gap: '2px' }}
-            >
-              {Array.from({ length: rows }, (_, r) =>
-                Array.from({ length: cols }, (_, c) => (
-                  <WallCell
-                    key={`${c},${r}`}
-                    slot={slots[`${c},${r}`] ?? null}
-                    onPickContent={() => setPickerCell({ col: c, row: r })}
-                    onClear={() => clearCell(c, r)}
-                    onCycleObjectFit={() => cycleObjectFit(c, r)}
-                  />
-                )),
+        <>
+          {/* Toolbar strip */}
+          <div className="px-4 py-2 border-b border-[var(--border)] shrink-0 flex items-center justify-between gap-4">
+            <p className="text-sm text-[var(--text-muted)]">
+              Click a cell to assign content.{' '}
+              <span className="font-medium text-[var(--text)]">{filledCount}</span>
+              {' '}of{' '}
+              <span className="font-medium text-[var(--text)]">{totalCells}</span>
+              {' '}cells assigned.
+              {groupDetail && (
+                <span className="ml-2 opacity-60">· {groupDetail.name}</span>
               )}
+            </p>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => setViewport((v) => { const z = Math.max(0.05, v.zoom / 1.25); return { ...v, zoom: z }; })}
+                className="w-6 h-6 flex items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--surface)] text-base leading-none"
+              >−</button>
+              <span className="text-xs w-12 text-center text-[var(--text-muted)]">
+                {Math.round(viewport.zoom * 100)}%
+              </span>
+              <button
+                onClick={() => setViewport((v) => { const z = Math.min(10, v.zoom * 1.25); return { ...v, zoom: z }; })}
+                className="w-6 h-6 flex items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--surface)] text-base leading-none"
+              >+</button>
+              <button
+                onClick={fitView}
+                className="px-2 h-6 flex items-center justify-center rounded text-[10px] text-[var(--text-muted)] hover:bg-[var(--surface)] border border-[var(--border)] ml-1"
+              >Fit</button>
             </div>
           </div>
 
-          {/* Group hint */}
-          {groupDetail && (
-            <p className="text-xs text-[var(--text-muted)] text-center mt-3">
-              Wall group: <span className="text-[var(--text)]">{groupDetail.name}</span>
-              {' '}·{' '}
-              {groupDetail.members.length} device{groupDetail.members.length !== 1 ? 's' : ''}
-            </p>
-          )}
-        </div>
+          {/* Pan / zoom viewport */}
+          <div
+            ref={containerRef}
+            className="flex-1 overflow-hidden relative select-none"
+            style={{
+              cursor: isDragging ? 'grabbing' : 'grab',
+              backgroundColor: '#0a0a14',
+              backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.04) 1px, transparent 1px)',
+              backgroundSize: '24px 24px',
+            }}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            onClickCapture={(e) => {
+              if (hasDraggedRef.current) {
+                e.stopPropagation();
+                hasDraggedRef.current = false;
+              }
+            }}
+          >
+            {/* Wall canvas at natural size, transformed */}
+            <div
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                width: naturalW,
+                height: naturalH,
+                transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+                transformOrigin: '0 0',
+                background: '#0e0e0e',
+                border: '2px solid rgba(255,255,255,0.12)',
+                boxShadow: '0 8px 40px rgba(0,0,0,0.8)',
+              }}
+            >
+              <div
+                className="grid w-full h-full"
+                style={{ gridTemplateColumns: colFrs, gridTemplateRows: rowFrs, gap: '2px' }}
+              >
+                {Array.from({ length: rows }, (_, r) =>
+                  Array.from({ length: cols }, (_, c) => (
+                    <WallCell
+                      key={`${c},${r}`}
+                      slot={slots[`${c},${r}`] ?? null}
+                      onPickContent={() => setPickerCell({ col: c, row: r })}
+                      onClear={() => clearCell(c, r)}
+                      onCycleObjectFit={() => cycleObjectFit(c, r)}
+                    />
+                  )),
+                )}
+              </div>
+            </div>
+          </div>
+        </>
       )}
 
       {/* ── Content picker modal ──────────────────────────────────────────── */}
