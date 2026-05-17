@@ -472,6 +472,10 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
       name: z.string().optional(),
     })),
   }),
+  z.object({
+    type: z.literal('platform_info'),
+    payload: z.object({ platform: z.string().optional() }).passthrough(),
+  }),
 ]);
 export type DeviceMessage = z.infer<typeof DeviceMessageSchema>;
 

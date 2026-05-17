@@ -273,9 +273,17 @@ export async function videowallPlaylistRoutes(app: FastifyInstance) {
     await db.delete(videowallPlaylistSlots).where(eq(videowallPlaylistSlots.playlistId, id));
 
     if (body.length > 0) {
+      // Resolve first page to satisfy the required pageId FK
+      const firstPage = await db.query.videowallPlaylistPages.findFirst({
+        where: eq(videowallPlaylistPages.playlistId, id),
+        orderBy: [asc(videowallPlaylistPages.pageIndex)],
+      });
+      if (!firstPage) return reply.status(409).send({ error: 'Playlist has no pages' });
+
       await db.insert(videowallPlaylistSlots).values(
         body.map((s) => ({
           playlistId: id,
+          pageId: firstPage.id,
           positionCol: s.positionCol,
           positionRow: s.positionRow,
           contentId: s.contentId ?? null,
