@@ -208,12 +208,18 @@ export async function scheduleRoutes(app: FastifyInstance) {
     const playlistIds = slots.map(s => s.playlistId).filter((v): v is string => v != null);
     const contentIds = slots.map(s => s.contentId).filter((v): v is string => v != null);
 
+    // Collect all playlist/content IDs including the schedule's default
+    const defaultPlIds = schedule.defaultPlaylistId ? [schedule.defaultPlaylistId] : [];
+    const defaultCIds = schedule.defaultContentId ? [schedule.defaultContentId] : [];
+    const allPlaylistIds = [...new Set([...playlistIds, ...defaultPlIds])];
+    const allContentIds = [...new Set([...contentIds, ...defaultCIds])];
+
     const [plRows, cRows, blackoutRows] = await Promise.all([
-      playlistIds.length > 0
-        ? db.query.playlists.findMany({ where: and(inArray(playlists.id, playlistIds), isNull(playlists.deletedAt)) })
+      allPlaylistIds.length > 0
+        ? db.query.playlists.findMany({ where: and(inArray(playlists.id, allPlaylistIds), isNull(playlists.deletedAt)) })
         : Promise.resolve([]),
-      contentIds.length > 0
-        ? db.query.contentItems.findMany({ where: and(inArray(contentItems.id, contentIds), isNull(contentItems.deletedAt)) })
+      allContentIds.length > 0
+        ? db.query.contentItems.findMany({ where: and(inArray(contentItems.id, allContentIds), isNull(contentItems.deletedAt)) })
         : Promise.resolve([]),
       db.query.scheduleBlackouts.findMany({
         where: eq(scheduleBlackouts.scheduleId, id),
@@ -230,8 +236,18 @@ export async function scheduleRoutes(app: FastifyInstance) {
       content: slot.contentId ? (cMap[slot.contentId] ?? null) : null,
     }));
 
+    const defaultPlaylistRow = schedule.defaultPlaylistId ? (plMap[schedule.defaultPlaylistId] ?? null) : null;
+    const defaultContentRow = schedule.defaultContentId ? (cMap[schedule.defaultContentId] ?? null) : null;
+
     const assignedTagMap = await getAssignedTagsForEntities(schedule.workspaceId, 'schedule', [schedule.id]);
-    return reply.send({ ...schedule, assignedTags: assignedTagMap[schedule.id] ?? [], slots: enrichedSlots, blackouts: blackoutRows });
+    return reply.send({
+      ...schedule,
+      defaultPlaylist: defaultPlaylistRow ? { id: defaultPlaylistRow.id, name: defaultPlaylistRow.name, thumbnailContentId: defaultPlaylistRow.thumbnailContentId ?? null } : null,
+      defaultContent: defaultContentRow ? { id: defaultContentRow.id, name: defaultContentRow.name } : null,
+      assignedTags: assignedTagMap[schedule.id] ?? [],
+      slots: enrichedSlots,
+      blackouts: blackoutRows,
+    });
   });
 
   // ── POST /schedules ──────────────────────────────────────────────────────

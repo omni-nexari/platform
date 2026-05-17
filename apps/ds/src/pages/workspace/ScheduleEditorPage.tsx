@@ -1,12 +1,12 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+﻿import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
 import {
   ArrowLeft, Plus, Save, ChevronLeft, ChevronRight,
-  X, List, CalendarDays, CalendarRange, MoreVertical,
-  Trash2, Pencil, Monitor,
+  X, List, CalendarDays, CalendarRange,
+  Trash2, Pencil, Monitor, ImageOff, Clock,
 } from 'lucide-react';
 import AuthImg from '../../components/AuthImg.js';
 import ContentPickerModal, { type PickedItem } from '../../components/ContentPickerModal.js';
@@ -15,9 +15,9 @@ import ConfirmDialog from '../../components/ConfirmDialog.js';
 import WorkspaceTagPicker from '../../components/WorkspaceTagPicker.js';
 import { Skeleton, ToggleSwitch } from '../../components/UiPrimitives.js';
 
-// ── Constants ────────────────────────────────────────────────────────────────
+// -- Constants ----------------------------------------------------------------
 
-const HOUR_HEIGHT = 56; // px per hour row
+const HOUR_HEIGHT = 56;
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const SLOT_PALETTE = [
@@ -25,7 +25,7 @@ const SLOT_PALETTE = [
   '#ef4444', '#ec4899', '#06b6d4', '#f97316', '#a855f7', '#84cc16',
 ];
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// -- Types --------------------------------------------------------------------
 
 interface LocalSlot {
   localId: string;
@@ -33,13 +33,12 @@ interface LocalSlot {
   contentId: string | null;
   label: string;
   thumbnailContentId: string | null;
-  startTime: string;   // HH:MM
-  endTime: string;     // HH:MM
+  startTime: string;
+  endTime: string;
   recurrenceType: 'once' | 'weekly';
-  date: string;        // YYYY-MM-DD (for 'once')
-  daysOfWeek: number[]; // 0=Mon … 6=Sun (for 'weekly')
+  date: string;
+  daysOfWeek: number[];
   color: string;
-  priority: number;
 }
 
 interface SlotDraft {
@@ -53,7 +52,13 @@ interface SlotDraft {
   date: string;
   daysOfWeek: number[];
   color: string;
-  priority: number;
+}
+
+interface DefaultContentState {
+  playlistId: string | null;
+  contentId: string | null;
+  label: string;
+  thumbnailContentId: string | null;
 }
 
 interface Schedule {
@@ -63,6 +68,10 @@ interface Schedule {
   description: string | null;
   type: string;
   isActive: boolean;
+  defaultPlaylistId: string | null;
+  defaultContentId: string | null;
+  defaultPlaylist: { id: string; name: string; thumbnailContentId: string | null } | null;
+  defaultContent: { id: string; name: string } | null;
 }
 
 interface SlotRow {
@@ -87,13 +96,14 @@ interface ScheduleDetail extends Schedule {
 }
 
 type ViewMode = 'week' | 'list';
+type PickerTarget = 'slot' | 'default';
 
-// ── Date helpers ─────────────────────────────────────────────────────────────
+// -- Date helpers -------------------------------------------------------------
 
 function getWeekStart(date: Date): Date {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
-  const day = d.getDay(); // 0=Sun
+  const day = d.getDay();
   const diff = day === 0 ? -6 : 1 - day;
   d.setDate(d.getDate() + diff);
   return d;
@@ -133,32 +143,29 @@ function formatRecurrenceLabel(slot: LocalSlot): string {
   return `Every ${slot.daysOfWeek.map(d => DAY_LABELS[d]).join(', ')}`;
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
-
-// ── Conflict detection ──────────────────────────────────────────────────────
+// -- Conflict detection -------------------------------------------------------
 
 function slotsOverlap(
   a: { startTime: string; endTime: string; recurrenceType: 'once' | 'weekly'; date: string; daysOfWeek: number[] },
   b: LocalSlot,
 ): boolean {
-  // Time ranges must strictly intersect
   if (!a.startTime || !a.endTime || a.startTime >= a.endTime) return false;
   if (a.startTime >= b.endTime || b.startTime >= a.endTime) return false;
-
   if (a.recurrenceType === 'weekly' && b.recurrenceType === 'weekly') {
     return a.daysOfWeek.some(d => b.daysOfWeek.includes(d));
   }
   if (a.recurrenceType === 'once' && b.recurrenceType === 'once') {
     return !!a.date && a.date === b.date;
   }
-  // once vs weekly: check if the one-time date's day-of-week falls on a recurring day
   const onceDate = a.recurrenceType === 'once' ? a.date : b.date;
   const weeklyDays = a.recurrenceType === 'weekly' ? a.daysOfWeek : b.daysOfWeek;
   if (!onceDate || weeklyDays.length === 0) return false;
-  const jsDay = new Date(onceDate + 'T00:00:00').getDay(); // 0=Sun
-  const appDay = jsDay === 0 ? 6 : jsDay - 1;              // convert to 0=Mon…6=Sun
+  const jsDay = new Date(onceDate + 'T00:00:00').getDay();
+  const appDay = jsDay === 0 ? 6 : jsDay - 1;
   return weeklyDays.includes(appDay);
 }
+
+// -- SlotBlock ----------------------------------------------------------------
 
 function SlotBlock({
   slot, onClick, onDelete,
@@ -192,7 +199,7 @@ function SlotBlock({
       </span>
       {height >= 26 && (
         <span className="text-[9px] text-gray-400 leading-tight">
-          {slot.startTime}–{slot.endTime}
+          {slot.startTime}&#8211;{slot.endTime}
         </span>
       )}
       <button
@@ -207,7 +214,7 @@ function SlotBlock({
   );
 }
 
-// ── Slot dialog ───────────────────────────────────────────────────────────────
+// -- Slot dialog --------------------------------------------------------------
 
 function SlotDialog({
   draft, onDraftChange, editingId, onConfirm, onClose, onOpenPicker, existingSlots,
@@ -246,181 +253,135 @@ function SlotDialog({
       <div className="modal-backdrop" onClick={onClose} />
       <div className="modal-shell modal-shell-sm">
         <div className="modal-header">
-          <h2 className="modal-title">
-            {editingId ? 'Edit Slot' : 'Add Slot'}
-          </h2>
-          <button onClick={onClose} className="modal-close">
-            <X size={16} />
-          </button>
+          <h2 className="modal-title">{editingId ? 'Edit Slot' : 'Add Slot'}</h2>
+          <button onClick={onClose} className="modal-close"><X size={16} /></button>
         </div>
 
         <div className="modal-body space-y-4">
 
-        {/* Content / Playlist picker trigger */}
-        <div>
-          <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1.5">Content or Playlist</label>
-          {draft.label ? (
-            <div className="flex items-center gap-2 p-2 rounded-lg border border-[var(--border)] bg-[var(--surface)]">
-              {draft.thumbnailContentId ? (
-                <AuthImg
-                  itemId={draft.thumbnailContentId}
-                  className="w-14 h-9 object-cover rounded shrink-0"
-                  fallback={<div className="w-14 h-9 rounded bg-[var(--surface-raised)] shrink-0 flex items-center justify-center text-[var(--text-muted)]"><CalendarDays size={16} /></div>}
-                />
-              ) : (
-                <div className="w-14 h-9 rounded bg-[var(--surface-raised)] shrink-0 flex items-center justify-center text-[var(--text-muted)]">
-                  <CalendarDays size={16} />
+          {/* Content / Playlist picker */}
+          <div>
+            <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1.5">Content or Playlist</label>
+            {draft.label ? (
+              <div className="flex items-center gap-2 p-2 rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+                {draft.thumbnailContentId ? (
+                  <AuthImg
+                    itemId={draft.thumbnailContentId}
+                    className="w-14 h-9 object-cover rounded shrink-0"
+                    fallback={<div className="w-14 h-9 rounded bg-[var(--surface-raised)] shrink-0 flex items-center justify-center text-[var(--text-muted)]"><ImageOff size={14} /></div>}
+                  />
+                ) : (
+                  <div className="w-14 h-9 rounded bg-[var(--surface-raised)] shrink-0 flex items-center justify-center text-[var(--text-muted)]">
+                    <CalendarDays size={14} />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-[var(--text)] truncate">{draft.label}</p>
                 </div>
-              )}
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-[var(--text)] truncate">{draft.label}</p>
+                <button onClick={onOpenPicker} className="text-xs text-[var(--accent)] hover:underline shrink-0">
+                  Change
+                </button>
               </div>
+            ) : (
               <button
                 onClick={onOpenPicker}
-                className="text-xs text-[var(--accent)] hover:underline shrink-0"
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-lg border-2 border-dashed border-[var(--border)] text-sm text-[var(--text-muted)] hover:border-[var(--accent)]/50 hover:text-[var(--text)] transition-colors"
               >
-                Change
+                <Plus size={15} />
+                Pick Content or Playlist
               </button>
+            )}
+          </div>
+
+          {/* Playing Time */}
+          <div>
+            <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1.5">
+              Playing Time
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[10px] text-[var(--text-muted)] mb-1">Start</label>
+                <input
+                  type="time"
+                  value={draft.startTime}
+                  onChange={e => onDraftChange({ ...draft, startTime: e.target.value })}
+                  className="w-full px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-[var(--text-muted)] mb-1">End</label>
+                <input
+                  type="time"
+                  value={draft.endTime}
+                  onChange={e => onDraftChange({ ...draft, endTime: e.target.value })}
+                  className="w-full px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
+                />
+              </div>
             </div>
-          ) : (
-            <button
-              onClick={onOpenPicker}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-lg border-2 border-dashed border-[var(--border)] text-sm text-[var(--text-muted)] hover:border-[var(--accent)]/50 hover:text-[var(--text)] transition-colors"
-            >
-              <Plus size={15} />
-              Pick Content or Playlist
-            </button>
+            {draft.startTime && draft.endTime && draft.startTime >= draft.endTime && (
+              <p className="text-xs text-red-400 mt-1">End time must be after start time</p>
+            )}
+          </div>
+
+          {conflictingSlots.length > 0 && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+              <strong>Overlap with:</strong>{' '}
+              {conflictingSlots.map(s => s.label).join(', ')}.
+              {' '}Higher-priority slot will take precedence at playback.
+            </div>
           )}
-        </div>
 
-        {/* Time range */}
-        <div className="grid grid-cols-2 gap-3">
+          {/* Repeat */}
           <div>
-            <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1">Start time</label>
-            <input
-              type="time"
-              value={draft.startTime}
-              onChange={e => onDraftChange({ ...draft, startTime: e.target.value })}
-              className="w-full px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1">End time</label>
-            <input
-              type="time"
-              value={draft.endTime}
-              onChange={e => onDraftChange({ ...draft, endTime: e.target.value })}
-              className="w-full px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
-            />
-          </div>
-        </div>
-        {draft.startTime && draft.endTime && draft.startTime >= draft.endTime && (
-          <p className="text-xs text-red-400 -mt-2">End time must be after start time</p>
-        )}
-
-        {conflictingSlots.length > 0 && (
-          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-400 -mt-1">
-            <strong>Overlap with:</strong>{' '}
-            {conflictingSlots.map(s => s.label).join(', ')}.
-            {' '}Higher-priority slot will take precedence at playback.
-          </div>
-        )}
-
-        {/* Recurrence */}
-        <div>
-          <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1.5">Repeats</label>
-          <div className="flex gap-2">
-            {(['weekly', 'once'] as const).map(r => (
-              <button
-                key={r}
-                onClick={() => onDraftChange({ ...draft, recurrenceType: r })}
-                className={`flex-1 ui-filter-chip ${draft.recurrenceType === r ? 'ui-filter-chip-active' : ''}`}
-              >
-                {r === 'weekly' ? 'Weekly' : 'One-time'}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Weekly day selector */}
-        {draft.recurrenceType === 'weekly' && (
-          <div>
-            <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1.5">Days of week</label>
-            <div className="flex gap-1 flex-wrap">
-              {DAY_LABELS.map((label, d) => (
+            <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1.5">Repeat</label>
+            <div className="flex gap-2">
+              {(['weekly', 'once'] as const).map(r => (
                 <button
-                  key={d}
-                  onClick={() => toggleDay(d)}
-                  className={`ui-filter-chip text-[11px] ${draft.daysOfWeek.includes(d) ? 'ui-filter-chip-active' : ''}`}
+                  key={r}
+                  onClick={() => onDraftChange({ ...draft, recurrenceType: r })}
+                  className={`flex-1 ui-filter-chip ${draft.recurrenceType === r ? 'ui-filter-chip-active' : ''}`}
                 >
-                  {label}
+                  {r === 'weekly' ? 'Weekly' : 'One-time'}
                 </button>
               ))}
             </div>
           </div>
-        )}
 
-        {/* Specific date */}
-        {draft.recurrenceType === 'once' && (
-          <div>
-            <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1">Date</label>
-            <input
-              type="date"
-              value={draft.date}
-              onChange={e => onDraftChange({ ...draft, date: e.target.value })}
-              className="w-full px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
-            />
-          </div>
-        )}
-
-        {/* Color + Priority */}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1.5">Colour</label>
-            <div className="flex gap-1.5 flex-wrap">
-              {SLOT_PALETTE.map(c => (
-                <button
-                  key={c}
-                  onClick={() => onDraftChange({ ...draft, color: c })}
-                  style={{ background: c }}
-                  className={`w-5 h-5 rounded-full transition-transform ${
-                    draft.color === c ? 'ring-2 ring-offset-1 ring-[var(--accent)] scale-110' : 'hover:scale-110'
-                  }`}
-                />
-              ))}
+          {draft.recurrenceType === 'weekly' && (
+            <div>
+              <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1.5">Days of week</label>
+              <div className="flex gap-1 flex-wrap">
+                {DAY_LABELS.map((label, d) => (
+                  <button
+                    key={d}
+                    onClick={() => toggleDay(d)}
+                    className={`ui-filter-chip text-[11px] ${draft.daysOfWeek.includes(d) ? 'ui-filter-chip-active' : ''}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1">
-              Priority
-              <span className="ml-1 text-[var(--text-muted)] font-normal">(higher wins)</span>
-            </label>
-            <input
-              type="number"
-              min={0}
-              max={99}
-              value={draft.priority}
-              onChange={e => onDraftChange({ ...draft, priority: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-              className="w-full px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
-            />
-          </div>
-        </div>
+          )}
+
+          {draft.recurrenceType === 'once' && (
+            <div>
+              <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1">Date</label>
+              <input
+                type="date"
+                value={draft.date}
+                onChange={e => onDraftChange({ ...draft, date: e.target.value })}
+                className="w-full px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              />
+            </div>
+          )}
 
         </div>
 
         <div className="modal-footer modal-footer-plain">
-          <button
-            onClick={onClose}
-            className="modal-secondary-btn flex-1"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={!canConfirm}
-            className="modal-primary-btn flex-1"
-          >
-            {editingId ? 'Update' : 'Add Slot'}
+          <button onClick={onClose} className="modal-secondary-btn flex-1">Cancel</button>
+          <button onClick={onConfirm} disabled={!canConfirm} className="modal-primary-btn flex-1">
+            {editingId ? 'Update Slot' : 'Add Slot'}
           </button>
         </div>
       </div>
@@ -428,12 +389,7 @@ function SlotDialog({
   );
 }
 
-// ── Main editor ───────────────────────────────────────────────────────────────
-
-const TYPE_META: Record<string, { label: string; tone: 'warning' | 'danger' }> = {
-  general:  { label: 'General', tone: 'warning' },
-  override: { label: 'Override', tone: 'danger' },
-};
+// -- Helpers ------------------------------------------------------------------
 
 function emptyDraft(hour?: number, dayDate?: Date): SlotDraft {
   const h = hour ?? 9;
@@ -448,9 +404,10 @@ function emptyDraft(hour?: number, dayDate?: Date): SlotDraft {
     date: dayDate ? toYMD(dayDate) : toYMD(new Date()),
     daysOfWeek: [],
     color: SLOT_PALETTE[0]!,
-    priority: 0,
   };
 }
+
+// -- Main editor --------------------------------------------------------------
 
 export default function ScheduleEditorPage() {
   const { wsId, id } = useParams<{ wsId: string; id: string }>();
@@ -458,29 +415,32 @@ export default function ScheduleEditorPage() {
   const queryClient = useQueryClient();
   const isNew = id === 'new';
 
-  // Meta state
   const [editName, setEditName] = useState('');
-  const [editType, setEditType] = useState('general');
+  const [editType] = useState('general');
   const [editIsActive, setEditIsActive] = useState(true);
   const [isDirty, setIsDirty] = useState(false);
 
-  // Slots
+  const [defaultContent, setDefaultContent] = useState<DefaultContentState>({
+    playlistId: null, contentId: null, label: '', thumbnailContentId: null,
+  });
+
   const [slots, setSlots] = useState<LocalSlot[]>([]);
   const colorIndexRef = useRef(0);
 
-  // View + navigation
   const [view, setView] = useState<ViewMode>('week');
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() => getWeekStart(new Date()));
 
-  // Slot dialog
   const [slotDialogOpen, setSlotDialogOpen] = useState(false);
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
   const [slotDraft, setSlotDraft] = useState<SlotDraft>(() => emptyDraft());
-  const [pickerActive, setPickerActive] = useState(false);
+
+  const [pickerTarget, setPickerTarget] = useState<PickerTarget>('slot');
+  const [pickerOpen, setPickerOpen] = useState(false);
+
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
 
-  // ── Load ──
+  // -- Load --
   const { data: schedule, isLoading } = useQuery<ScheduleDetail>({
     queryKey: ['schedule', id],
     queryFn: () => api.get(`/schedules/${id!}`),
@@ -490,8 +450,13 @@ export default function ScheduleEditorPage() {
   useEffect(() => {
     if (schedule) {
       setEditName(schedule.name);
-      setEditType(schedule.type);
       setEditIsActive(schedule.isActive);
+      setDefaultContent({
+        playlistId: schedule.defaultPlaylistId ?? null,
+        contentId: schedule.defaultContentId ?? null,
+        label: schedule.defaultPlaylist?.name ?? schedule.defaultContent?.name ?? '',
+        thumbnailContentId: schedule.defaultPlaylist?.thumbnailContentId ?? schedule.defaultContentId ?? null,
+      });
       setSlots(schedule.slots.map(s => ({
         localId: s.id,
         playlistId: s.playlistId,
@@ -504,17 +469,15 @@ export default function ScheduleEditorPage() {
         date: s.date ?? '',
         daysOfWeek: s.daysOfWeek ?? [],
         color: s.color,
-        priority: s.priority,
       })));
     } else if (isNew) {
       setEditName('');
-      setEditType('general');
       setEditIsActive(true);
+      setDefaultContent({ playlistId: null, contentId: null, label: '', thumbnailContentId: null });
       setSlots([]);
     }
   }, [schedule, isNew]);
 
-  // Beforeunload guard
   useEffect(() => {
     if (!isDirty) return;
     const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
@@ -524,44 +487,32 @@ export default function ScheduleEditorPage() {
 
   function markDirty() { setIsDirty(true); }
 
-  // ── Week navigation ──
+  // -- Week navigation --
   const weekDays = useMemo(() => {
     return Array.from({ length: 7 }, (_, i) => {
       const date = new Date(currentWeekStart);
       date.setDate(currentWeekStart.getDate() + i);
       const today = new Date();
-      return {
-        date,
-        label: DAY_LABELS[i]!,
-        dayNum: date.getDate(),
-        isToday: toYMD(date) === toYMD(today),
-      };
+      return { date, label: DAY_LABELS[i]!, dayNum: date.getDate(), isToday: toYMD(date) === toYMD(today) };
     });
   }, [currentWeekStart]);
 
-  const monthLabel = useMemo(() => {
-    return currentWeekStart.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-  }, [currentWeekStart]);
+  const monthLabel = useMemo(() =>
+    currentWeekStart.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+  [currentWeekStart]);
 
   const weekNum = useMemo(() => getISOWeekNumber(currentWeekStart), [currentWeekStart]);
 
-  function prevWeek() {
-    setCurrentWeekStart(d => { const n = new Date(d); n.setDate(d.getDate() - 7); return n; });
-  }
-  function nextWeek() {
-    setCurrentWeekStart(d => { const n = new Date(d); n.setDate(d.getDate() + 7); return n; });
-  }
-  function goToday() {
-    setCurrentWeekStart(getWeekStart(new Date()));
-  }
+  function prevWeek() { setCurrentWeekStart(d => { const n = new Date(d); n.setDate(d.getDate() - 7); return n; }); }
+  function nextWeek() { setCurrentWeekStart(d => { const n = new Date(d); n.setDate(d.getDate() + 7); return n; }); }
+  function goToday() { setCurrentWeekStart(getWeekStart(new Date())); }
 
-  // ── Slots helpers ──
+  // -- Slots helpers --
   function slotsForDay(dayIndex: number, dayDate: Date): LocalSlot[] {
     const dateStr = toYMD(dayDate);
-    return slots.filter(s => {
-      if (s.recurrenceType === 'weekly') return s.daysOfWeek.includes(dayIndex);
-      return s.date === dateStr;
-    });
+    return slots.filter(s =>
+      s.recurrenceType === 'weekly' ? s.daysOfWeek.includes(dayIndex) : s.date === dateStr,
+    );
   }
 
   function nextColor(): string {
@@ -590,7 +541,6 @@ export default function ScheduleEditorPage() {
       date: slot.date,
       daysOfWeek: [...slot.daysOfWeek],
       color: slot.color,
-      priority: slot.priority,
     });
     setEditingSlotId(slot.localId);
     setSlotDialogOpen(true);
@@ -599,16 +549,10 @@ export default function ScheduleEditorPage() {
   function confirmSlot() {
     if (editingSlotId) {
       setSlots(prev => prev.map(s =>
-        s.localId === editingSlotId
-          ? { ...s, ...slotDraft, localId: s.localId }
-          : s,
+        s.localId === editingSlotId ? { ...s, ...slotDraft, localId: s.localId } : s,
       ));
     } else {
-      const newSlot: LocalSlot = {
-        ...slotDraft,
-        localId: crypto.randomUUID(),
-      };
-      setSlots(prev => [...prev, newSlot]);
+      setSlots(prev => [...prev, { ...slotDraft, localId: crypto.randomUUID() }]);
     }
     setSlotDialogOpen(false);
     setEditingSlotId(null);
@@ -620,20 +564,48 @@ export default function ScheduleEditorPage() {
     markDirty();
   }
 
-  function handlePickerSelect(picked: PickedItem[]) {
-    const item = picked[0];
-    if (!item) return;
-    setSlotDraft(d => ({
-      ...d,
-      playlistId: item.type === 'playlist' ? item.id : null,
-      contentId: item.type === 'content' ? item.id : null,
-      label: item.name,
-      thumbnailContentId: item.thumbnailContentId ?? null,
-    }));
-    setPickerActive(false);
+  // -- Picker handlers --
+  function openPickerForSlot() {
+    setPickerTarget('slot');
+    setPickerOpen(true);
+    setSlotDialogOpen(false);
   }
 
-  // ── Save ──
+  function openPickerForDefault() {
+    setPickerTarget('default');
+    setPickerOpen(true);
+  }
+
+  function handlePickerSelect(picked: PickedItem[]) {
+    const item = picked[0];
+    if (!item) { setPickerOpen(false); return; }
+    if (pickerTarget === 'default') {
+      setDefaultContent({
+        playlistId: item.type === 'playlist' ? item.id : null,
+        contentId: item.type === 'content' ? item.id : null,
+        label: item.name,
+        thumbnailContentId: item.thumbnailContentId ?? null,
+      });
+      markDirty();
+    } else {
+      setSlotDraft(d => ({
+        ...d,
+        playlistId: item.type === 'playlist' ? item.id : null,
+        contentId: item.type === 'content' ? item.id : null,
+        label: item.name,
+        thumbnailContentId: item.thumbnailContentId ?? null,
+      }));
+      setSlotDialogOpen(true);
+    }
+    setPickerOpen(false);
+  }
+
+  function handlePickerClose() {
+    setPickerOpen(false);
+    if (pickerTarget === 'slot') setSlotDialogOpen(true);
+  }
+
+  // -- Save --
   const saveMut = useMutation({
     mutationFn: async () => {
       if (!editName.trim()) throw new Error('Name is required');
@@ -652,6 +624,8 @@ export default function ScheduleEditorPage() {
           name: editName.trim(),
           type: editType,
           isActive: editIsActive,
+          defaultPlaylistId: defaultContent.playlistId ?? null,
+          defaultContentId: defaultContent.contentId ?? null,
         });
       }
 
@@ -665,8 +639,15 @@ export default function ScheduleEditorPage() {
         daysOfWeek: s.daysOfWeek.length ? s.daysOfWeek : undefined,
         label: s.label,
         color: s.color,
-        priority: s.priority,
+        priority: 0,
       })));
+
+      if (isNew && (defaultContent.playlistId || defaultContent.contentId)) {
+        await api.patch(`/schedules/${scheduleId}`, {
+          defaultPlaylistId: defaultContent.playlistId ?? null,
+          defaultContentId: defaultContent.contentId ?? null,
+        });
+      }
 
       return scheduleId;
     },
@@ -697,9 +678,6 @@ export default function ScheduleEditorPage() {
     onError: (error) => toast.error(error instanceof Error ? error.message : 'Failed to publish schedule'),
   });
 
-  // ── Type meta ──
-  const typeMeta = TYPE_META[editType] ?? TYPE_META['general']!;
-
   if (!isNew && isLoading) {
     return (
       <div className="flex flex-col h-full bg-[var(--surface)] overflow-hidden">
@@ -719,16 +697,10 @@ export default function ScheduleEditorPage() {
   return (
     <div className="flex flex-col h-full bg-[var(--surface)] overflow-hidden">
 
-      {/* ── Top toolbar ── */}
+      {/* -- Top toolbar -- */}
       <div className="flex items-center gap-3 px-6 py-3 border-b border-[var(--border)] bg-[var(--card)] shrink-0">
         <button
-          onClick={() => {
-            if (isDirty) {
-              setLeaveConfirmOpen(true);
-              return;
-            }
-            navigate(`/workspaces/${wsId!}/schedule`);
-          }}
+          onClick={() => { if (isDirty) { setLeaveConfirmOpen(true); return; } navigate(`/workspaces/${wsId!}/schedule`); }}
           className="flex items-center gap-1.5 text-sm font-medium text-[var(--text-muted)] hover:text-[var(--text)] transition-colors shrink-0"
           title="Back to schedules"
         >
@@ -736,26 +708,13 @@ export default function ScheduleEditorPage() {
           <span>Schedules</span>
         </button>
 
-        {/* Editable name */}
         <input
           value={editName}
           onChange={e => { setEditName(e.target.value); markDirty(); }}
-          placeholder="Schedule name…"
+          placeholder="Schedule name..."
           className="flex-1 min-w-0 bg-transparent text-base font-bold text-[var(--text)] outline-none placeholder:text-[var(--text-muted)] border-b border-transparent focus:border-[var(--accent)]"
         />
 
-        {/* Schedule type chip */}
-        <div className="relative shrink-0">
-          <button
-            onClick={() => setEditType(t => t === 'general' ? 'override' : 'general')}
-            className={`ui-filter-chip ${typeMeta.tone === 'danger' ? 'ui-filter-chip-danger' : 'ui-filter-chip-warning'}`}
-            title="Toggle schedule type"
-          >
-            {typeMeta.label}
-          </button>
-        </div>
-
-        {/* Active toggle */}
         <ToggleSwitch
           label="Active"
           checked={editIsActive}
@@ -764,40 +723,80 @@ export default function ScheduleEditorPage() {
         />
 
         <div className="flex items-center gap-2 shrink-0">
-          {/* Add Content */}
-          <button
-            onClick={() => openAddSlot()}
-            className="editor-toolbar-btn-primary"
-          >
+          <button onClick={() => openAddSlot()} className="editor-toolbar-btn-primary">
             <Plus size={13} />
-            Add Content
+            Add Slot
           </button>
-
-          {/* Publish */}
-          <button
-            onClick={() => setPublishConfirmOpen(true)}
-            disabled={!id}
-            className="editor-toolbar-btn"
-          >
+          <button onClick={() => setPublishConfirmOpen(true)} disabled={!id} className="editor-toolbar-btn">
             <Monitor size={13} />
             Publish
           </button>
-
-          {/* Save */}
           <button
             onClick={() => saveMut.mutate()}
             disabled={saveMut.isPending || (!isNew && !isDirty)}
             className="editor-toolbar-btn-primary"
           >
             <Save size={13} />
-            {saveMut.isPending ? 'Saving…' : 'Save'}
+            {saveMut.isPending ? 'Saving...' : 'Save'}
           </button>
         </div>
       </div>
 
-      <div className="px-6 py-3 border-b border-[var(--border)] bg-[var(--card)] shrink-0">
-        <div className="max-w-md">
-          <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1">Tags</label>
+      {/* -- Settings bar: Default Content + Tags -- */}
+      <div className="flex items-center gap-4 px-6 py-2.5 border-b border-[var(--border)] bg-[var(--card)] shrink-0 flex-wrap">
+
+        {/* Default Content */}
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs font-semibold text-[var(--text-muted)] shrink-0 whitespace-nowrap">Default Content</span>
+          {defaultContent.label ? (
+            <div className="flex items-center gap-2 px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+              {defaultContent.thumbnailContentId ? (
+                <AuthImg
+                  itemId={defaultContent.thumbnailContentId}
+                  className="w-9 h-6 object-cover rounded shrink-0"
+                  fallback={<div className="w-9 h-6 rounded bg-[var(--surface-raised)] shrink-0" />}
+                />
+              ) : (
+                <div className="w-9 h-6 rounded bg-[var(--surface-raised)] shrink-0 flex items-center justify-center">
+                  <ImageOff size={11} className="text-[var(--text-muted)]" />
+                </div>
+              )}
+              <span className="text-xs font-medium text-[var(--text)] truncate max-w-[120px]">
+                {defaultContent.label}
+              </span>
+              <button
+                onClick={openPickerForDefault}
+                className="text-[10px] text-[var(--accent)] hover:underline shrink-0"
+              >
+                Change
+              </button>
+              <button
+                onClick={() => { setDefaultContent({ playlistId: null, contentId: null, label: '', thumbnailContentId: null }); markDirty(); }}
+                className="text-[var(--text-muted)] hover:text-red-400 transition-colors shrink-0"
+                title="Remove default content"
+              >
+                <X size={11} />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={openPickerForDefault}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-dashed border-[var(--border)] text-xs text-[var(--text-muted)] hover:border-[var(--accent)]/50 hover:text-[var(--text)] transition-colors"
+            >
+              <Plus size={12} />
+              Set default
+            </button>
+          )}
+          <span className="text-[10px] text-[var(--text-muted)] hidden lg:block whitespace-nowrap">
+            Plays when no slot is scheduled
+          </span>
+        </div>
+
+        <div className="h-4 w-px bg-[var(--border)] shrink-0 hidden sm:block" />
+
+        {/* Tags */}
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="text-xs font-semibold text-[var(--text-muted)] shrink-0">Tags</span>
           <WorkspaceTagPicker
             workspaceId={wsId!}
             entityId={isNew ? null : id ?? null}
@@ -806,7 +805,7 @@ export default function ScheduleEditorPage() {
         </div>
       </div>
 
-      {/* ── Calendar wrapper ── */}
+      {/* -- Calendar wrapper -- */}
       <div className="flex-1 overflow-hidden p-4">
         <div
           className="h-full rounded-2xl flex flex-col overflow-hidden"
@@ -814,15 +813,13 @@ export default function ScheduleEditorPage() {
         >
           {/* Calendar control bar */}
           <div className="flex items-center gap-2 px-4 py-3 border-b shrink-0" style={{ borderColor: 'var(--border)' }}>
-            {/* + quick add */}
             <button
               onClick={() => openAddSlot()}
               className="w-7 h-7 flex items-center justify-center rounded-full border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-raised)] transition-colors"
+              title="Add slot"
             >
               <Plus size={14} />
             </button>
-
-            {/* Week navigation */}
             <button onClick={prevWeek} className="w-7 h-7 flex items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--surface-raised)] transition-colors">
               <ChevronLeft size={16} />
             </button>
@@ -832,18 +829,8 @@ export default function ScheduleEditorPage() {
             <button onClick={nextWeek} className="w-7 h-7 flex items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--surface-raised)] transition-colors">
               <ChevronRight size={16} />
             </button>
-
             <div className="flex-1" />
-
-            {/* Today */}
-            <button
-              onClick={goToday}
-              className="editor-toolbar-btn-primary"
-            >
-              Today
-            </button>
-
-            {/* View toggles */}
+            <button onClick={goToday} className="editor-toolbar-btn-primary">Today</button>
             <div className="flex border border-[var(--border)] rounded-lg overflow-hidden">
               {([
                 { mode: 'week' as ViewMode, icon: <CalendarRange size={14} /> },
@@ -865,17 +852,14 @@ export default function ScheduleEditorPage() {
             </div>
           </div>
 
-          {/* ── Week view ── */}
+          {/* -- Week view -- */}
           {view === 'week' && (
             <>
-              {/* Day column headers */}
               <div className="flex border-b shrink-0" style={{ borderColor: 'var(--border)' }}>
                 <div className="w-14 shrink-0" />
                 {weekDays.map((day, i) => (
                   <div key={i} className="flex-1 flex flex-col items-center py-2 border-l" style={{ borderColor: 'var(--border)' }}>
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                      {day.label}
-                    </span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">{day.label}</span>
                     <span className={`text-lg font-bold leading-tight mt-0.5 w-8 h-8 flex items-center justify-center rounded-full transition-colors ${
                       day.isToday ? 'bg-[var(--accent)] text-white' : 'text-[var(--text)]'
                     }`}>
@@ -884,26 +868,15 @@ export default function ScheduleEditorPage() {
                   </div>
                 ))}
               </div>
-
-              {/* Scrollable time grid */}
               <div className="flex-1 overflow-y-auto">
                 <div className="flex" style={{ minHeight: `${HOUR_HEIGHT * 24}px` }}>
-                  {/* Time gutter */}
                   <div className="w-14 shrink-0 select-none">
                     {HOURS.map(h => (
-                      <div
-                        key={h}
-                        style={{ height: `${HOUR_HEIGHT}px` }}
-                        className="flex items-start justify-end pr-2 pt-1"
-                      >
-                        <span className="text-[10px] text-[var(--text-muted)]">
-                          {String(h).padStart(2, '0')}:00
-                        </span>
+                      <div key={h} style={{ height: `${HOUR_HEIGHT}px` }} className="flex items-start justify-end pr-2 pt-1">
+                        <span className="text-[10px] text-[var(--text-muted)]">{String(h).padStart(2, '0')}:00</span>
                       </div>
                     ))}
                   </div>
-
-                  {/* Day columns */}
                   {weekDays.map((day, dayIdx) => (
                     <div
                       key={dayIdx}
@@ -913,7 +886,6 @@ export default function ScheduleEditorPage() {
                         background: day.isToday ? 'color-mix(in srgb, var(--accent) 3%, transparent)' : undefined,
                       }}
                     >
-                      {/* Hour rows */}
                       {HOURS.map(h => (
                         <div
                           key={h}
@@ -922,8 +894,6 @@ export default function ScheduleEditorPage() {
                           onClick={() => openAddSlot(h, day.date)}
                         />
                       ))}
-
-                      {/* Slot blocks */}
                       {slotsForDay(dayIdx, day.date).map(slot => (
                         <SlotBlock
                           key={slot.localId + '-' + dayIdx}
@@ -939,13 +909,13 @@ export default function ScheduleEditorPage() {
             </>
           )}
 
-          {/* ── List view ── */}
+          {/* -- List view -- */}
           {view === 'list' && (
             <div className="flex-1 overflow-y-auto p-4 space-y-2">
               {slots.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-40 gap-3 text-center">
                   <CalendarDays size={32} className="text-[var(--text-muted)]" />
-                  <p className="text-sm text-[var(--text-muted)]">No slots yet. Click "Add Content" to create one.</p>
+                  <p className="text-sm text-[var(--text-muted)]">No slots yet. Click "Add Slot" to schedule content.</p>
                 </div>
               ) : (
                 [...slots]
@@ -955,19 +925,13 @@ export default function ScheduleEditorPage() {
                       key={slot.localId}
                       className="flex items-center gap-3 p-3 rounded-xl border border-[var(--card-border)] bg-[var(--card)] group"
                     >
-                      {/* Color bar */}
-                      <div
-                        style={{ background: slot.color }}
-                        className="w-1.5 h-10 rounded-full shrink-0"
-                      />
-
-                      {/* Thumbnail */}
+                      <div style={{ background: slot.color }} className="w-1.5 h-10 rounded-full shrink-0" />
                       {slot.thumbnailContentId ? (
                         <div className="shrink-0 w-16 h-10 rounded-lg overflow-hidden bg-[var(--surface-raised)]">
                           <AuthImg
                             itemId={slot.thumbnailContentId}
                             className="w-full h-full object-cover"
-                            fallback={<div className="w-full h-full flex items-center justify-center"><CalendarDays size={16} className="text-[var(--text-muted)]" /></div>}
+                            fallback={<div className="w-full h-full flex items-center justify-center"><ImageOff size={14} className="text-[var(--text-muted)]" /></div>}
                           />
                         </div>
                       ) : (
@@ -975,16 +939,12 @@ export default function ScheduleEditorPage() {
                           <CalendarDays size={16} className="text-[var(--text-muted)]" />
                         </div>
                       )}
-
-                      {/* Info */}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-[var(--text)] truncate">{slot.label}</p>
                         <p className="text-xs text-[var(--text-muted)]">
-                          {slot.startTime}–{slot.endTime} &middot; {formatRecurrenceLabel(slot)}
+                          {slot.startTime}&#8211;{slot.endTime} &middot; {formatRecurrenceLabel(slot)}
                         </p>
                       </div>
-
-                      {/* Actions */}
                       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
                           onClick={() => openEditSlot(slot)}
@@ -1009,28 +969,28 @@ export default function ScheduleEditorPage() {
         </div>
       </div>
 
-      {/* ── Slot dialog ── */}
-      {slotDialogOpen && !pickerActive && (
+      {/* -- Slot dialog -- */}
+      {slotDialogOpen && !pickerOpen && (
         <SlotDialog
           draft={slotDraft}
           onDraftChange={setSlotDraft}
           editingId={editingSlotId}
           onConfirm={confirmSlot}
           onClose={() => setSlotDialogOpen(false)}
-          onOpenPicker={() => setPickerActive(true)}
+          onOpenPicker={openPickerForSlot}
           existingSlots={slots}
         />
       )}
 
-      {/* ── Content picker ── */}
+      {/* -- Content picker (shared for slot + default content) -- */}
       <ContentPickerModal
-        open={pickerActive}
-        onClose={() => { setPickerActive(false); setSlotDialogOpen(true); }}
-        onSelect={(picked) => { handlePickerSelect(picked); setSlotDialogOpen(true); }}
+        open={pickerOpen}
+        onClose={handlePickerClose}
+        onSelect={handlePickerSelect}
         workspaceId={wsId!}
         multi={false}
         allowedTypes={['content', 'playlist']}
-        title="Pick Content or Playlist"
+        title={pickerTarget === 'default' ? 'Set Default Content' : 'Pick Content or Playlist'}
       />
 
       <ConfirmDialog
@@ -1049,7 +1009,7 @@ export default function ScheduleEditorPage() {
         onSelect={(devices) => publishMut.mutate(devices.map((device) => device.id))}
         workspaceId={wsId!}
         title={`Publish ${editName || 'Schedule'}`}
-        confirmLabel={publishMut.isPending ? 'Publishing…' : 'Publish'}
+        confirmLabel={publishMut.isPending ? 'Publishing...' : 'Publish'}
       />
     </div>
   );
