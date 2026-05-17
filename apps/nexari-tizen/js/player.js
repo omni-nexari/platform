@@ -399,6 +399,10 @@ const Player = {
                 else {
                     logger.warn('[BLE] BleManager not loaded — ble-manager.js missing from WGT?');
                 }
+                // Notify the server of consumer vs commercial TV so the portal can hide MDC-only controls
+                if (typeof window.b2bapis === 'undefined') {
+                    this.wsConnection.send(JSON.stringify({ type: 'platform_info', payload: { platform: 'tizen-consumer' } }));
+                }
             };
             this.wsConnection.onmessage = (event) => {
                 this.lastWsMessageAt = Date.now();
@@ -3238,7 +3242,9 @@ const Player = {
     // Render video content — routes to wall CSS renderer, HTML5 sync path, or AVPlay.
     renderVideo(container, content) {
         // CrossOS wall mode: use HTML5 <video> with CSS transform crop.
-        if (this._wallCss && content && content.type === 'VIDEOWALL') {
+        // Apply whenever _wallCss is set — content.type may be VIDEO or VIDEOWALL
+        // (videowall playlist slots are regular VIDEO items; VIDEOWALL_INIT sets _wallCss).
+        if (this._wallCss && content) {
             this._renderWallVideo(container, content);
             return;
         }
