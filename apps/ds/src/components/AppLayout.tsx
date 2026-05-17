@@ -15,7 +15,7 @@ import {
   ModalPrimaryButton,
   ModalSecondaryButton,
 } from './UiPrimitives.js';
-import { useCmsEnabled, usePosEnabled } from '../lib/modules.js';
+import { useCmsEnabled, usePosEnabled, useOrgModules } from '../lib/modules.js';
 import {
   LayoutDashboard,
   Monitor,
@@ -250,8 +250,20 @@ export default function AppLayout() {
   }
 
   const canManageEmergency = user?.orgRole === 'owner' || user?.orgRole === 'admin';
-  const cmsEnabled = useCmsEnabled();
-  const posEnabled = usePosEnabled();
+
+  // Derive modules from the live query response (fresh from server) so the
+  // sidebar updates immediately without waiting for the auth store to sync.
+  const storeModules = useOrgModules();
+  const liveSettings = (meData as { org?: { settings?: string } } | undefined)?.org?.settings;
+  const activeModules = liveSettings !== undefined ? (() => {
+    try {
+      const s = JSON.parse(liveSettings ?? '{}') as { modules?: string };
+      if (s.modules === 'pos' || s.modules === 'both') return s.modules as 'pos' | 'both';
+    } catch { /* ignore */ }
+    return 'signage' as const;
+  })() : storeModules;
+  const cmsEnabled = activeModules === 'signage' || activeModules === 'both';
+  const posEnabled = activeModules === 'pos' || activeModules === 'both';
   const contentEnabled = cmsEnabled;
 
   return (
