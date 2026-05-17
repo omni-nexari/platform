@@ -207,6 +207,9 @@ export default function AppLayout() {
     retry: false,
   });
 
+  // Fall back to first workspace so sidebar nav is always visible even from /dashboard
+  const effectiveWsId = currentWsId ?? workspaces[0]?.id ?? null;
+
   const { data: activeOverrides = [] } = useQuery<EmergencyOverride[]>({
     queryKey: ['emergency'],
     queryFn: () => api.get('/emergency'),
@@ -216,9 +219,9 @@ export default function AppLayout() {
   });
 
   const { data: currentWs } = useQuery<Workspace>({
-    queryKey: ['workspace', currentWsId],
-    queryFn: () => api.get(`/workspaces/${currentWsId}`),
-    enabled: bootstrapped && !!user && !!currentWsId,
+    queryKey: ['workspace', effectiveWsId],
+    queryFn: () => api.get(`/workspaces/${effectiveWsId}`),
+    enabled: bootstrapped && !!user && !!effectiveWsId,
     retry: false,
   });
 
@@ -313,7 +316,7 @@ export default function AppLayout() {
             <MessageSquare className="w-4 h-4" />
             Support
           </NavLink>
-          {currentWsId && (
+          {effectiveWsId && (
             <>
               <div className="pt-2 pb-1 px-3">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] truncate">
@@ -323,7 +326,7 @@ export default function AppLayout() {
 
               {/* Devices — always visible */}
               <NavLink
-                to={`/workspaces/${currentWsId}/devices`}
+                to={`/workspaces/${effectiveWsId}/devices`}
                 className={({ isActive }) =>
                   `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                     isActive
@@ -338,7 +341,7 @@ export default function AppLayout() {
 
               {contentEnabled && (
                 <NavLink
-                  to={`/workspaces/${currentWsId}/content`}
+                  to={`/workspaces/${effectiveWsId}/content`}
                   className={({ isActive }) =>
                     `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                       isActive
@@ -359,7 +362,7 @@ export default function AppLayout() {
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Signage</p>
                   </div>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/playlist`}
+                    to={`/workspaces/${effectiveWsId}/playlist`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -372,7 +375,7 @@ export default function AppLayout() {
                     Playlists
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/schedule`}
+                    to={`/workspaces/${effectiveWsId}/schedule`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -385,7 +388,7 @@ export default function AppLayout() {
                     Schedules
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/canvas/new`}
+                    to={`/workspaces/${effectiveWsId}/canvas/new`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -398,7 +401,7 @@ export default function AppLayout() {
                     Canvas
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/tags`}
+                    to={`/workspaces/${effectiveWsId}/tags`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -411,7 +414,7 @@ export default function AppLayout() {
                     Tags
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/analytics`}
+                    to={`/workspaces/${effectiveWsId}/analytics`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -433,7 +436,7 @@ export default function AppLayout() {
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Point of Sale</p>
                   </div>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/pos/orders`}
+                    to={`/workspaces/${effectiveWsId}/pos/orders`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -446,7 +449,7 @@ export default function AppLayout() {
                     Orders
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/pos/kiosk`}
+                    to={`/workspaces/${effectiveWsId}/pos/kiosk`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -459,7 +462,7 @@ export default function AppLayout() {
                     Kiosk
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/pos/kitchen`}
+                    to={`/workspaces/${effectiveWsId}/pos/kitchen`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -472,7 +475,7 @@ export default function AppLayout() {
                     Kitchen
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/pos/inventory`}
+                    to={`/workspaces/${effectiveWsId}/pos/inventory`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -485,7 +488,7 @@ export default function AppLayout() {
                     Inventory
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/pos/employees`}
+                    to={`/workspaces/${effectiveWsId}/pos/employees`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -498,7 +501,7 @@ export default function AppLayout() {
                     Employees
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/pos/loyalty`}
+                    to={`/workspaces/${effectiveWsId}/pos/loyalty`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -511,7 +514,7 @@ export default function AppLayout() {
                     Loyalty
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/pos/analytics`}
+                    to={`/workspaces/${effectiveWsId}/pos/analytics`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -524,7 +527,7 @@ export default function AppLayout() {
                     POS Analytics
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/pos/menu`}
+                    to={`/workspaces/${effectiveWsId}/pos/menu`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -537,7 +540,7 @@ export default function AppLayout() {
                     Menu Builder
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/pos/menu-boards`}
+                    to={`/workspaces/${effectiveWsId}/pos/menu-boards`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -550,7 +553,7 @@ export default function AppLayout() {
                     Menu Boards
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/pos/expenses`}
+                    to={`/workspaces/${effectiveWsId}/pos/expenses`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
@@ -563,7 +566,7 @@ export default function AppLayout() {
                     Expenses
                   </NavLink>
                   <NavLink
-                    to={`/workspaces/${currentWsId}/pos/purchase-orders`}
+                    to={`/workspaces/${effectiveWsId}/pos/purchase-orders`}
                     className={({ isActive }) =>
                       `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                         isActive
