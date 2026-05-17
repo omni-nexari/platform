@@ -47,6 +47,7 @@ import DeviceGroupDetailPage from './pages/workspace/DeviceGroupDetailPage.js';
 import PosMenuPage from './pages/workspace/PosMenuPage.js';
 import PosOrderPage from './pages/workspace/PosOrderPage.js';
 import PosPaymentPage from './pages/workspace/PosPaymentPage.js';
+import PosWaiterLayout from './pages/workspace/PosWaiterLayout.js';
 import PosOrdersPage from './pages/workspace/PosOrdersPage.js';
 import PosKioskPage from './pages/workspace/PosKioskPage.js';
 import PosKitchenPage from './pages/workspace/PosKitchenPage.js';
@@ -330,6 +331,18 @@ export default function App() {
         element={<Navigate to="/settings?section=security" replace />}
       />
 
+      {/* POS waiter tablet — full-screen, no main nav */}
+      <Route
+        element={
+          <RequireAuth>
+            <PosWaiterLayout />
+          </RequireAuth>
+        }
+      >
+        <Route path="/workspaces/:wsId/pos" element={<PosOrderPage />} />
+        <Route path="/workspaces/:wsId/pos/payment" element={<PosPaymentPage />} />
+      </Route>
+
       {/* Main app — dashboard + workspace/device pages */}
       <Route
         element={
@@ -348,8 +361,6 @@ export default function App() {
         <Route path="/workspaces/:wsId/devices/groups/:groupId" element={<DeviceGroupDetailPage />} />
         <Route path="/workspaces/:wsId/devices/:deviceId" element={<DeviceDetailPage />} />
         <Route path="/workspaces/:wsId/pos/menu" element={<PosMenuPage />} />
-        <Route path="/workspaces/:wsId/pos" element={<PosOrderPage />} />
-        <Route path="/workspaces/:wsId/pos/payment" element={<PosPaymentPage />} />
         <Route path="/workspaces/:wsId/pos/orders" element={<PosOrdersPage />} />
         <Route path="/workspaces/:wsId/pos/kiosk" element={<PosKioskPage />} />
         <Route path="/workspaces/:wsId/pos/kitchen" element={<PosKitchenPage />} />

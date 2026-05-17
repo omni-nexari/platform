@@ -357,7 +357,7 @@ export default function PosOrderPage() {
   // ─── Render ──────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] max-w-screen-2xl mx-auto">
+    <div className="flex flex-col h-full max-w-screen-2xl mx-auto">
       {/* Header */}
       <div className="px-4 sm:px-6 py-4 border-b border-[var(--border)]">
         <PageHeader
