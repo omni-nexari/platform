@@ -1007,11 +1007,8 @@ export default function DevicesPage() {
             <div>
               <label className="ui-label">Device Type</label>
               <select {...register('type')} className="ui-input w-full" defaultValue="signage">
-                {useCmsEnabled() && <option value="signage">Signage Display</option>}
-                {useCmsEnabled() && <option value="menu-board">Menu Board</option>}
-                {usePosEnabled() && <option value="kiosk">Kiosk (Self-Order)</option>}
-                {usePosEnabled() && <option value="kitchen">Kitchen Monitor</option>}
-                {usePosEnabled() && <option value="order-pad">Order Pad (Staff)</option>}
+                <option value="signage">Signage</option>
+                {usePosEnabled() && <option value="pos">POS</option>}
               </select>
             </div>
           </form>

@@ -6024,11 +6024,12 @@ var PairRequestSchema = external_exports.object({
   windowsBuild: external_exports.string().nullish(),
   macAddress: external_exports.string().nullish()
 });
+var DeviceTypeEnum = external_exports.enum(["signage", "kiosk", "kitchen", "order-pad", "menu-board", "pos"]);
 var ClaimDeviceSchema = external_exports.object({
   code: external_exports.string().length(6),
   workspaceId: external_exports.string().uuid(),
   name: external_exports.string().min(1).max(255).optional(),
-  type: external_exports.enum(["signage", "kiosk", "kitchen"]).optional()
+  type: DeviceTypeEnum.optional()
 });
 var ZoneSourceSchema = external_exports.discriminatedUnion("type", [
   external_exports.object({ type: external_exports.literal("playlist"), playlistId: external_exports.string().uuid(), playlistName: external_exports.string().optional() }),
@@ -6048,6 +6049,7 @@ var ZoneConfigSchema = external_exports.object({
 });
 var UpdateDeviceSchema = external_exports.object({
   name: external_exports.string().min(1).max(255).optional(),
+  type: DeviceTypeEnum.optional(),
   timezone: external_exports.string().optional(),
   settings: external_exports.string().optional(),
   defaultPlaylistId: external_exports.string().uuid().nullable().optional(),

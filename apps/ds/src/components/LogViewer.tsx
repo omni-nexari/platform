@@ -3,7 +3,9 @@ import {
   Download, RefreshCw, Trash2, ChevronDown, Filter,
   Radio, RadioTower, X, BarChart2,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { saApi } from '../lib/superadmin-auth.js';
+import ConfirmDialog from './ConfirmDialog.js';
 import { PageHeader, SectionCard, SectionCardBody, SectionCardHeader, Skeleton } from './UiPrimitives.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -255,6 +257,7 @@ export default function LogViewer({
   const [error,      setError]      = useState<string | null>(null);
   const [expanded,   setExpanded]   = useState<Set<number>>(new Set());
   const [purging,    setPurging]    = useState(false);
+  const [purgeConfirmOpen, setPurgeConfirmOpen] = useState(false);
 
   // ── Stats + device timeline ───────────────────────────────────────────────
   const [stats,          setStats]          = useState<LogStats | null>(null);
@@ -458,16 +461,16 @@ export default function LogViewer({
   // ── Purge ─────────────────────────────────────────────────────────────────
 
   const handlePurge = async () => {
-    if (!window.confirm('Purge ALL log entries? This cannot be undone.')) return;
     setPurging(true);
     try {
       const data = await saApi.post<{ deleted: number }>('/logs/purge', {});
       setEntries([]); setNextCursor(null); setStats(null);
-      alert(`Purged ${data.deleted} log entries.`);
+      toast.success(`Purged ${data.deleted} log entries.`);
     } catch {
-      alert('Purge failed.');
+      toast.error('Purge failed.');
     } finally {
       setPurging(false);
+      setPurgeConfirmOpen(false);
     }
   };
 
@@ -616,7 +619,7 @@ export default function LogViewer({
             {showPurge && (
               <button
                 type="button"
-                onClick={() => void handlePurge()}
+                onClick={() => setPurgeConfirmOpen(true)}
                 disabled={purging}
                 className="flex items-center gap-2 rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-600 disabled:opacity-60"
               >
@@ -792,6 +795,19 @@ export default function LogViewer({
           )}
         </SectionCard>
       )}
+
+      <ConfirmDialog
+        open={purgeConfirmOpen}
+        title="Purge all log entries"
+        message="Purge ALL log entries? This cannot be undone."
+        confirmLabel="Purge All"
+        confirmPendingLabel="Purging…"
+        variant="danger"
+        isConfirming={purging}
+        closeOnConfirm={false}
+        onConfirm={() => void handlePurge()}
+        onClose={() => setPurgeConfirmOpen(false)}
+      />
     </div>
   );
 }

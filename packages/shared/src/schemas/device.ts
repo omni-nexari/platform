@@ -92,7 +92,7 @@ export const PairRequestSchema = z.object({
 });
 export type PairRequestInput = z.infer<typeof PairRequestSchema>;
 
-export const DeviceTypeEnum = z.enum(['signage', 'kiosk', 'kitchen', 'order-pad', 'menu-board']);
+export const DeviceTypeEnum = z.enum(['signage', 'kiosk', 'kitchen', 'order-pad', 'menu-board', 'pos']);
 export type DeviceType = z.infer<typeof DeviceTypeEnum>;
 
 export const ClaimDeviceSchema = z.object({

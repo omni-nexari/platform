@@ -41,13 +41,6 @@ const SLOT_LABELS: Record<PosDisplaySlot, string> = {
   'order-pad':       'Waiter Tablet',
 };
 
-const SLOT_DEVICE_TYPES: Record<PosDisplaySlot, string> = {
-  'kiosk-portrait':  'kiosk',
-  'kiosk-landscape': 'kiosk',
-  'kitchen':         'kitchen',
-  'order-pad':       'order-pad',
-};
-
 function parsePosSettings(settingsJson: string): { posDisplayType?: string; posWorkspaceId?: string } {
   try { return JSON.parse(settingsJson || '{}'); } catch { return {}; }
 }
@@ -56,7 +49,7 @@ interface DeviceListItem {
   id: string;
   name: string;
   status: 'unclaimed' | 'online' | 'offline' | 'error';
-  type: 'signage' | 'kiosk' | 'kitchen' | 'order-pad';
+  type: 'signage' | 'kiosk' | 'kitchen' | 'order-pad' | 'pos';
   lastSeen: string | null;
   playerVersion: string | null;
   settings: string;
@@ -239,7 +232,7 @@ export default function PosKioskPage() {
 
   const kioskDevices = useMemo(() => devices.filter((device) => device.type === 'kiosk'), [devices]);
   const posDevices   = useMemo(
-    () => devices.filter((d) => d.type === 'kiosk' || d.type === 'kitchen' || d.type === 'order-pad'),
+    () => devices.filter((d) => d.type !== 'signage' && d.type !== 'menu-board'),
     [devices],
   );
   const pairedDevices = useMemo(() => {
@@ -790,11 +783,11 @@ export default function PosKioskPage() {
               <button className="text-[var(--text-muted)] hover:text-[var(--text)] text-lg leading-none" onClick={() => setDeploySlot(null)}>✕</button>
             </div>
             <div className="p-4 space-y-2 max-h-72 overflow-y-auto">
-              {posDevices.filter((d) => d.type === SLOT_DEVICE_TYPES[deploySlot]).length === 0 ? (
+              {posDevices.length === 0 ? (
                 <p className="text-sm text-[var(--text-muted)] text-center py-6">
-                  No <strong>{SLOT_DEVICE_TYPES[deploySlot]}</strong> devices registered. Claim a device with the right type first.
+                  No POS devices registered. Pair a device with type POS first.
                 </p>
-              ) : posDevices.filter((d) => d.type === SLOT_DEVICE_TYPES[deploySlot]).map((device) => {
+              ) : posDevices.map((device) => {
                 const isCurrentlyPaired = pairedDevices[deploySlot]?.id === device.id;
                 return (
                   <button

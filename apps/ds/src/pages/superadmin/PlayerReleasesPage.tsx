@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Plus, Trash2, Rocket, PackageCheck, CheckCircle2 } from 'lucide-react';
 import { z } from 'zod';
 import { saApi } from '../../lib/superadmin-auth.js';
+import ConfirmDialog from '../../components/ConfirmDialog.js';
 import {
   Badge,
   EmptyState,
@@ -57,6 +58,7 @@ export default function PlayerReleasesPage() {
   const [showPublish, setShowPublish] = useState(false);
   const [deploying, setDeploying] = useState<string | null>(null);
   const [platformTab, setPlatformTab] = useState<ReleasePlatform | 'all'>('all');
+  const [deleteTarget, setDeleteTarget] = useState<PlayerRelease | null>(null);
 
   const { data: releases = [], isLoading } = useQuery({
     queryKey: ['sa-player-releases'],
@@ -224,11 +226,7 @@ export default function PlayerReleasesPage() {
                 <InlineActionButton
                   tone="danger"
                   disabled={remove.isPending}
-                  onClick={() => {
-                    if (window.confirm(`Delete release v${r.version}?`)) {
-                      remove.mutate(r.id);
-                    }
-                  }}
+                  onClick={() => setDeleteTarget(r)}
                 >
                   <Trash2 size={13} />
                 </InlineActionButton>
@@ -302,6 +300,24 @@ export default function PlayerReleasesPage() {
             </ModalFooter>
           </form>
         </Modal>
+      ) : null}
+
+      {deleteTarget ? (
+        <ConfirmDialog
+          open={!!deleteTarget}
+          title="Delete release"
+          message={`Delete release v${deleteTarget.version} (${PLATFORM_LABELS[deleteTarget.platform] ?? deleteTarget.platform})? This cannot be undone.`}
+          confirmLabel="Delete"
+          confirmPendingLabel="Deleting…"
+          variant="danger"
+          isConfirming={remove.isPending}
+          closeOnConfirm={false}
+          onConfirm={() => {
+            const id = deleteTarget.id;
+            remove.mutate(id, { onSettled: () => setDeleteTarget(null) });
+          }}
+          onClose={() => setDeleteTarget(null)}
+        />
       ) : null}
     </div>
   );

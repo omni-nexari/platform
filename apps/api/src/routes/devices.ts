@@ -2045,6 +2045,106 @@ export async function deviceRoutes(app: FastifyInstance) {
       schedule: publishedSchedule,
     });
 
+    // ── POS display injection for legacy schedule endpoint ───────────────────
+    // Android / player-web only reads this endpoint, not publishedContent from
+    // the workspace endpoint. Inject a synthetic web_url schedule so POS devices
+    // don't idle when nothing else is published.
+    let posSchedule: typeof legacyPublishedSchedule | null = null;
+    if (!legacyPublishedSchedule) {
+      try {
+        const deviceSettings = JSON.parse(device.settings ?? '{}') as Record<string, unknown>;
+        const posDisplayType = typeof deviceSettings['posDisplayType'] === 'string' ? deviceSettings['posDisplayType'] : null;
+        const posWorkspaceId = typeof deviceSettings['posWorkspaceId'] === 'string' ? deviceSettings['posWorkspaceId'] : null;
+        if (posDisplayType && posWorkspaceId) {
+          const appUrl = `${req.protocol}://${req.hostname}`;
+          let posUrl: string | null = null;
+          if (posDisplayType === 'order-pad') {
+            posUrl = `${appUrl}/workspaces/${posWorkspaceId}/pos`;
+          } else if (posDisplayType === 'kiosk-portrait' || posDisplayType === 'kiosk-landscape' || posDisplayType === 'kitchen') {
+            const restaurant = await db.query.posRestaurants.findFirst({
+              where: eq(posRestaurants.workspaceId, posWorkspaceId),
+              columns: { settings: true },
+            });
+            const dtObj = restaurant?.settings != null && typeof restaurant.settings === 'object' && !Array.isArray(restaurant.settings)
+              ? (restaurant.settings as Record<string, unknown>)['displayTokens']
+              : null;
+            const tokens = dtObj != null && typeof dtObj === 'object' && !Array.isArray(dtObj)
+              ? dtObj as Record<string, unknown>
+              : {};
+            const tokenKey = posDisplayType === 'kitchen' ? 'kitchen' : 'kiosk';
+            const dt = typeof tokens[tokenKey] === 'string' ? tokens[tokenKey] : null;
+            if (dt) {
+              if (posDisplayType === 'kiosk-portrait') {
+                posUrl = `${appUrl}/kiosk/${posWorkspaceId}/portrait?dt=${encodeURIComponent(dt)}`;
+              } else if (posDisplayType === 'kiosk-landscape') {
+                posUrl = `${appUrl}/kiosk/${posWorkspaceId}/landscape?dt=${encodeURIComponent(dt)}`;
+              } else {
+                posUrl = `${appUrl}/kitchen/${posWorkspaceId}?dt=${encodeURIComponent(dt)}`;
+              }
+            }
+          }
+          if (posUrl) {
+            const contentId = `pos-content-${device.id}`;
+            posSchedule = {
+              id: `pos-schedule-${device.id}`,
+              workspaceId: posWorkspaceId,
+              createdBy: null,
+              name: 'POS Display',
+              description: 'POS display injection',
+              type: 'override',
+              isActive: true,
+              deletedAt: null,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+              slots: [
+                {
+                  id: `pos-slot-${device.id}`,
+                  scheduleId: `pos-schedule-${device.id}`,
+                  playlistId: null,
+                  contentId,
+                  startTime: null,
+                  endTime: null,
+                  recurrenceType: 'daily',
+                  date: null,
+                  daysOfWeek: null,
+                  label: null,
+                  color: '#3b82f6',
+                  priority: 9999,
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                  playlist: null,
+                  content: {
+                    id: contentId,
+                    workspaceId: posWorkspaceId,
+                    orgId: device.orgId,
+                    name: 'POS Display',
+                    type: 'web_url',
+                    url: posUrl,
+                    webUrl: posUrl,
+                    filePath: null,
+                    mimeType: 'text/html',
+                    fileSize: null,
+                    uploadedBy: null,
+                    metadata: '{}',
+                    tags: null,
+                    originalName: null,
+                    thumbnailPath: null,
+                    transcodedPath: null,
+                    androidFilePath: null,
+                    deletedAt: null,
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                  } as unknown as NonNullable<typeof publishedContent>,
+                },
+              ],
+            } as unknown as typeof legacyPublishedSchedule;
+          }
+        }
+      } catch {
+        // If settings parsing fails, fall through to normal (possibly idle) behaviour
+      }
+    }
+
     const filteredWorkspaceSchedules = workspaceSchedules.map((sch) => ({
       ...sch,
       slots: sch.slots
@@ -2054,9 +2154,10 @@ export async function deviceRoutes(app: FastifyInstance) {
           : slot),
     }));
 
+    const firstSchedule = legacyPublishedSchedule ?? posSchedule;
     return reply.send({
-      schedules: legacyPublishedSchedule
-        ? [legacyPublishedSchedule, ...filteredWorkspaceSchedules]
+      schedules: firstSchedule
+        ? [firstSchedule, ...filteredWorkspaceSchedules]
         : filteredWorkspaceSchedules,
     });
   });
@@ -2197,7 +2298,7 @@ export async function deviceRoutes(app: FastifyInstance) {
         const posDisplayType = typeof deviceSettings['posDisplayType'] === 'string' ? deviceSettings['posDisplayType'] : null;
         const posWorkspaceId = typeof deviceSettings['posWorkspaceId'] === 'string' ? deviceSettings['posWorkspaceId'] : null;
         if (posDisplayType && posWorkspaceId) {
-          const appUrl = (process.env['APP_URL'] ?? 'https://ds.chiho.app').replace(/\/+$/, '');
+          const appUrl = `${req.protocol}://${req.hostname}`;
           let posUrl: string | null = null;
 
           if (posDisplayType === 'order-pad') {

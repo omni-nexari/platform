@@ -211,6 +211,12 @@ app.on('ready', async () => {
   const connectSrc = ["'self'", ...Array.from(connectSrcHosts)].join(' ');
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    // Only enforce CSP on the main player frame itself — not on iframe content
+    // (POS displays, HTML5 ads, dashboards) which should govern their own policies.
+    if (details.resourceType !== 'mainFrame') {
+      callback({ responseHeaders: details.responseHeaders ?? {} });
+      return;
+    }
     callback({
       responseHeaders: {
         ...details.responseHeaders,
