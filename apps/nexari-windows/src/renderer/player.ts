@@ -182,7 +182,11 @@ function getSignature(pl: Playlist | null): string {
 // ---------------------------------------------------------------------------
 // Content loading / schedule resolution
 // ---------------------------------------------------------------------------
-async function loadContent() {
+// Pass force=true (e.g. from an explicit WS refresh_schedule command) to
+// bypass the signature check and always re-render — this is critical for POS
+// display devices whose kitchen/kiosk URL never changes but whose iframe needs
+// a reload when the server signals a content update.
+async function loadContent(force = false) {
   if (_loadInFlight) return;
   _loadInFlight = true;
   try {
@@ -199,7 +203,7 @@ async function loadContent() {
     }
 
     const sig = getSignature(content);
-    if (sig === _contentSignature && (_isPlaying || _syncActive)) {
+    if (!force && sig === _contentSignature && (_isPlaying || _syncActive)) {
       console.debug('[Player] Content unchanged, continuing playback');
       return;
     }
@@ -1629,15 +1633,15 @@ window.nexari.onMessage('WS_MESSAGE', (msg: any) => {
     case 'content.published':
     case 'refresh_schedule':
       console.info(`[Player] Schedule refresh triggered by: ${msg.type}`);
-      loadContent();
+      void loadContent(true); // force re-render so POS iframe is always reloaded
       break;
     case 'emergency_start':
       console.warn('[Player] Emergency content started');
-      loadContent();
+      void loadContent(true);
       break;
     case 'emergency_clear':
       console.info('[Player] Emergency content cleared');
-      loadContent();
+      void loadContent(true);
       break;
     case 'reload':
       console.info('[Player] Remote reload command received');

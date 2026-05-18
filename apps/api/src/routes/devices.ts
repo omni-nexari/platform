@@ -1195,11 +1195,12 @@ export async function deviceRoutes(app: FastifyInstance) {
         settings['posDisplayType'] = 'kitchen';
       } else if (body.data.type === 'order-pad') {
         settings['posDisplayType'] = 'order-pad';
-      } else {
-        // signage / menu-board / pos — unlink from any POS display slot
+      } else if (body.data.type === 'signage' || body.data.type === 'menu-board') {
+        // unlink from any POS display slot
         delete settings['posDisplayType'];
         delete settings['posWorkspaceId'];
       }
+      // 'pos' (generic POS role) keeps whatever posDisplayType/posWorkspaceId was already set
       settingsOverride = JSON.stringify(settings);
     }
 
@@ -2158,7 +2159,7 @@ export async function deviceRoutes(app: FastifyInstance) {
                     workspaceId: posWorkspaceId,
                     orgId: device.orgId,
                     name: 'POS Display',
-                    type: 'web_url',
+                    type: 'html',
                     url: posUrl,
                     webUrl: posUrl,
                     filePath: null,

@@ -764,22 +764,21 @@ export default function DevicesPage() {
       ) : (
         <div className="flex flex-col gap-8">
           {(() => {
-            type SectionKey = 'signage' | 'kitchen' | 'kiosk' | 'order-pad' | 'menu-board' | 'pos';
-            const allSections: Array<{ key: SectionKey; label: string; icon: React.ReactNode; pos?: boolean }> = [
-              { key: 'signage',    label: 'Signage Displays', icon: <Monitor className="w-4 h-4" /> },
-              { key: 'kitchen',   label: 'Kitchen Monitors', icon: <Utensils className="w-4 h-4" />,   pos: true },
-              { key: 'kiosk',     label: 'Kiosks',           icon: <ShoppingBag className="w-4 h-4" />, pos: true },
-              { key: 'order-pad', label: 'Order Pads',       icon: <Tablet className="w-4 h-4" />,      pos: true },
-              { key: 'menu-board',label: 'Menu Boards',      icon: <LayoutGrid className="w-4 h-4" />,  pos: true },
-              { key: 'pos',       label: 'POS Devices',      icon: <ShoppingBag className="w-4 h-4" />, pos: true },
+            type SectionKey = 'signage' | 'pos';
+            const allSections: Array<{ key: SectionKey; label: string; icon: React.ReactNode; cms?: boolean; pos?: boolean }> = [
+              { key: 'signage', label: 'Signage Displays', icon: <Monitor className="w-4 h-4" />, cms: true },
+              { key: 'pos',     label: 'POS Devices',      icon: <ShoppingBag className="w-4 h-4" />, pos: true },
             ];
             const sections = allSections.filter((s) => {
-              if (s.pos) return posEnabled || cmsEnabled;
+              if (s.cms) return cmsEnabled;
+              if (s.pos) return posEnabled;
               return true;
             });
             return sections;
           })().map(({ key, label, icon }) => {
-            const sectionDevices = filteredDevices.filter((d) => (d.type ?? 'signage') === key);
+            const sectionDevices = key === 'signage'
+              ? filteredDevices.filter((d) => (d.type ?? 'signage') === 'signage')
+              : filteredDevices.filter((d) => !!d.type && d.type !== 'signage');
             if (sectionDevices.length === 0) return null;
 
             // Split into videowall group cards + sync group cards + ungrouped individual cards

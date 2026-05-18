@@ -6,6 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
 import { useAuthStore } from '../../lib/auth.js';
+import { useCmsEnabled, usePosEnabled } from '../../lib/modules.js';
 import { UpdateDeviceSchema } from '@signage/shared';
 import type { UpdateDeviceInput, DeviceCommandInput, WindowsPlayerSettings } from '@signage/shared';
 import {
@@ -1421,6 +1422,8 @@ export function DeviceDetailContent({
   const isOnline    = device.status === 'online';
   const isEpaper    = device.kind === 'epaper';
   const isWindows      = device.platform === 'windows';
+  const cmsEnabled     = useCmsEnabled();
+  const posEnabled     = usePosEnabled();
   const isAndroid      = ['android', 'androidtv', 'firetv'].includes(device.platform ?? '');
   const isTizenTop     = ['tizen', 'tizen-sbb'].includes(device.platform ?? 'tizen');
   const isConsumerTizen = device.platform === 'tizen-consumer';
@@ -2383,17 +2386,13 @@ export function DeviceDetailContent({
                 className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]" />
             </div>
 
-            {!isEpaper && (
+            {!isEpaper && (cmsEnabled || posEnabled) && (
             <div className="sm:col-span-2">
               <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Device Role</label>
               <select {...register('type')}
                 className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]">
-                <option value="signage">Signage (default)</option>
-                <option value="kiosk">POS Kiosk</option>
-                <option value="kitchen">POS Kitchen Display</option>
-                <option value="order-pad">POS Waiter Tablet</option>
-                <option value="menu-board">Menu Board</option>
-                <option value="pos">POS (general)</option>
+                {cmsEnabled && <option value="signage">Signage</option>}
+                {posEnabled && <option value="pos">POS</option>}
               </select>
             </div>
             )}
