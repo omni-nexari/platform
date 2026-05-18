@@ -641,6 +641,10 @@ const Player = {
           break;
           
         // ── Our API WS commands (snake_case from server → ws.ts) ──────────────
+        case 'DEVICE_DELETED':
+          logger.warn('DEVICE_DELETED received — clearing credentials and returning to pairing');
+          this.handleDeviceDeleted();
+          break;
         case 'refresh_schedule':
           logger.info('refresh_schedule received - reloading content');
           this.loadContent();
@@ -2914,9 +2918,9 @@ const Player = {
         this.showIdleScreen();
       }
     } catch (error) {
-      // If device was deleted (404), return to pairing
-      if (error.message && error.message.includes('404')) {
-        logger.warn('Device not found during content load (deleted). Returning to pairing...');
+      // If device was deleted or token rejected (401 or 404), return to pairing
+      if (error.message && (error.message.includes('401') || error.message.includes('404'))) {
+        logger.warn('Device not found or token rejected during content load. Returning to pairing...');
         this.handleDeviceDeleted();
         return;
       }

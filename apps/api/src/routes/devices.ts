@@ -4,7 +4,7 @@ import { createReadStream, existsSync, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import AdmZip from 'adm-zip';
-import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents, deviceGroupMembers, deviceGroups, calendarConnections, deviceRules, bleScanResults } from '@signage/db';
+import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents, deviceGroupMembers, deviceGroups, calendarConnections, deviceRules, bleScanResults, posRestaurants } from '@signage/db';
 import { eq, and, isNull, desc, asc, inArray, sql, ilike, gte, lte, lt } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -2186,8 +2186,79 @@ export async function deviceRoutes(app: FastifyInstance) {
       }
     }
 
+    // ── POS display injection ────────────────────────────────────────────────
+    // If this device is paired as a POS display (posDisplayType in settings) and
+    // has no explicitly published content/playlist/schedule, synthesise a virtual
+    // content item so the player renders the correct POS URL instead of idle.
+    let effectivePublishedContent = publishedContent;
+    if (!publishedContent && !publishedPlaylist && !publishedSchedule && !publishedSyncGroup) {
+      try {
+        const deviceSettings = JSON.parse(device.settings ?? '{}') as Record<string, unknown>;
+        const posDisplayType = typeof deviceSettings['posDisplayType'] === 'string' ? deviceSettings['posDisplayType'] : null;
+        const posWorkspaceId = typeof deviceSettings['posWorkspaceId'] === 'string' ? deviceSettings['posWorkspaceId'] : null;
+        if (posDisplayType && posWorkspaceId) {
+          const appUrl = (process.env['APP_URL'] ?? 'https://ds.chiho.app').replace(/\/+$/, '');
+          let posUrl: string | null = null;
+
+          if (posDisplayType === 'order-pad') {
+            posUrl = `${appUrl}/workspaces/${posWorkspaceId}/pos`;
+          } else if (posDisplayType === 'kiosk-portrait' || posDisplayType === 'kiosk-landscape' || posDisplayType === 'kitchen') {
+            // Kiosk / kitchen displays need a display token — fetch from restaurant settings
+            const restaurant = await db.query.posRestaurants.findFirst({
+              where: eq(posRestaurants.workspaceId, posWorkspaceId),
+              columns: { settings: true },
+            });
+            const dtObj = restaurant?.settings != null && typeof restaurant.settings === 'object' && !Array.isArray(restaurant.settings)
+              ? (restaurant.settings as Record<string, unknown>)['displayTokens']
+              : null;
+            const tokens = dtObj != null && typeof dtObj === 'object' && !Array.isArray(dtObj)
+              ? dtObj as Record<string, unknown>
+              : {};
+            const tokenKey = posDisplayType === 'kitchen' ? 'kitchen' : 'kiosk';
+            const dt = typeof tokens[tokenKey] === 'string' ? tokens[tokenKey] : null;
+            if (dt) {
+              if (posDisplayType === 'kiosk-portrait') {
+                posUrl = `${appUrl}/kiosk/${posWorkspaceId}/portrait?dt=${encodeURIComponent(dt)}`;
+              } else if (posDisplayType === 'kiosk-landscape') {
+                posUrl = `${appUrl}/kiosk/${posWorkspaceId}/landscape?dt=${encodeURIComponent(dt)}`;
+              } else {
+                posUrl = `${appUrl}/kitchen/${posWorkspaceId}?dt=${encodeURIComponent(dt)}`;
+              }
+            }
+          }
+
+          if (posUrl) {
+            effectivePublishedContent = {
+              id: `pos-display-${device.id}`,
+              workspaceId: posWorkspaceId,
+              orgId: device.orgId,
+              name: 'POS Display',
+              type: 'html',
+              url: posUrl,
+              webUrl: posUrl,
+              filePath: null,
+              mimeType: 'text/html',
+              fileSize: null,
+              uploadedBy: null,
+              metadata: '{}',
+              tags: null,
+              originalName: null,
+              thumbnailPath: null,
+              transcodedPath: null,
+              androidFilePath: null,
+              deletedAt: null,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            } as unknown as NonNullable<typeof publishedContent>;
+          }
+        }
+      } catch {
+        // If settings parsing fails, fall through to normal (possibly idle) behaviour
+      }
+    }
+
     const compatibilityDefaultPlaylist = publishedPlaylist
-      ?? (publishedContent ? buildSingleContentPlaylist(publishedContent) : null)
+      ?? (effectivePublishedContent ? buildSingleContentPlaylist(effectivePublishedContent) : null)
       ?? defaultPlaylist;
 
     // Calendar content must only play when explicitly published or scheduled —
@@ -2204,7 +2275,7 @@ export async function deviceRoutes(app: FastifyInstance) {
       workspace,
       deviceType: device.type ?? 'signage',
       defaultPlaylist: safeDefaultPlaylist,
-      publishedContent,
+      publishedContent: effectivePublishedContent,
       publishedPlaylist,
       publishedSchedule,
       publishedSyncGroup,

@@ -1618,6 +1618,12 @@ window.nexari.onMessage('CMD_DISPLAY_POWER', (data: any) => {
 
 window.nexari.onMessage('WS_MESSAGE', (msg: any) => {
   switch (msg?.type) {
+    case 'DEVICE_DELETED':
+      console.warn('[Player] DEVICE_DELETED received — clearing credentials and returning to pairing');
+      localStorage.removeItem('deviceToken');
+      localStorage.removeItem('deviceId');
+      window.nexari.unpair().catch(() => {});
+      break;
     case 'content-update':
     case 'schedule.updated':
     case 'content.published':

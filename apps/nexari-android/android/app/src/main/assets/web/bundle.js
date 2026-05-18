@@ -7958,6 +7958,19 @@ var Player = class {
         this._lastWallMsg = msg;
         await this.initVideoWall(msg);
         return;
+      case "DEVICE_DELETED":
+        logger.warn("[Player] DEVICE_DELETED received \u2014 clearing token and reloading");
+        try {
+          localStorage.removeItem("nexariToken");
+        } catch (e) {
+        }
+        delete window["__nexariToken"];
+        this.token = null;
+        try {
+          await this.cfg.adapter.reloadRenderer();
+        } catch (e) {
+        }
+        return;
       default:
         await this.dispatchCommand(t, msg["payload"]);
         return;
@@ -8646,7 +8659,22 @@ var Player = class {
       }
       void this.downloadContentInBackground(schedule.items, newSig);
     } catch (e) {
-      logger.warn(`[Player] loadContent failed: ${e == null ? void 0 : e.message}`);
+      const err = e;
+      logger.warn(`[Player] loadContent failed: ${err == null ? void 0 : err.message}`);
+      if ((err == null ? void 0 : err.status) === 401) {
+        logger.warn("[Player] 401 on schedule \u2014 device deleted, clearing token and reloading");
+        try {
+          localStorage.removeItem("nexariToken");
+        } catch (e2) {
+        }
+        delete window["__nexariToken"];
+        this.token = null;
+        try {
+          await this.cfg.adapter.reloadRenderer();
+        } catch (e2) {
+        }
+        return;
+      }
       if (!this.playlistItems.length) {
         if (!this.tryLoadCachedSchedule()) this.showIdle("Waiting for content\u2026");
       }
