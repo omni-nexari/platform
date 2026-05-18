@@ -539,6 +539,8 @@ type StatusFilter = (typeof STATUS_FILTERS)[number];
 export default function DevicesPage() {
   const { wsId } = useParams<{ wsId: string }>();
   const navigate = useNavigate();
+  const cmsEnabled = useCmsEnabled();
+  const posEnabled = usePosEnabled();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
 
@@ -762,8 +764,6 @@ export default function DevicesPage() {
       ) : (
         <div className="flex flex-col gap-8">
           {(() => {
-            const cmsEnabled = useCmsEnabled();
-            const posEnabled = usePosEnabled();
             type SectionKey = 'signage' | 'kitchen' | 'kiosk' | 'order-pad' | 'menu-board';
             const allSections: Array<{ key: SectionKey; label: string; icon: React.ReactNode; cms?: boolean; pos?: boolean }> = [
               { key: 'signage',    label: 'Signage Displays', icon: <Monitor className="w-4 h-4" />,    cms: true },
