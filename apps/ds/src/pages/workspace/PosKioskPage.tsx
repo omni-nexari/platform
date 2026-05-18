@@ -49,7 +49,7 @@ interface DeviceListItem {
   id: string;
   name: string;
   status: 'unclaimed' | 'online' | 'offline' | 'error';
-  type: 'signage' | 'kiosk' | 'kitchen' | 'order-pad' | 'pos';
+  type: 'signage' | 'kiosk' | 'kitchen' | 'order-pad' | 'menu-board' | 'pos';
   lastSeen: string | null;
   playerVersion: string | null;
   settings: string;
