@@ -1249,7 +1249,9 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (body.data.posDisplayType === null) {
       delete settings['posDisplayType'];
       delete settings['posWorkspaceId'];
-      newDeviceType = 'signage'; // revert to default when unlinked
+      // Keep the device's existing type so it stays visible in the POS deploy picker.
+      // Reverting to 'signage' would hide it and prevent re-pairing.
+      newDeviceType = device.type;
     } else {
       settings['posDisplayType'] = body.data.posDisplayType;
       settings['posWorkspaceId'] = body.data.posWorkspaceId ?? '';
