@@ -1280,7 +1280,7 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
           contentName={item?.name ?? 'Content'}
           workspaceId={workspaceId}
           skipModeStep={skipPublishModeStep ?? false}
-          deviceTypeFilter={publishDeviceTypeFilter}
+          {...(publishDeviceTypeFilter !== undefined ? { deviceTypeFilter: publishDeviceTypeFilter } : {})}
           onClose={() => setConfirmPublishOpen(false)}
           onDone={() => setConfirmPublishOpen(false)}
         />
