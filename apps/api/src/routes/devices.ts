@@ -1178,9 +1178,38 @@ export async function deviceRoutes(app: FastifyInstance) {
     const body = UpdateDeviceSchema.safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
+    // When device.type changes, keep settings.posDisplayType in sync so the
+    // player serves the correct URL without needing a separate pos-display PATCH.
+    let settingsOverride: string | undefined;
+    if (body.data.type !== undefined && body.data.type !== device.type) {
+      let settings: Record<string, unknown> = {};
+      try { settings = JSON.parse(device.settings || '{}'); } catch { /* ignore */ }
+
+      if (body.data.type === 'kiosk') {
+        // Preserve existing kiosk orientation; default to portrait if coming from elsewhere
+        const cur = settings['posDisplayType'];
+        if (cur !== 'kiosk-portrait' && cur !== 'kiosk-landscape') {
+          settings['posDisplayType'] = 'kiosk-portrait';
+        }
+      } else if (body.data.type === 'kitchen') {
+        settings['posDisplayType'] = 'kitchen';
+      } else if (body.data.type === 'order-pad') {
+        settings['posDisplayType'] = 'order-pad';
+      } else {
+        // signage / menu-board / pos — unlink from any POS display slot
+        delete settings['posDisplayType'];
+        delete settings['posWorkspaceId'];
+      }
+      settingsOverride = JSON.stringify(settings);
+    }
+
     const [updated] = await db
       .update(devices)
-      .set({ ...body.data, updatedAt: new Date() })
+      .set({
+        ...body.data,
+        ...(settingsOverride !== undefined ? { settings: settingsOverride } : {}),
+        updatedAt: new Date(),
+      })
       .where(eq(devices.id, id))
       .returning();
 
