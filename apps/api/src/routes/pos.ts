@@ -27,6 +27,7 @@ import {
   posPurchaseOrders,
   devices,
   deviceHeartbeats,
+  workspaces,
 } from '@signage/db';
 
 // ─── Device JWT helpers (same pattern as devices.ts) ────────────────────────────
@@ -837,15 +838,149 @@ export async function posRoutes(app: FastifyInstance) {
 
   type AuthUser = { sub: string; orgId: string; role: string };
 
-  // ─── Restaurant profile ──────────────────────────────────────────────────────
+  // ─── Helper: accept either a waiter display JWT (Bearer) or a session cookie ─
+  // Used by endpoints that both the waiter tablet and session-authenticated portal
+  // need to reach. Returns the `orgId` on success, or sends 401 and returns null.
+  async function requireWaiterOrSession(
+    req: { headers: Record<string, string | string[] | undefined>; user: unknown },
+    reply: { status: (n: number) => { send: (b: unknown) => void } },
+  ): Promise<{ orgId: string } | null> {
+    const authHeader = req.headers['authorization'];
+    if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      try {
+        const p = app.jwt.verify<{ type: string; displayType: string; orgId: string; workspaceId: string }>(
+          authHeader.slice(7),
+        );
+        if (p.type === 'display' && p.displayType === 'waiter' && p.orgId) {
+          // Inject into req.user so existing code that does `req.user as AuthUser` works
+          (req as { user: unknown }).user = { sub: `display:${p.workspaceId}`, orgId: p.orgId, role: 'pos_display' };
+          return { orgId: p.orgId };
+        }
+      } catch {
+        // fall through to session auth
+      }
+    }
+    // Fall back to session / cookie auth
+    try {
+      await (app.authenticate as (req: unknown, reply: unknown) => Promise<void>)(req, reply);
+      return { orgId: (req.user as AuthUser).orgId };
+    } catch {
+      return null;
+    }
+  }
 
-  app.get('/restaurant', { onRequest: [app.authenticate] }, async (req, reply) => {
+  // ── GET /pos/display/pin-status?workspaceId= ─────────────────────────────────
+  // Public — returns whether a display PIN is configured for the workspace
+  app.get('/display/pin-status', async (req, reply) => {
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const ws = await db.query.workspaces.findFirst({
+      where: eq(workspaces.id, workspaceId),
+      columns: { settings: true },
+    });
+    if (!ws) return reply.status(404).send({ error: 'Workspace not found' });
+
+    let settings: Record<string, unknown> = {};
+    try { settings = JSON.parse(ws.settings) as Record<string, unknown>; } catch { /* ignore */ }
+    return reply.send({ required: Boolean(settings['posDisplayPin']) });
+  });
+
+  // ── POST /pos/display/verify-pin ─────────────────────────────────────────────
+  // Public — verify PIN and return a short-lived waiter display JWT
+  const VerifyPinSchema = z.object({
+    workspaceId: z.string().uuid(),
+    pin: z.string().max(20),
+  });
+
+  app.post('/display/verify-pin', async (req, reply) => {
+    const parsed = VerifyPinSchema.safeParse(req.body);
+    if (!parsed.success) return reply.status(400).send({ error: 'Invalid request' });
+
+    const ws = await db.query.workspaces.findFirst({
+      where: eq(workspaces.id, parsed.data.workspaceId),
+      columns: { id: true, orgId: true, settings: true },
+    });
+    if (!ws) return reply.status(404).send({ error: 'Workspace not found' });
+
+    let settings: Record<string, unknown> = {};
+    try { settings = JSON.parse(ws.settings) as Record<string, unknown>; } catch { /* ignore */ }
+    const storedPin = settings['posDisplayPin'];
+
+    if (storedPin && String(storedPin) !== String(parsed.data.pin)) {
+      return reply.send({ valid: false });
+    }
+
+    const token = app.jwt.sign(
+      { type: 'display', displayType: 'waiter', workspaceId: ws.id, orgId: ws.orgId },
+      { expiresIn: '24h' },
+    );
+    return reply.send({ valid: true, token });
+  });
+
+  // ── PUT /pos/mgmt/display-pin ─────────────────────────────────────────────────
+  // Session auth — set or update the display PIN
+  const SetDisplayPinSchema = z.object({
+    workspaceId: z.string().uuid(),
+    pin: z.string().regex(/^\d{4,8}$/, 'PIN must be 4–8 digits'),
+  });
+
+  app.put('/mgmt/display-pin', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const parsed = SetDisplayPinSchema.safeParse(req.body);
+    if (!parsed.success) return reply.status(400).send({ error: parsed.error.errors[0]?.message ?? 'Invalid request' });
+
+    const ws = await db.query.workspaces.findFirst({
+      where: and(eq(workspaces.id, parsed.data.workspaceId), eq(workspaces.orgId, user.orgId)),
+      columns: { id: true, settings: true },
+    });
+    if (!ws) return reply.status(404).send({ error: 'Workspace not found' });
+
+    let settings: Record<string, unknown> = {};
+    try { settings = JSON.parse(ws.settings) as Record<string, unknown>; } catch { /* ignore */ }
+    settings['posDisplayPin'] = parsed.data.pin;
+
+    await db.update(workspaces)
+      .set({ settings: JSON.stringify(settings), updatedAt: new Date() })
+      .where(eq(workspaces.id, ws.id));
+
+    return reply.send({ ok: true });
+  });
+
+  // ── DELETE /pos/mgmt/display-pin?workspaceId= ────────────────────────────────
+  // Session auth — remove the display PIN
+  app.delete('/mgmt/display-pin', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
     const { workspaceId } = req.query as { workspaceId?: string };
     if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
 
+    const ws = await db.query.workspaces.findFirst({
+      where: and(eq(workspaces.id, workspaceId), eq(workspaces.orgId, user.orgId)),
+      columns: { id: true, settings: true },
+    });
+    if (!ws) return reply.status(404).send({ error: 'Workspace not found' });
+
+    let settings: Record<string, unknown> = {};
+    try { settings = JSON.parse(ws.settings) as Record<string, unknown>; } catch { /* ignore */ }
+    delete settings['posDisplayPin'];
+
+    await db.update(workspaces)
+      .set({ settings: JSON.stringify(settings), updatedAt: new Date() })
+      .where(eq(workspaces.id, ws.id));
+
+    return reply.status(204).send();
+  });
+
+  // ─── Restaurant profile ──────────────────────────────────────────────────────
+
+  app.get('/restaurant', async (req, reply) => {
+    const auth = await requireWaiterOrSession(req, reply);
+    if (!auth) return;
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
     const restaurant = await db.query.posRestaurants.findFirst({
-      where: and(eq(posRestaurants.workspaceId, workspaceId), eq(posRestaurants.orgId, user.orgId)),
+      where: and(eq(posRestaurants.workspaceId, workspaceId), eq(posRestaurants.orgId, auth.orgId)),
     });
 
     if (!restaurant) return reply.send(null);
@@ -894,7 +1029,9 @@ export async function posRoutes(app: FastifyInstance) {
 
   // ─── Tables ──────────────────────────────────────────────────────────────────
 
-  app.get('/tables', { onRequest: [app.authenticate] }, async (req, reply) => {
+  app.get('/tables', async (req, reply) => {
+    const auth = await requireWaiterOrSession(req, reply);
+    if (!auth) return;
     const { workspaceId } = req.query as { workspaceId?: string };
     if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
 
@@ -1519,8 +1656,9 @@ export async function posRoutes(app: FastifyInstance) {
 
   // ─── Orders management (session auth — for portal views) ────────────────────
 
-  app.get('/mgmt/orders', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const user = req.user as AuthUser;
+  app.get('/mgmt/orders', async (req, reply) => {
+    const auth = await requireWaiterOrSession(req, reply);
+    if (!auth) return;
     const { workspaceId, status } = req.query as { workspaceId?: string; status?: string };
     if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
 
@@ -1531,7 +1669,7 @@ export async function posRoutes(app: FastifyInstance) {
     const orders = await db.query.posOrders.findMany({
       where: and(
         eq(posOrders.workspaceId, workspaceId),
-        eq(posOrders.orgId, user.orgId),
+        eq(posOrders.orgId, auth.orgId),
         requestedStatuses.length > 0 ? inArray(posOrders.status, requestedStatuses as string[]) : undefined,
       ),
       orderBy: (t, { desc }) => [desc(t.createdAt)],
@@ -1789,11 +1927,12 @@ export async function posRoutes(app: FastifyInstance) {
     });
   });
 
-  app.get('/mgmt/orders/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const user = req.user as AuthUser;
+  app.get('/mgmt/orders/:id', async (req, reply) => {
+    const auth = await requireWaiterOrSession(req, reply);
+    if (!auth) return;
     const { id } = req.params as { id: string };
 
-    const order = await getOrderByIdForOrg(id, user.orgId);
+    const order = await getOrderByIdForOrg(id, auth.orgId);
     if (!order) return reply.status(404).send({ error: 'Order not found' });
 
     const [hydrated] = await hydrateOrders([order]);
@@ -1824,8 +1963,9 @@ export async function posRoutes(app: FastifyInstance) {
     items:        z.array(OrderItemInputSchema).min(1).max(50),
   });
 
-  app.post('/mgmt/orders', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const user = req.user as AuthUser;
+  app.post('/mgmt/orders', async (req, reply) => {
+    const auth = await requireWaiterOrSession(req, reply);
+    if (!auth) return;
     const parsed = MgmtCreateOrderSchema.safeParse(req.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
@@ -1848,7 +1988,7 @@ export async function posRoutes(app: FastifyInstance) {
       columns: { id: true, orgId: true },
     });
     if (!menu) return reply.status(400).send({ error: 'No active menu for this workspace' });
-    if (menu.orgId !== user.orgId) return reply.status(403).send({ error: 'Forbidden' });
+    if (menu.orgId !== auth.orgId) return reply.status(403).send({ error: 'Forbidden' });
 
     type LineItem = {
       itemId: string; itemName: string; itemPriceCents: number; quantity: number;
@@ -2034,15 +2174,16 @@ export async function posRoutes(app: FastifyInstance) {
     return reply.send({ orderId, itemId, totalCents, status: order.status });
   });
 
-  app.post('/mgmt/orders/:id/mark-paid', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const user = req.user as AuthUser;
+  app.post('/mgmt/orders/:id/mark-paid', async (req, reply) => {
+    const auth = await requireWaiterOrSession(req, reply);
+    if (!auth) return;
     const { id } = req.params as { id: string };
     const parsed = MarkOrderPaidSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
     }
 
-    const order = await getOrderByIdForOrg(id, user.orgId);
+    const order = await getOrderByIdForOrg(id, auth.orgId);
     if (!order) return reply.status(404).send({ error: 'Order not found' });
     if (order.status === 'completed' || order.status === 'cancelled') {
       return reply.status(409).send({ error: `Order is already ${order.status}` });
@@ -2069,18 +2210,18 @@ export async function posRoutes(app: FastifyInstance) {
       })
       .returning({ id: posPayments.id });
 
-    await transitionOrderStatus(id, user.orgId, 'completed');
+    await transitionOrderStatus(id, auth.orgId, 'completed');
 
     // ── Auto-earn loyalty points ──────────────────────────────────────────────
     let loyaltyPointsEarned = 0;
     if (parsed.data.loyaltyCustomerId) {
-      const loyaltyConfig = await getLoyaltyConfig(order.workspaceId, user.orgId);
+      const loyaltyConfig = await getLoyaltyConfig(order.workspaceId, auth.orgId);
       if (loyaltyConfig.loyaltyEnabled && loyaltyConfig.loyaltyPointsPerDollar > 0) {
         const customer = await db.query.posLoyaltyCustomers.findFirst({
           where: and(
             eq(posLoyaltyCustomers.id, parsed.data.loyaltyCustomerId),
             eq(posLoyaltyCustomers.workspaceId, order.workspaceId),
-            eq(posLoyaltyCustomers.orgId, user.orgId),
+            eq(posLoyaltyCustomers.orgId, auth.orgId),
           ),
         });
         if (customer) {
@@ -2344,12 +2485,13 @@ export async function posRoutes(app: FastifyInstance) {
 
   // ── Loyalty ─────────────────────────────────────────────────────────────────────
 
-  app.get('/mgmt/loyalty/customers', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const user = req.user as AuthUser;
+  app.get('/mgmt/loyalty/customers', async (req, reply) => {
+    const auth = await requireWaiterOrSession(req, reply);
+    if (!auth) return;
     const { workspaceId, q } = req.query as { workspaceId?: string; q?: string };
     if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
     const customers = await db.query.posLoyaltyCustomers.findMany({
-      where: and(eq(posLoyaltyCustomers.workspaceId, workspaceId), eq(posLoyaltyCustomers.orgId, user.orgId)),
+      where: and(eq(posLoyaltyCustomers.workspaceId, workspaceId), eq(posLoyaltyCustomers.orgId, auth.orgId)),
       orderBy: (t, { desc }) => [desc(t.points)],
       limit: q ? 20 : 100,
     });

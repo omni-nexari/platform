@@ -78,6 +78,7 @@ import LiveLinkFaceEditorPage from './pages/workspace/LiveLinkFaceEditorPage.js'
 import { buildApiUrl } from './lib/api.js';
 import KioskDisplayPage from './pages/kiosk/KioskDisplayPage.js';
 import KitchenDisplayPage from './pages/kitchen/KitchenDisplayPage.js';
+import PinGate from './components/PinGate.js';
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -160,6 +161,26 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return user ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
+/** Wraps waiter tablet routes in a PIN gate (no session login required). */
+function WaiterPinGateWrapper() {
+  const { wsId } = useParams<{ wsId: string }>();
+  return (
+    <PinGate wsId={wsId ?? ''} mode="waiter">
+      <PosWaiterLayout />
+    </PinGate>
+  );
+}
+
+/** Wraps kiosk/kitchen display routes in a PIN gate (no session login required). */
+function DisplayPinGateWrapper({ children }: { children: React.ReactNode }) {
+  const { wsId } = useParams<{ wsId: string }>();
+  return (
+    <PinGate wsId={wsId ?? ''} mode="display">
+      {children}
+    </PinGate>
+  );
+}
+
 function RequirePlatformOwner({ children }: { children: React.ReactNode }) {
   const { bootstrapped, user } = useSAStore();
   if (!bootstrapped) return null;
@@ -198,7 +219,9 @@ function isMainPublicAuthPath(pathname: string) {
     || pathname.startsWith('/accept-client-org-invite/')
     // Public device display pages — no session auth needed
     || pathname.startsWith('/kiosk/')
-    || pathname.startsWith('/kitchen/');
+    || pathname.startsWith('/kitchen/')
+    // Waiter tablet — PIN-gated, no session auth
+    || /^\/workspaces\/[^/]+\/pos(?:\/|$)/.test(pathname);
 }
 
 function isPortalPublicAuthPath(pathname: string) {
@@ -261,9 +284,9 @@ export default function App() {
     <AuthBootstrap>
       <PortalAuthBootstrap>
         <Routes>
-      {/* Public device display pages — no auth */}
-      <Route path="/kiosk/:wsId/:orientation" element={<KioskDisplayPage />} />
-      <Route path="/kitchen/:wsId" element={<KitchenDisplayPage />} />
+      {/* Public device display pages — PIN-gated, no session auth */}
+      <Route path="/kiosk/:wsId/:orientation" element={<DisplayPinGateWrapper><KioskDisplayPage /></DisplayPinGateWrapper>} />
+      <Route path="/kitchen/:wsId" element={<DisplayPinGateWrapper><KitchenDisplayPage /></DisplayPinGateWrapper>} />
 
       {/* Public auth */}
       <Route path="/login" element={<LoginPage />} />
@@ -331,13 +354,9 @@ export default function App() {
         element={<Navigate to="/settings?section=security" replace />}
       />
 
-      {/* POS waiter tablet — full-screen, no main nav */}
+      {/* POS waiter tablet — PIN-gated, no session auth */}
       <Route
-        element={
-          <RequireAuth>
-            <PosWaiterLayout />
-          </RequireAuth>
-        }
+        element={<WaiterPinGateWrapper />}
       >
         <Route path="/workspaces/:wsId/pos" element={<PosOrderPage />} />
         <Route path="/workspaces/:wsId/pos/payment" element={<PosPaymentPage />} />

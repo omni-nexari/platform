@@ -11,6 +11,7 @@ import {
   Copy,
   Cpu,
   Heart,
+  Key,
   Monitor,
   RefreshCw,
   RotateCcw,
@@ -162,6 +163,7 @@ export default function PosKioskPage() {
   const [redeemPoints, setRedeemPoints] = useState('');
   const [copiedType, setCopiedType] = useState<'kiosk-portrait' | 'kiosk-landscape' | 'kitchen' | 'waiter' | null>(null);
   const [deploySlot, setDeploySlot] = useState<PosDisplaySlot | null>(null);
+  const [newPin, setNewPin] = useState('');
 
   const { data: displayTokens, refetch: refetchTokens } = useQuery<DisplayTokens>({
     queryKey: ['pos-display-tokens', wsId],
@@ -181,6 +183,31 @@ export default function PosKioskPage() {
       api.delete<{ token: string; displayType: string }>(`/pos/mgmt/display-tokens/${displayType}?workspaceId=${wsId}`),
     onSuccess: () => { void refetchTokens(); toast.success('Token regenerated — update the display URL on your device'); },
     onError: () => toast.error('Failed to regenerate display token'),
+  });
+
+  const { data: pinStatus, refetch: refetchPinStatus } = useQuery<{ required: boolean }>({
+    queryKey: ['pos-display-pin-status', wsId],
+    queryFn: () => api.get(`/pos/display/pin-status?workspaceId=${wsId}`),
+    enabled: !!wsId,
+  });
+
+  const setPinMut = useMutation({
+    mutationFn: (pin: string) => api.put('/pos/mgmt/display-pin', { workspaceId: wsId, pin }),
+    onSuccess: () => {
+      setNewPin('');
+      void refetchPinStatus();
+      toast.success('Display PIN updated');
+    },
+    onError: (err: Error) => toast.error(err.message || 'Failed to set PIN'),
+  });
+
+  const removePinMut = useMutation({
+    mutationFn: () => api.delete(`/pos/mgmt/display-pin?workspaceId=${wsId}`),
+    onSuccess: () => {
+      void refetchPinStatus();
+      toast.success('Display PIN removed');
+    },
+    onError: () => toast.error('Failed to remove PIN'),
   });
 
   function buildDisplayUrl(type: 'kiosk-portrait' | 'kiosk-landscape' | 'kitchen', token: string) {
@@ -583,6 +610,57 @@ export default function PosKioskPage() {
                     <ArrowUpRight className="h-3 w-3" />Deploy to Device
                   </button>
                 )}
+              </div>
+            </div>
+          </div>
+
+          {/* ── Display PIN ─────────────────────────────────────────────── */}
+          <div className="mt-6 pt-5 border-t border-[var(--border)]">
+            <div className="flex items-center gap-2 mb-3">
+              <Key className="h-4 w-4 text-[var(--accent)]" />
+              <span className="text-sm font-semibold text-[var(--text)]">Display PIN</span>
+              <span className="text-xs text-[var(--text-muted)]">— protects all 4 display screens</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              {pinStatus?.required ? (
+                <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-green-500/15 px-2 py-0.5 text-green-400 font-medium">
+                    <span className="h-1.5 w-1.5 rounded-full bg-green-400 inline-block" />PIN active
+                  </span>
+                  <button
+                    className="ui-btn-secondary text-xs py-0.5 px-2 text-red-400 border-red-400/30 hover:bg-red-500/10"
+                    disabled={removePinMut.isPending}
+                    onClick={() => {
+                      if (window.confirm('Remove the display PIN? All display screens will be open.')) {
+                        removePinMut.mutate();
+                      }
+                    }}
+                  >
+                    Remove PIN
+                  </button>
+                </div>
+              ) : (
+                <span className="text-xs text-[var(--text-muted)]">No PIN — open access</span>
+              )}
+              <div className="flex items-center gap-2 ml-auto">
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={8}
+                  value={newPin}
+                  onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && newPin.length >= 4) setPinMut.mutate(newPin); }}
+                  placeholder={pinStatus?.required ? 'New PIN (4–8 digits)' : 'Set PIN (4–8 digits)'}
+                  className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text)] outline-none focus:border-[var(--accent)] w-44"
+                />
+                <button
+                  className="ui-btn-primary text-xs flex items-center gap-1.5"
+                  disabled={newPin.length < 4 || setPinMut.isPending}
+                  onClick={() => setPinMut.mutate(newPin)}
+                >
+                  <Key className="h-3.5 w-3.5" />{pinStatus?.required ? 'Update PIN' : 'Set PIN'}
+                </button>
               </div>
             </div>
           </div>

@@ -4,6 +4,11 @@ let refreshSessionPromise: Promise<void> | null = null;
 let lastRefreshFailureAt = 0;
 const REFRESH_FAILURE_COOLDOWN_MS = 5_000;
 
+// ── Display Bearer token (for waiter tablet display auth) ────────────────────
+let _displayToken: string | null = null;
+export function setDisplayToken(token: string | null) { _displayToken = token; }
+export function clearDisplayToken() { _displayToken = null; }
+
 function resolveApiBase() {
   // In production the DS is served from the same origin as the API (/api/v1 prefix).
   // The Vite dev proxy rewrites /api/v1 unchanged (negative-lookahead regex), so
@@ -168,6 +173,18 @@ async function request<T>(
     ...(typeof options.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
     ...(options.headers as Record<string, string>),
   };
+
+  // ── Display token mode (waiter tablet) — Bearer auth, no cookies ─────────
+  if (_displayToken) {
+    headers['Authorization'] = `Bearer ${_displayToken}`;
+    const res = await fetch(buildApiUrl(path), { ...options, headers, credentials: 'omit' });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `Request failed with status ${res.status}`);
+    }
+    if (res.status === 204) return undefined as T;
+    return res.json() as Promise<T>;
+  }
 
   if (isMutationMethod(options.method)) {
     const csrfToken = await ensureCsrfToken();
