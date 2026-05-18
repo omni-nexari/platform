@@ -99,6 +99,14 @@ export class Api {
       url = token
         ? `${this.base}/devices/device/content/${id}/html5/${encodeURIComponent(token)}/`
         : undefined;
+    } else if (type === 'html') {
+      // Use the API-provided URL when it's an absolute HTTP URL (e.g. synthetic POS
+      // display content injected by the schedule/workspace endpoint). Fall back to the
+      // file endpoint for regular uploaded HTML content that has no pre-built URL.
+      const rawUrl = content['url'] as string | undefined;
+      url = (rawUrl && /^https?:\/\//i.test(rawUrl))
+        ? rawUrl
+        : `${this.base}/devices/device/content/${id}/file${token ? `?token=${encodeURIComponent(token)}` : ''}`;
     } else {
       url = `${this.base}/devices/device/content/${id}/file${token ? `?token=${encodeURIComponent(token)}` : ''}`;
     }
