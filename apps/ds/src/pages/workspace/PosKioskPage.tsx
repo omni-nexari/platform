@@ -32,13 +32,34 @@ import {
   Skeleton,
 } from '../../components/UiPrimitives.js';
 
+type PosDisplaySlot = 'kiosk-portrait' | 'kiosk-landscape' | 'kitchen' | 'order-pad';
+
+const SLOT_LABELS: Record<PosDisplaySlot, string> = {
+  'kiosk-portrait':  'Kiosk — Portrait',
+  'kiosk-landscape': 'Kiosk — Landscape',
+  'kitchen':         'Kitchen Display',
+  'order-pad':       'Waiter Tablet',
+};
+
+const SLOT_DEVICE_TYPES: Record<PosDisplaySlot, string> = {
+  'kiosk-portrait':  'kiosk',
+  'kiosk-landscape': 'kiosk',
+  'kitchen':         'kitchen',
+  'order-pad':       'order-pad',
+};
+
+function parsePosSettings(settingsJson: string): { posDisplayType?: string; posWorkspaceId?: string } {
+  try { return JSON.parse(settingsJson || '{}'); } catch { return {}; }
+}
+
 interface DeviceListItem {
   id: string;
   name: string;
   status: 'unclaimed' | 'online' | 'offline' | 'error';
-  type: 'signage' | 'kiosk' | 'kitchen';
+  type: 'signage' | 'kiosk' | 'kitchen' | 'order-pad';
   lastSeen: string | null;
   playerVersion: string | null;
+  settings: string;
   publishedTarget: {
     id: string;
     type: 'content' | 'playlist' | 'schedule';
@@ -147,6 +168,7 @@ export default function PosKioskPage() {
   const [verifyResult, setVerifyResult] = useState<KioskVerifyResponse | null>(null);
   const [redeemPoints, setRedeemPoints] = useState('');
   const [copiedType, setCopiedType] = useState<'kiosk-portrait' | 'kiosk-landscape' | 'kitchen' | 'waiter' | null>(null);
+  const [deploySlot, setDeploySlot] = useState<PosDisplaySlot | null>(null);
 
   const { data: displayTokens, refetch: refetchTokens } = useQuery<DisplayTokens>({
     queryKey: ['pos-display-tokens', wsId],
@@ -216,15 +238,40 @@ export default function PosKioskPage() {
   });
 
   const kioskDevices = useMemo(() => devices.filter((device) => device.type === 'kiosk'), [devices]);
+  const posDevices   = useMemo(
+    () => devices.filter((d) => d.type === 'kiosk' || d.type === 'kitchen' || d.type === 'order-pad'),
+    [devices],
+  );
+  const pairedDevices = useMemo(() => {
+    const map: Partial<Record<PosDisplaySlot, DeviceListItem>> = {};
+    for (const d of posDevices) {
+      const pos = parsePosSettings(d.settings ?? '{}');
+      if (pos.posDisplayType && pos.posWorkspaceId === wsId) {
+        map[pos.posDisplayType as PosDisplaySlot] = d;
+      }
+    }
+    return map;
+  }, [posDevices, wsId]);
+
+  const deployPairMut = useMutation({
+    mutationFn: ({ deviceId, slot }: { deviceId: string; slot: PosDisplaySlot | null }) =>
+      api.patch(`/devices/${deviceId}/pos-display`, { posDisplayType: slot, posWorkspaceId: slot ? wsId : null }),
+    onSuccess: (_data, vars) => {
+      void queryClient.invalidateQueries({ queryKey: ['devices', wsId] });
+      setDeploySlot(null);
+      toast.success(vars.slot ? 'Device paired to display slot' : 'Display unlinked');
+    },
+    onError: () => toast.error('Failed to update display pairing'),
+  });
 
   useEffect(() => {
-    if (!selectedDeviceId && kioskDevices.length > 0) {
-      setSelectedDeviceId(kioskDevices[0]!.id);
+    if (!selectedDeviceId && posDevices.length > 0) {
+      setSelectedDeviceId(posDevices[0]!.id);
     }
-    if (selectedDeviceId && !kioskDevices.some((device) => device.id === selectedDeviceId)) {
-      setSelectedDeviceId(kioskDevices[0]?.id ?? '');
+    if (selectedDeviceId && !posDevices.some((device) => device.id === selectedDeviceId)) {
+      setSelectedDeviceId(posDevices[0]?.id ?? '');
     }
-  }, [kioskDevices, selectedDeviceId]);
+  }, [posDevices, selectedDeviceId]);
 
   const { data: deviceDetail, isLoading: deviceLoading, refetch: refetchDevice } = useQuery<DeviceDetailResponse>({
     queryKey: ['device-detail', selectedDeviceId],
@@ -365,8 +412,19 @@ export default function PosKioskPage() {
                     <Smartphone className="h-4 w-4" />{generateTokenMut.isPending ? 'Generating…' : 'Generate Kiosk URL'}
                   </button>
                 </div>
-              )}
-            </div>
+              )}              <div className="pt-2 border-t border-[var(--border)]">
+                {pairedDevices['kiosk-portrait'] ? (
+                  <div className="flex items-center gap-2">
+                    <div className={`h-2 w-2 rounded-full shrink-0 ${pairedDevices['kiosk-portrait'].status === 'online' ? 'bg-green-500' : 'bg-gray-500'}`} />
+                    <span className="text-xs text-[var(--text)] truncate min-w-0">{pairedDevices['kiosk-portrait'].name}</span>
+                    <button className="ml-auto shrink-0 ui-btn-secondary text-xs py-0.5 px-2" onClick={() => setDeploySlot('kiosk-portrait')}>Change</button>
+                  </div>
+                ) : (
+                  <button className="w-full ui-btn-secondary text-xs flex items-center justify-center gap-1.5 py-1.5" onClick={() => setDeploySlot('kiosk-portrait')}>
+                    <ArrowUpRight className="h-3 w-3" />Deploy to Device
+                  </button>
+                )}
+              </div>            </div>
 
             {/* Kiosk — Landscape */}
             <div className="space-y-3">
@@ -405,6 +463,19 @@ export default function PosKioskPage() {
               ) : (
                 <p className="text-xs text-[var(--text-muted)]">Generate a kiosk token first.</p>
               )}
+              <div className="pt-2 border-t border-[var(--border)]">
+                {pairedDevices['kiosk-landscape'] ? (
+                  <div className="flex items-center gap-2">
+                    <div className={`h-2 w-2 rounded-full shrink-0 ${pairedDevices['kiosk-landscape'].status === 'online' ? 'bg-green-500' : 'bg-gray-500'}`} />
+                    <span className="text-xs text-[var(--text)] truncate min-w-0">{pairedDevices['kiosk-landscape'].name}</span>
+                    <button className="ml-auto shrink-0 ui-btn-secondary text-xs py-0.5 px-2" onClick={() => setDeploySlot('kiosk-landscape')}>Change</button>
+                  </div>
+                ) : (
+                  <button className="w-full ui-btn-secondary text-xs flex items-center justify-center gap-1.5 py-1.5" onClick={() => setDeploySlot('kiosk-landscape')}>
+                    <ArrowUpRight className="h-3 w-3" />Deploy to Device
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Waiter Tablet */}
@@ -427,6 +498,19 @@ export default function PosKioskPage() {
                 </button>
               </div>
               <QrCanvas url={buildPosUrl()} />
+              <div className="pt-2 border-t border-[var(--border)]">
+                {pairedDevices['order-pad'] ? (
+                  <div className="flex items-center gap-2">
+                    <div className={`h-2 w-2 rounded-full shrink-0 ${pairedDevices['order-pad'].status === 'online' ? 'bg-green-500' : 'bg-gray-500'}`} />
+                    <span className="text-xs text-[var(--text)] truncate min-w-0">{pairedDevices['order-pad'].name}</span>
+                    <button className="ml-auto shrink-0 ui-btn-secondary text-xs py-0.5 px-2" onClick={() => setDeploySlot('order-pad')}>Change</button>
+                  </div>
+                ) : (
+                  <button className="w-full ui-btn-secondary text-xs flex items-center justify-center gap-1.5 py-1.5" onClick={() => setDeploySlot('order-pad')}>
+                    <ArrowUpRight className="h-3 w-3" />Deploy to Device
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Kitchen */}
@@ -477,6 +561,19 @@ export default function PosKioskPage() {
                   </button>
                 </div>
               )}
+              <div className="pt-2 border-t border-[var(--border)]">
+                {pairedDevices['kitchen'] ? (
+                  <div className="flex items-center gap-2">
+                    <div className={`h-2 w-2 rounded-full shrink-0 ${pairedDevices['kitchen'].status === 'online' ? 'bg-green-500' : 'bg-gray-500'}`} />
+                    <span className="text-xs text-[var(--text)] truncate min-w-0">{pairedDevices['kitchen'].name}</span>
+                    <button className="ml-auto shrink-0 ui-btn-secondary text-xs py-0.5 px-2" onClick={() => setDeploySlot('kitchen')}>Change</button>
+                  </div>
+                ) : (
+                  <button className="w-full ui-btn-secondary text-xs flex items-center justify-center gap-1.5 py-1.5" onClick={() => setDeploySlot('kitchen')}>
+                    <ArrowUpRight className="h-3 w-3" />Deploy to Device
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </SectionCardBody>
@@ -486,8 +583,8 @@ export default function PosKioskPage() {
         <SectionCard>
           <SectionCardHeader>
             <div>
-              <h2 className="text-sm font-semibold text-[var(--text)]">Kiosk Device Heartbeat</h2>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">Select a kiosk device to inspect the latest stored heartbeat and playback state.</p>
+              <h2 className="text-sm font-semibold text-[var(--text)]">Deployed Display Health</h2>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Select a paired POS device to inspect its latest heartbeat and playback state.</p>
             </div>
             <button className="ui-btn-secondary text-xs" onClick={() => void refetchDevice()} disabled={!selectedDeviceId}>
               <RefreshCw className="h-3.5 w-3.5" />Refresh
@@ -496,8 +593,8 @@ export default function PosKioskPage() {
           <SectionCardBody className="space-y-4">
             {devicesLoading ? (
               <Skeleton className="h-28 rounded-2xl" />
-            ) : kioskDevices.length === 0 ? (
-              <Callout tone="warning">No kiosk devices are registered for this workspace yet.</Callout>
+            ) : posDevices.length === 0 ? (
+              <Callout tone="warning">No POS devices are registered for this workspace yet.</Callout>
             ) : (
               <>
                 <select
@@ -505,11 +602,17 @@ export default function PosKioskPage() {
                   onChange={(event) => setSelectedDeviceId(event.target.value)}
                   className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
                 >
-                  {kioskDevices.map((device) => (
-                    <option key={device.id} value={device.id}>
-                      {device.name} · {device.status}
-                    </option>
-                  ))}
+                  {posDevices.map((device) => {
+                    const pos = parsePosSettings(device.settings ?? '{}');
+                    const slotLabel = pos.posDisplayType && pos.posWorkspaceId === wsId
+                      ? ` [${SLOT_LABELS[pos.posDisplayType as PosDisplaySlot] ?? pos.posDisplayType}]`
+                      : '';
+                    return (
+                      <option key={device.id} value={device.id}>
+                        {device.name}{slotLabel} · {device.status}
+                      </option>
+                    );
+                  })}
                 </select>
 
                 {deviceLoading ? (
@@ -657,6 +760,62 @@ export default function PosKioskPage() {
           </SectionCardBody>
         </SectionCard>
       </div>
+
+      {/* ── Deploy Modal ───────────────────────────────────────── */}
+      {deploySlot && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setDeploySlot(null)}>
+          <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-[var(--border)]">
+              <div>
+                <h2 className="text-sm font-semibold text-[var(--text)]">Deploy Display</h2>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">Choose a device to pair with <strong>{SLOT_LABELS[deploySlot]}</strong></p>
+              </div>
+              <button className="text-[var(--text-muted)] hover:text-[var(--text)] text-lg leading-none" onClick={() => setDeploySlot(null)}>✕</button>
+            </div>
+            <div className="p-4 space-y-2 max-h-72 overflow-y-auto">
+              {posDevices.filter((d) => d.type === SLOT_DEVICE_TYPES[deploySlot]).length === 0 ? (
+                <p className="text-sm text-[var(--text-muted)] text-center py-6">
+                  No <strong>{SLOT_DEVICE_TYPES[deploySlot]}</strong> devices registered. Claim a device with the right type first.
+                </p>
+              ) : posDevices.filter((d) => d.type === SLOT_DEVICE_TYPES[deploySlot]).map((device) => {
+                const isCurrentlyPaired = pairedDevices[deploySlot]?.id === device.id;
+                return (
+                  <button
+                    key={device.id}
+                    onClick={() => deployPairMut.mutate({ deviceId: device.id, slot: deploySlot })}
+                    disabled={deployPairMut.isPending}
+                    className={`w-full flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors ${
+                      isCurrentlyPaired
+                        ? 'border-[var(--accent)] bg-[var(--accent)]/10'
+                        : 'border-[var(--border)] hover:border-[var(--accent)]/50'
+                    }`}
+                  >
+                    <div className={`h-2 w-2 rounded-full shrink-0 ${device.status === 'online' ? 'bg-green-500' : 'bg-gray-500'}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-[var(--text)] truncate">{device.name}</div>
+                      <div className="text-xs text-[var(--text-muted)]">
+                        {device.status}{device.lastSeen ? ` · ${formatDistanceToNow(device.lastSeen)} ago` : ' · Never seen'}
+                      </div>
+                    </div>
+                    {isCurrentlyPaired && <Badge tone="accent">Paired</Badge>}
+                  </button>
+                );
+              })}
+            </div>
+            {pairedDevices[deploySlot] && (
+              <div className="p-4 border-t border-[var(--border)]">
+                <button
+                  className="w-full rounded-xl border border-red-400/30 px-3 py-2 text-xs text-red-400 hover:border-red-400/60 transition-colors"
+                  onClick={() => deployPairMut.mutate({ deviceId: pairedDevices[deploySlot]!.id, slot: null })}
+                  disabled={deployPairMut.isPending}
+                >
+                  Unlink current device
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

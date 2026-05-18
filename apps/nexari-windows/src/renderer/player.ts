@@ -356,9 +356,12 @@ function renderContent(item: PlaylistItem) {
 
     case 'HTML':
     case 'HTML5':
-    case 'MENU_BOARD':
     case 'CANVAS':
       renderHTML(c, durationSec);
+      break;
+
+    case 'MENU_BOARD':
+      renderMenuBoard(c, durationSec);
       break;
 
     case 'DATASYNC':
@@ -621,6 +624,200 @@ function renderHTML(c: NormalizedContent, durationSec: number) {
   iframe.setAttribute('scrolling', 'no');
   iframe.src = url;
   root.appendChild(iframe);
+  scheduleAdvance(durationSec);
+}
+
+// ---------------------------------------------------------------------------
+// MENU_BOARD — fetch live POS menu and render inline HTML
+// ---------------------------------------------------------------------------
+function _mbEscHtml(s: unknown): string {
+  const d = document.createElement('div');
+  d.textContent = String(s ?? '');
+  return d.innerHTML;
+}
+
+function _mbSanitizeColor(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  const v = value.trim();
+  if (!v) return fallback;
+  if (/^(#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|[a-zA-Z]+)$/.test(v)) return v;
+  return fallback;
+}
+
+function _mbFormatPrice(cents: number, currency: string): string {
+  const norm = (currency || 'USD').toUpperCase();
+  const amount = cents / 100;
+  const fd = ['JPY', 'KRW', 'VND'].includes(norm) ? 0 : 2;
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency', currency: norm,
+      minimumFractionDigits: fd, maximumFractionDigits: fd,
+    }).format(amount);
+  } catch {
+    return `${norm} ${amount.toFixed(fd)}`;
+  }
+}
+
+function _mbBuildStateHtml(title: string, message: string): string {
+  return `<div style="display:flex;align-items:center;justify-content:center;height:100%;padding:32px;background:linear-gradient(160deg,#1f1510 0%,#120d0a 100%);color:#f7f2eb;font-family:'Segoe UI',Arial,sans-serif;text-align:center;box-sizing:border-box;"><div style="max-width:720px;"><div style="font-size:30px;font-weight:700;">${_mbEscHtml(title)}</div><div style="margin-top:12px;font-size:16px;line-height:1.6;color:rgba(247,242,235,0.78);">${_mbEscHtml(message)}</div></div></div>`;
+}
+
+function _mbBuildHtml(c: NormalizedContent, menu: any, metadata: Record<string, unknown>): string {
+  const layout      = metadata['layout'] === '1-col' || metadata['layout'] === 'featured' ? String(metadata['layout']) : '2-col';
+  const showPrices  = metadata['showPrices'] !== false;
+  const showImages  = metadata['showImages'] !== false;
+  const showDesc    = metadata['showDescription'] === true;
+  const fontScaleRaw = Number(metadata['fontScale']);
+  const fontScale   = isFinite(fontScaleRaw) ? Math.min(Math.max(fontScaleRaw, 0.8), 1.4) : 1;
+  const accentColor = _mbSanitizeColor(metadata['accentColor'], '#dd6b20');
+  const currency    = typeof menu.currency === 'string' ? menu.currency : 'USD';
+
+  const ids = Array.isArray(metadata['categoryIds'])
+    ? (metadata['categoryIds'] as string[]).filter((v) => typeof v === 'string')
+    : [];
+  const cats: any[] = Array.isArray(menu.categories) ? menu.categories : [];
+  const filtered = ids.length > 0 ? cats.filter((cat) => ids.includes(cat.id)) : cats;
+  const sections = filtered
+    .map((cat) => ({ ...cat, items: Array.isArray(cat.items) ? cat.items.filter(Boolean) : [] }))
+    .filter((cat) => cat.items.length > 0);
+
+  if (!sections.length) {
+    return _mbBuildStateHtml(c.name || 'Menu Board', 'No active POS menu items available for this board right now.');
+  }
+
+  let featuredItem: any = null;
+  if (layout === 'featured') {
+    for (const cat of sections) {
+      featuredItem = (showImages && cat.items.find((i: any) => !!i.imageUrl)) || cat.items[0] || null;
+      if (featuredItem) break;
+    }
+  }
+
+  const boardTitle = c.name || menu.name || 'Menu Board';
+  const subtitleParts: string[] = [];
+  if (menu.name && menu.name !== boardTitle) subtitleParts.push(menu.name);
+  if (menu.description) subtitleParts.push(menu.description);
+  subtitleParts.push(`${sections.length} ${sections.length === 1 ? 'category' : 'categories'}`);
+  const subtitle = subtitleParts.join(' | ');
+  const sectionCols = layout === '1-col' ? 1 : Math.min(2, sections.length || 1);
+
+  const featuredMarkup = layout === 'featured' && featuredItem ? `
+    <aside class="menu-board-feature">
+      ${showImages && featuredItem.imageUrl ? `<div class="menu-board-feature-image"><img src="${_mbEscHtml(featuredItem.imageUrl)}" alt="${_mbEscHtml(featuredItem.name)}" /></div>` : ''}
+      <div class="menu-board-feature-copy">
+        <div class="menu-board-feature-kicker">Featured Item</div>
+        <div class="menu-board-feature-title">${_mbEscHtml(featuredItem.name)}</div>
+        ${showPrices ? `<div class="menu-board-feature-price">${_mbEscHtml(_mbFormatPrice(featuredItem.priceCents, currency))}</div>` : ''}
+        ${showDesc && featuredItem.description ? `<div class="menu-board-feature-description">${_mbEscHtml(featuredItem.description)}</div>` : ''}
+      </div>
+    </aside>` : '';
+
+  const sectionsMarkup = sections.map((cat) => {
+    const catAccent = _mbSanitizeColor(cat.color, accentColor);
+    const items = cat.items.map((item: any) => {
+      const img   = showImages && item.imageUrl ? `<div class="menu-board-item-image"><img src="${_mbEscHtml(item.imageUrl)}" alt="${_mbEscHtml(item.name)}" /></div>` : '';
+      const price = showPrices ? `<div class="menu-board-item-price">${_mbEscHtml(_mbFormatPrice(item.priceCents, currency))}</div>` : '';
+      const desc  = showDesc && item.description ? `<div class="menu-board-item-description">${_mbEscHtml(item.description)}</div>` : '';
+      return `<article class="menu-board-item ${img ? 'has-image' : 'no-image'}">${img}<div class="menu-board-item-copy"><div class="menu-board-item-head"><div class="menu-board-item-name">${_mbEscHtml(item.name)}</div>${price}</div>${desc}</div></article>`;
+    }).join('');
+    return `<section class="menu-board-category" style="--menu-board-category-accent:${catAccent};">
+      <div class="menu-board-category-head">
+        <div>
+          <div class="menu-board-category-title">${_mbEscHtml(cat.name)}</div>
+          ${cat.description ? `<div class="menu-board-category-description">${_mbEscHtml(cat.description)}</div>` : ''}
+        </div>
+        <div class="menu-board-category-count">${cat.items.length}</div>
+      </div>
+      <div class="menu-board-item-list">${items}</div>
+    </section>`;
+  }).join('');
+
+  return `<div class="menu-board-root">
+    <style>
+      .menu-board-root,.menu-board-root *{box-sizing:border-box;}
+      .menu-board-root{--menu-board-accent:${accentColor};--menu-board-scale:${fontScale};width:100%;height:100%;color:#f7f2eb;font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(160deg,#231812 0%,#120d0a 62%,#241913 100%);}
+      .menu-board-shell{width:100%;height:100%;display:flex;flex-direction:column;gap:calc(18px*var(--menu-board-scale));padding:calc(28px*var(--menu-board-scale));overflow:hidden;}
+      .menu-board-header{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;}
+      .menu-board-eyebrow{font-size:calc(12px*var(--menu-board-scale));font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:var(--menu-board-accent);}
+      .menu-board-title{margin:6px 0 0;font-size:calc(34px*var(--menu-board-scale));line-height:1.05;letter-spacing:-0.03em;}
+      .menu-board-subtitle{margin-top:8px;font-size:calc(14px*var(--menu-board-scale));line-height:1.5;color:rgba(247,242,235,0.7);}
+      .menu-board-grid{flex:1;min-height:0;display:grid;grid-template-columns:1fr;gap:calc(18px*var(--menu-board-scale));}
+      .menu-board-grid.is-featured{grid-template-columns:minmax(320px,0.95fr) minmax(0,1.75fr);}
+      .menu-board-feature{min-height:0;border:1px solid rgba(255,255,255,0.1);border-radius:26px;overflow:hidden;background:linear-gradient(180deg,rgba(255,255,255,0.08) 0%,rgba(255,255,255,0.03) 100%);display:flex;flex-direction:column;}
+      .menu-board-feature-image{height:48%;min-height:210px;background:rgba(255,255,255,0.04);}
+      .menu-board-feature-image img{width:100%;height:100%;display:block;object-fit:cover;}
+      .menu-board-feature-copy{padding:calc(22px*var(--menu-board-scale));display:flex;flex-direction:column;gap:10px;}
+      .menu-board-feature-kicker{font-size:calc(11px*var(--menu-board-scale));letter-spacing:0.16em;text-transform:uppercase;color:var(--menu-board-accent);font-weight:700;}
+      .menu-board-feature-title{font-size:calc(30px*var(--menu-board-scale));line-height:1.05;font-weight:800;}
+      .menu-board-feature-price{font-size:calc(22px*var(--menu-board-scale));font-weight:700;color:#fff4cf;}
+      .menu-board-feature-description{font-size:calc(15px*var(--menu-board-scale));line-height:1.55;color:rgba(247,242,235,0.8);}
+      .menu-board-sections{min-height:0;display:grid;align-content:start;grid-template-columns:repeat(${sectionCols},minmax(0,1fr));gap:calc(16px*var(--menu-board-scale));overflow:hidden;}
+      .menu-board-category{min-height:0;display:flex;flex-direction:column;gap:calc(14px*var(--menu-board-scale));padding:calc(18px*var(--menu-board-scale));border-radius:24px;border:1px solid rgba(255,255,255,0.09);background:linear-gradient(180deg,rgba(255,255,255,0.08) 0%,rgba(255,255,255,0.035) 100%);box-shadow:inset 4px 0 0 var(--menu-board-category-accent);}
+      .menu-board-category-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;}
+      .menu-board-category-title{font-size:calc(22px*var(--menu-board-scale));line-height:1.1;font-weight:800;overflow-wrap:anywhere;}
+      .menu-board-category-description{margin-top:6px;font-size:calc(12px*var(--menu-board-scale));line-height:1.45;color:rgba(247,242,235,0.62);}
+      .menu-board-category-count{min-width:calc(32px*var(--menu-board-scale));height:calc(32px*var(--menu-board-scale));padding:0 10px;border-radius:999px;background:rgba(255,255,255,0.08);color:var(--menu-board-accent);display:inline-flex;align-items:center;justify-content:center;font-size:calc(12px*var(--menu-board-scale));font-weight:700;}
+      .menu-board-item-list{display:flex;flex-direction:column;gap:calc(10px*var(--menu-board-scale));min-height:0;overflow:hidden;}
+      .menu-board-item{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;padding:calc(12px*var(--menu-board-scale));border-radius:18px;background:rgba(255,255,255,0.045);border:1px solid rgba(255,255,255,0.06);}
+      .menu-board-item.has-image{grid-template-columns:calc(74px*var(--menu-board-scale)) minmax(0,1fr);}
+      .menu-board-item-image{width:calc(74px*var(--menu-board-scale));height:calc(74px*var(--menu-board-scale));border-radius:14px;overflow:hidden;background:rgba(255,255,255,0.06);}
+      .menu-board-item-image img{width:100%;height:100%;display:block;object-fit:cover;}
+      .menu-board-item-copy{min-width:0;display:flex;flex-direction:column;gap:6px;}
+      .menu-board-item-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
+      .menu-board-item-name{min-width:0;font-size:calc(17px*var(--menu-board-scale));line-height:1.25;font-weight:700;overflow-wrap:anywhere;}
+      .menu-board-item-price{white-space:nowrap;font-size:calc(14px*var(--menu-board-scale));font-weight:700;color:#fff4cf;}
+      .menu-board-item-description{font-size:calc(12px*var(--menu-board-scale));line-height:1.45;color:rgba(247,242,235,0.72);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+    </style>
+    <div class="menu-board-shell">
+      <header class="menu-board-header">
+        <div>
+          <div class="menu-board-eyebrow">Live POS Menu</div>
+          <h1 class="menu-board-title">${_mbEscHtml(boardTitle)}</h1>
+          <div class="menu-board-subtitle">${_mbEscHtml(subtitle)}</div>
+        </div>
+      </header>
+      <div class="menu-board-grid ${layout === 'featured' ? 'is-featured' : ''}">
+        ${featuredMarkup}
+        <div class="menu-board-sections">${sectionsMarkup}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function renderMenuBoard(c: NormalizedContent, durationSec: number): Promise<void> {
+  let meta: Record<string, unknown>;
+  try { meta = JSON.parse(c.metadata || '{}'); } catch { meta = {}; }
+
+  const posWorkspaceId = typeof meta['posWorkspaceId'] === 'string' && meta['posWorkspaceId']
+    ? meta['posWorkspaceId'] as string
+    : null;
+
+  if (!posWorkspaceId) {
+    root.innerHTML = _mbBuildStateHtml(c.name || 'Menu Board', 'This menu board is missing its POS workspace source.');
+    scheduleAdvance(durationSec);
+    return;
+  }
+
+  const apiBase = localStorage.getItem('apiBase') || 'https://ds.chiho.app/api/v1';
+  const reqId   = `mb-${Date.now()}`;
+  root.dataset['mbReqId'] = reqId;
+  root.innerHTML = _mbBuildStateHtml(c.name || 'Menu Board', 'Loading the latest POS menu\u2026');
+
+  try {
+    const resp = await fetch(`${apiBase}/pos/menu?workspaceId=${encodeURIComponent(posWorkspaceId)}`);
+    if (root.dataset['mbReqId'] !== reqId) return;
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const menu = await resp.json();
+    if (root.dataset['mbReqId'] !== reqId) return;
+    root.innerHTML = _mbBuildHtml(c, menu, meta);
+  } catch (err) {
+    if (root.dataset['mbReqId'] !== reqId) return;
+    console.error('[Player] Menu board fetch failed:', err);
+    root.innerHTML = _mbBuildStateHtml(
+      c.name || 'Menu Board',
+      'The live POS menu could not be loaded. Check the API connection or publish an active menu.',
+    );
+  }
   scheduleAdvance(durationSec);
 }
 

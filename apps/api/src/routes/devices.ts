@@ -1212,6 +1212,43 @@ export async function deviceRoutes(app: FastifyInstance) {
     return reply.send(updated);
   });
 
+  // ── PATCH /devices/:id/pos-display ─ pair / unpair a POS display slot ─────
+  app.patch('/:id/pos-display', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { id } = req.params as { id: string };
+
+    const bodySchema = z.object({
+      posDisplayType: z.enum(['kiosk-portrait', 'kiosk-landscape', 'kitchen', 'order-pad']).nullable(),
+      posWorkspaceId: z.string().uuid().nullable().optional(),
+    });
+    const body = bodySchema.safeParse(req.body);
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, id), eq(devices.orgId, user.orgId), isNull(devices.deletedAt)),
+    });
+    if (!device) return reply.status(404).send({ error: 'Not found' });
+
+    let settings: Record<string, unknown> = {};
+    try { settings = JSON.parse(device.settings || '{}'); } catch { /* ignore */ }
+
+    if (body.data.posDisplayType === null) {
+      delete settings['posDisplayType'];
+      delete settings['posWorkspaceId'];
+    } else {
+      settings['posDisplayType'] = body.data.posDisplayType;
+      settings['posWorkspaceId'] = body.data.posWorkspaceId ?? '';
+    }
+
+    const [updated] = await db
+      .update(devices)
+      .set({ settings: JSON.stringify(settings), updatedAt: new Date() })
+      .where(eq(devices.id, id))
+      .returning();
+
+    return reply.send(updated);
+  });
+
   // ── POST /devices/:id/replace ─ transfer config to a newly paired device ──
   app.post('/:id/replace', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;

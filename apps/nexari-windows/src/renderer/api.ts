@@ -274,6 +274,13 @@ export function _normalizeContent(content: any): NormalizedContent {
     normalized.webUrl = null;
   }
 
+  if (normalized.type === 'MENU_BOARD') {
+    // Menu boards have no associated file; they are rendered from POS API data.
+    // Clear the file URL so renderMenuBoard fetches /pos/menu instead.
+    normalized.url = '';
+    normalized.webUrl = null;
+  }
+
   if (normalized.type === 'CHANNEL_GROUP') {
     try {
       const meta = typeof content.metadata === 'string'
