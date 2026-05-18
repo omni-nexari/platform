@@ -13,6 +13,7 @@ import { ToggleSwitch } from './UiPrimitives.js';
 interface DeviceItem {
   id: string;
   name: string;
+  type?: string;
   status: 'unclaimed' | 'online' | 'offline' | 'error';
   updatedAt: string;
   lastSeen: string | null;
@@ -192,6 +193,8 @@ export interface PublishWizardModalProps {
   skipModeStep?: boolean;
   /** When provided, only show devices of this type in the device picker. */
   deviceTypeFilter?: string;
+  /** When true, hide signage-type devices (use in POS contexts where only POS devices are relevant). */
+  excludeSignageDevices?: boolean;
   onClose: () => void;
   onDone: () => void;
 }
@@ -204,6 +207,7 @@ export default function PublishWizardModal({
   preSelectedDeviceIds,
   skipModeStep,
   deviceTypeFilter,
+  excludeSignageDevices,
   onClose,
   onDone,
 }: PublishWizardModalProps) {
@@ -255,13 +259,14 @@ export default function PublishWizardModal({
     const q = search.trim().toLowerCase();
     let items = deviceItems.filter((d) => {
       if (hideOffline && d.status !== 'online') return false;
-      if (deviceTypeFilter && (d as DeviceItem & { type?: string }).type !== deviceTypeFilter) return false;
+      if (deviceTypeFilter && d.type !== deviceTypeFilter) return false;
+      if (excludeSignageDevices && d.type === 'signage') return false;
       if (!q) return true;
       return [d.name, d.modelName, d.modelCode, d.ipAddress, d.wifiSsid, d.timezone]
         .some((v) => v?.toLowerCase().includes(q));
     });
     return sortDevices(items);
-  }, [deviceItems, hideOffline, search, sort, deviceTypeFilter]);
+  }, [deviceItems, hideOffline, search, sort, deviceTypeFilter, excludeSignageDevices]);
 
   const filteredGroups = useMemo(() => {
     const q = search.trim().toLowerCase();

@@ -247,6 +247,8 @@ interface Props {
   skipPublishModeStep?: boolean;
   /** Forwarded to PublishWizardModal — filters device picker to this type. */
   publishDeviceTypeFilter?: string;
+  /** Forwarded to PublishWizardModal — hides signage devices in POS contexts. */
+  publishExcludeSignage?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -912,7 +914,7 @@ function SettingsTab({
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDeleted, skipPublishModeStep, publishDeviceTypeFilter }: Props) {
+export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDeleted, skipPublishModeStep, publishDeviceTypeFilter, publishExcludeSignage }: Props) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [tab, setTab] = useState<'info' | 'settings'>('info');
@@ -1281,6 +1283,7 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
           workspaceId={workspaceId}
           skipModeStep={skipPublishModeStep ?? false}
           {...(publishDeviceTypeFilter !== undefined ? { deviceTypeFilter: publishDeviceTypeFilter } : {})}
+          {...(publishExcludeSignage ? { excludeSignageDevices: true } : {})}
           onClose={() => setConfirmPublishOpen(false)}
           onDone={() => setConfirmPublishOpen(false)}
         />
