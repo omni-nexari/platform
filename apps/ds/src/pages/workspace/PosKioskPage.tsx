@@ -39,7 +39,7 @@ const SLOT_LABELS: Record<PosDisplaySlot, string> = {
   'kiosk-portrait':  'Kiosk — Portrait',
   'kiosk-landscape': 'Kiosk — Landscape',
   'kitchen':         'Kitchen Display',
-  'order-pad':       'Waiter Tablet',
+  'order-pad':       'Order Tablet',
 };
 
 function parsePosSettings(settingsJson: string): { posDisplayType?: string; posWorkspaceId?: string } {
@@ -514,11 +514,11 @@ export default function PosKioskPage() {
               </div>
             </div>
 
-            {/* Waiter Tablet */}
+            {/* Order Tablet */}
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <Tablet className="h-4 w-4 text-[var(--accent)]" />
-                <span className="text-sm font-semibold text-[var(--text)]">Waiter Tablet</span>
+                <span className="text-sm font-semibold text-[var(--text)]">Order Tablet</span>
               </div>
               <div className="flex items-center gap-2">
                 <input
