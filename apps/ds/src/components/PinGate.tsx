@@ -21,12 +21,19 @@ const STORAGE_KEY_DISPLAY = (wsId: string) => `pos_display_unlocked_${wsId}`;
 export default function PinGate({ wsId, mode, children }: PinGateProps) {
   const [unlocked, setUnlocked] = useState(() => {
     if (mode === 'waiter') {
-      return Boolean(sessionStorage.getItem(STORAGE_KEY_WAITER(wsId)));
+      const stored = sessionStorage.getItem(STORAGE_KEY_WAITER(wsId));
+      if (stored) {
+        // Restore synchronously so the first render already has Bearer auth set,
+        // preventing api.ts from falling back to cookie auth and triggering clearInvalidSession().
+        setDisplayToken(stored);
+        return true;
+      }
+      return false;
     }
     return sessionStorage.getItem(STORAGE_KEY_DISPLAY(wsId)) === '1';
   });
 
-  // On mount: restore display token if already unlocked
+  // On mount: restore display token if already unlocked (safety net for edge cases)
   useEffect(() => {
     if (mode === 'waiter' && unlocked) {
       const stored = sessionStorage.getItem(STORAGE_KEY_WAITER(wsId));

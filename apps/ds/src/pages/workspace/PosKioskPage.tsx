@@ -259,9 +259,8 @@ export default function PosKioskPage() {
 
   const kioskDevices = useMemo(() => devices.filter((device) => device.type === 'kiosk'), [devices]);
   const posDevices   = useMemo(
-    // Include all devices except menu-board — 'signage' defaults should also be deployable
-    // (deploying sets device.type automatically via PATCH /pos-display)
-    () => devices.filter((d) => d.type !== 'menu-board'),
+    // Only show POS-compatible devices in the deploy picker — exclude signage, epaper, menu-board
+    () => devices.filter((d) => d.type !== 'signage' && d.type !== 'epaper' && d.type !== 'menu-board'),
     [devices],
   );
   const pairedDevices = useMemo(() => {
