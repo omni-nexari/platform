@@ -301,289 +301,296 @@ export default function AppLayout() {
             <MessageSquare className="w-4 h-4" />
             Support
           </NavLink>
-          {currentWsId && (
-            <>
-              <div className="pt-2 pb-1 px-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] truncate">
-                  {currentWs?.name ?? 'Workspace'}
-                </p>
-              </div>
-
-              {/* Devices — always visible */}
-              <NavLink
-                to={`/workspaces/${currentWsId}/devices`}
-                className={({ isActive }) =>
-                  `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    isActive
-                      ? 'bg-[var(--blue)] text-white'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                  }`
-                }
-              >
-                <Monitor className="w-4 h-4" />
-                Devices
-              </NavLink>
-
-              {contentEnabled && (
-                <NavLink
-                  to={`/workspaces/${currentWsId}/content`}
-                  className={({ isActive }) =>
-                    `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                      isActive
-                        ? 'bg-[var(--blue)] text-white'
-                        : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                    }`
-                  }
-                >
-                  <Image className="w-4 h-4" />
-                  Content
-                </NavLink>
-              )}
-
-              {/* CMS / Signage section */}
-              {cmsEnabled && (
-                <>
-                  <div className="pt-3 pb-1 px-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Signage</p>
-                  </div>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/playlist`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <Layers className="w-4 h-4" />
-                    Playlists
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/schedule`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <CalendarDays className="w-4 h-4" />
-                    Schedules
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/canvas/new`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <Paintbrush className="w-4 h-4" />
-                    Canvas
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/tags`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <Tag className="w-4 h-4" />
-                    Tags
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/analytics`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <BarChart2 className="w-4 h-4" />
-                    Analytics
-                  </NavLink>
-                </>
-              )}
-
-              {/* POS section */}
-              {posEnabled && (
-                <>
-                  <div className="pt-3 pb-1 px-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Point of Sale</p>
-                  </div>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/pos/orders`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <ClipboardList className="w-4 h-4" />
-                    Orders
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/pos/kiosk`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <Smartphone className="w-4 h-4" />
-                    Kiosk
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/pos/kitchen`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <ChefHat className="w-4 h-4" />
-                    Kitchen
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/pos/inventory`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <Package className="w-4 h-4" />
-                    Inventory
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/pos/employees`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <Users className="w-4 h-4" />
-                    Employees
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/pos/loyalty`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <Heart className="w-4 h-4" />
-                    Loyalty
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/pos/analytics`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <BarChart2 className="w-4 h-4" />
-                    POS Analytics
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/pos/menu`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <UtensilsCrossed className="w-4 h-4" />
-                    Menu Builder
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/pos/menu-boards`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <Menu className="w-4 h-4" />
-                    Menu Boards
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/pos/expenses`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <DollarSign className="w-4 h-4" />
-                    Expenses
-                  </NavLink>
-                  <NavLink
-                    to={`/workspaces/${currentWsId}/pos/purchase-orders`}
-                    className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--blue)] text-white'
-                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                      }`
-                    }
-                  >
-                    <FileText className="w-4 h-4" />
-                    Purchase Orders
-                  </NavLink>
-                </>
-              )}
-            </>
-          )}
-
-          {/* Workspace picker */}
-          {workspaces.length > 0 && !currentWsId && (
+          {/* Workspaces — always visible; clicking a workspace enters it */}
+          {workspaces.length > 0 && (
             <div className="pt-2">
               <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 Workspaces
               </p>
-              {workspaces.map((ws) => (
-                <button
-                  key={ws.id}
-                  onClick={() => navigate(`/dashboard?workspaceId=${ws.id}`)}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors text-left"
-                >
-                  <Monitor className="w-4 h-4" />
-                  <span className="truncate">{ws.name}</span>
-                </button>
-              ))}
+              {workspaces.map((ws) => {
+                const isActiveWs = ws.id === currentWsId;
+                const wsLanding = posEnabled && !cmsEnabled
+                  ? `/workspaces/${ws.id}/pos/orders`
+                  : `/workspaces/${ws.id}/devices`;
+                return (
+                  <div key={ws.id}>
+                    <button
+                      onClick={() => navigate(wsLanding)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors text-left ${
+                        isActiveWs
+                          ? 'text-[var(--text)] bg-[var(--surface)]'
+                          : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                      }`}
+                    >
+                      <Monitor className="w-4 h-4 shrink-0" />
+                      <span className="truncate">{ws.name}</span>
+                    </button>
+
+                    {/* Nav items for the active workspace */}
+                    {isActiveWs && (
+                      <div className="mt-0.5 space-y-0.5">
+                        {/* Devices — always visible */}
+                        <NavLink
+                          to={`/workspaces/${ws.id}/devices`}
+                          className={({ isActive }) =>
+                            `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                              isActive
+                                ? 'bg-[var(--blue)] text-white'
+                                : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                            }`
+                          }
+                        >
+                          <Monitor className="w-4 h-4" />
+                          Devices
+                        </NavLink>
+
+                        {/* CMS — Content */}
+                        {contentEnabled && (
+                          <NavLink
+                            to={`/workspaces/${ws.id}/content`}
+                            className={({ isActive }) =>
+                              `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                isActive
+                                  ? 'bg-[var(--blue)] text-white'
+                                  : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                              }`
+                            }
+                          >
+                            <Image className="w-4 h-4" />
+                            Content
+                          </NavLink>
+                        )}
+
+                        {/* CMS / Signage section */}
+                        {cmsEnabled && (
+                          <>
+                            <div className="pt-2 pb-1 pl-8 pr-3">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Signage</p>
+                            </div>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/playlist`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <Layers className="w-4 h-4" />
+                              Playlists
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/schedule`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <CalendarDays className="w-4 h-4" />
+                              Schedules
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/canvas/new`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <Paintbrush className="w-4 h-4" />
+                              Canvas
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/tags`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <Tag className="w-4 h-4" />
+                              Tags
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/analytics`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <BarChart2 className="w-4 h-4" />
+                              Analytics
+                            </NavLink>
+                          </>
+                        )}
+
+                        {/* POS section */}
+                        {posEnabled && (
+                          <>
+                            <div className="pt-2 pb-1 pl-8 pr-3">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Point of Sale</p>
+                            </div>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/pos/orders`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <ClipboardList className="w-4 h-4" />
+                              Orders
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/pos/kiosk`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <Smartphone className="w-4 h-4" />
+                              Kiosk
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/pos/kitchen`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <ChefHat className="w-4 h-4" />
+                              Kitchen
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/pos/inventory`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <Package className="w-4 h-4" />
+                              Inventory
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/pos/employees`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <Users className="w-4 h-4" />
+                              Employees
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/pos/loyalty`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <Heart className="w-4 h-4" />
+                              Loyalty
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/pos/analytics`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <BarChart2 className="w-4 h-4" />
+                              Analytics
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/pos/menu`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <UtensilsCrossed className="w-4 h-4" />
+                              Menu Builder
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/pos/menu-boards`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <Menu className="w-4 h-4" />
+                              Menu Boards
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/pos/expenses`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <DollarSign className="w-4 h-4" />
+                              Expenses
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/pos/purchase-orders`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <FileText className="w-4 h-4" />
+                              Purchase Orders
+                            </NavLink>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </nav>

@@ -1824,7 +1824,6 @@ export class Player {
     const bezelOffsets = (geo['bezelOffsets'] as { left: number; right: number; top: number; bottom: number } | null | undefined) ?? null;
 
     const member: WallMember = {
-      deviceId:      String(myCell['deviceId']      ?? ''),
       positionCol:   Number(myCell['positionCol']   ?? 0),
       positionRow:   Number(myCell['positionRow']   ?? 0),
       colSpan:       Number(myCell['colSpan']        ?? 1),

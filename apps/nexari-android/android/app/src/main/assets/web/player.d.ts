@@ -51,6 +51,7 @@ export declare class Player {
     private lastContentSignature;
     private pendingItems;
     private _pendingSyncGroupMsg;
+    private _lastWallMsg;
     private _pendingSyncRelayInfo;
     private pendingSignature;
     private isDownloadingContent;

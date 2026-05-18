@@ -481,36 +481,9 @@ export async function deviceRoutes(app: FastifyInstance) {
       });
     }
 
-    // Soft-deleted device with a valid token — restore it and auto-resume without re-pairing
-    if (existing?.orgId && existing.deviceToken && existing.deletedAt) {
-      await db
-        .update(devices)
-        .set({
-          duid: duid ?? existing.duid,
-          modelName: modelName ?? existing.modelName,
-          modelCode: modelCode ?? existing.modelCode,
-          serialNumber: serialNumber ?? existing.serialNumber,
-          firmwareVersion: firmwareVersion ?? existing.firmwareVersion,
-          ipAddress: req.ip ?? null,
-          lastSeen: new Date(),
-          updatedAt: new Date(),
-          deletedAt: null,
-          mdcNetworkStandby: null,
-          ...(epaperKind ? { kind: epaperKind } : {}),
-          ...(epaperPlatform ? { platform: epaperPlatform } : {}),
-          ...(epaperPanelW ? { panelW: epaperPanelW } : {}),
-          ...(epaperPanelH ? { panelH: epaperPanelH } : {}),
-          ...(epaperOrientation ? { panelOrientation: epaperOrientation } : {}),
-          ...(epaperApiVersion ? { epaperApiVersion: epaperApiVersion } : {}),
-        })
-        .where(eq(devices.id, existing.id));
-
-      return reply.status(200).send({
-        status: 'claimed',
-        deviceId: existing.id,
-        deviceToken: existing.deviceToken,
-      });
-    }
+    // NOTE: Soft-deleted devices are intentionally NOT auto-resumed here.
+    // When a device has been removed from the dashboard (deletedAt set), it must
+    // go through fresh pairing so the admin can choose which workspace to assign it to.
 
     let code = '';
     for (let i = 0; i < 5; i++) {
@@ -527,7 +500,8 @@ export async function deviceRoutes(app: FastifyInstance) {
     let device;
     if (existing) {
       // Reuse the existing device row; refresh pairing code.
-      // Also clear deletedAt in case this is a re-pair of a previously soft-deleted device.
+      // When the device was previously soft-deleted, also reset its claimed state
+      // so /pair/status returns 'pending' and the dashboard must re-claim it.
       [device] = await db
         .update(devices)
         .set({
@@ -541,6 +515,7 @@ export async function deviceRoutes(app: FastifyInstance) {
           ipAddress: req.ip ?? null,
           updatedAt: new Date(),
           deletedAt: null,
+          ...(existing.deletedAt ? { orgId: null, workspaceId: null, deviceToken: null, status: 'unclaimed' } : {}),
           ...(epaperKind ? { kind: epaperKind } : {}),
           ...(epaperPlatform ? { platform: epaperPlatform } : {}),
           ...(epaperPanelW ? { panelW: epaperPanelW } : {}),
