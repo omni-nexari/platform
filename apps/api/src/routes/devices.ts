@@ -1262,6 +1262,45 @@ export async function deviceRoutes(app: FastifyInstance) {
       .where(eq(devices.id, id))
       .returning();
 
+    // Auto-generate the kiosk/kitchen display token for the workspace if it
+    // doesn't already exist. This ensures the schedule endpoint can build a
+    // kiosk URL immediately without requiring a separate manual step.
+    const assignedDisplayType = body.data.posDisplayType;
+    const assignedWorkspaceId = body.data.posWorkspaceId;
+    if (assignedDisplayType && assignedWorkspaceId && assignedDisplayType !== 'order-pad') {
+      const tokenKey = assignedDisplayType === 'kitchen' ? 'kitchen' : 'kiosk';
+      try {
+        const restaurant = await db.query.posRestaurants.findFirst({
+          where: eq(posRestaurants.workspaceId, assignedWorkspaceId),
+          columns: { id: true, settings: true },
+        });
+        const rSettings = (restaurant?.settings != null && typeof restaurant.settings === 'object' && !Array.isArray(restaurant.settings))
+          ? restaurant.settings as Record<string, unknown>
+          : {};
+        const rTokens = (rSettings['displayTokens'] != null && typeof rSettings['displayTokens'] === 'object' && !Array.isArray(rSettings['displayTokens']))
+          ? rSettings['displayTokens'] as Record<string, unknown>
+          : {};
+        if (typeof rTokens[tokenKey] !== 'string') {
+          const displayToken = app.jwt.sign(
+            { sub: assignedWorkspaceId, type: 'display', displayType: tokenKey, orgId: user.orgId, workspaceId: assignedWorkspaceId },
+            { expiresIn: '87600h' },
+          );
+          const newRSettings = { ...rSettings, displayTokens: { ...rTokens, [tokenKey]: displayToken } };
+          if (restaurant) {
+            await db.update(posRestaurants)
+              .set({ settings: newRSettings, updatedAt: new Date() })
+              .where(eq(posRestaurants.id, restaurant.id));
+          } else {
+            await db.insert(posRestaurants)
+              .values({ orgId: user.orgId, workspaceId: assignedWorkspaceId, name: '', settings: newRSettings });
+          }
+        }
+      } catch {
+        // Non-fatal: token generation failure is not a reason to block pairing.
+        // The schedule endpoint will still produce a URL without a token as fallback.
+      }
+    }
+
     // Immediately push refresh_schedule so the player loads the POS URL
     // without waiting for its 60-second poll cycle.
     sendCommand(id, { type: 'refresh_schedule' });
@@ -2118,14 +2157,20 @@ export async function deviceRoutes(app: FastifyInstance) {
               : {};
             const tokenKey = posDisplayType === 'kitchen' ? 'kitchen' : 'kiosk';
             const dt = typeof tokens[tokenKey] === 'string' ? tokens[tokenKey] : null;
-            if (dt) {
-              if (posDisplayType === 'kiosk-portrait') {
-                posUrl = `${appUrl}/kiosk/${posWorkspaceId}/portrait?dt=${encodeURIComponent(dt)}`;
-              } else if (posDisplayType === 'kiosk-landscape') {
-                posUrl = `${appUrl}/kiosk/${posWorkspaceId}/landscape?dt=${encodeURIComponent(dt)}`;
-              } else {
-                posUrl = `${appUrl}/kitchen/${posWorkspaceId}?dt=${encodeURIComponent(dt)}`;
-              }
+            // Build URL with token when available; fall back to tokenless URL so the
+            // player still loads the page even if the token hasn't been generated yet.
+            if (posDisplayType === 'kiosk-portrait') {
+              posUrl = dt
+                ? `${appUrl}/kiosk/${posWorkspaceId}/portrait?dt=${encodeURIComponent(dt)}`
+                : `${appUrl}/kiosk/${posWorkspaceId}/portrait`;
+            } else if (posDisplayType === 'kiosk-landscape') {
+              posUrl = dt
+                ? `${appUrl}/kiosk/${posWorkspaceId}/landscape?dt=${encodeURIComponent(dt)}`
+                : `${appUrl}/kiosk/${posWorkspaceId}/landscape`;
+            } else {
+              posUrl = dt
+                ? `${appUrl}/kitchen/${posWorkspaceId}?dt=${encodeURIComponent(dt)}`
+                : `${appUrl}/kitchen/${posWorkspaceId}`;
             }
           }
           if (posUrl) {
@@ -2362,14 +2407,20 @@ export async function deviceRoutes(app: FastifyInstance) {
               : {};
             const tokenKey = posDisplayType === 'kitchen' ? 'kitchen' : 'kiosk';
             const dt = typeof tokens[tokenKey] === 'string' ? tokens[tokenKey] : null;
-            if (dt) {
-              if (posDisplayType === 'kiosk-portrait') {
-                posUrl = `${appUrl}/kiosk/${posWorkspaceId}/portrait?dt=${encodeURIComponent(dt)}`;
-              } else if (posDisplayType === 'kiosk-landscape') {
-                posUrl = `${appUrl}/kiosk/${posWorkspaceId}/landscape?dt=${encodeURIComponent(dt)}`;
-              } else {
-                posUrl = `${appUrl}/kitchen/${posWorkspaceId}?dt=${encodeURIComponent(dt)}`;
-              }
+            // Build URL with token when available; fall back to tokenless URL so the
+            // player still loads the page even if the token hasn't been generated yet.
+            if (posDisplayType === 'kiosk-portrait') {
+              posUrl = dt
+                ? `${appUrl}/kiosk/${posWorkspaceId}/portrait?dt=${encodeURIComponent(dt)}`
+                : `${appUrl}/kiosk/${posWorkspaceId}/portrait`;
+            } else if (posDisplayType === 'kiosk-landscape') {
+              posUrl = dt
+                ? `${appUrl}/kiosk/${posWorkspaceId}/landscape?dt=${encodeURIComponent(dt)}`
+                : `${appUrl}/kiosk/${posWorkspaceId}/landscape`;
+            } else {
+              posUrl = dt
+                ? `${appUrl}/kitchen/${posWorkspaceId}?dt=${encodeURIComponent(dt)}`
+                : `${appUrl}/kitchen/${posWorkspaceId}`;
             }
           }
 

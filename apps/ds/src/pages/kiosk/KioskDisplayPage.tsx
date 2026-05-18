@@ -199,7 +199,7 @@ export default function KioskDisplayPage() {
   }, [isIdle]);
 
   const loadAll = useCallback(async () => {
-    if (!wsId) return;
+    if (!wsId) { setLoading(false); return; }
 
     setLoading(true);
     setError(null);

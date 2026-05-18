@@ -44,6 +44,8 @@ export default function PinGate({ wsId, mode, children }: PinGateProps) {
         const data = (await res.json()) as { required: boolean };
         if (!data.required) {
           await doVerify('');
+        } else {
+          setPinRequired(true);
         }
       } catch {
         // If the check fails, show PIN entry as fallback
