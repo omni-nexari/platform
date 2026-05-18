@@ -259,7 +259,9 @@ export default function PosKioskPage() {
 
   const kioskDevices = useMemo(() => devices.filter((device) => device.type === 'kiosk'), [devices]);
   const posDevices   = useMemo(
-    () => devices.filter((d) => d.type !== 'signage' && d.type !== 'menu-board'),
+    // Include all devices except menu-board — 'signage' defaults should also be deployable
+    // (deploying sets device.type automatically via PATCH /pos-display)
+    () => devices.filter((d) => d.type !== 'menu-board'),
     [devices],
   );
   const pairedDevices = useMemo(() => {
@@ -863,7 +865,7 @@ export default function PosKioskPage() {
             <div className="p-4 space-y-2 max-h-72 overflow-y-auto">
               {posDevices.length === 0 ? (
                 <p className="text-sm text-[var(--text-muted)] text-center py-6">
-                  No POS devices registered. Pair a device with type POS first.
+                  No devices found. Pair a device to this workspace first.
                 </p>
               ) : posDevices.map((device) => {
                 const isCurrentlyPaired = pairedDevices[deploySlot]?.id === device.id;
