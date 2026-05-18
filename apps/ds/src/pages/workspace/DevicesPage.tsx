@@ -646,6 +646,7 @@ export default function DevicesPage() {
     formState: { errors, isSubmitting },
   } = useForm<PairFormInput>({
     resolver: zodResolver(ClaimDeviceSchema.omit({ workspaceId: true })),
+    defaultValues: { type: cmsEnabled ? 'signage' : 'pos' },
   });
 
   const claimMutation = useMutation({
@@ -778,7 +779,11 @@ export default function DevicesPage() {
           })().map(({ key, label, icon }) => {
             const sectionDevices = key === 'signage'
               ? filteredDevices.filter((d) => (d.type ?? 'signage') === 'signage')
-              : filteredDevices.filter((d) => !!d.type && d.type !== 'signage');
+              // POS-only org: show ALL devices (type='signage' default should not be invisible)
+              // Both org: only show devices with an explicit POS type
+              : !cmsEnabled
+                ? filteredDevices
+                : filteredDevices.filter((d) => !!d.type && d.type !== 'signage');
             if (sectionDevices.length === 0) return null;
 
             // Split into videowall group cards + sync group cards + ungrouped individual cards
@@ -1004,9 +1009,9 @@ export default function DevicesPage() {
             </div>
             <div>
               <label className="ui-label">Device Type</label>
-              <select {...register('type')} className="ui-input w-full" defaultValue="signage">
-                <option value="signage">Signage</option>
-                {usePosEnabled() && <option value="pos">POS</option>}
+              <select {...register('type')} className="ui-input w-full">
+                {cmsEnabled && <option value="signage">Signage</option>}
+                {posEnabled && <option value="pos">POS</option>}
               </select>
             </div>
           </form>
