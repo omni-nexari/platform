@@ -1238,6 +1238,7 @@ export function DeviceDetailContent({
     resolver: zodResolver(UpdateDeviceSchema),
     defaultValues: {
       name: '',
+      type: undefined,
       screenshotIntervalMin: undefined,
       locationLabel: null,
       latitude: null,
@@ -1253,6 +1254,7 @@ export function DeviceDetailContent({
       formInitialisedRef.current = true;
       reset({
         name: data.device.name,
+        type: (data.device.type as UpdateDeviceInput['type']) ?? 'signage',
         screenshotIntervalMin: data.device.screenshotIntervalMin ?? undefined,
         locationLabel: data.device.locationLabel ?? null,
         latitude: data.device.latitude ?? null,
@@ -2380,6 +2382,21 @@ export function DeviceDetailContent({
               <input {...register('name')}
                 className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]" />
             </div>
+
+            {!isEpaper && (
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Device Role</label>
+              <select {...register('type')}
+                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]">
+                <option value="signage">Signage (default)</option>
+                <option value="kiosk">POS Kiosk</option>
+                <option value="kitchen">POS Kitchen Display</option>
+                <option value="order-pad">POS Waiter Tablet</option>
+                <option value="menu-board">Menu Board</option>
+                <option value="pos">POS (general)</option>
+              </select>
+            </div>
+            )}
 
             {!isConsumerTizen && (
             <div className="sm:col-span-2">
