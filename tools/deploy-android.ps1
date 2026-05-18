@@ -221,6 +221,10 @@ if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
 
     if ($session) {
         Write-Host "Logged in as $SuperadminEmail"
+        $csrfToken = $session.Cookies.GetCookies("$ApiBase/") |
+            Where-Object { $_.Name -eq 'sa_csrf_token' } |
+            Select-Object -First 1 -ExpandProperty Value
+
         $releaseBody = @{
             platform     = "android"
             version      = $newVersion
@@ -233,6 +237,7 @@ if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
                 -Uri "$ApiBase/player-releases" `
                 -ContentType "application/json" `
                 -WebSession $session `
+                -Headers @{ 'X-CSRF-Token' = $csrfToken } `
                 -Body $releaseBody
             Write-Host "  Release published: v$($releaseResp.version) (id=$($releaseResp.id))" -ForegroundColor Green
         } catch {

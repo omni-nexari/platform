@@ -245,13 +245,19 @@ if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
         $session = $null
     }
     if ($session) {
+        $csrfToken = $session.Cookies.GetCookies("$ApiBase/") |
+            Where-Object { $_.Name -eq 'sa_csrf_token' } |
+            Select-Object -First 1 -ExpandProperty Value
+
         try {
             $rb = @{ version = $appVer; downloadUrl = $DownloadUrl }
             if ($ReleaseNotes -ne "") { $rb.releaseNotes = $ReleaseNotes }
             $resp = Invoke-RestMethod -Method Post `
                 -Uri "$ApiBase/api/v1/player-releases" `
                 -ContentType "application/json" `
-                -WebSession $session -Body ($rb | ConvertTo-Json)
+                -WebSession $session `
+                -Headers @{ 'X-CSRF-Token' = $csrfToken } `
+                -Body ($rb | ConvertTo-Json)
             Write-Host "  Release published: v$($resp.version) (id=$($resp.id))" -ForegroundColor Green
         } catch {
             $errBody = $_.ErrorDetails.Message

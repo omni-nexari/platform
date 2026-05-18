@@ -160,6 +160,10 @@ if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
     }
 
     if ($session) {
+        $csrfToken = $session.Cookies.GetCookies("$ApiBase/") |
+            Where-Object { $_.Name -eq 'sa_csrf_token' } |
+            Select-Object -First 1 -ExpandProperty Value
+
         try {
             $releaseBody = @{ platform = "windows"; version = $newVersion; downloadUrl = $DownloadUrl }
             if ($ReleaseNotes -ne "") { $releaseBody.releaseNotes = $ReleaseNotes }
@@ -168,6 +172,7 @@ if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
                 -Uri "$ApiBase/player-releases" `
                 -ContentType "application/json" `
                 -WebSession $session `
+                -Headers @{ 'X-CSRF-Token' = $csrfToken } `
                 -Body ($releaseBody | ConvertTo-Json)
             Write-Host "  Release published: v$($publishResp.version) (id=$($publishResp.id))" -ForegroundColor Green
         } catch {
