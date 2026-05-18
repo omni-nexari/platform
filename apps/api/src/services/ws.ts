@@ -169,7 +169,9 @@ export type WsCommand =
   // Full replacement of the device's rule set list. Sent on connect and on save.
   | { type: 'set_rule_sets'; payload: { ruleSets: CompiledRuleSet[] } }
   // Server-side sensor condition matched — device should execute the action.
-  | { type: 'rule_set_trigger'; payload: { ruleSet: CompiledRuleSet } };
+  | { type: 'rule_set_trigger'; payload: { ruleSet: CompiledRuleSet } }
+  // Device was removed from the dashboard — clear token and show pairing screen.
+  | { type: 'DEVICE_DELETED' };
 
 const connections = new Map<string, Conn>();
 const deviceLogs = new Map<string, DeviceConsoleLogEntry[]>();

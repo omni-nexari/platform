@@ -1330,6 +1330,10 @@ export async function deviceRoutes(app: FastifyInstance) {
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(eq(devices.id, id));
 
+    // Notify the device (if currently connected) so it clears its token and
+    // shows the pairing screen immediately without waiting for the next API poll.
+    sendCommand(id, { type: 'DEVICE_DELETED' });
+
     await writeAuditLog({
       orgId: user.orgId,
       actorId: user.sub,
@@ -2000,12 +2004,13 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     const [device, workspaceSchedules] = await Promise.all([
       db.query.devices.findFirst({
-        where: and(eq(devices.id, auth.deviceId), isNull(devices.deletedAt)),
+        where: eq(devices.id, auth.deviceId),
       }),
       loadWorkspaceSchedules(workspaceId),
     ]);
 
     if (!device) return reply.status(404).send({ error: 'Device not found' });
+    if (device.deletedAt) return reply.status(401).send({ error: 'Device has been removed' });
 
     const [publishedContentRaw, publishedPlaylistRaw, publishedSchedule] = await Promise.all([
       device.publishedContentId
@@ -2062,9 +2067,10 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!auth) return;
 
     const device = await db.query.devices.findFirst({
-      where: and(eq(devices.id, auth.deviceId), isNull(devices.deletedAt)),
+      where: eq(devices.id, auth.deviceId),
     });
     if (!device) return reply.status(404).send({ error: 'Device not found' });
+    if (device.deletedAt) return reply.status(401).send({ error: 'Device has been removed' });
 
     const workspace = await db.query.workspaces.findFirst({
       where: and(eq(workspaces.id, auth.workspaceId), isNull(workspaces.deletedAt)),

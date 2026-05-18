@@ -546,6 +546,15 @@ export class Player {
       }
       case 'SYNC_GROUP_INIT': await this.initSyncGroup(msg); return;
       case 'VIDEOWALL_INIT':   this._lastWallMsg = msg; await this.initVideoWall(msg); return;
+      case 'DEVICE_DELETED':
+        // Admin removed this device from the dashboard — clear the pairing token
+        // and reload so ensurePaired() runs fresh and shows the pairing screen.
+        logger.warn('[Player] DEVICE_DELETED received — clearing token and reloading');
+        try { localStorage.removeItem('nexariToken'); } catch { /* ignore */ }
+        delete (window as unknown as Record<string, unknown>)['__nexariToken'];
+        this.token = null;
+        try { await this.cfg.adapter.reloadRenderer(); } catch { /* ignore */ }
+        return;
       default:
         // The API sends device commands using the command name as the WS type
         // (e.g. type='reboot', type='screenshot', type='set_system_volume').
@@ -1208,7 +1217,19 @@ export class Player {
 
       void this.downloadContentInBackground(schedule.items, newSig);
     } catch (e) {
-      logger.warn(`[Player] loadContent failed: ${(e as Error)?.message}`);
+      const err = e as Error & { status?: number };
+      logger.warn(`[Player] loadContent failed: ${err?.message}`);
+      // 401 means this device was deleted from the dashboard — the JWT is still
+      // cryptographically valid but the server has soft-deleted the device row.
+      // Clear the pairing token and reload so the device shows the pairing screen.
+      if (err?.status === 401) {
+        logger.warn('[Player] 401 on schedule — device deleted, clearing token and reloading');
+        try { localStorage.removeItem('nexariToken'); } catch { /* ignore */ }
+        delete (window as unknown as Record<string, unknown>)['__nexariToken'];
+        this.token = null;
+        try { await this.cfg.adapter.reloadRenderer(); } catch { /* ignore */ }
+        return;
+      }
       if (!this.playlistItems.length) {
         if (!this.tryLoadCachedSchedule()) this.showIdle('Waiting for content…');
       }
