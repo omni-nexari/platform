@@ -1262,6 +1262,10 @@ export async function deviceRoutes(app: FastifyInstance) {
       .where(eq(devices.id, id))
       .returning();
 
+    // Immediately push refresh_schedule so the player loads the POS URL
+    // without waiting for its 60-second poll cycle.
+    sendCommand(id, { type: 'refresh_schedule' });
+
     return reply.send(updated);
   });
 

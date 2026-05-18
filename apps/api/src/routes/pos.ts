@@ -29,8 +29,23 @@ import {
   deviceHeartbeats,
   workspaces,
 } from '@signage/db';
+import { sendCommand } from '../services/ws.js';
 
-// ─── Device JWT helpers (same pattern as devices.ts) ────────────────────────────
+// ─── Helper: notify POS display devices when config changes ─────────────────
+async function notifyPosDevices(orgId: string, workspaceId: string, displayTypes: string[]): Promise<void> {
+  const orgDevices = await db.query.devices.findMany({
+    where: and(eq(devices.orgId, orgId), eq(devices.workspaceId, workspaceId), isNull(devices.deletedAt)),
+    columns: { id: true, settings: true },
+  });
+  for (const d of orgDevices) {
+    try {
+      const s = JSON.parse(d.settings || '{}') as { posDisplayType?: string; posWorkspaceId?: string };
+      if (displayTypes.includes(s.posDisplayType ?? '') && s.posWorkspaceId === workspaceId) {
+        sendCommand(d.id, { type: 'refresh_schedule' });
+      }
+    } catch { /* ignore */ }
+  }
+}
 function authenticateDeviceRequest(
   req: { headers: Record<string, string | string[] | undefined>; query: unknown },
   reply: { status: (n: number) => { send: (b: unknown) => void } },
@@ -1107,6 +1122,7 @@ export async function posRoutes(app: FastifyInstance) {
       primaryColor?: string | null;
     };
 
+    const user = req.user as { sub: string; orgId: string; role: string };
     const [config] = await db
       .insert(posKioskConfig)
       .values({ workspaceId, ...body, updatedAt: new Date() })
@@ -1115,6 +1131,8 @@ export async function posRoutes(app: FastifyInstance) {
         set: { ...body, updatedAt: new Date() },
       })
       .returning();
+    // Notify paired kiosk displays so they reload immediately
+    void notifyPosDevices(user.orgId, workspaceId, ['kiosk-portrait', 'kiosk-landscape']);
     return reply.send(config);
   });
 
@@ -1138,6 +1156,7 @@ export async function posRoutes(app: FastifyInstance) {
       alertIntervalSec?: number;
       theme?: string;
     };
+    const user = req.user as { sub: string; orgId: string; role: string };
     const [config] = await db
       .insert(posKitchenConfig)
       .values({ workspaceId, ...body, updatedAt: new Date() })
@@ -1146,6 +1165,8 @@ export async function posRoutes(app: FastifyInstance) {
         set: { ...body, updatedAt: new Date() },
       })
       .returning();
+    // Notify paired kitchen displays so they reload immediately
+    void notifyPosDevices(user.orgId, workspaceId, ['kitchen']);
     return reply.send(config);
   });
 
