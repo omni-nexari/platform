@@ -2734,7 +2734,7 @@ export function DeviceDetailContent({
         />
       )}
 
-      {(deviceType === 'signage' || deviceType === 'menu-board') && <SectionCard>
+      {((device.type ?? 'signage') === 'signage' || (device.type ?? 'signage') === 'menu-board') && <SectionCard>
         <SectionCardHeader>
           <h2 className="text-sm font-semibold text-[var(--text)]">Default Playlist</h2>
           <span className="text-xs text-[var(--text-muted)]">shown when no schedule slot is active</span>
