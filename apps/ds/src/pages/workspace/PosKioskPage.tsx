@@ -399,7 +399,20 @@ export default function PosKioskPage() {
                       <Copy className="h-3.5 w-3.5" />{copiedType === 'kiosk-portrait' ? 'Copied!' : 'Copy'}
                     </button>
                   </div>
-                  <QrCanvas url={buildDisplayUrl('kiosk-portrait', displayTokens.kiosk)} />
+                  <div className="flex items-start gap-4">
+                    <QrCanvas url={buildDisplayUrl('kiosk-portrait', displayTokens.kiosk)} />
+                    <button
+                      className="ui-btn-secondary flex items-center gap-1.5 text-xs mt-1"
+                      disabled={regenerateTokenMut.isPending}
+                      onClick={() => {
+                        if (window.confirm('Regenerate kiosk token? Both portrait and landscape URLs will stop working.')) {
+                          regenerateTokenMut.mutate('kiosk');
+                        }
+                      }}
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />Regenerate
+                    </button>
+                  </div>
                 </>
               ) : (
                 <div className="flex flex-col gap-2">
@@ -447,18 +460,20 @@ export default function PosKioskPage() {
                       <Copy className="h-3.5 w-3.5" />{copiedType === 'kiosk-landscape' ? 'Copied!' : 'Copy'}
                     </button>
                   </div>
-                  <QrCanvas url={buildDisplayUrl('kiosk-landscape', displayTokens.kiosk)} />
-                  <button
-                    className="ui-btn-secondary flex items-center gap-1.5 text-xs"
-                    disabled={regenerateTokenMut.isPending}
-                    onClick={() => {
-                      if (window.confirm('Regenerate kiosk token? Both portrait and landscape URLs will stop working.')) {
-                        regenerateTokenMut.mutate('kiosk');
-                      }
-                    }}
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />Regenerate Token
-                  </button>
+                  <div className="flex items-start gap-4">
+                    <QrCanvas url={buildDisplayUrl('kiosk-landscape', displayTokens.kiosk)} />
+                    <button
+                      className="ui-btn-secondary flex items-center gap-1.5 text-xs mt-1"
+                      disabled={regenerateTokenMut.isPending}
+                      onClick={() => {
+                        if (window.confirm('Regenerate kiosk token? Both portrait and landscape URLs will stop working.')) {
+                          regenerateTokenMut.mutate('kiosk');
+                        }
+                      }}
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />Regenerate
+                    </button>
+                  </div>
                 </>
               ) : (
                 <p className="text-xs text-[var(--text-muted)]">Generate a kiosk token first.</p>
@@ -497,7 +512,9 @@ export default function PosKioskPage() {
                   <Copy className="h-3.5 w-3.5" />{copiedType === 'waiter' ? 'Copied!' : 'Copy'}
                 </button>
               </div>
-              <QrCanvas url={buildPosUrl()} />
+              <div className="flex items-start gap-4">
+                <QrCanvas url={buildPosUrl()} />
+              </div>
               <div className="pt-2 border-t border-[var(--border)]">
                 {pairedDevices['order-pad'] ? (
                   <div className="flex items-center gap-2">
