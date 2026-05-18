@@ -123,7 +123,7 @@ interface Device {
   id: string;
   name: string;
   status: 'unclaimed' | 'online' | 'offline' | 'error';
-  type: 'signage' | 'kiosk' | 'kitchen';
+  type: 'signage' | 'kiosk' | 'kitchen' | 'order-pad' | 'menu-board';
   platform: 'tizen' | 'tizen-sbb' | 'tizen-consumer' | 'webos' | 'android' | 'linux' | 'browser' | 'windows' | 'other';
   manufacturer: string | null;
   lastSeen: string | null;
@@ -1581,7 +1581,10 @@ export function DeviceDetailContent({
       {(device.type || device.platform) && (
         <div className="flex flex-wrap gap-2">
           {device.type && device.type !== 'signage' && (
-            <Badge tone={device.type === 'kiosk' ? 'accent' : 'warning'} className="capitalize">
+            <Badge
+              tone={device.type === 'kiosk' ? 'accent' : device.type === 'order-pad' ? 'accent' : device.type === 'menu-board' ? 'success' : 'warning'}
+              className="capitalize"
+            >
               {device.type}
             </Badge>
           )}
@@ -2731,7 +2734,7 @@ export function DeviceDetailContent({
         />
       )}
 
-      <SectionCard>
+      {(deviceType === 'signage' || deviceType === 'menu-board') && <SectionCard>
         <SectionCardHeader>
           <h2 className="text-sm font-semibold text-[var(--text)]">Default Playlist</h2>
           <span className="text-xs text-[var(--text-muted)]">shown when no schedule slot is active</span>
@@ -2753,12 +2756,10 @@ export function DeviceDetailContent({
             </div>
           </form>
         </SectionCardBody>
-      </SectionCard>
+      </SectionCard>}
 
         </div>
       )}
-
-      {/* ── Timers tab ──────────────────────────────────────────────────── */}
       {activeTab === 'timers' && (
         <div className="space-y-6">
           <SectionCard>

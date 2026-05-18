@@ -9,7 +9,8 @@ import { ClaimDeviceSchema } from '@signage/shared';
 import type { ClaimDeviceInput } from '@signage/shared';
 
 type PairFormInput = Omit<ClaimDeviceInput, 'workspaceId'>;
-import { Grid2x2, Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon, Copy, CheckCheck, Battery, Play, CalendarDays, Image, Moon, Download, Smartphone, Tv2 } from 'lucide-react';
+import { Grid2x2, Monitor, Plus, WifiOff, Clock, ChevronRight, Cpu, Check, RotateCcw, Layers, Utensils, ShoppingBag, Trash2, Eye, X as XIcon, Copy, CheckCheck, Battery, Play, CalendarDays, Image, Moon, Download, Smartphone, Tv2, Tablet, LayoutGrid } from 'lucide-react';
+import { useCmsEnabled, usePosEnabled } from '../../lib/modules.js';
 
 // Shows the device thumbnail using the DB-backed screenshot record.
 // Re-renders automatically when the device list poll returns a new latestScreenshotId.
@@ -183,7 +184,7 @@ interface Device {
   name: string;
   status: 'unclaimed' | 'online' | 'offline' | 'error' | 'sleeping';
   powerState: 'on' | 'off' | 'standby' | null;
-  type: 'signage' | 'kiosk' | 'kitchen';
+  type: 'signage' | 'kiosk' | 'kitchen' | 'order-pad' | 'menu-board';
   platform: string;
   kind?: 'tv' | 'epaper' | 'android' | 'androidtv' | 'firetv' | null;
   batteryPct?: number | null;
@@ -220,10 +221,12 @@ function StatusBadge({ status }: { status: Device['status'] }) {
 }
 
 function TypeBadge({ type }: { type: Device['type'] }) {
-  const map: Record<Device['type'], { label: string; tone: 'neutral' | 'info' | 'warning' }> = {
-    signage: { label: 'Signage', tone: 'neutral' },
-    kiosk: { label: 'Kiosk', tone: 'info' },
-    kitchen: { label: 'Kitchen', tone: 'warning' },
+  const map: Record<Device['type'], { label: string; tone: 'neutral' | 'info' | 'warning' | 'success' | 'accent' }> = {
+    signage:    { label: 'Signage',    tone: 'neutral' },
+    kiosk:      { label: 'Kiosk',      tone: 'info' },
+    kitchen:    { label: 'Kitchen',    tone: 'warning' },
+    'order-pad':  { label: 'Order Pad',  tone: 'accent' },
+    'menu-board': { label: 'Menu Board', tone: 'success' },
   };
   const t = map[type] ?? map.signage;
   return <Badge tone={t.tone}>{t.label}</Badge>;
@@ -758,13 +761,25 @@ export default function DevicesPage() {
         />
       ) : (
         <div className="flex flex-col gap-8">
-          {(
-            [
-              { key: 'signage', label: 'Signage Displays', icon: <Monitor className="w-4 h-4" /> },
-              { key: 'kitchen', label: 'Kitchen Monitor', icon: <Utensils className="w-4 h-4" /> },
-              { key: 'kiosk',   label: 'Kiosk Ops',       icon: <ShoppingBag className="w-4 h-4" /> },
-            ] as const
-          ).map(({ key, label, icon }) => {
+          {(() => {
+            const cmsEnabled = useCmsEnabled();
+            const posEnabled = usePosEnabled();
+            type SectionKey = 'signage' | 'kitchen' | 'kiosk' | 'order-pad' | 'menu-board';
+            const allSections: Array<{ key: SectionKey; label: string; icon: React.ReactNode; cms?: boolean; pos?: boolean }> = [
+              { key: 'signage',    label: 'Signage Displays', icon: <Monitor className="w-4 h-4" />,    cms: true },
+              { key: 'kitchen',   label: 'Kitchen Monitors', icon: <Utensils className="w-4 h-4" />,   pos: true },
+              { key: 'kiosk',     label: 'Kiosks',           icon: <ShoppingBag className="w-4 h-4" />, pos: true },
+              { key: 'order-pad', label: 'Order Pads',       icon: <Tablet className="w-4 h-4" />,      pos: true },
+              { key: 'menu-board',label: 'Menu Boards',      icon: <LayoutGrid className="w-4 h-4" />,  cms: true, pos: true },
+            ];
+            const sections = allSections.filter((s) => {
+              if (s.cms && s.pos) return cmsEnabled || posEnabled;
+              if (s.cms) return cmsEnabled;
+              if (s.pos) return posEnabled;
+              return true;
+            });
+            return sections;
+          })().map(({ key, label, icon }) => {
             const sectionDevices = filteredDevices.filter((d) => (d.type ?? 'signage') === key);
             if (sectionDevices.length === 0) return null;
 
@@ -989,7 +1004,16 @@ export default function DevicesPage() {
                 <p className="text-xs text-red-400 mt-1">{errors.name.message}</p>
               )}
             </div>
-            <input type="hidden" {...register('type')} value="signage" />
+            <div>
+              <label className="ui-label">Device Type</label>
+              <select {...register('type')} className="ui-input w-full" defaultValue="signage">
+                {useCmsEnabled() && <option value="signage">Signage Display</option>}
+                {useCmsEnabled() && <option value="menu-board">Menu Board</option>}
+                {usePosEnabled() && <option value="kiosk">Kiosk (Self-Order)</option>}
+                {usePosEnabled() && <option value="kitchen">Kitchen Monitor</option>}
+                {usePosEnabled() && <option value="order-pad">Order Pad (Staff)</option>}
+              </select>
+            </div>
           </form>
         </ModalBody>
         <ModalFooter>

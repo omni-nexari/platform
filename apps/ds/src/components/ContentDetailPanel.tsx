@@ -243,6 +243,10 @@ interface Props {
   workspaceId: string;
   onClose: () => void;
   onDeleted: () => void;
+  /** Forwarded to PublishWizardModal — skips mode selection step. */
+  skipPublishModeStep?: boolean;
+  /** Forwarded to PublishWizardModal — filters device picker to this type. */
+  publishDeviceTypeFilter?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -908,7 +912,7 @@ function SettingsTab({
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDeleted }: Props) {
+export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDeleted, skipPublishModeStep, publishDeviceTypeFilter }: Props) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [tab, setTab] = useState<'info' | 'settings'>('info');
@@ -1275,6 +1279,8 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
           contentId={itemId ?? ''}
           contentName={item?.name ?? 'Content'}
           workspaceId={workspaceId}
+          skipModeStep={skipPublishModeStep}
+          deviceTypeFilter={publishDeviceTypeFilter}
           onClose={() => setConfirmPublishOpen(false)}
           onDone={() => setConfirmPublishOpen(false)}
         />

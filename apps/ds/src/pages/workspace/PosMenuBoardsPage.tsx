@@ -254,6 +254,8 @@ export default function PosMenuBoardsPage() {
         <ContentDetailPanel
           itemId={selectedId}
           workspaceId={wsId}
+          skipPublishModeStep
+          publishDeviceTypeFilter="menu-board"
           onClose={() => setSelectedId(null)}
           onDeleted={() => {
             setSelectedId(null);

@@ -188,6 +188,10 @@ export interface PublishWizardModalProps {
   contentName: string;
   workspaceId: string;
   preSelectedDeviceIds?: string[];
+  /** When true, skip the mode-selection step and go straight to device picker (Single mode). */
+  skipModeStep?: boolean;
+  /** When provided, only show devices of this type in the device picker. */
+  deviceTypeFilter?: string;
   onClose: () => void;
   onDone: () => void;
 }
@@ -198,11 +202,13 @@ export default function PublishWizardModal({
   contentName,
   workspaceId,
   preSelectedDeviceIds,
+  skipModeStep,
+  deviceTypeFilter,
   onClose,
   onDone,
 }: PublishWizardModalProps) {
-  const [step, setStep] = useState<1 | 2>(1);
-  const [mode, setMode] = useState<PublishMode | null>(null);
+  const [step, setStep] = useState<1 | 2>(() => skipModeStep ? 2 : 1);
+  const [mode, setMode] = useState<PublishMode | null>(() => skipModeStep ? 'single' : null);
 
   // Videowall target (step 2, videowall mode) — single-select
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -249,12 +255,13 @@ export default function PublishWizardModal({
     const q = search.trim().toLowerCase();
     let items = deviceItems.filter((d) => {
       if (hideOffline && d.status !== 'online') return false;
+      if (deviceTypeFilter && (d as DeviceItem & { type?: string }).type !== deviceTypeFilter) return false;
       if (!q) return true;
       return [d.name, d.modelName, d.modelCode, d.ipAddress, d.wifiSsid, d.timezone]
         .some((v) => v?.toLowerCase().includes(q));
     });
     return sortDevices(items);
-  }, [deviceItems, hideOffline, search, sort]);
+  }, [deviceItems, hideOffline, search, sort, deviceTypeFilter]);
 
   const filteredGroups = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -342,8 +349,8 @@ export default function PublishWizardModal({
     onClose();
     // Reset after the modal animation finishes
     setTimeout(() => {
-      setStep(1);
-      setMode(null);
+      setStep(skipModeStep ? 2 : 1);
+      setMode(skipModeStep ? 'single' : null);
       setSelectedGroupId(null);
       setSelectedDeviceIds(new Set());
       setSelectedGroupIds(new Set());
@@ -352,6 +359,7 @@ export default function PublishWizardModal({
   }
 
   function handleBack() {
+    if (skipModeStep) return; // no back when mode step is skipped
     setStep(1);
     setSelectedGroupId(null);
     setSelectedDeviceIds(new Set());
@@ -387,7 +395,7 @@ export default function PublishWizardModal({
         {/* Header */}
         <div className="modal-header">
           <div className="flex items-center gap-2">
-            {step === 2 && (
+            {step === 2 && !skipModeStep && (
               <button
                 onClick={handleBack}
                 className="flex items-center justify-center w-7 h-7 rounded-lg hover:bg-[var(--surface-raised)] text-[var(--text-muted)] transition-colors"
@@ -407,8 +415,8 @@ export default function PublishWizardModal({
           <button onClick={handleClose} className="modal-close"><X size={20} /></button>
         </div>
 
-        {/* Step indicator */}
-        <div className="flex border-b" style={{ borderColor: 'var(--border)' }}>
+        {/* Step indicator — hidden when mode step is skipped */}
+        {!skipModeStep && <div className="flex border-b" style={{ borderColor: 'var(--border)' }}>
           {(['Mode', 'Target'] as const).map((label, idx) => {
             const stepNum = (idx + 1) as 1 | 2;
             const active = step === stepNum;
@@ -425,7 +433,7 @@ export default function PublishWizardModal({
               </div>
             );
           })}
-        </div>
+        </div>}
 
         {/* ── Step 1 — Mode selection ── */}
         {step === 1 && (

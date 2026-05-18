@@ -92,11 +92,14 @@ export const PairRequestSchema = z.object({
 });
 export type PairRequestInput = z.infer<typeof PairRequestSchema>;
 
+export const DeviceTypeEnum = z.enum(['signage', 'kiosk', 'kitchen', 'order-pad', 'menu-board']);
+export type DeviceType = z.infer<typeof DeviceTypeEnum>;
+
 export const ClaimDeviceSchema = z.object({
   code: z.string().length(6),
   workspaceId: z.string().uuid(),
   name: z.string().min(1).max(255).optional(),
-  type: z.enum(['signage', 'kiosk', 'kitchen']).optional(),
+  type: DeviceTypeEnum.optional(),
 });
 export type ClaimDeviceInput = z.infer<typeof ClaimDeviceSchema>;
 
@@ -119,6 +122,7 @@ const ZoneConfigSchema = z.object({
 
 export const UpdateDeviceSchema = z.object({
   name: z.string().min(1).max(255).optional(),
+  type: DeviceTypeEnum.optional(),
   timezone: z.string().optional(),
   settings: z.string().optional(),
   defaultPlaylistId: z.string().uuid().nullable().optional(),
