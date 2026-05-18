@@ -781,9 +781,7 @@ export default function DevicesPage() {
               ? filteredDevices.filter((d) => (d.type ?? 'signage') === 'signage')
               // POS-only org: show ALL devices (type='signage' default should not be invisible)
               // Both org: only show devices with an explicit POS type
-              : !cmsEnabled
-                ? filteredDevices
-                : filteredDevices.filter((d) => !!d.type && d.type !== 'signage');
+              : filteredDevices.filter((d) => d.type !== 'signage');
             if (sectionDevices.length === 0) return null;
 
             // Split into videowall group cards + sync group cards + ungrouped individual cards

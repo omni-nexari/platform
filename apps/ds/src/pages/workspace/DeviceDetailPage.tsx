@@ -963,6 +963,10 @@ export function DeviceDetailContent({
   const [timerSlots, setTimerSlots] = useState<Record<number, TimerSlotState>>({});
   const [activeTab, setActiveTab] = useState<DeviceTabId>('info');
 
+  // Must be declared before any early-return so hooks order is stable
+  const cmsEnabled     = useCmsEnabled();
+  const posEnabled     = usePosEnabled();
+
   // ── Network config state ────────────────────────────────────────────
   type IpMode   = 'dhcp'     | 'static';
   const [netIpMode,    setNetIpMode]    = useState<IpMode>('dhcp');
@@ -1422,8 +1426,6 @@ export function DeviceDetailContent({
   const isOnline    = device.status === 'online';
   const isEpaper    = device.kind === 'epaper';
   const isWindows      = device.platform === 'windows';
-  const cmsEnabled     = useCmsEnabled();
-  const posEnabled     = usePosEnabled();
   const isAndroid      = ['android', 'androidtv', 'firetv'].includes(device.platform ?? '');
   const isTizenTop     = ['tizen', 'tizen-sbb'].includes(device.platform ?? 'tizen');
   const isConsumerTizen = device.platform === 'tizen-consumer';
