@@ -962,7 +962,7 @@ export async function authRoutes(app: FastifyInstance) {
 
     const org = await db.query.organisations.findFirst({
       where: and(eq(organisations.id, orgId), isNull(organisations.deletedAt)),
-      columns: { id: true, name: true, slug: true, plan: true, settings: true },
+      columns: { id: true, name: true, slug: true, plan: true, settings: true, managementCompanyId: true },
     });
     if (!org) {
       if (process.env['NODE_ENV'] !== 'production') {
@@ -973,6 +973,29 @@ export async function authRoutes(app: FastifyInstance) {
       clearRefreshCookie(reply);
       return reply.status(401).send({ error: 'Unauthorized' });
     }
+
+    // Ensure settings.modules is always explicitly set so the client never
+    // falls back to the 'signage' default for POS-only orgs.
+    // If the org's own settings don't have a modules key, inherit from the
+    // parent management company's allowedModules.
+    let orgSettings: Record<string, unknown> = {};
+    try { orgSettings = JSON.parse(org.settings || '{}') as Record<string, unknown>; } catch { /* ignore */ }
+    if (orgSettings.modules == null && org.managementCompanyId) {
+      const company = await db.query.managementCompanies.findFirst({
+        where: eq(managementCompanies.id, org.managementCompanyId),
+        columns: { allowedModules: true },
+      });
+      if (company?.allowedModules) {
+        orgSettings.modules = company.allowedModules;
+      }
+    }
+    const resolvedOrg = {
+      id: org.id,
+      name: org.name,
+      slug: org.slug,
+      plan: org.plan,
+      settings: JSON.stringify(orgSettings),
+    };
 
     const [storageUsageRow] = await db
       .select({ usedBytes: sum(contentItems.fileSize) })
@@ -1006,10 +1029,10 @@ export async function authRoutes(app: FastifyInstance) {
         ...user,
         impersonatedBy: impersonatedBy ?? null,
       },
-      org,
+      org: resolvedOrg,
       storage: {
         usedBytes: Number(storageUsageRow?.usedBytes ?? 0),
-        limitBytes: quota?.limitBytes ?? planDefaults[org.plan] ?? planDefaults.starter,
+        limitBytes: quota?.limitBytes ?? planDefaults[resolvedOrg.plan] ?? planDefaults.starter,
       },
     });
   });
