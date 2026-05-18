@@ -764,18 +764,17 @@ export default function DevicesPage() {
       ) : (
         <div className="flex flex-col gap-8">
           {(() => {
-            type SectionKey = 'signage' | 'kitchen' | 'kiosk' | 'order-pad' | 'menu-board';
-            const allSections: Array<{ key: SectionKey; label: string; icon: React.ReactNode; cms?: boolean; pos?: boolean }> = [
-              { key: 'signage',    label: 'Signage Displays', icon: <Monitor className="w-4 h-4" />,    cms: true },
+            type SectionKey = 'signage' | 'kitchen' | 'kiosk' | 'order-pad' | 'menu-board' | 'pos';
+            const allSections: Array<{ key: SectionKey; label: string; icon: React.ReactNode; pos?: boolean }> = [
+              { key: 'signage',    label: 'Signage Displays', icon: <Monitor className="w-4 h-4" /> },
               { key: 'kitchen',   label: 'Kitchen Monitors', icon: <Utensils className="w-4 h-4" />,   pos: true },
               { key: 'kiosk',     label: 'Kiosks',           icon: <ShoppingBag className="w-4 h-4" />, pos: true },
               { key: 'order-pad', label: 'Order Pads',       icon: <Tablet className="w-4 h-4" />,      pos: true },
-              { key: 'menu-board',label: 'Menu Boards',      icon: <LayoutGrid className="w-4 h-4" />,  cms: true, pos: true },
+              { key: 'menu-board',label: 'Menu Boards',      icon: <LayoutGrid className="w-4 h-4" />,  pos: true },
+              { key: 'pos',       label: 'POS Devices',      icon: <ShoppingBag className="w-4 h-4" />, pos: true },
             ];
             const sections = allSections.filter((s) => {
-              if (s.cms && s.pos) return cmsEnabled || posEnabled;
-              if (s.cms) return cmsEnabled;
-              if (s.pos) return posEnabled;
+              if (s.pos) return posEnabled || cmsEnabled;
               return true;
             });
             return sections;

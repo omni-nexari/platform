@@ -1207,17 +1207,28 @@ export async function deviceRoutes(app: FastifyInstance) {
     let settings: Record<string, unknown> = {};
     try { settings = JSON.parse(device.settings || '{}'); } catch { /* ignore */ }
 
+    // Map posDisplayType → device.type so filters in the dashboard work correctly
+    const posTypeToDeviceType: Record<string, string> = {
+      'kiosk-portrait': 'kiosk',
+      'kiosk-landscape': 'kiosk',
+      'kitchen': 'kitchen',
+      'order-pad': 'order-pad',
+    };
+
+    let newDeviceType: string;
     if (body.data.posDisplayType === null) {
       delete settings['posDisplayType'];
       delete settings['posWorkspaceId'];
+      newDeviceType = 'signage'; // revert to default when unlinked
     } else {
       settings['posDisplayType'] = body.data.posDisplayType;
       settings['posWorkspaceId'] = body.data.posWorkspaceId ?? '';
+      newDeviceType = posTypeToDeviceType[body.data.posDisplayType] ?? 'signage';
     }
 
     const [updated] = await db
       .update(devices)
-      .set({ settings: JSON.stringify(settings), updatedAt: new Date() })
+      .set({ settings: JSON.stringify(settings), type: newDeviceType, updatedAt: new Date() })
       .where(eq(devices.id, id))
       .returning();
 
