@@ -376,7 +376,7 @@ export default function PosPaymentPage() {
   // ─── Main render ─────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col gap-6 p-4 sm:p-6 max-w-2xl mx-auto">
+    <div className="flex flex-col gap-6 p-4 sm:p-6 pb-10 max-w-2xl mx-auto">
       <div className="flex items-center gap-3">
         <button
           onClick={() => navigate(-1)}
