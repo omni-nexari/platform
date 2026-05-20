@@ -194,8 +194,13 @@ export async function registerPlugins(app: FastifyInstance) {
   app.decorate('authenticate', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       await req.jwtVerify();
-      const payload = req.user as { sub?: string; iat?: number };
-      if (payload?.sub && typeof payload.iat === 'number') {
+      const payload = req.user as { sub?: string; orgId?: string; iat?: number };
+      // Reject tokens that are missing required claims — prevents UNDEFINED_VALUE
+      // errors if a malformed or legacy token slips through jwtVerify().
+      if (!payload?.sub || !payload?.orgId) {
+        return reply.status(401).send({ error: 'Unauthorized' });
+      }
+      if (typeof payload.iat === 'number') {
         const revoked = await isAccessTokenRevoked(payload.sub, payload.iat);
         if (revoked) return reply.status(401).send({ error: 'Unauthorized' });
       }
