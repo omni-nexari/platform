@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import QRCode from 'qrcode';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   Activity,
   ArrowUpRight,
+  Bike,
   ChefHat,
+  CheckCircle,
   Clock3,
   Copy,
   Cpu,
@@ -20,6 +22,7 @@ import {
   Tablet,
   Wifi,
   WifiOff,
+  XCircle,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { formatDistanceToNow } from '../utils/time.js';
@@ -113,6 +116,20 @@ interface KioskRedeemResponse {
   tier: LoyaltyCustomer['tier'];
 }
 
+interface UberEatsStatus {
+  connected: boolean;
+  storeId: string | null;
+  storeName: string | null;
+  autoAccept: boolean;
+  webhookUrl: string;
+}
+
+interface UberEatsStore {
+  store_id: string;
+  name: string;
+  location: { address?: string; city?: string };
+}
+
 interface DisplayTokens {
   kiosk: string | null;
   kitchen: string | null;
@@ -155,15 +172,18 @@ function QrCanvas({ url }: { url: string }) {
 export default function PosKioskPage() {
   const { wsId } = useParams<{ wsId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [lookupPhone, setLookupPhone] = useState('');
   const [lookupEmail, setLookupEmail] = useState('');
   const [verifyResult, setVerifyResult] = useState<KioskVerifyResponse | null>(null);
   const [redeemPoints, setRedeemPoints] = useState('');
-  const [copiedType, setCopiedType] = useState<'kiosk-portrait' | 'kiosk-landscape' | 'kitchen' | 'waiter' | null>(null);
+  const [copiedType, setCopiedType] = useState<'kiosk-portrait' | 'kiosk-landscape' | 'kitchen' | 'waiter' | 'webhook' | null>(null);
   const [deploySlot, setDeploySlot] = useState<PosDisplaySlot | null>(null);
   const [newPin, setNewPin] = useState('');
+  const [selectedUberStoreId, setSelectedUberStoreId] = useState('');
+  const uberSession = searchParams.get('uber_session');
 
   const { data: displayTokens, refetch: refetchTokens } = useQuery<DisplayTokens>({
     queryKey: ['pos-display-tokens', wsId],
@@ -183,6 +203,52 @@ export default function PosKioskPage() {
       api.delete<{ token: string; displayType: string }>(`/pos/mgmt/display-tokens/${displayType}?workspaceId=${wsId}`),
     onSuccess: () => { void refetchTokens(); toast.success('Token regenerated — update the display URL on your device'); },
     onError: () => toast.error('Failed to regenerate display token'),
+  });
+
+  const { data: uberStatus, refetch: refetchUberStatus } = useQuery<UberEatsStatus>({
+    queryKey: ['pos-uber-eats', wsId],
+    queryFn: () => api.get(`/pos/mgmt/uber-eats?workspaceId=${wsId}`),
+    enabled: !!wsId,
+  });
+
+  const { data: uberStoresData } = useQuery<{ stores: UberEatsStore[] }>({
+    queryKey: ['pos-uber-eats-stores', uberSession],
+    queryFn: () => api.get(`/pos/mgmt/uber-eats/stores?session=${uberSession}`),
+    enabled: !!uberSession,
+  });
+
+  const activateUberMut = useMutation({
+    mutationFn: () => api.post<{ ok: boolean; storeName: string }>('/pos/mgmt/uber-eats/activate', {
+      session: uberSession,
+      storeId: selectedUberStoreId,
+    }),
+    onSuccess: (data) => {
+      const params = new URLSearchParams(searchParams);
+      params.delete('uber_session');
+      setSearchParams(params, { replace: true });
+      setSelectedUberStoreId('');
+      void refetchUberStatus();
+      toast.success(`Connected to ${data.storeName}`);
+    },
+    onError: () => toast.error('Failed to activate Uber Eats connection'),
+  });
+
+  const updateUberAutoAcceptMut = useMutation({
+    mutationFn: (autoAccept: boolean) => api.put('/pos/mgmt/uber-eats/settings', { workspaceId: wsId, autoAccept }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['pos-uber-eats', wsId] });
+      toast.success('Uber Eats settings updated');
+    },
+    onError: () => toast.error('Failed to update Uber Eats settings'),
+  });
+
+  const disconnectUberMut = useMutation({
+    mutationFn: () => api.delete(`/pos/mgmt/uber-eats?workspaceId=${wsId}`),
+    onSuccess: () => {
+      void refetchUberStatus();
+      toast.success('Uber Eats disconnected');
+    },
+    onError: () => toast.error('Failed to disconnect Uber Eats'),
   });
 
   const { data: pinStatus, refetch: refetchPinStatus } = useQuery<{ required: boolean }>({
@@ -665,6 +731,137 @@ export default function PosKioskPage() {
               </div>
             </div>
           </div>
+        </SectionCardBody>
+      </SectionCard>
+
+      {/* ── Uber Eats Integration ──────────────────────────────────── */}
+      <SectionCard>
+        <SectionCardHeader>
+          <div className="flex items-center gap-2">
+            <Bike className="h-4 w-4 text-[var(--accent)]" />
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--text)]">Uber Eats Integration</h2>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Receive and auto-accept Uber Eats orders directly into the POS kitchen queue.</p>
+            </div>
+          </div>
+          {uberStatus?.connected && (
+            <Badge tone="success"><CheckCircle className="h-3 w-3 inline-block mr-1" />Connected</Badge>
+          )}
+        </SectionCardHeader>
+        <SectionCardBody className="space-y-4">
+          {/* Store picker shown after OAuth callback */}
+          {uberSession && uberStoresData && !uberStatus?.connected && (
+            <div className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface-raised)] p-4">
+              <p className="text-xs text-[var(--text-muted)]">Your Uber Eats account was authorised. Select the store to connect:</p>
+              <select
+                value={selectedUberStoreId}
+                onChange={(e) => setSelectedUberStoreId(e.target.value)}
+                className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              >
+                <option value="">— Select a store —</option>
+                {uberStoresData.stores.map((s) => (
+                  <option key={s.store_id} value={s.store_id}>
+                    {s.name}{s.location.city ? ` · ${s.location.city}` : ''}
+                  </option>
+                ))}
+              </select>
+              <div className="flex justify-end">
+                <button
+                  className="ui-btn-primary flex items-center gap-1.5"
+                  disabled={!selectedUberStoreId || activateUberMut.isPending}
+                  onClick={() => activateUberMut.mutate()}
+                >
+                  <CheckCircle className="h-4 w-4" />
+                  {activateUberMut.isPending ? 'Activating…' : 'Activate Store'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Connected state */}
+          {uberStatus?.connected ? (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="text-sm text-[var(--text)]">
+                  <span className="text-[var(--text-muted)] text-xs uppercase tracking-wide">Store</span>
+                  <div className="font-medium mt-0.5">{uberStatus.storeName ?? uberStatus.storeId}</div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-[var(--text-muted)]">Auto-accept orders</span>
+                <button
+                  role="switch"
+                  aria-checked={uberStatus.autoAccept}
+                  disabled={updateUberAutoAcceptMut.isPending}
+                  onClick={() => updateUberAutoAcceptMut.mutate(!uberStatus.autoAccept)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors ${
+                    uberStatus.autoAccept ? 'bg-[var(--accent)]' : 'bg-[var(--border)]'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${
+                      uberStatus.autoAccept ? 'translate-x-4' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+                <span className="text-xs text-[var(--text-muted)]">
+                  {uberStatus.autoAccept ? 'On — orders accepted automatically' : 'Off — accept/reject from kitchen display'}
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wide">Webhook URL</label>
+                <p className="text-[10px] text-[var(--text-muted)]">Register this once in your Uber Eats Developer Dashboard.</p>
+                <div className="flex items-center gap-2">
+                  <input
+                    readOnly
+                    value={uberStatus.webhookUrl}
+                    className="flex-1 truncate rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-muted)] outline-none"
+                  />
+                  <button
+                    className="ui-btn-secondary shrink-0 flex items-center gap-1.5 text-xs"
+                    onClick={async () => {
+                      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(uberStatus.webhookUrl);
+                      setCopiedType('webhook');
+                      setTimeout(() => setCopiedType(null), 2000);
+                    }}
+                  >
+                    <Copy className="h-3.5 w-3.5" />{copiedType === 'webhook' ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  className="ui-btn-secondary text-xs flex items-center gap-1.5 text-red-400 border-red-400/30 hover:bg-red-500/10"
+                  disabled={disconnectUberMut.isPending}
+                  onClick={() => {
+                    if (window.confirm('Disconnect Uber Eats? This will deprovision the store from the platform.')) {
+                      disconnectUberMut.mutate();
+                    }
+                  }}
+                >
+                  <XCircle className="h-3.5 w-3.5" />
+                  {disconnectUberMut.isPending ? 'Disconnecting…' : 'Disconnect'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            !uberSession && (
+              <div className="flex flex-col gap-3">
+                <p className="text-xs text-[var(--text-muted)]">Not connected. Click below to authorise your Uber Eats merchant account.</p>
+                <div>
+                  <a
+                    href={`${window.location.origin.replace(/:5173$/, ':3000').replace(/:5174$/, ':3000')}/api/v1/pos/mgmt/uber-eats/connect?workspaceId=${wsId}`}
+                    className="ui-btn-primary inline-flex items-center gap-1.5"
+                  >
+                    <Bike className="h-4 w-4" />Connect with Uber Eats
+                  </a>
+                </div>
+              </div>
+            )
+          )}
         </SectionCardBody>
       </SectionCard>
 

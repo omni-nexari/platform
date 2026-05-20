@@ -18,6 +18,7 @@ interface ActiveOrder {
   status: ActiveStatus;
   totalCents: number;
   customerName: string | null;
+  source: string | null;
   createdAt: string;
   items: OrderItem[];
 }
@@ -48,9 +49,14 @@ function OrderCard({ order }: { order: ActiveOrder }) {
     <div className={`rounded-xl border px-3 py-2.5 space-y-1.5 ${STATUS_STYLES[order.status]}`}>
       <div className="flex items-center justify-between gap-1">
         <span className="text-xs font-bold text-[var(--text)]">#{order.orderNumber}</span>
-        <span className={`text-[9px] font-bold uppercase tracking-wider ${GROUP_LABEL_STYLES[order.status]}`}>
-          {STATUS_LABEL[order.status]}
-        </span>
+        <div className="flex items-center gap-1">
+          {order.source === 'uber-eats' && (
+            <span className="text-[9px] font-bold bg-cyan-400/15 text-cyan-400 rounded px-1 py-0.5">🚴 Uber</span>
+          )}
+          <span className={`text-[9px] font-bold uppercase tracking-wider ${GROUP_LABEL_STYLES[order.status]}`}>
+            {STATUS_LABEL[order.status]}
+          </span>
+        </div>
       </div>
       {order.customerName && (
         <p className="text-[11px] text-[var(--text-muted)] truncate">{order.customerName}</p>

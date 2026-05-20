@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { and, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
+import * as uberEatsLib from '../lib/uber-eats.js';
 import { z } from 'zod';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -1361,6 +1362,24 @@ export async function posRoutes(app: FastifyInstance) {
       .returning();
 
     broadcastKitchenEvent(auth.workspaceId, { type: 'order_updated', order: updated });
+
+    // When a kitchen display manually accepts/cancels an Uber Eats order, sync to Uber
+    if (order.source === 'uber-eats' && order.externalId) {
+      const uberOrderId = order.externalId;
+      void (async () => {
+        try {
+          const tok = await uberEatsLib.getAppToken();
+          if (parsed.data.status === 'preparing' && order.status === 'pending') {
+            await uberEatsLib.acceptOrder(tok, uberOrderId);
+          } else if (parsed.data.status === 'cancelled') {
+            await uberEatsLib.denyOrder(tok, uberOrderId);
+          }
+        } catch (e) {
+          console.error('[uber-eats] kitchen status sync error:', e);
+        }
+      })();
+    }
+
     return reply.send(updated);
   });
 
@@ -2745,5 +2764,411 @@ export async function posRoutes(app: FastifyInstance) {
     });
 
     return reply.send({ token, displayType });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // UBER EATS INTEGRATION
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  // ── GET /pos/mgmt/uber-eats?workspaceId= ─────────────────────────────────────
+  app.get('/mgmt/uber-eats', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const restaurant = await db.query.posRestaurants.findFirst({
+      where: and(eq(posRestaurants.workspaceId, workspaceId), eq(posRestaurants.orgId, user.orgId)),
+      columns: { settings: true },
+    });
+    const settings     = getSettingsObject(restaurant?.settings);
+    const uberSettings = getSettingsObject(settings['uberEats']);
+    const connected    = Boolean(uberSettings['connected'] && uberSettings['storeId']);
+    const webhookUrl   = `${uberEatsLib.getPublicApiUrl()}/api/v1/pos/uber-eats/webhook`;
+
+    return reply.send({
+      connected,
+      storeId:    connected ? (uberSettings['storeId']   as string)          : null,
+      storeName:  connected ? (uberSettings['storeName'] as string | null)    : null,
+      autoAccept: (uberSettings['autoAccept'] as boolean | undefined) ?? true,
+      webhookUrl,
+    });
+  });
+
+  // ── GET /pos/mgmt/uber-eats/connect?workspaceId= ─────────────────────────────
+  // Redirects the browser to Uber's OAuth authorize page
+  app.get('/mgmt/uber-eats/connect', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    try {
+      const state = crypto.randomUUID();
+      const url   = await uberEatsLib.buildAuthorizeUrl(state, { workspaceId, orgId: user.orgId });
+      return reply.redirect(url, 302);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      return reply.status(500).send({ error: `Failed to initiate Uber OAuth: ${message}` });
+    }
+  });
+
+  // ── GET /pos/uber-eats/oauth/callback ────────────────────────────────────────
+  // Public — Uber redirects here after merchant authorizes
+  app.get('/uber-eats/oauth/callback', async (req, reply) => {
+    const { code, state, error: oauthError } = req.query as {
+      code?: string; state?: string; error?: string;
+    };
+    const dsFallback = process.env['DS_BASE_URL'] ?? '';
+
+    if (oauthError || !code || !state) {
+      return reply.redirect(`${dsFallback}/?uber_error=access_denied`, 302);
+    }
+
+    try {
+      const context = await uberEatsLib.consumeOAuthState(state);
+      if (!context) {
+        return reply.redirect(`${dsFallback}/?uber_error=invalid_state`, 302);
+      }
+
+      const tokenResp = await uberEatsLib.exchangeCode(code);
+      const stores    = await uberEatsLib.getMerchantStores(tokenResp.access_token);
+
+      const sessionToken = crypto.randomUUID();
+      await uberEatsLib.storeOAuthSession(sessionToken, {
+        workspaceId:   context.workspaceId,
+        orgId:         context.orgId,
+        merchantToken: tokenResp.access_token,
+        stores,
+      });
+
+      const target = new URL(`${dsFallback}/workspaces/${context.workspaceId}/pos/kiosk`);
+      target.searchParams.set('uber_session', sessionToken);
+      return reply.redirect(target.toString(), 302);
+    } catch (err) {
+      console.error('[uber-oauth-callback]', err);
+      return reply.redirect(`${dsFallback}/?uber_error=server_error`, 302);
+    }
+  });
+
+  // ── GET /pos/mgmt/uber-eats/stores?session= ──────────────────────────────────
+  // Returns stores from a pending OAuth session
+  app.get('/mgmt/uber-eats/stores', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { session } = req.query as { session?: string };
+    if (!session) return reply.status(400).send({ error: 'session required' });
+
+    const oauthSession = await uberEatsLib.getOAuthSession(session);
+    if (!oauthSession || oauthSession.orgId !== user.orgId) {
+      return reply.status(404).send({ error: 'Session expired or not found' });
+    }
+    return reply.send({ stores: oauthSession.stores });
+  });
+
+  // ── POST /pos/mgmt/uber-eats/activate ────────────────────────────────────────
+  // Provisions a specific store and saves connection to workspace settings
+  const ActivateUberEatsSchema = z.object({
+    session: z.string().uuid(),
+    storeId: z.string().min(1),
+  });
+
+  app.post('/mgmt/uber-eats/activate', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user   = req.user as AuthUser;
+    const parsed = ActivateUberEatsSchema.safeParse(req.body);
+    if (!parsed.success) return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
+
+    const oauthSession = await uberEatsLib.getOAuthSession(parsed.data.session);
+    if (!oauthSession || oauthSession.orgId !== user.orgId) {
+      return reply.status(404).send({ error: 'Session expired or not found' });
+    }
+
+    const { workspaceId, merchantToken, stores } = oauthSession;
+    const store = stores.find((s) => s.store_id === parsed.data.storeId);
+    if (!store) return reply.status(400).send({ error: 'Store not found in session' });
+
+    await uberEatsLib.provisionStore(merchantToken, store.store_id, workspaceId);
+    await upsertRestaurantSettings(workspaceId, user.orgId, {
+      uberEats: {
+        connected:     true,
+        storeId:       store.store_id,
+        storeName:     store.name,
+        autoAccept:    true,
+        merchantToken: merchantToken,
+      },
+    });
+    await uberEatsLib.deleteOAuthSession(parsed.data.session);
+    return reply.send({ ok: true, storeName: store.name });
+  });
+
+  // ── PUT /pos/mgmt/uber-eats/settings ─────────────────────────────────────────
+  // Update autoAccept and other non-credential settings
+  const UberEatsSettingsSchema = z.object({
+    workspaceId: z.string().uuid(),
+    autoAccept:  z.boolean(),
+  });
+
+  app.put('/mgmt/uber-eats/settings', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user   = req.user as AuthUser;
+    const parsed = UberEatsSettingsSchema.safeParse(req.body);
+    if (!parsed.success) return reply.status(400).send({ error: 'Invalid request', details: parsed.error.flatten() });
+
+    const { workspaceId, autoAccept } = parsed.data;
+    const restaurant = await db.query.posRestaurants.findFirst({
+      where: and(eq(posRestaurants.workspaceId, workspaceId), eq(posRestaurants.orgId, user.orgId)),
+      columns: { settings: true },
+    });
+    const existing = getSettingsObject(getSettingsObject(restaurant?.settings)['uberEats']);
+    await upsertRestaurantSettings(workspaceId, user.orgId, {
+      uberEats: { ...existing, autoAccept },
+    });
+    return reply.send({ ok: true });
+  });
+
+  // ── DELETE /pos/mgmt/uber-eats?workspaceId= ───────────────────────────────────
+  // Disconnect: deprovision from Uber and clear workspace settings
+  app.delete('/mgmt/uber-eats', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const restaurant = await db.query.posRestaurants.findFirst({
+      where: and(eq(posRestaurants.workspaceId, workspaceId), eq(posRestaurants.orgId, user.orgId)),
+      columns: { settings: true },
+    });
+    const uberEatsSettings = getSettingsObject(getSettingsObject(restaurant?.settings)['uberEats']);
+    const storeId           = uberEatsSettings['storeId']       as string | undefined;
+    const merchantToken     = uberEatsSettings['merchantToken'] as string | undefined;
+
+    if (storeId) {
+      try {
+        if (merchantToken) {
+          await uberEatsLib.deprovisionStore(merchantToken, storeId);
+        } else {
+          console.warn('[uber-eats] Cannot deprovision from Uber: merchant token unavailable, clearing local settings only');
+        }
+      } catch (err) {
+        console.error('[uber-eats] deprovisionStore error:', err);
+      }
+    }
+    await upsertRestaurantSettings(workspaceId, user.orgId, { uberEats: {} });
+    return reply.send({ ok: true });
+  });
+
+  // ── POST /pos/uber-eats/webhook (public, scoped for raw body capture) ─────────
+  await app.register(async (webhookScope) => {
+    webhookScope.addContentTypeParser(
+      'application/json',
+      { parseAs: 'buffer' },
+      (req, body, done) => {
+        (req as typeof req & { rawBody: Buffer }).rawBody = body as Buffer;
+        try {
+          done(null, JSON.parse((body as Buffer).toString()));
+        } catch (err) {
+          done(err as Error, undefined);
+        }
+      },
+    );
+
+    webhookScope.post('/uber-eats/webhook', async (req, reply) => {
+      const sig     = req.headers['x-uber-signature'] as string | undefined;
+      const rawBody = (req as typeof req & { rawBody?: Buffer }).rawBody;
+
+      if (!sig || !rawBody) {
+        return reply.status(400).send({ error: 'Missing signature or body' });
+      }
+      if (!uberEatsLib.verifyWebhookSignature(rawBody, sig)) {
+        return reply.status(401).send({ error: 'Invalid webhook signature' });
+      }
+
+      const event = req.body as {
+        event_type?: string;
+        resource_id?: string;
+        user_id?: string;
+        meta?: { resource_id?: string; user_id?: string };
+      };
+      const eventType = event.event_type;
+      const storeId   = event.user_id ?? event.meta?.user_id;
+      const orderId   = event.resource_id ?? event.meta?.resource_id;
+
+      // Fire-and-forget: process webhook after responding 200
+      if (storeId && eventType) {
+        void processUberWebhookEvent(storeId, eventType, orderId);
+      }
+      return reply.status(200).send({});
+    });
+
+    async function processUberWebhookEvent(
+      storeId: string,
+      eventType: string,
+      uberOrderId: string | undefined,
+    ) {
+      try {
+        const restaurant = await db.query.posRestaurants.findFirst({
+          where: sql`(${posRestaurants.settings})::jsonb -> 'uberEats' ->> 'storeId' = ${storeId}`,
+          columns: { workspaceId: true, orgId: true, settings: true },
+        });
+        if (!restaurant) {
+          console.warn(`[uber-webhook] No workspace for storeId ${storeId}`);
+          return;
+        }
+        const { workspaceId, orgId } = restaurant;
+        const uberSettings = getSettingsObject(getSettingsObject(restaurant.settings)['uberEats']);
+        const autoAccept   = (uberSettings['autoAccept'] as boolean | undefined) ?? true;
+
+        if (eventType === 'orders.notification' && uberOrderId) {
+          const existing = await db.query.posOrders.findFirst({
+            where: and(eq(posOrders.workspaceId, workspaceId), eq(posOrders.externalId, uberOrderId)),
+            columns: { id: true },
+          });
+          if (existing) return; // dedup
+
+          const appToken   = await uberEatsLib.getAppToken();
+          const uberOrdRes = await fetch(
+            `https://api.uber.com/v1/eats/orders/${encodeURIComponent(uberOrderId)}`,
+            { headers: { Authorization: `Bearer ${appToken}` } },
+          );
+          if (!uberOrdRes.ok) {
+            console.error(`[uber-webhook] GET order ${uberOrderId} → ${uberOrdRes.status}`);
+            return;
+          }
+          const uberOrd = await uberOrdRes.json() as {
+            id:          string;
+            display_id?: string;
+            eater?:      { first_name?: string; last_name?: string };
+            cart?: {
+              items?: Array<{
+                title:     string;
+                quantity:  number;
+                price?:    { unit_price?: { amount?: number } };
+                customizations?: Array<{
+                  customization_name: string;
+                  customization_type: string;
+                  quantity:           number;
+                  price:              { amount: number };
+                }>;
+              }>;
+            };
+          };
+
+          const customerName = [uberOrd.eater?.first_name, uberOrd.eater?.last_name]
+            .filter(Boolean).join(' ') || null;
+          const displayId    = uberOrd.display_id ?? '';
+          const notes        = displayId ? `🚴 Uber #${displayId}` : '🚴 Uber Eats';
+
+          const lineItems = (uberOrd.cart?.items ?? []).map((item) => {
+            const unitCents  = Math.round((item.price?.unit_price?.amount ?? 0) * 100);
+            const modifiers  = (item.customizations ?? []).map((c) => ({
+              groupName:  c.customization_name,
+              optionName: c.customization_type,
+              priceCents: Math.round(c.price.amount * 100),
+            }));
+            const modTotal   = modifiers.reduce((sum, m) => sum + m.priceCents, 0);
+            return { itemName: item.title, itemPriceCents: unitCents, quantity: item.quantity,
+              selectedModifiers: modifiers, lineTotalCents: (unitCents + modTotal) * item.quantity };
+          });
+          const totalCents = lineItems.reduce((sum, li) => sum + li.lineTotalCents, 0);
+
+          const [seq] = await db
+            .insert(posOrderSequences)
+            .values({ workspaceId, lastOrderNumber: 1 })
+            .onConflictDoUpdate({
+              target: posOrderSequences.workspaceId,
+              set: { lastOrderNumber: sql`${posOrderSequences.lastOrderNumber} + 1`, updatedAt: sql`now()` },
+            })
+            .returning({ orderNumber: posOrderSequences.lastOrderNumber });
+
+          const [order] = await db
+            .insert(posOrders)
+            .values({
+              orgId, workspaceId,
+              orderNumber:  seq!.orderNumber,
+              status:       'pending',
+              totalCents,
+              customerName,
+              notes,
+              source:       'uber-eats',
+              externalId:   uberOrderId,
+            })
+            .returning();
+          if (!order) return;
+
+          if (lineItems.length > 0) {
+            await db.insert(posOrderItems).values(
+              lineItems.map((li) => ({
+                orderId: order.id, itemName: li.itemName, itemPriceCents: li.itemPriceCents,
+                quantity: li.quantity, selectedModifiers: li.selectedModifiers, lineTotalCents: li.lineTotalCents,
+              })),
+            );
+          }
+
+          broadcastKitchenEvent(workspaceId, {
+            type: 'order_created',
+            order: { id: order.id, orderNumber: order.orderNumber, totalCents,
+              status: 'pending', source: 'uber-eats', externalId: uberOrderId, customerName, notes },
+          });
+
+          if (autoAccept) {
+            const tok = await uberEatsLib.getAppToken();
+            await uberEatsLib.acceptOrder(tok, uberOrderId);
+          }
+
+        } else if (eventType === 'orders.cancel' && uberOrderId) {
+          const ord = await db.query.posOrders.findFirst({
+            where: and(eq(posOrders.workspaceId, workspaceId), eq(posOrders.externalId, uberOrderId)),
+            columns: { id: true, orgId: true },
+          });
+          if (!ord) return;
+          await transitionOrderStatus(ord.id, ord.orgId, 'cancelled');
+          broadcastKitchenEvent(workspaceId, { type: 'order_updated', orderId: ord.id, status: 'cancelled' });
+
+        } else if (eventType === 'store.provisioned') {
+          await upsertRestaurantSettings(workspaceId, orgId, {
+            uberEats: { ...uberSettings, connected: true },
+          });
+        } else if (eventType === 'store.deprovisioned') {
+          await upsertRestaurantSettings(workspaceId, orgId, {
+            uberEats: { ...uberSettings, connected: false },
+          });
+        }
+      } catch (err) {
+        console.error('[uber-webhook] processing error:', err);
+      }
+    }
+  });
+
+  // ── POST /pos/mgmt/uber-eats/orders/:id/accept ───────────────────────────────
+  app.post('/mgmt/uber-eats/orders/:id/accept', async (req, reply) => {
+    const auth = await requireWaiterOrSession(req, reply);
+    if (!auth) return;
+
+    const { id } = req.params as { id: string };
+    const order = await getOrderByIdForOrg(id, auth.orgId);
+    if (!order) return reply.status(404).send({ error: 'Order not found' });
+    if (order.source !== 'uber-eats' || !order.externalId) {
+      return reply.status(400).send({ error: 'Not an Uber Eats order' });
+    }
+
+    const tok = await uberEatsLib.getAppToken();
+    await uberEatsLib.acceptOrder(tok, order.externalId);
+    await transitionOrderStatus(id, auth.orgId, 'preparing');
+    broadcastKitchenEvent(order.workspaceId, { type: 'order_updated', orderId: id, status: 'preparing' });
+    return reply.send({ ok: true });
+  });
+
+  // ── POST /pos/mgmt/uber-eats/orders/:id/reject ───────────────────────────────
+  app.post('/mgmt/uber-eats/orders/:id/reject', async (req, reply) => {
+    const auth = await requireWaiterOrSession(req, reply);
+    if (!auth) return;
+
+    const { id } = req.params as { id: string };
+    const order = await getOrderByIdForOrg(id, auth.orgId);
+    if (!order) return reply.status(404).send({ error: 'Order not found' });
+    if (order.source !== 'uber-eats' || !order.externalId) {
+      return reply.status(400).send({ error: 'Not an Uber Eats order' });
+    }
+
+    const tok = await uberEatsLib.getAppToken();
+    await uberEatsLib.denyOrder(tok, order.externalId);
+    await transitionOrderStatus(id, auth.orgId, 'cancelled');
+    broadcastKitchenEvent(order.workspaceId, { type: 'order_updated', orderId: id, status: 'cancelled' });
+    return reply.send({ ok: true });
   });
 }

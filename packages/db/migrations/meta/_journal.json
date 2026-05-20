@@ -505,6 +505,13 @@
             "when": 1778747200000,
             "tag": "0071_workspace_rule_sets",
             "breakpoints": true
+        },
+        {
+            "idx": 72,
+            "version": "7",
+            "when": 1778749000000,
+            "tag": "0072_uber_eats",
+            "breakpoints": true
         }
     ]
 }

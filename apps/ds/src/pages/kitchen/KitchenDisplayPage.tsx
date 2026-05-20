@@ -21,6 +21,7 @@ interface KitchenOrder {
   notes: string | null;
   totalCents: number;
   createdAt: string;
+  source: string | null;
   items: KitchenOrderItem[];
 }
 
@@ -353,8 +354,11 @@ function OrderCard({ order, updating, theme: T, primaryAction, secondaryAction, 
   return (
     <div style={{ ...S.card, background: T.card, border: `1px solid ${urgent ? 'rgba(245,158,11,0.5)' : T.cardBorder}`, boxShadow: urgent ? '0 0 16px rgba(245,158,11,0.15)' : 'none' }}>
       <div style={S.cardTop}>
-        <span style={{ fontSize: 28, fontWeight: 900, color: '#f59e0b', letterSpacing: '0.05em' }}>#{String(order.orderNumber).padStart(3, '0')}</span>
-        {order.customerName && <span style={{ fontSize: 16, fontWeight: 600, flex: 1 }}>{order.customerName}</span>}
+        <span style={{ fontSize: 28, fontWeight: 900, color: '#f59e0b', letterSpacing: '0.05em' }}>#{String(order.orderNumber).padStart(3, '0')}</span>        {order.source === 'uber-eats' && (
+          <span style={{ fontSize: 13, fontWeight: 700, background: '#06b6d4', color: '#000', borderRadius: 8, padding: '2px 8px', letterSpacing: '0.05em' }}>
+            🚴 Uber
+          </span>
+        )}        {order.customerName && <span style={{ fontSize: 16, fontWeight: 600, flex: 1 }}>{order.customerName}</span>}
         <span style={{ fontSize: 13, color: urgent ? '#f59e0b' : T.dim, marginLeft: 'auto' }}>
           {urgent ? 'âš  ' : ''}{timeAgo(order.createdAt)}
         </span>

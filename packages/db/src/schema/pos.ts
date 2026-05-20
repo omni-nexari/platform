@@ -110,6 +110,10 @@ export const posOrders = pgTable(
     customerName: text('customer_name'),
     // Free-text notes from the customer
     notes:        text('notes'),
+    // Order source: 'pos' (default), 'uber-eats', 'kiosk'
+    source:       text('source').notNull().default('pos'),
+    // External order ID from the originating platform (e.g. Uber Eats order UUID)
+    externalId:   text('external_id'),
     completedAt:  timestamp('completed_at', { withTimezone: true }),
     cancelledAt:  timestamp('cancelled_at', { withTimezone: true }),
     createdAt:    timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -119,6 +123,7 @@ export const posOrders = pgTable(
     index('idx_pos_orders_workspace').on(t.workspaceId),
     index('idx_pos_orders_status').on(t.status),
     index('idx_pos_orders_created').on(t.createdAt),
+    index('idx_pos_orders_external_id').on(t.externalId),
   ],
 );
 

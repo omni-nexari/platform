@@ -6,7 +6,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
 import { useAuthStore } from '../../lib/auth.js';
-import { useCmsEnabled, usePosEnabled } from '../../lib/modules.js';
 import { UpdateDeviceSchema } from '@signage/shared';
 import type { UpdateDeviceInput, DeviceCommandInput, WindowsPlayerSettings } from '@signage/shared';
 import {
@@ -962,10 +961,6 @@ export function DeviceDetailContent({
   const [selectedTimerSlot, setSelectedTimerSlot] = useState(1);
   const [timerSlots, setTimerSlots] = useState<Record<number, TimerSlotState>>({});
   const [activeTab, setActiveTab] = useState<DeviceTabId>('info');
-
-  // Must be declared before any early-return so hooks order is stable
-  const cmsEnabled     = useCmsEnabled();
-  const posEnabled     = usePosEnabled();
 
   // ── Network config state ────────────────────────────────────────────
   type IpMode   = 'dhcp'     | 'static';
@@ -2388,13 +2383,17 @@ export function DeviceDetailContent({
                 className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]" />
             </div>
 
-            {!isEpaper && (cmsEnabled || posEnabled) && (
+            {!isEpaper && (
             <div className="sm:col-span-2">
               <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Device Role</label>
               <select {...register('type')}
                 className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]">
-                {cmsEnabled && <option value="signage">Signage</option>}
-                {posEnabled && <option value="pos">POS</option>}
+                <option value="signage">Signage (default)</option>
+                <option value="kiosk">POS Kiosk</option>
+                <option value="kitchen">POS Kitchen Display</option>
+                <option value="order-pad">POS Waiter Tablet</option>
+                <option value="menu-board">Menu Board</option>
+                <option value="pos">POS (general)</option>
               </select>
             </div>
             )}
