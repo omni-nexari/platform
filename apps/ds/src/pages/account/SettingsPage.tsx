@@ -4180,18 +4180,26 @@ function PosUberEatsSection({ wsId }: { wsId: string | null }) {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const uberSession   = searchParams.get('uber_session');
-  const isPopupClose  = searchParams.get('popup') === '1' && !!uberSession && !!window.opener;
+  // window.opener is nulled by browsers after cross-origin navigation (COOP), so
+  // don't gate on it — use BroadcastChannel as primary, opener postMessage as fallback.
+  const isPopupClose = searchParams.get('popup') === '1' && !!uberSession;
 
-  // Popup close: post message to parent then close
+  // Popup close: broadcast session to parent then close
   useEffect(() => {
     if (!isPopupClose || !uberSession) return;
     try {
+      const bc = new BroadcastChannel('uber_oauth');
+      bc.postMessage({ type: 'uber_oauth_callback', session: uberSession });
+      bc.close();
+    } catch { /* BroadcastChannel not available */ }
+    // Also try opener in case it's still set (same-origin opener)
+    try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window.opener as any).postMessage(
+      (window.opener as any)?.postMessage(
         { type: 'uber_oauth_callback', session: uberSession },
         window.location.origin,
       );
-    } catch { /* opener may be closed */ }
+    } catch { /* opener may be null or closed */ }
     window.close();
   }, [isPopupClose, uberSession]);
 
@@ -4221,16 +4229,26 @@ function PosUberEatsSection({ wsId }: { wsId: string | null }) {
     if (activeSession && !uberStatus?.connected) setWizardStep('store-select');
   }, [activeSession, uberStatus?.connected]);
 
-  // Listen for popup postMessage (popup flow)
+  // Listen for popup callback via BroadcastChannel (primary) and window message (fallback)
   useEffect(() => {
-    const handler = (e: MessageEvent) => {
-      if (e.origin !== window.location.origin) return;
-      const data = e.data as { type?: string; session?: string };
+    const handle = (data: { type?: string; session?: string }) => {
       if (data.type !== 'uber_oauth_callback' || !data.session) return;
       setPendingSession(data.session);
     };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
+    const msgHandler = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      handle(e.data as { type?: string; session?: string });
+    };
+    window.addEventListener('message', msgHandler);
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel('uber_oauth');
+      bc.onmessage = (e: MessageEvent) => handle(e.data as { type?: string; session?: string });
+    } catch { /* not supported */ }
+    return () => {
+      window.removeEventListener('message', msgHandler);
+      bc?.close();
+    };
   }, []);
 
   const activateMut = useMutation({
