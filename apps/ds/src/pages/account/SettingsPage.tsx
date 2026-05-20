@@ -51,6 +51,11 @@ import {
   CalendarRange,
   Globe,
   ExternalLink,
+  ShoppingBag,
+  CheckCircle,
+  XCircle,
+  ArrowDownToLine,
+  ChevronRight,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
@@ -156,6 +161,7 @@ type SectionId =
   | 'pos-hardware'
   | 'pos-kiosk'
   | 'pos-loyalty'
+  | 'pos-uber-eats'
   | 'integrations';
 
 const SECTIONS: {
@@ -183,6 +189,7 @@ const SECTIONS: {
   { id: 'pos-hardware',   label: 'Hardware',      icon: Printer,         group: 'Point of Sale', posOnly: true },
   { id: 'pos-kiosk',      label: 'Kiosk',         icon: Smartphone,      group: 'Point of Sale', posOnly: true },
   { id: 'pos-loyalty',    label: 'Loyalty',       icon: Gift,            group: 'Point of Sale', posOnly: true },
+  { id: 'pos-uber-eats',  label: 'Uber Eats',     icon: ShoppingBag,     group: 'Point of Sale', posOnly: true },
 ];
 
 const SECTION_LABELS: Record<SectionId, string> = {
@@ -202,6 +209,7 @@ const SECTION_LABELS: Record<SectionId, string> = {
   'pos-hardware':   'Hardware',
   'pos-kiosk':      'Kiosk',
   'pos-loyalty':    'Loyalty',
+  'pos-uber-eats':  'Uber Eats',
 };
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
@@ -4149,6 +4157,480 @@ function PosLoyaltySection({ wsId }: { wsId: string | null }) {
   );
 }
 
+// ─── PosUberEatsSection — Uber Eats integration wizard ────────────────────────
+
+type UberEatsStatus = {
+  connected:    boolean;
+  storeId:      string | null;
+  storeName:    string | null;
+  storeAddress: string | null;
+  autoAccept:   boolean;
+  webhookUrl:   string;
+};
+
+type UberEatsStore = {
+  store_id: string;
+  name:     string;
+  location: { address?: string; city?: string };
+};
+
+type WizardStep = 'idle' | 'store-select' | 'import-prompt' | 'sync-prompt';
+
+function PosUberEatsSection({ wsId }: { wsId: string | null }) {
+  const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const uberSession   = searchParams.get('uber_session');
+  const isPopupClose  = searchParams.get('popup') === '1' && !!uberSession && !!window.opener;
+
+  // Popup close: post message to parent then close
+  useEffect(() => {
+    if (!isPopupClose || !uberSession) return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window.opener as any).postMessage(
+        { type: 'uber_oauth_callback', session: uberSession },
+        window.location.origin,
+      );
+    } catch { /* opener may be closed */ }
+    window.close();
+  }, [isPopupClose, uberSession]);
+
+  const [wizardStep, setWizardStep]       = useState<WizardStep>('idle');
+  const [selectedStoreId, setSelectedStoreId] = useState('');
+  const [activatedStore, setActivatedStore] = useState<{ name: string; address: string | null } | null>(null);
+  const [copiedWebhook, setCopiedWebhook]  = useState(false);
+  const [pendingSession, setPendingSession] = useState<string | null>(null);
+
+  // Active session: prefer URL param (normal redirect flow), fall back to popup-received session
+  const activeSession = uberSession ?? pendingSession;
+
+  const { data: uberStatus, refetch: refetchStatus } = useQuery<UberEatsStatus>({
+    queryKey: ['pos-uber-eats-settings', wsId],
+    queryFn:  () => api.get(`/pos/mgmt/uber-eats?workspaceId=${wsId}`),
+    enabled:  !!wsId,
+  });
+
+  const { data: storesData } = useQuery<{ stores: UberEatsStore[] }>({
+    queryKey: ['pos-uber-eats-stores-settings', activeSession],
+    queryFn:  () => api.get(`/pos/mgmt/uber-eats/stores?session=${activeSession}`),
+    enabled:  !!activeSession && !uberStatus?.connected,
+  });
+
+  // Advance to store-select when session is present and not yet connected
+  useEffect(() => {
+    if (activeSession && !uberStatus?.connected) setWizardStep('store-select');
+  }, [activeSession, uberStatus?.connected]);
+
+  // Listen for popup postMessage (popup flow)
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      const data = e.data as { type?: string; session?: string };
+      if (data.type !== 'uber_oauth_callback' || !data.session) return;
+      setPendingSession(data.session);
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  const activateMut = useMutation({
+    mutationFn: () => api.post<{ ok: boolean; storeName: string; storeAddress: string | null }>(
+      '/pos/mgmt/uber-eats/activate',
+      { session: activeSession, storeId: selectedStoreId },
+    ),
+    onSuccess: (data) => {
+      // Clean uber_session from URL
+      const next = new URLSearchParams(searchParams);
+      next.delete('uber_session');
+      next.delete('popup');
+      setSearchParams(next, { replace: true });
+      setPendingSession(null);
+      setActivatedStore({ name: data.storeName, address: data.storeAddress });
+      void refetchStatus();
+      setWizardStep('import-prompt');
+    },
+    onError: (err: unknown) => toast.error(parseApiError(err) ?? 'Failed to activate store'),
+  });
+
+  const importMut = useMutation({
+    mutationFn: () => api.post<{ ok: boolean; name: string; address: string | null }>(
+      '/pos/mgmt/uber-eats/import-restaurant',
+      { workspaceId: wsId },
+    ),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['pos-restaurant', wsId] });
+      toast.success(`Restaurant profile updated: ${data.name}`);
+      setWizardStep('sync-prompt');
+    },
+    onError: (err: unknown) => toast.error(parseApiError(err) ?? 'Import failed'),
+  });
+
+  const syncMenuMut = useMutation({
+    mutationFn: () => api.post(`/pos/mgmt/uber-eats/sync-menu?workspaceId=${wsId}`, {}),
+    onSuccess: () => {
+      toast.success('Menu synced to Uber Eats');
+      setWizardStep('idle');
+      void refetchStatus();
+    },
+    onError: (err: unknown) => toast.error(parseApiError(err) ?? 'Menu sync failed'),
+  });
+
+  const autoAcceptMut = useMutation({
+    mutationFn: (autoAccept: boolean) =>
+      api.put('/pos/mgmt/uber-eats/settings', { workspaceId: wsId, autoAccept }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pos-uber-eats-settings', wsId] });
+    },
+    onError: (err: unknown) => toast.error(parseApiError(err) ?? 'Failed to update settings'),
+  });
+
+  const disconnectMut = useMutation({
+    mutationFn: () => api.delete(`/pos/mgmt/uber-eats?workspaceId=${wsId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pos-uber-eats-settings', wsId] });
+      toast.success('Uber Eats disconnected');
+    },
+    onError: (err: unknown) => toast.error(parseApiError(err) ?? 'Failed to disconnect'),
+  });
+
+  // Build the connect URL (popup: fetch redirect URL via api.get then window.open)
+  async function handleConnect() {
+    if (!wsId) return;
+    try {
+      const { redirectUrl } = await api.get<{ redirectUrl: string }>(
+        `/pos/mgmt/uber-eats/connect?workspaceId=${wsId}&json=1&returnTo=settings&popup=1`,
+      );
+      const popup = window.open(redirectUrl, 'uber_oauth', 'width=600,height=700,left=200,top=100');
+      if (!popup) {
+        // Blocked — fall back to full redirect
+        window.location.href = redirectUrl;
+      }
+    } catch (err: unknown) {
+      toast.error(parseApiError(err) ?? 'Could not start Uber Eats authorization');
+    }
+  }
+
+  if (!wsId) {
+    return <Callout tone="accent">Select a workspace to manage Uber Eats integration.</Callout>;
+  }
+
+  // ── Wizard: step overlays ────────────────────────────────────────────────────
+
+  if (wizardStep === 'store-select' && activeSession) {
+    return (
+      <div className="space-y-4">
+        <Callout tone="accent">
+          Uber Eats authorised. Select the store to connect to this workspace.
+        </Callout>
+        <SectionCard>
+          <SectionCardHeader>
+            <div className="flex items-center gap-2">
+              <ShoppingBag size={14} className="text-[var(--accent)]" />
+              <h3 className="text-sm font-semibold">Select Store</h3>
+            </div>
+            <Badge tone="info">Step 1 of 3</Badge>
+          </SectionCardHeader>
+          <SectionCardBody className="space-y-4">
+            {!storesData ? (
+              <Skeleton className="h-10 rounded-xl" />
+            ) : (
+              <select
+                value={selectedStoreId}
+                onChange={(e) => setSelectedStoreId(e.target.value)}
+                className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              >
+                <option value="">— Select a store —</option>
+                {storesData.stores.map((s) => (
+                  <option key={s.store_id} value={s.store_id}>
+                    {s.name}{s.location.city ? ` · ${s.location.city}` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                className="ui-btn-secondary text-xs"
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  next.delete('uber_session'); next.delete('popup');
+                  setSearchParams(next, { replace: true });
+                  setPendingSession(null);
+                  setWizardStep('idle');
+                }}
+              >Cancel</button>
+              <button
+                className="ui-btn-primary flex items-center gap-1.5"
+                disabled={!selectedStoreId || activateMut.isPending}
+                onClick={() => activateMut.mutate()}
+              >
+                <ChevronRight size={14} />
+                {activateMut.isPending ? 'Connecting…' : 'Connect Store'}
+              </button>
+            </div>
+          </SectionCardBody>
+        </SectionCard>
+      </div>
+    );
+  }
+
+  if (wizardStep === 'import-prompt') {
+    const store = activatedStore ?? { name: uberStatus?.storeName ?? '', address: uberStatus?.storeAddress ?? null };
+    return (
+      <div className="space-y-4">
+        <Callout tone="accent">
+          <div className="flex items-center gap-2">
+            <CheckCircle size={14} className="shrink-0 text-green-400" />
+            Connected to <strong>{store.name}</strong>
+            {store.address ? <span className="text-[var(--text-muted)]">· {store.address}</span> : null}
+          </div>
+        </Callout>
+        <SectionCard>
+          <SectionCardHeader>
+            <div className="flex items-center gap-2">
+              <ArrowDownToLine size={14} className="text-[var(--accent)]" />
+              <h3 className="text-sm font-semibold">Import Restaurant Profile</h3>
+            </div>
+            <Badge tone="info">Step 2 of 3</Badge>
+          </SectionCardHeader>
+          <SectionCardBody className="space-y-4">
+            <p className="text-sm text-[var(--text-muted)]">
+              Import your restaurant name and address from Uber Eats into your workspace settings?
+            </p>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 space-y-1">
+              <p className="text-xs font-medium text-[var(--text)]">{store.name}</p>
+              {store.address && <p className="text-xs text-[var(--text-muted)]">{store.address}</p>}
+            </div>
+            <p className="text-xs text-[var(--text-muted)]">
+              Only name and address are imported — all other workspace settings remain unchanged.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                className="ui-btn-secondary text-xs"
+                onClick={() => setWizardStep('sync-prompt')}
+              >Skip</button>
+              <button
+                className="ui-btn-primary flex items-center gap-1.5"
+                disabled={importMut.isPending}
+                onClick={() => importMut.mutate()}
+              >
+                <ArrowDownToLine size={14} />
+                {importMut.isPending ? 'Importing…' : 'Import'}
+              </button>
+            </div>
+          </SectionCardBody>
+        </SectionCard>
+      </div>
+    );
+  }
+
+  if (wizardStep === 'sync-prompt') {
+    return (
+      <div className="space-y-4">
+        <Callout tone="accent">
+          <div className="flex items-center gap-2">
+            <CheckCircle size={14} className="shrink-0 text-green-400" />
+            Setup almost complete
+          </div>
+        </Callout>
+        <SectionCard>
+          <SectionCardHeader>
+            <div className="flex items-center gap-2">
+              <RefreshCw size={14} className="text-[var(--accent)]" />
+              <h3 className="text-sm font-semibold">Sync Menu to Uber Eats</h3>
+            </div>
+            <Badge tone="info">Step 3 of 3</Badge>
+          </SectionCardHeader>
+          <SectionCardBody className="space-y-4">
+            <p className="text-sm text-[var(--text-muted)]">
+              Push your current POS menu to Uber Eats so customers can order your items through the app.
+            </p>
+            <p className="text-xs text-[var(--text-muted)]">
+              You can re-sync at any time from the connected state. Uber will also send a refresh request automatically.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                className="ui-btn-secondary text-xs"
+                onClick={() => { setWizardStep('idle'); void refetchStatus(); }}
+              >Skip for now</button>
+              <button
+                className="ui-btn-primary flex items-center gap-1.5"
+                disabled={syncMenuMut.isPending}
+                onClick={() => syncMenuMut.mutate()}
+              >
+                <RefreshCw size={14} className={syncMenuMut.isPending ? 'animate-spin' : ''} />
+                {syncMenuMut.isPending ? 'Syncing…' : 'Sync Menu'}
+              </button>
+            </div>
+          </SectionCardBody>
+        </SectionCard>
+      </div>
+    );
+  }
+
+  // ── Connected state ──────────────────────────────────────────────────────────
+
+  if (uberStatus?.connected) {
+    return (
+      <div className="space-y-4">
+        <SectionCard>
+          <SectionCardHeader>
+            <div className="flex items-center gap-2">
+              <ShoppingBag size={14} className="text-[var(--accent)]" />
+              <div>
+                <h3 className="text-sm font-semibold">Uber Eats</h3>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                  {uberStatus.storeName ?? uberStatus.storeId}
+                  {uberStatus.storeAddress ? ` · ${uberStatus.storeAddress}` : ''}
+                </p>
+              </div>
+            </div>
+            <Badge tone="success"><CheckCircle size={11} className="inline mr-1" />Connected</Badge>
+          </SectionCardHeader>
+          <SectionCardBody className="space-y-5">
+
+            {/* Auto-accept toggle */}
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-[var(--text-muted)] flex-1">Auto-accept incoming orders</span>
+              <button
+                role="switch"
+                aria-checked={uberStatus.autoAccept}
+                disabled={autoAcceptMut.isPending}
+                onClick={() => autoAcceptMut.mutate(!uberStatus.autoAccept)}
+                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors ${
+                  uberStatus.autoAccept ? 'bg-[var(--accent)]' : 'bg-[var(--border)]'
+                } disabled:opacity-50`}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${
+                  uberStatus.autoAccept ? 'translate-x-4' : 'translate-x-0.5'
+                }`} />
+              </button>
+              <span className="text-xs text-[var(--text-muted)] w-36">
+                {uberStatus.autoAccept ? 'On — auto accepted' : 'Off — manual via kitchen display'}
+              </span>
+            </div>
+
+            {/* Sync menu */}
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
+              <div>
+                <p className="text-sm font-medium text-[var(--text)]">Menu sync</p>
+                <p className="text-xs text-[var(--text-muted)]">Push your current POS menu to Uber Eats</p>
+              </div>
+              <button
+                className="ui-btn-secondary shrink-0 flex items-center gap-1.5 text-xs"
+                disabled={syncMenuMut.isPending}
+                onClick={() => syncMenuMut.mutate()}
+              >
+                <RefreshCw size={13} className={syncMenuMut.isPending ? 'animate-spin' : ''} />
+                {syncMenuMut.isPending ? 'Syncing…' : 'Sync Now'}
+              </button>
+            </div>
+
+            {/* Import restaurant profile */}
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
+              <div>
+                <p className="text-sm font-medium text-[var(--text)]">Import profile from Uber</p>
+                <p className="text-xs text-[var(--text-muted)]">Update workspace name &amp; address from Uber store data</p>
+              </div>
+              <button
+                className="ui-btn-secondary shrink-0 flex items-center gap-1.5 text-xs"
+                disabled={importMut.isPending}
+                onClick={() => importMut.mutate()}
+              >
+                <ArrowDownToLine size={13} />
+                {importMut.isPending ? 'Importing…' : 'Import'}
+              </button>
+            </div>
+
+            {/* Webhook URL */}
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wide">Webhook URL</label>
+              <p className="text-[10px] text-[var(--text-muted)]">Register this once in your Uber Eats Developer Dashboard under Webhooks.</p>
+              <div className="flex items-center gap-2">
+                <input
+                  readOnly
+                  value={uberStatus.webhookUrl}
+                  className="flex-1 truncate rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text-muted)] outline-none"
+                />
+                <button
+                  className="ui-btn-secondary shrink-0 flex items-center gap-1.5 text-xs"
+                  onClick={async () => {
+                    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(uberStatus.webhookUrl);
+                    setCopiedWebhook(true);
+                    setTimeout(() => setCopiedWebhook(false), 2000);
+                  }}
+                >
+                  <Copy size={13} />{copiedWebhook ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+            </div>
+
+            {/* Disconnect */}
+            <div className="pt-2 border-t border-[var(--border)]">
+              <button
+                className="ui-btn-secondary text-xs flex items-center gap-1.5 text-red-400 border-red-400/30 hover:bg-red-500/10"
+                disabled={disconnectMut.isPending}
+                onClick={() => {
+                  if (window.confirm('Disconnect Uber Eats? This will deprovision the store and stop order reception.')) {
+                    disconnectMut.mutate();
+                  }
+                }}
+              >
+                <XCircle size={13} />
+                {disconnectMut.isPending ? 'Disconnecting…' : 'Disconnect Uber Eats'}
+              </button>
+            </div>
+          </SectionCardBody>
+        </SectionCard>
+      </div>
+    );
+  }
+
+  // ── Idle: not connected ──────────────────────────────────────────────────────
+
+  return (
+    <div className="space-y-4">
+      <SectionCard>
+        <SectionCardHeader>
+          <div className="flex items-center gap-2">
+            <ShoppingBag size={14} className="text-[var(--accent)]" />
+            <div>
+              <h3 className="text-sm font-semibold">Uber Eats Integration</h3>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">Receive Uber Eats orders directly into your POS kitchen queue</p>
+            </div>
+          </div>
+        </SectionCardHeader>
+        <SectionCardBody className="space-y-4">
+          <Callout tone="accent">
+            Connect your Uber Eats merchant account to receive orders, push your menu, and manage availability — all from one place.
+          </Callout>
+          <ul className="space-y-2 text-sm text-[var(--text-muted)]">
+            {[
+              'Orders appear instantly in the kitchen display and waiter tablet',
+              'Auto-accept or manually approve each order',
+              'Push your POS menu to Uber Eats in one click',
+              'Mark items as sold out — synced to Uber automatically',
+            ].map((item) => (
+              <li key={item} className="flex items-start gap-2">
+                <Check size={13} className="mt-0.5 shrink-0 text-[var(--accent)]" />
+                {item}
+              </li>
+            ))}
+          </ul>
+          <div>
+            <button
+              className="ui-btn-primary flex items-center gap-2"
+              onClick={() => void handleConnect()}
+            >
+              <ShoppingBag size={15} />
+              Connect with Uber Eats
+            </button>
+          </div>
+        </SectionCardBody>
+      </SectionCard>
+    </div>
+  );
+}
+
 // ─── Main SettingsPage ────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -4179,7 +4661,7 @@ export default function SettingsPage() {
 
   const WORKSPACE_SECTIONS: SectionId[] = [
     'workspace', 'tags', 'emergency', 'api-keys', 'integrations',
-    'pos-restaurant', 'pos-menu', 'pos-tables', 'pos-hardware', 'pos-kiosk', 'pos-loyalty',
+    'pos-restaurant', 'pos-menu', 'pos-tables', 'pos-hardware', 'pos-kiosk', 'pos-loyalty', 'pos-uber-eats',
   ];
   const needsWorkspacePicker = WORKSPACE_SECTIONS.includes(activeSection);
 
@@ -4252,6 +4734,7 @@ export default function SettingsPage() {
           {activeSection === 'pos-hardware'   && <ComingSoon title="Hardware" description="Receipt printer, barcode scanner, and cash drawer setup coming soon." />}
           {activeSection === 'pos-kiosk'      && <PosKioskSection wsId={resolvedWsId} />}
           {activeSection === 'pos-loyalty'    && <PosLoyaltySection wsId={resolvedWsId} />}
+          {activeSection === 'pos-uber-eats'  && <PosUberEatsSection wsId={resolvedWsId} />}
         </div>
       </div>
     </div>

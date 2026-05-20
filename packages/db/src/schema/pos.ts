@@ -100,6 +100,8 @@ export const posOrders = pgTable(
     workspaceId:  uuid('workspace_id').notNull().references(() => workspaces.id),
     // Which kiosk device placed the order (nullable — could be manual entry)
     deviceId:     uuid('device_id').references(() => devices.id, { onDelete: 'set null' }),
+    // Which dine-in table this order belongs to (nullable — takeout/kiosk have no table)
+    tableId:      uuid('table_id').references(() => posTables.id, { onDelete: 'set null' }),
     // Human-readable sequential number per workspace, e.g. "#042"
     orderNumber:  integer('order_number').notNull(),
     // pending | preparing | ready | completed | cancelled
@@ -123,6 +125,7 @@ export const posOrders = pgTable(
     index('idx_pos_orders_workspace').on(t.workspaceId),
     index('idx_pos_orders_status').on(t.status),
     index('idx_pos_orders_created').on(t.createdAt),
+    index('idx_pos_orders_table').on(t.tableId),
     index('idx_pos_orders_external_id').on(t.externalId),
   ],
 );

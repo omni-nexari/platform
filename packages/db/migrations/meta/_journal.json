@@ -512,6 +512,13 @@
             "when": 1778749000000,
             "tag": "0072_uber_eats",
             "breakpoints": true
+        },
+        {
+            "idx": 73,
+            "version": "7",
+            "when": 1778750800000,
+            "tag": "0073_pos_order_table_link",
+            "breakpoints": true
         }
     ]
 }

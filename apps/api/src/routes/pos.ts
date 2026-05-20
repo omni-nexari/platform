@@ -2061,7 +2061,8 @@ export async function posRoutes(app: FastifyInstance) {
     const [order] = await db
       .insert(posOrders)
       .values({
-        orgId: menu.orgId, workspaceId, deviceId: tableId ?? null,
+        orgId: menu.orgId, workspaceId,
+        tableId:     tableId ?? null,
         orderNumber: seq!.orderNumber, status: 'pending', totalCents,
         customerName: customerName ?? null, notes: orderNotes,
       })
@@ -2787,23 +2788,34 @@ export async function posRoutes(app: FastifyInstance) {
 
     return reply.send({
       connected,
-      storeId:    connected ? (uberSettings['storeId']   as string)          : null,
-      storeName:  connected ? (uberSettings['storeName'] as string | null)    : null,
-      autoAccept: (uberSettings['autoAccept'] as boolean | undefined) ?? true,
+      storeId:      connected ? (uberSettings['storeId']       as string)          : null,
+      storeName:    connected ? (uberSettings['storeName']     as string | null)    : null,
+      storeAddress: connected ? (uberSettings['storeAddress']  as string | null)    : null,
+      autoAccept:   (uberSettings['autoAccept'] as boolean | undefined) ?? true,
       webhookUrl,
     });
   });
 
   // ── GET /pos/mgmt/uber-eats/connect?workspaceId= ─────────────────────────────
-  // Redirects the browser to Uber's OAuth authorize page
+  // Redirects the browser to Uber's OAuth authorize page.
+  // Pass ?json=1 to get { redirectUrl } as JSON instead of a 302 (used by popup flow).
+  // Pass ?returnTo=settings&popup=1 to tell the callback where to land.
   app.get('/mgmt/uber-eats/connect', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
-    const { workspaceId } = req.query as { workspaceId?: string };
+    const { workspaceId, json, returnTo, popup } = req.query as {
+      workspaceId?: string; json?: string; returnTo?: string; popup?: string;
+    };
     if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
 
     try {
       const state = crypto.randomUUID();
-      const url   = await uberEatsLib.buildAuthorizeUrl(state, { workspaceId, orgId: user.orgId });
+      const url   = await uberEatsLib.buildAuthorizeUrl(state, {
+        workspaceId,
+        orgId:    user.orgId,
+        ...(returnTo ? { returnTo } : {}),
+        popup:    popup === '1',
+      });
+      if (json === '1') return reply.send({ redirectUrl: url });
       return reply.redirect(url, 302);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -2840,6 +2852,14 @@ export async function posRoutes(app: FastifyInstance) {
         stores,
       });
 
+      // Determine redirect destination based on returnTo / popup context
+      if (context.returnTo === 'settings') {
+        const target = new URL(`${dsFallback}/settings`);
+        target.searchParams.set('section',      'pos-uber-eats');
+        target.searchParams.set('uber_session', sessionToken);
+        if (context.popup) target.searchParams.set('popup', '1');
+        return reply.redirect(target.toString(), 302);
+      }
       const target = new URL(`${dsFallback}/workspaces/${context.workspaceId}/pos/kiosk`);
       target.searchParams.set('uber_session', sessionToken);
       return reply.redirect(target.toString(), 302);
@@ -2884,18 +2904,22 @@ export async function posRoutes(app: FastifyInstance) {
     const store = stores.find((s) => s.store_id === parsed.data.storeId);
     if (!store) return reply.status(400).send({ error: 'Store not found in session' });
 
+    const storeAddress = [store.location.address, store.location.city]
+      .filter(Boolean).join(', ');
+
     await uberEatsLib.provisionStore(merchantToken, store.store_id, workspaceId);
     await upsertRestaurantSettings(workspaceId, user.orgId, {
       uberEats: {
         connected:     true,
         storeId:       store.store_id,
         storeName:     store.name,
+        storeAddress,
         autoAccept:    true,
         merchantToken: merchantToken,
       },
     });
     await uberEatsLib.deleteOAuthSession(parsed.data.session);
-    return reply.send({ ok: true, storeName: store.name });
+    return reply.send({ ok: true, storeName: store.name, storeAddress });
   });
 
   // ── PUT /pos/mgmt/uber-eats/settings ─────────────────────────────────────────
@@ -3305,6 +3329,44 @@ export async function posRoutes(app: FastifyInstance) {
       modifier_groups: uberModGroups,
     };
   }
+
+  // ── POST /pos/mgmt/uber-eats/import-restaurant ─────────────────────────────
+  // Pull restaurant name + address from stored Uber store data into posRestaurants.
+  app.post('/mgmt/uber-eats/import-restaurant', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { workspaceId } = req.body as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const restaurant = await db.query.posRestaurants.findFirst({
+      where: and(eq(posRestaurants.workspaceId, workspaceId), eq(posRestaurants.orgId, user.orgId)),
+      columns: { settings: true },
+    });
+    const uberSettings = getSettingsObject(getSettingsObject(restaurant?.settings ?? {})['uberEats']);
+    const storeName    = uberSettings['storeName']    as string | undefined;
+    const storeAddress = uberSettings['storeAddress'] as string | undefined;
+
+    if (!storeName) return reply.status(400).send({ error: 'Uber Eats not connected or store data missing' });
+
+    // Upsert the restaurant row so it always exists, then patch name + address
+    await db
+      .insert(posRestaurants)
+      .values({
+        orgId:       user.orgId,
+        workspaceId,
+        name:        storeName,
+        address:     storeAddress ?? null,
+      })
+      .onConflictDoUpdate({
+        target: posRestaurants.workspaceId,
+        set: {
+          ...(storeName    ? { name:    storeName    } : {}),
+          ...(storeAddress ? { address: storeAddress } : {}),
+          updatedAt: new Date(),
+        },
+      });
+
+    return reply.send({ ok: true, name: storeName, address: storeAddress ?? null });
+  });
 
   // ── POST /pos/mgmt/uber-eats/sync-menu ─────────────────────────────────────
   // Push the active POS menu to Uber Eats in full.

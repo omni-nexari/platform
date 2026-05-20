@@ -121,7 +121,7 @@ async function fetchClientCredentialsToken(): Promise<UberTokenResponse> {
  */
 export async function buildAuthorizeUrl(
   state: string,
-  context: { workspaceId: string; orgId: string },
+  context: { workspaceId: string; orgId: string; returnTo?: string; popup?: boolean },
 ): Promise<string> {
   const redis = getRedis();
   if (!redis) throw new Error('Redis is required for the Uber OAuth flow');
@@ -150,7 +150,7 @@ export async function buildAuthorizeUrl(
  */
 export async function consumeOAuthState(
   state: string,
-): Promise<{ workspaceId: string; orgId: string } | null> {
+): Promise<{ workspaceId: string; orgId: string; returnTo?: string; popup?: boolean } | null> {
   const redis = getRedis();
   if (!redis) return null;
 
@@ -158,7 +158,7 @@ export async function consumeOAuthState(
   const json = await redis.get(key);
   if (!json) return null;
   await redis.del(key);
-  return JSON.parse(json) as { workspaceId: string; orgId: string };
+  return JSON.parse(json) as { workspaceId: string; orgId: string; returnTo?: string; popup?: boolean };
 }
 
 /**
