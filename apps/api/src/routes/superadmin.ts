@@ -23,7 +23,10 @@ import {
   platformAdminNotifications,
   supportTickets,
   supportTicketMessages,
+  platformIntegrations,
 } from '@signage/db';
+import { encryptSecret } from '../services/crypto.js';
+import { bustUberCredCache } from '../lib/uber-eats.js';
 import { eq, isNull, count, sql, desc, and, inArray, asc, sum, gte, lte, gt } from 'drizzle-orm';
 import * as argon2 from 'argon2';
 import Redis from 'ioredis';
@@ -3662,6 +3665,68 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
       const contentType = getBrandAssetContentType(filename);
       return reply.type(contentType).send(fileBuffer);
+    },
+  );
+
+  // ── Platform integrations (OAuth app credentials) ────────────────────────
+
+  /** GET /superadmin/integrations/:type — returns config without exposing the secret */
+  app.get(
+    '/integrations/:type',
+    { onRequest: [app.authenticatePlatformAdmin] },
+    async (req, reply) => {
+      const { type } = req.params as { type: string };
+      const row = await db.query.platformIntegrations.findFirst({
+        where: eq(platformIntegrations.type, type),
+      });
+      return reply.send({
+        type,
+        clientId:  row?.clientId  ?? null,
+        hasSecret: Boolean(row?.clientSecretEnc),
+        enabled:   row?.enabled   ?? false,
+      });
+    },
+  );
+
+  /** POST /superadmin/integrations/:type — upsert credentials */
+  app.post(
+    '/integrations/:type',
+    { onRequest: [app.authenticatePlatformAdmin] },
+    async (req, reply) => {
+      const { type } = req.params as { type: string };
+      const ALLOWED_TYPES = new Set(['uber_eats', 'google_calendar', 'microsoft_calendar']);
+      if (!ALLOWED_TYPES.has(type)) {
+        return reply.status(400).send({ error: 'Unknown integration type' });
+      }
+      const body = req.body as { clientId?: string; clientSecret?: string; enabled?: boolean };
+      const clientId     = typeof body.clientId     === 'string' ? body.clientId.trim()     : undefined;
+      const clientSecret = typeof body.clientSecret === 'string' ? body.clientSecret.trim() : undefined;
+      const enabled      = typeof body.enabled      === 'boolean' ? body.enabled             : undefined;
+
+      const existing = await db.query.platformIntegrations.findFirst({
+        where: eq(platformIntegrations.type, type),
+      });
+
+      if (existing) {
+        await db.update(platformIntegrations)
+          .set({
+            ...(clientId     !== undefined ? { clientId }                                    : {}),
+            ...(clientSecret !== undefined ? { clientSecretEnc: encryptSecret(clientSecret) ?? undefined } : {}),
+            ...(enabled      !== undefined ? { enabled }                                     : {}),
+            updatedAt: new Date(),
+          })
+          .where(eq(platformIntegrations.type, type));
+      } else {
+        await db.insert(platformIntegrations).values({
+          type,
+          clientId:        clientId        ?? null,
+          clientSecretEnc: clientSecret ? (encryptSecret(clientSecret) ?? null) : null,
+          enabled:         enabled ?? true,
+        });
+      }
+
+      if (type === 'uber_eats') bustUberCredCache();
+      return reply.status(204).send();
     },
   );
 }

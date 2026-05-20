@@ -519,6 +519,13 @@
             "when": 1778750800000,
             "tag": "0073_pos_order_table_link",
             "breakpoints": true
+        },
+        {
+            "idx": 74,
+            "version": "7",
+            "when": 1747612800000,
+            "tag": "0074_platform_integrations",
+            "breakpoints": true
         }
     ]
 }

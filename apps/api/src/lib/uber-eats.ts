@@ -13,6 +13,9 @@
  */
 import crypto from 'node:crypto';
 import { getRedis } from '../services/redis.js';
+import { db, platformIntegrations } from '@signage/db';
+import { eq } from 'drizzle-orm';
+import { decryptSecret } from '../services/crypto.js';
 
 // ── Uber API base URLs ────────────────────────────────────────────────────────
 const UBER_AUTH_URL   = 'https://auth.uber.com/oauth/v2/token';
@@ -22,17 +25,36 @@ const REDIS_APP_TOKEN = 'uber_eats:app_token';
 const REDIS_OAUTH_STATE_PREFIX   = 'uber_oauth:state:';
 const REDIS_OAUTH_SESSION_PREFIX = 'uber_oauth:session:';
 
-// ── Env var helpers ───────────────────────────────────────────────────────────
-export function getUberClientId(): string {
-  const id = process.env['UBER_CLIENT_ID'];
-  if (!id) throw new Error('UBER_CLIENT_ID env var not set');
-  return id;
+// ── Platform credential loader (DB-first, env var fallback) ─────────────────
+let _credCache: { clientId: string; clientSecret: string } | null = null;
+let _credCacheAt = 0;
+const CRED_CACHE_TTL_MS = 60_000;
+
+export async function getUberCredentials(): Promise<{ clientId: string; clientSecret: string }> {
+  const now = Date.now();
+  if (_credCache && now - _credCacheAt < CRED_CACHE_TTL_MS) return _credCache;
+
+  const row = await db.query.platformIntegrations.findFirst({
+    where: eq(platformIntegrations.type, 'uber_eats'),
+  });
+
+  const clientId     = row?.clientId     ?? process.env['UBER_CLIENT_ID']     ?? '';
+  const clientSecret = row?.clientSecretEnc
+    ? (decryptSecret(row.clientSecretEnc) ?? '')
+    : (process.env['UBER_CLIENT_SECRET'] ?? '');
+
+  if (!clientId || !clientSecret) {
+    throw new Error('Uber Eats credentials not configured — set via superadmin or UBER_CLIENT_ID/UBER_CLIENT_SECRET env vars');
+  }
+
+  _credCache   = { clientId, clientSecret };
+  _credCacheAt = now;
+  return _credCache;
 }
-export function getUberClientSecret(): string {
-  const secret = process.env['UBER_CLIENT_SECRET'];
-  if (!secret) throw new Error('UBER_CLIENT_SECRET env var not set');
-  return secret;
-}
+
+/** Bust the in-process credential cache (call after saving new credentials). */
+export function bustUberCredCache(): void { _credCache = null; }
+
 export function getUberRedirectUri(): string {
   const uri = process.env['UBER_REDIRECT_URI'];
   if (!uri) throw new Error('UBER_REDIRECT_URI env var not set');
@@ -93,9 +115,10 @@ export async function getAppToken(): Promise<string> {
 }
 
 async function fetchClientCredentialsToken(): Promise<UberTokenResponse> {
+  const { clientId, clientSecret } = await getUberCredentials();
   const body = new URLSearchParams({
-    client_id:     getUberClientId(),
-    client_secret: getUberClientSecret(),
+    client_id:     clientId,
+    client_secret: clientSecret,
     grant_type:    'client_credentials',
     scope:         'eats.store eats.order',
   });
@@ -133,8 +156,9 @@ export async function buildAuthorizeUrl(
     600, // 10 minutes
   );
 
+  const { clientId } = await getUberCredentials();
   const params = new URLSearchParams({
-    client_id:     getUberClientId(),
+    client_id:     clientId,
     response_type: 'code',
     scope:         'eats.pos_provisioning',
     redirect_uri:  getUberRedirectUri(),
@@ -165,9 +189,10 @@ export async function consumeOAuthState(
  * Exchange an authorization code for a merchant access token.
  */
 export async function exchangeCode(code: string): Promise<UberTokenResponse> {
+  const { clientId, clientSecret } = await getUberCredentials();
   const body = new URLSearchParams({
-    client_id:     getUberClientId(),
-    client_secret: getUberClientSecret(),
+    client_id:     clientId,
+    client_secret: clientSecret,
     grant_type:    'authorization_code',
     redirect_uri:  getUberRedirectUri(),
     code,
@@ -345,15 +370,15 @@ export async function denyOrder(
  * Uber signs with HMAC-SHA256 using the app's CLIENT_SECRET.
  * Returns true if the signature matches.
  */
-export function verifyWebhookSignature(
+export async function verifyWebhookSignature(
   rawBody: Buffer | string,
   signatureHeader: string,
-): boolean {
+): Promise<boolean> {
   try {
-    const secret = getUberClientSecret();
+    const { clientSecret } = await getUberCredentials();
     const body   = typeof rawBody === 'string' ? Buffer.from(rawBody) : rawBody;
     const digest = crypto
-      .createHmac('sha256', secret)
+      .createHmac('sha256', clientSecret)
       .update(body)
       .digest('hex')
       .toLowerCase();

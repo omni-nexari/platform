@@ -106,3 +106,17 @@ export const calendarConnectionCalendarsRelations = relations(
     }),
   }),
 );
+
+// ── Platform-level OAuth app credentials ──────────────────────────────────────
+// One row per integration type (e.g. 'uber_eats', 'google_calendar', 'microsoft_calendar').
+// clientSecretEnc is AES-256-GCM encrypted via services/crypto.ts encryptSecret().
+// clientId is stored plaintext — it is not sensitive.
+export const platformIntegrations = pgTable('platform_integrations', {
+  id:              uuid('id').primaryKey().defaultRandom(),
+  type:            text('type').notNull().unique(), // 'uber_eats' | 'google_calendar' | 'microsoft_calendar'
+  clientId:        text('client_id'),
+  clientSecretEnc: text('client_secret_enc'),       // encrypted via encryptSecret()
+  enabled:         boolean('enabled').notNull().default(true),
+  createdAt:       timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:       timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});

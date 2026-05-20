@@ -2998,7 +2998,7 @@ export async function posRoutes(app: FastifyInstance) {
       if (!sig || !rawBody) {
         return reply.status(400).send({ error: 'Missing signature or body' });
       }
-      if (!uberEatsLib.verifyWebhookSignature(rawBody, sig)) {
+      if (!await uberEatsLib.verifyWebhookSignature(rawBody, sig)) {
         return reply.status(401).send({ error: 'Invalid webhook signature' });
       }
 
