@@ -17,6 +17,7 @@ import { getRedis } from '../services/redis.js';
 // ── Uber API base URLs ────────────────────────────────────────────────────────
 const UBER_AUTH_URL   = 'https://auth.uber.com/oauth/v2/token';
 const UBER_API_BASE   = 'https://api.uber.com/v1/eats';
+const UBER_MENU_BASE  = 'https://api.uber.com/v2/eats';
 const REDIS_APP_TOKEN = 'uber_eats:app_token';
 const REDIS_OAUTH_STATE_PREFIX   = 'uber_oauth:state:';
 const REDIS_OAUTH_SESSION_PREFIX = 'uber_oauth:session:';
@@ -362,5 +363,68 @@ export function verifyWebhookSignature(
     );
   } catch {
     return false;
+  }
+}
+
+// ── 7. Menu API (v2) ──────────────────────────────────────────────────────────
+
+/**
+ * Upload (replace) the entire menu for a store.
+ * Uses the app token (eats.store scope, client_credentials).
+ * PUT /v2/eats/stores/{store_id}/menus → 204 No Content
+ */
+export async function uploadMenu(
+  appToken: string,
+  storeId: string,
+  payload: unknown,
+): Promise<void> {
+  const res = await fetch(
+    `${UBER_MENU_BASE}/stores/${encodeURIComponent(storeId)}/menus`,
+    {
+      method:  'PUT',
+      headers: {
+        Authorization:  `Bearer ${appToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Uber uploadMenu error ${res.status}: ${text}`);
+  }
+}
+
+/**
+ * Toggle availability of a single menu item on Uber.
+ * available=false → suspends the item (sold out) until far-future timestamp.
+ * available=true  → clears the suspension.
+ * POST /v2/eats/stores/{store_id}/menus/items/{item_id} → 204 No Content
+ */
+export async function updateItemAvailability(
+  appToken: string,
+  storeId: string,
+  itemId: string,
+  available: boolean,
+): Promise<void> {
+  const body = {
+    suspension_info: available
+      ? { suspension: null }
+      : { suspension: { suspend_until: 8640000000, reason: 'Sold out' } },
+  };
+  const res = await fetch(
+    `${UBER_MENU_BASE}/stores/${encodeURIComponent(storeId)}/menus/items/${encodeURIComponent(itemId)}`,
+    {
+      method:  'POST',
+      headers: {
+        Authorization:  `Bearer ${appToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Uber updateItemAvailability error ${res.status}: ${text}`);
   }
 }

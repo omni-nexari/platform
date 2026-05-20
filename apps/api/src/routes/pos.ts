@@ -3127,6 +3127,19 @@ export async function posRoutes(app: FastifyInstance) {
           await upsertRestaurantSettings(workspaceId, orgId, {
             uberEats: { ...uberSettings, connected: false },
           });
+        } else if (eventType === 'store.menu_refresh_request') {
+          // Uber is requesting a full menu re-push for this store
+          const uberStoreId = uberSettings['storeId'] as string | undefined;
+          if (uberStoreId) {
+            const appToken   = await uberEatsLib.getAppToken();
+            const menuPayload = await buildUberMenuPayload(workspaceId);
+            if (menuPayload) {
+              await uberEatsLib.uploadMenu(appToken, uberStoreId, menuPayload);
+              console.log(`[uber-webhook] menu refreshed for storeId ${uberStoreId}`);
+            } else {
+              console.warn(`[uber-webhook] menu_refresh_request: no active menu for workspace ${workspaceId}`);
+            }
+          }
         }
       } catch (err) {
         console.error('[uber-webhook] processing error:', err);
@@ -3169,6 +3182,173 @@ export async function posRoutes(app: FastifyInstance) {
     await uberEatsLib.denyOrder(tok, order.externalId);
     await transitionOrderStatus(id, auth.orgId, 'cancelled');
     broadcastKitchenEvent(order.workspaceId, { type: 'order_updated', orderId: id, status: 'cancelled' });
+    return reply.send({ ok: true });
+  });
+
+  // ── Uber Eats Menu helpers ────────────────────────────────────────────────────
+
+  /**
+   * Build an Uber-format MenuConfiguration from the workspace's active POS menu.
+   * Returns null if no active menu exists.
+   */
+  async function buildUberMenuPayload(workspaceId: string): Promise<unknown | null> {
+    const menu = await db.query.posMenus.findFirst({
+      where: and(
+        eq(posMenus.workspaceId, workspaceId),
+        eq(posMenus.isActive, true),
+        isNull(posMenus.deletedAt),
+      ),
+    });
+    if (!menu) return null;
+
+    const categories = await db.query.posCategories.findMany({
+      where: and(
+        eq(posCategories.menuId, menu.id),
+        eq(posCategories.isActive, true),
+        isNull(posCategories.deletedAt),
+      ),
+      orderBy: (t, { asc }) => [asc(t.sortOrder), asc(t.createdAt)],
+    });
+
+    const categoryIds = categories.map((c) => c.id);
+    const items = categoryIds.length > 0
+      ? await db.query.posItems.findMany({
+          where: and(
+            inArray(posItems.categoryId, categoryIds),
+            isNull(posItems.deletedAt),
+          ),
+          orderBy: (t, { asc }) => [asc(t.sortOrder), asc(t.createdAt)],
+        })
+      : [];
+
+    const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    const allDayAvailability = DAYS.map((day) => ({
+      day_of_week:  day,
+      time_periods: [{ start_time: '00:00', end_time: '23:59' }],
+    }));
+
+    type ModifierGroup = {
+      id: string; name: string; required: boolean; maxSelect: number;
+      options: Array<{ id: string; name: string; priceCents: number }>;
+    };
+
+    const uberItems: unknown[]     = [];
+    const uberModGroups: unknown[] = [];
+    const seenModGroups = new Set<string>();
+
+    for (const item of items) {
+      const modifiers = (item.modifiers as ModifierGroup[] | null) ?? [];
+
+      for (const mod of modifiers) {
+        if (!seenModGroups.has(mod.id)) {
+          seenModGroups.add(mod.id);
+          uberModGroups.push({
+            id:             mod.id,
+            title:          { translations: { en: mod.name } },
+            quantity_info:  {
+              quantity: {
+                min_permitted: mod.required ? 1 : 0,
+                max_permitted: mod.maxSelect,
+              },
+            },
+            modifier_options: mod.options.map((opt) => ({ type: 'ITEM', id: opt.id })),
+          });
+          for (const opt of mod.options) {
+            uberItems.push({
+              id:         opt.id,
+              title:      { translations: { en: opt.name } },
+              price_info: { price: opt.priceCents },
+              tax_info:   { tax_rate: 0 },
+            });
+          }
+        }
+      }
+
+      const itemPayload: Record<string, unknown> = {
+        id:         item.id,
+        title:      { translations: { en: item.name } },
+        price_info: { price: item.priceCents },
+        tax_info:   { tax_rate: 0 },
+      };
+      if (item.description) itemPayload['description'] = { translations: { en: item.description } };
+      if (item.imageUrl)    itemPayload['image_url']    = item.imageUrl;
+      if (!item.isAvailable) {
+        // suspend_until far-future = "sold out" on Uber
+        itemPayload['suspension_info'] = { suspension: { suspend_until: 8640000000 } };
+      }
+      if (modifiers.length > 0) {
+        itemPayload['modifier_group_ids'] = { ids: modifiers.map((m) => m.id) };
+      }
+      uberItems.push(itemPayload);
+    }
+
+    const catEntities = new Map<string, string[]>();
+    for (const item of items) {
+      const list = catEntities.get(item.categoryId) ?? [];
+      list.push(item.id);
+      catEntities.set(item.categoryId, list);
+    }
+
+    return {
+      menus: [{
+        id:                   menu.id,
+        title:                { translations: { en: menu.name } },
+        service_availability: allDayAvailability,
+        category_ids:         categories.map((c) => c.id),
+      }],
+      categories: categories.map((cat) => ({
+        id:       cat.id,
+        title:    { translations: { en: cat.name } },
+        entities: (catEntities.get(cat.id) ?? []).map((itemId) => ({ type: 'ITEM', id: itemId })),
+      })),
+      items:           uberItems,
+      modifier_groups: uberModGroups,
+    };
+  }
+
+  // ── POST /pos/mgmt/uber-eats/sync-menu ─────────────────────────────────────
+  // Push the active POS menu to Uber Eats in full.
+  app.post('/mgmt/uber-eats/sync-menu', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const restaurant = await db.query.posRestaurants.findFirst({
+      where: eq(posRestaurants.workspaceId, workspaceId),
+      columns: { settings: true },
+    });
+
+    const uberSettings = getSettingsObject(getSettingsObject(restaurant?.settings ?? {})['uberEats']);
+    const storeId      = uberSettings['storeId'] as string | undefined;
+    if (!storeId) return reply.status(400).send({ error: 'Uber Eats not connected for this workspace' });
+
+    const menuPayload = await buildUberMenuPayload(workspaceId);
+    if (!menuPayload) return reply.status(404).send({ error: 'No active menu found' });
+
+    const appToken = await uberEatsLib.getAppToken();
+    await uberEatsLib.uploadMenu(appToken, storeId, menuPayload);
+    return reply.send({ ok: true });
+  });
+
+  // ── POST /pos/mgmt/uber-eats/items/:itemId/availability ────────────────────
+  // Sync a single item's availability to Uber (suspend = sold out).
+  app.post('/mgmt/uber-eats/items/:itemId/availability', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { itemId }    = req.params as { itemId: string };
+    const { workspaceId, available } = req.body as { workspaceId?: string; available?: boolean };
+    if (!workspaceId || available === undefined) {
+      return reply.status(400).send({ error: 'workspaceId and available required' });
+    }
+
+    const restaurant = await db.query.posRestaurants.findFirst({
+      where: eq(posRestaurants.workspaceId, workspaceId),
+      columns: { settings: true },
+    });
+
+    const uberSettings = getSettingsObject(getSettingsObject(restaurant?.settings ?? {})['uberEats']);
+    const storeId      = uberSettings['storeId'] as string | undefined;
+    if (!storeId) return reply.status(400).send({ error: 'Uber Eats not connected for this workspace' });
+
+    const appToken = await uberEatsLib.getAppToken();
+    await uberEatsLib.updateItemAvailability(appToken, storeId, itemId, available);
     return reply.send({ ok: true });
   });
 }
