@@ -666,6 +666,42 @@ function _mbBuildStateHtml(title: string, message: string): string {
   return `<div style="display:flex;align-items:center;justify-content:center;height:100%;padding:32px;background:linear-gradient(160deg,#1f1510 0%,#120d0a 100%);color:#f7f2eb;font-family:'Segoe UI',Arial,sans-serif;text-align:center;box-sizing:border-box;"><div style="max-width:720px;"><div style="font-size:30px;font-weight:700;">${_mbEscHtml(title)}</div><div style="margin-top:12px;font-size:16px;line-height:1.6;color:rgba(247,242,235,0.78);">${_mbEscHtml(message)}</div></div></div>`;
 }
 
+function _mbShardSections(sections: any[], screenCount: number, screenIndex: number, strategy: string): any[] {
+  if (screenCount <= 1) return sections;
+  const idx = Math.max(0, Math.min(screenCount - 1, screenIndex));
+  if (strategy === 'by-category') return sections.filter((_, i) => i % screenCount === idx);
+  const allItems: { item: any; cat: any }[] = [];
+  for (const cat of sections) for (const item of cat.items) allItems.push({ item, cat });
+  let slotItems: typeof allItems;
+  if (strategy === 'by-item-roundrobin') {
+    slotItems = allItems.filter((_, i) => i % screenCount === idx);
+  } else {
+    const blockSize = Math.ceil(allItems.length / screenCount);
+    slotItems = allItems.slice(idx * blockSize, idx * blockSize + blockSize);
+  }
+  const catMap = new Map<string, any>();
+  for (const { item, cat } of slotItems) {
+    if (!catMap.has(cat.id)) catMap.set(cat.id, { ...cat, items: [] });
+    catMap.get(cat.id)!.items.push(item);
+  }
+  return sections.map((c) => catMap.get(c.id)).filter(Boolean);
+}
+
+function _mbPaginateSections(sections: any[], itemsPerPage: number): any[][] {
+  const pages: any[][] = [];
+  let current: any[] = [], count = 0;
+  for (const cat of sections) {
+    if (!cat.items.length) continue;
+    if (count > 0 && count + cat.items.length > itemsPerPage) { pages.push(current); current = []; count = 0; }
+    if (cat.items.length > itemsPerPage) {
+      if (current.length) { pages.push(current); current = []; count = 0; }
+      for (let i = 0; i < cat.items.length; i += itemsPerPage) pages.push([{ ...cat, items: cat.items.slice(i, i + itemsPerPage) }]);
+    } else { current.push(cat); count += cat.items.length; }
+  }
+  if (current.length) pages.push(current);
+  return pages.length > 0 ? pages : [sections];
+}
+
 function _mbBuildHtml(c: NormalizedContent, menu: any, metadata: Record<string, unknown>): string {
   const VALID_LAYOUTS = ['1-col','2-col','3-col','featured','hero-banner','magazine','grid-cards','split'];
   const FONT_STACKS: Record<string, string> = {
@@ -687,6 +723,10 @@ function _mbBuildHtml(c: NormalizedContent, menu: any, metadata: Record<string, 
   const textColor       = _mbSanitizeColor(metadata['textColor'],       '#f7f2eb');
   const backgroundImage = typeof metadata['backgroundImage'] === 'string' && /^https?:|^data:/.test(metadata['backgroundImage'])
     ? metadata['backgroundImage'] : null;
+  const backgroundVideoUrl = typeof metadata['backgroundVideoUrl'] === 'string' && /^https?:/.test(metadata['backgroundVideoUrl'])
+    ? metadata['backgroundVideoUrl'] : null;
+  const heroImageUrl = typeof metadata['heroImageUrl'] === 'string' && /^https?:|^data:/.test(metadata['heroImageUrl'])
+    ? metadata['heroImageUrl'] : null;
   const fontFamily = FONT_STACKS[metadata['fontFamily'] as string] || FONT_STACKS['system'];
   const catHeadStyle = ['block','underline','bar','pill'].includes(metadata['categoryHeaderStyle'] as string)
     ? String(metadata['categoryHeaderStyle']) : 'block';
@@ -695,78 +735,102 @@ function _mbBuildHtml(c: NormalizedContent, menu: any, metadata: Record<string, 
     ? (metadata['titleOverride'] as string).trim() : null;
   const currency    = typeof menu.currency === 'string' ? menu.currency : 'USD';
 
+  const screenCount = Number.isFinite(Number(metadata['screenCount'])) ? Math.max(1, Number(metadata['screenCount'])) : 1;
+  const splitStrategy = typeof metadata['splitStrategy'] === 'string' ? metadata['splitStrategy'] : 'by-category';
+  const screenIndex = Number.isFinite(Number(metadata['_playlistScreenIndex']))
+    ? Number(metadata['_playlistScreenIndex'])
+    : (Number.isFinite(Number(metadata['screenIndex'])) ? Number(metadata['screenIndex']) : 0);
+
   const ids = Array.isArray(metadata['categoryIds'])
     ? (metadata['categoryIds'] as string[]).filter((v) => typeof v === 'string')
     : [];
   const cats: any[] = Array.isArray(menu.categories) ? menu.categories : [];
   const filtered = ids.length > 0 ? cats.filter((cat) => ids.includes(cat.id)) : cats;
-  const sections = filtered
+  const rawSections = filtered
     .map((cat) => ({ ...cat, items: Array.isArray(cat.items) ? cat.items.filter(Boolean) : [] }))
     .filter((cat) => cat.items.length > 0);
+  const sections = _mbShardSections(rawSections, screenCount, screenIndex, splitStrategy);
 
   if (!sections.length) {
     return _mbBuildStateHtml(c.name || 'Menu Board', 'No active POS menu items available for this board right now.');
   }
 
+  const pagMeta = metadata['pagination'] && typeof metadata['pagination'] === 'object' ? metadata['pagination'] as Record<string,unknown> : {};
+  const pagMode = String(pagMeta['mode'] || 'hybrid');
+  const itemsPerPage = pagMode !== 'auto-fit' ? Math.max(1, Number.isFinite(Number(pagMeta['itemsPerPage'])) ? Number(pagMeta['itemsPerPage']) : 8) : 9999;
+  const pageSeconds = Math.max(2, Number.isFinite(Number(pagMeta['pageSeconds'])) ? Number(pagMeta['pageSeconds']) : 10);
+  const pages = _mbPaginateSections(sections, itemsPerPage);
+
   const isFeatured = layout === 'featured' || layout === 'hero-banner' || layout === 'magazine';
-  let featuredItem: any = null;
-  if (isFeatured) {
-    for (const cat of sections) {
-      featuredItem = (showImages && cat.items.find((i: any) => !!i.imageUrl)) || cat.items[0] || null;
-      if (featuredItem) break;
+
+  const buildPageHtml = (pageSections: any[]): string => {
+    let featuredItem: any = null;
+    if (isFeatured) {
+      if (heroImageUrl) {
+        const anyItem = pageSections[0]?.items[0] ?? null;
+        if (anyItem) featuredItem = { ...anyItem, imageUrl: heroImageUrl };
+      } else {
+        for (const cat of pageSections) {
+          featuredItem = (showImages && cat.items.find((i: any) => !!i.imageUrl)) || cat.items[0] || null;
+          if (featuredItem) break;
+        }
+      }
     }
-  }
-
-  const boardTitle = titleOverride || c.name || menu.name || 'Menu Board';
-  const subtitleParts: string[] = [];
-  if (menu.name && menu.name !== boardTitle) subtitleParts.push(menu.name);
-  if (menu.description) subtitleParts.push(menu.description);
-  subtitleParts.push(`${sections.length} ${sections.length === 1 ? 'category' : 'categories'}`);
-  const subtitle = subtitleParts.join(' | ');
-  const sectionCols = layout === '1-col' ? 1 : (layout === '3-col' || layout === 'grid-cards') ? Math.min(3, sections.length || 1) : Math.min(2, sections.length || 1);
-
-  const featuredKicker = layout === 'hero-banner' ? "Today's Special" : layout === 'magazine' ? "Editor's Pick" : 'Featured Item';
-  const featuredMarkup = isFeatured && featuredItem ? `
-    <aside class="menu-board-feature">
-      ${showImages && featuredItem.imageUrl ? `<div class="menu-board-feature-image"><img src="${_mbEscHtml(featuredItem.imageUrl)}" alt="${_mbEscHtml(featuredItem.name)}" /></div>` : ''}
-      <div class="menu-board-feature-copy">
-        <div class="menu-board-feature-kicker">${_mbEscHtml(featuredKicker)}</div>
-        <div class="menu-board-feature-title">${_mbEscHtml(featuredItem.name)}</div>
-        ${showPrices ? `<div class="menu-board-feature-price">${_mbEscHtml(_mbFormatPrice(featuredItem.priceCents, currency))}</div>` : ''}
-        ${showDesc && featuredItem.description ? `<div class="menu-board-feature-description">${_mbEscHtml(featuredItem.description)}</div>` : ''}
-      </div>
-    </aside>` : '';
-
-  const sectionsMarkup = sections.map((cat) => {
-    const catAccent = _mbSanitizeColor(cat.color, accentColor);
-    const items = cat.items.map((item: any) => {
-      const img   = showImages && item.imageUrl ? `<div class="menu-board-item-image"><img src="${_mbEscHtml(item.imageUrl)}" alt="${_mbEscHtml(item.name)}" /></div>` : '';
-      const price = showPrices ? `<div class="menu-board-item-price">${_mbEscHtml(_mbFormatPrice(item.priceCents, currency))}</div>` : '';
-      const desc  = showDesc && item.description ? `<div class="menu-board-item-description">${_mbEscHtml(item.description)}</div>` : '';
-      return `<article class="menu-board-item ${img ? 'has-image' : 'no-image'}">${img}<div class="menu-board-item-copy"><div class="menu-board-item-head"><div class="menu-board-item-name">${_mbEscHtml(item.name)}</div>${price}</div>${desc}</div></article>`;
-    }).join('');
-    return `<section class="menu-board-category" style="--menu-board-category-accent:${catAccent};">
-      <div class="menu-board-category-head">
-        <div>
-          <div class="menu-board-category-title">${_mbEscHtml(cat.name)}</div>
-          ${cat.description ? `<div class="menu-board-category-description">${_mbEscHtml(cat.description)}</div>` : ''}
+    const boardTitle = titleOverride || c.name || menu.name || 'Menu Board';
+    const sectionCols = layout === '1-col' ? 1 : (layout === '3-col' || layout === 'grid-cards') ? Math.min(3, pageSections.length || 1) : Math.min(2, pageSections.length || 1);
+    const featuredKicker = layout === 'hero-banner' ? "Today's Special" : layout === 'magazine' ? "Editor's Pick" : 'Featured Item';
+    const featuredMarkup = isFeatured && featuredItem ? `
+      <aside class="menu-board-feature">
+        ${(showImages || heroImageUrl) && featuredItem.imageUrl ? `<div class="menu-board-feature-image"><img src="${_mbEscHtml(featuredItem.imageUrl)}" alt="${_mbEscHtml(featuredItem.name)}" /></div>` : ''}
+        <div class="menu-board-feature-copy">
+          <div class="menu-board-feature-kicker">${_mbEscHtml(featuredKicker)}</div>
+          <div class="menu-board-feature-title">${_mbEscHtml(featuredItem.name)}</div>
+          ${showPrices ? `<div class="menu-board-feature-price">${_mbEscHtml(_mbFormatPrice(featuredItem.priceCents, currency))}</div>` : ''}
+          ${showDesc && featuredItem.description ? `<div class="menu-board-feature-description">${_mbEscHtml(featuredItem.description)}</div>` : ''}
         </div>
-        <div class="menu-board-category-count">${cat.items.length}</div>
+      </aside>` : '';
+    const sectionsMarkup = pageSections.map((cat) => {
+      const catAccent = _mbSanitizeColor(cat.color, accentColor);
+      const items = cat.items.map((item: any) => {
+        const img   = showImages && item.imageUrl ? `<div class="menu-board-item-image"><img src="${_mbEscHtml(item.imageUrl)}" alt="${_mbEscHtml(item.name)}" /></div>` : '';
+        const price = showPrices ? `<div class="menu-board-item-price">${_mbEscHtml(_mbFormatPrice(item.priceCents, currency))}</div>` : '';
+        const desc  = showDesc && item.description ? `<div class="menu-board-item-description">${_mbEscHtml(item.description)}</div>` : '';
+        return `<article class="menu-board-item ${img ? 'has-image' : 'no-image'}">${img}<div class="menu-board-item-copy"><div class="menu-board-item-head"><div class="menu-board-item-name">${_mbEscHtml(item.name)}</div>${price}</div>${desc}</div></article>`;
+      }).join('');
+      return `<section class="menu-board-category" style="--menu-board-category-accent:${catAccent};"><div class="menu-board-category-head"><div><div class="menu-board-category-title">${_mbEscHtml(cat.name)}</div>${cat.description ? `<div class="menu-board-category-description">${_mbEscHtml(cat.description)}</div>` : ''}</div><div class="menu-board-category-count">${cat.items.length}</div></div><div class="menu-board-item-list">${items}</div></section>`;
+    }).join('');
+    const subtitleParts: string[] = [];
+    if (menu.name && menu.name !== boardTitle) subtitleParts.push(menu.name);
+    if (menu.description) subtitleParts.push(menu.description);
+    subtitleParts.push(`${pageSections.length} ${pageSections.length === 1 ? 'category' : 'categories'}`);
+    const subtitle = subtitleParts.join(' | ');
+    const gridClass = `menu-board-grid layout-${layout} cathead-${catHeadStyle}${isFeatured ? ' is-featured' : ''}`;
+    return `<div class="menu-board-shell">
+      ${showHeader ? `<header class="menu-board-header"><div>${eyebrow ? `<div class="menu-board-eyebrow">${_mbEscHtml(eyebrow)}</div>` : ''}<h1 class="menu-board-title">${_mbEscHtml(boardTitle)}</h1><div class="menu-board-subtitle">${_mbEscHtml(subtitle)}</div></div></header>` : ''}
+      <div class="${gridClass}" style="--mb-section-cols:${sectionCols}">
+        ${featuredMarkup}
+        <div class="menu-board-sections">${sectionsMarkup}</div>
       </div>
-      <div class="menu-board-item-list">${items}</div>
-    </section>`;
-  }).join('');
+    </div>`;
+  };
 
+  const pageHtmls = pages.map((pg, i) =>
+    `<div class="mb-page" data-page="${i}" style="display:${i===0?'flex':'none'};flex-direction:column;width:100%;height:100%;position:absolute;inset:0;">${buildPageHtml(pg)}</div>`
+  ).join('');
   const bgCss = backgroundImage
     ? `linear-gradient(rgba(0,0,0,0.45),rgba(0,0,0,0.45)),url("${_mbEscHtml(backgroundImage)}") center/cover no-repeat,${backgroundColor}`
     : backgroundColor;
-  const gridClass = `menu-board-grid layout-${layout} cathead-${catHeadStyle}${isFeatured ? ' is-featured' : ''}`;
+  const pageIndicator = pages.length > 1
+    ? `<div id="mb-page-ind" style="position:absolute;bottom:12px;right:16px;font-size:12px;opacity:0.55;color:${textColor};z-index:20;">1/${pages.length}</div>` : '';
+  const paginationScript = pages.length > 1
+    ? `<script>(function(){var p=document.querySelectorAll('.mb-page'),c=0;setInterval(function(){p[c].style.display='none';c=(c+1)%p.length;p[c].style.display='flex';var i=document.getElementById('mb-page-ind');if(i)i.textContent=(c+1)+'/${pages.length}';},${pageSeconds * 1000});})()</script>` : '';
 
   return `<div class="menu-board-root">
     <style>
       .menu-board-root,.menu-board-root *{box-sizing:border-box;}
-      .menu-board-root{--menu-board-accent:${accentColor};--menu-board-scale:${fontScale};width:100%;height:100%;color:${textColor};font-family:${fontFamily};background:${bgCss};}
-      .menu-board-shell{width:100%;height:100%;display:flex;flex-direction:column;gap:calc(18px*var(--menu-board-scale));padding:calc(28px*var(--menu-board-scale));overflow:hidden;}
+      .menu-board-root{--menu-board-accent:${accentColor};--menu-board-scale:${fontScale};width:100%;height:100%;color:${textColor};font-family:${fontFamily};background:${bgCss};position:relative;overflow:hidden;}
+      ${backgroundVideoUrl ? `.menu-board-bgvideo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:0.55;}` : ''}
+      .menu-board-shell{width:100%;height:100%;display:flex;flex-direction:column;gap:calc(18px*var(--menu-board-scale));padding:calc(28px*var(--menu-board-scale));overflow:hidden;position:relative;z-index:1;}
       .menu-board-header{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;}
       .menu-board-eyebrow{font-size:calc(12px*var(--menu-board-scale));font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:var(--menu-board-accent);}
       .menu-board-title{margin:6px 0 0;font-size:calc(34px*var(--menu-board-scale));line-height:1.05;letter-spacing:-0.03em;}
@@ -786,7 +850,7 @@ function _mbBuildHtml(c: NormalizedContent, menu: any, metadata: Record<string, 
       .menu-board-feature-title{font-size:calc(30px*var(--menu-board-scale));line-height:1.05;font-weight:800;}
       .menu-board-feature-price{font-size:calc(22px*var(--menu-board-scale));font-weight:700;color:#fff4cf;}
       .menu-board-feature-description{font-size:calc(15px*var(--menu-board-scale));line-height:1.55;color:rgba(247,242,235,0.8);}
-      .menu-board-sections{min-height:0;display:grid;align-content:start;grid-template-columns:repeat(${sectionCols},minmax(0,1fr));gap:calc(16px*var(--menu-board-scale));overflow:hidden;}
+      .menu-board-sections{min-height:0;display:grid;align-content:start;grid-template-columns:repeat(var(--mb-section-cols,2),minmax(0,1fr));gap:calc(16px*var(--menu-board-scale));overflow:hidden;}
       .menu-board-category{min-height:0;display:flex;flex-direction:column;gap:calc(14px*var(--menu-board-scale));padding:calc(18px*var(--menu-board-scale));border-radius:24px;border:1px solid rgba(255,255,255,0.09);background:linear-gradient(180deg,rgba(255,255,255,0.08) 0%,rgba(255,255,255,0.035) 100%);box-shadow:inset 4px 0 0 var(--menu-board-category-accent);}
       .cathead-underline .menu-board-category{background:transparent;box-shadow:none;border-color:transparent;border-bottom:2px solid var(--menu-board-category-accent);border-radius:0;}
       .cathead-bar .menu-board-category{box-shadow:inset 0 6px 0 var(--menu-board-category-accent);padding-top:calc(20px*var(--menu-board-scale));}
@@ -806,20 +870,12 @@ function _mbBuildHtml(c: NormalizedContent, menu: any, metadata: Record<string, 
       .menu-board-item-name{min-width:0;font-size:calc(17px*var(--menu-board-scale));line-height:1.25;font-weight:700;overflow-wrap:anywhere;}
       .menu-board-item-price{white-space:nowrap;font-size:calc(14px*var(--menu-board-scale));font-weight:700;color:#fff4cf;}
       .menu-board-item-description{font-size:calc(12px*var(--menu-board-scale));line-height:1.45;color:rgba(247,242,235,0.72);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+      .mb-page{flex-direction:column;}
     </style>
-    <div class="menu-board-shell">
-      ${showHeader ? `<header class="menu-board-header">
-        <div>
-          ${eyebrow ? `<div class="menu-board-eyebrow">${_mbEscHtml(eyebrow)}</div>` : ''}
-          <h1 class="menu-board-title">${_mbEscHtml(boardTitle)}</h1>
-          <div class="menu-board-subtitle">${_mbEscHtml(subtitle)}</div>
-        </div>
-      </header>` : ''}
-      <div class="${gridClass}">
-        ${featuredMarkup}
-        <div class="menu-board-sections">${sectionsMarkup}</div>
-      </div>
-    </div>
+    ${backgroundVideoUrl ? `<video class="menu-board-bgvideo" src="${_mbEscHtml(backgroundVideoUrl)}" autoplay muted loop playsinline></video>` : ''}
+    ${pageHtmls}
+    ${pageIndicator}
+    ${paginationScript}
   </div>`;
 }
 

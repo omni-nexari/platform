@@ -5,6 +5,35 @@
  * so adding new entries here automatically makes them available throughout the app.
  */
 
+// ── Multi-screen types ────────────────────────────────────────────────────────
+
+/** How each physical screen knows which shard of the menu it should display. */
+export type ScreenSelectionMode =
+  | 'playlist'   // Operator picks "Screen X of N" when dropping into a device playlist
+  | 'siblings'   // Wizard auto-creates N linked sibling content items, one per screen
+  | 'device'     // The device record's primaryDisplayIndex determines the shard
+  | 'cycle';     // Every screen shows all shards rotating like pages (no splitting)
+
+/** How categories/items are distributed across screens. */
+export type SplitStrategy =
+  | 'by-category'          // Whole categories per screen (preferred)
+  | 'by-item-roundrobin'   // Items distributed round-robin across screens
+  | 'by-item-sequential';  // Items in contiguous blocks per screen
+
+/** How the renderer decides how many items fit on one page. */
+export type PaginationMode =
+  | 'user-cap'   // Renderer pages when items exceed itemsPerPage
+  | 'auto-fit'   // Renderer measures overflow and pages automatically
+  | 'hybrid';    // User sets a soft cap; auto-fit trims further if needed
+
+export interface PaginationConfig {
+  mode: PaginationMode;
+  /** Maximum items per page (used by user-cap + hybrid). Default 8. */
+  itemsPerPage: number;
+  /** Seconds to show each page before cycling. Default 10. */
+  pageSeconds: number;
+}
+
 export interface MenuBoardConfig {
   posWorkspaceId: string;
   layout: MenuBoardLayoutId;
@@ -24,8 +53,26 @@ export interface MenuBoardConfig {
   textColor: string;
   /** Optional CSS background-image URL (https or data:). */
   backgroundImage: string | null;
+  /** Optional silent looping background video URL (overrides backgroundImage when present). */
+  backgroundVideoUrl: string | null;
+  /** Override image for hero/featured panel (for featured, hero-banner, magazine layouts). */
+  heroImageUrl: string | null;
   categoryHeaderStyle: MenuBoardCategoryStyle;
   theme: MenuBoardThemeId | 'custom';
+
+  // ── Multi-screen fields ───────────────────────────────────────────────────
+  /** Number of physical screens in the restaurant wall (1–6). Default 1. */
+  screenCount: number;
+  /** How each device determines which shard it renders. */
+  screenSelection: ScreenSelectionMode;
+  /** How content is distributed when screenCount > 1. */
+  splitStrategy: SplitStrategy;
+  /** Pagination behaviour when a shard has too many items for one page. */
+  pagination: PaginationConfig;
+  /** UUID linking sibling content items created in 'siblings' mode. */
+  groupId: string | null;
+  /** 0-based index of which shard this item represents (set on sibling items). */
+  screenIndex: number;
 }
 
 export type MenuBoardLayoutId =
@@ -118,6 +165,14 @@ export const DEFAULT_MENU_BOARD_CONFIG: MenuBoardConfig = {
   fontScale: 1,
   fontFamily: 'system',
   accentColor: '#dd6b20',
+  backgroundVideoUrl: null,
+  heroImageUrl: null,
+  screenCount: 1,
+  screenSelection: 'playlist',
+  splitStrategy: 'by-category',
+  pagination: { mode: 'hybrid', itemsPerPage: 8, pageSeconds: 10 },
+  groupId: null,
+  screenIndex: 0,
   backgroundColor: '#0f1117',
   textColor: '#f7f2eb',
   backgroundImage: null,
@@ -151,6 +206,14 @@ export function parseMenuBoardMetadata(metadata: string | null | undefined): Men
   const layout: MenuBoardLayoutId = MENU_BOARD_LAYOUTS.some((l) => l.id === layoutCandidate)
     ? layoutCandidate as MenuBoardLayoutId
     : '2-col';
+  const screenCount = Math.max(1, Math.min(6, Number.isFinite(raw['screenCount'] as number) ? Number(raw['screenCount']) : 1));
+  const rawPag = raw['pagination'] && typeof raw['pagination'] === 'object' ? raw['pagination'] as Record<string, unknown> : {};
+  const pagination: PaginationConfig = {
+    mode: (['user-cap','auto-fit','hybrid'] as PaginationMode[]).includes(rawPag['mode'] as PaginationMode)
+      ? rawPag['mode'] as PaginationMode : 'hybrid',
+    itemsPerPage: Number.isFinite(rawPag['itemsPerPage'] as number) ? Math.max(1, Number(rawPag['itemsPerPage'])) : 8,
+    pageSeconds: Number.isFinite(rawPag['pageSeconds'] as number) ? Math.max(2, Number(rawPag['pageSeconds'])) : 10,
+  };
   return {
     posWorkspaceId:      get('posWorkspaceId', ''),
     layout,
@@ -167,8 +230,18 @@ export function parseMenuBoardMetadata(metadata: string | null | undefined): Men
     backgroundColor:     get('backgroundColor', '#0f1117'),
     textColor:           get('textColor', '#f7f2eb'),
     backgroundImage:     get('backgroundImage', null),
+    backgroundVideoUrl:  get('backgroundVideoUrl', null),
+    heroImageUrl:        get('heroImageUrl', null),
     categoryHeaderStyle: get('categoryHeaderStyle', 'block'),
     theme:               get('theme', 'midnight'),
+    screenCount,
+    screenSelection:     (['playlist','siblings','device','cycle'] as ScreenSelectionMode[]).includes(raw['screenSelection'] as ScreenSelectionMode)
+      ? raw['screenSelection'] as ScreenSelectionMode : 'playlist',
+    splitStrategy:       (['by-category','by-item-roundrobin','by-item-sequential'] as SplitStrategy[]).includes(raw['splitStrategy'] as SplitStrategy)
+      ? raw['splitStrategy'] as SplitStrategy : 'by-category',
+    pagination,
+    groupId:             typeof raw['groupId']==='string' ? raw['groupId'] : null,
+    screenIndex:         Number.isFinite(raw['screenIndex'] as number) ? Number(raw['screenIndex']) : 0,
   };
 }
 
@@ -190,7 +263,15 @@ export function configToApiBody(cfg: MenuBoardConfig) {
     backgroundColor:     cfg.backgroundColor,
     textColor:           cfg.textColor,
     backgroundImage:     cfg.backgroundImage,
+    backgroundVideoUrl:  cfg.backgroundVideoUrl,
+    heroImageUrl:        cfg.heroImageUrl,
     categoryHeaderStyle: cfg.categoryHeaderStyle,
     theme:               cfg.theme,
+    screenCount:         cfg.screenCount,
+    screenSelection:     cfg.screenSelection,
+    splitStrategy:       cfg.splitStrategy,
+    pagination:          cfg.pagination,
+    groupId:             cfg.groupId,
+    screenIndex:         cfg.screenIndex,
   };
 }

@@ -834,9 +834,16 @@ export async function contentRoutes(app: FastifyInstance) {
       backgroundColor?: string;
       textColor?: string;
       backgroundImage?: string | null;
+      backgroundVideoUrl?: string | null;
+      heroImageUrl?: string | null;
       categoryHeaderStyle?: string;
       theme?: string;
       duration?: number;
+      screenCount?: number;
+      screenSelection?: string;
+      splitStrategy?: string;
+      pagination?: { mode?: string; itemsPerPage?: number; pageSeconds?: number };
+      siblingCount?: number;
     };
 
     const wsId = body.workspaceId;
@@ -853,7 +860,11 @@ export async function contentRoutes(app: FastifyInstance) {
     try { wsSettingsMb = JSON.parse(wsRowMb?.settings ?? '{}'); } catch { /* ignore */ }
     const initialApprovalStateMb = wsSettingsMb.approvalRequired && !APPROVE_ROLES.has(user.role) ? 'draft' : 'approved';
 
-    const metadata = JSON.stringify({
+    const screenCount = Math.max(1, Math.min(6, Number.isFinite(body.screenCount) ? Number(body.screenCount) : 1));
+    const siblingCount = Math.max(0, Math.min(5, Number.isFinite(body.siblingCount) ? Number(body.siblingCount) : 0));
+    const groupId = siblingCount > 0 ? crypto.randomUUID() : null;
+
+    const buildMetadata = (screenIndex: number, gId: string | null) => JSON.stringify({
       posWorkspaceId:       body.posWorkspaceId,
       layout:               body.layout ?? '2-col',
       showPrices:           body.showPrices         ?? true,
@@ -869,8 +880,20 @@ export async function contentRoutes(app: FastifyInstance) {
       backgroundColor:      body.backgroundColor    ?? '#0f1117',
       textColor:            body.textColor          ?? '#f7f2eb',
       backgroundImage:      body.backgroundImage    ?? null,
+      backgroundVideoUrl:   body.backgroundVideoUrl ?? null,
+      heroImageUrl:         body.heroImageUrl       ?? null,
       categoryHeaderStyle:  body.categoryHeaderStyle ?? 'block',
       theme:                body.theme              ?? 'midnight',
+      screenCount,
+      screenSelection:      body.screenSelection    ?? 'playlist',
+      splitStrategy:        body.splitStrategy      ?? 'by-category',
+      pagination: {
+        mode:         body.pagination?.mode         ?? 'hybrid',
+        itemsPerPage: body.pagination?.itemsPerPage ?? 8,
+        pageSeconds:  body.pagination?.pageSeconds  ?? 10,
+      },
+      groupId: gId,
+      screenIndex,
     });
 
     const [item] = await db.insert(contentItems).values({
@@ -881,10 +904,28 @@ export async function contentRoutes(app: FastifyInstance) {
       duration:    body.duration ?? 30,
       status:      'ready',
       approvalState: initialApprovalStateMb,
-      metadata,
+      metadata:    buildMetadata(0, groupId),
     }).returning();
 
-    return reply.status(201).send(item);
+    // Create sibling items (screens 2…N) when siblings mode is used
+    const siblingIds: string[] = [];
+    if (siblingCount > 0 && groupId) {
+      for (let i = 1; i <= siblingCount; i++) {
+        const [sib] = await db.insert(contentItems).values({
+          workspaceId: wsId,
+          uploadedBy:  user.sub,
+          type:        'menu_board',
+          name:        `${body.name.trim()} – Screen ${i + 1}`,
+          duration:    body.duration ?? 30,
+          status:      'ready',
+          approvalState: initialApprovalStateMb,
+          metadata:    buildMetadata(i, groupId),
+        }).returning();
+        siblingIds.push(sib!.id);
+      }
+    }
+
+    return reply.status(201).send({ ...item!, siblingIds });
   });
 
   // ── PATCH /content/:id/menu-board ─────────────────────────────────────────
@@ -908,9 +949,19 @@ export async function contentRoutes(app: FastifyInstance) {
       backgroundColor?: string;
       textColor?: string;
       backgroundImage?: string | null;
+      backgroundVideoUrl?: string | null;
+      heroImageUrl?: string | null;
       categoryHeaderStyle?: string;
       theme?: string;
       duration?: number;
+      screenCount?: number;
+      screenSelection?: string;
+      splitStrategy?: string;
+      pagination?: { mode?: string; itemsPerPage?: number; pageSeconds?: number };
+      screenIndex?: number;
+      groupId?: string | null;
+      /** When true, propagate all metadata changes to sibling items sharing the same groupId. */
+      propagateSiblings?: boolean;
     };
 
     const item = await db.query.contentItems.findFirst({
@@ -923,8 +974,6 @@ export async function contentRoutes(app: FastifyInstance) {
     if (!member) return reply.status(403).send({ error: 'Forbidden' });
 
     const current = (() => { try { return JSON.parse(item.metadata ?? '{}'); } catch { return {}; } })();
-    // Use `??` everywhere so that explicit `null`/`false` from the client overwrite existing values,
-    // while undefined fields keep the current metadata value.
     const updated = {
       posWorkspaceId:       body.posWorkspaceId      ?? current.posWorkspaceId,
       layout:               body.layout              ?? current.layout,
@@ -941,8 +990,16 @@ export async function contentRoutes(app: FastifyInstance) {
       backgroundColor:      body.backgroundColor     ?? current.backgroundColor,
       textColor:            body.textColor           ?? current.textColor,
       backgroundImage:      body.backgroundImage     !== undefined ? body.backgroundImage     : current.backgroundImage,
+      backgroundVideoUrl:   body.backgroundVideoUrl  !== undefined ? body.backgroundVideoUrl  : current.backgroundVideoUrl,
+      heroImageUrl:         body.heroImageUrl        !== undefined ? body.heroImageUrl        : current.heroImageUrl,
       categoryHeaderStyle:  body.categoryHeaderStyle ?? current.categoryHeaderStyle,
       theme:                body.theme               ?? current.theme,
+      screenCount:          body.screenCount         ?? current.screenCount,
+      screenSelection:      body.screenSelection     ?? current.screenSelection,
+      splitStrategy:        body.splitStrategy       ?? current.splitStrategy,
+      pagination:           body.pagination ? { ...current.pagination, ...body.pagination } : current.pagination,
+      screenIndex:          body.screenIndex         ?? current.screenIndex,
+      groupId:              body.groupId !== undefined ? body.groupId : current.groupId,
     };
 
     const [patched] = await db.update(contentItems)
@@ -954,6 +1011,27 @@ export async function contentRoutes(app: FastifyInstance) {
       })
       .where(eq(contentItems.id, id))
       .returning();
+
+    // Propagate styling changes to siblings (all except screenIndex/screenCount which are per-screen)
+    if (body.propagateSiblings && updated.groupId) {
+      const styleOnlyUpdate = { ...updated } as Record<string, unknown>;
+      delete styleOnlyUpdate['screenIndex'];
+      const siblings = await db.query.contentItems.findMany({
+        where: and(
+          isNull(contentItems.deletedAt),
+          eq(contentItems.workspaceId, item.workspaceId),
+        ),
+        columns: { id: true, metadata: true },
+      });
+      for (const sib of siblings) {
+        if (sib.id === id) continue;
+        let sibMeta: Record<string, unknown> = {};
+        try { sibMeta = JSON.parse(sib.metadata ?? '{}'); } catch { /* ignore */ }
+        if (sibMeta['groupId'] !== updated.groupId) continue;
+        const sibUpdated = { ...sibMeta, ...styleOnlyUpdate, screenIndex: sibMeta['screenIndex'] };
+        await db.update(contentItems).set({ metadata: JSON.stringify(sibUpdated), updatedAt: new Date() }).where(eq(contentItems.id, sib.id));
+      }
+    }
 
     return reply.send(patched);
   });

@@ -4933,6 +4933,47 @@ const Player = {
       .filter((category) => category.items.length > 0);
   },
 
+  _mbShardSections(sections, screenCount, screenIndex, strategy) {
+    if (screenCount <= 1) return sections;
+    const idx = Math.max(0, Math.min(screenCount - 1, screenIndex));
+    if (strategy === 'by-category') {
+      return sections.filter((_, i) => i % screenCount === idx);
+    }
+    const allItems = [];
+    for (const cat of sections) for (const item of cat.items) allItems.push({ item, cat });
+    let slotItems;
+    if (strategy === 'by-item-roundrobin') {
+      slotItems = allItems.filter((_, i) => i % screenCount === idx);
+    } else {
+      const blockSize = Math.ceil(allItems.length / screenCount);
+      const start = idx * blockSize;
+      slotItems = allItems.slice(start, start + blockSize);
+    }
+    const catMap = new Map();
+    for (const { item, cat } of slotItems) {
+      if (!catMap.has(cat.id)) catMap.set(cat.id, { ...cat, items: [] });
+      catMap.get(cat.id).items.push(item);
+    }
+    return sections.map((c) => catMap.get(c.id)).filter(Boolean);
+  },
+
+  _mbPaginateSections(sections, itemsPerPage) {
+    const pages = [];
+    let current = [], count = 0;
+    for (const cat of sections) {
+      if (cat.items.length === 0) continue;
+      if (count > 0 && count + cat.items.length > itemsPerPage) { pages.push(current); current = []; count = 0; }
+      if (cat.items.length > itemsPerPage) {
+        if (current.length > 0) { pages.push(current); current = []; count = 0; }
+        for (let i = 0; i < cat.items.length; i += itemsPerPage) {
+          pages.push([{ ...cat, items: cat.items.slice(i, i + itemsPerPage) }]);
+        }
+      } else { current.push(cat); count += cat.items.length; }
+    }
+    if (current.length > 0) pages.push(current);
+    return pages.length > 0 ? pages : [sections];
+  },
+
   buildMenuBoardStateHtml(title, message) {
     return `
       <div style="display:flex;align-items:center;justify-content:center;height:100%;padding:32px;background:linear-gradient(160deg,#1f1510 0%,#120d0a 100%);color:#f7f2eb;font-family:'Segoe UI',Arial,sans-serif;text-align:center;box-sizing:border-box;">
@@ -4976,8 +5017,27 @@ const Player = {
     const titleOverride = typeof metadata.titleOverride === 'string' && metadata.titleOverride.trim()
       ? metadata.titleOverride.trim()
       : null;
-    const sections = this.getMenuBoardSections(menu, metadata);
+    const backgroundVideoUrl = typeof metadata.backgroundVideoUrl === 'string' && /^https?:/.test(metadata.backgroundVideoUrl)
+      ? metadata.backgroundVideoUrl : null;
+    const heroImageUrl = typeof metadata.heroImageUrl === 'string' && /^https?:|^data:/.test(metadata.heroImageUrl)
+      ? metadata.heroImageUrl : null;
+
+    // Multi-screen sharding
+    const screenCount = Number.isFinite(Number(metadata.screenCount)) ? Math.max(1, Number(metadata.screenCount)) : 1;
+    const splitStrategy = typeof metadata.splitStrategy === 'string' ? metadata.splitStrategy : 'by-category';
+    const screenIndexRaw = Number.isFinite(Number(metadata._playlistScreenIndex))
+      ? Number(metadata._playlistScreenIndex)
+      : (Number.isFinite(Number(metadata.screenIndex)) ? Number(metadata.screenIndex) : 0);
+    const rawSections = this.getMenuBoardSections(menu, metadata);
+    const sections = this._mbShardSections(rawSections, screenCount, screenIndexRaw, splitStrategy);
     const currency = menu && typeof menu.currency === 'string' ? menu.currency : 'USD';
+
+    // Pagination
+    const pagMeta = metadata.pagination && typeof metadata.pagination === 'object' ? metadata.pagination : {};
+    const pagMode = String(pagMeta.mode || 'hybrid');
+    const itemsPerPage = pagMode !== 'auto-fit' ? Math.max(1, Number.isFinite(Number(pagMeta.itemsPerPage)) ? Number(pagMeta.itemsPerPage) : 8) : 9999;
+    const pageSeconds = Math.max(2, Number.isFinite(Number(pagMeta.pageSeconds)) ? Number(pagMeta.pageSeconds) : 10);
+    const pages = this._mbPaginateSections(sections, itemsPerPage);
 
     if (sections.length === 0) {
       return this.buildMenuBoardStateHtml(
@@ -4986,88 +5046,81 @@ const Player = {
       );
     }
 
-    let featuredItem = null;
     const isFeatured = layout === 'featured' || layout === 'hero-banner' || layout === 'magazine';
-    if (isFeatured) {
-      for (const category of sections) {
-        const preferred = category.items.find((item) => showImages && !!item.imageUrl) || category.items[0];
-        if (preferred) {
-          featuredItem = preferred;
-          break;
+
+    const buildPageHtml = (pageSections) => {
+      let featuredItem = null;
+      if (isFeatured) {
+        if (heroImageUrl) {
+          const anyItem = pageSections[0]?.items[0] ?? null;
+          if (anyItem) featuredItem = { ...anyItem, imageUrl: heroImageUrl };
+        } else {
+          for (const category of pageSections) {
+            const preferred = category.items.find((item) => showImages && !!item.imageUrl) || category.items[0];
+            if (preferred) { featuredItem = preferred; break; }
+          }
         }
       }
-    }
 
-    const boardTitle = titleOverride
-      || (content && content.name ? content.name : (menu && menu.name ? menu.name : 'Menu Board'));
-    const subtitleParts = [];
-    if (menu && menu.name && menu.name !== boardTitle) {
-      subtitleParts.push(menu.name);
-    }
-    if (menu && menu.description) {
-      subtitleParts.push(menu.description);
-    }
-    subtitleParts.push(`${sections.length} ${sections.length === 1 ? 'category' : 'categories'}`);
-    const subtitle = subtitleParts.join(' | ');
-    let sectionColumnCount;
-    if (layout === '1-col') sectionColumnCount = 1;
-    else if (layout === '3-col' || layout === 'grid-cards') sectionColumnCount = Math.min(3, sections.length || 1);
-    else sectionColumnCount = Math.min(2, sections.length || 1);
+      const boardTitle = titleOverride
+        || (content && content.name ? content.name : (menu && menu.name ? menu.name : 'Menu Board'));
+      let sectionColumnCount;
+      if (layout === '1-col') sectionColumnCount = 1;
+      else if (layout === '3-col' || layout === 'grid-cards') sectionColumnCount = Math.min(3, pageSections.length || 1);
+      else sectionColumnCount = Math.min(2, pageSections.length || 1);
 
-    const featuredMarkup = isFeatured && featuredItem
-      ? `
-        <aside class="menu-board-feature">
-          ${showImages && featuredItem.imageUrl ? `<div class="menu-board-feature-image"><img src="${this.escapeHtml(featuredItem.imageUrl)}" alt="${this.escapeHtml(featuredItem.name)}" /></div>` : ''}
-          <div class="menu-board-feature-copy">
-            <div class="menu-board-feature-kicker">${layout === 'hero-banner' ? "Today's Special" : layout === 'magazine' ? "Editor's Pick" : 'Featured Item'}</div>
-            <div class="menu-board-feature-title">${this.escapeHtml(featuredItem.name)}</div>
-            ${showPrices ? `<div class="menu-board-feature-price">${this.escapeHtml(this.formatMenuBoardPrice(featuredItem.priceCents, currency))}</div>` : ''}
-            ${showDescription && featuredItem.description ? `<div class="menu-board-feature-description">${this.escapeHtml(featuredItem.description)}</div>` : ''}
-          </div>
-        </aside>
-      `
-      : '';
-
-    const sectionsMarkup = sections.map((category) => {
-      const categoryAccent = this.sanitizeMenuBoardColor(category.color, accentColor);
-      const itemsMarkup = category.items.map((item) => {
-        const imageMarkup = showImages && item.imageUrl
-          ? `<div class="menu-board-item-image"><img src="${this.escapeHtml(item.imageUrl)}" alt="${this.escapeHtml(item.name)}" /></div>`
-          : '';
-        const priceMarkup = showPrices
-          ? `<div class="menu-board-item-price">${this.escapeHtml(this.formatMenuBoardPrice(item.priceCents, currency))}</div>`
-          : '';
-        const descriptionMarkup = showDescription && item.description
-          ? `<div class="menu-board-item-description">${this.escapeHtml(item.description)}</div>`
-          : '';
-
-        return `
-          <article class="menu-board-item ${imageMarkup ? 'has-image' : 'no-image'}">
-            ${imageMarkup}
-            <div class="menu-board-item-copy">
-              <div class="menu-board-item-head">
-                <div class="menu-board-item-name">${this.escapeHtml(item.name)}</div>
-                ${priceMarkup}
-              </div>
-              ${descriptionMarkup}
+      const featuredMarkup = isFeatured && featuredItem
+        ? `<aside class="menu-board-feature">
+            ${(showImages || heroImageUrl) && featuredItem.imageUrl ? `<div class="menu-board-feature-image"><img src="${this.escapeHtml(featuredItem.imageUrl)}" alt="${this.escapeHtml(featuredItem.name)}" /></div>` : ''}
+            <div class="menu-board-feature-copy">
+              <div class="menu-board-feature-kicker">${layout === 'hero-banner' ? "Today's Special" : layout === 'magazine' ? "Editor's Pick" : 'Featured Item'}</div>
+              <div class="menu-board-feature-title">${this.escapeHtml(featuredItem.name)}</div>
+              ${showPrices ? `<div class="menu-board-feature-price">${this.escapeHtml(this.formatMenuBoardPrice(featuredItem.priceCents, currency))}</div>` : ''}
+              ${showDescription && featuredItem.description ? `<div class="menu-board-feature-description">${this.escapeHtml(featuredItem.description)}</div>` : ''}
             </div>
-          </article>
-        `;
+          </aside>` : '';
+
+      const sectionsMarkup = pageSections.map((category) => {
+        const categoryAccent = this.sanitizeMenuBoardColor(category.color, accentColor);
+        const itemsMarkup = category.items.map((item) => {
+          const imageMarkup = showImages && item.imageUrl
+            ? `<div class="menu-board-item-image"><img src="${this.escapeHtml(item.imageUrl)}" alt="${this.escapeHtml(item.name)}" /></div>`
+            : '';
+          const priceMarkup = showPrices
+            ? `<div class="menu-board-item-price">${this.escapeHtml(this.formatMenuBoardPrice(item.priceCents, currency))}</div>`
+            : '';
+          const descriptionMarkup = showDescription && item.description
+            ? `<div class="menu-board-item-description">${this.escapeHtml(item.description)}</div>`
+            : '';
+          return `<article class="menu-board-item ${imageMarkup ? 'has-image' : 'no-image'}">${imageMarkup}<div class="menu-board-item-copy"><div class="menu-board-item-head"><div class="menu-board-item-name">${this.escapeHtml(item.name)}</div>${priceMarkup}</div>${descriptionMarkup}</div></article>`;
+        }).join('');
+        return `<section class="menu-board-category" style="--menu-board-category-accent:${categoryAccent};"><div class="menu-board-category-head"><div><div class="menu-board-category-title">${this.escapeHtml(category.name)}</div>${category.description ? `<div class="menu-board-category-description">${this.escapeHtml(category.description)}</div>` : ''}</div><div class="menu-board-category-count">${category.items.length}</div></div><div class="menu-board-item-list">${itemsMarkup}</div></section>`;
       }).join('');
 
-      return `
-        <section class="menu-board-category" style="--menu-board-category-accent:${categoryAccent};">
-          <div class="menu-board-category-head">
-            <div>
-              <div class="menu-board-category-title">${this.escapeHtml(category.name)}</div>
-              ${category.description ? `<div class="menu-board-category-description">${this.escapeHtml(category.description)}</div>` : ''}
-            </div>
-            <div class="menu-board-category-count">${category.items.length}</div>
-          </div>
-          <div class="menu-board-item-list">${itemsMarkup}</div>
-        </section>
-      `;
-    }).join('');
+      const gridClass = `menu-board-grid ${isFeatured ? 'is-featured' : ''} layout-${this.escapeHtml(layout)} cathead-${this.escapeHtml(categoryHeaderStyle)}`;
+      const subtitleParts = [];
+      if (menu && menu.name && menu.name !== boardTitle) subtitleParts.push(menu.name);
+      if (menu && menu.description) subtitleParts.push(menu.description);
+      subtitleParts.push(`${pageSections.length} ${pageSections.length === 1 ? 'category' : 'categories'}`);
+      const subtitle = subtitleParts.join(' | ');
+      return `<div class="menu-board-shell">
+        ${showHeader ? `<header class="menu-board-header"><div>${eyebrow ? `<div class="menu-board-eyebrow">${this.escapeHtml(eyebrow)}</div>` : ''}<h1 class="menu-board-title">${this.escapeHtml(boardTitle)}</h1><div class="menu-board-subtitle">${this.escapeHtml(subtitle)}</div></div></header>` : ''}
+        <div class="${gridClass}" style="--mb-section-cols:${sectionColumnCount}">
+          ${featuredMarkup}
+          <div class="menu-board-sections">${sectionsMarkup}</div>
+        </div>
+      </div>`;
+    };
+
+    const pageHtmls = pages.map((pg, i) =>
+      `<div class="mb-page" data-page="${i}" style="display:${i===0?'flex':'none'};flex-direction:column;width:100%;height:100%;position:absolute;inset:0;">${buildPageHtml(pg)}</div>`
+    ).join('');
+    const bgCss = backgroundImage
+      ? `linear-gradient(rgba(0,0,0,0.45),rgba(0,0,0,0.45)),url("${this.escapeHtml(backgroundImage)}") center/cover no-repeat,${backgroundColor}`
+      : backgroundColor;
+    const pageIndicator = pages.length > 1
+      ? `<div id="mb-page-ind" style="position:absolute;bottom:12px;right:16px;font-size:12px;opacity:0.55;color:${textColor};z-index:20;">1/${pages.length}</div>` : '';
+    const paginationScript = pages.length > 1 ? `<script>(function(){var pages=document.querySelectorAll('.mb-page');var cur=0;setInterval(function(){pages[cur].style.display='none';cur=(cur+1)%pages.length;pages[cur].style.display='flex';var ind=document.getElementById('mb-page-ind');if(ind)ind.textContent=(cur+1)+'/${pages.length}';},${pageSeconds * 1000});})()</script>` : '';
 
     return `
       <div class="menu-board-root">
@@ -5080,10 +5133,11 @@ const Player = {
             height: 100%;
             color: ${textColor};
             font-family: ${fontFamily};
-            background: ${backgroundImage
-              ? `linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url("${this.escapeHtml(backgroundImage)}") center/cover no-repeat, ${backgroundColor}`
-              : backgroundColor};
+            background: ${bgCss};
+            position: relative;
+            overflow: hidden;
           }
+          ${backgroundVideoUrl ? `.menu-board-bgvideo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:0.55;}` : ''}
           .menu-board-shell {
             width: 100%;
             height: 100%;
@@ -5315,6 +5369,7 @@ const Player = {
           }
           .menu-board-grid.layout-split { grid-template-columns: 1fr 1fr; }
           .menu-board-grid.layout-split .menu-board-sections { grid-template-columns: 1fr; }
+          .menu-board-sections { grid-template-columns: repeat(var(--mb-section-cols,2), minmax(0,1fr)); }
           /* Category header style variants */
           .menu-board-grid.cathead-underline .menu-board-category {
             background: transparent;
@@ -5337,22 +5392,12 @@ const Player = {
             background: transparent;
             box-shadow: none;
           }
+          .mb-page { flex-direction: column; }
         </style>
-        <div class="menu-board-shell">
-          ${showHeader ? `
-          <header class="menu-board-header">
-            <div>
-              ${eyebrow ? `<div class="menu-board-eyebrow">${this.escapeHtml(eyebrow)}</div>` : ''}
-              <h1 class="menu-board-title">${this.escapeHtml(boardTitle)}</h1>
-              <div class="menu-board-subtitle">${this.escapeHtml(subtitle)}</div>
-            </div>
-          </header>
-          ` : ''}
-          <div class="menu-board-grid ${isFeatured ? 'is-featured' : ''} layout-${this.escapeHtml(layout)} cathead-${this.escapeHtml(categoryHeaderStyle)}">
-            ${featuredMarkup}
-            <div class="menu-board-sections">${sectionsMarkup}</div>
-          </div>
-        </div>
+        ${backgroundVideoUrl ? `<video class="menu-board-bgvideo" src="${this.escapeHtml(backgroundVideoUrl)}" autoplay muted loop playsinline></video>` : ''}
+        ${pageHtmls}
+        ${pageIndicator}
+        ${paginationScript}
       </div>
     `;
   },

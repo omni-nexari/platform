@@ -58,6 +58,7 @@ import PosAnalyticsPage from './pages/workspace/PosAnalyticsPage.js';
 import PosExpensesPage from './pages/workspace/PosExpensesPage.js';
 import PosPurchaseOrdersPage from './pages/workspace/PosPurchaseOrdersPage.js';
 import PosMenuBoardsPage from './pages/workspace/PosMenuBoardsPage.js';
+import PosMediaPage from './pages/workspace/PosMediaPage.js';
 import ContentPage from './pages/workspace/ContentPage.js';
 import PlaylistPage from './pages/workspace/PlaylistPage.js';
 import PlaylistEditorPage from './pages/workspace/PlaylistEditorPage.js';
@@ -390,6 +391,7 @@ export default function App() {
         <Route path="/workspaces/:wsId/pos/expenses" element={<PosExpensesPage />} />
         <Route path="/workspaces/:wsId/pos/purchase-orders" element={<PosPurchaseOrdersPage />} />
         <Route path="/workspaces/:wsId/pos/menu-boards" element={<PosMenuBoardsPage />} />
+        <Route path="/workspaces/:wsId/pos/media" element={<PosMediaPage />} />
         <Route path="/workspaces/:wsId/content" element={<ContentPage />} />
         <Route path="/workspaces/:wsId/playlist" element={<PlaylistPage />} />
         <Route path="/workspaces/:wsId/playlist/sync/:id" element={<SyncPlaylistEditorPage />} />

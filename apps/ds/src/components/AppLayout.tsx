@@ -49,6 +49,7 @@ import {
   FileText,
   Receipt,
   MessageSquare,
+  ImageIcon,
 } from 'lucide-react';
 
 interface Workspace {
@@ -557,6 +558,19 @@ export default function AppLayout() {
                             >
                               <Menu className="w-4 h-4" />
                               Menu Boards
+                            </NavLink>
+                            <NavLink
+                              to={`/workspaces/${ws.id}/pos/media`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <ImageIcon className="w-4 h-4" />
+                              Media Library
                             </NavLink>
                             <NavLink
                               to={`/workspaces/${ws.id}/pos/expenses`}

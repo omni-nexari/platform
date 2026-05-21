@@ -1,10 +1,11 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Tv2 } from 'lucide-react';
 import {
   MENU_BOARD_FONTS,
   type MenuBoardConfig,
   type MenuBoardLayoutId,
 } from './menuBoardConfig.js';
+import { paginateSections, shardSections, type ShardSection } from './menuBoardShard.js';
 import { buildApiUrl } from '../../lib/api.js';
 
 export interface MenuBoardCanvasMenuItem {
@@ -42,6 +43,8 @@ export interface MenuBoardCanvasProps {
   placeholder?: boolean;
   className?: string;
   style?: React.CSSProperties;
+  /** Which shard (0-based screen index) to render. Defaults to config.screenIndex. */
+  screenIndex?: number;
 }
 
 const DENSITY_SCALE: Record<NonNullable<MenuBoardCanvasProps['density']>, number> = {
@@ -479,9 +482,44 @@ export function MenuBoardLayoutThumbnail({
 /* ── Main canvas component ────────────────────────────────────────────────── */
 
 export default function MenuBoardCanvas({
-  config, menu, density = 'md', fallbackTitle, placeholder = false, className, style,
+  config, menu, density = 'md', fallbackTitle, placeholder = false, className, style, screenIndex: screenIndexProp,
 }: MenuBoardCanvasProps) {
   const s = DENSITY_SCALE[density] * (config.fontScale || 1);
+
+  // Pagination page cycling
+  const [pageIdx, setPageIdx] = useState(0);
+
+  const effectiveScreenIndex = screenIndexProp ?? config.screenIndex ?? 0;
+
+  // Build the sharded + paginated pages from the menu
+  const pages = useMemo(() => {
+    if (!menu) return [];
+    const rawSections = menu.categories.map((c) => ({
+      ...c,
+      items: c.items ?? [],
+    })) as ShardSection[];
+    const sharded = shardSections(rawSections, config.screenCount ?? 1, effectiveScreenIndex, config.splitStrategy ?? 'by-category');
+    const pag = config.pagination ?? { mode: 'hybrid', itemsPerPage: 8, pageSeconds: 10 };
+    return paginateSections(sharded, pag);
+  }, [menu, config.screenCount, config.splitStrategy, config.pagination, effectiveScreenIndex]);
+
+  // Advance page on a timer when there are multiple pages
+  useEffect(() => {
+    if (pages.length <= 1) return;
+    const secs = Math.max(2, config.pagination?.pageSeconds ?? 10);
+    const id = setInterval(() => setPageIdx((i) => (i + 1) % pages.length), secs * 1000);
+    return () => clearInterval(id);
+  }, [pages.length, config.pagination?.pageSeconds]);
+
+  // Reset page index when menu/config changes
+  useEffect(() => { setPageIdx(0); }, [pages.length]);
+
+  const currentPage = pages[pageIdx] ?? pages[0];
+  // Reconstruct a "menu" slice for the current page so renderLayout works unchanged
+  const pageMenu = currentPage && menu ? {
+    ...menu,
+    categories: currentPage.sections as MenuBoardCanvasCategory[],
+  } : menu;
 
   const rootStyle: React.CSSProperties = {
     width: '100%',
@@ -494,6 +532,7 @@ export default function MenuBoardCanvas({
       ? `linear-gradient(${overlayFor(config.backgroundColor)}, ${overlayFor(config.backgroundColor)}), url("${config.backgroundImage}") center/cover no-repeat`
       : config.backgroundColor,
     color: config.textColor,
+    position: 'relative',
     ...style,
   };
 
@@ -512,30 +551,48 @@ export default function MenuBoardCanvas({
 
   return (
     <div className={className} style={rootStyle}>
-      {config.showHeader && (
-        <div style={{
-          flexShrink: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: `${6 * s}px ${10 * s}px`,
-          borderBottom: `1px solid ${config.accentColor}33`,
-          background: 'rgba(0,0,0,0.18)',
-        }}>
-          <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-            {config.eyebrow && (
-              <span style={{ fontSize: 8 * s, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: config.accentColor }}>
-                {config.eyebrow}
-              </span>
-            )}
-            <span style={{ fontSize: 14 * s, fontWeight: 800, color: config.textColor, lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {title}
-            </span>
-          </div>
-          <span style={{ fontSize: 8 * s, opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-            {config.layout.replace('-', ' ')}
-          </span>
-        </div>
+      {/* Background video (muted loop) */}
+      {config.backgroundVideoUrl && (
+        <video
+          key={config.backgroundVideoUrl}
+          src={config.backgroundVideoUrl}
+          autoPlay muted loop playsInline
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0, opacity: 0.55 }}
+        />
       )}
-      {menu && menu.categories.length > 0 ? renderLayout(menu, config, s) : placeholderEl}
+      <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+        {config.showHeader && (
+          <div style={{
+            flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: `${6 * s}px ${10 * s}px`,
+            borderBottom: `1px solid ${config.accentColor}33`,
+            background: 'rgba(0,0,0,0.18)',
+          }}>
+            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+              {config.eyebrow && (
+                <span style={{ fontSize: 8 * s, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: config.accentColor }}>
+                  {config.eyebrow}
+                </span>
+              )}
+              <span style={{ fontSize: 14 * s, fontWeight: 800, color: config.textColor, lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {title}
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+              <span style={{ fontSize: 8 * s, opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                {config.layout.replace('-', ' ')}
+              </span>
+              {pages.length > 1 && (
+                <span style={{ fontSize: 7 * s, opacity: 0.5, color: config.accentColor }}>
+                  {pageIdx + 1}/{pages.length}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+        {pageMenu && pageMenu.categories.length > 0 ? renderLayout(pageMenu, config, s) : placeholderEl}
+      </div>
     </div>
   );
 }
