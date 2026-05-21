@@ -60,7 +60,7 @@ function formatPrice(cents: number, currency: string) {
 }
 
 function pickFontStack(id: MenuBoardConfig['fontFamily']) {
-  return MENU_BOARD_FONTS.find((f) => f.id === id)?.stack ?? MENU_BOARD_FONTS[0].stack;
+  return MENU_BOARD_FONTS.find((f) => f.id === id)?.stack ?? MENU_BOARD_FONTS[0]!.stack;
 }
 
 /** Slightly transparent overlay on top of the user's background so text stays readable. */

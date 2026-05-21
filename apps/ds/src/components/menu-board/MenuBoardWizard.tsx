@@ -73,7 +73,7 @@ export default function MenuBoardWizard({
   }, [showBasicsStep]);
 
   const [stepIdx, setStepIdx] = useState(0);
-  const currentStep = STEPS[stepIdx];
+  const currentStep = STEPS[stepIdx]!;
 
   const { data: workspaces = [] } = useQuery<Workspace[]>({
     queryKey: ['workspaces'],
