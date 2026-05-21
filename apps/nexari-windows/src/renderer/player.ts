@@ -667,13 +667,32 @@ function _mbBuildStateHtml(title: string, message: string): string {
 }
 
 function _mbBuildHtml(c: NormalizedContent, menu: any, metadata: Record<string, unknown>): string {
-  const layout      = metadata['layout'] === '1-col' || metadata['layout'] === 'featured' ? String(metadata['layout']) : '2-col';
+  const VALID_LAYOUTS = ['1-col','2-col','3-col','featured','hero-banner','magazine','grid-cards','split'];
+  const FONT_STACKS: Record<string, string> = {
+    system:    "-apple-system,'Segoe UI',Roboto,sans-serif",
+    serif:     "'Playfair Display',Georgia,'Times New Roman',serif",
+    rounded:   "'Nunito','Quicksand',system-ui,sans-serif",
+    condensed: "'Oswald','Bebas Neue','Arial Narrow',sans-serif",
+    mono:      "'JetBrains Mono',ui-monospace,'Courier New',monospace",
+  };
+  const layout      = VALID_LAYOUTS.includes(metadata['layout'] as string) ? String(metadata['layout']) : '2-col';
   const showPrices  = metadata['showPrices'] !== false;
   const showImages  = metadata['showImages'] !== false;
   const showDesc    = metadata['showDescription'] === true;
+  const showHeader  = metadata['showHeader'] !== false;
   const fontScaleRaw = Number(metadata['fontScale']);
-  const fontScale   = isFinite(fontScaleRaw) ? Math.min(Math.max(fontScaleRaw, 0.8), 1.4) : 1;
-  const accentColor = _mbSanitizeColor(metadata['accentColor'], '#dd6b20');
+  const fontScale   = isFinite(fontScaleRaw) ? Math.min(Math.max(fontScaleRaw, 0.7), 1.6) : 1;
+  const accentColor     = _mbSanitizeColor(metadata['accentColor'],     '#dd6b20');
+  const backgroundColor = _mbSanitizeColor(metadata['backgroundColor'], '#0f1117');
+  const textColor       = _mbSanitizeColor(metadata['textColor'],       '#f7f2eb');
+  const backgroundImage = typeof metadata['backgroundImage'] === 'string' && /^https?:|^data:/.test(metadata['backgroundImage'])
+    ? metadata['backgroundImage'] : null;
+  const fontFamily = FONT_STACKS[metadata['fontFamily'] as string] || FONT_STACKS['system'];
+  const catHeadStyle = ['block','underline','bar','pill'].includes(metadata['categoryHeaderStyle'] as string)
+    ? String(metadata['categoryHeaderStyle']) : 'block';
+  const eyebrow     = typeof metadata['eyebrow'] === 'string' ? metadata['eyebrow'] : 'Live POS Menu';
+  const titleOverride = typeof metadata['titleOverride'] === 'string' && (metadata['titleOverride'] as string).trim()
+    ? (metadata['titleOverride'] as string).trim() : null;
   const currency    = typeof menu.currency === 'string' ? menu.currency : 'USD';
 
   const ids = Array.isArray(metadata['categoryIds'])
@@ -689,27 +708,29 @@ function _mbBuildHtml(c: NormalizedContent, menu: any, metadata: Record<string, 
     return _mbBuildStateHtml(c.name || 'Menu Board', 'No active POS menu items available for this board right now.');
   }
 
+  const isFeatured = layout === 'featured' || layout === 'hero-banner' || layout === 'magazine';
   let featuredItem: any = null;
-  if (layout === 'featured') {
+  if (isFeatured) {
     for (const cat of sections) {
       featuredItem = (showImages && cat.items.find((i: any) => !!i.imageUrl)) || cat.items[0] || null;
       if (featuredItem) break;
     }
   }
 
-  const boardTitle = c.name || menu.name || 'Menu Board';
+  const boardTitle = titleOverride || c.name || menu.name || 'Menu Board';
   const subtitleParts: string[] = [];
   if (menu.name && menu.name !== boardTitle) subtitleParts.push(menu.name);
   if (menu.description) subtitleParts.push(menu.description);
   subtitleParts.push(`${sections.length} ${sections.length === 1 ? 'category' : 'categories'}`);
   const subtitle = subtitleParts.join(' | ');
-  const sectionCols = layout === '1-col' ? 1 : Math.min(2, sections.length || 1);
+  const sectionCols = layout === '1-col' ? 1 : (layout === '3-col' || layout === 'grid-cards') ? Math.min(3, sections.length || 1) : Math.min(2, sections.length || 1);
 
-  const featuredMarkup = layout === 'featured' && featuredItem ? `
+  const featuredKicker = layout === 'hero-banner' ? "Today's Special" : layout === 'magazine' ? "Editor's Pick" : 'Featured Item';
+  const featuredMarkup = isFeatured && featuredItem ? `
     <aside class="menu-board-feature">
       ${showImages && featuredItem.imageUrl ? `<div class="menu-board-feature-image"><img src="${_mbEscHtml(featuredItem.imageUrl)}" alt="${_mbEscHtml(featuredItem.name)}" /></div>` : ''}
       <div class="menu-board-feature-copy">
-        <div class="menu-board-feature-kicker">Featured Item</div>
+        <div class="menu-board-feature-kicker">${_mbEscHtml(featuredKicker)}</div>
         <div class="menu-board-feature-title">${_mbEscHtml(featuredItem.name)}</div>
         ${showPrices ? `<div class="menu-board-feature-price">${_mbEscHtml(_mbFormatPrice(featuredItem.priceCents, currency))}</div>` : ''}
         ${showDesc && featuredItem.description ? `<div class="menu-board-feature-description">${_mbEscHtml(featuredItem.description)}</div>` : ''}
@@ -736,10 +757,15 @@ function _mbBuildHtml(c: NormalizedContent, menu: any, metadata: Record<string, 
     </section>`;
   }).join('');
 
+  const bgCss = backgroundImage
+    ? `linear-gradient(rgba(0,0,0,0.45),rgba(0,0,0,0.45)),url("${_mbEscHtml(backgroundImage)}") center/cover no-repeat,${backgroundColor}`
+    : backgroundColor;
+  const gridClass = `menu-board-grid layout-${layout} cathead-${catHeadStyle}${isFeatured ? ' is-featured' : ''}`;
+
   return `<div class="menu-board-root">
     <style>
       .menu-board-root,.menu-board-root *{box-sizing:border-box;}
-      .menu-board-root{--menu-board-accent:${accentColor};--menu-board-scale:${fontScale};width:100%;height:100%;color:#f7f2eb;font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(160deg,#231812 0%,#120d0a 62%,#241913 100%);}
+      .menu-board-root{--menu-board-accent:${accentColor};--menu-board-scale:${fontScale};width:100%;height:100%;color:${textColor};font-family:${fontFamily};background:${bgCss};}
       .menu-board-shell{width:100%;height:100%;display:flex;flex-direction:column;gap:calc(18px*var(--menu-board-scale));padding:calc(28px*var(--menu-board-scale));overflow:hidden;}
       .menu-board-header{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;}
       .menu-board-eyebrow{font-size:calc(12px*var(--menu-board-scale));font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:var(--menu-board-accent);}
@@ -747,6 +773,11 @@ function _mbBuildHtml(c: NormalizedContent, menu: any, metadata: Record<string, 
       .menu-board-subtitle{margin-top:8px;font-size:calc(14px*var(--menu-board-scale));line-height:1.5;color:rgba(247,242,235,0.7);}
       .menu-board-grid{flex:1;min-height:0;display:grid;grid-template-columns:1fr;gap:calc(18px*var(--menu-board-scale));}
       .menu-board-grid.is-featured{grid-template-columns:minmax(320px,0.95fr) minmax(0,1.75fr);}
+      .menu-board-grid.layout-hero-banner{grid-template-columns:1fr;grid-auto-rows:auto 1fr;}
+      .menu-board-grid.layout-hero-banner .menu-board-feature{grid-column:1/-1;display:grid;grid-template-columns:1.2fr 1fr;}
+      .menu-board-grid.layout-split{grid-template-columns:1fr 1fr;}
+      .menu-board-grid.layout-split .menu-board-sections{grid-template-columns:1fr;}
+      .menu-board-grid.layout-grid-cards .menu-board-item.has-image .menu-board-item-image{aspect-ratio:4/3;width:100%;height:auto;}
       .menu-board-feature{min-height:0;border:1px solid rgba(255,255,255,0.1);border-radius:26px;overflow:hidden;background:linear-gradient(180deg,rgba(255,255,255,0.08) 0%,rgba(255,255,255,0.03) 100%);display:flex;flex-direction:column;}
       .menu-board-feature-image{height:48%;min-height:210px;background:rgba(255,255,255,0.04);}
       .menu-board-feature-image img{width:100%;height:100%;display:block;object-fit:cover;}
@@ -757,6 +788,10 @@ function _mbBuildHtml(c: NormalizedContent, menu: any, metadata: Record<string, 
       .menu-board-feature-description{font-size:calc(15px*var(--menu-board-scale));line-height:1.55;color:rgba(247,242,235,0.8);}
       .menu-board-sections{min-height:0;display:grid;align-content:start;grid-template-columns:repeat(${sectionCols},minmax(0,1fr));gap:calc(16px*var(--menu-board-scale));overflow:hidden;}
       .menu-board-category{min-height:0;display:flex;flex-direction:column;gap:calc(14px*var(--menu-board-scale));padding:calc(18px*var(--menu-board-scale));border-radius:24px;border:1px solid rgba(255,255,255,0.09);background:linear-gradient(180deg,rgba(255,255,255,0.08) 0%,rgba(255,255,255,0.035) 100%);box-shadow:inset 4px 0 0 var(--menu-board-category-accent);}
+      .cathead-underline .menu-board-category{background:transparent;box-shadow:none;border-color:transparent;border-bottom:2px solid var(--menu-board-category-accent);border-radius:0;}
+      .cathead-bar .menu-board-category{box-shadow:inset 0 6px 0 var(--menu-board-category-accent);padding-top:calc(20px*var(--menu-board-scale));}
+      .cathead-pill .menu-board-category{background:transparent;box-shadow:none;}
+      .cathead-pill .menu-board-category-title{display:inline-block;padding:4px 14px;border-radius:999px;background:var(--menu-board-category-accent);color:#0f1117;}
       .menu-board-category-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;}
       .menu-board-category-title{font-size:calc(22px*var(--menu-board-scale));line-height:1.1;font-weight:800;overflow-wrap:anywhere;}
       .menu-board-category-description{margin-top:6px;font-size:calc(12px*var(--menu-board-scale));line-height:1.45;color:rgba(247,242,235,0.62);}
@@ -773,14 +808,14 @@ function _mbBuildHtml(c: NormalizedContent, menu: any, metadata: Record<string, 
       .menu-board-item-description{font-size:calc(12px*var(--menu-board-scale));line-height:1.45;color:rgba(247,242,235,0.72);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
     </style>
     <div class="menu-board-shell">
-      <header class="menu-board-header">
+      ${showHeader ? `<header class="menu-board-header">
         <div>
-          <div class="menu-board-eyebrow">Live POS Menu</div>
+          ${eyebrow ? `<div class="menu-board-eyebrow">${_mbEscHtml(eyebrow)}</div>` : ''}
           <h1 class="menu-board-title">${_mbEscHtml(boardTitle)}</h1>
           <div class="menu-board-subtitle">${_mbEscHtml(subtitle)}</div>
         </div>
-      </header>
-      <div class="menu-board-grid ${layout === 'featured' ? 'is-featured' : ''}">
+      </header>` : ''}
+      <div class="${gridClass}">
         ${featuredMarkup}
         <div class="menu-board-sections">${sectionsMarkup}</div>
       </div>

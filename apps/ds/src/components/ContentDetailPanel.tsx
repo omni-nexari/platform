@@ -15,6 +15,8 @@ import AssignedTagPills, { type AssignedTag } from './AssignedTagPills.js';
 import PublishWizardModal from './PublishWizardModal.js';
 import WorkspaceTagPicker from './WorkspaceTagPicker.js';
 import EditMenuBoardModal from './EditMenuBoardModal.js';
+import MenuBoardCanvas from './menu-board/MenuBoardCanvas.js';
+import { parseMenuBoardMetadata } from './menu-board/menuBoardConfig.js';
 import Html5EditorModal from './Html5EditorModal.js';
 import VideoReprocessWizard from './VideoReprocessWizard.js';
 
@@ -78,17 +80,9 @@ interface PosMenuPreviewData {
   }[];
 }
 
-function formatCents(cents: number, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100);
-}
-
 function MenuBoardPreview({ item }: { item: ContentDetail }) {
-  const meta = (() => { try { return JSON.parse(item.metadata ?? '{}'); } catch { return {}; } })();
-  const posWorkspaceId = meta.posWorkspaceId as string | undefined;
-  const layout         = (meta.layout as string) ?? '2-col';
-  const showPrices     = (meta.showPrices as boolean) ?? true;
-  const showDescription = (meta.showDescription as boolean) ?? false;
-  const showImages     = (meta.showImages as boolean) ?? true;
+  const config = parseMenuBoardMetadata(item.metadata);
+  const posWorkspaceId = config.posWorkspaceId || undefined;
 
   const { data: menu, isLoading } = useQuery<PosMenuPreviewData>({
     queryKey: ['pos-menu-preview', posWorkspaceId],
@@ -102,108 +96,19 @@ function MenuBoardPreview({ item }: { item: ContentDetail }) {
   }
   if (isLoading) {
     return (
-      <div className="w-full h-full flex items-center justify-center bg-[#0f1117]">
-        <div className="w-5 h-5 border-2 border-rose-400 border-t-transparent rounded-full animate-spin" />
+      <div className="w-full h-full flex items-center justify-center" style={{ background: config.backgroundColor }}>
+        <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" style={{ color: config.accentColor }} />
       </div>
     );
   }
-  if (!menu || menu.categories.length === 0) {
-    return (
-      <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 bg-[#0f1117]">
-        <Tv2 size={24} className="text-rose-400/60" />
-        <span className="text-[9px] text-slate-400">No active menu</span>
-      </div>
-    );
-  }
-
-  // Flatten items with their category for featured layout
-  const allItems = menu.categories.flatMap((c) => c.items.map((i) => ({ ...i, categoryName: c.name, categoryColor: c.color })));
 
   return (
-    <div className="w-full h-full overflow-hidden bg-[#0f1117] flex flex-col" style={{ fontFamily: 'system-ui, sans-serif' }}>
-      {/* Header bar */}
-      <div className="shrink-0 flex items-center justify-between px-2 py-1 bg-[#1a1e2e] border-b border-white/10">
-        <span className="text-[8px] font-bold text-white tracking-wide uppercase truncate">{menu.name}</span>
-        <span className="text-[7px] text-rose-400 font-semibold uppercase">{layout.replace('-', ' ')}</span>
-      </div>
-
-      {/* Body */}
-      <div className={`flex-1 min-h-0 overflow-hidden p-1 ${layout === '2-col' ? 'columns-2 gap-1' : 'flex flex-col gap-1'}`}>
-        {layout === 'featured' ? (
-          /* Featured: hero item + compact grid */
-          <>
-            {allItems[0] && (
-              <div className="shrink-0 flex gap-1.5 mb-1 p-1.5 rounded bg-white/5 border border-white/10">
-                {showImages && allItems[0].imageUrl && (
-                  <img
-                    src={allItems[0].imageUrl.startsWith('http') ? allItems[0].imageUrl : buildApiUrl(allItems[0].imageUrl)}
-                    alt=""
-                    className="w-10 h-10 object-cover rounded shrink-0"
-                  />
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-1">
-                    <span className="text-[8px] font-bold text-white leading-tight truncate">{allItems[0].name}</span>
-                    {showPrices && <span className="text-[7px] font-semibold text-rose-300 shrink-0">{formatCents(allItems[0].priceCents, menu.currency)}</span>}
-                  </div>
-                  {showDescription && allItems[0].description && (
-                    <p className="text-[6px] text-slate-400 leading-tight line-clamp-2 mt-0.5">{allItems[0].description}</p>
-                  )}
-                  <span className="text-[6px] text-rose-400/70 uppercase">{allItems[0].categoryName}</span>
-                </div>
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-0.5">
-              {allItems.slice(1, 9).map((it) => (
-                <div key={it.id} className="flex items-center gap-1 px-1.5 py-1 rounded bg-white/3 border border-white/8">
-                  <div className="min-w-0 flex-1">
-                    <span className="text-[6px] text-white font-medium truncate block">{it.name}</span>
-                    {showPrices && <span className="text-[6px] text-rose-300">{formatCents(it.priceCents, menu.currency)}</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          /* 1-col or 2-col: categories with items */
-          menu.categories.map((cat) => (
-            <div key={cat.id} className="break-inside-avoid mb-1">
-              {/* Category header */}
-              <div
-                className="px-1.5 py-0.5 rounded-t text-[7px] font-bold text-white uppercase tracking-wide"
-                style={{ background: cat.color ?? '#1e293b' }}
-              >
-                {cat.name}
-              </div>
-              {/* Items */}
-              <div className="border border-white/10 rounded-b overflow-hidden">
-                {cat.items.slice(0, 8).map((it, idx) => (
-                  <div
-                    key={it.id}
-                    className={`flex items-center gap-1 px-1.5 py-0.5 ${idx % 2 === 0 ? 'bg-white/3' : 'bg-transparent'}`}
-                  >
-                    {showImages && it.imageUrl && (
-                      <img
-                        src={it.imageUrl.startsWith('http') ? it.imageUrl : buildApiUrl(it.imageUrl)}
-                        alt=""
-                        className="w-4 h-4 object-cover rounded shrink-0"
-                      />
-                    )}
-                    <span className="text-[6px] text-slate-200 flex-1 truncate">{it.name}</span>
-                    {showPrices && (
-                      <span className="text-[6px] font-semibold text-rose-300 shrink-0">{formatCents(it.priceCents, menu.currency)}</span>
-                    )}
-                  </div>
-                ))}
-                {cat.items.length === 0 && (
-                  <div className="px-1.5 py-1 text-[6px] text-slate-500 italic">No items</div>
-                )}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
+    <MenuBoardCanvas
+      config={config}
+      menu={menu ?? null}
+      density="sm"
+      fallbackTitle={item.name}
+    />
   );
 }
 

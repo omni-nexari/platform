@@ -3,11 +3,13 @@ import { useParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Plus, Tv2, Trash2 } from 'lucide-react';
-import { api, buildApiUrl } from '../../lib/api.js';
+import { api } from '../../lib/api.js';
 import { PageHeader, Skeleton, EmptyState } from '../../components/UiPrimitives.js';
 import CreateMenuBoardModal from '../../components/CreateMenuBoardModal.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
 import ContentDetailPanel from '../../components/ContentDetailPanel.js';
+import MenuBoardCanvas, { type MenuBoardCanvasMenu } from '../../components/menu-board/MenuBoardCanvas.js';
+import { parseMenuBoardMetadata } from '../../components/menu-board/menuBoardConfig.js';
 
 interface MenuBoardItem {
   id: string;
@@ -19,25 +21,11 @@ interface MenuBoardItem {
   updatedAt: string;
 }
 
-interface PosMenuCard {
-  name: string;
-  currency: string;
-  categories: {
-    id: string;
-    name: string;
-    color: string | null;
-    items: { id: string; name: string; priceCents: number; imageUrl: string | null }[];
-  }[];
-}
-
 function MenuBoardCardPreview({ metadata }: { metadata: string | null }) {
-  const meta = (() => { try { return JSON.parse(metadata ?? '{}'); } catch { return {}; } })();
-  const posWorkspaceId = meta.posWorkspaceId as string | undefined;
-  const layout         = (meta.layout as string) ?? '2-col';
-  const showPrices     = (meta.showPrices as boolean) ?? true;
-  const showImages     = (meta.showImages as boolean) ?? true;
+  const config = parseMenuBoardMetadata(metadata);
+  const posWorkspaceId = config.posWorkspaceId || undefined;
 
-  const { data: menu, isLoading } = useQuery<PosMenuCard>({
+  const { data: menu, isLoading } = useQuery<MenuBoardCanvasMenu>({
     queryKey: ['pos-menu-preview', posWorkspaceId],
     queryFn:  () => api.get(`/pos/menu?workspaceId=${posWorkspaceId}`),
     enabled:  !!posWorkspaceId,
@@ -46,95 +34,15 @@ function MenuBoardCardPreview({ metadata }: { metadata: string | null }) {
 
   if (!posWorkspaceId || isLoading) {
     return (
-      <div className="w-full h-full flex items-center justify-center bg-[#0f1117]">
+      <div className="w-full h-full flex items-center justify-center" style={{ background: config.backgroundColor }}>
         {isLoading
-          ? <div className="w-4 h-4 border-2 border-rose-400 border-t-transparent rounded-full animate-spin" />
-          : <Tv2 size={24} className="text-rose-400/60" />}
-      </div>
-    );
-  }
-  if (!menu || menu.categories.length === 0) {
-    return (
-      <div className="w-full h-full flex flex-col items-center justify-center gap-1 bg-[#0f1117]">
-        <Tv2 size={20} className="text-rose-400/40" />
-        <span className="text-[8px] text-slate-500">No active menu</span>
+          ? <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" style={{ color: config.accentColor }} />
+          : <Tv2 size={24} style={{ color: config.accentColor, opacity: 0.6 }} />}
       </div>
     );
   }
 
-  const allItems = menu.categories.flatMap((c) => c.items.map((i) => ({ ...i, catName: c.name, catColor: c.color })));
-
-  return (
-    <div className="w-full h-full overflow-hidden bg-[#0f1117] flex flex-col" style={{ fontFamily: 'system-ui,sans-serif' }}>
-      {/* mini header */}
-      <div className="shrink-0 flex items-center justify-between px-1.5 py-0.5 bg-[#1a1e2e] border-b border-white/10">
-        <span className="text-[7px] font-bold text-white truncate uppercase tracking-wide">{menu.name}</span>
-        <span className="text-[6px] text-rose-400 uppercase font-semibold">{layout.replace('-',' ')}</span>
-      </div>
-      {/* content */}
-      <div className={`flex-1 min-h-0 overflow-hidden p-0.5 ${
-        layout === '2-col' ? 'columns-2 gap-0.5' : 'flex flex-col gap-0.5'
-      }`}>
-        {layout === 'featured' ? (
-          <>
-            {allItems[0] && (
-              <div className="shrink-0 flex gap-1 mb-0.5 p-1 rounded bg-white/5 border border-white/10">
-                {showImages && allItems[0].imageUrl && (
-                  <img
-                    src={allItems[0].imageUrl.startsWith('http') ? allItems[0].imageUrl : buildApiUrl(allItems[0].imageUrl)}
-                    alt=""
-                    className="w-7 h-7 object-cover rounded shrink-0"
-                  />
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="text-[7px] font-bold text-white truncate">{allItems[0].name}</p>
-                  {showPrices && <p className="text-[6px] text-rose-300">${(allItems[0].priceCents/100).toFixed(2)}</p>}
-                </div>
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-0.5">
-              {allItems.slice(1, 7).map((it) => (
-                <div key={it.id} className="px-1 py-0.5 rounded bg-white/3 border border-white/8">
-                  <p className="text-[6px] text-slate-200 truncate">{it.name}</p>
-                  {showPrices && <p className="text-[6px] text-rose-300">${(it.priceCents/100).toFixed(2)}</p>}
-                </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          menu.categories.map((cat) => (
-            <div key={cat.id} className="break-inside-avoid mb-0.5">
-              <div
-                className="px-1 py-0.5 text-[6px] font-bold text-white uppercase tracking-wide rounded-t"
-                style={{ background: cat.color ?? '#1e293b' }}
-              >
-                {cat.name}
-              </div>
-              <div className="border border-white/10 rounded-b overflow-hidden">
-                {cat.items.slice(0, 6).map((it, idx) => (
-                  <div key={it.id} className={`flex items-center gap-0.5 px-1 py-0.5 ${
-                    idx % 2 === 0 ? 'bg-white/3' : ''
-                  }`}>
-                    {showImages && it.imageUrl && (
-                      <img
-                        src={it.imageUrl.startsWith('http') ? it.imageUrl : buildApiUrl(it.imageUrl)}
-                        alt=""
-                        className="w-3 h-3 object-cover rounded shrink-0"
-                      />
-                    )}
-                    <span className="text-[6px] text-slate-200 flex-1 truncate">{it.name}</span>
-                    {showPrices && (
-                      <span className="text-[6px] text-rose-300 shrink-0">${(it.priceCents/100).toFixed(2)}</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
+  return <MenuBoardCanvas config={config} menu={menu ?? null} density="xs" />;
 }
 
 interface ContentResponse {

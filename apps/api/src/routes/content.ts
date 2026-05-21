@@ -824,9 +824,18 @@ export async function contentRoutes(app: FastifyInstance) {
       showPrices?: boolean;
       showImages?: boolean;
       showDescription?: boolean;
+      showHeader?: boolean;
+      titleOverride?: string | null;
+      eyebrow?: string | null;
       categoryIds?: string[];
       fontScale?: number;
+      fontFamily?: string;
       accentColor?: string;
+      backgroundColor?: string;
+      textColor?: string;
+      backgroundImage?: string | null;
+      categoryHeaderStyle?: string;
+      theme?: string;
       duration?: number;
     };
 
@@ -845,14 +854,23 @@ export async function contentRoutes(app: FastifyInstance) {
     const initialApprovalStateMb = wsSettingsMb.approvalRequired && !APPROVE_ROLES.has(user.role) ? 'draft' : 'approved';
 
     const metadata = JSON.stringify({
-      posWorkspaceId:  body.posWorkspaceId,
-      layout:          body.layout ?? '2-col',
-      showPrices:      body.showPrices    ?? true,
-      showImages:      body.showImages    ?? true,
-      showDescription: body.showDescription ?? false,
-      categoryIds:     body.categoryIds   ?? [],
-      fontScale:       body.fontScale     ?? 1,
-      accentColor:     body.accentColor   ?? null,
+      posWorkspaceId:       body.posWorkspaceId,
+      layout:               body.layout ?? '2-col',
+      showPrices:           body.showPrices         ?? true,
+      showImages:           body.showImages         ?? true,
+      showDescription:      body.showDescription    ?? false,
+      showHeader:           body.showHeader         ?? true,
+      titleOverride:        body.titleOverride      ?? null,
+      eyebrow:              body.eyebrow            ?? 'Live POS Menu',
+      categoryIds:          body.categoryIds        ?? [],
+      fontScale:            body.fontScale          ?? 1,
+      fontFamily:           body.fontFamily         ?? 'system',
+      accentColor:          body.accentColor        ?? '#dd6b20',
+      backgroundColor:      body.backgroundColor    ?? '#0f1117',
+      textColor:            body.textColor          ?? '#f7f2eb',
+      backgroundImage:      body.backgroundImage    ?? null,
+      categoryHeaderStyle:  body.categoryHeaderStyle ?? 'block',
+      theme:                body.theme              ?? 'midnight',
     });
 
     const [item] = await db.insert(contentItems).values({
@@ -880,9 +898,18 @@ export async function contentRoutes(app: FastifyInstance) {
       showPrices?: boolean;
       showImages?: boolean;
       showDescription?: boolean;
+      showHeader?: boolean;
+      titleOverride?: string | null;
+      eyebrow?: string | null;
       categoryIds?: string[];
       fontScale?: number;
+      fontFamily?: string;
       accentColor?: string;
+      backgroundColor?: string;
+      textColor?: string;
+      backgroundImage?: string | null;
+      categoryHeaderStyle?: string;
+      theme?: string;
       duration?: number;
     };
 
@@ -896,15 +923,26 @@ export async function contentRoutes(app: FastifyInstance) {
     if (!member) return reply.status(403).send({ error: 'Forbidden' });
 
     const current = (() => { try { return JSON.parse(item.metadata ?? '{}'); } catch { return {}; } })();
+    // Use `??` everywhere so that explicit `null`/`false` from the client overwrite existing values,
+    // while undefined fields keep the current metadata value.
     const updated = {
-      posWorkspaceId:  body.posWorkspaceId  ?? current.posWorkspaceId,
-      layout:          body.layout          ?? current.layout,
-      showPrices:      body.showPrices      ?? current.showPrices,
-      showImages:      body.showImages      ?? current.showImages,
-      showDescription: body.showDescription ?? current.showDescription,
-      categoryIds:     body.categoryIds     ?? current.categoryIds,
-      fontScale:       body.fontScale       ?? current.fontScale,
-      accentColor:     body.accentColor     ?? current.accentColor,
+      posWorkspaceId:       body.posWorkspaceId      ?? current.posWorkspaceId,
+      layout:               body.layout              ?? current.layout,
+      showPrices:           body.showPrices          ?? current.showPrices,
+      showImages:           body.showImages          ?? current.showImages,
+      showDescription:      body.showDescription     ?? current.showDescription,
+      showHeader:           body.showHeader          ?? current.showHeader,
+      titleOverride:        body.titleOverride       !== undefined ? body.titleOverride       : current.titleOverride,
+      eyebrow:              body.eyebrow             !== undefined ? body.eyebrow             : current.eyebrow,
+      categoryIds:          body.categoryIds         ?? current.categoryIds,
+      fontScale:            body.fontScale           ?? current.fontScale,
+      fontFamily:           body.fontFamily          ?? current.fontFamily,
+      accentColor:          body.accentColor         ?? current.accentColor,
+      backgroundColor:      body.backgroundColor     ?? current.backgroundColor,
+      textColor:            body.textColor           ?? current.textColor,
+      backgroundImage:      body.backgroundImage     !== undefined ? body.backgroundImage     : current.backgroundImage,
+      categoryHeaderStyle:  body.categoryHeaderStyle ?? current.categoryHeaderStyle,
+      theme:                body.theme               ?? current.theme,
     };
 
     const [patched] = await db.update(contentItems)

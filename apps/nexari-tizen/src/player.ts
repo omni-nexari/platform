@@ -4945,17 +4945,37 @@ const Player = {
   },
 
   buildMenuBoardHtml(content, menu, metadata) {
-    const layout = metadata.layout === '1-col' || metadata.layout === 'featured'
-      ? metadata.layout
-      : '2-col';
+    const validLayouts = ['1-col', '2-col', '3-col', 'featured', 'hero-banner', 'magazine', 'grid-cards', 'split'];
+    const layout = validLayouts.indexOf(metadata.layout) !== -1 ? metadata.layout : '2-col';
     const showPrices = metadata.showPrices !== false;
     const showImages = metadata.showImages !== false;
     const showDescription = metadata.showDescription === true;
+    const showHeader = metadata.showHeader !== false;
     const fontScaleRaw = Number(metadata.fontScale);
     const fontScale = Number.isFinite(fontScaleRaw)
-      ? Math.min(Math.max(fontScaleRaw, 0.8), 1.4)
+      ? Math.min(Math.max(fontScaleRaw, 0.7), 1.6)
       : 1;
-    const accentColor = this.sanitizeMenuBoardColor(metadata.accentColor, '#dd6b20');
+    const accentColor     = this.sanitizeMenuBoardColor(metadata.accentColor,     '#dd6b20');
+    const backgroundColor = this.sanitizeMenuBoardColor(metadata.backgroundColor, '#0f1117');
+    const textColor       = this.sanitizeMenuBoardColor(metadata.textColor,       '#f7f2eb');
+    const backgroundImage = typeof metadata.backgroundImage === 'string' && /^https?:|^data:/.test(metadata.backgroundImage)
+      ? metadata.backgroundImage
+      : null;
+    const fontFamilyMap = {
+      system:    "-apple-system, 'Segoe UI', Roboto, sans-serif",
+      serif:     "'Playfair Display', Georgia, 'Times New Roman', serif",
+      rounded:   "'Nunito', 'Quicksand', system-ui, sans-serif",
+      condensed: "'Oswald', 'Bebas Neue', 'Arial Narrow', sans-serif",
+      mono:      "'JetBrains Mono', ui-monospace, 'Courier New', monospace",
+    };
+    const fontFamily = fontFamilyMap[metadata.fontFamily] || fontFamilyMap.system;
+    const categoryHeaderStyle = ['block', 'underline', 'bar', 'pill'].indexOf(metadata.categoryHeaderStyle) !== -1
+      ? metadata.categoryHeaderStyle
+      : 'block';
+    const eyebrow = typeof metadata.eyebrow === 'string' ? metadata.eyebrow : 'Live POS Menu';
+    const titleOverride = typeof metadata.titleOverride === 'string' && metadata.titleOverride.trim()
+      ? metadata.titleOverride.trim()
+      : null;
     const sections = this.getMenuBoardSections(menu, metadata);
     const currency = menu && typeof menu.currency === 'string' ? menu.currency : 'USD';
 
@@ -4967,7 +4987,8 @@ const Player = {
     }
 
     let featuredItem = null;
-    if (layout === 'featured') {
+    const isFeatured = layout === 'featured' || layout === 'hero-banner' || layout === 'magazine';
+    if (isFeatured) {
       for (const category of sections) {
         const preferred = category.items.find((item) => showImages && !!item.imageUrl) || category.items[0];
         if (preferred) {
@@ -4977,7 +4998,8 @@ const Player = {
       }
     }
 
-    const boardTitle = content && content.name ? content.name : (menu && menu.name ? menu.name : 'Menu Board');
+    const boardTitle = titleOverride
+      || (content && content.name ? content.name : (menu && menu.name ? menu.name : 'Menu Board'));
     const subtitleParts = [];
     if (menu && menu.name && menu.name !== boardTitle) {
       subtitleParts.push(menu.name);
@@ -4987,14 +5009,17 @@ const Player = {
     }
     subtitleParts.push(`${sections.length} ${sections.length === 1 ? 'category' : 'categories'}`);
     const subtitle = subtitleParts.join(' | ');
-    const sectionColumnCount = layout === '1-col' ? 1 : Math.min(2, sections.length || 1);
+    let sectionColumnCount;
+    if (layout === '1-col') sectionColumnCount = 1;
+    else if (layout === '3-col' || layout === 'grid-cards') sectionColumnCount = Math.min(3, sections.length || 1);
+    else sectionColumnCount = Math.min(2, sections.length || 1);
 
-    const featuredMarkup = layout === 'featured' && featuredItem
+    const featuredMarkup = isFeatured && featuredItem
       ? `
         <aside class="menu-board-feature">
           ${showImages && featuredItem.imageUrl ? `<div class="menu-board-feature-image"><img src="${this.escapeHtml(featuredItem.imageUrl)}" alt="${this.escapeHtml(featuredItem.name)}" /></div>` : ''}
           <div class="menu-board-feature-copy">
-            <div class="menu-board-feature-kicker">Featured Item</div>
+            <div class="menu-board-feature-kicker">${layout === 'hero-banner' ? "Today's Special" : layout === 'magazine' ? "Editor's Pick" : 'Featured Item'}</div>
             <div class="menu-board-feature-title">${this.escapeHtml(featuredItem.name)}</div>
             ${showPrices ? `<div class="menu-board-feature-price">${this.escapeHtml(this.formatMenuBoardPrice(featuredItem.priceCents, currency))}</div>` : ''}
             ${showDescription && featuredItem.description ? `<div class="menu-board-feature-description">${this.escapeHtml(featuredItem.description)}</div>` : ''}
@@ -5053,9 +5078,11 @@ const Player = {
             --menu-board-scale: ${fontScale};
             width: 100%;
             height: 100%;
-            color: #f7f2eb;
-            font-family: 'Segoe UI', Arial, sans-serif;
-            background: linear-gradient(160deg, #231812 0%, #120d0a 62%, #241913 100%);
+            color: ${textColor};
+            font-family: ${fontFamily};
+            background: ${backgroundImage
+              ? `linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url("${this.escapeHtml(backgroundImage)}") center/cover no-repeat, ${backgroundColor}`
+              : backgroundColor};
           }
           .menu-board-shell {
             width: 100%;
@@ -5273,16 +5300,55 @@ const Player = {
               grid-template-columns: 1fr;
             }
           }
+          /* Layout variants */
+          .menu-board-grid.layout-hero-banner { grid-template-columns: 1fr; grid-auto-rows: auto 1fr; }
+          .menu-board-grid.layout-hero-banner .menu-board-feature {
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: 1.2fr 1fr;
+          }
+          .menu-board-grid.layout-magazine .menu-board-feature {
+            border: 1px solid rgba(255,255,255,0.08);
+          }
+          .menu-board-grid.layout-grid-cards .menu-board-item.has-image .menu-board-item-image {
+            aspect-ratio: 4 / 3;
+          }
+          .menu-board-grid.layout-split { grid-template-columns: 1fr 1fr; }
+          .menu-board-grid.layout-split .menu-board-sections { grid-template-columns: 1fr; }
+          /* Category header style variants */
+          .menu-board-grid.cathead-underline .menu-board-category {
+            background: transparent;
+            box-shadow: none;
+            border-bottom: 2px solid var(--menu-board-category-accent);
+            border-radius: 0;
+          }
+          .menu-board-grid.cathead-bar .menu-board-category {
+            box-shadow: inset 0 6px 0 var(--menu-board-category-accent);
+            padding-top: calc(20px * var(--menu-board-scale));
+          }
+          .menu-board-grid.cathead-pill .menu-board-category-title {
+            display: inline-block;
+            padding: 4px 14px;
+            border-radius: 999px;
+            background: var(--menu-board-category-accent);
+            color: #0f1117;
+          }
+          .menu-board-grid.cathead-pill .menu-board-category {
+            background: transparent;
+            box-shadow: none;
+          }
         </style>
         <div class="menu-board-shell">
+          ${showHeader ? `
           <header class="menu-board-header">
             <div>
-              <div class="menu-board-eyebrow">Live POS Menu</div>
+              ${eyebrow ? `<div class="menu-board-eyebrow">${this.escapeHtml(eyebrow)}</div>` : ''}
               <h1 class="menu-board-title">${this.escapeHtml(boardTitle)}</h1>
               <div class="menu-board-subtitle">${this.escapeHtml(subtitle)}</div>
             </div>
           </header>
-          <div class="menu-board-grid ${layout === 'featured' ? 'is-featured' : ''}">
+          ` : ''}
+          <div class="menu-board-grid ${isFeatured ? 'is-featured' : ''} layout-${this.escapeHtml(layout)} cathead-${this.escapeHtml(categoryHeaderStyle)}">
             ${featuredMarkup}
             <div class="menu-board-sections">${sectionsMarkup}</div>
           </div>
