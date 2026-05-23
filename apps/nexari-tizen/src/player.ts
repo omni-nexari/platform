@@ -5234,7 +5234,7 @@ const Player = {
             min-height: 0;
             display: grid;
             align-content: start;
-            grid-template-columns: repeat(${sectionColumnCount}, minmax(0, 1fr));
+            grid-template-columns: repeat(var(--mb-section-cols, 2), minmax(0, 1fr));
             gap: calc(16px * var(--menu-board-scale));
             overflow: hidden;
           }

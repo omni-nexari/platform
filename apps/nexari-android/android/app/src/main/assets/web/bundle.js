@@ -187,6 +187,9 @@ var Api = class {
       url = content["webUrl"];
     } else if (type === "html5") {
       url = token ? `${this.base}/devices/device/content/${id}/html5/${encodeURIComponent(token)}/` : void 0;
+    } else if (type === "html") {
+      const rawUrl = content["url"];
+      url = rawUrl && /^https?:\/\//i.test(rawUrl) ? rawUrl : `${this.base}/devices/device/content/${id}/file${token ? `?token=${encodeURIComponent(token)}` : ""}`;
     } else {
       url = `${this.base}/devices/device/content/${id}/file${token ? `?token=${encodeURIComponent(token)}` : ""}`;
     }
@@ -916,15 +919,72 @@ function getSections(menu, metadata) {
   const filtered = ids.length > 0 ? cats.filter((c) => ids.includes(c.id)) : cats;
   return filtered.map((c) => __spreadProps(__spreadValues({}, c), { items: Array.isArray(c.items) ? c.items.filter(Boolean) : [] })).filter((c) => c.items.length > 0);
 }
-function buildMenuBoardHtml(content, menu, metadata) {
-  const VALID_LAYOUTS = ["1-col","2-col","3-col","featured","hero-banner","magazine","grid-cards","split"];
-  const FONT_STACKS = {
-    system:    "-apple-system,'Segoe UI',Roboto,sans-serif",
-    serif:     "'Playfair Display',Georgia,'Times New Roman',serif",
-    rounded:   "'Nunito','Quicksand',system-ui,sans-serif",
-    condensed: "'Oswald','Bebas Neue','Arial Narrow',sans-serif",
-    mono:      "'JetBrains Mono',ui-monospace,'Courier New',monospace",
-  };
+var VALID_LAYOUTS = ["1-col", "2-col", "3-col", "featured", "hero-banner", "magazine", "grid-cards", "split"];
+var FONT_STACKS = {
+  system: "-apple-system,'Segoe UI',Roboto,sans-serif",
+  serif: "'Playfair Display',Georgia,'Times New Roman',serif",
+  rounded: "'Nunito','Quicksand',system-ui,sans-serif",
+  condensed: "'Oswald','Bebas Neue','Arial Narrow',sans-serif",
+  mono: "'JetBrains Mono',ui-monospace,'Courier New',monospace"
+};
+function shardSections(sections, screenCount, screenIndex, strategy) {
+  if (screenCount <= 1) return sections;
+  const idx = Math.max(0, Math.min(screenCount - 1, screenIndex));
+  if (strategy === "by-category") {
+    return sections.filter((_, i) => i % screenCount === idx);
+  }
+  const allItems = [];
+  for (const cat of sections) for (const item of cat.items) allItems.push({ item, cat });
+  let slotItems;
+  if (strategy === "by-item-roundrobin") {
+    slotItems = allItems.filter((_, i) => i % screenCount === idx);
+  } else {
+    const blockSize = Math.ceil(allItems.length / screenCount);
+    const start = idx * blockSize;
+    slotItems = allItems.slice(start, start + blockSize);
+  }
+  const catMap = /* @__PURE__ */ new Map();
+  for (const { item, cat } of slotItems) {
+    if (!catMap.has(cat.id)) catMap.set(cat.id, __spreadProps(__spreadValues({}, cat), { items: [] }));
+    catMap.get(cat.id).items.push(item);
+  }
+  return sections.map((c) => catMap.get(c.id)).filter(Boolean);
+}
+function paginateSections(sections, itemsPerPage) {
+  const pages = [];
+  let current = [];
+  let count = 0;
+  for (const cat of sections) {
+    if (cat.items.length === 0) continue;
+    if (count > 0 && count + cat.items.length > itemsPerPage) {
+      pages.push(current);
+      current = [];
+      count = 0;
+    }
+    if (cat.items.length > itemsPerPage) {
+      if (current.length > 0) {
+        pages.push(current);
+        current = [];
+        count = 0;
+      }
+      for (let i = 0; i < cat.items.length; i += itemsPerPage) {
+        pages.push([__spreadProps(__spreadValues({}, cat), { items: cat.items.slice(i, i + itemsPerPage) })]);
+      }
+    } else {
+      current.push(cat);
+      count += cat.items.length;
+    }
+  }
+  if (current.length > 0) pages.push(current);
+  return pages.length > 0 ? pages : [sections];
+}
+function resolveScreenIndex(meta, deviceDisplayIndex) {
+  if (Number.isFinite(meta["_playlistScreenIndex"])) return Number(meta["_playlistScreenIndex"]);
+  if (Number.isFinite(meta["screenIndex"])) return Number(meta["screenIndex"]);
+  if (Number.isFinite(deviceDisplayIndex)) return Number(deviceDisplayIndex);
+  return 0;
+}
+function buildMenuBoardHtml(content, menu, metadata, deviceDisplayIndex) {
   const layout = VALID_LAYOUTS.includes(metadata["layout"]) ? String(metadata["layout"]) : "2-col";
   const showPrices = metadata["showPrices"] !== false;
   const showImages = metadata["showImages"] !== false;
@@ -936,50 +996,68 @@ function buildMenuBoardHtml(content, menu, metadata) {
   const backgroundColor = sanitizeColor(metadata["backgroundColor"], "#0f1117");
   const textColor = sanitizeColor(metadata["textColor"], "#f7f2eb");
   const backgroundImage = typeof metadata["backgroundImage"] === "string" && /^https?:|^data:/.test(metadata["backgroundImage"]) ? metadata["backgroundImage"] : null;
+  const backgroundVideoUrl = typeof metadata["backgroundVideoUrl"] === "string" && /^https?:/.test(metadata["backgroundVideoUrl"]) ? metadata["backgroundVideoUrl"] : null;
+  const heroImageUrl = typeof metadata["heroImageUrl"] === "string" && /^https?:|^data:/.test(metadata["heroImageUrl"]) ? metadata["heroImageUrl"] : null;
   const fontFamily = FONT_STACKS[metadata["fontFamily"]] || FONT_STACKS["system"];
-  const catHeadStyle = ["block","underline","bar","pill"].includes(metadata["categoryHeaderStyle"]) ? String(metadata["categoryHeaderStyle"]) : "block";
+  const catHeadStyle = ["block", "underline", "bar", "pill"].includes(metadata["categoryHeaderStyle"]) ? String(metadata["categoryHeaderStyle"]) : "block";
   const eyebrow = typeof metadata["eyebrow"] === "string" ? metadata["eyebrow"] : "Live POS Menu";
   const titleOverride = typeof metadata["titleOverride"] === "string" && metadata["titleOverride"].trim() ? metadata["titleOverride"].trim() : null;
   const currency = typeof menu.currency === "string" ? menu.currency : "USD";
-  const sections = getSections(menu, metadata);
+  const screenCount = Number.isFinite(metadata["screenCount"]) ? Math.max(1, Number(metadata["screenCount"])) : 1;
+  const splitStrategy = typeof metadata["splitStrategy"] === "string" ? metadata["splitStrategy"] : "by-category";
+  const screenIndex = resolveScreenIndex(metadata, deviceDisplayIndex);
+  const rawSections = getSections(menu, metadata);
+  const sections = shardSections(rawSections, screenCount, screenIndex, splitStrategy);
   if (!sections.length) {
     return buildStateHtml(content.name || "Menu Board", "No active POS menu items available for this board right now.");
   }
+  const pagMeta = metadata["pagination"] && typeof metadata["pagination"] === "object" ? metadata["pagination"] : {};
+  const pagMode = String(pagMeta["mode"] || "hybrid");
+  const itemsPerPage = pagMode !== "auto-fit" ? Math.max(1, Number.isFinite(pagMeta["itemsPerPage"]) ? Number(pagMeta["itemsPerPage"]) : 8) : 9999;
+  const pageSeconds = Math.max(2, Number.isFinite(pagMeta["pageSeconds"]) ? Number(pagMeta["pageSeconds"]) : 10);
+  const pages = paginateSections(sections, itemsPerPage);
   const isFeatured = layout === "featured" || layout === "hero-banner" || layout === "magazine";
-  let featuredItem = null;
-  if (isFeatured) {
-    for (const cat of sections) {
-      featuredItem = showImages && cat.items.find((i) => !!i.imageUrl) || cat.items[0] || null;
-      if (featuredItem) break;
+  function buildPageHtml(pageSections) {
+    var _a, _b, _c;
+    let featuredItem = null;
+    if (isFeatured) {
+      if (heroImageUrl) {
+        const anyItem = (_b = (_a = pageSections[0]) == null ? void 0 : _a.items[0]) != null ? _b : null;
+        if (anyItem) featuredItem = __spreadProps(__spreadValues({}, anyItem), { imageUrl: heroImageUrl });
+      } else {
+        for (const cat of pageSections) {
+          featuredItem = showImages && cat.items.find((i) => !!i.imageUrl) || cat.items[0] || null;
+          if (featuredItem) break;
+        }
+      }
     }
-  }
-  const boardTitle = titleOverride || content.name || (menu.name != null ? menu.name : "Menu Board");
-  const subtitleParts = [];
-  if (menu.name && menu.name !== boardTitle) subtitleParts.push(menu.name);
-  if (menu.description) subtitleParts.push(menu.description);
-  subtitleParts.push(`${sections.length} ${sections.length === 1 ? "category" : "categories"}`);
-  const subtitle = subtitleParts.join(" | ");
-  const sectionCols = layout === "1-col" ? 1 : (layout === "3-col" || layout === "grid-cards") ? Math.min(3, sections.length || 1) : Math.min(2, sections.length || 1);
-  const featuredKicker = layout === "hero-banner" ? "Today's Special" : layout === "magazine" ? "Editor's Pick" : "Featured Item";
-  const featuredMarkup = isFeatured && featuredItem ? `
-    <aside class="menu-board-feature">
-      ${showImages && featuredItem.imageUrl ? `<div class="menu-board-feature-image"><img src="${escapeHtml2(featuredItem.imageUrl)}" alt="${escapeHtml2(featuredItem.name)}" /></div>` : ""}
-      <div class="menu-board-feature-copy">
-        <div class="menu-board-feature-kicker">${escapeHtml2(featuredKicker)}</div>
-        <div class="menu-board-feature-title">${escapeHtml2(featuredItem.name)}</div>
-        ${showPrices ? `<div class="menu-board-feature-price">${escapeHtml2(formatPrice(featuredItem.priceCents, currency))}</div>` : ""}
-        ${showDesc && featuredItem.description ? `<div class="menu-board-feature-description">${escapeHtml2(featuredItem.description)}</div>` : ""}
-      </div>
-    </aside>` : "";
-  const sectionsMarkup = sections.map((cat) => {
-    const catAccent = sanitizeColor(cat.color, accentColor);
-    const items = cat.items.map((item) => {
-      const img = showImages && item.imageUrl ? `<div class="menu-board-item-image"><img src="${escapeHtml2(item.imageUrl)}" alt="${escapeHtml2(item.name)}" /></div>` : "";
-      const price = showPrices ? `<div class="menu-board-item-price">${escapeHtml2(formatPrice(item.priceCents, currency))}</div>` : "";
-      const desc = showDesc && item.description ? `<div class="menu-board-item-description">${escapeHtml2(item.description)}</div>` : "";
-      return `<article class="menu-board-item ${img ? "has-image" : "no-image"}">${img}<div class="menu-board-item-copy"><div class="menu-board-item-head"><div class="menu-board-item-name">${escapeHtml2(item.name)}</div>${price}</div>${desc}</div></article>`;
-    }).join("");
-    return `<section class="menu-board-category" style="--menu-board-category-accent:${catAccent};">
+    const boardTitle = titleOverride || content.name || ((_c = menu.name) != null ? _c : "Menu Board");
+    const subtitleParts = [];
+    if (menu.name && menu.name !== boardTitle) subtitleParts.push(menu.name);
+    if (menu.description) subtitleParts.push(menu.description);
+    subtitleParts.push(`${pageSections.length} ${pageSections.length === 1 ? "category" : "categories"}`);
+    const subtitle = subtitleParts.join(" | ");
+    const sectionCols = layout === "1-col" ? 1 : layout === "3-col" || layout === "grid-cards" ? Math.min(3, pageSections.length || 1) : Math.min(2, pageSections.length || 1);
+    const featuredKicker = layout === "hero-banner" ? "Today's Special" : layout === "magazine" ? "Editor's Pick" : "Featured Item";
+    const featuredMarkup = isFeatured && featuredItem ? `
+      <aside class="menu-board-feature">
+        ${(showImages || heroImageUrl) && featuredItem.imageUrl ? `<div class="menu-board-feature-image"><img src="${escapeHtml2(featuredItem.imageUrl)}" alt="${escapeHtml2(featuredItem.name)}" /></div>` : ""}
+        <div class="menu-board-feature-copy">
+          <div class="menu-board-feature-kicker">${escapeHtml2(featuredKicker)}</div>
+          <div class="menu-board-feature-title">${escapeHtml2(featuredItem.name)}</div>
+          ${showPrices ? `<div class="menu-board-feature-price">${escapeHtml2(formatPrice(featuredItem.priceCents, currency))}</div>` : ""}
+          ${showDesc && featuredItem.description ? `<div class="menu-board-feature-description">${escapeHtml2(featuredItem.description)}</div>` : ""}
+        </div>
+      </aside>` : "";
+    const sectionsMarkup = pageSections.map((cat) => {
+      const catAccent = sanitizeColor(cat.color, accentColor);
+      const items = cat.items.map((item) => {
+        const img = showImages && item.imageUrl ? `<div class="menu-board-item-image"><img src="${escapeHtml2(item.imageUrl)}" alt="${escapeHtml2(item.name)}" /></div>` : "";
+        const price = showPrices ? `<div class="menu-board-item-price">${escapeHtml2(formatPrice(item.priceCents, currency))}</div>` : "";
+        const desc = showDesc && item.description ? `<div class="menu-board-item-description">${escapeHtml2(item.description)}</div>` : "";
+        return `<article class="menu-board-item ${img ? "has-image" : "no-image"}">${img}<div class="menu-board-item-copy"><div class="menu-board-item-head"><div class="menu-board-item-name">${escapeHtml2(item.name)}</div>${price}</div>${desc}</div></article>`;
+      }).join("");
+      return `<section class="menu-board-category" style="--menu-board-category-accent:${catAccent};">
       <div class="menu-board-category-head">
         <div>
           <div class="menu-board-category-title">${escapeHtml2(cat.name)}</div>
@@ -989,21 +1067,48 @@ function buildMenuBoardHtml(content, menu, metadata) {
       </div>
       <div class="menu-board-item-list">${items}</div>
     </section>`;
-  }).join("");
-  const bgCss = backgroundImage
-    ? `linear-gradient(rgba(0,0,0,0.45),rgba(0,0,0,0.45)),url("${escapeHtml2(backgroundImage)}") center/cover no-repeat,${backgroundColor}`
-    : backgroundColor;
-  const gridClass = `menu-board-grid layout-${layout} cathead-${catHeadStyle}${isFeatured ? " is-featured" : ""}`;
+    }).join("");
+    const bgCss2 = backgroundImage ? `linear-gradient(rgba(0,0,0,0.45),rgba(0,0,0,0.45)),url("${escapeHtml2(backgroundImage)}") center/cover no-repeat,${backgroundColor}` : backgroundColor;
+    const gridClass = `menu-board-grid layout-${layout} cathead-${catHeadStyle}${isFeatured ? " is-featured" : ""}`;
+    return `
+      <div class="menu-board-shell">
+        ${showHeader ? `<header class="menu-board-header">
+          <div>
+            ${eyebrow ? `<div class="menu-board-eyebrow">${escapeHtml2(eyebrow)}</div>` : ""}
+            <h1 class="menu-board-title">${escapeHtml2(boardTitle)}</h1>
+          </div>
+        </header>` : ""}
+        <div class="${gridClass}">
+          ${featuredMarkup}
+          <div class="menu-board-sections">${sectionsMarkup}</div>
+        </div>
+      </div>`;
+  }
+  const pageHtmls = pages.map((pg, i) => `<div class="mb-page" data-page="${i}" style="display:${i === 0 ? "flex" : "none"};flex-direction:column;width:100%;height:100%;position:absolute;inset:0;">${buildPageHtml(pg)}</div>`).join("");
+  const bgCss = backgroundImage ? `linear-gradient(rgba(0,0,0,0.45),rgba(0,0,0,0.45)),url("${escapeHtml2(backgroundImage)}") center/cover no-repeat,${backgroundColor}` : backgroundColor;
+  const paginationScript = pages.length > 1 ? `
+    <script>(function(){
+      var pages=document.querySelectorAll('.mb-page');
+      var cur=0;
+      setInterval(function(){
+        pages[cur].style.display='none';
+        cur=(cur+1)%pages.length;
+        pages[cur].style.display='flex';
+        var ind=document.getElementById('mb-page-ind');
+        if(ind)ind.textContent=(cur+1)+'/${pages.length}';
+      },${pageSeconds * 1e3});
+    })();<\/script>` : "";
+  const pageIndicator = pages.length > 1 ? `<div id="mb-page-ind" style="position:absolute;bottom:12px;right:16px;font-size:12px;opacity:0.55;color:${textColor};z-index:20;">1/${pages.length}</div>` : "";
   return `
     <div class="menu-board-root">
       <style>
         .menu-board-root,.menu-board-root *{box-sizing:border-box;}
-        .menu-board-root{--menu-board-accent:${accentColor};--menu-board-scale:${fontScale};width:100%;height:100%;color:${textColor};font-family:${fontFamily};background:${bgCss};}
-        .menu-board-shell{width:100%;height:100%;display:flex;flex-direction:column;gap:calc(18px*var(--menu-board-scale));padding:calc(28px*var(--menu-board-scale));overflow:hidden;}
+        .menu-board-root{--menu-board-accent:${accentColor};--menu-board-scale:${fontScale};width:100%;height:100%;color:${textColor};font-family:${fontFamily};background:${bgCss};position:relative;overflow:hidden;}
+        ${backgroundVideoUrl ? `.menu-board-bgvideo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:0.55;}` : ""}
+        .menu-board-shell{width:100%;height:100%;display:flex;flex-direction:column;gap:calc(18px*var(--menu-board-scale));padding:calc(28px*var(--menu-board-scale));overflow:hidden;position:relative;z-index:1;}
         .menu-board-header{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;}
         .menu-board-eyebrow{font-size:calc(12px*var(--menu-board-scale));font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:var(--menu-board-accent);}
         .menu-board-title{margin:6px 0 0;font-size:calc(34px*var(--menu-board-scale));line-height:1.05;letter-spacing:-0.03em;}
-        .menu-board-subtitle{margin-top:8px;font-size:calc(14px*var(--menu-board-scale));line-height:1.5;color:rgba(247,242,235,0.7);}
         .menu-board-grid{flex:1;min-height:0;display:grid;grid-template-columns:1fr;gap:calc(18px*var(--menu-board-scale));}
         .menu-board-grid.is-featured{grid-template-columns:minmax(320px,0.95fr) minmax(0,1.75fr);}
         .menu-board-grid.layout-hero-banner{grid-template-columns:1fr;grid-auto-rows:auto 1fr;}
@@ -1019,7 +1124,7 @@ function buildMenuBoardHtml(content, menu, metadata) {
         .menu-board-feature-title{font-size:calc(30px*var(--menu-board-scale));line-height:1.05;font-weight:800;}
         .menu-board-feature-price{font-size:calc(22px*var(--menu-board-scale));font-weight:700;color:#fff4cf;}
         .menu-board-feature-description{font-size:calc(15px*var(--menu-board-scale));line-height:1.55;color:rgba(247,242,235,0.8);}
-        .menu-board-sections{min-height:0;display:grid;align-content:start;grid-template-columns:repeat(${sectionCols},minmax(0,1fr));gap:calc(16px*var(--menu-board-scale));overflow:hidden;}
+        .menu-board-sections{min-height:0;display:grid;align-content:start;gap:calc(16px*var(--menu-board-scale));overflow:hidden;}
         .menu-board-category{min-height:0;display:flex;flex-direction:column;gap:calc(14px*var(--menu-board-scale));padding:calc(18px*var(--menu-board-scale));border-radius:24px;border:1px solid rgba(255,255,255,0.09);background:linear-gradient(180deg,rgba(255,255,255,0.08) 0%,rgba(255,255,255,0.035) 100%);box-shadow:inset 4px 0 0 var(--menu-board-category-accent);}
         .cathead-underline .menu-board-category{background:transparent;box-shadow:none;border-color:transparent;border-bottom:2px solid var(--menu-board-category-accent);border-radius:0;}
         .cathead-bar .menu-board-category{box-shadow:inset 0 6px 0 var(--menu-board-category-accent);padding-top:calc(20px*var(--menu-board-scale));}
@@ -1039,20 +1144,12 @@ function buildMenuBoardHtml(content, menu, metadata) {
         .menu-board-item-name{min-width:0;font-size:calc(17px*var(--menu-board-scale));line-height:1.25;font-weight:700;overflow-wrap:anywhere;}
         .menu-board-item-price{white-space:nowrap;font-size:calc(14px*var(--menu-board-scale));font-weight:700;color:#fff4cf;}
         .menu-board-item-description{font-size:calc(12px*var(--menu-board-scale));line-height:1.45;color:rgba(247,242,235,0.72);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+        .mb-page{flex-direction:column;}
       </style>
-      <div class="menu-board-shell">
-        ${showHeader ? `<header class="menu-board-header">
-          <div>
-            ${eyebrow ? `<div class="menu-board-eyebrow">${escapeHtml2(eyebrow)}</div>` : ""}
-            <h1 class="menu-board-title">${escapeHtml2(boardTitle)}</h1>
-            <div class="menu-board-subtitle">${escapeHtml2(subtitle)}</div>
-          </div>
-        </header>` : ""}
-        <div class="${gridClass}">
-          ${featuredMarkup}
-          <div class="menu-board-sections">${sectionsMarkup}</div>
-        </div>
-      </div>
+      ${backgroundVideoUrl ? `<video class="menu-board-bgvideo" src="${escapeHtml2(backgroundVideoUrl)}" autoplay muted loop playsinline></video>` : ""}
+      ${pageHtmls}
+      ${pageIndicator}
+      ${paginationScript}
     </div>`;
 }
 async function renderMenuBoard(container, content, api) {

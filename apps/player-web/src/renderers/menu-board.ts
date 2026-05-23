@@ -222,7 +222,6 @@ function buildMenuBoardHtml(content: ContentRecord, menu: PosMenu, metadata: Rec
       ? `linear-gradient(rgba(0,0,0,0.45),rgba(0,0,0,0.45)),url("${escapeHtml(backgroundImage)}") center/cover no-repeat,${backgroundColor}`
       : backgroundColor;
     const gridClass = `menu-board-grid layout-${layout} cathead-${catHeadStyle}${isFeatured?' is-featured':''}`;
-    const boardTitle = titleOverride || content.name || (menu.name ?? 'Menu Board');
 
     return `
       <div class="menu-board-shell">
