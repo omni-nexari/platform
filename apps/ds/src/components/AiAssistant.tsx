@@ -55,18 +55,28 @@ export default function AiAssistant({ workspaceId }: AiAssistantProps) {
   const [error, setError] = useState<string | null>(null);
   const [showSessions, setShowSessions] = useState(false);
   const [liveMessages, setLiveMessages] = useState<DraftMessage[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  // Ref guard prevents double-send from simultaneous keydown + click events.
+  const sendingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
 
-  // ── AI health ping (drives "unavailable" banner) ────────────────────────
-  const { data: health } = useQuery<{ available: boolean; model: string }>({
+  // ── AI health ping (drives "unavailable" banner + model list) ──────────
+  const { data: health } = useQuery<{ available: boolean; model: string; models: string[] }>({
     queryKey: ['ai', 'health'],
     queryFn: () => api.get('/ai/health'),
     enabled: open,
     refetchInterval: open ? 30_000 : false,
     refetchOnWindowFocus: false,
   });
+
+  // Auto-select the server default model on first load.
+  useEffect(() => {
+    if (health?.model && !selectedModel) {
+      setSelectedModel(health.model);
+    }
+  }, [health?.model, selectedModel]);
 
   // ── Sessions list ────────────────────────────────────────────────────────
   const { data: sessionsData } = useQuery<{ sessions: ChatSession[] }>({
@@ -113,7 +123,9 @@ export default function AiAssistant({ workspaceId }: AiAssistantProps) {
 
   async function sendMessage() {
     const text = draft.trim();
-    if (!text || streaming) return;
+    // Ref guard prevents concurrent sends (e.g. simultaneous Enter key + button click).
+    if (!text || sendingRef.current) return;
+    sendingRef.current = true;
     setDraft('');
     setError(null);
 
@@ -145,6 +157,7 @@ export default function AiAssistant({ workspaceId }: AiAssistantProps) {
           workspaceId,
           sessionId: currentSessionId ?? undefined,
           message: text,
+          ...(selectedModel ? { model: selectedModel } : {}),
         }),
         signal: ctrl.signal,
       });
@@ -252,6 +265,7 @@ export default function AiAssistant({ workspaceId }: AiAssistantProps) {
         setLiveMessages([]);
       }
     } finally {
+      sendingRef.current = false;
       setStreaming(false);
       abortRef.current = null;
     }
@@ -287,9 +301,24 @@ export default function AiAssistant({ workspaceId }: AiAssistantProps) {
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-sm font-semibold text-[var(--text)]">AI Assistant</div>
-              <div className="text-[11px] text-[var(--text-muted)] truncate">
-                {health?.available === false ? 'Offline' : (health?.model ?? 'Local model')}
-              </div>
+              {/* Model selector — only shown when multiple models are available */}
+              {health?.models && health.models.length > 1 ? (
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  disabled={streaming}
+                  className="mt-0.5 text-[11px] text-[var(--text-muted)] bg-transparent border-none outline-none cursor-pointer hover:text-[var(--text)] disabled:cursor-not-allowed max-w-[160px] truncate"
+                  title="Select model"
+                >
+                  {health.models.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="text-[11px] text-[var(--text-muted)] truncate">
+                  {health?.available === false ? 'Offline' : (selectedModel || (health?.model ?? 'Local model'))}
+                </div>
+              )}
             </div>
             <button
               onClick={() => setShowSessions((s) => !s)}

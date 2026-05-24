@@ -11,6 +11,7 @@ import {
   chatComplete,
   chatStream,
   isOllamaAvailable,
+  listModels,
   getOllamaConfig,
   type OllamaMessage,
 } from '../services/ollama.js';
@@ -36,6 +37,8 @@ const sendMessageSchema = z.object({
   workspaceId: z.string().uuid(),
   sessionId: z.string().uuid().optional(),
   message: z.string().min(1).max(4000),
+  /** Optional model override — must be a tag that exists on the Ollama instance */
+  model: z.string().max(100).optional(),
 });
 
 const listSessionsQuerySchema = z.object({
@@ -48,7 +51,8 @@ export async function aiRoutes(app: FastifyInstance) {
   app.get('/health', { onRequest: [app.authenticate] }, async (_req, reply) => {
     const available = await isOllamaAvailable();
     const cfg = getOllamaConfig();
-    return reply.send({ available, model: cfg.model });
+    const models = available ? await listModels() : [];
+    return reply.send({ available, model: cfg.model, models });
   });
 
   // ── POST /ai/activity ─ frontend page-view / interaction tracking ─────────
@@ -162,7 +166,7 @@ export async function aiRoutes(app: FastifyInstance) {
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
-    const { workspaceId, sessionId: existingSessionId, message } = parsed.data;
+    const { workspaceId, sessionId: existingSessionId, message, model: modelOverride } = parsed.data;
 
     if (!(await checkWorkspaceAccess(workspaceId, actor.sub))) {
       return reply.code(403).send({ error: 'No access to workspace' });
@@ -250,6 +254,7 @@ export async function aiRoutes(app: FastifyInstance) {
             tools: AGENT_TOOLS,
             temperature: 0.3,
             signal: aborter.signal,
+            ...(modelOverride ? { model: modelOverride } : {}),
           });
 
           // Stream any text the model included alongside or instead of tool_calls.
@@ -326,7 +331,7 @@ export async function aiRoutes(app: FastifyInstance) {
         ];
 
         let fullAssistant = '';
-        for await (const delta of chatStream(ollamaMessages, { signal: aborter.signal })) {
+        for await (const delta of chatStream(ollamaMessages, { signal: aborter.signal, ...(modelOverride ? { model: modelOverride } : {}) })) {
           fullAssistant += delta;
           send({ type: 'delta', text: delta });
         }

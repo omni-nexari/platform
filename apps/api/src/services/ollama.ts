@@ -67,6 +67,24 @@ export async function isOllamaAvailable(): Promise<boolean> {
 }
 
 /**
+ * List locally available model names from Ollama.
+ * Returns an empty array if Ollama is unreachable.
+ */
+export async function listModels(): Promise<string[]> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    const res = await fetch(`${OLLAMA_HOST}/api/tags`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return [];
+    const data = await res.json() as { models?: { name: string }[] };
+    return (data.models ?? []).map((m) => m.name);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Non-streaming chat completion. Returns content text + any tool_calls the
  * model emitted.  Use this for the tool-detection pass in the agent loop.
  */
