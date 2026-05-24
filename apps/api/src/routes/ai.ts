@@ -232,95 +232,105 @@ export async function aiRoutes(app: FastifyInstance) {
     try {
       if (agentMode) {
         // ── Agent loop (tool-calling mode) ──────────────────────────────────
-        const systemPrompt = await buildAgentSystemPrompt(message);
-        const agentMessages: OllamaMessage[] = [
-          { role: 'system', content: systemPrompt },
-          ...history.map((m) => ({
-            role: (m.role === 'user' || m.role === 'assistant' || m.role === 'tool'
-              ? m.role : 'user') as OllamaMessage['role'],
-            content: m.role === 'tool' && m.toolResult
-              ? JSON.stringify(m.toolResult)
-              : m.content,
-          })),
-        ];
-
-        let iterations = 0;
-        const MAX_ITERATIONS = 5;
+        // Wrapped in its own try-catch so that if tool-calling isn't supported
+        // by the running model/Ollama version we fall back to simple streaming.
+        let agentSucceeded = false;
         let lastAssistantText = '';
 
-        while (iterations < MAX_ITERATIONS) {
-          iterations++;
-          const result = await chatComplete(agentMessages, {
-            tools: AGENT_TOOLS,
-            temperature: 0.3,
-            signal: aborter.signal,
-            ...(modelOverride ? { model: modelOverride } : {}),
-          });
+        try {
+          const systemPrompt = await buildAgentSystemPrompt(message);
+          const agentMessages: OllamaMessage[] = [
+            { role: 'system', content: systemPrompt },
+            ...history.map((m) => ({
+              role: (m.role === 'user' || m.role === 'assistant' || m.role === 'tool'
+                ? m.role : 'user') as OllamaMessage['role'],
+              content: m.role === 'tool' && m.toolResult
+                ? JSON.stringify(m.toolResult)
+                : m.content,
+            })),
+          ];
 
-          // Stream any text the model included alongside or instead of tool_calls.
-          if (result.content) {
-            lastAssistantText += result.content;
-            send({ type: 'delta', text: result.content });
-          }
+          let iterations = 0;
+          const MAX_ITERATIONS = 5;
 
-          if (!result.toolCalls || result.toolCalls.length === 0) {
-            // No tool calls — model is done.  Add the assistant message to
-            // agentMessages so history is consistent, then break.
-            agentMessages.push({ role: 'assistant', content: result.content });
-            break;
-          }
+          while (iterations < MAX_ITERATIONS) {
+            iterations++;
+            const result = await chatComplete(agentMessages, {
+              tools: AGENT_TOOLS,
+              temperature: 0.3,
+              signal: aborter.signal,
+              ...(modelOverride ? { model: modelOverride } : {}),
+            });
 
-          // Add the assistant turn (with tool_calls) to the conversation.
-          agentMessages.push({ role: 'assistant', content: result.content });
-
-          // Execute each tool call sequentially.
-          for (const toolCall of result.toolCalls) {
-            const name = toolCall.function.name;
-            const args = toolCall.function.arguments;
-            const label = name.replaceAll('_', ' ');
-
-            send({ type: 'tool_start', name, label });
-
-            const toolResult = await executeToolCall(name, args, toolCtx);
-
-            if (toolResult.success) {
-              send({ type: 'tool_done', name, label: toolResult.label, data: toolResult.data });
-            } else {
-              send({ type: 'tool_error', name, label: toolResult.label, message: toolResult.error });
+            if (result.content) {
+              lastAssistantText += result.content;
+              send({ type: 'delta', text: result.content });
             }
 
-            // Feed tool result back to the model as a tool message.
-            agentMessages.push({
-              role: 'tool',
-              content: JSON.stringify(toolResult),
-            });
+            if (!result.toolCalls || result.toolCalls.length === 0) {
+              agentMessages.push({ role: 'assistant', content: result.content });
+              break;
+            }
 
-            // Persist the tool interaction to the DB for session history.
-            await db.insert(aiChatMessages).values({
-              sessionId,
-              role: 'tool',
-              content: `Tool: ${name}`,
-              toolCalls: [toolCall] as unknown as Record<string, unknown>[],
-              toolResult: toolResult as unknown as Record<string, unknown>,
-            });
+            agentMessages.push({ role: 'assistant', content: result.content });
+
+            for (const toolCall of result.toolCalls) {
+              const name = toolCall.function.name;
+              const args = toolCall.function.arguments;
+              const label = name.replaceAll('_', ' ');
+
+              send({ type: 'tool_start', name, label });
+
+              const toolResult = await executeToolCall(name, args, toolCtx);
+
+              if (toolResult.success) {
+                send({ type: 'tool_done', name, label: toolResult.label, data: toolResult.data });
+              } else {
+                send({ type: 'tool_error', name, label: toolResult.label, message: toolResult.error });
+              }
+
+              agentMessages.push({ role: 'tool', content: JSON.stringify(toolResult) });
+
+              await db.insert(aiChatMessages).values({
+                sessionId,
+                role: 'tool',
+                content: `Tool: ${name}`,
+                toolCalls: [toolCall] as unknown as Record<string, unknown>[],
+                toolResult: toolResult as unknown as Record<string, unknown>,
+              });
+            }
           }
+
+          agentSucceeded = true;
+        } catch (agentErr) {
+          // Tool-calling failed (model may not support it, or Ollama unreachable).
+          // Clear any partial delta output and fall through to simple streaming.
+          req.log.warn({ err: agentErr }, 'agent tool-calling failed, falling back to streaming');
+          lastAssistantText = '';
         }
 
-        // Persist final assistant text.
-        const [savedAgent] = await db
-          .insert(aiChatMessages)
-          .values({ sessionId, role: 'assistant', content: lastAssistantText })
-          .returning();
+        if (agentSucceeded) {
+          // Persist final assistant text.
+          const [savedAgent] = await db
+            .insert(aiChatMessages)
+            .values({ sessionId, role: 'assistant', content: lastAssistantText })
+            .returning();
 
-        await db
-          .update(aiChatSessions)
-          .set({ updatedAt: new Date() })
-          .where(eq(aiChatSessions.id, sessionId));
+          await db
+            .update(aiChatSessions)
+            .set({ updatedAt: new Date() })
+            .where(eq(aiChatSessions.id, sessionId));
 
-        send({ type: 'done', messageId: savedAgent?.id });
+          send({ type: 'done', messageId: savedAgent?.id });
+          // Done — don't fall through to simple streaming.
+          return;
+        }
 
-      } else {
-        // ── Simple streaming (navigation / knowledge Q&A) ──────────────────
+        // Agent failed or was skipped — fall through to simple streaming below.
+      }
+
+      // ── Simple streaming (navigation / Q&A, or agent fallback) ────────────
+      {
         const systemPrompt = await buildSystemPrompt(message);
         const ollamaMessages: OllamaMessage[] = [
           { role: 'system', content: systemPrompt },

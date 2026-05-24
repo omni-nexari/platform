@@ -146,17 +146,27 @@ export interface ToolResult {
   label: string;
 }
 
-// ── Keyword detector — enables tool mode for action-oriented messages ─────────
+// ── Intent detector — enables tool mode only for imperative action requests ───
+//
+// We use patterns rather than plain keywords to avoid false positives.
+// "how do i make a playlist?" → asking for instructions → simple streaming
+// "can you make a playlist for me?" → asking AI to act  → agent mode
 
-const ACTION_KEYWORDS = [
-  'create', 'make', 'schedule', 'add', 'set up', 'setup', 'build',
-  'generate', 'new playlist', 'new schedule', 'assign', 'publish',
-  'for me', 'can you', 'please', 'i want', 'i need',
+const IMPERATIVE_PATTERNS = [
+  /\b(can|could|would)\s+you\s+(create|make|build|schedule|add|set\s+up|setup|generate)\b/i,
+  /\bplease\s+(create|make|build|schedule|add|set\s+up|setup|generate)\b/i,
+  /\b(i want|i need)\s+you\s+to\b/i,
+  // "create a playlist", "make a schedule", "build me a loop" — imperative, no "how"
+  /^(?!.*\b(how|what|where|why|when|which|explain|show|tell)\b).*(create|make|build|set\s+up|setup|generate)\s+(a|an|the|my|new)\s*(playlist|schedule|loop|plan)\b/is,
+  // "schedule this/it for monday", "schedule my content for..."
+  /\bschedule\s+(this|it|them|my|the)\b/i,
+  /\bauto[-\s]?(schedule|create|build)\b/i,
+  // "add [something] to [a playlist/schedule]"
+  /\badd\s+.{3,40}\s+to\s+(a|the|my|an?)?\s*(playlist|schedule)\b/i,
 ];
 
 export function shouldUseTools(message: string): boolean {
-  const lower = message.toLowerCase();
-  return ACTION_KEYWORDS.some((kw) => lower.includes(kw));
+  return IMPERATIVE_PATTERNS.some((p) => p.test(message));
 }
 
 // ── Tool dispatcher ───────────────────────────────────────────────────────────
