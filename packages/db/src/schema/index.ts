@@ -32,3 +32,4 @@ export * from './support.js';
 export { deviceRules, type DeviceRule, type DeviceRuleInsert } from './triggerRules.js';
 export * from './bleScanResults.js';
 export * from './ruleSets.js';
+export * from './ai.js';

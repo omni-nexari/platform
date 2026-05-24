@@ -19,6 +19,8 @@ export const schedules = pgTable('schedules', {
   // 4-B: Fallback slot — no .references() to avoid circular dep with playlists/content
   defaultPlaylistId: uuid('default_playlist_id'),
   defaultContentId: uuid('default_content_id'),
+  // True when this schedule was created by the AI assistant on behalf of a user
+  createdByAi: boolean('created_by_ai').notNull().default(false),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

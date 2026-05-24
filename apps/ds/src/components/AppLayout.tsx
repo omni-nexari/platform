@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { useTheme } from '../contexts/ThemeContext.js';
 import SearchModal from './SearchModal.js';
 import NotificationTray from './NotificationTray.js';
+import AiAssistant from './AiAssistant.js';
 import {
   Modal,
   ModalBody,
@@ -775,6 +776,9 @@ export default function AppLayout() {
           onClose={() => setSearchOpen(false)}
         />
       )}
+
+      {/* ---------- AI Assistant (workspace-scoped) ---------- */}
+      {currentWsId && <AiAssistant workspaceId={currentWsId} />}
 
       {/* ---------- Emergency override modal ---------- */}
       {emergencyOpen && (

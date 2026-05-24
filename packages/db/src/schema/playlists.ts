@@ -24,6 +24,8 @@ export const playlists = pgTable('playlists', {
   folderId: uuid('folder_id'), // references playlist_folders.id — FK defined in migration (avoids circular dep)
   // Approval workflow
   approvalState: text('approval_state').notNull().default('approved'), // draft | pending_review | approved | rejected
+  // True when this playlist was created by the AI assistant on behalf of a user
+  createdByAi: boolean('created_by_ai').notNull().default(false),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

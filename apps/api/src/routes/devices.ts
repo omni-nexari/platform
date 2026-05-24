@@ -309,6 +309,45 @@ function buildSingleContentPlaylist(content: NonNullable<Awaited<ReturnType<type
   };
 }
 
+// ── Canvas URL enrichment (backward-compat) ──────────────────────────────────
+// Old Tizen wgt clients (api.js without the CANVAS block) set content.url to the
+// /file endpoint which returns 404 for canvas items.  resolveCanvasUrl() in
+// player.ts also checks metadata.canvasUrl, so we inject that field here so the
+// old wgt picks up the correct HTML renderer URL without needing a redeploy.
+function enrichCanvasContent<T extends { type?: string | null; id?: string | null; metadata?: unknown }>(
+  content: T,
+  deviceToken: string,
+  apiBase: string,
+): T {
+  if (!content || content.type !== 'canvas' || !content.id) return content;
+  try {
+    const existing: Record<string, unknown> =
+      typeof content.metadata === 'string'
+        ? (JSON.parse((content.metadata as string) || '{}') as Record<string, unknown>)
+        : content.metadata && typeof content.metadata === 'object'
+        ? (content.metadata as Record<string, unknown>)
+        : {};
+    const canvasUrl = `${apiBase}/devices/device/content/${content.id}/canvas.html?token=${encodeURIComponent(deviceToken)}`;
+    return { ...content, metadata: JSON.stringify({ ...existing, canvasUrl }) };
+  } catch {
+    return content;
+  }
+}
+
+function enrichCanvasPlaylist<P extends {
+  items: Array<{ content?: { type?: string | null; id?: string | null; metadata?: unknown } | null }>;
+}>(playlist: P | null | undefined, deviceToken: string, apiBase: string): P | null {
+  if (!playlist) return playlist ?? null;
+  return {
+    ...playlist,
+    items: playlist.items.map((item) =>
+      item.content
+        ? { ...item, content: enrichCanvasContent(item.content, deviceToken, apiBase) }
+        : item,
+    ),
+  };
+}
+
 function buildLegacyPublishedSchedule(target: {
   content?: NonNullable<Awaited<ReturnType<typeof db.query.contentItems.findFirst>>> | null;
   playlist?: Awaited<ReturnType<typeof loadPlaylistById>> | null;
@@ -2125,9 +2164,25 @@ export async function deviceRoutes(app: FastifyInstance) {
           : slot);
     }
 
+    // Extract device token for canvas URL enrichment so old wgt clients receive
+    // metadata.canvasUrl and resolveCanvasUrl() can find the HTML renderer.
+    const _dTok = (req.headers.authorization as string | undefined)?.startsWith('Bearer ')
+      ? (req.headers.authorization as string).slice(7)
+      : (req.query as Record<string, string | undefined>).token ?? '';
+    const _apiBase = `${req.protocol}://${req.hostname}/api/v1`;
+
+    // Enrich canvas items in schedule slots before building legacy schedule
+    if (publishedSchedule) {
+      publishedSchedule.slots = publishedSchedule.slots.map((slot) => ({
+        ...slot,
+        content: slot.content ? enrichCanvasContent(slot.content, _dTok, _apiBase) : slot.content,
+        playlist: slot.playlist ? enrichCanvasPlaylist(slot.playlist, _dTok, _apiBase) : slot.playlist,
+      }));
+    }
+
     const legacyPublishedSchedule = buildLegacyPublishedSchedule({
-      content: publishedContent ?? null,
-      playlist: publishedPlaylist,
+      content: publishedContent ? enrichCanvasContent(publishedContent, _dTok, _apiBase) : null,
+      playlist: enrichCanvasPlaylist(publishedPlaylist, _dTok, _apiBase),
       schedule: publishedSchedule,
     });
 
@@ -2241,9 +2296,16 @@ export async function deviceRoutes(app: FastifyInstance) {
       ...sch,
       slots: sch.slots
         .filter((slot) => !slot.content || isContentSupportedByDevice(device, slot.content.type))
-        .map((slot) => slot.playlist
-          ? { ...slot, playlist: filterPlaylistItemsForDevice(device, slot.playlist) }
-          : slot),
+        .map((slot) => {
+          const s = slot.playlist
+            ? { ...slot, playlist: filterPlaylistItemsForDevice(device, slot.playlist) }
+            : slot;
+          return {
+            ...s,
+            content: s.content ? enrichCanvasContent(s.content, _dTok, _apiBase) : s.content,
+            playlist: s.playlist ? enrichCanvasPlaylist(s.playlist, _dTok, _apiBase) : s.playlist,
+          };
+        }),
     }));
 
     const firstSchedule = legacyPublishedSchedule ?? posSchedule;
@@ -2496,7 +2558,11 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!playlist || (playlist as any).workspaceId !== auth.workspaceId) {
       return reply.status(404).send({ error: 'Not found' });
     }
-    return reply.send(filterPlaylistItemsForDevice(device, playlist));
+    const _dTokP = (req.headers.authorization as string | undefined)?.startsWith('Bearer ')
+      ? (req.headers.authorization as string).slice(7)
+      : (req.query as Record<string, string | undefined>).token ?? '';
+    const _apiBaseP = `${req.protocol}://${req.hostname}/api/v1`;
+    return reply.send(enrichCanvasPlaylist(filterPlaylistItemsForDevice(device, playlist), _dTokP, _apiBaseP));
   });
 
   // ── GET /devices/device/content/:id ─ fetch content metadata (device-auth) ─
@@ -2520,7 +2586,11 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!isContentSupportedByDevice(device, item.type)) {
       return reply.status(404).send({ error: 'Content type not supported on this device' });
     }
-    return reply.send(item);
+    const _dTokC = (req.headers.authorization as string | undefined)?.startsWith('Bearer ')
+      ? (req.headers.authorization as string).slice(7)
+      : (req.query as Record<string, string | undefined>).token ?? '';
+    const _apiBaseC = `${req.protocol}://${req.hostname}/api/v1`;
+    return reply.send(enrichCanvasContent(item, _dTokC, _apiBaseC));
   });
 
   // ── GET /devices/device/web-proxy ─ proxy a remote URL, stripping framing headers ──
