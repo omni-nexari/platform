@@ -16,9 +16,13 @@ import {
   schedules,
   scheduleSlots,
   contentItems,
+  devices,
+  deviceGroups,
+  syncPlaylists,
 } from '@signage/db';
 import { and, eq, ilike, isNull, inArray } from 'drizzle-orm';
 import { logActivity } from './activity-logger.js';
+import { isDeviceOnline } from './ws.js';
 
 // ── Context ──────────────────────────────────────────────────────────────────
 
@@ -134,6 +138,75 @@ export const AGENT_TOOLS = [
       },
     },
   },
+  // ── Read / list tools ──────────────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'list_devices',
+      description: 'List devices in the workspace. Optionally filter by online status, platform, or name. Returns id, name, online, platform, type.',
+      parameters: {
+        type: 'object',
+        properties: {
+          search:   { type: 'string', description: 'Partial device name to search for' },
+          status:   { type: 'string', enum: ['online', 'offline'], description: 'Filter by live connection status' },
+          platform: { type: 'string', description: 'Filter by platform: tizen, windows, android, browser, linux, webos' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_playlists',
+      description: 'List playlists in the workspace. Returns id, name, itemCount, totalDuration.',
+      parameters: {
+        type: 'object',
+        properties: {
+          search: { type: 'string', description: 'Partial playlist name to search for' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_schedules',
+      description: 'List schedules in the workspace. Returns id, name, timezone, type, isActive.',
+      parameters: {
+        type: 'object',
+        properties: {
+          search: { type: 'string', description: 'Partial schedule name to search for' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_sync_playlists',
+      description: 'List sync playlists in the workspace. Returns id and name.',
+      parameters: {
+        type: 'object',
+        properties: {
+          search: { type: 'string', description: 'Partial name to search for' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_device_groups',
+      description: 'List device groups in the workspace. Returns id, name, type (sync/videowall/location/tag).',
+      parameters: {
+        type: 'object',
+        properties: {
+          search: { type: 'string', description: 'Partial group name to search for' },
+          type:   { type: 'string', enum: ['sync', 'videowall', 'location', 'tag'], description: 'Filter by group type' },
+        },
+      },
+    },
+  },
 ];
 
 // ── Tool result type ──────────────────────────────────────────────────────────
@@ -163,6 +236,11 @@ const IMPERATIVE_PATTERNS = [
   /\bauto[-\s]?(schedule|create|build)\b/i,
   // "add [something] to [a playlist/schedule]"
   /\badd\s+.{3,40}\s+to\s+(a|the|my|an?)?\s*(playlist|schedule)\b/i,
+  // ── List / query intents ──────────────────────────────────────────────────
+  /\b(show|list|get|find)\s+(me\s+)?(all\s+)?(my\s+)?(devices?|playlists?|schedules?|sync\s+playlists?|sync\s+groups?|device\s+groups?)\b/i,
+  /\bwhat\s+(devices?|playlists?|schedules?|groups?)\s+(do\s+i|are|is)\b/i,
+  /\bwhich\s+devices?\s+(are|is)\s+(online|offline)\b/i,
+  /\bhow\s+many\s+(devices?|playlists?|schedules?|groups?)\b/i,
 ];
 
 export function shouldUseTools(message: string): boolean {
@@ -177,10 +255,15 @@ export async function executeToolCall(
   ctx: ToolContext,
 ): Promise<ToolResult> {
   switch (name) {
-    case 'search_content':   return searchContent(args, ctx);
-    case 'create_playlist':  return createPlaylist(args, ctx);
-    case 'add_playlist_items': return addPlaylistItems(args, ctx);
-    case 'create_schedule':  return createScheduleWithSlots(args, ctx);
+    case 'search_content':       return searchContent(args, ctx);
+    case 'create_playlist':      return createPlaylist(args, ctx);
+    case 'add_playlist_items':   return addPlaylistItems(args, ctx);
+    case 'create_schedule':      return createScheduleWithSlots(args, ctx);
+    case 'list_devices':         return listDevices(args, ctx);
+    case 'list_playlists':       return listPlaylists(args, ctx);
+    case 'list_schedules':       return listSchedules(args, ctx);
+    case 'list_sync_playlists':  return listSyncPlaylists(args, ctx);
+    case 'list_device_groups':   return listDeviceGroups(args, ctx);
     default:
       return { success: false, error: `Unknown tool: ${name}`, label: name };
   }
@@ -379,5 +462,151 @@ async function createScheduleWithSlots(
     success: true,
     data: { id: schedule.id, name, slotCount: insertedSlots },
     label: `Created schedule "${name}" with ${insertedSlots} slot${insertedSlots !== 1 ? 's' : ''}`,
+  };
+}
+
+// ── List / query tools ────────────────────────────────────────────────────────
+
+async function listDevices(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const search         = typeof args['search']   === 'string' ? args['search']   : undefined;
+  const statusFilter   = typeof args['status']   === 'string' ? args['status']   : undefined;
+  const platformFilter = typeof args['platform'] === 'string' ? args['platform'] : undefined;
+
+  const conditions = [eq(devices.workspaceId, ctx.workspaceId), isNull(devices.deletedAt)];
+  if (search)         conditions.push(ilike(devices.name, `%${search}%`));
+  if (platformFilter) conditions.push(eq(devices.platform, platformFilter));
+
+  const rows = await db
+    .select({
+      id: devices.id,
+      name: devices.name,
+      status: devices.status,
+      platform: devices.platform,
+      type: devices.type,
+      lastSeen: devices.lastSeen,
+    })
+    .from(devices)
+    .where(and(...conditions))
+    .limit(50);
+
+  const enriched = rows
+    .map((r) => ({ ...r, online: isDeviceOnline(r.id) }))
+    .filter((r) => !statusFilter || (statusFilter === 'online' ? r.online : !r.online));
+
+  return {
+    success: true,
+    data: enriched,
+    label: `Found ${enriched.length} device${enriched.length !== 1 ? 's' : ''}`,
+  };
+}
+
+async function listPlaylists(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const search = typeof args['search'] === 'string' ? args['search'] : undefined;
+
+  const conditions = [eq(playlists.workspaceId, ctx.workspaceId), isNull(playlists.deletedAt)];
+  if (search) conditions.push(ilike(playlists.name, `%${search}%`));
+
+  const rows = await db
+    .select({
+      id: playlists.id,
+      name: playlists.name,
+      itemCount: playlists.itemCount,
+      totalDuration: playlists.totalDuration,
+      isSmartPlaylist: playlists.isSmartPlaylist,
+    })
+    .from(playlists)
+    .where(and(...conditions))
+    .limit(50);
+
+  return {
+    success: true,
+    data: rows,
+    label: `Found ${rows.length} playlist${rows.length !== 1 ? 's' : ''}`,
+  };
+}
+
+async function listSchedules(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const search = typeof args['search'] === 'string' ? args['search'] : undefined;
+
+  const conditions = [eq(schedules.workspaceId, ctx.workspaceId), isNull(schedules.deletedAt)];
+  if (search) conditions.push(ilike(schedules.name, `%${search}%`));
+
+  const rows = await db
+    .select({
+      id: schedules.id,
+      name: schedules.name,
+      timezone: schedules.timezone,
+      type: schedules.type,
+      isActive: schedules.isActive,
+    })
+    .from(schedules)
+    .where(and(...conditions))
+    .limit(50);
+
+  return {
+    success: true,
+    data: rows,
+    label: `Found ${rows.length} schedule${rows.length !== 1 ? 's' : ''}`,
+  };
+}
+
+async function listSyncPlaylists(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const search = typeof args['search'] === 'string' ? args['search'] : undefined;
+
+  const conditions = [eq(syncPlaylists.workspaceId, ctx.workspaceId), isNull(syncPlaylists.deletedAt)];
+  if (search) conditions.push(ilike(syncPlaylists.name, `%${search}%`));
+
+  const rows = await db
+    .select({ id: syncPlaylists.id, name: syncPlaylists.name, createdAt: syncPlaylists.createdAt })
+    .from(syncPlaylists)
+    .where(and(...conditions))
+    .limit(50);
+
+  return {
+    success: true,
+    data: rows,
+    label: `Found ${rows.length} sync playlist${rows.length !== 1 ? 's' : ''}`,
+  };
+}
+
+async function listDeviceGroups(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const search     = typeof args['search'] === 'string' ? args['search'] : undefined;
+  const typeFilter = typeof args['type']   === 'string' ? args['type']   : undefined;
+
+  const conditions = [eq(deviceGroups.workspaceId, ctx.workspaceId), isNull(deviceGroups.deletedAt)];
+  if (search)     conditions.push(ilike(deviceGroups.name, `%${search}%`));
+  if (typeFilter) conditions.push(eq(deviceGroups.type, typeFilter));
+
+  const rows = await db
+    .select({
+      id: deviceGroups.id,
+      name: deviceGroups.name,
+      type: deviceGroups.type,
+      videoWallCols: deviceGroups.videoWallCols,
+      videoWallRows: deviceGroups.videoWallRows,
+    })
+    .from(deviceGroups)
+    .where(and(...conditions))
+    .limit(50);
+
+  return {
+    success: true,
+    data: rows,
+    label: `Found ${rows.length} device group${rows.length !== 1 ? 's' : ''}`,
   };
 }
