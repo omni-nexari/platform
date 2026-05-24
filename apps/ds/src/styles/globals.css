@@ -1,3 +1,28 @@
+/* Skip navigation link (WCAG 2.4.1) */
+.skip-link {
+  position: absolute;
+  top: -9999px;
+  left: 0;
+  z-index: 9999;
+  padding: 0.5rem 1rem;
+  background: var(--blue);
+  color: #fff;
+  font-size: 0.875rem;
+  border-radius: 0 0 8px 0;
+  text-decoration: none;
+  clip: rect(0 0 0 0);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.skip-link:focus-visible {
+  top: 0;
+  clip: auto;
+  overflow: visible;
+  white-space: normal;
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
 @import "tailwindcss";
 
 /* ── Brand tokens (default theme) ───────────────────────────────────────────── */
@@ -8,6 +33,7 @@
   --card: rgba(255, 255, 255, 0.06);
   --card-border: rgba(255, 255, 255, 0.08);
   --border: rgba(255, 255, 255, 0.08); /* alias for card-border */
+  --input-border: rgba(255, 255, 255, 0.32);
   --modal-bg: #1c2030;        /* solid background for modals / dialogs */
   --blue: #3a7bff;
   --aqua: #4ff2d1;
@@ -29,6 +55,7 @@
   --card: rgba(255, 255, 255, 0.85);
   --card-border: rgba(0, 0, 0, 0.08);
   --border: rgba(0, 0, 0, 0.08);
+  --input-border: rgba(0, 0, 0, 0.40);
   --text: #0f1115;
   --text-muted: #5a6278;
   --modal-bg: #ffffff;
@@ -992,7 +1019,7 @@ body::before {
 
 .input {
   background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--card-border);
+  border: 1px solid var(--input-border);
   border-radius: 8px;
   color: var(--text);
   padding: 0.5rem 0.75rem;

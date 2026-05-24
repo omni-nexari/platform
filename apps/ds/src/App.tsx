@@ -1,5 +1,66 @@
 import { useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation, useParams } from 'react-router';
+
+/* ── WCAG 2.4.2 — Page title manager ──────────────────────────────────────── */
+const PAGE_TITLE_MAP: Record<string, string> = {
+  login: 'Sign In',
+  dashboard: 'Dashboard',
+  settings: 'Settings',
+  support: 'Support',
+  // workspace sub-sections
+  devices: 'Devices',
+  content: 'Content',
+  playlist: 'Playlists',
+  analytics: 'Analytics',
+  schedule: 'Schedule',
+  canvas: 'Canvas Editor',
+  tags: 'Tags',
+  'rule-sets': 'Rule Sets',
+  // POS sub-sections
+  menu: 'Menu',
+  orders: 'Orders',
+  kiosk: 'Kiosk',
+  kitchen: 'Kitchen Display',
+  inventory: 'Inventory',
+  employees: 'Employees',
+  loyalty: 'Loyalty',
+  expenses: 'Expenses',
+  // superadmin
+  orgs: 'Organisations',
+  companies: 'Companies',
+  system: 'System Health',
+  monitoring: 'Infrastructure',
+  notifications: 'Notifications',
+  logs: 'Logs',
+  releases: 'Releases',
+};
+
+function getPageTitle(pathname: string): string {
+  const segments = pathname.split('/').filter(Boolean);
+  if (!segments.length) return 'Nexari Signage';
+
+  // /workspaces/:wsId/<section>[/...]
+  if (segments[0] === 'workspaces' && segments.length >= 3) {
+    // pos sub-pages: /workspaces/:id/pos/<section>
+    const raw = segments[2] === 'pos' && segments[3] != null
+      ? segments[3]
+      : segments[2];
+    const section = raw ?? '';
+    return PAGE_TITLE_MAP[section] ?? section.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  const top = segments[0] ?? '';
+  return PAGE_TITLE_MAP[top] ?? top.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function PageTitleManager() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    const page = getPageTitle(pathname);
+    document.title = `${page} — Nexari Signage`;
+  }, [pathname]);
+  return null;
+}
 import { useAuthStore } from './lib/auth.js';
 import { useSAStore, type SAUser } from './lib/superadmin-auth.js';
 import LoginPage from './pages/auth/LoginPage.js';
@@ -284,6 +345,7 @@ export default function App() {
   return (
     <AuthBootstrap>
       <PortalAuthBootstrap>
+        <PageTitleManager />
         <Routes>
       {/* Public device display pages — PIN-gated, no session auth */}
       <Route path="/kiosk/:wsId/:orientation" element={<DisplayPinGateWrapper><KioskDisplayPage /></DisplayPinGateWrapper>} />

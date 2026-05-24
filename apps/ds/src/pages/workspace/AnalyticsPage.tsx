@@ -206,6 +206,7 @@ export default function AnalyticsPage() {
               <input
                 type="date"
                 value={from}
+                aria-label="Start date"
                 onChange={(e) => {
                   setFrom(e.target.value);
                   setPage(1);
@@ -216,6 +217,7 @@ export default function AnalyticsPage() {
               <input
                 type="date"
                 value={to}
+                aria-label="End date"
                 onChange={(e) => {
                   setTo(e.target.value);
                   setPage(1);

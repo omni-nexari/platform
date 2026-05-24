@@ -106,6 +106,7 @@ export default function CanvasPageBar() {
           onChange={(e) => updatePage(selectedPageId, { title: e.target.value })}
           className="w-24 px-2 py-0.5 rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-xs"
           placeholder="Page title"
+          aria-label="Page title"
         />
 
         {/* Duration */}
@@ -116,6 +117,7 @@ export default function CanvasPageBar() {
             onChange={(e) => updatePage(selectedPageId, { duration: Math.max(1, parseInt(e.target.value) || 10) })}
             min={1}
             className="w-12 px-1.5 py-0.5 rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-xs text-center"
+            aria-label="Page duration in seconds"
           />
           <span className="text-[10px] text-[var(--text-muted)]">sec</span>
         </div>
