@@ -17,7 +17,7 @@ import {
 } from '../services/ollama.js';
 import { buildSystemPrompt, buildAgentSystemPrompt } from '../services/ai-knowledge.js';
 import { logActivity } from '../services/activity-logger.js';
-import { shouldUseTools, executeToolCall, AGENT_TOOLS } from '../services/ai-tools.js';
+import { shouldUseTools, getDirectListQuery, formatListResult, executeToolCall, AGENT_TOOLS } from '../services/ai-tools.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -227,10 +227,36 @@ export async function aiRoutes(app: FastifyInstance) {
     req.raw.on('close', () => aborter.abort());
 
     const toolCtx = { workspaceId, userId: actor.sub };
-    const agentMode = shouldUseTools(message);
+    const directQuery = getDirectListQuery(message);
+    const agentMode = !directQuery && shouldUseTools(message);
 
     try {
-      if (agentMode) {
+      if (directQuery) {
+        // ── Direct list path (no Ollama tool-calling) ──────────────────────────────
+        // Executes the list tool directly and formats results as Markdown,
+        // bypassing chatComplete-with-tools entirely so qwen2.5:7b can't crash.
+        const tLabel = directQuery.tool.replaceAll('_', ' ');
+        send({ type: 'tool_start', name: directQuery.tool, label: tLabel });
+
+        const toolResult = await executeToolCall(directQuery.tool, directQuery.args, toolCtx);
+
+        if (toolResult.success) {
+          send({ type: 'tool_done', name: directQuery.tool, label: toolResult.label });
+        } else {
+          send({ type: 'tool_error', name: directQuery.tool, label: tLabel, message: toolResult.error ?? 'Failed' });
+        }
+
+        const formatted = formatListResult(directQuery.tool, toolResult);
+        send({ type: 'delta', text: formatted });
+
+        const [savedList] = await db
+          .insert(aiChatMessages)
+          .values({ sessionId, role: 'assistant', content: formatted })
+          .returning();
+        await db.update(aiChatSessions).set({ updatedAt: new Date() }).where(eq(aiChatSessions.id, sessionId));
+        send({ type: 'done', messageId: savedList?.id });
+
+      } else if (agentMode) {
         // ── Agent loop (tool-calling mode) ──────────────────────────────────
         // Wrapped in its own try-catch so that if tool-calling isn't supported
         // by the running model/Ollama version we fall back to simple streaming.
@@ -327,10 +353,8 @@ export async function aiRoutes(app: FastifyInstance) {
         }
 
         // Agent failed or was skipped — fall through to simple streaming below.
-      }
-
-      // ── Simple streaming (navigation / Q&A, or agent fallback) ────────────
-      {
+      } else {
+        // ── Simple streaming (navigation / Q&A, or agent fallback) ──────────
         const systemPrompt = await buildSystemPrompt(message);
         const ollamaMessages: OllamaMessage[] = [
           { role: 'system', content: systemPrompt },

@@ -236,15 +236,94 @@ const IMPERATIVE_PATTERNS = [
   /\bauto[-\s]?(schedule|create|build)\b/i,
   // "add [something] to [a playlist/schedule]"
   /\badd\s+.{3,40}\s+to\s+(a|the|my|an?)?\s*(playlist|schedule)\b/i,
-  // ── List / query intents ──────────────────────────────────────────────────
-  /\b(show|list|get|find)\s+(me\s+)?(all\s+)?(my\s+)?(devices?|playlists?|schedules?|sync\s+playlists?|sync\s+groups?|device\s+groups?)\b/i,
-  /\bwhat\s+(devices?|playlists?|schedules?|groups?)\s+(do\s+i|are|is)\b/i,
-  /\bwhich\s+devices?\s+(are|is)\s+(online|offline)\b/i,
-  /\bhow\s+many\s+(devices?|playlists?|schedules?|groups?)\b/i,
+  // NOTE: list/query intents are handled by getDirectListQuery, not here.
 ];
 
 export function shouldUseTools(message: string): boolean {
   return IMPERATIVE_PATTERNS.some((p) => p.test(message));
+}
+
+// ── Direct list query dispatcher ─────────────────────────────────────────────
+//
+// List queries are executed directly (no LLM tool-calling round-trip needed).
+// This avoids the chatComplete-with-tools path on models that don't support it.
+
+const DIRECT_LIST_PATTERNS: Array<{
+  pattern: RegExp;
+  tool: string;
+  args?: Record<string, unknown>;
+}> = [
+  { pattern: /\b(show|list|get|find)\s+(me\s+)?(all\s+)?(my\s+)?devices?\b/i,       tool: 'list_devices' },
+  { pattern: /\bwhich\s+devices?\s+are\s+online\b/i,                                  tool: 'list_devices',      args: { status: 'online' } },
+  { pattern: /\bwhich\s+devices?\s+are\s+offline\b/i,                                 tool: 'list_devices',      args: { status: 'offline' } },
+  { pattern: /\bhow\s+many\s+devices?\b/i,                                            tool: 'list_devices' },
+  { pattern: /\bwhat\s+devices?\b/i,                                                  tool: 'list_devices' },
+  { pattern: /\b(show|list|get|find)\s+(me\s+)?(all\s+)?(my\s+)?playlists?\b/i,     tool: 'list_playlists' },
+  { pattern: /\bwhat\s+playlists?\b/i,                                                tool: 'list_playlists' },
+  { pattern: /\b(show|list|get|find)\s+(me\s+)?(all\s+)?(my\s+)?schedules?\b/i,     tool: 'list_schedules' },
+  { pattern: /\bwhat\s+schedules?\b/i,                                                tool: 'list_schedules' },
+  { pattern: /\b(show|list|get|find)\s+(me\s+)?(all\s+)?(my\s+)?sync\s+playlists?\b/i, tool: 'list_sync_playlists' },
+  { pattern: /\b(show|list|get|find)\s+(me\s+)?(all\s+)?(my\s+)?(device\s+)?groups?\b/i, tool: 'list_device_groups' },
+  { pattern: /\bwhat\s+(device\s+)?groups?\b/i,                                       tool: 'list_device_groups' },
+  { pattern: /\bhow\s+many\s+(playlists?|schedules?|groups?)\b/i,                    tool: 'list_playlists' }, // resolved further below if needed
+];
+
+export function getDirectListQuery(message: string): { tool: string; args: Record<string, unknown> } | null {
+  const lower = message.toLowerCase();
+  for (const entry of DIRECT_LIST_PATTERNS) {
+    if (entry.pattern.test(lower)) {
+      // Disambiguate "how many X" for non-device resources
+      if (entry.tool === 'list_playlists' && /schedule/i.test(message)) {
+        return { tool: 'list_schedules', args: {} };
+      }
+      if (entry.tool === 'list_playlists' && /group/i.test(message)) {
+        return { tool: 'list_device_groups', args: {} };
+      }
+      return { tool: entry.tool, args: entry.args ?? {} };
+    }
+  }
+  return null;
+}
+
+/** Format a list ToolResult as readable Markdown without involving the LLM. */
+export function formatListResult(tool: string, result: ToolResult): string {
+  if (!result.success) return `I couldn't retrieve that data: ${result.error}`;
+  const data = (result.data ?? []) as Record<string, unknown>[];
+  if (!data.length) return 'No items found.';
+
+  switch (tool) {
+    case 'list_devices':
+      return `**${result.label}:**\n\n` + data.map((r) =>
+        `- **${r['name']}** — ${r['online'] ? '🟢 online' : '⚫ offline'} · ${r['platform']}${
+          r['type'] !== 'signage' ? ` · ${r['type']}` : ''}`,
+      ).join('\n');
+
+    case 'list_playlists':
+      return `**${result.label}:**\n\n` + data.map((r) => {
+        const dur = (r['totalDuration'] as number) > 0
+          ? ` · ${Math.floor((r['totalDuration'] as number) / 60)}m ${(r['totalDuration'] as number) % 60}s` : '';
+        return `- **${r['name']}** — ${r['itemCount']} item${r['itemCount'] !== 1 ? 's' : ''}${dur}${
+          r['isSmartPlaylist'] ? ' _(smart)_' : ''}`;
+      }).join('\n');
+
+    case 'list_schedules':
+      return `**${result.label}:**\n\n` + data.map((r) =>
+        `- **${r['name']}** — ${r['type']} · ${r['timezone']}${!r['isActive'] ? ' · _inactive_' : ''}`,
+      ).join('\n');
+
+    case 'list_sync_playlists':
+      return `**${result.label}:**\n\n` + data.map((r) => `- **${r['name']}**`).join('\n');
+
+    case 'list_device_groups':
+      return `**${result.label}:**\n\n` + data.map((r) => {
+        const wall = r['type'] === 'videowall' && r['videoWallCols']
+          ? ` · ${r['videoWallCols']}×${r['videoWallRows']} grid` : '';
+        return `- **${r['name']}** — ${r['type']}${wall}`;
+      }).join('\n');
+
+    default:
+      return `**${result.label}**`;
+  }
 }
 
 // ── Tool dispatcher ───────────────────────────────────────────────────────────
