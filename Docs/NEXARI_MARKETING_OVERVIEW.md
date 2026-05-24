@@ -85,7 +85,11 @@ The dashboard tracks device health, online/offline state, workspace assignment, 
 
 Sync playlists and sync groups allow multiple screens to play the same content in lockstep. Samsung-native SyncPlay is used when the group is all compatible Samsung/Tizen hardware; mixed-platform groups can use the custom relay engine. The system handles leader priority, relay mode, session config, manifest publishing, and force-resync controls.
 
-### 6. POS and Business Workflows
+### 6. Video Walls and Multi-Screen Experiences
+
+Video wall groups let teams map physical screens into a column/row grid, assign each panel to the correct cell, compensate for bezels, and publish either one full-wall asset cropped across panels or a video wall playlist with different content per panel. This supports lobby feature walls, menu walls, retail backdrops, and high-impact brand moments.
+
+### 7. POS and Business Workflows
 
 For restaurants and SMB operations, Nexari can bridge signage with POS/menu workflows. Menu boards can use structured menu data, and the AI roadmap includes assisted content generation, menu updates, translation, moderation, and business intelligence.
 
@@ -101,6 +105,7 @@ For restaurants and SMB operations, Nexari can bridge signage with POS/menu work
 | Devices | pairing, monitoring, published targets, screenshots, commands, fallback content |
 | Groups | location groups, tag groups, video wall groups, SyncPlay groups |
 | SyncPlay | sync playlists, member devices, leader priority, LAN/cloud relay, force resync |
+| Video Walls | grid layout, cell assignment, bezel compensation, full-wall crop mode, per-cell playlists |
 | Analytics | proof of play, screenshots, device state, workspace and org-level reporting |
 | AI roadmap | content studio, CMS assistant, support assistant, local/private AI deployment |
 
@@ -121,6 +126,10 @@ An office workspace runs a lobby playlist by default, schedules event signage fo
 ### Multi-Screen Feature Wall
 
 A venue builds a sync playlist, publishes it to selected displays, and lets the system create or reuse a sync group. The screens receive a synchronized manifest and play the same loop together.
+
+### Video Wall Experience
+
+A venue creates a 2x2 or 3x3 video wall group, assigns each screen to a physical grid cell, and publishes a hero campaign either as one full-wall video cropped across all panels or as a video wall playlist with different content in each cell.
 
 ## Differentiators
 
@@ -158,6 +167,7 @@ Nexari OmniHub gives management companies and venue operators the tools to publi
 - Monitor and refresh screens remotely with device status, screenshots, and commands.
 - Support multiple client organizations from a branded management portal.
 - Publish synchronized loops to groups of screens for high-impact displays.
+- Build video walls with grid mapping, bezel compensation, and full-wall or per-panel publishing.
 
 ## Proof Points to Collect
 
