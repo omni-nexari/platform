@@ -374,6 +374,19 @@ export default function AppLayout() {
                               <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Signage</p>
                             </div>
                             <NavLink
+                              to={`/workspaces/${ws.id}/rule-sets`}
+                              className={({ isActive }) =>
+                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                  isActive
+                                    ? 'bg-[var(--blue)] text-white'
+                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                }`
+                              }
+                            >
+                              <Zap className="w-4 h-4" />
+                              Rule Sets
+                            </NavLink>
+                            <NavLink
                               to={`/workspaces/${ws.id}/playlist`}
                               className={({ isActive }) =>
                                 `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${

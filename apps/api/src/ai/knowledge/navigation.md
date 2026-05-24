@@ -21,6 +21,7 @@
 | Templates | Reusable canvas designs | `/workspaces/:id/templates` |
 | Tags | Organise content | `/workspaces/:id/tags` |
 | Analytics | Playback & device stats | `/workspaces/:id/analytics` |
+| Rule Sets | Event-driven automation (conditions → action) | `/workspaces/:id/rule-sets` |
 | Settings | Workspace configuration | `/workspaces/:id/settings` |
 
 ## Typical workflow
