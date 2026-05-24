@@ -746,7 +746,7 @@ export default function DevicesPage() {
 
       {/* Device sections */}
       {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-36 rounded-xl" />
           ))}
@@ -811,7 +811,7 @@ export default function DevicesPage() {
                   {label}
                   <span className="ml-1 text-[var(--text-muted)] font-normal">({sectionDevices.length})</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   {videowallGroupsHere.map(({ group, members }) => (
                     <VideowallGroupCard
                       key={`group-${group.id}`}
