@@ -341,6 +341,13 @@ window.API = {
       normalized.webUrl = null;
     }
 
+    // Canvas projects: served as a self-contained HTML player page that renders
+    // the scene data (text, images, clock, weather, RSS ticker, webpage iframes).
+    if (normalized.type === 'CANVAS') {
+      normalized.url = `${CONFIG.API_BASE}/devices/device/content/${content.id}/canvas.html?token=${encodeURIComponent(token)}`;
+      normalized.webUrl = null;
+    }
+
     // Live Link Face: all data is in metadata; there is no server file to fetch.
     if (normalized.type === 'LIVE_LINK_FACE') {
       normalized.url = '';

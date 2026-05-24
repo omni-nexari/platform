@@ -824,9 +824,9 @@ window.ContentManager = {
       const c = item && item.content;
       if (!c || !c.url) return true;
       const t = String(c.type || '').toUpperCase();
-      // HTML5 packages must always be probed (cheap path-exists check) so the
-      // ZIP gets extracted on first play; never short-circuit here.
-      if (t === 'HTML' || t === 'HTML5') return false;
+      // HTML5 and CANVAS must always be probed (path-exists check) so the
+      // file gets downloaded on first play; never short-circuit here.
+      if (t === 'HTML' || t === 'HTML5' || t === 'CANVAS') return false;
       if (!downloadableTypes.has(t)) return true;
       const cid = c.id ? String(c.id) : null;
       return cid && this.cachedUrlMap.has(cid);
@@ -868,6 +868,25 @@ window.ContentManager = {
           continue;
         }
         
+        // Handle CANVAS content: download the server-generated standalone HTML page once
+        // so it plays fully offline (images are base64-embedded; weather/RSS fetch from internet).
+        if (content.type === 'CANVAS') {
+          try {
+            const localHtml = await this.prepareCanvasPage(content);
+            if (localHtml && localHtml.url) {
+              downloadedItems.push(Object.assign({}, item, {
+                content: Object.assign({}, content, {
+                  url: localHtml.url,
+                  originalUrl: content.url,
+                })
+              }));
+              continue;
+            }
+          } catch (canvasError) {
+            logger.warn('Failed to prepare canvas page, falling back to remote URL:', (canvasError && canvasError.message) || canvasError);
+          }
+        }
+
         // Handle HTML5 packages (download and unzip for offline playback)
         if (content.type === 'HTML' || content.type === 'HTML5') {
           try {
@@ -1114,6 +1133,38 @@ window.ContentManager = {
       logger.error('Failed to get cache size:', error);
       return 0;
     }
+  },
+
+  // Download the canvas HTML page (generated on-demand by the API) to local storage.
+  // The downloaded file is fully self-contained: images are base64-embedded by the server,
+  // weather calls open-meteo.com directly, and RSS feeds are fetched directly from their URL.
+  async prepareCanvasPage(content) {
+    if (!content || content.type !== 'CANVAS') return null;
+    if (!content.url) return null;
+
+    const cid = this.sanitizeId(content.id || 'canvas');
+    const sig = this.hashString([
+      content.id || '',
+      content.updatedAt || content.updated_at || '',
+      content.version || '',
+    ].join('|'));
+    const fileName = 'canvas-' + cid + '-' + sig + '.html';
+    const filePath = this.storagePath + '/' + fileName;
+
+    if (this.pathExists(filePath)) {
+      logger.info('Using cached canvas page for: ' + content.name);
+      const uri = this.toUri(filePath);
+      if (uri && content.id) this.cachedUrlMap.set(String(content.id), uri);
+      return { url: uri };
+    }
+
+    logger.info('Downloading canvas HTML page for: ' + content.name);
+    const uri = await this.downloadContentWithName(
+      { url: content.url, id: content.id, name: content.name || 'canvas' },
+      fileName
+    );
+    if (!uri) throw new Error('Canvas page download returned empty URI');
+    return { url: uri };
   },
 
   async prepareHtmlPackage(content) {

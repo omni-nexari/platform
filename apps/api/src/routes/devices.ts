@@ -4,7 +4,7 @@ import { createReadStream, existsSync, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import AdmZip from 'adm-zip';
-import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents, deviceGroupMembers, deviceGroups, calendarConnections, deviceRules, bleScanResults, posRestaurants } from '@signage/db';
+import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents, deviceGroupMembers, deviceGroups, calendarConnections, deviceRules, bleScanResults, posRestaurants, canvasProjects } from '@signage/db';
 import { eq, and, isNull, desc, asc, inArray, sql, ilike, gte, lte, lt } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -3715,6 +3715,506 @@ export async function deviceRoutes(app: FastifyInstance) {
       stations,
       cells,
     });
+  });
+
+  // ── GET /devices/device/widgets/weather — device-auth weather proxy ───────
+  app.get('/device/widgets/weather', async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+
+    const { lat, lon, units } = req.query as { lat?: string; lon?: string; units?: string };
+    if (!lat || !lon) return reply.status(400).send({ error: 'lat and lon required' });
+
+    const latF = parseFloat(lat);
+    const lonF = parseFloat(lon);
+    if (isNaN(latF) || isNaN(lonF)) return reply.status(400).send({ error: 'Invalid lat/lon' });
+
+    const mode = req.query && (req.query as Record<string, string>)['mode'] || 'current';
+    const baseParams = `latitude=${latF}&longitude=${lonF}&timezone=auto&wind_speed_unit=kmh${units === 'F' ? '&temperature_unit=fahrenheit' : ''}`;
+    let weatherUrl: string;
+    if (mode === '7day') {
+      weatherUrl = `https://api.open-meteo.com/v1/forecast?${baseParams}&daily=temperature_2m_max,temperature_2m_min,weather_code&forecast_days=7`;
+    } else if (mode === 'hourly') {
+      weatherUrl = `https://api.open-meteo.com/v1/forecast?${baseParams}&hourly=temperature_2m,weather_code&forecast_hours=24`;
+    } else {
+      weatherUrl = `https://api.open-meteo.com/v1/forecast?${baseParams}&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m`;
+    }
+
+    try {
+      const res = await fetch(weatherUrl);
+      if (!res.ok) return reply.status(502).send({ error: 'Weather service unavailable' });
+      const data = await res.json() as Record<string, unknown>;
+
+      function weatherLabel(code: number): string {
+        if (code === 0) return 'Clear Sky';
+        if (code === 1 || code === 2 || code === 3) return 'Partly Cloudy';
+        if (code <= 48) return 'Foggy';
+        if (code <= 67) return 'Rainy';
+        if (code <= 77) return 'Snowy';
+        if (code <= 82) return 'Showers';
+        if (code <= 99) return 'Thunderstorm';
+        return 'Unknown';
+      }
+      function weatherIcon(code: number): string {
+        if (code === 0 || code === 1) return '☀️';
+        if (code <= 3)  return '⛅';
+        if (code <= 48) return '🌫️';
+        if (code <= 67) return '🌧️';
+        if (code <= 77) return '❄️';
+        if (code <= 82) return '🌦️';
+        if (code <= 99) return '⛈️';
+        return '🌡️';
+      }
+
+      if (mode === '7day') {
+        const daily = data['daily'] as Record<string, unknown> | undefined;
+        const dates  = (daily?.['time']              as string[]  | undefined) ?? [];
+        const maxes  = (daily?.['temperature_2m_max'] as number[] | undefined) ?? [];
+        const mins   = (daily?.['temperature_2m_min'] as number[] | undefined) ?? [];
+        const codes  = (daily?.['weather_code']       as number[] | undefined) ?? [];
+        return reply.send(dates.map((date, i) => ({
+          date, code: codes[i] ?? 0, label: weatherLabel(codes[i] ?? 0),
+          icon: weatherIcon(codes[i] ?? 0), tempMax: maxes[i] ?? null, tempMin: mins[i] ?? null,
+        })));
+      } else if (mode === 'hourly') {
+        const hourly = data['hourly'] as Record<string, unknown> | undefined;
+        const times  = (hourly?.['time']           as string[]  | undefined) ?? [];
+        const temps  = (hourly?.['temperature_2m'] as number[]  | undefined) ?? [];
+        const codes  = (hourly?.['weather_code']   as number[]  | undefined) ?? [];
+        return reply.send(times.slice(0, 24).map((time, i) => ({
+          time, code: codes[i] ?? 0, icon: weatherIcon(codes[i] ?? 0), temp: temps[i] ?? null,
+        })));
+      } else {
+        const current = data['current'] as Record<string, unknown> | undefined;
+        const code = typeof current?.['weather_code'] === 'number' ? current['weather_code'] as number : 0;
+        return reply.send({
+          temp: current?.['temperature_2m'] ?? null, unit: units === 'F' ? 'F' : 'C',
+          code, label: weatherLabel(code), icon: weatherIcon(code),
+          wind: current?.['wind_speed_10m'] ?? null, humidity: current?.['relative_humidity_2m'] ?? null,
+        });
+      }
+    } catch (err: any) {
+      return reply.status(502).send({ error: 'Failed to fetch weather', detail: err?.message });
+    }
+  });
+
+  // ── GET /devices/device/widgets/rss — device-auth RSS proxy ──────────────
+  app.get('/device/widgets/rss', async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+
+    const { url } = req.query as { url?: string };
+    if (!url) return reply.status(400).send({ error: 'url required' });
+
+    let feedUrl: URL;
+    try {
+      feedUrl = new URL(url);
+    } catch {
+      return reply.status(400).send({ error: 'Invalid URL' });
+    }
+    if (feedUrl.protocol !== 'http:' && feedUrl.protocol !== 'https:') {
+      return reply.status(400).send({ error: 'Only http/https URLs supported' });
+    }
+
+    try {
+      const res = await fetch(feedUrl.toString(), {
+        headers: { 'User-Agent': 'Nexari-Signage-Player/1.0', 'Accept': 'application/rss+xml,application/atom+xml,text/xml,*/*' },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return reply.status(502).send({ error: `Feed returned HTTP ${res.status}` });
+      const xml = await res.text();
+
+      // Parse titles and links from RSS/Atom XML
+      const items: Array<{ title: string; link: string }> = [];
+      const itemRe = /<item[\s>]([\s\S]*?)<\/item>/gi;
+      const entryRe = /<entry[\s>]([\s\S]*?)<\/entry>/gi;
+      const titleRe = /<title(?:[^>]*)>([\s\S]*?)<\/title>/i;
+      const linkRe  = /<link(?:[^>]*)>([^<]*)<\/link>/i;
+      const linkHrefRe = /<link[^>]+href=["']([^"']+)["']/i;
+      function extractItems(re: RegExp) {
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(xml)) !== null) {
+          if (items.length >= 20) break;
+          const block = m[1] ?? '';
+          const titleMatch = titleRe.exec(block);
+          const linkMatch  = linkRe.exec(block) || linkHrefRe.exec(block);
+          const rawTitle = titleMatch ? titleMatch[1] ?? '' : '';
+          const title = rawTitle.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/<[^>]+>/g, '').trim();
+          const link = linkMatch ? (linkMatch[1] ?? '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').trim() : '';
+          if (title) items.push({ title, link });
+        }
+      }
+      extractItems(itemRe);
+      if (!items.length) extractItems(entryRe);
+
+      return reply.send({ items });
+    } catch (err: any) {
+      return reply.status(502).send({ error: 'Failed to fetch RSS feed', detail: err?.message });
+    }
+  });
+
+  // ── GET /devices/device/content/:id/canvas.html — serve canvas as HTML ──
+  app.get('/device/content/:id/canvas.html', {
+    onSend: async (_req, rep) => {
+      rep.removeHeader('X-Frame-Options');
+      rep.header('Content-Security-Policy', 'frame-ancestors *;');
+      rep.header('Cross-Origin-Resource-Policy', 'cross-origin');
+    },
+  }, async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+
+    const { id } = req.params as { id: string };
+    const item = await db.query.contentItems.findFirst({
+      where: and(eq(contentItems.id, id), eq(contentItems.workspaceId, auth.workspaceId), isNull(contentItems.deletedAt)),
+    });
+    if (!item || item.type !== 'canvas') return reply.status(404).send({ error: 'Canvas content not found' });
+
+    // Look up the canvas project via metadata canvasProjectId or by contentItemId
+    let meta: Record<string, unknown> = {};
+    try { meta = JSON.parse(item.metadata ?? '{}'); } catch { /* ignore */ }
+    const projectId = typeof meta['canvasProjectId'] === 'string' ? meta['canvasProjectId'] : null;
+
+    const project = projectId
+      ? await db.query.canvasProjects.findFirst({
+          where: and(eq(canvasProjects.id, projectId), isNull(canvasProjects.deletedAt)),
+        })
+      : await db.query.canvasProjects.findFirst({
+          where: and(eq(canvasProjects.contentItemId, id), isNull(canvasProjects.deletedAt)),
+        });
+
+    if (!project) return reply.status(404).send({ error: 'Canvas project not found' });
+
+    const sceneData = project.sceneData as { pages?: unknown[] } | null;
+    const settings  = project.settings  as { width?: number; height?: number; background?: string } | null;
+    const canvasW = settings?.width  ?? 1920;
+    const canvasH = settings?.height ?? 1080;
+    const bgColor = settings?.background ?? '#000';
+
+    // Pre-fetch all image assets referenced in the canvas and embed as base64 so the
+    // downloaded HTML file is fully self-contained and plays without any server connection.
+    function collectImageIds(elements: any[]): string[] {
+      const ids: string[] = [];
+      for (const el of elements ?? []) {
+        if (el.type === 'image' && typeof el.contentItemId === 'string') ids.push(el.contentItemId);
+        if (el.type === 'group' && Array.isArray(el.children)) ids.push(...collectImageIds(el.children));
+      }
+      return ids;
+    }
+    const allImageIds = ((sceneData as any)?.pages ?? []).flatMap((p: any) => collectImageIds(p?.elements ?? [])) as string[];
+    const uniqueImageIds = [...new Set(allImageIds)].filter(Boolean);
+    const imageMap: Record<string, string> = {};
+    if (uniqueImageIds.length > 0) {
+      const imgItems = await db.query.contentItems.findMany({
+        where: and(inArray(contentItems.id, uniqueImageIds), eq(contentItems.workspaceId, auth.workspaceId)),
+      });
+      for (const imgItem of imgItems) {
+        if (imgItem.filePath) {
+          try {
+            const absPath = path.resolve(STORAGE_ROOT, imgItem.filePath);
+            const buf = await fsPromises.readFile(absPath);
+            imageMap[imgItem.id] = `data:${imgItem.mimeType ?? 'image/jpeg'};base64,${buf.toString('base64')}`;
+          } catch { /* file missing — skip */ }
+        }
+      }
+    }
+    const imageMapJson = JSON.stringify(imageMap)
+      .replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
+
+    // Serialize sceneData as JSON for injection into the HTML page
+    const sceneJson = JSON.stringify(sceneData ?? { pages: [] })
+      .replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=${canvasW},initial-scale=1">
+<title>${item.name.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:${canvasW}px;height:${canvasH}px;overflow:hidden;background:${bgColor};font-family:Inter,system-ui,sans-serif}
+#canvas-root{position:absolute;top:0;left:0;width:${canvasW}px;height:${canvasH}px;overflow:hidden;background:${bgColor}}
+.ce{position:absolute;overflow:hidden}
+.ce-text{overflow:hidden;word-break:break-word}
+.ce-img{object-fit:cover;width:100%;height:100%}
+.ce-iframe{width:100%;height:100%;border:none;background:transparent}
+.ticker-wrap{width:100%;height:100%;overflow:hidden;display:flex;align-items:center}
+.ticker-inner{white-space:nowrap;display:inline-block}
+@keyframes ticker-left{from{transform:translateX(100%)}to{transform:translateX(-100%)}}
+@keyframes ticker-right{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.weather-wrap{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;border-radius:8px}
+.clock-wrap{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center}
+</style>
+</head>
+<body>
+<div id="canvas-root"></div>
+<script>
+(function(){
+  var SCENE = ${sceneJson};
+  var IMAGE_MAP = ${imageMapJson};
+  var CANVAS_W = ${canvasW};
+  var CANVAS_H = ${canvasH};
+  var root = document.getElementById('canvas-root');
+
+  function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function px(n){ return (Number(n)||0)+'px'; }
+  function clamp01(n){ return Math.max(0,Math.min(1,Number(n)||0)); }
+
+  // ── Element renderer ────────────────────────────────────────────────────
+  function renderElement(el, parent){
+    if(el.visible===false) return;
+    var x=Number(el.x)||0, y=Number(el.y)||0, w=Number(el.width)||0, h=Number(el.height)||0;
+    var rot=Number(el.rotation)||0, op=clamp01(el.opacity==null?1:el.opacity);
+    var baseStyle='left:'+x+'px;top:'+y+'px;width:'+w+'px;height:'+h+'px;'
+      +'transform:rotate('+rot+'deg);opacity:'+op+';';
+
+    switch(el.type){
+      case 'rect':{
+        var d=document.createElement('div');
+        d.className='ce';
+        d.style.cssText=baseStyle+'background:'+esc(el.fill||'transparent')+';'
+          +(el.stroke&&el.strokeWidth?'outline:'+el.strokeWidth+'px solid '+esc(el.stroke)+';':'')
+          +(el.cornerRadius?'border-radius:'+el.cornerRadius+'px;':'');
+        parent.appendChild(d);
+        break;
+      }
+      case 'circle':{
+        var d=document.createElement('div');
+        d.className='ce';
+        d.style.cssText=baseStyle+'background:'+esc(el.fill||'transparent')
+          +';border-radius:50%;'
+          +(el.stroke&&el.strokeWidth?'outline:'+el.strokeWidth+'px solid '+esc(el.stroke)+';':'');
+        parent.appendChild(d);
+        break;
+      }
+      case 'text':{
+        var d=document.createElement('div');
+        d.className='ce ce-text';
+        var align=el.align||'left', va=el.verticalAlign||'top';
+        var jc=va==='middle'?'center':va==='bottom'?'flex-end':'flex-start';
+        d.style.cssText=baseStyle+'display:flex;align-items:'+jc+';justify-content:'+align+';'
+          +'color:'+esc(el.fill||'#fff')+';font-size:'+(el.fontSize||16)+'px;'
+          +'font-family:'+esc(el.fontFamily||'Inter,sans-serif')+';'
+          +(el.fontStyle?'font-weight:'+(el.fontStyle.includes('bold')?'bold':'normal')+';font-style:'+(el.fontStyle.includes('italic')?'italic':'normal')+';':'')
+          +(el.textDecoration?'text-decoration:'+esc(el.textDecoration)+';':'')
+          +'line-height:'+(el.lineHeight||1.2)+';letter-spacing:'+(el.letterSpacing||0)+'px;'
+          +'padding:'+(el.padding||0)+'px;text-align:'+align+';';
+        d.textContent=el.text||'';
+        parent.appendChild(d);
+        break;
+      }
+      case 'line':{
+        var svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+        svg.setAttribute('style',baseStyle+'overflow:visible;');
+        svg.setAttribute('width',w||1);svg.setAttribute('height',h||1);
+        var pts=(el.points||[0,0,w,0]);
+        var polyline=document.createElementNS('http://www.w3.org/2000/svg','polyline');
+        var ptStr='';
+        for(var i=0;i<pts.length;i+=2) ptStr+=(pts[i]||0)+','+(pts[i+1]||0)+' ';
+        polyline.setAttribute('points',ptStr.trim());
+        polyline.setAttribute('stroke',el.stroke||'#fff');
+        polyline.setAttribute('stroke-width',el.strokeWidth||2);
+        polyline.setAttribute('fill','none');
+        svg.appendChild(polyline);
+        parent.appendChild(svg);
+        break;
+      }
+      case 'image':{
+        var imgSrc=el.contentItemId?(IMAGE_MAP[el.contentItemId]||el.src):el.src;
+        if(imgSrc){
+          var d=document.createElement('div');
+          d.className='ce';
+          d.style.cssText=baseStyle;
+          var img=document.createElement('img');
+          img.className='ce-img';
+          img.style.objectFit=el.objectFit||'cover';
+          img.src=imgSrc;
+          d.appendChild(img);parent.appendChild(d);
+        }
+        break;
+      }
+      case 'group':{
+        var d=document.createElement('div');
+        d.className='ce';d.style.cssText=baseStyle;
+        var children=el.children||[];
+        for(var i=0;i<children.length;i++) renderElement(children[i],d);
+        parent.appendChild(d);
+        break;
+      }
+      case 'clock':{
+        var d=document.createElement('div');
+        d.className='ce clock-wrap';
+        d.style.cssText=baseStyle+'background:'+esc(el.bgColor||'transparent')+';color:'+esc(el.textColor||'#fff')+';';
+        var timeDiv=document.createElement('div');timeDiv.style.cssText='font-size:'+(Math.floor(h*0.35))+'px;font-weight:bold;font-variant-numeric:tabular-nums;';
+        var dateDiv=document.createElement('div');dateDiv.style.cssText='font-size:'+(Math.floor(h*0.14))+'px;opacity:0.8;margin-top:4px;';
+        d.appendChild(timeDiv);if(el.showDate!==false)d.appendChild(dateDiv);
+        parent.appendChild(d);
+        (function(td,dd,tz,fmt,showDate){
+          function tick(){
+            var now=tz?new Date(new Date().toLocaleString('en-US',{timeZone:tz})):new Date();
+            var h=now.getHours(),m=now.getMinutes(),s=now.getSeconds();
+            var disp;
+            if(fmt==='12h'){
+              var ampm=h>=12?'PM':'AM';h=h%12||12;
+              disp=(h<10?'0':'')+h+':'+(m<10?'0':'')+m+':'+(s<10?'0':'')+s+' '+ampm;
+            } else {
+              disp=(h<10?'0':'')+h+':'+(m<10?'0':'')+m+':'+(s<10?'0':'')+s;
+            }
+            td.textContent=disp;
+            if(showDate&&dd) dd.textContent=now.toLocaleDateString('en-US',{weekday:'short',year:'numeric',month:'short',day:'numeric'});
+          }
+          tick();setInterval(tick,1000);
+        })(timeDiv,dateDiv,el.timezone||'',el.format||'24h',el.showDate!==false);
+        break;
+      }
+      case 'weather':{
+        var d=document.createElement('div');
+        d.className='ce weather-wrap';
+        d.style.cssText=baseStyle+'color:'+esc(el.textColor||'#fff')+';';
+        d.innerHTML='<div style="opacity:0.5;font-size:14px">Loading weather\u2026</div>';
+        parent.appendChild(d);
+        (function(container,lat,lon,unit,mode){
+          function wIcon(c){return c===0||c===1?'\u2600\uFE0F':c<=3?'\u26C5':c<=48?'\uD83C\uDF2B\uFE0F':c<=67?'\uD83C\uDF27\uFE0F':c<=77?'\u2744\uFE0F':c<=82?'\uD83C\uDF26\uFE0F':'\u26C8\uFE0F';}
+          function wLabel(c){return c===0?'Clear Sky':c<=3?'Partly Cloudy':c<=48?'Foggy':c<=67?'Rainy':c<=77?'Snowy':c<=82?'Showers':c<=99?'Thunderstorm':'Unknown';}
+          var tp=unit==='F'?'&temperature_unit=fahrenheit':'';
+          var base='latitude='+lat+'&longitude='+lon+'&timezone=auto&wind_speed_unit=kmh'+tp;
+          var url;
+          if(mode==='7day')url='https://api.open-meteo.com/v1/forecast?'+base+'&daily=temperature_2m_max,temperature_2m_min,weather_code&forecast_days=7';
+          else if(mode==='hourly')url='https://api.open-meteo.com/v1/forecast?'+base+'&hourly=temperature_2m,weather_code&forecast_hours=24';
+          else url='https://api.open-meteo.com/v1/forecast?'+base+'&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m';
+          fetch(url).then(function(r){return r.ok?r.json():null;}).then(function(data){
+            if(!data){container.innerHTML='<div style="opacity:0.5">Weather unavailable</div>';return;}
+            if(mode==='7day'&&data.daily){
+              var dd=data.daily,dates=dd.time||[],maxT=dd.temperature_2m_max||[],minT=dd.temperature_2m_min||[],codes=dd.weather_code||[];
+              var h7='<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;width:100%;padding:8px;">';
+              for(var i=0;i<Math.min(dates.length,7);i++)h7+='<div style="text-align:center;flex:1;min-width:60px;"><div style="font-size:22px">'+wIcon(codes[i]||0)+'</div><div style="font-size:11px;opacity:0.8">'+esc((dates[i]||'').slice(5))+'</div><div style="font-size:12px">'+esc(maxT[i]!=null?Math.round(maxT[i])+'\u00B0':'\u2014')+'</div><div style="font-size:11px;opacity:0.7">'+esc(minT[i]!=null?Math.round(minT[i])+'\u00B0':'\u2014')+'</div></div>';
+              container.innerHTML=h7+'</div>';
+            }else if(mode==='hourly'&&data.hourly){
+              var dh=data.hourly,times=dh.time||[],temps=dh.temperature_2m||[],hcodes=dh.weather_code||[];
+              var hh='<div style="display:flex;gap:6px;overflow:hidden;padding:8px;">';
+              for(var i=0;i<Math.min(times.length,12);i++)hh+='<div style="text-align:center;flex:1;min-width:50px;"><div style="font-size:18px">'+wIcon(hcodes[i]||0)+'</div><div style="font-size:11px;opacity:0.8">'+esc((times[i]||'').slice(11,16))+'</div><div style="font-size:12px">'+esc(temps[i]!=null?Math.round(temps[i])+'\u00B0':'\u2014')+'</div></div>';
+              container.innerHTML=hh+'</div>';
+            }else if(data.current){
+              var cur=data.current,code=cur.weather_code||0;
+              container.innerHTML='<div style="font-size:48px;line-height:1">'+wIcon(code)+'</div>'
+                +'<div style="font-size:28px;font-weight:bold;margin-top:4px">'+(cur.temperature_2m!=null?Math.round(cur.temperature_2m)+'\u00B0'+esc(unit):'\u2014')+'</div>'
+                +'<div style="font-size:14px;opacity:0.8;margin-top:2px">'+wLabel(code)+'</div>'
+                +(cur.wind_speed_10m!=null?'<div style="font-size:11px;opacity:0.6;margin-top:2px">\uD83D\uDCA8 '+Math.round(cur.wind_speed_10m)+' km/h</div>':'');
+            }else{
+              container.innerHTML='<div style="opacity:0.5">Weather unavailable</div>';
+            }
+          }).catch(function(){container.innerHTML='<div style="opacity:0.5">Weather unavailable</div>';});
+        })(d,el.lat||0,el.lon||0,el.unit||'C',el.displayMode||'current');
+        break;
+      }
+      case 'ticker':{
+        var d=document.createElement('div');
+        d.className='ce ticker-wrap';
+        d.style.cssText=baseStyle+'background:'+esc(el.bgColor||'transparent')+';color:'+esc(el.textColor||'#fff')+';font-size:'+(el.fontSize||16)+'px;';
+        var inner=document.createElement('div');
+        inner.className='ticker-inner';
+        var dur=Math.round(66-((el.speed||5)*6));
+        var dir=el.direction==='right'?'ticker-right':'ticker-left';
+        inner.style.animation=dir+' '+dur+'s linear infinite';
+        inner.textContent='Loading feed\u2026';
+        d.appendChild(inner);parent.appendChild(d);
+        if(el.rssUrl){
+          (function(inner2,rssUrl){
+            fetch(rssUrl,{headers:{'Accept':'application/rss+xml,application/atom+xml,text/xml,*/*'}})
+              .then(function(r){return r.ok?r.text():null;})
+              .then(function(xml){
+                if(!xml){inner2.textContent='No headlines available  ';return;}
+                var items=[];
+                try{
+                  var doc=(new DOMParser()).parseFromString(xml,'text/xml');
+                  var nodes=Array.prototype.slice.call(doc.querySelectorAll('item,entry'),0,30);
+                  for(var i=0;i<nodes.length;i++){
+                    var t=(nodes[i].querySelector('title')||{}).textContent||'';
+                    var clean=t.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/<[^>]+>/g,'').trim();
+                    if(clean)items.push(clean);
+                  }
+                }catch(e){}
+                inner2.textContent=items.length?(items.join('  \u2022  ')+'  '):'No headlines  ';
+              }).catch(function(){inner2.textContent='Feed unavailable  ';});
+          })(inner,el.rssUrl);
+        } else {
+          inner.textContent='RSS feed not configured  ';
+        }
+        break;
+      }
+      case 'webpage':{
+        var d=document.createElement('div');
+        d.className='ce';d.style.cssText=baseStyle;
+        var frame=document.createElement('iframe');
+        frame.className='ce-iframe';
+        frame.src=el.url||'about:blank';
+        frame.setAttribute('allowfullscreen','');
+        frame.setAttribute('allow','autoplay; fullscreen');
+        if(el.refreshIntervalSec&&el.refreshIntervalSec>0){
+          (function(f,sec){setInterval(function(){f.src=f.src;},sec*1000);})(frame,el.refreshIntervalSec);
+        }
+        d.appendChild(frame);parent.appendChild(d);
+        break;
+      }
+      case 'youtube':{
+        var d=document.createElement('div');
+        d.className='ce';d.style.cssText=baseStyle;
+        var rawUrl=el.url||'';
+        var vid='';
+        var m=rawUrl.match(/(?:v=|youtu\\.be\\/)([A-Za-z0-9_-]{11})/);
+        if(m)vid=m[1];else if(/^[A-Za-z0-9_-]{11}$/.test(rawUrl))vid=rawUrl;
+        if(vid){
+          var frame=document.createElement('iframe');
+          frame.className='ce-iframe';
+          frame.src='https://www.youtube.com/embed/'+vid+'?autoplay='+(el.autoplay?1:0)+'&mute='+(el.muted?1:0)+'&loop='+(el.loop?1:0)+(el.loop?'&playlist='+vid:'')+'&controls=0&playsinline=1';
+          frame.setAttribute('allowfullscreen','');
+          frame.setAttribute('allow','autoplay; fullscreen; encrypted-media');
+          d.appendChild(frame);
+        }
+        parent.appendChild(d);
+        break;
+      }
+    }
+  }
+
+  // ── Multi-page renderer ─────────────────────────────────────────────────
+  var pages=(SCENE.pages||[]);
+  if(!pages.length) return;
+
+  var pageEls=[];
+  for(var pi=0;pi<pages.length;pi++){
+    var page=pages[pi];
+    var pageDiv=document.createElement('div');
+    pageDiv.style.cssText='position:absolute;top:0;left:0;width:'+CANVAS_W+'px;height:'+CANVAS_H+'px;'
+      +'display:'+(pi===0?'block':'none')+';overflow:hidden;background:'+'${bgColor}'+';';
+    var elements=page.elements||[];
+    for(var ei=0;ei<elements.length;ei++) renderElement(elements[ei],pageDiv);
+    root.appendChild(pageDiv);
+    pageEls.push(pageDiv);
+  }
+
+  // Cycle pages if more than one
+  if(pageEls.length>1){
+    var cur=0;
+    function nextPage(){
+      pageEls[cur].style.display='none';
+      cur=(cur+1)%pageEls.length;
+      pageEls[cur].style.display='block';
+      var dur=(pages[cur].duration||10)*1000;
+      setTimeout(nextPage,dur);
+    }
+    var firstDur=(pages[0].duration||10)*1000;
+    setTimeout(nextPage,firstDur);
+  }
+})();
+</script>
+</body>
+</html>`;
+
+    reply.header('Content-Type', 'text/html; charset=utf-8');
+    reply.header('Cache-Control', 'private, no-cache');
+    return reply.send(html);
   });
 }
 
