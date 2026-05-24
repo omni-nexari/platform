@@ -4,6 +4,7 @@ import { eq, and, isNull, isNotNull, desc, ilike, or, sql, getTableColumns, asc,
 import { createReadStream, promises as fs } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { logActivity } from '../services/activity-logger.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import sharp from 'sharp';
@@ -514,6 +515,7 @@ export async function contentRoutes(app: FastifyInstance) {
       });
     }
 
+    logActivity({ userId: user.sub, workspaceId: wsId, eventType: 'content_uploaded', eventData: { contentId: item.id, type, name } });
     return reply.status(201).send(item);
   });
 

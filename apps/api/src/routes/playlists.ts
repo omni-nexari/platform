@@ -3,6 +3,7 @@ import { db, playlists, playlistItems, playlistFolders, contentItems, workspaceM
 import { eq, and, isNull, isNotNull, desc, ilike, inArray, sql, getTableColumns, gte, asc } from 'drizzle-orm';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
 import { validatePlaylistItemConditions } from '@signage/shared';
+import { logActivity } from '../services/activity-logger.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -221,6 +222,7 @@ export async function playlistRoutes(app: FastifyInstance) {
       smartFilters: body.smartFilters != null ? JSON.stringify(body.smartFilters) : null,
     }).returning();
 
+    logActivity({ userId: user.sub, workspaceId: body.workspaceId, eventType: 'playlist_created', eventData: { playlistId: playlist?.id, name: body.name } });
     return reply.status(201).send(playlist);
   });
 

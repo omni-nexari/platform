@@ -8,6 +8,7 @@ import { useTheme } from '../contexts/ThemeContext.js';
 import SearchModal from './SearchModal.js';
 import NotificationTray from './NotificationTray.js';
 import AiAssistant from './AiAssistant.js';
+import { usePageTracking } from '../lib/usePageTracking.js';
 import {
   Modal,
   ModalBody,
@@ -93,6 +94,9 @@ export default function AppLayout() {
   // Detect current workspace from URL
   const wsMatch = pathname.match(/^\/workspaces\/([^/]+)/);
   const currentWsId = wsMatch?.[1] ?? null;
+
+  // Track page views for AI personalisation (fire-and-forget)
+  usePageTracking(currentWsId);
 
   const [emergencyOpen, setEmergencyOpen] = useState(false);
   const [emergencyMsg, setEmergencyMsg] = useState('');

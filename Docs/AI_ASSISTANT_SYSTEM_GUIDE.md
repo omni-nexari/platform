@@ -1,7 +1,7 @@
 # AI Assistant System Guide
 
-> Status: Working knowledge document  
-> Audience: AI assistant, support agents, product team  
+> Status: Working knowledge document
+> Audience: AI assistant, support agents, product team
 > Goal: Help an AI answer user questions about how Nexari OmniHub is structured and how to use the system.
 
 ---

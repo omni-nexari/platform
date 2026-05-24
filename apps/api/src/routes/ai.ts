@@ -14,6 +14,7 @@ import {
   type OllamaMessage,
 } from '../services/ollama.js';
 import { buildSystemPrompt } from '../services/ai-knowledge.js';
+import { logActivity } from '../services/activity-logger.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -46,6 +47,29 @@ export async function aiRoutes(app: FastifyInstance) {
     const available = await isOllamaAvailable();
     const cfg = getOllamaConfig();
     return reply.send({ available, model: cfg.model });
+  });
+
+  // ── POST /ai/activity ─ frontend page-view / interaction tracking ─────────
+  app.post('/activity', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const actor = req.user as AuthUser;
+    const body = req.body as { workspaceId?: string; eventType?: string; eventData?: Record<string, unknown> };
+    if (!body.workspaceId || !body.eventType) return reply.code(400).send({ error: 'workspaceId and eventType required' });
+
+    const allowed = new Set(['page_view', 'playlist_created', 'schedule_created', 'content_uploaded', 'device_assigned']);
+    if (!allowed.has(body.eventType)) return reply.code(400).send({ error: 'Unknown eventType' });
+
+    if (!(await checkWorkspaceAccess(body.workspaceId, actor.sub))) {
+      return reply.code(403).send({ error: 'No access to workspace' });
+    }
+
+    logActivity({
+      userId: actor.sub,
+      workspaceId: body.workspaceId,
+      eventType: body.eventType as Parameters<typeof logActivity>[0]['eventType'],
+      ...(body.eventData ? { eventData: body.eventData } : {}),
+    });
+
+    return reply.code(204).send();
   });
 
   // ── GET /ai/sessions?workspaceId=&limit= ──────────────────────────────────

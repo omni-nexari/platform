@@ -4,6 +4,7 @@ import {
 } from '@signage/db';
 import { eq, and, isNull, desc, asc, ilike, inArray, sql, getTableColumns } from 'drizzle-orm';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
+import { logActivity } from '../services/activity-logger.js';
 import { dispatchWebhookEvent } from '../services/webhooks.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
@@ -277,6 +278,7 @@ export async function scheduleRoutes(app: FastifyInstance) {
       timezone: timezone ?? 'UTC',
     }).returning();
 
+    logActivity({ userId: user.sub, workspaceId, eventType: 'schedule_created', eventData: { scheduleId: schedule?.id, name: name.trim() } });
     return reply.status(201).send(schedule);
   });
 

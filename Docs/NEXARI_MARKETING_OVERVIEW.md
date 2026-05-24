@@ -1,7 +1,7 @@
 # Nexari OmniHub Marketing Overview
 
-> Status: Working marketing document  
-> Audience: management companies, venue operators, restaurants, retail teams, and internal sales/support  
+> Status: Working marketing document
+> Audience: management companies, venue operators, restaurants, retail teams, and internal sales/support
 > Product: multi-tenant digital signage, POS-aware content, scheduling, device management, and synchronized playback
 
 ---

@@ -13,6 +13,7 @@ import { ClaimDeviceSchema, UpdateDeviceSchema, DeviceCommandSchema, PairRequest
 import type { WallMember, WallBezels } from '@signage/shared';
 import { writeAuditLog } from '../services/audit.js';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
+import { logActivity } from '../services/activity-logger.js';
 import { MDC_ALL_COMMAND_NAMES } from '../services/mdc.js';
 import { dispatchWebhookEvent } from '../services/webhooks.js';
 import {
@@ -1131,6 +1132,17 @@ export async function deviceRoutes(app: FastifyInstance) {
       meta: { resourceType: body.data.resourceType, resourceId: body.data.resourceId },
       ipAddress: req.ip,
     })));
+
+    logActivity({
+      userId: user.sub,
+      workspaceId: body.data.workspaceId,
+      eventType: 'device_assigned',
+      eventData: {
+        deviceIds: body.data.deviceIds,
+        resourceType: body.data.resourceType,
+        resourceId: body.data.resourceId,
+      },
+    });
 
     return reply.send({
       updated: targetDevices.length,
