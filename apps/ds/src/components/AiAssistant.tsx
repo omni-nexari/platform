@@ -202,8 +202,11 @@ export default function AiAssistant({ workspaceId }: AiAssistantProps) {
 
               if (evt.type === 'session') {
                 if (!currentSessionId) {
+                  // Track in local var only — don't call setSessionId here.
+                  // Setting it mid-stream enables the messagesData query while
+                  // liveMessages still has the user message, causing a duplicate.
+                  // We set it together with setLiveMessages([]) at the end.
                   currentSessionId = evt.sessionId;
-                  setSessionId(evt.sessionId);
                 }
               } else if (evt.type === 'delta') {
                 assistantText += evt.text;
@@ -247,11 +250,15 @@ export default function AiAssistant({ workspaceId }: AiAssistantProps) {
         }
       }
 
-      // Invalidate queries so persisted history shows up; clear live overlay.
+      // Invalidate queries so persisted history shows up.
       await queryClient.invalidateQueries({ queryKey: ['ai', 'sessions', workspaceId] });
       if (currentSessionId) {
         await queryClient.invalidateQueries({ queryKey: ['ai', 'messages', currentSessionId] });
       }
+      // Set sessionId and clear liveMessages together so React batches them
+      // into one render — at that point liveMessages=[] so persisted drives
+      // the view with no duplicates.
+      setSessionId(currentSessionId);
       setLiveMessages([]);
     } catch (err) {
       if ((err as Error).name === 'AbortError') {
