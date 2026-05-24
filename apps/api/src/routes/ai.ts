@@ -8,13 +8,15 @@ import {
 import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import {
+  chatComplete,
   chatStream,
   isOllamaAvailable,
   getOllamaConfig,
   type OllamaMessage,
 } from '../services/ollama.js';
-import { buildSystemPrompt } from '../services/ai-knowledge.js';
+import { buildSystemPrompt, buildAgentSystemPrompt } from '../services/ai-knowledge.js';
 import { logActivity } from '../services/activity-logger.js';
+import { shouldUseTools, executeToolCall, AGENT_TOOLS } from '../services/ai-tools.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -145,11 +147,15 @@ export async function aiRoutes(app: FastifyInstance) {
   // ── POST /ai/chat ─────────────────────────────────────────────────────────
   // Streaming chat endpoint. Uses Server-Sent Events. Body JSON:
   //   { workspaceId, sessionId?, message }
-  // Events emitted (each as `data: <json>\n\n`):
-  //   { type: 'session', sessionId }
-  //   { type: 'delta', text }
-  //   { type: 'done', messageId }
-  //   { type: 'error', message }
+  //
+  // SSE events emitted (each as `data: <json>\n\n`):
+  //   { type: 'session',    sessionId }
+  //   { type: 'delta',      text }
+  //   { type: 'tool_start', name, label }
+  //   { type: 'tool_done',  name, label, data? }
+  //   { type: 'tool_error', name, label, message }
+  //   { type: 'done',       messageId }
+  //   { type: 'error',      message }
   app.post('/chat', { onRequest: [app.authenticate] }, async (req, reply) => {
     const actor = req.user as AuthUser;
     const parsed = sendMessageSchema.safeParse(req.body);
@@ -182,21 +188,13 @@ export async function aiRoutes(app: FastifyInstance) {
     } else {
       const [created] = await db
         .insert(aiChatSessions)
-        .values({
-          workspaceId,
-          userId: actor.sub,
-          title: message.slice(0, 80),
-        })
+        .values({ workspaceId, userId: actor.sub, title: message.slice(0, 80) })
         .returning();
       sessionId = created!.id;
     }
 
     // Persist the user message.
-    await db.insert(aiChatMessages).values({
-      sessionId,
-      role: 'user',
-      content: message,
-    });
+    await db.insert(aiChatMessages).values({ sessionId, role: 'user', content: message });
 
     // Load history for context (oldest → newest, capped).
     const history = await db
@@ -207,16 +205,7 @@ export async function aiRoutes(app: FastifyInstance) {
       .limit(MAX_HISTORY_MESSAGES);
     history.reverse();
 
-    const systemPrompt = await buildSystemPrompt(message);
-    const ollamaMessages: OllamaMessage[] = [
-      { role: 'system', content: systemPrompt },
-      ...history.map((m) => ({
-        role: (m.role === 'user' || m.role === 'assistant' ? m.role : 'user') as 'user' | 'assistant',
-        content: m.content,
-      })),
-    ];
-
-    // Open SSE stream.
+    // ── Open SSE stream ────────────────────────────────────────────────────
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
@@ -233,44 +222,130 @@ export async function aiRoutes(app: FastifyInstance) {
     const aborter = new AbortController();
     req.raw.on('close', () => aborter.abort());
 
-    let fullAssistant = '';
+    const toolCtx = { workspaceId, userId: actor.sub };
+    const agentMode = shouldUseTools(message);
+
     try {
-      for await (const delta of chatStream(ollamaMessages, { signal: aborter.signal })) {
-        fullAssistant += delta;
-        send({ type: 'delta', text: delta });
+      if (agentMode) {
+        // ── Agent loop (tool-calling mode) ──────────────────────────────────
+        const systemPrompt = await buildAgentSystemPrompt(message);
+        const agentMessages: OllamaMessage[] = [
+          { role: 'system', content: systemPrompt },
+          ...history.map((m) => ({
+            role: (m.role === 'user' || m.role === 'assistant' || m.role === 'tool'
+              ? m.role : 'user') as OllamaMessage['role'],
+            content: m.role === 'tool' && m.toolResult
+              ? JSON.stringify(m.toolResult)
+              : m.content,
+          })),
+        ];
+
+        let iterations = 0;
+        const MAX_ITERATIONS = 5;
+        let lastAssistantText = '';
+
+        while (iterations < MAX_ITERATIONS) {
+          iterations++;
+          const result = await chatComplete(agentMessages, {
+            tools: AGENT_TOOLS,
+            temperature: 0.3,
+            signal: aborter.signal,
+          });
+
+          // Stream any text the model included alongside or instead of tool_calls.
+          if (result.content) {
+            lastAssistantText += result.content;
+            send({ type: 'delta', text: result.content });
+          }
+
+          if (!result.toolCalls || result.toolCalls.length === 0) {
+            // No tool calls — model is done.  Add the assistant message to
+            // agentMessages so history is consistent, then break.
+            agentMessages.push({ role: 'assistant', content: result.content });
+            break;
+          }
+
+          // Add the assistant turn (with tool_calls) to the conversation.
+          agentMessages.push({ role: 'assistant', content: result.content });
+
+          // Execute each tool call sequentially.
+          for (const toolCall of result.toolCalls) {
+            const name = toolCall.function.name;
+            const args = toolCall.function.arguments;
+            const label = name.replaceAll('_', ' ');
+
+            send({ type: 'tool_start', name, label });
+
+            const toolResult = await executeToolCall(name, args, toolCtx);
+
+            if (toolResult.success) {
+              send({ type: 'tool_done', name, label: toolResult.label, data: toolResult.data });
+            } else {
+              send({ type: 'tool_error', name, label: toolResult.label, message: toolResult.error });
+            }
+
+            // Feed tool result back to the model as a tool message.
+            agentMessages.push({
+              role: 'tool',
+              content: JSON.stringify(toolResult),
+            });
+
+            // Persist the tool interaction to the DB for session history.
+            await db.insert(aiChatMessages).values({
+              sessionId,
+              role: 'tool',
+              content: `Tool: ${name}`,
+              toolCalls: [toolCall] as unknown as Record<string, unknown>[],
+              toolResult: toolResult as unknown as Record<string, unknown>,
+            });
+          }
+        }
+
+        // Persist final assistant text.
+        const [savedAgent] = await db
+          .insert(aiChatMessages)
+          .values({ sessionId, role: 'assistant', content: lastAssistantText })
+          .returning();
+
+        await db
+          .update(aiChatSessions)
+          .set({ updatedAt: new Date() })
+          .where(eq(aiChatSessions.id, sessionId));
+
+        send({ type: 'done', messageId: savedAgent?.id });
+
+      } else {
+        // ── Simple streaming (navigation / knowledge Q&A) ──────────────────
+        const systemPrompt = await buildSystemPrompt(message);
+        const ollamaMessages: OllamaMessage[] = [
+          { role: 'system', content: systemPrompt },
+          ...history.map((m) => ({
+            role: (m.role === 'user' || m.role === 'assistant' ? m.role : 'user') as OllamaMessage['role'],
+            content: m.content,
+          })),
+        ];
+
+        let fullAssistant = '';
+        for await (const delta of chatStream(ollamaMessages, { signal: aborter.signal })) {
+          fullAssistant += delta;
+          send({ type: 'delta', text: delta });
+        }
+
+        const [saved] = await db
+          .insert(aiChatMessages)
+          .values({ sessionId, role: 'assistant', content: fullAssistant })
+          .returning();
+
+        await db
+          .update(aiChatSessions)
+          .set({ updatedAt: new Date() })
+          .where(eq(aiChatSessions.id, sessionId));
+
+        send({ type: 'done', messageId: saved?.id });
       }
-
-      const [saved] = await db
-        .insert(aiChatMessages)
-        .values({
-          sessionId,
-          role: 'assistant',
-          content: fullAssistant,
-        })
-        .returning();
-
-      // Bump session updatedAt so the sidebar list re-orders.
-      await db
-        .update(aiChatSessions)
-        .set({ updatedAt: new Date() })
-        .where(eq(aiChatSessions.id, sessionId));
-
-      send({ type: 'done', messageId: saved?.id });
     } catch (err) {
-      req.log.error({ err }, 'ai chat stream failed');
-      send({
-        type: 'error',
-        message: err instanceof Error ? err.message : 'Unknown error',
-      });
-
-      // Persist whatever we got so the conversation isn't lost on error.
-      if (fullAssistant) {
-        await db.insert(aiChatMessages).values({
-          sessionId,
-          role: 'assistant',
-          content: fullAssistant,
-        });
-      }
+      req.log.error({ err }, 'ai chat failed');
+      send({ type: 'error', message: err instanceof Error ? err.message : 'Unknown error' });
     } finally {
       reply.raw.end();
     }

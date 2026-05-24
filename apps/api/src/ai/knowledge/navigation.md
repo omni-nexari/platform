@@ -12,11 +12,11 @@
 |------|---------------|-----|
 | Dashboard | Overview & quick stats | `/workspaces/:id/` |
 | Content | Media library | `/workspaces/:id/content` |
-| Playlists | Sequences of content | `/workspaces/:id/playlists` |
-| Schedules | Time-based programming | `/workspaces/:id/schedules` |
+| Playlists | Sequences of content, sync playlists, video wall playlists | `/workspaces/:id/playlist` |
+| Schedules | Time-based programming | `/workspaces/:id/schedule` |
 | Devices | Registered displays | `/workspaces/:id/devices` |
-| Device Groups | Bulk-manage displays | `/workspaces/:id/device-groups` |
-| Sync Groups | Multi-screen frame sync | `/workspaces/:id/sync-groups` |
+| Device Groups | Bulk-manage displays, sync groups, video wall groups | `/workspaces/:id/devices/groups` |
+| Sync Groups | Multi-screen frame sync, managed through Device Groups | `/workspaces/:id/devices/groups` |
 | Canvas | Visual layout builder | `/workspaces/:id/canvas` |
 | Templates | Reusable canvas designs | `/workspaces/:id/templates` |
 | Tags | Organise content | `/workspaces/:id/tags` |
@@ -29,6 +29,10 @@
 3. **Create a schedule** if you want time-based playback (Schedules page).
 4. **Assign** the playlist and/or schedule to one or more **devices**.
 5. The players receive updates automatically via the sync engine.
+
+For synchronized playback, create a **Sync Playlist** from the Playlists page, then publish it to selected devices. The platform creates or reuses a sync group behind the scenes.
+
+For video walls, create a **Video Wall** device group from Device Groups, configure the grid layout, then publish either a content item in Videowall mode or a Video Wall playlist from Playlists.
 
 ## Top bar
 - **Workspace switcher** (left) — change between workspaces you belong to.

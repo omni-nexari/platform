@@ -19,6 +19,8 @@ Open a device's detail page and set:
 
 Changes propagate to the player via WebSocket / sync engine on the next heartbeat.
 
+For bulk publishing, publish to selected devices from the Content publish wizard or publish to a Device Group. Use a reusable "All Screens" device group when a customer frequently publishes to every signage screen in a workspace.
+
 ## Device status
 Each device shows:
 - **Online/Offline** — last heartbeat within 90s.
@@ -29,5 +31,10 @@ Each device shows:
 ## Device groups
 Group devices together to publish playlists/schedules to many at once. Workspace sidebar → **Device Groups**.
 
+Device group types include location, tag, sync, and video wall. Video wall groups add grid dimensions and per-cell screen assignment.
+
 ## Sync groups
 For coordinated multi-screen playback (video walls, synchronised displays), use **Sync Groups** — devices in the same group play frame-synchronised content.
+
+## Video wall groups
+For tiled walls, create a **Video Wall** device group. Set the number of columns and rows, add screens, configure the panel layout, then use **Push to Screens** so online players receive the wall geometry.

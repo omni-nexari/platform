@@ -3,7 +3,7 @@
 A **playlist** is an ordered sequence of content items (images, videos, HTML pages, web URLs) that a digital sign plays back in a loop.
 
 ## Where to find playlists
-Navigate to the **Workspace** sidebar → **Playlists**. URL: `/workspaces/:workspaceId/playlists`.
+Navigate to the **Workspace** sidebar → **Playlists**. URL: `/workspaces/:workspaceId/playlist`.
 
 ## Creating a playlist
 1. Go to the Playlists page and click **+ New Playlist** (top right).
@@ -35,3 +35,4 @@ Playlists have an `approvalState`: `draft`, `pending_review`, `approved`, `rejec
 - Use **folders** to organise large libraries.
 - Set a **workspace default playlist** so new devices have something to play immediately.
 - Combine with a **schedule** to control *when* the playlist plays.
+- For lockstep multi-screen playback, use a **Sync Playlist** instead of a normal playlist.

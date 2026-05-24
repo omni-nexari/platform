@@ -2,12 +2,11 @@
  * Floating AI Assistant widget — mounted in AppLayout so it's available on
  * every page. Uses Server-Sent Events for streaming responses from /ai/chat.
  *
- * Phase 2: navigation help + Q&A. Phase 3 will add tool-calling for
- * playlist / schedule creation.
+ * Phase 3: agentic tool-calling for playlist / schedule creation.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bot, Send, X, Plus, MessageSquare, Loader2, AlertCircle, Sparkles } from 'lucide-react';
+import { Bot, Send, X, Plus, MessageSquare, Loader2, AlertCircle, Sparkles, CheckCircle2, XCircle, Wrench } from 'lucide-react';
 import { api } from '../lib/api.js';
 
 interface ChatMessage {
@@ -32,7 +31,19 @@ interface AiAssistantProps {
   workspaceId: string;
 }
 
-type DraftMessage = { id: string; role: 'user' | 'assistant'; content: string; pending?: boolean };
+type ToolEventStatus = 'running' | 'done' | 'error';
+
+interface ToolBadge {
+  id: string;
+  name: string;
+  label: string;
+  status: ToolEventStatus;
+  message?: string;
+}
+
+type DraftMessage =
+  | { id: string; role: 'user' | 'assistant'; content: string; pending?: boolean }
+  | { id: string; role: 'tool_badge'; badge: ToolBadge };
 
 const STREAM_URL = '/api/v1/ai/chat';
 
@@ -77,9 +88,7 @@ export default function AiAssistant({ workspaceId }: AiAssistantProps) {
     .map((m) => ({ id: m.id, role: m.role as 'user' | 'assistant', content: m.content }));
   const visibleMessages: DraftMessage[] = streaming || liveMessages.length > 0
     ? [...persisted, ...liveMessages]
-    : persisted;
-
-  // Auto-scroll to bottom on new content.
+    : persisted;  // Auto-scroll to bottom on new content.
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -172,6 +181,9 @@ export default function AiAssistant({ workspaceId }: AiAssistantProps) {
               const evt = JSON.parse(data) as
                 | { type: 'session'; sessionId: string }
                 | { type: 'delta'; text: string }
+                | { type: 'tool_start'; name: string; label: string }
+                | { type: 'tool_done'; name: string; label: string; data?: unknown }
+                | { type: 'tool_error'; name: string; label: string; message: string }
                 | { type: 'done'; messageId?: string }
                 | { type: 'error'; message: string };
 
@@ -184,6 +196,28 @@ export default function AiAssistant({ workspaceId }: AiAssistantProps) {
                 assistantText += evt.text;
                 setLiveMessages((prev) =>
                   prev.map((m) => (m.id === assistantId ? { ...m, content: assistantText, pending: true } : m)),
+                );
+              } else if (evt.type === 'tool_start') {
+                const badgeId = `tool-${evt.name}-${Date.now()}`;
+                setLiveMessages((prev) => [
+                  ...prev,
+                  { id: badgeId, role: 'tool_badge', badge: { id: badgeId, name: evt.name, label: evt.label, status: 'running' } },
+                ]);
+              } else if (evt.type === 'tool_done') {
+                setLiveMessages((prev) =>
+                  prev.map((m) =>
+                    m.role === 'tool_badge' && m.badge.name === evt.name && m.badge.status === 'running'
+                      ? { ...m, badge: { ...m.badge, label: evt.label, status: 'done' as const } }
+                      : m,
+                  ),
+                );
+              } else if (evt.type === 'tool_error') {
+                setLiveMessages((prev) =>
+                  prev.map((m) =>
+                    m.role === 'tool_badge' && m.badge.name === evt.name && m.badge.status === 'running'
+                      ? { ...m, badge: { ...m.badge, label: evt.label, status: 'error' as const, message: evt.message } }
+                      : m,
+                  ),
                 );
               } else if (evt.type === 'done') {
                 setLiveMessages((prev) =>
@@ -325,22 +359,45 @@ export default function AiAssistant({ workspaceId }: AiAssistantProps) {
               </div>
             )}
 
-            {visibleMessages.map((m) => (
-              <div
-                key={m.id}
-                className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
+            {visibleMessages.map((m) => {
+              if (m.role === 'tool_badge') {
+                const { badge } = m;
+                return (
+                  <div key={badge.id} className="flex justify-start">
+                    <div className={`inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-1 border ${
+                      badge.status === 'running'
+                        ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-800 dark:text-blue-300'
+                        : badge.status === 'done'
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-900/30 dark:border-emerald-800 dark:text-emerald-300'
+                          : 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/30 dark:border-red-800 dark:text-red-300'
+                    }`}>
+                      {badge.status === 'running' && <Loader2 className="w-3 h-3 animate-spin" />}
+                      {badge.status === 'done'    && <CheckCircle2 className="w-3 h-3" />}
+                      {badge.status === 'error'   && <XCircle className="w-3 h-3" />}
+                      <Wrench className="w-3 h-3 opacity-60" />
+                      <span>{badge.label}</span>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
                 <div
-                  className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words ${
-                    m.role === 'user'
-                      ? 'bg-[var(--blue)] text-white rounded-br-sm'
-                      : 'bg-[var(--surface-elevated,rgba(0,0,0,0.04))] text-[var(--text)] rounded-bl-sm'
-                  }`}
+                  key={m.id}
+                  className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
-                  {m.content || (m.pending ? <Loader2 className="w-4 h-4 animate-spin" /> : '')}
+                  <div
+                    className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words ${
+                      m.role === 'user'
+                        ? 'bg-[var(--blue)] text-white rounded-br-sm'
+                        : 'bg-[var(--surface-elevated,rgba(0,0,0,0.04))] text-[var(--text)] rounded-bl-sm'
+                    }`}
+                  >
+                    {m.content || (m.pending ? <Loader2 className="w-4 h-4 animate-spin" /> : '')}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
             {error && (
               <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-xs text-red-600 dark:text-red-400 flex items-start gap-2">

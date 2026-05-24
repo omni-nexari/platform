@@ -52,6 +52,8 @@ Platform
 | Device group | User grouping for screens by sync, video wall, location, or tag | Workspace sidebar -> Device Groups |
 | Sync playlist | Content list intended for lockstep multi-screen playback | Workspace sidebar -> Playlists / Sync Playlists |
 | Sync group | Set of member devices that receive synchronized playback config | Created through Sync Playlist publish or Device Groups |
+| Video wall group | Device group with a column/row grid and one screen assigned to each cell | Workspace sidebar -> Device Groups |
+| Video wall playlist | Per-cell content layout for a video wall group | Workspace sidebar -> Playlists / Video Wall |
 
 ## Assistant Answer Rules
 
@@ -63,6 +65,8 @@ Platform
 6. If the user wants synchronized playback, route them to sync playlists and sync groups, not normal playlists.
 7. If the user wants time-based playback, route them to schedules, then publish the schedule to devices.
 8. If the user wants a simple always-on loop, route them to a playlist and publish it directly or set it as the default.
+9. If the user wants one image or video stretched across multiple panels, route them to a video wall group and the Video Wall publish mode.
+10. If the user wants different content on each panel, route them to a video wall playlist.
 
 ## Common Intent Routing
 
@@ -76,6 +80,9 @@ Platform
 | "Play the same video on multiple screens in sync" | Sync Playlists / Sync Groups | Create sync playlist -> publish to selected devices |
 | "Group these screens" | Device Groups | Create group -> choose type -> select devices |
 | "Video wall" | Video wall groups/playlists | Create video wall group -> configure grid -> publish video wall playlist |
+| "Crop one video across a wall" | Content publish wizard -> Videowall | Publish content to a video wall group in Videowall mode |
+| "Different content on each wall panel" | Video wall playlist | Select wall group -> assign content to cells -> publish to wall |
+| "Publish to all screens" | Device group or bulk device publish | Use a group containing all target screens, or select all devices in the publish wizard |
 
 ## How to Create a Playlist
 
@@ -179,6 +186,49 @@ Use this when the user asks how to put something on a screen.
 
 Important rule: a device should have one primary published target at a time. Publishing a sync group clears normal content, playlist, and schedule targets for that device.
 
+## How Publishing Works in Nexari Signage
+
+Use this when the user asks how to publish across Nexari Signage, publish to every screen, publish to a group, or understand the difference between publish modes.
+
+### Publishing Targets
+
+| User goal | Recommended target |
+|---|---|
+| Put one item on one or more screens now | Publish content to selected devices |
+| Put a loop on screens | Publish a playlist to selected devices or a device group |
+| Use time rules | Publish a schedule to selected devices or a device group |
+| Play the same synchronized loop | Publish a sync playlist to a sync group |
+| Crop one full-wall asset across panels | Publish content to a video wall group in Videowall mode |
+| Put different content in each wall cell | Publish a video wall playlist to the video wall group |
+
+### Publish One Content Item
+
+1. Open the workspace.
+2. Go to Content.
+3. Select one content item.
+4. Choose Publish.
+5. Choose the publish mode:
+   - Single for normal full-screen playback on selected devices or groups.
+   - Videowall for cropped playback across a video wall group.
+6. Select target devices or groups.
+7. Confirm Publish.
+
+In Single mode, selecting a video wall group plays the content full-screen on each member and uses P2P sync mode. In Videowall mode, each panel renders its cropped region from the full-wall content.
+
+### Publish to All Signage Screens
+
+There is no need to publish one screen at a time. Use one of these patterns:
+
+1. Create a Device Group such as "All Screens" or "All Lobby Screens".
+2. Add every target signage device to that group.
+3. Publish content, playlist, or schedule to the group.
+
+For one-off content publishing, the Publish wizard can also select multiple individual devices. If the user has many screens, recommend an all-screens device group because it is easier to reuse.
+
+### Unpublish
+
+Unpublishing clears the device-level published content, playlist, schedule, or sync group. The device then returns to normal workspace schedule and fallback behavior.
+
 ## How to Create a Sync Playlist
 
 Use this when the user asks about synchronized playback or multiple screens playing the same content at the same time.
@@ -250,16 +300,97 @@ Use this when the user asks how to create a group of screens that play together.
 For synchronized playback, create a Sync Playlist first, add the content that all screens should play, and save it. Then use Publish on that sync playlist, select the screens, and confirm. Nexari will create or reuse a sync group for those screens and point the devices at that group.
 ```
 
+## How to Create a Video Wall Group
+
+Use this when the user asks how to create a video wall group, video wall device group, panel wall, or screen wall.
+
+1. Open the target workspace.
+2. Go to Device Groups.
+3. Select New Group.
+4. Enter a group name, such as "Lobby Video Wall".
+5. Choose Video Wall as the group type.
+6. Set the grid size:
+   - Columns = number of screens across.
+   - Rows = number of screens high.
+7. Add an optional description.
+8. Continue to Add screens.
+9. Select the physical screens that belong to the wall.
+10. Continue to Sync settings.
+11. Choose relay mode:
+   - LAN (local) when the screens are on the same reachable network.
+   - Cloud relay when screens need central relay behavior.
+12. Choose Auto-select leader unless a specific screen should coordinate playback.
+13. Save.
+14. Open the group detail page and select Configure.
+15. In Panel Layout, assign each screen to its correct grid cell.
+16. Use the L/P toggle per cell if the panel orientation is landscape or portrait.
+17. Save Layout.
+18. Optionally set Bezel Compensation and Save Bezels.
+19. Optionally set Sync Leader & Relay and Save.
+20. Select Push to Screens to send the wall geometry and peer list to online screens.
+
+### Video Wall Group Details the Assistant Should Know
+
+- Video wall groups are device groups with type `videowall`.
+- The group stores `videoWallCols` and `videoWallRows`.
+- Each member device can have a cell position: column and row.
+- Each cell can store orientation and native resolution metadata.
+- Bezel compensation is optional and uses physical millimeter values per edge.
+- Push to Screens sends `VIDEOWALL_INIT` to online devices.
+- A video wall group needs a saved layout before video wall publishing can work correctly.
+
+## How to Use the Video Wall Feature
+
+Use this when the user asks how to use a video wall after the group exists.
+
+### Option A: One Full-Wall Asset Cropped Across Panels
+
+Use this for one large video or image that should span the whole wall.
+
+1. Open Content.
+2. Select the content item.
+3. Choose Publish.
+4. Select Videowall mode.
+5. Select the video wall group.
+6. Confirm Publish to Videowall.
+
+The platform publishes the same content to every member device, pushes wall geometry, and each screen crops its own region from the full-wall asset.
+
+### Option B: Different Content Per Panel
+
+Use this for menu walls, dashboards, or layouts where each screen shows different content.
+
+1. Open Playlists.
+2. Create or open a Video Wall playlist.
+3. Select the target video wall group.
+4. Go to Assign Content.
+5. Click each wall cell and choose the content for that panel.
+6. Set object fit per cell if needed: cover, contain, or fill.
+7. Add pages if the wall layout needs multiple content pages.
+8. Save.
+9. Select Publish to Wall.
+
+The current publish path assigns the first saved page's cell content to the matching member devices and refreshes online devices.
+
+### Good Video Wall Answer Template
+
+```text
+Create the wall first from Device Groups: New Group, choose Video Wall, set columns and rows, add the screens, then open Configure and assign each screen to a grid cell. After saving the layout, you can either publish one content item in Videowall mode so it is cropped across the whole wall, or create a Video Wall playlist from Playlists and assign different content to each cell before choosing Publish to Wall.
+```
+
 ## Device Groups vs Sync Groups
 
 Device groups are a broader dashboard concept. They can be sync, video wall, location, or tag groups.
 
 Sync groups are the playback configuration used for lockstep playback. A sync-type device group can create or connect to a sync group behind the scenes.
 
+Video wall groups are also device groups, but they store a physical grid and per-cell screen assignment. They are used by the video wall manifest and video wall playlist flows.
+
 When answering users, use this distinction:
 
 - If the user wants organization or bulk management, say device group.
 - If the user wants screens to play in lockstep, say sync group and sync playlist.
+- If the user wants a tiled wall, say video wall group and video wall playlist.
 
 ## Fallback Playback Logic
 
@@ -312,6 +443,21 @@ Check these in order:
 7. LAN relay devices are on the same reachable network, or cloud relay is selected.
 8. Use force resync if the group is stuck in preparation or drift is visible.
 
+### Video wall is not correct
+
+Check these in order:
+
+1. The device group type is Video Wall.
+2. The grid columns and rows match the physical wall.
+3. Each physical screen is assigned to the correct cell.
+4. The layout was saved after cell assignment.
+5. Orientation is correct for each panel.
+6. Bezel values are correct or blank if not needed.
+7. Push to Screens was used after layout or relay changes.
+8. If using one full-wall asset, it was published in Videowall mode, not Single mode.
+9. If using per-cell content, the video wall playlist was saved and published to the wall.
+10. Online devices received refresh commands; offline devices will update when they reconnect.
+
 ## API Reference for AI Reasoning
 
 The assistant does not need to expose API paths in normal user answers, but these paths describe the underlying behavior:
@@ -322,6 +468,9 @@ The assistant does not need to expose API paths in normal user answers, but thes
 | Schedules | `GET/POST/PATCH/DELETE /schedules`, `PUT /schedules/:id/slots`, preview, blackouts, import/export |
 | Sync playlists | `GET/POST/PATCH/DELETE /sync-playlists`, `PUT /sync-playlists/:id/items` |
 | Sync groups | `GET/POST/PATCH/DELETE /sync-groups`, add/remove members, manifest, priorities, state, force-resync |
+| Device groups | `GET/POST/PATCH/DELETE /device-groups`, members, group publish, video wall publish, video wall manifest |
+| Video wall playlists | `GET/POST/PATCH/DELETE /videowall-playlists`, pages, slots, publish |
+| Device publish | `POST /devices/publish`, `POST /devices/unpublish` |
 | Device schedule fetch | Players fetch `GET /devices/device/schedule` |
 
 ## User-Facing Response Examples
@@ -344,6 +493,18 @@ Create a Lunch Menu playlist first if you do not already have one. Then go to Sc
 Create a Sync Playlist, add the content that should play on all three screens, and save it. Then select Publish on that sync playlist and choose the three screens. Nexari will create or reuse a sync group, add the devices, and publish the synchronized playback target to them.
 ```
 
+### "How do I create a video wall?"
+
+```text
+Go to Device Groups, choose New Group, and set the type to Video Wall. Enter the wall grid size, add the screens, then open the group and use Configure to assign each screen to the correct cell. Save the layout and use Push to Screens so the players receive the wall geometry.
+```
+
+### "How do I publish to all screens?"
+
+```text
+The cleanest way is to create a Device Group for all target screens, then publish content, a playlist, or a schedule to that group. For one-off content, you can also use the Content page's Publish button and select multiple devices in the publish wizard.
+```
+
 ### "Why is my scheduled content not playing?"
 
 ```text
@@ -357,5 +518,6 @@ First check that the schedule is published to the device. Then confirm the curre
 - Schedule recurrence options exposed in the UI.
 - Device publish target behavior.
 - Sync group creation/publish flow.
+- Video wall group, manifest, and playlist publish flow.
 - SyncPlay mode detection and relay behavior.
 - AI assistant permissions and autonomous action guardrails.

@@ -18,6 +18,18 @@ export interface OllamaMessage {
   content: string;
 }
 
+export interface OllamaToolCall {
+  function: {
+    name: string;
+    arguments: Record<string, unknown>;
+  };
+}
+
+export interface OllamaCompletionResult {
+  content: string;
+  toolCalls: OllamaToolCall[];
+}
+
 export interface OllamaChatOptions {
   /** Override default model */
   model?: string;
@@ -25,6 +37,8 @@ export interface OllamaChatOptions {
   temperature?: number;
   /** Optional response format hint. 'json' forces JSON-only output (used by tool-calling). */
   format?: 'json';
+  /** Tools to make available to the model (Ollama/OpenAI function-calling format) */
+  tools?: unknown[];
   /** Abort signal to cancel in-flight requests */
   signal?: AbortSignal;
 }
@@ -32,7 +46,7 @@ export interface OllamaChatOptions {
 interface OllamaChatStreamChunk {
   model: string;
   created_at: string;
-  message?: { role: string; content: string };
+  message?: { role: string; content: string; tool_calls?: OllamaToolCall[] };
   done: boolean;
 }
 
@@ -53,12 +67,13 @@ export async function isOllamaAvailable(): Promise<boolean> {
 }
 
 /**
- * Non-streaming chat completion. Returns the full assistant message content.
+ * Non-streaming chat completion. Returns content text + any tool_calls the
+ * model emitted.  Use this for the tool-detection pass in the agent loop.
  */
 export async function chatComplete(
   messages: OllamaMessage[],
   options: OllamaChatOptions = {},
-): Promise<string> {
+): Promise<OllamaCompletionResult> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
   const signal = options.signal ?? ctrl.signal;
@@ -72,6 +87,7 @@ export async function chatComplete(
         messages,
         stream: false,
         ...(options.format ? { format: options.format } : {}),
+        ...(options.tools  ? { tools: options.tools }   : {}),
         options: {
           temperature: options.temperature ?? 0.4,
         },
@@ -83,8 +99,13 @@ export async function chatComplete(
       throw new Error(`Ollama returned ${res.status}: ${await res.text()}`);
     }
 
-    const data = await res.json() as { message?: { content?: string } };
-    return data.message?.content ?? '';
+    const data = await res.json() as {
+      message?: { content?: string; tool_calls?: OllamaToolCall[] };
+    };
+    return {
+      content:   data.message?.content   ?? '',
+      toolCalls: data.message?.tool_calls ?? [],
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -115,6 +136,7 @@ export async function* chatStream(
         messages,
         stream: true,
         ...(options.format ? { format: options.format } : {}),
+        ...(options.tools  ? { tools: options.tools }   : {}),
         options: {
           temperature: options.temperature ?? 0.4,
         },

@@ -3,7 +3,7 @@
 A **schedule** controls *when* playlists or content items play on devices. Schedules contain one or more **time slots** with optional recurrence.
 
 ## Where to find schedules
-Workspace sidebar → **Schedules**. URL: `/workspaces/:workspaceId/schedules`.
+Workspace sidebar → **Schedules**. URL: `/workspaces/:workspaceId/schedule`.
 
 ## Creating a schedule
 1. Click **+ New Schedule**.
@@ -23,6 +23,8 @@ In the Schedule Editor, click **+ Add Slot**:
 - **Priority** (higher wins when slots overlap) and **color/label** for the calendar view.
 
 The editor warns about overlapping slots and refuses to save if a conflict isn't resolved by priority.
+
+The current dashboard commonly exposes **weekly** and **one-time** slot creation. For a daily pattern, choose weekly and select every day.
 
 ## Schedule types
 - `general` — normal weekly programming.
