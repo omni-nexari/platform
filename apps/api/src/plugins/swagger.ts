@@ -8,7 +8,7 @@ export async function registerSwagger(app: FastifyInstance): Promise<void> {
       openapi: '3.0.0',
       info: {
         title: 'Signage Platform API',
-        description: 'REST API for the Nexari Signage CMS platform',
+        description: 'REST API for the OmniHub platform',
         version: '1.0.0',
       },
       servers: [{ url: '/api/v1', description: 'Current server' }],

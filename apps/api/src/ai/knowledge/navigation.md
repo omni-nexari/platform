@@ -1,6 +1,6 @@
 # Platform Overview & Navigation
 
-**Omni Signage** is a multi-tenant digital signage management platform.
+**OmniHub** is a multi-tenant digital signage management platform.
 
 ## Hierarchy
 - **Organisation** — the top-level tenant (your company).

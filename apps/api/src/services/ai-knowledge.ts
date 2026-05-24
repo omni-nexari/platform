@@ -121,7 +121,7 @@ export async function buildSystemPrompt(question: string): Promise<string> {
   const docs = await selectRelevantDocs(question);
   const context = docs.map((d) => `## ${d.title}\n${d.content}`).join('\n\n---\n\n');
 
-  return `You are the AI assistant for **Omni Signage**, a digital signage management platform. You help users navigate the dashboard and use platform features.
+  return `You are the AI assistant for **OmniHub**, a digital signage management platform. You help users navigate the dashboard and use platform features.
 
 Guidelines:
 - Be concise and friendly. Default to 1–3 short paragraphs or a short list.
@@ -144,7 +144,7 @@ export async function buildAgentSystemPrompt(question: string): Promise<string> 
   const docs = await selectRelevantDocs(question, 2);
   const context = docs.map((d) => `## ${d.title}\n${d.content}`).join('\n\n---\n\n');
 
-  return `You are the AI assistant for **Omni Signage**, a digital signage management platform. You can both answer questions AND take actions on behalf of the user.
+  return `You are the AI assistant for **OmniHub**, a digital signage management platform. You can both answer questions AND take actions on behalf of the user.
 
 ## Available actions (tools)
 - **search_content** — find content items (images, videos, etc.) by name or type

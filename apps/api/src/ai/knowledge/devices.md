@@ -38,3 +38,18 @@ For coordinated multi-screen playback (video walls, synchronised displays), use 
 
 ## Video wall groups
 For tiled walls, create a **Video Wall** device group. Set the number of columns and rows, add screens, configure the panel layout, then use **Push to Screens** so online players receive the wall geometry.
+
+## Device control
+You can send real-time commands to any online device from its detail page (Devices → click device name). Available actions include:
+- **Refresh Schedule** — re-fetch published content immediately
+- **Screenshot** — request a new screenshot from the player
+- **Clear Cache** — force re-download of media assets
+- **Reboot** — restart the player OS
+- **Power On / Power Off** — control display power
+- **Return to Player** — re-launch the Nexari app on the TV
+- **Wake-on-LAN** — wake an offline device using a peer relay
+- **Live View** — stream real-time screenshots via SSE (Tizen/Windows)
+- **MDC commands** — Samsung display hardware control (volume, source, standby, locks)
+- **Emergency override** — broadcast urgent content to all devices immediately
+
+For full details on every command see the `device-control` knowledge file.

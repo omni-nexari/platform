@@ -113,7 +113,7 @@ export default function AcceptInvitePage() {
           <div className="mb-8 text-center">
             <h1 className="text-2xl font-bold">Set up your organization</h1>
             <p className="text-sm text-[var(--text-muted)] mt-1">
-              You've been invited to create an organization on OmniHub Signage
+              You've been invited to create an organization on OmniHub
             </p>
             <p className="text-xs text-[var(--text-muted)] mt-0.5">{inviteInfo.email}</p>
           </div>

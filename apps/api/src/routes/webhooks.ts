@@ -170,7 +170,7 @@ export async function webhooksRoutes(app: FastifyInstance) {
     const testPayload = JSON.stringify({
       event:     'webhook.test',
       timestamp: new Date().toISOString(),
-      message:   'This is a test delivery from OmniHub Signage',
+      message:   'This is a test delivery from OmniHub',
       orgId:     user.orgId,
       webhookId: id,
     });

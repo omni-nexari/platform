@@ -37,7 +37,7 @@ const PAGE_TITLE_MAP: Record<string, string> = {
 
 function getPageTitle(pathname: string): string {
   const segments = pathname.split('/').filter(Boolean);
-  if (!segments.length) return 'Nexari Signage';
+  if (!segments.length) return 'OmniHub';
 
   // /workspaces/:wsId/<section>[/...]
   if (segments[0] === 'workspaces' && segments.length >= 3) {
@@ -57,7 +57,7 @@ function PageTitleManager() {
   const { pathname } = useLocation();
   useEffect(() => {
     const page = getPageTitle(pathname);
-    document.title = `${page} — Nexari Signage`;
+    document.title = `${page} — OmniHub`;
   }, [pathname]);
   return null;
 }

@@ -390,7 +390,7 @@ export default function AiAssistant({ workspaceId }: AiAssistantProps) {
                 <Bot className="w-10 h-10 mx-auto mb-3 opacity-50" />
                 <div className="font-medium mb-1">How can I help?</div>
                 <div className="text-xs">
-                  Ask about playlists, schedules, devices, or how to do anything in Omni Signage.
+                  Ask about playlists, schedules, devices, or how to do anything in OmniHub.
                 </div>
               </div>
             )}

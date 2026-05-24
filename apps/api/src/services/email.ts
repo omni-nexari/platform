@@ -3,9 +3,9 @@ import { Resend } from 'resend';
 const resend = new Resend(process.env['RESEND_API_KEY']);
 
 // admin@mail.chiho.app — platform-level: superadmin invites, reseller onboarding
-const FROM_ADMIN = `"OmniHub Signage" <${process.env['RESEND_FROM_ADMIN'] ?? 'admin@mail.chiho.app'}>`;
+const FROM_ADMIN = `"OmniHub" <${process.env['RESEND_FROM_ADMIN'] ?? 'admin@mail.chiho.app'}>`;
 // mail@mail.chiho.app — user-level: org member invites, password reset
-const FROM_MAIL = `"OmniHub Signage" <${process.env['RESEND_FROM_MAIL'] ?? 'mail@mail.chiho.app'}>`;
+const FROM_MAIL = `"OmniHub" <${process.env['RESEND_FROM_MAIL'] ?? 'mail@mail.chiho.app'}>`;
 const APP_URL = (process.env['APP_URL'] ?? 'https://ds.chiho.app').replace(/\/+$/, '');
 
 function absoluteUrl(url: string | null | undefined): string | null {
@@ -32,7 +32,7 @@ function card(
 ): string {
   const brandPrimary = branding?.primaryColor ?? '#3a7bff';
   const brandAccent = branding?.accentColor ?? '#4ff2d1';
-  const brandTitle = branding?.portalTitle ?? 'OmniHub Signage';
+  const brandTitle = branding?.portalTitle ?? 'OmniHub';
   const brandLogo = absoluteUrl(branding?.logoUrl);
 
   return `<!DOCTYPE html>
@@ -62,7 +62,7 @@ function card(
         If you didn't expect this email, you can safely ignore it.
       </p>
       <p style="margin:0;color:#c0c8d4;font-size:11px;text-align:center;">
-        Powered by OmniHub Signage &nbsp;·&nbsp; <a href="mailto:support@chiho.app" style="color:#c0c8d4;">support@chiho.app</a>
+        Powered by OmniHub &nbsp;·&nbsp; <a href="mailto:support@chiho.app" style="color:#c0c8d4;">support@chiho.app</a>
       </p>
     </td></tr>
     </table>
@@ -124,7 +124,7 @@ export async function sendInviteEmail(
     bodyHtml = `
       <p style="color:#444;line-height:1.7;margin:0 0 18px;">${greeting}</p>
       <p style="color:#444;line-height:1.7;margin:0 0 20px;">
-        You've been invited to lead <strong>${companyName}</strong> as a reseller on <strong>OmniHub Signage</strong>.
+        You've been invited to lead <strong>${companyName}</strong> as a reseller on <strong>OmniHub</strong>.
         Click the button below to create your account and complete the setup — it only takes a few minutes.
         This invitation link expires in <strong>7 days</strong>.
       </p>
@@ -167,14 +167,14 @@ export async function sendInviteEmail(
           <td style="color:#555;font-size:14px;line-height:1.5;">Invite your team members and start adding client organizations</td>
         </tr>
       </table>`;
-    bodyText = `${greeting}\n\nYou've been invited to lead ${companyName} as a ${roleLabel.toLowerCase()} on OmniHub Signage.\n\nPlan: ${planLabel}\nActive Modules: ${modulesLabel}\n\nWhat happens next:\n1. Set your password and create your admin account\n2. Name your reseller portal and choose your portal URL\n3. Invite your team members and start adding client organizations\n\nAccept invitation (expires in 7 days):\n${link}`;
+    bodyText = `${greeting}\n\nYou've been invited to lead ${companyName} as a ${roleLabel.toLowerCase()} on OmniHub.\n\nPlan: ${planLabel}\nActive Modules: ${modulesLabel}\n\nWhat happens next:\n1. Set your password and create your admin account\n2. Name your reseller portal and choose your portal URL\n3. Invite your team members and start adding client organizations\n\nAccept invitation (expires in 7 days):\n${link}`;
   } else if (ctx.inviteType === 'client_org_owner') {
     const companyName = ctx.companyName ?? 'a management company';
-    subject = `${companyName} has invited you to OmniHub Signage`;
+    subject = `${companyName} has invited you to OmniHub`;
     bodyHtml = `
       <p style="color:#444;line-height:1.7;margin:0 0 18px;">${greeting}</p>
       <p style="color:#444;line-height:1.7;margin:0 0 20px;">
-        <strong>${companyName}</strong> has set up an organization on <strong>OmniHub Signage</strong> for you.
+        <strong>${companyName}</strong> has set up an organization on <strong>OmniHub</strong> for you.
         Click the button below to create your account, name your organization, and configure your first workspace.
         This invitation link expires in <strong>7 days</strong>.
       </p>
@@ -185,7 +185,7 @@ export async function sendInviteEmail(
         </td></tr>
         <tr><td style="padding:6px 0;">
           <span style="display:block;color:#8892a4;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Platform</span>
-          <strong style="color:#0f1115;font-size:15px;">OmniHub Signage</strong>
+          <strong style="color:#0f1115;font-size:15px;">OmniHub</strong>
         </td></tr>
       </table>
       <p style="color:#444;font-size:14px;font-weight:600;margin:0 0 10px;">What happens next</p>
@@ -209,7 +209,7 @@ export async function sendInviteEmail(
           <td style="color:#555;font-size:14px;line-height:1.5;">Configure your first workspace and start managing your displays</td>
         </tr>
       </table>`;
-    bodyText = `${greeting}\n\n${companyName} has set up an organization on OmniHub Signage for you.\n\nWhat happens next:\n1. Create your account and set your password\n2. Name your organization and choose your unique URL\n3. Configure your first workspace and start managing your displays\n\nAccept invitation (expires in 7 days):\n${link}`;
+    bodyText = `${greeting}\n\n${companyName} has set up an organization on OmniHub for you.\n\nWhat happens next:\n1. Create your account and set your password\n2. Name your organization and choose your unique URL\n3. Configure your first workspace and start managing your displays\n\nAccept invitation (expires in 7 days):\n${link}`;
   } else {
     // Standard org member invite
     const isPendingSetup = !ctx.orgName;
@@ -224,15 +224,15 @@ export async function sendInviteEmail(
       : '';
 
     subject = isPendingSetup
-      ? `You've been invited to set up your organization on OmniHub Signage`
+      ? `You've been invited to set up your organization on OmniHub`
       : `You've been invited to ${displayOrgName}`;
 
     bodyHtml = `
       <p style="color:#444;line-height:1.6;margin:0 0 16px;">${greeting}</p>
       <p style="color:#444;line-height:1.6;margin:0 0 20px;">
         ${isPendingSetup
-          ? `You've been invited to <strong>set up your organization</strong> on OmniHub Signage. Click the button below to create your account, name your organization, and configure your first workspace. This link expires in <strong>7 days</strong>.`
-          : `You've been invited to join <strong>${displayOrgName}</strong> on OmniHub Signage. Click the button below to accept and set your password. This link expires in <strong>7 days</strong>.`
+          ? `You've been invited to <strong>set up your organization</strong> on OmniHub. Click the button below to create your account, name your organization, and configure your first workspace. This link expires in <strong>7 days</strong>.`
+          : `You've been invited to join <strong>${displayOrgName}</strong> on OmniHub. Click the button below to accept and set your password. This link expires in <strong>7 days</strong>.`
         }
       </p>
       <table cellpadding="0" cellspacing="0" style="width:100%;background:#f8f9fc;border-radius:8px;padding:16px;margin-bottom:8px;">
@@ -247,7 +247,7 @@ export async function sendInviteEmail(
         ${workspaceBlock}
       </table>`;
     bodyText = isPendingSetup
-      ? `You've been invited to set up your organization on OmniHub Signage.\n\nAccept: ${link}\n\nExpires in 7 days.`
+      ? `You've been invited to set up your organization on OmniHub.\n\nAccept: ${link}\n\nExpires in 7 days.`
       : `You've been invited to ${displayOrgName} (role: ${ctx.orgRole})${ctx.workspaceName ? `, workspace: ${ctx.workspaceName}` : ''}.\n\nAccept: ${link}\n\nExpires in 7 days.`;
   }
 
@@ -281,7 +281,7 @@ export async function sendPasswordResetEmail(
   const { error } = await resend.emails.send({
     from: FROM_MAIL,
     to: [to],
-    subject: 'Reset your OmniHub Signage password',
+    subject: 'Reset your OmniHub password',
     html: card(
       'Reset your password',
       `<p style="color:#444;line-height:1.6;margin:0 0 0;">
@@ -290,7 +290,7 @@ export async function sendPasswordResetEmail(
       </p>`,
       { text: 'Reset Password', href: link },
     ),
-    text: `Reset your OmniHub Signage password:\n${link}\n\nExpires in 1 hour.`,
+    text: `Reset your OmniHub password:\n${link}\n\nExpires in 1 hour.`,
   });
   if (error) throw new Error(error.message);
 }
@@ -331,7 +331,7 @@ export async function sendResellerOnboardingConfirmationEmail(
   const { error } = await resend.emails.send({
     from: FROM_ADMIN,
     to: [to],
-    subject: `${ctx.companyName} is ready on OmniHub Signage`,
+    subject: `${ctx.companyName} is ready on OmniHub`,
     html: card(
       'Your reseller setup is complete',
       bodyHtml,

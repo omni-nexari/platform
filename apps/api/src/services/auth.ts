@@ -119,7 +119,7 @@ export function generateTotpSecret(): string {
 }
 
 export function getTotpUri(secret: string, email: string): string {
-  return authenticator.keyuri(email, 'OmniHub Signage', secret);
+  return authenticator.keyuri(email, 'OmniHub', secret);
 }
 
 export function verifyTotpCode(secret: string, token: string): boolean {

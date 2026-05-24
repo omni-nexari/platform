@@ -2,7 +2,7 @@
 
 > Status: Working knowledge document
 > Audience: AI assistant, support agents, product team
-> Goal: Help an AI answer user questions about how Nexari OmniHub is structured and how to use the system.
+> Goal: Help an AI answer user questions about how OmniHub is structured and how to use the system.
 
 ---
 
@@ -22,7 +22,7 @@ If a required detail is missing, ask one focused clarifying question. Do not ask
 
 ## System Model
 
-Nexari OmniHub is organized in this hierarchy:
+OmniHub is organized in this hierarchy:
 
 ```text
 Platform
@@ -83,6 +83,15 @@ Platform
 | "Crop one video across a wall" | Content publish wizard -> Videowall | Publish content to a video wall group in Videowall mode |
 | "Different content on each wall panel" | Video wall playlist | Select wall group -> assign content to cells -> publish to wall |
 | "Publish to all screens" | Device group or bulk device publish | Use a group containing all target screens, or select all devices in the publish wizard |
+| "Refresh the screen" or "update now" | Device detail -> Refresh Schedule | Devices -> click device -> Refresh Schedule button |
+| "Reboot the device" or "restart the screen" | Device detail -> Reboot | Devices -> click device -> Reboot button |
+| "Take a screenshot" or "check what's on screen" | Device detail -> Screenshot or Live View | Devices -> click device -> Screenshot or Live View |
+| "Power off / on the screen" | Device detail -> Power Off / Power On | Devices -> click device -> Power Off or Power On |
+| "Clear the cache" | Device detail -> Clear Cache | Devices -> click device -> Clear Cache button |
+| "Wake a sleeping device" | Device detail -> Wake | Devices -> click device -> Wake (requires peer device on same LAN) |
+| "Emergency alert" or "urgent broadcast" | Emergency override | Devices page or workspace overview -> siren/Emergency icon -> Activate |
+| "Control Samsung display" or "MDC" | Device detail -> MDC controls | Devices -> click device -> MDC panel (volume, source, standby, locks) |
+| "BLE rules" or "beacon trigger" | Device detail -> Rules | Devices -> click device -> Rules tab |
 
 ## How to Create a Playlist
 
@@ -443,6 +452,21 @@ Check these in order:
 7. LAN relay devices are on the same reachable network, or cloud relay is selected.
 8. Use force resync if the group is stuck in preparation or drift is visible.
 
+### Device is not updating / content is stale
+
+1. Check that the device is online (green status in Devices list).
+2. Go to the device detail page and click **Refresh Schedule** — this tells the player to re-fetch immediately.
+3. If content is still old, click **Clear Cache** then **Refresh Schedule** again.
+4. Confirm the correct playlist or schedule is published to the device.
+5. If using a schedule, check that the current time falls inside a slot and the timezone is correct.
+
+### Device will not reboot / command not working
+
+1. Confirm the device is **online** — commands require an active WebSocket connection.
+2. If the device is offline, check its network connection and power.
+3. For Samsung Tizen: confirm that background support permission is enabled on the player.
+4. Use **Wake-on-LAN** if the device was powered off (requires a peer device on the same subnet and the MAC address recorded in the system).
+
 ### Video wall is not correct
 
 Check these in order:
@@ -457,6 +481,65 @@ Check these in order:
 8. If using one full-wall asset, it was published in Videowall mode, not Single mode.
 9. If using per-cell content, the video wall playlist was saved and published to the wall.
 10. Online devices received refresh commands; offline devices will update when they reconnect.
+
+## How to Control a Device
+
+Use this when a user asks how to restart, refresh, screenshot, power off, wake, or otherwise remotely control a device.
+
+1. Open the target workspace.
+2. Go to **Devices** in the sidebar.
+3. Click the device name to open its **Device Detail** page.
+4. The control buttons appear in the **Device Actions** panel on the right.
+
+### Common quick commands
+
+| User goal | Button to click | Notes |
+|---|---|---|
+| Force content to update now | **Refresh Schedule** | Device must be online |
+| Capture what's on screen | **Screenshot** | Image appears in Screenshots panel after a few seconds |
+| View the screen live | **Live View** | Opens real-time streaming view (Tizen / Windows only) |
+| Force media re-download | **Clear Cache** | Device will re-download assets on next playback |
+| Restart the device | **Reboot** | Device goes offline briefly then reconnects |
+| Turn display off | **Power Off** | Also turns off Samsung LFD display via MDC if configured |
+| Turn display on | **Power On** | Re-energises the display |
+| Wake an offline device | **Wake** | Uses Wake-on-LAN; requires peer on same LAN and MAC address recorded |
+| Re-launch the Nexari app | **Return to Player** | Works even if app was killed; uses Samsung Remote API as fallback |
+| Broadcast urgent content | **Emergency** (siren icon) | Overrides all schedules org- or workspace-wide |
+
+### Samsung MDC display control
+
+For Samsung commercial (LFD) displays, additional hardware controls appear in the **MDC** panel:
+
+- **Volume** — set audio level 0–100
+- **Mute** — toggle audio mute
+- **Input** — switch to HDMI1, HDMI2, HDMI3, HDMI4, PC, DVI, DP, AV, COMPONENT, INTERNAL_USB
+- **Standby / Network Standby** — standby mode and keep-awake for remote power-on
+- **Remote Control Lock** — lock/unlock the physical IR remote
+- **Safety Lock** — enable/disable panel safety lock
+- **Remote Keys** — inject POWER_ON, POWER_OFF, REBOOT, arrow keys, ENTER, MENU, HOME
+- **Check MDC Status** — read live hardware values from the display
+
+### Device rules (BLE automation)
+
+For beacon-triggered content changes:
+
+1. Open device detail → **Rules** tab.
+2. Click **+ Add Rule** — define BLE scan conditions (UUID, RSSI) and the action to fire.
+3. Enable rules with the toggle.
+4. Click **Push Rules** to deploy to the device.
+
+### Emergency override
+
+1. Click the **Emergency** (siren) icon on the Devices page or workspace overview.
+2. Enter a text message or select a content item.
+3. Click **Activate** — all online devices immediately show the emergency content.
+4. To cancel: click the Emergency icon again → **Clear Emergency**.
+
+### Good Device Control Answer Template
+
+```text
+Open your workspace and go to Devices. Click the device you want to control to open its detail page. You will see control buttons in the Device Actions panel — use Refresh Schedule to push content updates immediately, Screenshot to capture what is on screen, Reboot to restart the player, and Power Off / On to control the display. If the device is offline and you need to wake it, use the Wake button (requires at least one other online device on the same network). For Samsung commercial displays, the MDC panel lets you control volume, input source, and display locks.
+```
 
 ## API Reference for AI Reasoning
 
@@ -499,6 +582,18 @@ Create a Sync Playlist, add the content that should play on all three screens, a
 Go to Device Groups, choose New Group, and set the type to Video Wall. Enter the wall grid size, add the screens, then open the group and use Configure to assign each screen to the correct cell. Save the layout and use Push to Screens so the players receive the wall geometry.
 ```
 
+### "How do I reboot a screen?" or "My screen is frozen"
+
+```text
+Go to Devices in your workspace and click the device name. On the detail page, click the Reboot button in the Device Actions panel. The device will restart and reconnect automatically — this usually takes under a minute. The device must be online for the command to reach it. If it is offline, check the network connection first.
+```
+
+### "How do I force my screen to show new content now?"
+
+```text
+Open the Device detail page for that screen (Devices -> click the device name) and click Refresh Schedule. This tells the player to immediately re-fetch its published playlist or schedule. If content still looks stale after a refresh, also click Clear Cache and then Refresh Schedule again.
+```
+
 ### "How do I publish to all screens?"
 
 ```text
@@ -521,3 +616,7 @@ First check that the schedule is published to the device. Then confirm the curre
 - Video wall group, manifest, and playlist publish flow.
 - SyncPlay mode detection and relay behavior.
 - AI assistant permissions and autonomous action guardrails.
+- Device control commands available per platform (Tizen, Android, Windows, e-paper).
+- MDC actions and remote-key set for Samsung LFD displays.
+- Emergency override scope (org vs workspace) and clear flow.
+- BLE rule conditions and actions supported by the platform.
