@@ -884,6 +884,7 @@ export async function contentRoutes(app: FastifyInstance) {
       categoryHeaderStyle:  body.categoryHeaderStyle ?? 'block',
       theme:                body.theme              ?? 'midnight',
       screenCount,
+      orientation:          body.orientation === 'portrait' ? 'portrait' : 'landscape',
       screenSelection:      body.screenSelection    ?? 'playlist',
       splitStrategy:        body.splitStrategy      ?? 'by-category',
       pagination: {
@@ -934,6 +935,7 @@ export async function contentRoutes(app: FastifyInstance) {
       theme?: string;
       duration?: number;
       screenCount?: number;
+      orientation?: string;
       screenSelection?: string;
       splitStrategy?: string;
       pagination?: { mode?: string; itemsPerPage?: number; pageSeconds?: number };
@@ -974,6 +976,7 @@ export async function contentRoutes(app: FastifyInstance) {
       categoryHeaderStyle:  body.categoryHeaderStyle ?? current.categoryHeaderStyle,
       theme:                body.theme               ?? current.theme,
       screenCount:          body.screenCount         ?? current.screenCount,
+      orientation:          body.orientation !== undefined ? (body.orientation === 'portrait' ? 'portrait' : 'landscape') : (current.orientation ?? 'landscape'),
       screenSelection:      body.screenSelection     ?? current.screenSelection,
       splitStrategy:        body.splitStrategy       ?? current.splitStrategy,
       pagination:           body.pagination ? { ...current.pagination, ...body.pagination } : current.pagination,

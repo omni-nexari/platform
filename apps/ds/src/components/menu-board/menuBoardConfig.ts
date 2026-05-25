@@ -63,6 +63,8 @@ export interface MenuBoardConfig {
   // ── Multi-screen fields ───────────────────────────────────────────────────
   /** Number of physical screens in the restaurant wall (1–6). Default 1. */
   screenCount: number;
+  /** Screen orientation — portrait (9:16) or landscape (16:9). */
+  orientation: 'landscape' | 'portrait';
   /** How each device determines which shard it renders. */
   screenSelection: ScreenSelectionMode;
   /** How content is distributed when screenCount > 1. */
@@ -168,6 +170,7 @@ export const DEFAULT_MENU_BOARD_CONFIG: MenuBoardConfig = {
   backgroundVideoUrl: null,
   heroImageUrl: null,
   screenCount: 1,
+  orientation: 'landscape',
   screenSelection: 'playlist',
   splitStrategy: 'by-category',
   pagination: { mode: 'hybrid', itemsPerPage: 8, pageSeconds: 10 },
@@ -235,6 +238,7 @@ export function parseMenuBoardMetadata(metadata: string | null | undefined): Men
     categoryHeaderStyle: get('categoryHeaderStyle', 'block'),
     theme:               get('theme', 'midnight'),
     screenCount,
+    orientation:         (raw['orientation'] === 'portrait' ? 'portrait' : 'landscape'),
     screenSelection:     (['playlist','siblings','device','cycle'] as ScreenSelectionMode[]).includes(raw['screenSelection'] as ScreenSelectionMode)
       ? raw['screenSelection'] as ScreenSelectionMode : 'playlist',
     splitStrategy:       (['by-category','by-item-roundrobin','by-item-sequential'] as SplitStrategy[]).includes(raw['splitStrategy'] as SplitStrategy)
@@ -268,6 +272,7 @@ export function configToApiBody(cfg: MenuBoardConfig) {
     categoryHeaderStyle: cfg.categoryHeaderStyle,
     theme:               cfg.theme,
     screenCount:         cfg.screenCount,
+    orientation:         cfg.orientation,
     screenSelection:     cfg.screenSelection,
     splitStrategy:       cfg.splitStrategy,
     pagination:          cfg.pagination,

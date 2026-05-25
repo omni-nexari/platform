@@ -385,6 +385,52 @@ export default function MenuBoardWizard({
         Set up your restaurant's display wall. Each screen shows a slice of the menu.
       </p>
 
+      {/* Orientation */}
+      <div className="flex flex-col gap-2">
+        <span className="text-xs font-medium text-[var(--text-muted)]">Screen orientation</span>
+        <div className="flex gap-3">
+          {([
+            { id: 'landscape', label: 'Landscape', hint: '16:9 — Standard TV / horizontal', icon: (
+              <svg width="28" height="18" viewBox="0 0 28 18" fill="none" className="shrink-0">
+                <rect x="1" y="1" width="26" height="16" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                <rect x="12" y="16" width="4" height="1.5" rx="0.5" fill="currentColor" />
+              </svg>
+            )},
+            { id: 'portrait', label: 'Portrait', hint: '9:16 — Vertical kiosk / digital poster', icon: (
+              <svg width="18" height="28" viewBox="0 0 18 28" fill="none" className="shrink-0">
+                <rect x="1" y="1" width="16" height="26" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                <rect x="7" y="25" width="4" height="1.5" rx="0.5" fill="currentColor" />
+              </svg>
+            )},
+          ] as { id: 'landscape' | 'portrait'; label: string; hint: string; icon: React.ReactNode }[]).map((opt) => (
+            <label
+              key={opt.id}
+              className={`flex flex-1 items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                config.orientation === opt.id
+                  ? 'border-[var(--accent)] bg-[var(--accent)]/10'
+                  : 'border-[var(--border)] hover:border-[var(--text-muted)]'
+              }`}
+            >
+              <input
+                type="radio"
+                name="orientation"
+                value={opt.id}
+                checked={config.orientation === opt.id}
+                onChange={() => patch({ orientation: opt.id })}
+                className="sr-only"
+              />
+              <span className={config.orientation === opt.id ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}>
+                {opt.icon}
+              </span>
+              <div>
+                <div className="text-sm font-medium text-[var(--text)]">{opt.label}</div>
+                <div className="text-xs text-[var(--text-muted)]">{opt.hint}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+      </div>
+
       {/* Screen count */}
       <div className="flex flex-col gap-2">
         <span className="text-xs font-medium text-[var(--text-muted)]">Number of screens</span>
@@ -404,7 +450,9 @@ export default function MenuBoardWizard({
         <div className="flex items-center gap-2 mt-1 flex-wrap">
           {Array.from({ length: config.screenCount }, (_, i) => (
             <div key={i} className="flex flex-col items-center gap-1">
-              <div className="w-16 h-10 rounded border-2 border-[var(--accent)] bg-[var(--surface-raised)] flex items-center justify-center">
+              <div className={`rounded border-2 border-[var(--accent)] bg-[var(--surface-raised)] flex items-center justify-center ${
+                config.orientation === 'portrait' ? 'w-10 h-16' : 'w-16 h-10'
+              }`}>
                 <Tv2 size={16} className="text-[var(--accent)]" />
               </div>
               <span className="text-[10px] text-[var(--text-muted)]">Screen {i + 1}</span>
@@ -696,7 +744,10 @@ export default function MenuBoardWizard({
                 return (
                   <div key={i} className="flex flex-col gap-1">
                     <span className="text-[9px] text-[var(--text-muted)] font-semibold uppercase">Screen {i + 1}</span>
-                    <div className="rounded-lg overflow-hidden border border-[var(--border)] shadow-inner" style={{ minHeight: 80 }}>
+                    <div
+                      className="rounded-lg overflow-hidden border border-[var(--border)] shadow-inner"
+                      style={config.orientation === 'portrait' ? { minHeight: 140, aspectRatio: '9/16', maxWidth: 80 } : { minHeight: 80 }}
+                    >
                       <MenuBoardCanvas config={config} menu={shardedMenu ?? null} density="xs" fallbackTitle={name || 'Menu Board'} placeholder />
                     </div>
                   </div>

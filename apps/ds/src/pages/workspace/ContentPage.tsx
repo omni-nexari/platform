@@ -64,7 +64,7 @@ interface ContentList {
 // ── Constants ─────────────────────────────────────────────────────────────────
 type FilterType = 'all' | ContentItem['type'];
 type ViewMode = 'grid-lg' | 'grid-sm' | 'list';
-type KnownContentType = 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout' | 'calendar' | 'live_link_face' | 'canvas';
+type KnownContentType = 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout' | 'calendar' | 'live_link_face' | 'canvas' | 'menu_board';
 
 const TYPE_FILTERS: { id: FilterType; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -78,6 +78,7 @@ const TYPE_FILTERS: { id: FilterType; label: string }[] = [
   { id: 'calendar',       label: 'Calendar' },
   { id: 'live_link_face', label: 'Live Link' },
   { id: 'canvas',         label: 'Canvas' },
+  { id: 'menu_board',     label: 'Menu Board' },
 ];
 
 const TYPE_META: Record<KnownContentType, { label: string; color: string; icon: React.ReactNode }> = {
@@ -90,7 +91,8 @@ const TYPE_META: Record<KnownContentType, { label: string; color: string; icon: 
   zone_layout:    { label: 'Zone Layout', color: 'bg-teal-500/80',     icon: <LayoutGrid size={10} /> },
   calendar:        { label: 'Calendar',   color: 'bg-indigo-500/80',   icon: <CalendarDays size={10} /> },
   live_link_face:  { label: 'Live Link',  color: 'bg-pink-500/80',     icon: <Scan size={10} /> },
-  canvas:          { label: 'Canvas',     color: 'bg-blue-500/80',     icon: <Paintbrush size={10} /> },
+  canvas:          { label: 'Canvas',      color: 'bg-blue-500/80',     icon: <Paintbrush size={10} /> },
+  menu_board:      { label: 'Menu Board',  color: 'bg-orange-500/80',   icon: <Monitor size={10} /> },
 };
 
 const UNKNOWN_TYPE_META = {
