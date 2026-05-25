@@ -842,6 +842,7 @@ export async function contentRoutes(app: FastifyInstance) {
       theme?: string;
       duration?: number;
       screenCount?: number;
+      orientation?: string;
       screenSelection?: string;
       splitStrategy?: string;
       pagination?: { mode?: string; itemsPerPage?: number; pageSeconds?: number };
