@@ -22,7 +22,8 @@ import {
 } from '@signage/db';
 import { and, eq, ilike, isNull, inArray } from 'drizzle-orm';
 import { logActivity } from './activity-logger.js';
-import { isDeviceOnline } from './ws.js';
+import { isDeviceOnline, sendCommand } from './ws.js';
+import type { WsCommand } from './ws.js';
 
 // ── Context ──────────────────────────────────────────────────────────────────
 
@@ -142,6 +143,65 @@ export const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'send_device_command',
+      description: 'Send a control command to one or more devices. The device must be online for the command to take effect. Supports: reboot, power_on, power_off, refresh_schedule, clear_cache, screenshot, dump_logs.',
+      parameters: {
+        type: 'object',
+        required: ['command'],
+        properties: {
+          command: {
+            type: 'string',
+            enum: ['reboot', 'power_on', 'power_off', 'refresh_schedule', 'clear_cache', 'screenshot', 'dump_logs'],
+            description: 'Command to send',
+          },
+          deviceIds: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'IDs of target devices',
+          },
+          deviceNames: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Names of target devices (partial, case-insensitive). Use when you know the name but not the ID.',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'publish_to_device',
+      description: 'Publish a playlist, schedule, or content item to one or more devices. The device will start playing the published resource immediately if online. Replaces any existing published target on those devices.',
+      parameters: {
+        type: 'object',
+        required: ['resourceType'],
+        properties: {
+          resourceType: {
+            type: 'string',
+            enum: ['playlist', 'schedule', 'content'],
+            description: 'Type of resource to publish',
+          },
+          resourceId: { type: 'string', description: 'ID of the playlist/schedule/content to publish' },
+          resourceName: { type: 'string', description: 'Name of the playlist/schedule/content (used to look up the ID when resourceId is not known)' },
+          deviceIds: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'IDs of target devices',
+          },
+          deviceNames: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Names of target devices (partial, case-insensitive)',
+          },
+        },
+      },
+    },
+  },
+  // ── Read / list tools ──────────────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
       name: 'list_devices',
       description: 'List devices in the workspace. Optionally filter by online status, platform, or name. Returns id, name, online, platform, type.',
       parameters: {
@@ -236,6 +296,16 @@ const IMPERATIVE_PATTERNS = [
   /\bauto[-\s]?(schedule|create|build)\b/i,
   // "add [something] to [a playlist/schedule]"
   /\badd\s+.{3,40}\s+to\s+(a|the|my|an?)?\s*(playlist|schedule)\b/i,
+  // "reboot the lobby screen", "restart device X"
+  /\b(reboot|restart)\s+(the\s+)?.{2,40}(device|screen|player|display|tv)\b/i,
+  /\b(reboot|restart)\s+.{2,30}\b/i,
+  // "power off / power on / turn off / turn on [device]"
+  /\b(power\s+off|power\s+on|turn\s+off|turn\s+on)\s+(the\s+)?.{2,40}(device|screen|player|display|tv|lobby|reception|office)\b/i,
+  // "refresh the schedule on [device]", "reload content on [device]"
+  /\b(refresh|reload)\s+(the\s+)?(schedule|content|playlist)\s+(on|for)\b/i,
+  // "publish [resource] to [device]", "assign [playlist] to [device]"
+  /\b(publish|assign)\s+.{2,40}\s+to\s+(the\s+)?(device|screen|player|display|lobby|reception|office|all)\b/i,
+  /\b(publish|assign)\s+.{2,40}\s+to\s+.{2,30}\b/i,
   // NOTE: list/query intents are handled by getDirectListQuery, not here.
 ];
 
@@ -334,7 +404,9 @@ export async function executeToolCall(
   ctx: ToolContext,
 ): Promise<ToolResult> {
   switch (name) {
-    case 'search_content':       return searchContent(args, ctx);
+    case 'send_device_command':  return sendDeviceCommand(args, ctx);
+    case 'publish_to_device':     return publishToDevice(args, ctx);
+    case 'search_content':        return searchContent(args, ctx);
     case 'create_playlist':      return createPlaylist(args, ctx);
     case 'add_playlist_items':   return addPlaylistItems(args, ctx);
     case 'create_schedule':      return createScheduleWithSlots(args, ctx);
@@ -687,5 +759,183 @@ async function listDeviceGroups(
     success: true,
     data: rows,
     label: `Found ${rows.length} device group${rows.length !== 1 ? 's' : ''}`,
+  };
+}
+
+// ── Device command tool ───────────────────────────────────────────────────────
+
+const SAFE_COMMANDS: Record<string, WsCommand> = {
+  reboot:           { type: 'reboot' },
+  power_on:         { type: 'power_on' },
+  power_off:        { type: 'power_off' },
+  refresh_schedule: { type: 'refresh_schedule' },
+  clear_cache:      { type: 'clear_cache' },
+  screenshot:       { type: 'screenshot' },
+  dump_logs:        { type: 'dump_logs' },
+};
+
+async function sendDeviceCommand(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const command     = typeof args['command'] === 'string' ? args['command'] : '';
+  const deviceIds   = Array.isArray(args['deviceIds'])   ? (args['deviceIds']   as string[]) : [];
+  const deviceNames = Array.isArray(args['deviceNames']) ? (args['deviceNames'] as string[]) : [];
+
+  const wsCmd = SAFE_COMMANDS[command];
+  if (!wsCmd) return { success: false, error: `Unknown command: ${command}`, label: 'Send command' };
+
+  // Resolve device names → IDs
+  const resolvedIds = [...deviceIds];
+  for (const name of deviceNames) {
+    const found = await db
+      .select({ id: devices.id })
+      .from(devices)
+      .where(and(eq(devices.workspaceId, ctx.workspaceId), ilike(devices.name, `%${name}%`), isNull(devices.deletedAt)))
+      .limit(1);
+    if (found[0]) resolvedIds.push(found[0].id);
+  }
+
+  if (resolvedIds.length === 0) {
+    return { success: false, error: 'No devices specified', label: 'Send command' };
+  }
+
+  const targetDevices = await db
+    .select({ id: devices.id, name: devices.name })
+    .from(devices)
+    .where(and(eq(devices.workspaceId, ctx.workspaceId), inArray(devices.id, resolvedIds), isNull(devices.deletedAt)));
+
+  if (targetDevices.length === 0) {
+    return { success: false, error: 'No matching devices found in this workspace', label: 'Send command' };
+  }
+
+  const results: Array<{ name: string; sent: boolean }> = [];
+  for (const device of targetDevices) {
+    const sent = sendCommand(device.id, wsCmd);
+    results.push({ name: device.name, sent });
+  }
+
+  const sentCount    = results.filter((r) => r.sent).length;
+  const offlineCount = results.filter((r) => !r.sent).length;
+  let label = `Sent "${command}" to ${sentCount} device${sentCount !== 1 ? 's' : ''}`;
+  if (offlineCount > 0) label += ` (${offlineCount} offline — command not delivered)`;
+
+  logActivity({
+    userId: ctx.userId,
+    workspaceId: ctx.workspaceId,
+    eventType: 'device_assigned',
+    eventData: { command, deviceIds: targetDevices.map((d) => d.id), sentCount, createdByAi: true },
+  });
+
+  return { success: true, data: results, label };
+}
+
+// ── Publish to device tool ────────────────────────────────────────────────────
+
+async function publishToDevice(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const resourceType = typeof args['resourceType'] === 'string'
+    ? (args['resourceType'] as 'playlist' | 'schedule' | 'content') : null;
+  if (!resourceType) return { success: false, error: 'resourceType is required', label: 'Publish' };
+
+  let resourceId   = typeof args['resourceId']   === 'string' ? args['resourceId']   : null;
+  const resourceName = typeof args['resourceName'] === 'string' ? args['resourceName'] : null;
+
+  // Resolve resource name → ID
+  if (!resourceId && resourceName) {
+    if (resourceType === 'playlist') {
+      const found = await db.select({ id: playlists.id }).from(playlists)
+        .where(and(eq(playlists.workspaceId, ctx.workspaceId), ilike(playlists.name, `%${resourceName}%`), isNull(playlists.deletedAt)))
+        .limit(1);
+      resourceId = found[0]?.id ?? null;
+    } else if (resourceType === 'schedule') {
+      const found = await db.select({ id: schedules.id }).from(schedules)
+        .where(and(eq(schedules.workspaceId, ctx.workspaceId), ilike(schedules.name, `%${resourceName}%`), isNull(schedules.deletedAt)))
+        .limit(1);
+      resourceId = found[0]?.id ?? null;
+    } else if (resourceType === 'content') {
+      const found = await db.select({ id: contentItems.id }).from(contentItems)
+        .where(and(eq(contentItems.workspaceId, ctx.workspaceId), ilike(contentItems.name, `%${resourceName}%`), isNull(contentItems.deletedAt)))
+        .limit(1);
+      resourceId = found[0]?.id ?? null;
+    }
+  }
+  if (!resourceId) {
+    return {
+      success: false,
+      error: `Could not find ${resourceType}${resourceName ? ` named "${resourceName}"` : ''}`,
+      label: 'Publish',
+    };
+  }
+
+  // Resolve device names → IDs
+  const deviceIds   = Array.isArray(args['deviceIds'])   ? (args['deviceIds']   as string[]) : [];
+  const deviceNames = Array.isArray(args['deviceNames']) ? (args['deviceNames'] as string[]) : [];
+  const resolvedIds = [...deviceIds];
+  for (const name of deviceNames) {
+    const found = await db
+      .select({ id: devices.id })
+      .from(devices)
+      .where(and(eq(devices.workspaceId, ctx.workspaceId), ilike(devices.name, `%${name}%`), isNull(devices.deletedAt)))
+      .limit(1);
+    if (found[0]) resolvedIds.push(found[0].id);
+  }
+  if (resolvedIds.length === 0) {
+    return { success: false, error: 'No target devices specified', label: 'Publish' };
+  }
+
+  const targetDevices = await db
+    .select({ id: devices.id, name: devices.name })
+    .from(devices)
+    .where(and(eq(devices.workspaceId, ctx.workspaceId), inArray(devices.id, resolvedIds), isNull(devices.deletedAt)));
+
+  if (targetDevices.length === 0) {
+    return { success: false, error: 'No matching devices found in this workspace', label: 'Publish' };
+  }
+
+  // Apply publish patch (clears other published targets)
+  await db
+    .update(devices)
+    .set({
+      publishedContentId:  resourceType === 'content'  ? resourceId : null,
+      publishedPlaylistId: resourceType === 'playlist' ? resourceId : null,
+      publishedScheduleId: resourceType === 'schedule' ? resourceId : null,
+      publishedSyncGroupId: null,
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(devices.workspaceId, ctx.workspaceId),
+      inArray(devices.id, targetDevices.map((d) => d.id)),
+      isNull(devices.deletedAt),
+    ));
+
+  // Notify online devices to refresh immediately
+  const refreshed: string[] = [];
+  for (const device of targetDevices) {
+    if (isDeviceOnline(device.id)) {
+      sendCommand(device.id, { type: 'refresh_schedule' });
+      refreshed.push(device.name);
+    }
+  }
+
+  logActivity({
+    userId: ctx.userId,
+    workspaceId: ctx.workspaceId,
+    eventType: 'device_assigned',
+    eventData: {
+      deviceIds: targetDevices.map((d) => d.id),
+      resourceType,
+      resourceId,
+      createdByAi: true,
+    },
+  });
+
+  const label = `Published ${resourceType} to ${targetDevices.length} device${targetDevices.length !== 1 ? 's' : ''}: ${targetDevices.map((d) => d.name).join(', ')}`;
+  return {
+    success: true,
+    data: { deviceCount: targetDevices.length, refreshed, resourceType, resourceId },
+    label,
   };
 }
