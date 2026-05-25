@@ -845,7 +845,6 @@ export async function contentRoutes(app: FastifyInstance) {
       screenSelection?: string;
       splitStrategy?: string;
       pagination?: { mode?: string; itemsPerPage?: number; pageSeconds?: number };
-      siblingCount?: number;
     };
 
     const wsId = body.workspaceId;
@@ -863,10 +862,8 @@ export async function contentRoutes(app: FastifyInstance) {
     const initialApprovalStateMb = wsSettingsMb.approvalRequired && !APPROVE_ROLES.has(user.role) ? 'draft' : 'approved';
 
     const screenCount = Math.max(1, Math.min(6, Number.isFinite(body.screenCount) ? Number(body.screenCount) : 1));
-    const siblingCount = Math.max(0, Math.min(5, Number.isFinite(body.siblingCount) ? Number(body.siblingCount) : 0));
-    const groupId = siblingCount > 0 ? crypto.randomUUID() : null;
 
-    const buildMetadata = (screenIndex: number, gId: string | null) => JSON.stringify({
+    const buildMetadata = () => JSON.stringify({
       posWorkspaceId:       body.posWorkspaceId,
       layout:               body.layout ?? '2-col',
       showPrices:           body.showPrices         ?? true,
@@ -894,8 +891,6 @@ export async function contentRoutes(app: FastifyInstance) {
         itemsPerPage: body.pagination?.itemsPerPage ?? 8,
         pageSeconds:  body.pagination?.pageSeconds  ?? 10,
       },
-      groupId: gId,
-      screenIndex,
     });
 
     const [item] = await db.insert(contentItems).values({
@@ -906,28 +901,10 @@ export async function contentRoutes(app: FastifyInstance) {
       duration:    body.duration ?? 30,
       status:      'ready',
       approvalState: initialApprovalStateMb,
-      metadata:    buildMetadata(0, groupId),
+      metadata:    buildMetadata(),
     }).returning();
 
-    // Create sibling items (screens 2…N) when siblings mode is used
-    const siblingIds: string[] = [];
-    if (siblingCount > 0 && groupId) {
-      for (let i = 1; i <= siblingCount; i++) {
-        const [sib] = await db.insert(contentItems).values({
-          workspaceId: wsId,
-          uploadedBy:  user.sub,
-          type:        'menu_board',
-          name:        `${body.name.trim()} – Screen ${i + 1}`,
-          duration:    body.duration ?? 30,
-          status:      'ready',
-          approvalState: initialApprovalStateMb,
-          metadata:    buildMetadata(i, groupId),
-        }).returning();
-        siblingIds.push(sib!.id);
-      }
-    }
-
-    return reply.status(201).send({ ...item!, siblingIds });
+    return reply.status(201).send(item!);
   });
 
   // ── PATCH /content/:id/menu-board ─────────────────────────────────────────

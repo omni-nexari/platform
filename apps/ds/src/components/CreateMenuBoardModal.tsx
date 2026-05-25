@@ -15,11 +15,10 @@ export default function CreateMenuBoardModal({ workspaceId, onClose, onCreated }
   const qc = useQueryClient();
 
   const createMut = useMutation({
-    mutationFn: (body: object) => api.post<{ id: string; siblingIds?: string[] }>('/content/menu-board', body),
+    mutationFn: (body: object) => api.post<{ id: string }>('/content/menu-board', body),
     onSuccess: (item) => {
       void qc.invalidateQueries({ queryKey: ['content', workspaceId] });
-      const extra = item.siblingIds?.length ? ` (+ ${item.siblingIds.length} sibling screen${item.siblingIds.length > 1 ? 's' : ''})` : '';
-      toast.success(`Menu board created${extra}`);
+      toast.success('Menu board created');
       onCreated(item.id);
     },
     onError: () => toast.error('Failed to create menu board'),
@@ -51,7 +50,6 @@ export default function CreateMenuBoardModal({ workspaceId, onClose, onCreated }
       name: state.name,
       duration: state.duration,
       ...configToApiBody({ ...state.config, backgroundImage: bgUrl }),
-      siblingCount: state.siblingCount ?? 0,
     });
   }
 

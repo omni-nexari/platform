@@ -27,8 +27,7 @@ export interface MenuBoardWizardState {
   config: MenuBoardConfig;
   /** Pending background image file to upload on submit (base64 data URL for preview). */
   pendingBgFile?: File | null;
-  /** Sibling count — how many extra content items to auto-create (siblings mode). */
-  siblingCount?: number;
+
 }
 
 interface Props {
@@ -159,7 +158,7 @@ export default function MenuBoardWizard({
 
   function handleFinish() {
     if (showBasicsStep && !name.trim()) return;
-    onSubmit({ name: name.trim(), duration, config, pendingBgFile, siblingCount: config.screenSelection === 'siblings' ? config.screenCount - 1 : 0 });
+    onSubmit({ name: name.trim(), duration, config, pendingBgFile });
   }
 
   /* ── Step renderers ──────────────────────────────────────────────────── */
@@ -420,7 +419,6 @@ export default function MenuBoardWizard({
         {(
           [
             { id: 'playlist',  label: 'Playlist assignment', hint: 'When adding to a device playlist, pick "Screen X of N". Best for flexibility.' },
-            { id: 'siblings',  label: 'Auto-generate per-screen items', hint: 'Wizard creates a separate content item per screen (e.g. Board – Screen 2). Assign each to its TV.' },
             { id: 'device',    label: 'Device screen-index setting', hint: 'Each device has a "Display Index" setting. The board auto-shards based on that. Best for dedicated walls.' },
             { id: 'cycle',     label: 'All screens cycle through all slices', hint: 'Every TV shows all slices as rotating pages — no splitting, just pagination everywhere.' },
           ] as { id: ScreenSelectionMode; label: string; hint: string }[]
