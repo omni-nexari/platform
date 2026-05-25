@@ -1,18 +1,15 @@
 /**
- * Knowledge base loader with semantic search via pgvector + nomic-embed-text.
+ * Knowledge base loader — reads the markdown docs in apps/api/src/ai/knowledge
+ * at startup and exposes a simple keyword-based context selector.
  *
- * Phase 2 (semantic) with keyword fallback:
- *   - At startup: generates embeddings for all .md docs, stores in ai_knowledge_embeddings
- *   - Per query: embeds the question, does cosine similarity search via pgvector
- *   - Falls back to keyword scoring if embeddings unavailable
+ * Phase 1 deliberately avoids embeddings/vector DBs: with a handful of docs,
+ * keyword scoring is fast, deterministic, and good enough. Upgrade to
+ * pgvector + nomic-embed-text when the knowledge base grows past ~30 docs.
  */
 
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { createHash } from 'node:crypto';
-import { db } from '@signage/db';
-import { sql } from 'drizzle-orm';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Try dev (src/) first, then prod build (dist/ → ../../src/) — knowledge
@@ -22,16 +19,12 @@ const KNOWLEDGE_DIR_CANDIDATES = [
   join(__dirname, '..', '..', 'src', 'ai', 'knowledge'),
 ];
 
-const OLLAMA_HOST = process.env['OLLAMA_HOST'] ?? 'http://127.0.0.1:11434';
-const EMBED_MODEL = 'nomic-embed-text';
-const EMBED_DIM = 768;
-
 export interface KnowledgeDoc {
   /** filename without extension */
   id: string;
   title: string;
   content: string;
-  /** Lowercased token set for fast keyword scoring (fallback) */
+  /** Lowercased token set for fast keyword scoring */
   tokens: Set<string>;
 }
 
@@ -87,137 +80,19 @@ async function loadAll(): Promise<KnowledgeDoc[]> {
   }
 
   // No knowledge found — return empty so the chat route still works
+  // (AI will answer from its priors with a slightly degraded system prompt).
   cache = [];
   return cache;
 }
 
-// ── Embedding utilities ───────────────────────────────────────────────────────
-
-// Truncate to ~6 000 chars so large docs stay within nomic-embed-text's token window.
-const MAX_EMBED_CHARS = 6_000;
-
-async function generateEmbedding(text: string): Promise<number[] | null> {
-  const input = text.length > MAX_EMBED_CHARS ? text.slice(0, MAX_EMBED_CHARS) : text;
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 60_000);
-    const res = await fetch(`${OLLAMA_HOST}/api/embed`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: EMBED_MODEL, input }),
-      signal: ctrl.signal,
-    });
-    clearTimeout(timer);
-    if (!res.ok) return null;
-    const data = await res.json() as { embeddings?: number[][] };
-    return data.embeddings?.[0] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-async function ensureEmbeddingsTable(): Promise<void> {
-  await db.execute(sql.raw(`
-    CREATE TABLE IF NOT EXISTS ai_knowledge_embeddings (
-      id         text PRIMARY KEY,
-      content    text NOT NULL,
-      checksum   text NOT NULL,
-      embedding  vector(${EMBED_DIM}) NOT NULL,
-      updated_at timestamptz NOT NULL DEFAULT now()
-    )
-  `));
-  await db.execute(sql.raw(`
-    CREATE INDEX IF NOT EXISTS idx_knowledge_embedding_hnsw
-    ON ai_knowledge_embeddings
-    USING hnsw (embedding vector_cosine_ops)
-  `));
-}
-
-/**
- * Seed / refresh embeddings for all docs.
- * Skips docs whose content hasn't changed (checksum match).
- * Called once at API startup — fire-and-forget, no await needed.
- */
-export async function seedKnowledgeEmbeddings(): Promise<void> {
-  try {
-    await ensureEmbeddingsTable();
-    const docs = await loadAll();
-    if (docs.length === 0) return;
-
-    for (const doc of docs) {
-      const checksum = createHash('md5').update(doc.content).digest('hex');
-
-      const existing = await db.execute(
-        sql`SELECT checksum FROM ai_knowledge_embeddings WHERE id = ${doc.id}`,
-      ) as unknown as Array<{ checksum: string }>;
-
-      if (existing[0]?.checksum === checksum) continue;
-
-      const embedding = await generateEmbedding(doc.content);
-      if (!embedding) {
-        console.warn('[ai-knowledge] failed to embed doc:', doc.id);
-        continue;
-      }
-
-      const vecStr = `[${embedding.join(',')}]`;
-      await db.execute(sql`
-        INSERT INTO ai_knowledge_embeddings (id, content, checksum, embedding, updated_at)
-        VALUES (${doc.id}, ${doc.content}, ${checksum}, ${vecStr}::vector, now())
-        ON CONFLICT (id) DO UPDATE
-          SET content    = EXCLUDED.content,
-              checksum   = EXCLUDED.checksum,
-              embedding  = EXCLUDED.embedding,
-              updated_at = now()
-      `);
-    }
-    console.info('[ai-knowledge] embeddings seeded for', docs.length, 'docs');
-  } catch (err) {
-    // Non-fatal — keyword fallback will handle queries
-    console.warn('[ai-knowledge] embedding seed failed:', err);
-  }
-}
-
-// ── Retrieval ─────────────────────────────────────────────────────────────────
-
-async function selectRelevantDocsSemantic(
-  question: string,
-  limit: number,
-): Promise<KnowledgeDoc[] | null> {
-  try {
-    const qEmbedding = await generateEmbedding(question);
-    if (!qEmbedding) return null;
-
-    const vecStr = `[${qEmbedding.join(',')}]`;
-    const rows = await db.execute(sql`
-      SELECT id
-      FROM   ai_knowledge_embeddings
-      ORDER  BY embedding <=> ${vecStr}::vector
-      LIMIT  ${limit}
-    `) as unknown as Array<{ id: string }>;
-
-    if (!rows.length) return null;
-
-    const docs = await loadAll();
-    const docMap = new Map(docs.map((d) => [d.id, d]));
-    return rows.map((r) => docMap.get(r.id)).filter((d): d is KnowledgeDoc => d !== undefined);
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Score documents against the user's question and return the top N.
- * Tries pgvector semantic search first; falls back to keyword scoring.
+ * Score = count of distinct query tokens that appear in the doc.
  */
 export async function selectRelevantDocs(
   question: string,
   limit = 3,
 ): Promise<KnowledgeDoc[]> {
-  // Try semantic search first
-  const semantic = await selectRelevantDocsSemantic(question, limit);
-  if (semantic && semantic.length > 0) return semantic;
-
-  // Keyword fallback
   const docs = await loadAll();
   if (docs.length === 0) return [];
 
@@ -232,8 +107,12 @@ export async function selectRelevantDocs(
 
   scored.sort((a, b) => b.score - a.score);
 
-  const top = scored.filter((s) => s.score > 0).slice(0, limit).map((s) => s.doc);
+  // Always include at least the navigation overview if nothing scored.
+  const top = scored.filter((s) => s.score > 1).slice(0, limit).map((s) => s.doc);
   if (top.length === 0) {
+    // Fall back to score > 0 before giving up
+    const loose = scored.filter((s) => s.score > 0).slice(0, limit).map((s) => s.doc);
+    if (loose.length > 0) return loose;
     const nav = docs.find((d) => d.id === 'navigation');
     return nav ? [nav] : docs.slice(0, 1);
   }
@@ -243,7 +122,15 @@ export async function selectRelevantDocs(
 /** Build the system prompt with retrieved context injected. */
 export async function buildSystemPrompt(question: string): Promise<string> {
   const docs = await selectRelevantDocs(question);
-  const context = docs.map((d) => `## ${d.title}\n${d.content}`).join('\n\n---\n\n');
+  const MAX_DOC_CHARS = 1200;
+  const context = docs
+    .map((d) => {
+      const body = d.content.length > MAX_DOC_CHARS
+        ? d.content.slice(0, MAX_DOC_CHARS) + '\n…'
+        : d.content;
+      return `## ${d.title}\n${body}`;
+    })
+    .join('\n\n---\n\n');
 
   return `You are the AI assistant for **OmniHub**, a digital signage management platform. You help users navigate the dashboard and use platform features.
 
@@ -262,11 +149,19 @@ ${context}`;
 
 /**
  * System prompt for agent (tool-calling) mode — used when the user's message
- * contains action intent. Instructs the AI to plan first, confirm, then act.
+ * contains action intent.  Instructs the AI to plan first, confirm, then act.
  */
 export async function buildAgentSystemPrompt(question: string): Promise<string> {
-  const docs = await selectRelevantDocs(question, 2);
-  const context = docs.map((d) => `## ${d.title}\n${d.content}`).join('\n\n---\n\n');
+  const docs = await selectRelevantDocs(question, 1);
+  const MAX_DOC_CHARS = 1200;
+  const context = docs
+    .map((d) => {
+      const body = d.content.length > MAX_DOC_CHARS
+        ? d.content.slice(0, MAX_DOC_CHARS) + '\n…'
+        : d.content;
+      return `## ${d.title}\n${body}`;
+    })
+    .join('\n\n---\n\n');
 
   return `You are the AI assistant for **OmniHub**, a digital signage management platform. You can both answer questions AND take actions on behalf of the user.
 
@@ -289,7 +184,7 @@ export async function buildAgentSystemPrompt(question: string): Promise<string> 
 1. **Read first when helpful.** If the user asks "show me my devices" or "list playlists", call the appropriate list tool immediately — no confirmation needed.
 2. **Plan before writing.** Before calling any tool that creates data, write a short plain-English plan (2–4 bullet points) describing exactly what you will do, then ask: "Shall I proceed?"
 3. **Only proceed after explicit confirmation.** If the user says yes/proceed/do it/go ahead/confirm — call the tools. If they say no/cancel/stop — don't call any tools.
-4. **One step at a time.** After each tool call, briefly report what happened before moving to the next step.
+4. **One step at a time.** After each tool call, briefly report what happened (e.g. "✓ Found 4 devices", "✓ Created playlist 'Morning Welcome'") before moving to the next step.
 5. **Be precise.** Use exact IDs returned by earlier tool calls when referencing playlists or content.
 6. **Handle errors gracefully.** If a tool returns an error, explain it simply and ask the user what they'd like to do next.
 

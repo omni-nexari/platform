@@ -201,3 +201,17 @@ export async function* chatStream(
 export function getOllamaConfig() {
   return { host: OLLAMA_HOST, model: OLLAMA_MODEL };
 }
+
+/**
+ * Fire-and-forget warmup — sends a minimal generation request so the model
+ * is loaded into RAM before the first real user request arrives.
+ * Call once after the server starts listening.
+ */
+export function warmupOllama(): void {
+  fetch(`${OLLAMA_HOST}/api/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: OLLAMA_MODEL, prompt: 'hi', stream: false }),
+    signal: AbortSignal.timeout(120_000),
+  }).catch(() => { /* best-effort — ignore failures */ });
+}

@@ -12,6 +12,7 @@ import { startJobs } from './services/jobs.js';
 import { startWorkers, stopWorkers } from './workers/index.js';
 import { closeQueues } from './queues/index.js';
 import { createPinoDbStream } from './services/pino-db-stream.js';
+import { warmupOllama } from './services/ollama.js';
 
 // DS production build — served at port 3000 so the TV doesn't need port 5174 open in firewall
 const _dir = dirname(fileURLToPath(import.meta.url));
@@ -102,6 +103,7 @@ async function start() {
 
   try {
     await app.listen({ port: PORT, host: '0.0.0.0' });
+    warmupOllama(); // pre-load model into RAM so first chat request is instant
   } catch (err) {
     app.log.error(err);
     process.exit(1);
