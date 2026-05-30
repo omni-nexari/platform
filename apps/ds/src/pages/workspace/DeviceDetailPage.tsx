@@ -1424,6 +1424,7 @@ export function DeviceDetailContent({
   const isAndroid      = ['android', 'androidtv', 'firetv'].includes(device.platform ?? '');
   const isTizenTop     = ['tizen', 'tizen-sbb'].includes(device.platform ?? 'tizen');
   const isConsumerTizen = device.platform === 'tizen-consumer';
+  const isEsp32        = (device.platform ?? '').startsWith('esp32');
   const cmdDisabled = !isOnline || cmdMutation.isPending;
   const fallbackNowPlaying = device.publishedTarget?.name ?? null;
   const fallbackNowPlayingType = device.publishedTarget?.type ?? null;
@@ -2398,7 +2399,7 @@ export function DeviceDetailContent({
             </div>
             )}
 
-            {!isConsumerTizen && (
+            {!isConsumerTizen && !isEsp32 && (
             <div className="sm:col-span-2">
               <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Screenshot Interval</label>
               <select {...register('screenshotIntervalMin', { valueAsNumber: true })}
@@ -2413,7 +2414,7 @@ export function DeviceDetailContent({
             )}
 
             {/* ── Display Settings (MDC) ───────────────────────────────── */}
-            {!isEpaper && !isWindows && !isAndroid && !isConsumerTizen && (
+            {!isEpaper && !isWindows && !isAndroid && !isConsumerTizen && !isEsp32 && (
             <div className="sm:col-span-2 space-y-5">
 
               {/* 2×2 toggle grid */}
@@ -2751,7 +2752,7 @@ export function DeviceDetailContent({
         />
       )}
 
-      {((device.type ?? 'signage') === 'signage' || (device.type ?? 'signage') === 'menu-board') && <SectionCard>
+      {!isEsp32 && ((device.type ?? 'signage') === 'signage' || (device.type ?? 'signage') === 'menu-board') && <SectionCard>
         <SectionCardHeader>
           <h2 className="text-sm font-semibold text-[var(--text)]">Default Playlist</h2>
           <span className="text-xs text-[var(--text-muted)]">shown when no schedule slot is active</span>
