@@ -9,6 +9,11 @@
 #define BTN_BOOT_PIN   0    // BOOT button (IO0)
 #define BTN_USER_PIN   21   // USER button (IO21)
 
+// ── mmWave sensor (Waveshare HMMD) ───────────────────────────────────────────
+// Sensor TX → ESP32 RX=44,  Sensor RX ← ESP32 TX=43
+#define MMWAVE_TX_PIN  43
+#define MMWAVE_RX_PIN  44
+
 // ── Identity ──────────────────────────────────────────────────────────────────
 #define FIRMWARE_VERSION   "1.0.0"
 #define PLATFORM_NAME      "esp32-amoled"

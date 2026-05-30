@@ -2355,8 +2355,13 @@ export async function deviceRoutes(app: FastifyInstance) {
     }
 
     const { default: sharp } = await import('sharp');
+    // Rotate landscape images 90° so they fill the 240×536 portrait display.
+    // fit:'cover' crops/scales to fill the full screen with no letterboxing.
+    const meta = await sharp(absPath).metadata();
+    const isLandscape = (meta.width ?? 1) > (meta.height ?? 1);
     const jpeg = await sharp(absPath)
-      .resize(240, 536, { fit: 'contain', background: { r: 15, g: 23, b: 42 } })
+      .rotate(isLandscape ? 90 : 0)
+      .resize(240, 536, { fit: 'cover', background: { r: 15, g: 23, b: 42 } })
       .jpeg({ quality: 80 })
       .toBuffer();
 

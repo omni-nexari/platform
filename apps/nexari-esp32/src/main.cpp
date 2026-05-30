@@ -208,8 +208,12 @@ static void doHealthCheck() {
 }
 
 static void doBatteryUpdate() {
-    int  pct = amoled.isBatteryConnect() ? amoled.getBatteryPercent() : -1;
+    // Always read directly — isBatteryConnect() can return false on this board
+    // even when a battery is fitted (AXP2101 quirk on T-Display S3 AMOLED).
+    int  pct = amoled.getBatteryPercent();
     bool chg = amoled.isCharging();
+    // Sanity: treat obviously invalid readings as "no data"
+    if (pct < 0 || pct > 100) pct = -1;
     uiSetBattery(pct, chg);
     Logger::debug("[Batt] %d%% charging=%d", pct, (int)chg);
     g_lastBatt = millis();
