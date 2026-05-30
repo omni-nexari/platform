@@ -326,6 +326,7 @@ function TimezoneCombobox({ value, onChange }: { value: string; onChange: (v: st
 
   const [query, setQuery] = useState(displayValue);
   const [open, setOpen] = useState(false);
+  const [dropUp, setDropUp] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { setQuery(currentEntry?.label ?? value); }, [value, currentEntry?.label]);
@@ -350,17 +351,29 @@ function TimezoneCombobox({ value, onChange }: { value: string; onChange: (v: st
     return () => document.removeEventListener('mousedown', onMouseDown);
   }, [value, currentEntry?.label]);
 
+  // Decide whether to open upward before showing the list
+  function handleOpen() {
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setDropUp(spaceBelow < 260); // 260 ≈ max-h-60 (240px) + margin
+    }
+    setOpen(true);
+  }
+
   return (
     <div ref={containerRef} className="relative">
       <input
         value={query}
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-        onFocus={(e) => { e.target.select(); setOpen(true); }}
+        onFocus={(e) => { e.target.select(); handleOpen(); }}
         placeholder="(UTC+00:00) UTC"
         className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]"
       />
       {open && filtered.length > 0 && (
-        <ul className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-xl">
+        <ul className={`absolute z-50 w-full max-h-60 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-xl ${
+          dropUp ? 'bottom-full mb-1' : 'top-full mt-1'
+        }`}>
           {filtered.map((entry) => (
             <li
               key={entry.tz}
