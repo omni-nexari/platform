@@ -16,6 +16,7 @@
 #include "buttons.h"
 #include "ui.h"
 #include "image_player.h"
+#include "mmwave_sensor.h"
 
 // ── Hardware ──────────────────────────────────────────────────────────────────
 // Non-static so image_player.cpp can extern it.
@@ -69,6 +70,7 @@ void setup() {
     // This is the library's official LVGL integration; it handles the rounder_cb
     // required by the RM67162 QSPI controller and flush via setAddrWindow+pushColorsDMA.
     beginLvglHelperDMA(amoled);
+    mmwaveSensor.begin();
     Logger::info("[Main] LVGL ready");
     uiInit();
 
@@ -229,6 +231,7 @@ void loop() {
         lv_task_handler();
     }
 
+    mmwaveSensor.update();
     wifiManager.loop();
     buttonManager.loop();
 
