@@ -38,10 +38,11 @@ bool ScheduleClient::fetch(const String &host, uint16_t port, bool ssl,
     http.end();
 
     _info = _parse(body);
-    Logger::info("[Sched] schedule='%s' now='%s' next='%s'",
+    Logger::info("[Sched] schedule='%s' now='%s' next='%s' type='%s'",
                  _info.scheduleName.c_str(),
                  _info.nowPlaying.c_str(),
-                 _info.nextUp.c_str());
+                 _info.nextUp.c_str(),
+                 _info.contentType.c_str());
     return _info.valid;
 }
 
@@ -64,10 +65,16 @@ ScheduleInfo ScheduleClient::_parse(const String &json) const {
     JsonDocument doc;
     if (deserializeJson(doc, json) != DeserializationError::Ok) return info;
 
-    JsonObjectConst schedule = doc["schedule"].as<JsonObjectConst>();
-    if (schedule.isNull()) {
-        // Try top-level (some API versions omit wrapper)
-        schedule = doc.as<JsonObjectConst>();
+    // API returns { "schedules": [ scheduleObj, ... ] }
+    // First entry is the published/active schedule for this device.
+    JsonArrayConst schedulesArr = doc["schedules"].as<JsonArrayConst>();
+    JsonObjectConst schedule;
+    if (!schedulesArr.isNull() && schedulesArr.size() > 0) {
+        schedule = schedulesArr[0].as<JsonObjectConst>();
+    } else {
+        // Fallback: some older API versions wrap in "schedule" (singular)
+        schedule = doc["schedule"].as<JsonObjectConst>();
+        if (schedule.isNull()) schedule = doc.as<JsonObjectConst>();
     }
 
     info.scheduleName = schedule["name"] | "";
@@ -79,7 +86,8 @@ ScheduleInfo ScheduleClient::_parse(const String &json) const {
             // Prefer playlist name, fall back to content name
             String pName = s0["playlist"]["name"] | "";
             String cName = s0["content"]["name"]  | "";
-            info.nowPlaying = pName.length() > 0 ? pName : cName;
+            info.nowPlaying  = pName.length() > 0 ? pName : cName;
+            info.contentType = s0["content"]["type"] | "";
         }
         if (slots.size() > 1) {
             JsonObjectConst s1 = slots[1];

@@ -15,12 +15,15 @@
 #include "schedule_client.h"
 #include "buttons.h"
 #include "ui.h"
+#include "image_player.h"
 
 // ── Hardware ──────────────────────────────────────────────────────────────────
-static LilyGo_Class amoled;
+// Non-static so image_player.cpp can extern it.
+LilyGo_Class amoled;
 
 // ── Application state ─────────────────────────────────────────────────────────
 static String  g_duid;
+static String  g_mac;
 static bool    g_wsRunning    = false;
 static uint32_t g_lastHB      = 0;
 static uint32_t g_lastLogFlush = 0;
@@ -77,7 +80,8 @@ void setup() {
     snprintf(macStr, sizeof(macStr), "%02x%02x%02x%02x%02x%02x",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     g_duid = String("esp32-") + macStr;
-    Logger::info("[Main] DUID: %s", g_duid.c_str());
+    g_mac  = WiFi.macAddress();  // "AA:BB:CC:DD:EE:FF"
+    Logger::info("[Main] DUID: %s  MAC: %s", g_duid.c_str(), g_mac.c_str());
 
     // WiFi
     if (!storage.hasWifi()) {
@@ -103,13 +107,17 @@ void setup() {
 
     // WS message handler
     wsClient.setOnMessage([](const String &type, const String &raw) {
-        if (type == "content-update" || type == "content.published" ||
-            type == "schedule.updated" || type == "schedule.created" ||
+        // Server sends "refresh_schedule" when content/playlist/schedule is published.
+        // Also handle legacy event names from older server versions.
+        if (type == "refresh_schedule" ||
+            type == "content-update"   ||
+            type == "content.published" ||
+            type == "schedule.updated" ||
+            type == "schedule.created" ||
             type == "schedule.deleted") {
-            Logger::info("[WS] Schedule change event: %s", type.c_str());
+            Logger::info("[WS] Refresh trigger: %s", type.c_str());
             doScheduleFetch();
         }
-        // other command types handled server-side; no-op here
     });
 }
 
@@ -135,7 +143,11 @@ static void startWs() {
                    storage.getApiHttps(), storage.getDeviceToken());
     // Fetch initial schedule then show dashboard
     doScheduleFetch();
-    showDashboard(0, 0, g_sched.nowPlaying.c_str(), "", "", false);
+    showDashboard(g_duid.c_str(), g_mac.c_str(),
+                  WiFi.localIP().toString().c_str(),
+                  WiFi.SSID().c_str(),
+                  g_sched.nowPlaying.c_str(),
+                  wsClient.isConnected());
 }
 
 static void doScheduleFetch() {
@@ -143,16 +155,27 @@ static void doScheduleFetch() {
                          storage.getApiHttps(), storage.getDeviceToken());
     g_sched = scheduleClient.info();
     g_lastSched = millis();
+
     // Refresh whichever screen is active
     if (uiCurrentScreen() == Screen::DASHBOARD) {
-        showDashboard(0, 0,
-                      g_sched.nowPlaying.c_str(), "", "",
+        showDashboard(g_duid.c_str(), g_mac.c_str(),
+                      WiFi.localIP().toString().c_str(),
+                      WiFi.SSID().c_str(),
+                      g_sched.nowPlaying.c_str(),
                       wsClient.isConnected());
-    } else if (uiCurrentScreen() == Screen::SIGNAGE) {
-        showSignage(g_sched.scheduleName.c_str(),
-                    g_sched.nowPlaying.c_str(),
-                    g_sched.nextUp.c_str(),
-                    wsClient.isConnected());
+    } else if (imagePlayer.isActive() || uiCurrentScreen() == Screen::SIGNAGE) {
+        if (g_sched.contentType == "image") {
+            // Re-fetch image (content may have changed)
+            imagePlayer.show(storage.getApiHost(), storage.getApiPort(),
+                             storage.getApiHttps(), storage.getDeviceToken());
+        } else {
+            // Non-image content — exit image mode and show LVGL signage
+            if (imagePlayer.isActive()) imagePlayer.clear();
+            showSignage(g_sched.scheduleName.c_str(),
+                        g_sched.nowPlaying.c_str(),
+                        g_sched.nextUp.c_str(),
+                        wsClient.isConnected());
+        }
     }
 }
 
@@ -184,7 +207,12 @@ static void doHealthCheck() {
 // ── Loop ──────────────────────────────────────────────────────────────────────
 
 void loop() {
-    lv_task_handler();
+    // Suspend LVGL while an image is being shown directly via pushColors.
+    // The OLED holds pixels until explicitly overwritten, so the image stays
+    // on screen without any refresh loop.
+    if (!imagePlayer.isActive()) {
+        lv_task_handler();
+    }
 
     wifiManager.loop();
     buttonManager.loop();
@@ -236,14 +264,30 @@ void loop() {
     BtnAction action = buttonManager.poll();
     switch (action) {
         case BtnAction::TOGGLE_SCREEN:
-            if (uiCurrentScreen() == Screen::DASHBOARD) {
-                showSignage(g_sched.scheduleName.c_str(),
-                            g_sched.nowPlaying.c_str(),
-                            g_sched.nextUp.c_str(),
-                            wsClient.isConnected());
+            if (imagePlayer.isActive()) {
+                // Image mode → back to dashboard
+                imagePlayer.clear();
+                showDashboard(g_duid.c_str(), g_mac.c_str(),
+                              WiFi.localIP().toString().c_str(),
+                              WiFi.SSID().c_str(),
+                              g_sched.nowPlaying.c_str(),
+                              wsClient.isConnected());
+            } else if (uiCurrentScreen() == Screen::DASHBOARD) {
+                if (g_sched.contentType == "image") {
+                    // Show image fullscreen; LVGL suspended while active
+                    imagePlayer.show(storage.getApiHost(), storage.getApiPort(),
+                                     storage.getApiHttps(), storage.getDeviceToken());
+                } else {
+                    showSignage(g_sched.scheduleName.c_str(),
+                                g_sched.nowPlaying.c_str(),
+                                g_sched.nextUp.c_str(),
+                                wsClient.isConnected());
+                }
             } else if (uiCurrentScreen() == Screen::SIGNAGE) {
-                showDashboard(0, 0,
-                              g_sched.nowPlaying.c_str(), "", "",
+                showDashboard(g_duid.c_str(), g_mac.c_str(),
+                              WiFi.localIP().toString().c_str(),
+                              WiFi.SSID().c_str(),
+                              g_sched.nowPlaying.c_str(),
                               wsClient.isConnected());
             }
             break;

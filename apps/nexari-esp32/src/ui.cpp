@@ -11,10 +11,9 @@ static lv_obj_t *g_scrSignage  = nullptr;
 
 // Live label handles so update functions can reuse screens
 static lv_obj_t *g_pairingCodeLbl  = nullptr;
-static lv_obj_t *g_dashOnlineLbl   = nullptr;
-static lv_obj_t *g_dashNP1Lbl      = nullptr;
-static lv_obj_t *g_dashNP2Lbl      = nullptr;
-static lv_obj_t *g_dashNP3Lbl      = nullptr;
+static lv_obj_t *g_dashIpLbl       = nullptr;
+static lv_obj_t *g_dashWsLbl       = nullptr;
+static lv_obj_t *g_dashNowLbl      = nullptr;
 static lv_obj_t *g_dashStatusDot   = nullptr;
 static lv_obj_t *g_sigScheduleLbl  = nullptr;
 static lv_obj_t *g_sigNowLbl       = nullptr;
@@ -72,6 +71,16 @@ static lv_obj_t *makeStatusDot(lv_obj_t *parent, int x, int y, bool connected) {
 static void updateDot(lv_obj_t *dot, bool connected) {
     if (!dot) return;
     lv_obj_set_style_bg_color(dot, connected ? C_GREEN : C_RED, 0);
+}
+
+// Key/value row: key in C_MUTED montserrat_12; value truncated to 144px.
+static lv_obj_t *makeRow(lv_obj_t *parent, const char *key, const char *val,
+                          lv_color_t valColor, const lv_font_t *valFont, int y) {
+    makeLabel(parent, key, C_MUTED, &lv_font_montserrat_12, 0, y + 2);
+    lv_obj_t *v = makeLabel(parent, val, valColor, valFont, 60, y);
+    lv_obj_set_width(v, DISPLAY_WIDTH - 16 - 20 - 60);  // 144px
+    lv_label_set_long_mode(v, LV_LABEL_LONG_DOT);
+    return v;
 }
 
 // ── uiInit ────────────────────────────────────────────────────────────────────
@@ -185,42 +194,78 @@ void showPairing(const char *code) {
 
 // ── showDashboard ─────────────────────────────────────────────────────────────
 
-void showDashboard(uint16_t online, uint16_t total,
-                   const char *np1, const char *np2, const char *np3,
-                   bool wsConnected) {
+void showDashboard(const char *duid, const char *mac,
+                   const char *ip,   const char *ssid,
+                   const char *nowPlaying, bool wsConnected) {
     if (!g_scrDash) {
         g_scrDash = makeScreen();
 
-        // Header
-        makeLabel(g_scrDash, "NEXARI", C_ACCENT, &lv_font_montserrat_20, 8, 12);
-        makeLabel(g_scrDash, "Dashboard", C_MUTED, &lv_font_montserrat_14, 8, 38);
+        // ── Header bar ───────────────────────────────────────────────────
+        lv_obj_t *hdr = lv_obj_create(g_scrDash);
+        lv_obj_set_size(hdr, DISPLAY_WIDTH, 76);
+        lv_obj_set_pos(hdr, 0, 0);
+        lv_obj_set_style_bg_color(hdr, C_CARD, 0);
+        lv_obj_set_style_bg_opa(hdr, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(hdr, 0, 0);
+        lv_obj_set_style_radius(hdr, 0, 0);
+        lv_obj_set_style_pad_all(hdr, 0, 0);
+        lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
 
-        // Status dot top-right
-        g_dashStatusDot = makeStatusDot(g_scrDash, DISPLAY_WIDTH - 22, 12, wsConnected);
+        lv_obj_t *accent = lv_obj_create(g_scrDash);
+        lv_obj_set_size(accent, 4, 76);
+        lv_obj_set_pos(accent, 0, 0);
+        lv_obj_set_style_bg_color(accent, C_ACCENT, 0);
+        lv_obj_set_style_bg_opa(accent, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(accent, 0, 0);
+        lv_obj_set_style_radius(accent, 0, 0);
+        lv_obj_clear_flag(accent, LV_OBJ_FLAG_SCROLLABLE);
 
-        // Devices card
-        lv_obj_t *card1 = makeCard(g_scrDash, 62, 90);
-        makeLabel(card1, "DEVICES", C_MUTED, &lv_font_montserrat_12, 0, 0);
-        g_dashOnlineLbl = makeLabel(card1, "-- / --", C_TEXT, &lv_font_montserrat_24, 0, 18);
+        makeLabel(g_scrDash, "NEXARI", C_ACCENT, &lv_font_montserrat_20, 14, 14);
+        makeLabel(g_scrDash, "Digital Signage Player", C_MUTED, &lv_font_montserrat_12, 14, 44);
+        g_dashStatusDot = makeStatusDot(g_scrDash, DISPLAY_WIDTH - 22, 20, wsConnected);
 
-        // Now Playing card
-        lv_obj_t *card2 = makeCard(g_scrDash, 162, 220);
-        makeLabel(card2, "NOW PLAYING", C_MUTED, &lv_font_montserrat_12, 0, 0);
-        g_dashNP1Lbl = makeLabel(card2, np1 && *np1 ? np1 : "—", C_TEXT, &lv_font_montserrat_14, 0, 22);
-        g_dashNP2Lbl = makeLabel(card2, np2 && *np2 ? np2 : "", C_MUTED, &lv_font_montserrat_14, 0, 46);
-        g_dashNP3Lbl = makeLabel(card2, np3 && *np3 ? np3 : "", C_MUTED, &lv_font_montserrat_14, 0, 70);
+        // ── Device card: serial, MAC, IP, connection ──────────────────────
+        lv_obj_t *devCard = makeCard(g_scrDash, 84, 118);
+        makeLabel(devCard, "DEVICE", C_MUTED, &lv_font_montserrat_12, 0, 0);
+        makeRow(devCard, "SERIAL", duid ? duid : "-", C_TEXT,   &lv_font_montserrat_12, 20);
+        makeRow(devCard, "MAC",    mac  ? mac  : "-", C_TEXT,   &lv_font_montserrat_12, 42);
+        g_dashIpLbl = makeRow(devCard, "IP", ip ? ip : "-",     C_ACCENT, &lv_font_montserrat_12, 64);
+        char connBuf[52];
+        if (ssid && *ssid) snprintf(connBuf, sizeof(connBuf), "WiFi - %s", ssid);
+        else               snprintf(connBuf, sizeof(connBuf), "WiFi");
+        makeRow(devCard, "TYPE", connBuf, C_TEXT, &lv_font_montserrat_12, 86);
 
-        // Status bar
-        makeLabel(g_scrDash, "IO21: toggle signage view", C_MUTED, &lv_font_montserrat_12, 8, 394);
+        // ── Server card: host, WS status ──────────────────────────────────
+        lv_obj_t *srvCard = makeCard(g_scrDash, 210, 70);
+        makeLabel(srvCard, "SERVER", C_MUTED, &lv_font_montserrat_12, 0, 0);
+        makeRow(srvCard, "HOST", DEFAULT_API_HOST, C_TEXT, &lv_font_montserrat_12, 20);
+        g_dashWsLbl = makeRow(srvCard, "WS",
+                              wsConnected ? "Connected" : "Offline",
+                              wsConnected ? C_GREEN : C_RED,
+                              &lv_font_montserrat_12, 42);
+
+        // ── Now Playing card ──────────────────────────────────────────────
+        lv_obj_t *cntCard = makeCard(g_scrDash, 288, 90);
+        makeLabel(cntCard, "NOW PLAYING", C_MUTED, &lv_font_montserrat_12, 0, 0);
+        g_dashNowLbl = lv_label_create(cntCard);
+        lv_obj_set_style_text_color(g_dashNowLbl, C_TEXT, 0);
+        lv_obj_set_style_text_font(g_dashNowLbl, &lv_font_montserrat_14, 0);
+        lv_label_set_text(g_dashNowLbl, nowPlaying && *nowPlaying ? nowPlaying : "-");
+        lv_obj_set_pos(g_dashNowLbl, 0, 22);
+        lv_obj_set_width(g_dashNowLbl, DISPLAY_WIDTH - 16 - 20);  // 204px, wraps
+        lv_label_set_long_mode(g_dashNowLbl, LV_LABEL_LONG_WRAP);
+        lv_obj_clear_flag(g_dashNowLbl, LV_OBJ_FLAG_SCROLLABLE);
+
+        makeLabel(g_scrDash, "IO21: toggle signage view", C_MUTED, &lv_font_montserrat_12, 8, 390);
     }
 
-    // Update live data
-    char onlineBuf[16];
-    snprintf(onlineBuf, sizeof(onlineBuf), "%u / %u", online, total);
-    lv_label_set_text(g_dashOnlineLbl, onlineBuf);
-    lv_label_set_text(g_dashNP1Lbl, np1 && *np1 ? np1 : "—");
-    lv_label_set_text(g_dashNP2Lbl, np2 && *np2 ? np2 : "");
-    lv_label_set_text(g_dashNP3Lbl, np3 && *np3 ? np3 : "");
+    // Update live fields
+    if (g_dashIpLbl)  lv_label_set_text(g_dashIpLbl,  ip && *ip ? ip : "-");
+    if (g_dashWsLbl) {
+        lv_label_set_text(g_dashWsLbl, wsConnected ? "Connected" : "Offline");
+        lv_obj_set_style_text_color(g_dashWsLbl, wsConnected ? C_GREEN : C_RED, 0);
+    }
+    if (g_dashNowLbl) lv_label_set_text(g_dashNowLbl, nowPlaying && *nowPlaying ? nowPlaying : "-");
     updateDot(g_dashStatusDot, wsConnected);
 
     g_screen = Screen::DASHBOARD;
@@ -270,6 +315,10 @@ void showSignage(const char *scheduleName,
 void uiSetWsStatus(bool connected) {
     updateDot(g_dashStatusDot, connected);
     updateDot(g_sigStatusDot,  connected);
+    if (g_dashWsLbl) {
+        lv_label_set_text(g_dashWsLbl, connected ? "Connected" : "Offline");
+        lv_obj_set_style_text_color(g_dashWsLbl, connected ? C_GREEN : C_RED, 0);
+    }
 }
 
 // ── uiCurrentScreen ───────────────────────────────────────────────────────────

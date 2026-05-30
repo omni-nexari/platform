@@ -10,7 +10,7 @@
 #define C_AMBER  lv_color_hex(0xFBBF24)   // Amber-400  warning
 #define C_RED    lv_color_hex(0xF87171)   // Red-400    error / offline
 #define C_TEXT   lv_color_hex(0xE2E8F0)   // Slate-200  primary text
-#define C_MUTED  lv_color_hex(0x64748B)   // Slate-500  secondary text
+#define C_MUTED  lv_color_hex(0x94A3B8)   // Slate-400  secondary text (legible on dark bg)
 
 enum class Screen {
     AP_PORTAL,
@@ -35,8 +35,9 @@ void showPairing(const char *code);
  * Show dashboard: device counts + up to 3 "now playing" device names
  * wsConnected — controls status indicator
  */
-void showDashboard(uint16_t online, uint16_t total,
-                   const char *np1, const char *np2, const char *np3,
+void showDashboard(const char *duid, const char *mac,
+                   const char *ip,   const char *ssid,
+                   const char *nowPlaying,
                    bool wsConnected);
 
 /** Show signage info (schedule + now/next + WS status) */

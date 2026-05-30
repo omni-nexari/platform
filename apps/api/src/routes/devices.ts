@@ -2328,6 +2328,43 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
   });
 
+  // ── GET /devices/device/signage-image ─ serve published image resized 240×536 ─
+  // ESP32 AMOLED display is 240×536 portrait. Returns a JPEG resized to fit
+  // with letterboxing so the player can display it via pushColors().
+  app.get('/device/signage-image', async (req, reply) => {
+    const auth = authenticateDevice(req as never, reply as never);
+    if (!auth) return;
+
+    const device = await db.query.devices.findFirst({
+      where: eq(devices.id, auth.deviceId),
+    });
+    if (!device) return reply.status(404).send({ error: 'Device not found' });
+    if (device.deletedAt) return reply.status(401).send({ error: 'Device has been removed' });
+    if (!device.publishedContentId) return reply.status(404).send({ error: 'No content published' });
+
+    const content = await db.query.contentItems.findFirst({
+      where: and(eq(contentItems.id, device.publishedContentId), isNull(contentItems.deletedAt)),
+    });
+    if (!content || content.type !== 'image' || !content.filePath) {
+      return reply.status(404).send({ error: 'No image content available' });
+    }
+
+    const absPath = path.resolve(STORAGE_ROOT, content.filePath);
+    try { await fsPromises.access(absPath); } catch {
+      return reply.status(404).send({ error: 'Image file not found on disk' });
+    }
+
+    const { default: sharp } = await import('sharp');
+    const jpeg = await sharp(absPath)
+      .resize(240, 536, { fit: 'contain', background: { r: 15, g: 23, b: 42 } })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+
+    reply.header('Content-Type', 'image/jpeg');
+    reply.header('Content-Length', jpeg.length);
+    reply.header('Cache-Control', 'no-cache');
+    return reply.send(jpeg);
+  });
   // ── GET /devices/device/workspace ─ workspace info inc. defaults ──────────
   app.get('/device/workspace', async (req, reply) => {
     const auth = authenticateDevice(req as never, reply as never);

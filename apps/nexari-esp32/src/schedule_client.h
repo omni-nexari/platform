@@ -5,6 +5,7 @@ struct ScheduleInfo {
     String scheduleName;
     String nowPlaying;
     String nextUp;
+    String contentType;  // "image", "video", "html", "" — from slots[0].content.type
     bool   valid = false;
 };
 
