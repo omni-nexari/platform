@@ -49,4 +49,11 @@ void showSignage(const char *scheduleName,
 /** Refresh WS status dot on whichever screen is active */
 void uiSetWsStatus(bool connected);
 
+/**
+ * Update battery indicator on all active screens.
+ * pct: 0-100 (percent), -1 = battery not connected.
+ * charging: true when USB/charger detected.
+ */
+void uiSetBattery(int pct, bool charging);
+
 Screen uiCurrentScreen();

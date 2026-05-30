@@ -4,6 +4,7 @@
 #include <LilyGo_AMOLED.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <lvgl.h>
 
 // Defined as a (non-static) global in main.cpp
 extern LilyGo_Class amoled;
@@ -12,9 +13,15 @@ ImagePlayer imagePlayer;
 JPEGDEC     ImagePlayer::_jpeg;
 
 // ── JPEGDEC strip callback ────────────────────────────────────────────────────
-// Called for each decoded MCU row. pDraw->pPixels is RGB565.
-// pushColors(x, y, w, h, rgb565*) pushes directly to the RM67162 AMOLED.
+// Called for each decoded MCU row. pDraw->pPixels is RGB565 in native byte
+// order (little-endian uint16_t on ESP32). The RM67162 QSPI controller sends
+// each byte MSB-first over the wire, so little-endian uint16_t are sent low
+// byte first. Empirically this produces wrong colours; swapping bytes per
+// pixel fixes it to match LVGL's output.
 int ImagePlayer::_drawCb(JPEGDRAW *pDraw) {
+    uint16_t *px = (uint16_t *)pDraw->pPixels;
+    const int  n  = pDraw->iWidth * pDraw->iHeight;
+    for (int i = 0; i < n; i++) px[i] = __builtin_bswap16(px[i]);
     amoled.pushColors(pDraw->x, pDraw->y,
                       pDraw->iWidth, pDraw->iHeight,
                       (uint16_t *)pDraw->pPixels);
@@ -107,4 +114,9 @@ bool ImagePlayer::show(const String &host, uint16_t port,
 void ImagePlayer::clear() {
     _active = false;
     if (_jpegBuf) { free(_jpegBuf); _jpegBuf = nullptr; }
+    // Direct pushColors() bypassed LVGL's dirty tracking: the AMOLED has image
+    // pixels but LVGL thinks its last-rendered screen is still showing.
+    // Invalidate the current LVGL screen so lv_task_handler() fully repaints it.
+    lv_obj_t *scr = lv_scr_act();
+    if (scr) lv_obj_invalidate(scr);
 }

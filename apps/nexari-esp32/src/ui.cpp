@@ -15,10 +15,12 @@ static lv_obj_t *g_dashIpLbl       = nullptr;
 static lv_obj_t *g_dashWsLbl       = nullptr;
 static lv_obj_t *g_dashNowLbl      = nullptr;
 static lv_obj_t *g_dashStatusDot   = nullptr;
+static lv_obj_t *g_dashBattLbl     = nullptr;
 static lv_obj_t *g_sigScheduleLbl  = nullptr;
 static lv_obj_t *g_sigNowLbl       = nullptr;
 static lv_obj_t *g_sigNextLbl      = nullptr;
 static lv_obj_t *g_sigStatusDot    = nullptr;
+static lv_obj_t *g_sigBattLbl      = nullptr;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -223,6 +225,12 @@ void showDashboard(const char *duid, const char *mac,
         makeLabel(g_scrDash, "NEXARI", C_ACCENT, &lv_font_montserrat_20, 14, 14);
         makeLabel(g_scrDash, "Digital Signage Player", C_MUTED, &lv_font_montserrat_12, 14, 44);
         g_dashStatusDot = makeStatusDot(g_scrDash, DISPLAY_WIDTH - 22, 20, wsConnected);
+        // Battery label — top-right corner of header, updated via uiSetBattery()
+        g_dashBattLbl = lv_label_create(g_scrDash);
+        lv_obj_set_style_text_font(g_dashBattLbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(g_dashBattLbl, C_MUTED, 0);
+        lv_label_set_text(g_dashBattLbl, "---%");
+        lv_obj_set_pos(g_dashBattLbl, DISPLAY_WIDTH - 66, 44);
 
         // ── Device card: serial, MAC, IP, connection ──────────────────────
         lv_obj_t *devCard = makeCard(g_scrDash, 84, 118);
@@ -283,6 +291,12 @@ void showSignage(const char *scheduleName,
 
         makeLabel(g_scrSignage, "SIGNAGE", C_ACCENT, &lv_font_montserrat_20, 8, 12);
         g_sigStatusDot = makeStatusDot(g_scrSignage, DISPLAY_WIDTH - 22, 12, wsConnected);
+        // Battery label — right side below the header row
+        g_sigBattLbl = lv_label_create(g_scrSignage);
+        lv_obj_set_style_text_font(g_sigBattLbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(g_sigBattLbl, C_MUTED, 0);
+        lv_label_set_text(g_sigBattLbl, "---%");
+        lv_obj_set_pos(g_sigBattLbl, DISPLAY_WIDTH - 66, 34);
 
         // Schedule card
         lv_obj_t *card = makeCard(g_scrSignage, 50, 340);
@@ -318,6 +332,36 @@ void uiSetWsStatus(bool connected) {
     if (g_dashWsLbl) {
         lv_label_set_text(g_dashWsLbl, connected ? "Connected" : "Offline");
         lv_obj_set_style_text_color(g_dashWsLbl, connected ? C_GREEN : C_RED, 0);
+    }
+}
+
+// ── uiSetBattery ──────────────────────────────────────────────────────────────
+
+void uiSetBattery(int pct, bool charging) {
+    char buf[16];
+    if (pct < 0) {
+        snprintf(buf, sizeof(buf), "---%");
+    } else if (charging) {
+        snprintf(buf, sizeof(buf), "CHG %d%%", pct);
+    } else {
+        snprintf(buf, sizeof(buf), "%d%%", pct);
+    }
+
+    // Color: green when charging, amber when low, red when critical, muted otherwise
+    lv_color_t col;
+    if (charging)    col = C_GREEN;
+    else if (pct < 0)    col = C_MUTED;
+    else if (pct < 20)   col = C_RED;
+    else if (pct < 50)   col = C_AMBER;
+    else                 col = C_MUTED;
+
+    if (g_dashBattLbl) {
+        lv_label_set_text(g_dashBattLbl, buf);
+        lv_obj_set_style_text_color(g_dashBattLbl, col, 0);
+    }
+    if (g_sigBattLbl) {
+        lv_label_set_text(g_sigBattLbl, buf);
+        lv_obj_set_style_text_color(g_sigBattLbl, col, 0);
     }
 }
 

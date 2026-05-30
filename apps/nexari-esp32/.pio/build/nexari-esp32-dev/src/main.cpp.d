@@ -558,4 +558,5 @@
  .pio/libdeps/nexari-esp32-dev/AceButton/src/ace_button/EncodedButtonConfig.h \
  .pio/libdeps/nexari-esp32-dev/AceButton/src/ace_button/LadderButtonConfig.h \
  .pio/libdeps/nexari-esp32-dev/AceButton/src/ace_button/AceButton.h \
- src/ui.h
+ src/ui.h src/image_player.h \
+ .pio/libdeps/nexari-esp32-dev/JPEGDEC/src/JPEGDEC.h

@@ -29,6 +29,7 @@ static uint32_t g_lastHB      = 0;
 static uint32_t g_lastLogFlush = 0;
 static uint32_t g_lastSched   = 0;
 static uint32_t g_lastHealth  = 0;
+static uint32_t g_lastBatt    = 0;
 
 // Schedule data (refreshed on schedule poll)
 static ScheduleInfo g_sched;
@@ -38,6 +39,7 @@ static void startPairing();
 static void startWs();
 static void doHealthCheck();
 static void doScheduleFetch();
+static void doBatteryUpdate();
 
 // ── Setup ──────────────────────────────────────────────────────────────────────
 
@@ -148,6 +150,7 @@ static void startWs() {
                   WiFi.SSID().c_str(),
                   g_sched.nowPlaying.c_str(),
                   wsClient.isConnected());
+    doBatteryUpdate(); // show initial battery reading on boot
 }
 
 static void doScheduleFetch() {
@@ -204,6 +207,14 @@ static void doHealthCheck() {
     g_lastHealth = millis();
 }
 
+static void doBatteryUpdate() {
+    int  pct = amoled.isBatteryConnect() ? amoled.getBatteryPercent() : -1;
+    bool chg = amoled.isCharging();
+    uiSetBattery(pct, chg);
+    Logger::debug("[Batt] %d%% charging=%d", pct, (int)chg);
+    g_lastBatt = millis();
+}
+
 // ── Loop ──────────────────────────────────────────────────────────────────────
 
 void loop() {
@@ -258,6 +269,12 @@ void loop() {
     // Health check
     if (g_wsRunning && now - g_lastHealth >= HEALTH_CHECK_MS) {
         doHealthCheck();
+    }
+
+    // Battery poll every 30 seconds
+    static constexpr uint32_t BATT_POLL_MS = 30000;
+    if (g_wsRunning && now - g_lastBatt >= BATT_POLL_MS) {
+        doBatteryUpdate();
     }
 
     // Button actions
