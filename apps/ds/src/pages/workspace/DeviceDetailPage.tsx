@@ -1,4 +1,5 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router';
 import { useForm } from 'react-hook-form';
@@ -326,14 +327,13 @@ function TimezoneCombobox({ value, onChange }: { value: string; onChange: (v: st
 
   const [query, setQuery] = useState(displayValue);
   const [open, setOpen] = useState(false);
-  const [dropUp, setDropUp] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [dropStyle, setDropStyle] = useState<React.CSSProperties>({});
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { setQuery(currentEntry?.label ?? value); }, [value, currentEntry?.label]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
-    // If query matches the current label exactly, show all (user hasn't started typing)
     if (!q || q === displayValue.toLowerCase()) return ALL_TIMEZONE_ENTRIES.slice(0, 80);
     return ALL_TIMEZONE_ENTRIES.filter(
       (e) => e.tz.toLowerCase().includes(q) || e.label.toLowerCase().includes(q)
@@ -342,7 +342,7 @@ function TimezoneCombobox({ value, onChange }: { value: string; onChange: (v: st
 
   useEffect(() => {
     function onMouseDown(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (inputRef.current && !inputRef.current.contains(e.target as Node)) {
         setOpen(false);
         setQuery(currentEntry?.label ?? value);
       }
@@ -351,43 +351,67 @@ function TimezoneCombobox({ value, onChange }: { value: string; onChange: (v: st
     return () => document.removeEventListener('mousedown', onMouseDown);
   }, [value, currentEntry?.label]);
 
-  // Decide whether to open upward before showing the list
   function handleOpen() {
-    if (containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      setDropUp(spaceBelow < 260); // 260 ≈ max-h-60 (240px) + margin
+    if (!inputRef.current) return;
+    const rect = inputRef.current.getBoundingClientRect();
+    const listH = Math.min(240, filtered.length * 32 + 8); // approx height
+    const spaceBelow = window.innerHeight - rect.bottom - 8;
+    const spaceAbove = rect.top - 8;
+    const openUp = spaceBelow < listH && spaceAbove > spaceBelow;
+    if (openUp) {
+      setDropStyle({
+        position: 'fixed',
+        bottom: window.innerHeight - rect.top + 4,
+        left: rect.left,
+        width: rect.width,
+        maxHeight: Math.min(300, spaceAbove),
+        zIndex: 9999,
+      });
+    } else {
+      setDropStyle({
+        position: 'fixed',
+        top: rect.bottom + 4,
+        left: rect.left,
+        width: rect.width,
+        maxHeight: Math.min(300, spaceBelow),
+        zIndex: 9999,
+      });
     }
     setOpen(true);
   }
 
+  const list = open && filtered.length > 0 && createPortal(
+    <ul
+      style={dropStyle}
+      className="overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-xl"
+    >
+      {filtered.map((entry) => (
+        <li
+          key={entry.tz}
+          onMouseDown={(e) => { e.preventDefault(); onChange(entry.tz); setQuery(entry.label); setOpen(false); }}
+          className={`px-3 py-1.5 text-xs font-mono cursor-pointer hover:bg-[var(--surface-raised)] ${
+            entry.tz === value ? 'text-[var(--blue)] font-semibold' : 'text-[var(--text)]'
+          }`}
+        >
+          <span className="text-[var(--text-muted)]">{entry.label.split(')')[0]})</span>
+          {' '}{entry.tz}
+        </li>
+      ))}
+    </ul>,
+    document.body
+  );
+
   return (
-    <div ref={containerRef} className="relative">
+    <div className="relative">
       <input
+        ref={inputRef}
         value={query}
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
         onFocus={(e) => { e.target.select(); handleOpen(); }}
         placeholder="(UTC+00:00) UTC"
         className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm font-mono focus:outline-none focus:border-[var(--blue)]"
       />
-      {open && filtered.length > 0 && (
-        <ul className={`absolute z-50 w-full max-h-60 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-xl ${
-          dropUp ? 'bottom-full mb-1' : 'top-full mt-1'
-        }`}>
-          {filtered.map((entry) => (
-            <li
-              key={entry.tz}
-              onMouseDown={(e) => { e.preventDefault(); onChange(entry.tz); setQuery(entry.label); setOpen(false); }}
-              className={`px-3 py-1.5 text-xs font-mono cursor-pointer hover:bg-[var(--surface-raised)] ${
-                entry.tz === value ? 'text-[var(--blue)] font-semibold' : 'text-[var(--text)]'
-              }`}
-            >
-              <span className="text-[var(--text-muted)]">{entry.label.split(')')[0]})</span>
-              {' '}{entry.tz}
-            </li>
-          ))}
-        </ul>
-      )}
+      {list}
     </div>
   );
 }
