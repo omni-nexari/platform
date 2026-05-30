@@ -1,26 +1,36 @@
 #include "ui.h"
 #include <Arduino.h>
+#include <math.h>
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 static Screen    g_screen      = Screen::AP_PORTAL;
 static lv_obj_t *g_scrAP       = nullptr;
 static lv_obj_t *g_scrPairing  = nullptr;
-static lv_obj_t *g_scrDash     = nullptr;
 static lv_obj_t *g_scrSignage  = nullptr;
 
-// Live label handles so update functions can reuse screens
+// Pairing / signage live labels
 static lv_obj_t *g_pairingCodeLbl  = nullptr;
-static lv_obj_t *g_dashIpLbl       = nullptr;
-static lv_obj_t *g_dashWsLbl       = nullptr;
-static lv_obj_t *g_dashNowLbl      = nullptr;
-static lv_obj_t *g_dashStatusDot   = nullptr;
-static lv_obj_t *g_dashBattLbl     = nullptr;
 static lv_obj_t *g_sigScheduleLbl  = nullptr;
 static lv_obj_t *g_sigNowLbl       = nullptr;
 static lv_obj_t *g_sigNextLbl      = nullptr;
 static lv_obj_t *g_sigStatusDot    = nullptr;
 static lv_obj_t *g_sigBattLbl      = nullptr;
+
+// ── Sensor dashboard ──────────────────────────────────────────────────────────
+#define RADAR_W   200
+#define RADAR_H   200
+#define RADAR_CX  (RADAR_W / 2)
+#define RADAR_CY  (RADAR_H / 2)
+#define RADAR_R   90   // pixels == 6 m  (15 px per metre)
+
+static lv_obj_t  *g_scrSensor       = nullptr;
+static lv_obj_t  *g_sensorCanvas    = nullptr;
+static uint16_t  *g_canvasBuf       = nullptr;
+static lv_obj_t  *g_sensPresenceLbl = nullptr;
+static lv_obj_t  *g_sensDistLbl     = nullptr;
+static lv_obj_t  *g_sensBattLbl     = nullptr;
+static lv_obj_t  *g_sensStatusDot   = nullptr;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -194,17 +204,96 @@ void showPairing(const char *code) {
     lv_scr_load(g_scrPairing);
 }
 
-// ── showDashboard ─────────────────────────────────────────────────────────────
+// ── _drawRadar ────────────────────────────────────────────────────────────────
 
-void showDashboard(const char *duid, const char *mac,
-                   const char *ip,   const char *ssid,
-                   const char *nowPlaying, bool wsConnected) {
-    if (!g_scrDash) {
-        g_scrDash = makeScreen();
+static void _drawRadar(bool present, uint16_t distCm) {
+    if (!g_sensorCanvas || !g_canvasBuf) return;
 
-        // ── Header bar ───────────────────────────────────────────────────
-        lv_obj_t *hdr = lv_obj_create(g_scrDash);
-        lv_obj_set_size(hdr, DISPLAY_WIDTH, 76);
+    lv_canvas_fill_bg(g_sensorCanvas, lv_color_make(10, 18, 36), LV_OPA_COVER);
+
+    // Grid rings 1-6 m
+    lv_draw_arc_dsc_t arc;
+    lv_draw_arc_dsc_init(&arc);
+    arc.width = 1;
+    for (int m = 1; m <= 6; m++) {
+        arc.color = (m % 2) ? lv_color_make(30, 40, 60) : lv_color_make(42, 54, 78);
+        lv_canvas_draw_arc(g_sensorCanvas, RADAR_CX, RADAR_CY,
+                           (lv_coord_t)(m * 15), 0, 360, &arc);
+    }
+
+    // Radial spokes every 30 deg (0 = north)
+    lv_draw_line_dsc_t line;
+    lv_draw_line_dsc_init(&line);
+    line.color = lv_color_make(35, 46, 68);
+    line.width = 1;
+    for (int deg = 0; deg < 360; deg += 30) {
+        float rad = deg * 3.14159265f / 180.0f;
+        lv_point_t pts[2] = {
+            { (lv_coord_t)RADAR_CX, (lv_coord_t)RADAR_CY },
+            { (lv_coord_t)(RADAR_CX + (int)(RADAR_R * sinf(rad))),
+              (lv_coord_t)(RADAR_CY - (int)(RADAR_R * cosf(rad))) }
+        };
+        lv_canvas_draw_line(g_sensorCanvas, pts, 2, &line);
+    }
+
+    // Ring distance labels (north side, offset right of centre)
+    lv_draw_label_dsc_t txt;
+    lv_draw_label_dsc_init(&txt);
+    txt.color = lv_color_make(65, 85, 115);
+    txt.font  = &lv_font_montserrat_12;
+    lv_canvas_draw_text(g_sensorCanvas, RADAR_CX + 3, RADAR_CY - 30 - 14, 24, &txt, "2m");
+    lv_canvas_draw_text(g_sensorCanvas, RADAR_CX + 3, RADAR_CY - 60 - 14, 24, &txt, "4m");
+    lv_canvas_draw_text(g_sensorCanvas, RADAR_CX + 3, RADAR_CY - 88,      24, &txt, "6m");
+
+    // Motion range — orange, 5.5 m = 82 px
+    lv_draw_arc_dsc_t mot;
+    lv_draw_arc_dsc_init(&mot);
+    mot.color = lv_color_make(249, 115, 22);
+    mot.width = 2;
+    lv_canvas_draw_arc(g_sensorCanvas, RADAR_CX, RADAR_CY, 82, 0, 360, &mot);
+
+    // Micro-motion range — blue, 4.5 m = 67 px
+    lv_draw_arc_dsc_t micro;
+    lv_draw_arc_dsc_init(&micro);
+    micro.color = lv_color_make(59, 130, 246);
+    micro.width = 2;
+    lv_canvas_draw_arc(g_sensorCanvas, RADAR_CX, RADAR_CY, 67, 0, 360, &micro);
+
+    // Detected distance ring — green
+    if (present && distCm > 0 && distCm <= 600) {
+        int pr = (int)(distCm / 100.0f * 15.0f);
+        if (pr < 3)       pr = 3;
+        if (pr > RADAR_R) pr = RADAR_R;
+        lv_draw_arc_dsc_t det;
+        lv_draw_arc_dsc_init(&det);
+        det.color = lv_color_make(74, 222, 128);
+        det.width = 3;
+        lv_canvas_draw_arc(g_sensorCanvas, RADAR_CX, RADAR_CY,
+                           (lv_coord_t)pr, 0, 360, &det);
+    }
+
+    // Centre dot: green = present, dim = absent
+    lv_draw_rect_dsc_t dot;
+    lv_draw_rect_dsc_init(&dot);
+    dot.bg_color     = present ? lv_color_make(74, 222, 128) : lv_color_make(55, 65, 90);
+    dot.bg_opa       = LV_OPA_COVER;
+    dot.radius       = LV_RADIUS_CIRCLE;
+    dot.border_width = 0;
+    lv_canvas_draw_rect(g_sensorCanvas,
+                        RADAR_CX - 6, RADAR_CY - 6, 12, 12, &dot);
+
+    lv_obj_invalidate(g_sensorCanvas);
+}
+
+// ── showSensorDashboard ───────────────────────────────────────────────────────
+
+void showSensorDashboard() {
+    if (!g_scrSensor) {
+        g_scrSensor = makeScreen();
+
+        // Header
+        lv_obj_t *hdr = lv_obj_create(g_scrSensor);
+        lv_obj_set_size(hdr, DISPLAY_WIDTH, 50);
         lv_obj_set_pos(hdr, 0, 0);
         lv_obj_set_style_bg_color(hdr, C_CARD, 0);
         lv_obj_set_style_bg_opa(hdr, LV_OPA_COVER, 0);
@@ -213,8 +302,8 @@ void showDashboard(const char *duid, const char *mac,
         lv_obj_set_style_pad_all(hdr, 0, 0);
         lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
 
-        lv_obj_t *accent = lv_obj_create(g_scrDash);
-        lv_obj_set_size(accent, 4, 76);
+        lv_obj_t *accent = lv_obj_create(g_scrSensor);
+        lv_obj_set_size(accent, 4, 50);
         lv_obj_set_pos(accent, 0, 0);
         lv_obj_set_style_bg_color(accent, C_ACCENT, 0);
         lv_obj_set_style_bg_opa(accent, LV_OPA_COVER, 0);
@@ -222,62 +311,108 @@ void showDashboard(const char *duid, const char *mac,
         lv_obj_set_style_radius(accent, 0, 0);
         lv_obj_clear_flag(accent, LV_OBJ_FLAG_SCROLLABLE);
 
-        makeLabel(g_scrDash, "NEXARI", C_ACCENT, &lv_font_montserrat_20, 14, 14);
-        makeLabel(g_scrDash, "Digital Signage Player", C_MUTED, &lv_font_montserrat_12, 14, 44);
-        g_dashStatusDot = makeStatusDot(g_scrDash, DISPLAY_WIDTH - 22, 20, wsConnected);
-        // Battery label — top-right corner of header, updated via uiSetBattery()
-        g_dashBattLbl = lv_label_create(g_scrDash);
-        lv_obj_set_style_text_font(g_dashBattLbl, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(g_dashBattLbl, C_MUTED, 0);
-        lv_label_set_text(g_dashBattLbl, "---%");
-        lv_obj_set_pos(g_dashBattLbl, DISPLAY_WIDTH - 66, 44);
+        makeLabel(g_scrSensor, "mmWave Sensor",       C_ACCENT, &lv_font_montserrat_16, 12, 10);
+        makeLabel(g_scrSensor, "24GHz Human Presence", C_MUTED,  &lv_font_montserrat_12, 12, 32);
+        g_sensStatusDot = makeStatusDot(g_scrSensor, DISPLAY_WIDTH - 22, 12, false);
+        g_sensBattLbl = lv_label_create(g_scrSensor);
+        lv_obj_set_style_text_font(g_sensBattLbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(g_sensBattLbl, C_MUTED, 0);
+        lv_label_set_text(g_sensBattLbl, "---%");
+        lv_obj_set_pos(g_sensBattLbl, DISPLAY_WIDTH - 66, 32);
 
-        // ── Device card: serial, MAC, IP, connection ──────────────────────
-        lv_obj_t *devCard = makeCard(g_scrDash, 84, 118);
-        makeLabel(devCard, "DEVICE", C_MUTED, &lv_font_montserrat_12, 0, 0);
-        makeRow(devCard, "SERIAL", duid ? duid : "-", C_TEXT,   &lv_font_montserrat_12, 20);
-        makeRow(devCard, "MAC",    mac  ? mac  : "-", C_TEXT,   &lv_font_montserrat_12, 42);
-        g_dashIpLbl = makeRow(devCard, "IP", ip ? ip : "-",     C_ACCENT, &lv_font_montserrat_12, 64);
-        char connBuf[52];
-        if (ssid && *ssid) snprintf(connBuf, sizeof(connBuf), "WiFi - %s", ssid);
-        else               snprintf(connBuf, sizeof(connBuf), "WiFi");
-        makeRow(devCard, "TYPE", connBuf, C_TEXT, &lv_font_montserrat_12, 86);
+        // Radar canvas (200x200, centred horizontally)
+        g_sensorCanvas = lv_canvas_create(g_scrSensor);
+        lv_obj_set_size(g_sensorCanvas, RADAR_W, RADAR_H);
+        lv_obj_set_pos(g_sensorCanvas, (DISPLAY_WIDTH - RADAR_W) / 2, 56);
+        g_canvasBuf = (uint16_t *)heap_caps_malloc(
+            RADAR_W * RADAR_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+        if (!g_canvasBuf)
+            g_canvasBuf = (uint16_t *)malloc(RADAR_W * RADAR_H * sizeof(uint16_t));
+        if (g_canvasBuf)
+            lv_canvas_set_buffer(g_sensorCanvas, g_canvasBuf,
+                                 RADAR_W, RADAR_H, LV_IMG_CF_TRUE_COLOR);
 
-        // ── Server card: host, WS status ──────────────────────────────────
-        lv_obj_t *srvCard = makeCard(g_scrDash, 210, 70);
-        makeLabel(srvCard, "SERVER", C_MUTED, &lv_font_montserrat_12, 0, 0);
-        makeRow(srvCard, "HOST", DEFAULT_API_HOST, C_TEXT, &lv_font_montserrat_12, 20);
-        g_dashWsLbl = makeRow(srvCard, "WS",
-                              wsConnected ? "Connected" : "Offline",
-                              wsConnected ? C_GREEN : C_RED,
-                              &lv_font_montserrat_12, 42);
+        // Legend
+        lv_obj_t *motBar = lv_obj_create(g_scrSensor);
+        lv_obj_set_size(motBar, 18, 4);
+        lv_obj_set_pos(motBar, 20, 266);
+        lv_obj_set_style_bg_color(motBar, lv_color_hex(0xF97316), 0);
+        lv_obj_set_style_bg_opa(motBar, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(motBar, 0, 0);
+        lv_obj_set_style_radius(motBar, 2, 0);
+        lv_obj_clear_flag(motBar, LV_OBJ_FLAG_SCROLLABLE);
+        makeLabel(g_scrSensor, "Motion  5.5 m",       C_MUTED, &lv_font_montserrat_12, 44, 260);
 
-        // ── Now Playing card ──────────────────────────────────────────────
-        lv_obj_t *cntCard = makeCard(g_scrDash, 288, 90);
-        makeLabel(cntCard, "NOW PLAYING", C_MUTED, &lv_font_montserrat_12, 0, 0);
-        g_dashNowLbl = lv_label_create(cntCard);
-        lv_obj_set_style_text_color(g_dashNowLbl, C_TEXT, 0);
-        lv_obj_set_style_text_font(g_dashNowLbl, &lv_font_montserrat_14, 0);
-        lv_label_set_text(g_dashNowLbl, nowPlaying && *nowPlaying ? nowPlaying : "-");
-        lv_obj_set_pos(g_dashNowLbl, 0, 22);
-        lv_obj_set_width(g_dashNowLbl, DISPLAY_WIDTH - 16 - 20);  // 204px, wraps
-        lv_label_set_long_mode(g_dashNowLbl, LV_LABEL_LONG_WRAP);
-        lv_obj_clear_flag(g_dashNowLbl, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *microBar = lv_obj_create(g_scrSensor);
+        lv_obj_set_size(microBar, 18, 4);
+        lv_obj_set_pos(microBar, 20, 282);
+        lv_obj_set_style_bg_color(microBar, lv_color_hex(0x3B82F6), 0);
+        lv_obj_set_style_bg_opa(microBar, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(microBar, 0, 0);
+        lv_obj_set_style_radius(microBar, 2, 0);
+        lv_obj_clear_flag(microBar, LV_OBJ_FLAG_SCROLLABLE);
+        makeLabel(g_scrSensor, "Micro-motion  4.5 m", C_MUTED, &lv_font_montserrat_12, 44, 276);
 
-        makeLabel(g_scrDash, "IO21: toggle signage view", C_MUTED, &lv_font_montserrat_12, 8, 390);
+        // Separator
+        lv_obj_t *sep = lv_obj_create(g_scrSensor);
+        lv_obj_set_size(sep, DISPLAY_WIDTH - 16, 1);
+        lv_obj_set_pos(sep, 8, 300);
+        lv_obj_set_style_bg_color(sep, C_MUTED, 0);
+        lv_obj_set_style_bg_opa(sep, LV_OPA_30, 0);
+        lv_obj_set_style_border_width(sep, 0, 0);
+        lv_obj_set_style_radius(sep, 0, 0);
+        lv_obj_clear_flag(sep, LV_OBJ_FLAG_SCROLLABLE);
+
+        // Presence status (centred)
+        g_sensPresenceLbl = lv_label_create(g_scrSensor);
+        lv_obj_set_style_text_font(g_sensPresenceLbl, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(g_sensPresenceLbl, C_MUTED, 0);
+        lv_label_set_text(g_sensPresenceLbl, "NO PERSON");
+        lv_obj_set_width(g_sensPresenceLbl, DISPLAY_WIDTH);
+        lv_obj_set_style_text_align(g_sensPresenceLbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_pos(g_sensPresenceLbl, 0, 312);
+
+        // Distance (large, centred)
+        g_sensDistLbl = lv_label_create(g_scrSensor);
+        lv_obj_set_style_text_font(g_sensDistLbl, &lv_font_montserrat_48, 0);
+        lv_obj_set_style_text_color(g_sensDistLbl, C_MUTED, 0);
+        lv_label_set_text(g_sensDistLbl, "---");
+        lv_obj_set_width(g_sensDistLbl, DISPLAY_WIDTH);
+        lv_obj_set_style_text_align(g_sensDistLbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_pos(g_sensDistLbl, 0, 342);
+
+        makeLabel(g_scrSensor, "IO21: toggle signage", C_MUTED, &lv_font_montserrat_12, 8, 494);
     }
 
-    // Update live fields
-    if (g_dashIpLbl)  lv_label_set_text(g_dashIpLbl,  ip && *ip ? ip : "-");
-    if (g_dashWsLbl) {
-        lv_label_set_text(g_dashWsLbl, wsConnected ? "Connected" : "Offline");
-        lv_obj_set_style_text_color(g_dashWsLbl, wsConnected ? C_GREEN : C_RED, 0);
-    }
-    if (g_dashNowLbl) lv_label_set_text(g_dashNowLbl, nowPlaying && *nowPlaying ? nowPlaying : "-");
-    updateDot(g_dashStatusDot, wsConnected);
+    _drawRadar(false, 0);
 
-    g_screen = Screen::DASHBOARD;
-    lv_scr_load(g_scrDash);
+    g_screen = Screen::SENSOR_DASH;
+    lv_scr_load(g_scrSensor);
+}
+
+// ── uiUpdateSensor ────────────────────────────────────────────────────────────
+
+void uiUpdateSensor(bool present, uint16_t distCm) {
+    if (!g_scrSensor) return;
+
+    _drawRadar(present, distCm);
+
+    if (g_sensPresenceLbl) {
+        lv_label_set_text(g_sensPresenceLbl, present ? "PRESENT" : "NO PERSON");
+        lv_obj_set_style_text_color(g_sensPresenceLbl,
+                                    present ? C_GREEN : C_MUTED, 0);
+    }
+    if (g_sensDistLbl) {
+        if (present && distCm > 0) {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.1f m", distCm / 100.0f);
+            lv_label_set_text(g_sensDistLbl, buf);
+            lv_obj_set_style_text_color(g_sensDistLbl, C_TEXT, 0);
+        } else {
+            lv_label_set_text(g_sensDistLbl, "---");
+            lv_obj_set_style_text_color(g_sensDistLbl, C_MUTED, 0);
+        }
+    }
 }
 
 // ── showSignage ───────────────────────────────────────────────────────────────
@@ -327,12 +462,8 @@ void showSignage(const char *scheduleName,
 // ── uiSetWsStatus ─────────────────────────────────────────────────────────────
 
 void uiSetWsStatus(bool connected) {
-    updateDot(g_dashStatusDot, connected);
+    updateDot(g_sensStatusDot, connected);
     updateDot(g_sigStatusDot,  connected);
-    if (g_dashWsLbl) {
-        lv_label_set_text(g_dashWsLbl, connected ? "Connected" : "Offline");
-        lv_obj_set_style_text_color(g_dashWsLbl, connected ? C_GREEN : C_RED, 0);
-    }
 }
 
 // ── uiSetBattery ──────────────────────────────────────────────────────────────
@@ -355,9 +486,9 @@ void uiSetBattery(int pct, bool charging) {
     else if (pct < 50)   col = C_AMBER;
     else                 col = C_MUTED;
 
-    if (g_dashBattLbl) {
-        lv_label_set_text(g_dashBattLbl, buf);
-        lv_obj_set_style_text_color(g_dashBattLbl, col, 0);
+    if (g_sensBattLbl) {
+        lv_label_set_text(g_sensBattLbl, buf);
+        lv_obj_set_style_text_color(g_sensBattLbl, col, 0);
     }
     if (g_sigBattLbl) {
         lv_label_set_text(g_sigBattLbl, buf);

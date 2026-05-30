@@ -10,9 +10,10 @@
 #define BTN_USER_PIN   21   // USER button (IO21)
 
 // ── mmWave sensor (Waveshare HMMD) ───────────────────────────────────────────
-// Sensor TX → ESP32 RX=44,  Sensor RX ← ESP32 TX=43
-#define MMWAVE_TX_PIN  43
-#define MMWAVE_RX_PIN  44
+// Physical wiring: Sensor TX → ESP32 IO43,  Sensor RX ← ESP32 IO44
+// So ESP32 RX=43 receives sensor TX, ESP32 TX=44 drives sensor RX
+#define MMWAVE_RX_PIN  43
+#define MMWAVE_TX_PIN  44
 
 // ── Identity ──────────────────────────────────────────────────────────────────
 #define FIRMWARE_VERSION   "1.0.0"

@@ -15,7 +15,7 @@
 enum class Screen {
     AP_PORTAL,
     PAIRING,
-    DASHBOARD,
+    SENSOR_DASH,
     SIGNAGE
 };
 
@@ -31,14 +31,11 @@ void showAPPortal(const char *apSSID);
 /** Show pairing code screen */
 void showPairing(const char *code);
 
-/**
- * Show dashboard: device counts + up to 3 "now playing" device names
- * wsConnected — controls status indicator
- */
-void showDashboard(const char *duid, const char *mac,
-                   const char *ip,   const char *ssid,
-                   const char *nowPlaying,
-                   bool wsConnected);
+/** Show mmWave sensor dashboard with live radar chart */
+void showSensorDashboard();
+
+/** Update sensor dashboard with latest detection data (call from loop) */
+void uiUpdateSensor(bool present, uint16_t distCm);
 
 /** Show signage info (schedule + now/next + WS status) */
 void showSignage(const char *scheduleName,

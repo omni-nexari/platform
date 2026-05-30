@@ -2250,7 +2250,7 @@ const Player = {
         // ----------------------------------------------------------------------
         try {
             logger.info('[NativeSync] startSyncPlay rect=' + rectX + ',' + rectY + ',' + rectW + ',' + rectH + ' rotation=' + rotation + ' groupID=' + groupId);
-            const handle = api.startSyncPlay(rectX, rectY, rectW, rectH, 1, rotation, onChange);
+            const handle = api.startSyncPlay(rectX, rectY, rectW, rectH, groupId, rotation, onChange);
             this._nativeSyncActive = true;
             this._nativeSyncGroupId = groupId;
             logger.info('[NativeSync] startSyncPlay invoked (groupID=' + groupId + ', handle=' + handle + ')');

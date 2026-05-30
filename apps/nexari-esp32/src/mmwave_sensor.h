@@ -26,16 +26,10 @@ public:
 
 private:
     MmwaveData _data;
-    uint8_t    _buf[64];
+    uint8_t    _buf[128];
     uint8_t    _bufLen = 0;
 
-    // Remove the first byte from the buffer (bad/unrecognised byte).
-    void _dropByte();
-    // Try to parse and consume a complete frame at the start of _buf.
-    // Returns true if a frame was consumed (caller should loop).
-    bool _tryParse();
-    void _handleNormalFrame(const uint8_t *data, uint16_t len);
-    void _handleReportFrame(const uint8_t *data, uint16_t len);
+    void _parseLine(const char *line);
 };
 
 extern MmwaveSensor mmwaveSensor;

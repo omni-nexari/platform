@@ -145,13 +145,9 @@ static void startWs() {
     g_wsRunning = true;
     wsClient.begin(storage.getApiHost(), storage.getApiPort(),
                    storage.getApiHttps(), storage.getDeviceToken());
-    // Fetch initial schedule then show dashboard
+    // Fetch initial schedule then show sensor dashboard
     doScheduleFetch();
-    showDashboard(g_duid.c_str(), g_mac.c_str(),
-                  WiFi.localIP().toString().c_str(),
-                  WiFi.SSID().c_str(),
-                  g_sched.nowPlaying.c_str(),
-                  wsClient.isConnected());
+    showSensorDashboard();
     doBatteryUpdate(); // show initial battery reading on boot
 }
 
@@ -162,13 +158,7 @@ static void doScheduleFetch() {
     g_lastSched = millis();
 
     // Refresh whichever screen is active
-    if (uiCurrentScreen() == Screen::DASHBOARD) {
-        showDashboard(g_duid.c_str(), g_mac.c_str(),
-                      WiFi.localIP().toString().c_str(),
-                      WiFi.SSID().c_str(),
-                      g_sched.nowPlaying.c_str(),
-                      wsClient.isConnected());
-    } else if (imagePlayer.isActive() || uiCurrentScreen() == Screen::SIGNAGE) {
+    if (imagePlayer.isActive() || uiCurrentScreen() == Screen::SIGNAGE) {
         if (g_sched.contentType == "image") {
             // Re-fetch image (content may have changed)
             imagePlayer.show(storage.getApiHost(), storage.getApiPort(),
@@ -210,14 +200,17 @@ static void doHealthCheck() {
 }
 
 static void doBatteryUpdate() {
-    // Always read directly — isBatteryConnect() can return false on this board
-    // even when a battery is fitted (AXP2101 quirk on T-Display S3 AMOLED).
-    int  pct = amoled.getBatteryPercent();
-    bool chg = amoled.isCharging();
-    // Sanity: treat obviously invalid readings as "no data"
-    if (pct < 0 || pct > 100) pct = -1;
-    uiSetBattery(pct, chg);
-    Logger::debug("[Batt] %d%% charging=%d", pct, (int)chg);
+    // T-Display-S3 AMOLED 1.91" has no PMU — battery voltage is read via
+    // ADC pin 4 with a /2 voltage divider. getBattVoltage() returns mV.
+    uint16_t mv  = amoled.getBattVoltage();
+    int      pct = -1;
+    if (mv >= 2500 && mv <= 4400) {   // valid LiPo range
+        pct = (int)map((long)mv, 3000L, 4200L, 0L, 100L);
+        pct = constrain(pct, 0, 100);
+    }
+    // No charging-status pin on this board; isCharging() will always be false.
+    uiSetBattery(pct, false);
+    Logger::debug("[Batt] %umV -> %d%%", (unsigned)mv, pct);
     g_lastBatt = millis();
 }
 
@@ -232,6 +225,15 @@ void loop() {
     }
 
     mmwaveSensor.update();
+    // Redraw sensor dashboard only when new data arrives
+    if (uiCurrentScreen() == Screen::SENSOR_DASH && !imagePlayer.isActive()) {
+        static uint32_t s_lastSensorTs = 0;
+        uint32_t ts = mmwaveSensor.data().lastUpdateMs;
+        if (ts != s_lastSensorTs) {
+            s_lastSensorTs = ts;
+            uiUpdateSensor(mmwaveSensor.isPresent(), mmwaveSensor.getDistanceCm());
+        }
+    }
     wifiManager.loop();
     buttonManager.loop();
 
@@ -289,14 +291,10 @@ void loop() {
     switch (action) {
         case BtnAction::TOGGLE_SCREEN:
             if (imagePlayer.isActive()) {
-                // Image mode → back to dashboard
+                // Image mode -> back to sensor dashboard
                 imagePlayer.clear();
-                showDashboard(g_duid.c_str(), g_mac.c_str(),
-                              WiFi.localIP().toString().c_str(),
-                              WiFi.SSID().c_str(),
-                              g_sched.nowPlaying.c_str(),
-                              wsClient.isConnected());
-            } else if (uiCurrentScreen() == Screen::DASHBOARD) {
+                showSensorDashboard();
+            } else if (uiCurrentScreen() == Screen::SENSOR_DASH) {
                 if (g_sched.contentType == "image") {
                     // Show image fullscreen; LVGL suspended while active
                     imagePlayer.show(storage.getApiHost(), storage.getApiPort(),
@@ -308,11 +306,7 @@ void loop() {
                                 wsClient.isConnected());
                 }
             } else if (uiCurrentScreen() == Screen::SIGNAGE) {
-                showDashboard(g_duid.c_str(), g_mac.c_str(),
-                              WiFi.localIP().toString().c_str(),
-                              WiFi.SSID().c_str(),
-                              g_sched.nowPlaying.c_str(),
-                              wsClient.isConnected());
+                showSensorDashboard();
             }
             break;
 
