@@ -51,6 +51,9 @@
 #define PAIR_POLL_MS             5000UL   // 5 s
 #define WS_RECONNECT_MS         10000UL   // 10 s
 
+// ── BLE scan ─────────────────────────────────────────────────────────────────
+#define BLE_SCAN_DURATION_SEC   5         // seconds per on-demand scan
+
 // ── AP / captive portal ───────────────────────────────────────────────────────
 #define AP_SSID_PREFIX  "NexariSetup-"
 #define AP_PORTAL_HOST  "192.168.4.1"

@@ -2,8 +2,10 @@
 #include <Arduino.h>
 #include <WebSocketsClient.h>
 #include <functional>
+#include <vector>
 #include "config.h"
 #include "logger.h"
+#include "ble_scanner.h"
 
 enum class WsState { DISCONNECTED, CONNECTING, CONNECTED };
 
@@ -44,6 +46,12 @@ public:
      * and connection type — populates the Info tab in the dashboard.
      */
     void sendNetworkInfo();
+
+    /**
+     * Send a ble_scan_result message containing the beacons discovered
+     * during the most recent BLE scan.
+     */
+    void sendBleScanResult(const std::vector<BleBeacon> &beacons);
 
 private:
     void _onEvent(WStype_t type, uint8_t *payload, size_t length);

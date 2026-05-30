@@ -107,6 +107,32 @@ void WsClient::sendNetworkInfo() {
                  (int)WiFi.RSSI());
 }
 
+// ── sendBleScanResult ─────────────────────────────────────────────────────────
+
+void WsClient::sendBleScanResult(const std::vector<BleBeacon> &beacons) {
+    if (!isConnected()) return;
+
+    JsonDocument doc;
+    doc["type"] = "ble_scan_result";
+    JsonArray arr = doc["payload"].to<JsonArray>();
+
+    for (const auto &b : beacons) {
+        JsonObject o = arr.add<JsonObject>();
+        o["uuid"] = b.uuid;
+        o["rssi"] = b.rssi;
+        if (b.name.length() > 0)  o["name"]  = b.name;
+        if (b.major >= 0) {
+            o["major"] = b.major;
+            o["minor"] = b.minor;
+        }
+    }
+
+    String msg;
+    serializeJson(doc, msg);
+    _ws.sendTXT(msg.c_str(), msg.length());
+    Logger::info("[WS] ble_scan_result sent: %d beacon(s)", (int)beacons.size());
+}
+
 // ── event handler ─────────────────────────────────────────────────────────────
 
 void WsClient::_onEvent(WStype_t type, uint8_t *payload, size_t length) {

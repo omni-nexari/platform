@@ -17,6 +17,7 @@
 #include "ui.h"
 #include "image_player.h"
 #include "mmwave_sensor.h"
+#include "ble_scanner.h"
 
 // ── Hardware ──────────────────────────────────────────────────────────────────
 // Non-static so image_player.cpp can extern it.
@@ -77,6 +78,9 @@ void setup() {
     // Buttons
     buttonManager.begin();
 
+    // BLE (init stack; does not start scanning yet)
+    bleScanner.begin();
+
     // DUID = "esp32-" + MAC lowercase no colons
     uint8_t mac[6];
     WiFi.macAddress(mac);
@@ -111,6 +115,11 @@ void setup() {
 
     // WS message handler
     wsClient.setOnMessage([](const String &type, const String &raw) {
+        if (type == "ble_scan") {
+            Logger::info("[WS] BLE scan command received");
+            bleScanner.startScan(BLE_SCAN_DURATION_SEC);
+            return;
+        }
         // Server sends "refresh_schedule" when content/playlist/schedule is published.
         // Also handle legacy event names from older server versions.
         if (type == "refresh_schedule" ||
@@ -253,6 +262,12 @@ void loop() {
     }
 
     uint32_t now = millis();
+
+    // BLE scan result drain
+    if (g_wsRunning && bleScanner.isComplete()) {
+        wsClient.sendBleScanResult(bleScanner.results());
+        bleScanner.reset();
+    }
 
     // Heartbeat
     if (g_wsRunning && wsClient.isConnected() &&
