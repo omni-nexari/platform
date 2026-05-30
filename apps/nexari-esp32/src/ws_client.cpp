@@ -1,6 +1,7 @@
 #include "ws_client.h"
 #include "logger.h"
 #include <ArduinoJson.h>
+#include <WiFi.h>
 
 WsClient wsClient;
 
@@ -78,6 +79,34 @@ void WsClient::sendHeartbeat(float tempC, uint32_t uptimeSec) {
     _ws.sendTXT(msg.c_str(), msg.length());
 }
 
+// ── sendNetworkInfo ──────────────────────────────────────────────────────────
+
+void WsClient::sendNetworkInfo() {
+    if (!isConnected()) return;
+
+    JsonDocument doc;
+    doc["type"] = "network_info";
+    JsonObject p = doc["payload"].to<JsonObject>();
+    p["ip"]             = WiFi.localIP().toString();
+    p["mac"]            = WiFi.macAddress();         // "AA:BB:CC:DD:EE:FF"
+    p["connectionType"] = "wifi";
+    p["wifiSsid"]       = WiFi.SSID();
+    p["wifiStrength"]   = WiFi.RSSI();               // dBm
+    // ESP32 serial = 64-bit eFuse MAC as hex string
+    char serial[17];
+    snprintf(serial, sizeof(serial), "%016llx", (unsigned long long)ESP.getEfuseMac());
+    p["serialNumber"]   = serial;
+
+    String msg;
+    serializeJson(doc, msg);
+    _ws.sendTXT(msg.c_str(), msg.length());
+    Logger::info("[WS] network_info sent: ip=%s mac=%s ssid=%s rssi=%d",
+                 WiFi.localIP().toString().c_str(),
+                 WiFi.macAddress().c_str(),
+                 WiFi.SSID().c_str(),
+                 (int)WiFi.RSSI());
+}
+
 // ── event handler ─────────────────────────────────────────────────────────────
 
 void WsClient::_onEvent(WStype_t type, uint8_t *payload, size_t length) {
@@ -85,6 +114,7 @@ void WsClient::_onEvent(WStype_t type, uint8_t *payload, size_t length) {
         case WStype_CONNECTED:
             _state = WsState::CONNECTED;
             Logger::info("[WS] Connected");
+            sendNetworkInfo();
             break;
 
         case WStype_DISCONNECTED:

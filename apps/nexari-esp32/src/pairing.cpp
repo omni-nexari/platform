@@ -63,12 +63,17 @@ void PairingClient::_doRequest() {
     }
     http.addHeader("Content-Type", "application/json");
 
-    // Build body: { duid, modelName, platform, firmwareVersion }
+    // Build body: { duid, modelName, platform, firmwareVersion, serialNumber }
     JsonDocument body;
     body["duid"]            = _duid;
     body["modelName"]       = MODEL_NAME;
     body["platform"]        = PLATFORM_NAME;
     body["firmwareVersion"] = FIRMWARE_VERSION;
+    // ESP32 serial number = chip eFuse MAC (64-bit, hex, no colons)
+    uint64_t chipId = ESP.getEfuseMac();
+    char serial[17];
+    snprintf(serial, sizeof(serial), "%016llx", chipId);
+    body["serialNumber"] = serial;
     String bodyStr;
     serializeJson(body, bodyStr);
 

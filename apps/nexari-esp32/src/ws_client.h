@@ -39,6 +39,12 @@ public:
      */
     void sendHeartbeat(float tempC, uint32_t uptimeSec);
 
+    /**
+     * Send a network_info message so the server stores MAC, IP, SSID
+     * and connection type — populates the Info tab in the dashboard.
+     */
+    void sendNetworkInfo();
+
 private:
     void _onEvent(WStype_t type, uint8_t *payload, size_t length);
 

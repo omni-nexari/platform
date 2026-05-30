@@ -27,7 +27,9 @@ public:
 private:
     MmwaveData _data;
     uint8_t    _buf[128];
-    uint8_t    _bufLen = 0;
+    uint8_t    _bufLen     = 0;
+    float      _smoothedCm = 0.0f;
+    bool       _smoothInit = false;
 
     void _parseLine(const char *line);
 };

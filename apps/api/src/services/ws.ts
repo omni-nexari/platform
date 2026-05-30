@@ -615,6 +615,7 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
         ...(ni.connectionType ? { connectionType: ni.connectionType } : {}),
         ...(ni.wifiSsid !== undefined ? { wifiSsid: ni.wifiSsid ?? null } : {}),
         ...(ni.wifiStrength !== undefined ? { wifiStrength: ni.wifiStrength ?? null } : {}),
+        ...(ni.serialNumber ? { serialNumber: ni.serialNumber } : {}),
         updatedAt: new Date(),
       })
       .where(eq(devices.id, deviceId));

@@ -48,10 +48,17 @@ void MmwaveSensor::_parseLine(const char *line) {
         _data.lastUpdateMs = millis();
         Logger::debug("[Mmwave] present=0");
     } else if (strncmp(line, "Range ", 6) == 0) {
-        int distCm = atoi(line + 6);
-        _data.distanceCm   = (uint16_t)(distCm > 0xFFFF ? 0xFFFF : distCm);
+        int raw      = atoi(line + 6);
+        int adjusted = raw + MMWAVE_DIST_OFFSET_CM;
+        if (adjusted < 0) adjusted = 0;
+        // Exponential moving average to smooth jitter
+        if (!_smoothInit) { _smoothedCm = (float)adjusted; _smoothInit = true; }
+        else _smoothedCm = MMWAVE_EMA_ALPHA * (float)adjusted
+                         + (1.0f - MMWAVE_EMA_ALPHA) * _smoothedCm;
+        _data.distanceCm   = (uint16_t)(_smoothedCm + 0.5f);
         _data.lastUpdateMs = millis();
-        Logger::debug("[Mmwave] dist=%ucm", _data.distanceCm);
+        Logger::debug("[Mmwave] raw=%dcm offset=%d smoothed=%ucm",
+                      raw, MMWAVE_DIST_OFFSET_CM, _data.distanceCm);
     }
     // Ignore unrecognised lines (version strings, blank lines, etc.)
 }

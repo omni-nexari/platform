@@ -15,6 +15,15 @@
 #define MMWAVE_RX_PIN  43
 #define MMWAVE_TX_PIN  44
 
+// ── mmWave calibration ────────────────────────────────────────────────────────
+// MMWAVE_DIST_OFFSET_CM: signed offset added to every reading (cm).
+//   Positive = sensor reads too low (add cm).  Negative = reads too high.
+//   Example: if standing 100 cm away and display shows 120, set to -20.
+#define MMWAVE_DIST_OFFSET_CM   0
+// MMWAVE_EMA_ALPHA: smoothing factor for exponential moving average (0..1).
+//   Lower = smoother but more lag.  1.0 = no smoothing (raw values).
+#define MMWAVE_EMA_ALPHA        0.25f
+
 // ── Identity ──────────────────────────────────────────────────────────────────
 #define FIRMWARE_VERSION   "1.0.0"
 #define PLATFORM_NAME      "esp32-amoled"
