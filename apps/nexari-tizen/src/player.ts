@@ -1988,7 +1988,9 @@ const Player = {
       });
     };
 
-    // Poll until the current video is ready (src set and can play), then send READY.
+    // Poll until the current video is ready (src set and can play), then send LOOP_READY.
+    // Using LOOP_READY (not READY) so the relay server barrier fires for the initial play
+    // the same way it does for subsequent loops — all devices must be ready before GO.
     const pollAndSendReady = (ws: WebSocket) => {
       if (stopped || readySent) return;
       const video = self._activeSyncVideo ||
@@ -1996,8 +1998,8 @@ const Player = {
           ?.querySelector('video') as HTMLVideoElement | null;
       if (video && (video.readyState >= 2 || video.src)) {
         readySent = true;
-        sendIfOpen(ws, { type: 'READY', groupId, deviceId });
-        logger.info('[SyncRelay] READY sent (item ' + currentItemIndex + ')');
+        sendIfOpen(ws, { type: 'LOOP_READY', groupId, deviceId });
+        logger.info('[SyncRelay] LOOP_READY sent (initial, item ' + currentItemIndex + ')');
       } else {
         setTimeout(() => pollAndSendReady(ws), 300);
       }
@@ -2021,16 +2023,30 @@ const Player = {
         if (video) {
           try { video.currentTime = 0; } catch {}
           video.play().catch(() => {});
-          // Schedule LOOP_READY ~800 ms before video ends.
-          const durMs = (video.duration || 10) * 1000;
-          if (loopTimer) clearTimeout(loopTimer);
-          loopTimer = setTimeout(() => {
-            if (!stopped) {
-              readySent = false;
-              sendIfOpen(ws as WebSocket, { type: 'LOOP_READY', groupId, deviceId });
-              logger.info('[SyncRelay] LOOP_READY sent');
-            }
-          }, Math.max(durMs - 800, 200));
+          // Arm the LOOP_READY timer based on actual video duration.
+          // Duration may not be available immediately if metadata is still loading,
+          // so we try immediately and fall back to the durationchange event.
+          if (loopTimer) { clearTimeout(loopTimer); loopTimer = null; }
+          const armLoopTimer = () => {
+            if (loopTimer) return; // already armed by a prior call
+            const dur = isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+            if (!dur) return; // not yet known — durationchange will retry
+            const remainingMs = Math.max(dur * 1000 - 800, 200);
+            loopTimer = setTimeout(() => {
+              if (!stopped) {
+                readySent = false;
+                sendIfOpen(ws as WebSocket, { type: 'LOOP_READY', groupId, deviceId });
+                logger.info('[SyncRelay] LOOP_READY sent (dur=' + dur.toFixed(1) + 's)');
+              }
+            }, remainingMs);
+            logger.info('[SyncRelay] loop timer armed ' + remainingMs + 'ms (dur=' + dur.toFixed(1) + 's)');
+          };
+          armLoopTimer();
+          if (!loopTimer) {
+            // Metadata not loaded yet — arm once it arrives.
+            video.addEventListener('durationchange', armLoopTimer, { once: true });
+            video.addEventListener('loadedmetadata',  armLoopTimer, { once: true });
+          }
         }
         logger.info('[SyncRelay] play triggered (item ' + currentItemIndex + ')');
       }, delay);
