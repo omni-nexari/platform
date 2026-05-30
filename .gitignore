@@ -44,3 +44,7 @@ apps/nexari-android/android/.gradle/
 apps/nexari-android/android/build/
 *.apk
 *.aab
+
+# ESP32
+apps/nexari-esp32/.pio/
+apps/nexari-esp32/firmware.bin
