@@ -306,6 +306,7 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
       connectionType: z.enum(['wifi', 'ethernet']).optional(),
       wifiSsid: z.string().optional(),
       wifiStrength: z.number().int().optional(),
+      serialNumber: z.string().optional(),
     }),
   }),
   z.object({
