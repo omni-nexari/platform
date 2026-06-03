@@ -95,6 +95,8 @@ import ManagementLogsPage from './pages/management/ManagementLogsPage.js';
 import ManagementReleasesPage from './pages/management/ManagementReleasesPage.js';
 import PricingManagementPage from './pages/superadmin/PricingManagementPage.js';
 import ManagementPricingPage from './pages/management/ManagementPricingPage.js';
+import MarketingPage from './pages/marketing/MarketingPage.js';
+import { TermsPage, PrivacyPage } from './pages/marketing/LegalPages.js';
 import OrgSupportPage from './pages/support/OrgSupportPage.js';
 import OrgSupportTicketDetailPage from './pages/support/OrgSupportTicketDetailPage.js';
 import AcceptManagementCompanyInvitePage from './pages/auth/AcceptManagementCompanyInvitePage.js';
@@ -282,6 +284,8 @@ function isMainPublicAuthPath(pathname: string) {
     || pathname.startsWith('/accept-invite/')
     || pathname.startsWith('/accept-management-company-invite/')
     || pathname.startsWith('/accept-client-org-invite/')
+    // Marketing / public pages — no session auth needed
+    || pathname.startsWith('/marketing')
     // Public device display pages — no session auth needed
     || pathname.startsWith('/kiosk/')
     || pathname.startsWith('/kitchen/')
@@ -356,6 +360,11 @@ export default function App() {
       <Route path="/kitchen/:wsId" element={<DisplayPinGateWrapper><KitchenDisplayPage /></DisplayPinGateWrapper>} />
       {/* QR menu — no auth, no PIN */}
       <Route path="/qr/:wsId/:menuId" element={<QrMenuPage />} />
+
+      {/* Marketing pages — public, no auth */}
+      <Route path="/marketing" element={<MarketingPage />} />
+      <Route path="/marketing/terms" element={<TermsPage />} />
+      <Route path="/marketing/privacy" element={<PrivacyPage />} />
 
       {/* Public auth */}
       <Route path="/login" element={<LoginPage />} />
