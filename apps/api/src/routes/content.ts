@@ -842,10 +842,10 @@ export async function contentRoutes(app: FastifyInstance) {
       theme?: string;
       duration?: number;
       screenCount?: number;
-      orientation?: string;
       screenSelection?: string;
       splitStrategy?: string;
       pagination?: { mode?: string; itemsPerPage?: number; pageSeconds?: number };
+      siblingCount?: number;
     };
 
     const wsId = body.workspaceId;
@@ -863,8 +863,10 @@ export async function contentRoutes(app: FastifyInstance) {
     const initialApprovalStateMb = wsSettingsMb.approvalRequired && !APPROVE_ROLES.has(user.role) ? 'draft' : 'approved';
 
     const screenCount = Math.max(1, Math.min(6, Number.isFinite(body.screenCount) ? Number(body.screenCount) : 1));
+    const siblingCount = Math.max(0, Math.min(5, Number.isFinite(body.siblingCount) ? Number(body.siblingCount) : 0));
+    const groupId = siblingCount > 0 ? crypto.randomUUID() : null;
 
-    const buildMetadata = () => JSON.stringify({
+    const buildMetadata = (screenIndex: number, gId: string | null) => JSON.stringify({
       posWorkspaceId:       body.posWorkspaceId,
       layout:               body.layout ?? '2-col',
       showPrices:           body.showPrices         ?? true,
@@ -885,7 +887,6 @@ export async function contentRoutes(app: FastifyInstance) {
       categoryHeaderStyle:  body.categoryHeaderStyle ?? 'block',
       theme:                body.theme              ?? 'midnight',
       screenCount,
-      orientation:          body.orientation === 'portrait' ? 'portrait' : 'landscape',
       screenSelection:      body.screenSelection    ?? 'playlist',
       splitStrategy:        body.splitStrategy      ?? 'by-category',
       pagination: {
@@ -893,6 +894,8 @@ export async function contentRoutes(app: FastifyInstance) {
         itemsPerPage: body.pagination?.itemsPerPage ?? 8,
         pageSeconds:  body.pagination?.pageSeconds  ?? 10,
       },
+      groupId: gId,
+      screenIndex,
     });
 
     const [item] = await db.insert(contentItems).values({
@@ -903,10 +906,28 @@ export async function contentRoutes(app: FastifyInstance) {
       duration:    body.duration ?? 30,
       status:      'ready',
       approvalState: initialApprovalStateMb,
-      metadata:    buildMetadata(),
+      metadata:    buildMetadata(0, groupId),
     }).returning();
 
-    return reply.status(201).send(item!);
+    // Create sibling items (screens 2…N) when siblings mode is used
+    const siblingIds: string[] = [];
+    if (siblingCount > 0 && groupId) {
+      for (let i = 1; i <= siblingCount; i++) {
+        const [sib] = await db.insert(contentItems).values({
+          workspaceId: wsId,
+          uploadedBy:  user.sub,
+          type:        'menu_board',
+          name:        `${body.name.trim()} – Screen ${i + 1}`,
+          duration:    body.duration ?? 30,
+          status:      'ready',
+          approvalState: initialApprovalStateMb,
+          metadata:    buildMetadata(i, groupId),
+        }).returning();
+        siblingIds.push(sib!.id);
+      }
+    }
+
+    return reply.status(201).send({ ...item!, siblingIds });
   });
 
   // ── PATCH /content/:id/menu-board ─────────────────────────────────────────
@@ -936,7 +957,6 @@ export async function contentRoutes(app: FastifyInstance) {
       theme?: string;
       duration?: number;
       screenCount?: number;
-      orientation?: string;
       screenSelection?: string;
       splitStrategy?: string;
       pagination?: { mode?: string; itemsPerPage?: number; pageSeconds?: number };
@@ -977,7 +997,6 @@ export async function contentRoutes(app: FastifyInstance) {
       categoryHeaderStyle:  body.categoryHeaderStyle ?? current.categoryHeaderStyle,
       theme:                body.theme               ?? current.theme,
       screenCount:          body.screenCount         ?? current.screenCount,
-      orientation:          body.orientation !== undefined ? (body.orientation === 'portrait' ? 'portrait' : 'landscape') : (current.orientation ?? 'landscape'),
       screenSelection:      body.screenSelection     ?? current.screenSelection,
       splitStrategy:        body.splitStrategy       ?? current.splitStrategy,
       pagination:           body.pagination ? { ...current.pagination, ...body.pagination } : current.pagination,

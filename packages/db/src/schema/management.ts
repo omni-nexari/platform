@@ -2,6 +2,7 @@ import {
   pgTable,
   uuid,
   text,
+  numeric,
   timestamp,
 } from 'drizzle-orm/pg-core';
 
@@ -24,6 +25,13 @@ export const managementCompanies = pgTable('management_companies', {
   headingFontPreset: text('heading_font_preset'),
   bodyFontPreset: text('body_font_preset'),
   loginBackgroundUrl: text('login_background_url'),
+  // Billing model for client orgs under this company:
+  //   reseller  — Nexari invoices SI at wholesale; SI bills their clients
+  //   direct    — Nexari bills clients directly via Stripe; SI earns commission
+  //   flexible  — model chosen per-org via billingOwnerCompanyId on organisations
+  billingModel: text('billing_model').notNull().default('flexible'),
+  stripeCustomerId: text('stripe_customer_id'),            // used in reseller model
+  defaultCommissionPct: numeric('default_commission_pct', { precision: 5, scale: 2 }),
   // bare UUID — FK enforced by migration; avoids circular import with auth.ts
   createdByOwnerId: uuid('created_by_owner_id'),
   suspendedAt: timestamp('suspended_at', { withTimezone: true }),

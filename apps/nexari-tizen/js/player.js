@@ -2190,10 +2190,11 @@ const Player = {
                 const isError = (typeof code === 'number' && code !== 0) ||
                     (errName && errName !== 'success');
                 if (isError) {
-                    logger.warn('[NativeSync] onChange code=' + code + ' err=' + errName + ' msg=' + errMsg);
+                    logger.warn('[NativeSync] onChange code=' + code + ' err=' + errName + ' msg=' + errMsg + ' data=' + JSON.stringify(data));
                 }
                 else {
-                    logger.debug('[NativeSync] onChange code=' + code + ' data=' + payload);
+                    // Log at info (not debug) so firmware sync events reach remote logs.
+                    logger.info('[NativeSync] onChange code=' + code + ' err=' + errName + ' data=' + JSON.stringify(data));
                 }
             }
             catch (_) { }
@@ -4777,6 +4778,11 @@ const Player = {
                 this.ntpOffset = Math.round(nextOffset);
                 this.lastNtpSync = Date.now();
                 logger.info(`NTP sync complete: offset=${Math.round(nextOffset)}ms (raw=${Math.round(best.offset)}ms), bestRTT=${Math.round(best.rtt)}ms, samples=${samples.length}${delta > NTP_SNAP_THRESHOLD_MS ? ' [SNAPPED]' : ''}`);
+                // Warn when the TV system clock is so far off that Samsung b2bsyncplay
+                // firmware (which uses the system NTP for peer coordination) may fail.
+                if (Math.abs(nextOffset) > 60000) {
+                    logger.warn(`[NativeSync] WARNING: system clock offset=${Math.round(nextOffset / 1000)}s — Samsung b2bsyncplay requires TVs to share the same NTP time. Please enable auto clock sync on this TV (Settings → General → System Manager → Time → Auto Clock Set).`);
+                }
             }
             catch (error) {
                 logger.error('Failed to sync time with server:', error);

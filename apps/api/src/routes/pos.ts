@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { and, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
 import * as uberEatsLib from '../lib/uber-eats.js';
 import { z } from 'zod';
 import path from 'node:path';
@@ -26,6 +26,7 @@ import {
   posLoyaltyEvents,
   posExpenses,
   posPurchaseOrders,
+  posMenuSchedules,
   devices,
   deviceHeartbeats,
   workspaces,
@@ -1577,20 +1578,65 @@ export async function posRoutes(app: FastifyInstance) {
   });
 
   app.post('/mgmt/items', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const body = req.body as { categoryId: string; name: string; priceCents: number; description?: string | null };
+    const body = req.body as {
+      categoryId: string; name: string; priceCents: number; description?: string | null;
+      tags?: string[];
+      allergens?: string[];
+      nutritionInfo?: { calories?: number; fatG?: number; carbsG?: number; proteinG?: number; sodiumMg?: number } | null;
+      nameI18n?: Record<string, string>;
+      descriptionI18n?: Record<string, string>;
+      inventoryCount?: number | null;
+      autoHideWhenEmpty?: boolean;
+      modifiers?: { id: string; name: string; required: boolean; maxSelect: number; options: { id: string; name: string; priceCents: number }[] }[];
+    };
     const [item] = await db
       .insert(posItems)
-      .values({ categoryId: body.categoryId, name: body.name, priceCents: body.priceCents, description: body.description ?? null })
+      .values({
+        categoryId: body.categoryId,
+        name: body.name,
+        priceCents: body.priceCents,
+        description: body.description ?? null,
+        ...(body.tags ? { tags: body.tags } : {}),
+        ...(body.allergens ? { allergens: body.allergens } : {}),
+        ...(body.nutritionInfo !== undefined ? { nutritionInfo: body.nutritionInfo } : {}),
+        ...(body.nameI18n ? { nameI18n: body.nameI18n } : {}),
+        ...(body.descriptionI18n ? { descriptionI18n: body.descriptionI18n } : {}),
+        ...(body.inventoryCount !== undefined ? { inventoryCount: body.inventoryCount } : {}),
+        ...(body.autoHideWhenEmpty !== undefined ? { autoHideWhenEmpty: body.autoHideWhenEmpty } : {}),
+        ...(body.modifiers ? { modifiers: body.modifiers } : {}),
+      })
       .returning();
     return reply.status(201).send(item);
   });
 
   app.patch('/mgmt/items/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = req.body as { name?: string; priceCents?: number; description?: string | null; isAvailable?: boolean; imageUrl?: string | null; tags?: string[] };
+    const body = req.body as {
+      name?: string; priceCents?: number; description?: string | null;
+      isAvailable?: boolean; imageUrl?: string | null; tags?: string[];
+      unavailableReason?: string | null;
+      allergens?: string[];
+      nutritionInfo?: { calories?: number; fatG?: number; carbsG?: number; proteinG?: number; sodiumMg?: number } | null;
+      nameI18n?: Record<string, string>;
+      descriptionI18n?: Record<string, string>;
+      inventoryCount?: number | null;
+      autoHideWhenEmpty?: boolean;
+      modifiers?: { id: string; name: string; required: boolean; maxSelect: number; options: { id: string; name: string; priceCents: number }[] }[];
+    };
+
+    // Item "86" bookkeeping: stamp/clear unavailableSince + reason on toggle
+    const patch: Record<string, unknown> = { ...body, updatedAt: new Date() };
+    if (body.isAvailable === false) {
+      patch['unavailableSince'] = new Date();
+      patch['unavailableReason'] = body.unavailableReason ?? null;
+    } else if (body.isAvailable === true) {
+      patch['unavailableSince'] = null;
+      patch['unavailableReason'] = null;
+    }
+
     const [updated] = await db
       .update(posItems)
-      .set({ ...body, updatedAt: new Date() })
+      .set(patch)
       .where(eq(posItems.id, id))
       .returning();
     if (!updated) return reply.status(404).send({ error: 'Item not found' });
@@ -1601,6 +1647,232 @@ export async function posRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     await db.update(posItems).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(posItems.id, id));
     return reply.status(204).send();
+  });
+
+  // ─── Bulk CSV import ─────────────────────────────────────────────────────────
+  // Accepts pre-parsed rows from the client (flexible column mapping done in UI).
+  // Finds-or-creates categories by name, then batch-inserts items.
+  app.post('/mgmt/csv-import', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const body = req.body as {
+      menuId: string;
+      rows: { name?: string; priceCents?: number; categoryName?: string; description?: string | null }[];
+    };
+    if (!body.menuId) return reply.status(400).send({ error: 'menuId required' });
+    if (!Array.isArray(body.rows) || body.rows.length === 0) {
+      return reply.status(400).send({ error: 'rows required' });
+    }
+
+    const menu = await db.query.posMenus.findFirst({
+      where: and(eq(posMenus.id, body.menuId), isNull(posMenus.deletedAt)),
+      columns: { id: true },
+    });
+    if (!menu) return reply.status(404).send({ error: 'Menu not found' });
+
+    // Pre-load existing categories for this menu (case-insensitive name match)
+    const existingCats = await db.query.posCategories.findMany({
+      where: and(eq(posCategories.menuId, body.menuId), isNull(posCategories.deletedAt)),
+      columns: { id: true, name: true },
+    });
+    const catByName = new Map<string, string>();
+    for (const c of existingCats) catByName.set(c.name.trim().toLowerCase(), c.id);
+
+    const errors: { row: number; reason: string }[] = [];
+    let created = 0;
+    let skipped = 0;
+
+    for (let i = 0; i < body.rows.length; i++) {
+      const row = body.rows[i]!;
+      const name = (row.name ?? '').trim();
+      if (!name) {
+        skipped++;
+        errors.push({ row: i + 1, reason: 'missing name' });
+        continue;
+      }
+      const priceCents = Number.isFinite(row.priceCents) ? Math.max(0, Math.round(Number(row.priceCents))) : 0;
+      const catName = (row.categoryName ?? 'Uncategorized').trim() || 'Uncategorized';
+      const catKey = catName.toLowerCase();
+
+      let categoryId = catByName.get(catKey);
+      if (!categoryId) {
+        const [cat] = await db
+          .insert(posCategories)
+          .values({ menuId: body.menuId, name: catName, sortOrder: existingCats.length + catByName.size })
+          .returning({ id: posCategories.id });
+        if (!cat) { skipped++; errors.push({ row: i + 1, reason: 'category create failed' }); continue; }
+        categoryId = cat.id;
+        catByName.set(catKey, categoryId);
+      }
+
+      try {
+        await db.insert(posItems).values({
+          categoryId,
+          name,
+          priceCents,
+          description: row.description?.trim() || null,
+        });
+        created++;
+      } catch {
+        skipped++;
+        errors.push({ row: i + 1, reason: 'insert failed' });
+      }
+    }
+
+    return reply.send({ created, skipped, errors });
+  });
+
+  // ─── Menu Schedules (day-part switching) ─────────────────────────────────────
+
+  // GET /pos/mgmt/schedules?workspaceId=...  → all schedules for workspace
+  app.get('/mgmt/schedules', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+    const schedules = await db
+      .select()
+      .from(posMenuSchedules)
+      .where(eq(posMenuSchedules.workspaceId, workspaceId));
+    return reply.send(schedules);
+  });
+
+  // POST /pos/mgmt/schedules  → create schedule
+  app.post('/mgmt/schedules', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const body = req.body as {
+      menuId: string; workspaceId: string; label: string;
+      startTime: string; endTime: string;
+      dayOfWeek?: number[] | null; isActive?: boolean;
+    };
+    if (!body.menuId || !body.workspaceId || !body.label || !body.startTime || !body.endTime) {
+      return reply.status(400).send({ error: 'menuId, workspaceId, label, startTime, endTime required' });
+    }
+    const [schedule] = await db
+      .insert(posMenuSchedules)
+      .values({
+        menuId: body.menuId,
+        workspaceId: body.workspaceId,
+        label: body.label,
+        startTime: body.startTime,
+        endTime: body.endTime,
+        dayOfWeek: body.dayOfWeek ?? null,
+        isActive: body.isActive ?? true,
+      })
+      .returning();
+    return reply.status(201).send(schedule);
+  });
+
+  // PATCH /pos/mgmt/schedules/:id
+  app.patch('/mgmt/schedules/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as {
+      menuId?: string; label?: string; startTime?: string; endTime?: string;
+      dayOfWeek?: number[] | null; isActive?: boolean;
+    };
+    const [updated] = await db
+      .update(posMenuSchedules)
+      .set({ ...body, updatedAt: new Date() })
+      .where(eq(posMenuSchedules.id, id))
+      .returning();
+    if (!updated) return reply.status(404).send({ error: 'Schedule not found' });
+    return reply.send(updated);
+  });
+
+  // DELETE /pos/mgmt/schedules/:id
+  app.delete('/mgmt/schedules/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await db.delete(posMenuSchedules).where(eq(posMenuSchedules.id, id));
+    return reply.status(204).send();
+  });
+
+  // GET /pos/active-menu?workspaceId=...
+  // Returns the menuId of the schedule whose time window covers the current server time.
+  // Falls back to the workspace's first active menu if no schedule matches.
+  app.get('/active-menu', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { workspaceId } = req.query as { workspaceId?: string };
+    if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
+
+    const now = new Date();
+    const dow = now.getDay(); // 0=Sun
+    const hhmm = now.toTimeString().slice(0, 5); // "HH:MM"
+
+    const schedules = await db
+      .select()
+      .from(posMenuSchedules)
+      .where(and(eq(posMenuSchedules.workspaceId, workspaceId), eq(posMenuSchedules.isActive, true)));
+
+    // Find a matching schedule (dayOfWeek null = any day; compare time strings lexicographically)
+    const match = schedules.find((s) => {
+      const dayOk = !s.dayOfWeek || (s.dayOfWeek as number[]).includes(dow);
+      const timeOk = hhmm >= s.startTime && hhmm < s.endTime;
+      return dayOk && timeOk;
+    });
+
+    if (match) return reply.send({ menuId: match.menuId, source: 'schedule' });
+
+    // Fallback: first active menu for workspace
+    const menus = await db
+      .select({ id: posMenus.id })
+      .from(posMenus)
+      .where(and(eq(posMenus.workspaceId, workspaceId), eq(posMenus.isActive, true), isNull(posMenus.deletedAt)))
+      .limit(1);
+    const menuId = menus[0]?.id ?? null;
+    return reply.send({ menuId, source: 'fallback' });
+  });
+
+  // ─── QR Menu — public (no auth) ──────────────────────────────────────────────
+  // GET /pos/qr-menu/:wsId/:menuId
+  // Returns full menu data suitable for the QR code scan page (phone-friendly).
+  // Filters out: deleted, unavailable, and auto-hidden sold-out items.
+  // Accepts optional ?lang=fr query param (falls back to "en" / primary name).
+  app.get('/qr-menu/:wsId/:menuId', async (req, reply) => {
+    const { wsId, menuId } = req.params as { wsId: string; menuId: string };
+
+    const menu = await db.query.posMenus.findFirst({
+      where: and(eq(posMenus.id, menuId), eq(posMenus.workspaceId, wsId), isNull(posMenus.deletedAt), eq(posMenus.isActive, true)),
+      columns: { id: true, name: true, description: true, currency: true },
+    });
+    if (!menu) return reply.status(404).send({ error: 'Menu not found' });
+
+    const categories = await db.query.posCategories.findMany({
+      where: and(eq(posCategories.menuId, menuId), isNull(posCategories.deletedAt)),
+      orderBy: (t, { asc }) => [asc(t.sortOrder), asc(t.createdAt)],
+      columns: { id: true, name: true, description: true, color: true, sortOrder: true },
+    });
+
+    // Fetch all items for all categories in one query, then filter in-memory
+    const catIds = categories.map((c) => c.id);
+    const allItems = catIds.length > 0
+      ? await db.query.posItems.findMany({
+          where: and(
+            inArray(posItems.categoryId, catIds),
+            isNull(posItems.deletedAt),
+            eq(posItems.isAvailable, true),
+            // Auto-hide: exclude items where autoHideWhenEmpty=true AND inventoryCount=0
+            or(
+              ne(posItems.autoHideWhenEmpty, true),
+              ne(posItems.inventoryCount!, 0),
+            ),
+          ),
+          orderBy: (t, { asc }) => [asc(t.sortOrder), asc(t.createdAt)],
+          columns: {
+            id: true, categoryId: true, name: true, nameI18n: true,
+            description: true, descriptionI18n: true, priceCents: true,
+            imageUrl: true, tags: true, allergens: true, nutritionInfo: true,
+          },
+        })
+      : [];
+
+    const itemsByCat = new Map<string, typeof allItems>();
+    for (const item of allItems) {
+      const list = itemsByCat.get(item.categoryId) ?? [];
+      list.push(item);
+      itemsByCat.set(item.categoryId, list);
+    }
+
+    const result = {
+      menu,
+      categories: categories
+        .map((cat) => ({ ...cat, items: itemsByCat.get(cat.id) ?? [] }))
+        .filter((cat) => cat.items.length > 0),
+    };
+    return reply.send(result);
   });
 
   // ─── Menu PATCH / DELETE ─────────────────────────────────────────────────────

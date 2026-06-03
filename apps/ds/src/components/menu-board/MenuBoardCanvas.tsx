@@ -14,6 +14,7 @@ export interface MenuBoardCanvasMenuItem {
   description?: string | null;
   priceCents: number;
   imageUrl: string | null;
+  allergens?: string[];
 }
 
 export interface MenuBoardCanvasCategory {
@@ -177,6 +178,13 @@ function renderItemRow(
         <span style={{ fontSize: 12 * s, fontWeight: 600, color: cfg.textColor, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
         {cfg.showDescription && item.description && (
           <span style={{ fontSize: 9 * s, color: cfg.textColor, opacity: 0.7, lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description}</span>
+        )}
+        {item.allergens && item.allergens.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 * s }}>
+            {item.allergens.map((a) => (
+              <span key={a} style={{ fontSize: 7 * s, padding: `${1 * s}px ${4 * s}px`, borderRadius: 999, background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>{a}</span>
+            ))}
+          </div>
         )}
       </div>
       {cfg.showPrices && (

@@ -7,6 +7,7 @@ import {
   timestamp,
   jsonb,
   index,
+  time,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 import { organisations } from './auth.js';
@@ -71,9 +72,24 @@ export const posItems = pgTable(
     // Price stored as INTEGER cents (e.g. 1099 = $10.99) to avoid float issues
     priceCents:   integer('price_cents').notNull().default(0),
     isAvailable:  boolean('is_available').notNull().default(true),
+    // Item "86" — optional reason + timestamp when an item is marked unavailable
+    unavailableReason: text('unavailable_reason'),
+    unavailableSince:  timestamp('unavailable_since', { withTimezone: true }),
     sortOrder:    integer('sort_order').notNull().default(0),
     // Freeform tags: ["vegan", "gluten-free", "spicy", "popular"]
     tags:         jsonb('tags').$type<string[]>().default([]),
+    // Allergen declarations — free-form string[] (Canadian SFCR presets + custom)
+    allergens:    jsonb('allergens').$type<string[]>().default([]),
+    // Nutrition info snapshot (optional, calories per serving etc.)
+    nutritionInfo: jsonb('nutrition_info').$type<{
+      calories?: number; fatG?: number; carbsG?: number; proteinG?: number; sodiumMg?: number;
+    } | null>().default(null),
+    // Phase 3 — bilingual names/descriptions (keys are IETF lang codes, e.g. "en", "fr")
+    nameI18n:          jsonb('name_i18n').$type<Record<string, string>>().default({}),
+    descriptionI18n:   jsonb('description_i18n').$type<Record<string, string>>().default({}),
+    // Phase 3 — inventory tracking & auto-hide when sold out (null = not tracked)
+    inventoryCount:    integer('inventory_count'),
+    autoHideWhenEmpty: boolean('auto_hide_when_empty').notNull().default(false),
     // Modifier groups as JSON for now (upsell / add-on options)
     modifiers:    jsonb('modifiers').$type<{
       id: string;
@@ -427,6 +443,30 @@ export const posPayments = pgTable('pos_payments', {
 // ─────────────────────────────────────────────────────────────────────────────
 // Relations
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// POS Menu Schedules — day-part / time-of-day menu switching
+// ─────────────────────────────────────────────────────────────────────────────
+export const posMenuSchedules = pgTable(
+  'pos_menu_schedules',
+  {
+    id:          uuid('id').primaryKey().defaultRandom(),
+    menuId:      uuid('menu_id').notNull().references(() => posMenus.id, { onDelete: 'cascade' }),
+    workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id),
+    label:       text('label').notNull(),   // e.g. 'Breakfast', 'Lunch', 'Dinner', 'Happy Hour'
+    // null dayOfWeek = applies every day; otherwise [0=Sun,1=Mon,...,6=Sat]
+    dayOfWeek:   jsonb('day_of_week').$type<number[] | null>().default(null),
+    startTime:   time('start_time').notNull(),   // HH:MM
+    endTime:     time('end_time').notNull(),      // HH:MM
+    isActive:    boolean('is_active').notNull().default(true),
+    createdAt:   timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt:   timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('idx_pos_menu_schedules_workspace').on(t.workspaceId),
+    index('idx_pos_menu_schedules_menu').on(t.menuId),
+  ],
+);
+
 export const posOrdersRelations = relations(posOrders, ({ many }) => ({
   items: many(posOrderItems),
 }));

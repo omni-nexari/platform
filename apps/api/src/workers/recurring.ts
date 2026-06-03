@@ -20,6 +20,7 @@ import {
   runSensorReadingCleanup,
   runWebhookDeliveryCleanup,
 } from '../services/jobs.js';
+import { runScreenUsageReport } from '../routes/billing.js';
 
 export interface RecurringJobData {
   name: string;
@@ -33,6 +34,7 @@ const HANDLERS: Record<string, () => Promise<void>> = {
   'play-events-partition':   runPlayEventsPartition,
   'sensor-reading-cleanup':  runSensorReadingCleanup,
   'webhook-delivery-cleanup': runWebhookDeliveryCleanup,
+  'screen-usage-report':       runScreenUsageReport,
 };
 
 /** Cron schedules — UTC. */
@@ -43,6 +45,7 @@ const SCHEDULES: Record<string, string> = {
   'play-events-partition':    '0 2 * * *',     // 02:00 UTC
   'sensor-reading-cleanup':   '0 4 * * *',     // 04:00 UTC
   'webhook-delivery-cleanup': '0 5 * * *',     // 05:00 UTC
+  'screen-usage-report':       '0 * * * *',     // hourly — report metered screen counts to Stripe
 };
 
 /** Register one BullMQ repeatable per recurring job. Idempotent. */

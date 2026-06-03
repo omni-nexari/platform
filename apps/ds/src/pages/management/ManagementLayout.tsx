@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
-import { Building2, BarChart2, Bell, LogOut, LayoutDashboard, Palette, Menu, X, ScrollText, MessageSquare, PackageCheck } from 'lucide-react';
+import { Building2, BarChart2, Bell, LogOut, LayoutDashboard, Palette, Menu, X, ScrollText, MessageSquare, PackageCheck, Tag } from 'lucide-react';
 import { saApi, useSAStore } from '../../lib/superadmin-auth.js';
 import {
   applyManagementBrandingDocument,
@@ -12,6 +12,7 @@ const NAV = [
   { to: '/management', icon: LayoutDashboard, label: 'Dashboard', end: true as const },
   { to: '/management/orgs', icon: Building2, label: 'Client Organisations', end: false as const },
   { to: '/management/analytics', icon: BarChart2, label: 'Analytics', end: false as const },
+  { to: '/management/pricing', icon: Tag, label: 'Pricing', end: false as const },
   { to: '/management/logs', icon: ScrollText, label: 'Logs', end: false as const },
   { to: '/management/releases', icon: PackageCheck, label: 'App Releases', end: false as const },
   { to: '/management/notifications', icon: Bell, label: 'Notifications', end: false as const },

@@ -56,6 +56,8 @@ import {
   XCircle,
   ArrowDownToLine,
   ChevronRight,
+  CreditCard,
+  Receipt,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
@@ -70,6 +72,7 @@ import {
   SectionCardBody,
   Skeleton,
   ToggleSwitch,
+  EmptyState,
 } from '../../components/UiPrimitives.js';
 import { useTheme } from '../../contexts/ThemeContext.js';
 
@@ -149,6 +152,7 @@ type SectionId =
   | 'general'
   | 'security'
   | 'organization'
+  | 'billing'
   | 'workspace'
   | 'tags'
   | 'emergency'
@@ -175,6 +179,7 @@ const SECTIONS: {
   { id: 'general',      label: 'General',         icon: User,          group: 'Account' },
   { id: 'security',     label: 'Security',         icon: Shield,        group: 'Account' },
   { id: 'organization', label: 'Organization',     icon: Building2,     group: 'Organization' },
+  { id: 'billing',      label: 'Billing',          icon: CreditCard,    group: 'Organization' },
   { id: 'workspace',    label: 'Workspace',        icon: LayoutGrid,    group: 'Workspace' },
   { id: 'tags',         label: 'Tags',             icon: Tag,           group: 'Workspace' },
   { id: 'emergency',    label: 'Emergency Alert',  icon: AlertTriangle, group: 'Workspace' },
@@ -196,6 +201,7 @@ const SECTION_LABELS: Record<SectionId, string> = {
   general:          'General',
   security:         'Security',
   organization:     'Organization',
+  billing:          'Billing',
   workspace:        'Workspace',
   tags:             'Tags',
   emergency:        'Emergency Alert',
@@ -4649,6 +4655,319 @@ function PosUberEatsSection({ wsId }: { wsId: string | null }) {
   );
 }
 
+// ─── Billing section ─────────────────────────────────────────────────────────
+
+interface BillingSubscription {
+  subscription: {
+    id: string;
+    planId: string | null;
+    status: string;
+    billingModel: string;
+    currency: string | null;
+    stripeCustomerId: string | null;
+    stripeSubscriptionId: string | null;
+    currentPeriodStart: string | null;
+    currentPeriodEnd: string | null;
+    trialEndsAt: string | null;
+    trialScreenLimit: number | null;
+    cancelAtPeriodEnd: boolean;
+    cancelledAt: string | null;
+    createdAt: string;
+  };
+  plan: { id: string; planKey: string; name: string; screensIncluded: number; billingPeriod: string } | null;
+  price: { amountCents: number; currency: string; extraScreenCents: number } | null;
+}
+
+interface Invoice {
+  id: string;
+  amountDue: number;
+  amountPaid: number;
+  currency: string;
+  status: string;
+  invoicePdf: string | null;
+  hostedInvoiceUrl: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+  createdAt: string;
+}
+
+const SUB_STATUS_TONES: Record<string, 'success' | 'warning' | 'danger' | 'accent' | 'neutral'> = {
+  active:   'success',
+  trialing: 'accent',
+  past_due: 'warning',
+  canceled: 'danger',
+  unpaid:   'danger',
+  paused:   'neutral',
+};
+
+const INVOICE_STATUS_TONES: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> = {
+  paid:          'success',
+  open:          'warning',
+  void:          'neutral',
+  uncollectible: 'danger',
+};
+
+function formatBillingDate(iso: string | null) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function formatBillingCents(cents: number, currency: string) {
+  return new Intl.NumberFormat('en-CA', { style: 'currency', currency }).format(cents / 100);
+}
+
+function trialDaysLeft(trialEndsAt: string | null): number {
+  if (!trialEndsAt) return 0;
+  const diff = new Date(trialEndsAt).getTime() - Date.now();
+  return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+}
+
+function BillingSection() {
+  const user = useAuthStore((s) => s.user);
+  const isOwner = user?.orgRole === 'owner' || user?.orgRole === 'prime_owner';
+
+  const { data: billingData, isLoading: loadingSub } = useQuery<BillingSubscription>({
+    queryKey: ['billing-subscription'],
+    queryFn: () => api.get('/billing/subscription'),
+    enabled: isOwner,
+  });
+
+  const { data: invoices = [], isLoading: loadingInvoices } = useQuery<Invoice[]>({
+    queryKey: ['billing-invoices'],
+    queryFn: () => api.get('/billing/invoices'),
+    enabled: isOwner && !!billingData?.subscription?.stripeSubscriptionId,
+  });
+
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [portalLoading, setPortalLoading] = useState(false);
+
+  async function handleCheckout() {
+    if (!billingData?.plan?.id) return;
+    setCheckoutLoading(true);
+    try {
+      const res = await api.post<{ url: string }>('/billing/checkout', {
+        planId: billingData.plan.id,
+        priceId: billingData.price ? undefined : undefined,
+        successUrl: window.location.href,
+        cancelUrl: window.location.href,
+      });
+      window.location.href = res.url;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create checkout session');
+      setCheckoutLoading(false);
+    }
+  }
+
+  async function handlePortal() {
+    setPortalLoading(true);
+    try {
+      const res = await api.post<{ url: string }>('/billing/portal', {
+        returnUrl: window.location.href,
+      });
+      window.location.href = res.url;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to open billing portal');
+      setPortalLoading(false);
+    }
+  }
+
+  if (!isOwner) {
+    return (
+      <Callout tone="accent">
+        Only organisation owners can view billing information.
+      </Callout>
+    );
+  }
+
+  if (loadingSub) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-36" />
+        <Skeleton className="h-24" />
+      </div>
+    );
+  }
+
+  const sub = billingData?.subscription;
+  const plan = billingData?.plan;
+  const price = billingData?.price;
+
+  if (!sub) {
+    return (
+      <EmptyState
+        icon={<CreditCard size={28} />}
+        title="No subscription"
+        description="Contact your platform administrator to set up billing."
+      />
+    );
+  }
+
+  const daysLeft = trialDaysLeft(sub.trialEndsAt);
+  const isTrialing = sub.status === 'trialing';
+  const hasStripePortal = !!sub.stripeSubscriptionId;
+
+  return (
+    <div className="space-y-6">
+      {/* Trial banner */}
+      {isTrialing && (
+        <div
+          className="rounded-lg p-4 border"
+          style={{ background: 'var(--bg2)', borderColor: 'var(--blue)' }}
+        >
+          <div className="flex items-start gap-3">
+            <CreditCard size={18} className="text-[var(--blue)] shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-[var(--text)]">
+                Trial — {daysLeft > 0 ? `${daysLeft} day${daysLeft !== 1 ? 's' : ''} remaining` : 'Expired'}
+              </p>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                Up to {sub.trialScreenLimit ?? 3} screen{(sub.trialScreenLimit ?? 3) !== 1 ? 's' : ''} during trial.
+                {daysLeft <= 7 && ' Upgrade now to avoid interruption.'}
+              </p>
+            </div>
+            {!hasStripePortal && (
+              <button
+                onClick={() => void handleCheckout()}
+                disabled={checkoutLoading}
+                className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--blue)] text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {checkoutLoading ? 'Loading…' : 'Upgrade'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Subscription card */}
+      <SectionCard>
+        <SectionCardHeader>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold">Subscription</span>
+            <Badge tone={SUB_STATUS_TONES[sub.status] ?? 'neutral'}>
+              {sub.status.charAt(0).toUpperCase() + sub.status.slice(1).replace('_', ' ')}
+            </Badge>
+          </div>
+          <div className="flex gap-2">
+            {hasStripePortal && (
+              <button
+                onClick={() => void handlePortal()}
+                disabled={portalLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--border)] hover:bg-[var(--surface)] transition-colors disabled:opacity-50"
+              >
+                <ExternalLink size={12} />
+                {portalLoading ? 'Loading…' : 'Manage Billing'}
+              </button>
+            )}
+            {!hasStripePortal && !isTrialing && (
+              <button
+                onClick={() => void handleCheckout()}
+                disabled={checkoutLoading}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--blue)] text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {checkoutLoading ? 'Loading…' : 'Upgrade'}
+              </button>
+            )}
+          </div>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+            <div>
+              <dt className="text-xs text-[var(--text-muted)]">Plan</dt>
+              <dd className="font-medium">{plan?.name ?? '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-[var(--text-muted)]">Billing Period</dt>
+              <dd className="font-medium capitalize">{plan?.billingPeriod ?? '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-[var(--text-muted)]">Screens Included</dt>
+              <dd className="font-medium">{plan?.screensIncluded ?? '—'}</dd>
+            </div>
+            {price && (
+              <div>
+                <dt className="text-xs text-[var(--text-muted)]">Price</dt>
+                <dd className="font-medium">
+                  {formatBillingCents(price.amountCents, price.currency)} / {plan?.billingPeriod ?? 'month'}
+                </dd>
+              </div>
+            )}
+            {sub.currentPeriodEnd && (
+              <div>
+                <dt className="text-xs text-[var(--text-muted)]">Next Billing Date</dt>
+                <dd className="font-medium">{formatBillingDate(sub.currentPeriodEnd)}</dd>
+              </div>
+            )}
+            {sub.cancelAtPeriodEnd && (
+              <div className="col-span-2">
+                <Badge tone="warning">Cancels at end of billing period</Badge>
+              </div>
+            )}
+          </dl>
+        </SectionCardBody>
+      </SectionCard>
+
+      {/* Invoices */}
+      {hasStripePortal && (
+        <SectionCard>
+          <SectionCardHeader>
+            <div className="flex items-center gap-2">
+              <Receipt size={15} />
+              <span className="text-sm font-semibold">Invoices</span>
+            </div>
+          </SectionCardHeader>
+          <SectionCardBody>
+            {loadingInvoices ? (
+              <Skeleton className="h-20" />
+            ) : invoices.length === 0 ? (
+              <p className="text-sm text-[var(--text-muted)]">No invoices yet.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-[var(--text-muted)] border-b border-[var(--border)]">
+                    <th className="text-left pb-2">Period</th>
+                    <th className="text-left pb-2">Amount</th>
+                    <th className="text-left pb-2">Status</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoices.map((inv) => (
+                    <tr key={inv.id} className="border-b border-[var(--border)] last:border-0">
+                      <td className="py-2 text-[var(--text-muted)]">
+                        {formatBillingDate(inv.periodStart)} – {formatBillingDate(inv.periodEnd)}
+                      </td>
+                      <td className="py-2 font-medium">
+                        {formatBillingCents(inv.amountPaid || inv.amountDue, inv.currency.toUpperCase())}
+                      </td>
+                      <td className="py-2">
+                        <Badge tone={INVOICE_STATUS_TONES[inv.status] ?? 'neutral'}>
+                          {inv.status.charAt(0).toUpperCase() + inv.status.slice(1)}
+                        </Badge>
+                      </td>
+                      <td className="py-2">
+                        {inv.hostedInvoiceUrl && (
+                          <a
+                            href={inv.hostedInvoiceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center gap-1 text-xs text-[var(--blue)] hover:underline"
+                          >
+                            View <ExternalLink size={11} />
+                          </a>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </SectionCardBody>
+        </SectionCard>
+      )}
+    </div>
+  );
+}
+
 // ─── Main SettingsPage ────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -4753,6 +5072,7 @@ export default function SettingsPage() {
           {activeSection === 'pos-kiosk'      && <PosKioskSection wsId={resolvedWsId} />}
           {activeSection === 'pos-loyalty'    && <PosLoyaltySection wsId={resolvedWsId} />}
           {activeSection === 'pos-uber-eats'  && <PosUberEatsSection wsId={resolvedWsId} />}
+          {activeSection === 'billing'         && <BillingSection />}
         </div>
       </div>
     </div>

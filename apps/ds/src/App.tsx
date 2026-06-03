@@ -93,6 +93,8 @@ import ManagementSupportTicketDetailPage from './pages/management/ManagementSupp
 import ManagementBrandingPage from './pages/management/ManagementBrandingPage.js';
 import ManagementLogsPage from './pages/management/ManagementLogsPage.js';
 import ManagementReleasesPage from './pages/management/ManagementReleasesPage.js';
+import PricingManagementPage from './pages/superadmin/PricingManagementPage.js';
+import ManagementPricingPage from './pages/management/ManagementPricingPage.js';
 import OrgSupportPage from './pages/support/OrgSupportPage.js';
 import OrgSupportTicketDetailPage from './pages/support/OrgSupportTicketDetailPage.js';
 import AcceptManagementCompanyInvitePage from './pages/auth/AcceptManagementCompanyInvitePage.js';
@@ -140,6 +142,7 @@ import LiveLinkFaceEditorPage from './pages/workspace/LiveLinkFaceEditorPage.js'
 import { buildApiUrl } from './lib/api.js';
 import KioskDisplayPage from './pages/kiosk/KioskDisplayPage.js';
 import KitchenDisplayPage from './pages/kitchen/KitchenDisplayPage.js';
+import QrMenuPage from './pages/qr/QrMenuPage.js';
 import PinGate from './components/PinGate.js';
 
 function sleep(ms: number) {
@@ -282,6 +285,7 @@ function isMainPublicAuthPath(pathname: string) {
     // Public device display pages — no session auth needed
     || pathname.startsWith('/kiosk/')
     || pathname.startsWith('/kitchen/')
+    || pathname.startsWith('/qr/')
     // Waiter tablet — PIN-gated, no session auth
     || /^\/workspaces\/[^/]+\/pos(?:\/|$)/.test(pathname);
 }
@@ -350,6 +354,8 @@ export default function App() {
       {/* Public device display pages — PIN-gated, no session auth */}
       <Route path="/kiosk/:wsId/:orientation" element={<DisplayPinGateWrapper><KioskDisplayPage /></DisplayPinGateWrapper>} />
       <Route path="/kitchen/:wsId" element={<DisplayPinGateWrapper><KitchenDisplayPage /></DisplayPinGateWrapper>} />
+      {/* QR menu — no auth, no PIN */}
+      <Route path="/qr/:wsId/:menuId" element={<QrMenuPage />} />
 
       {/* Public auth */}
       <Route path="/login" element={<LoginPage />} />
@@ -378,6 +384,7 @@ export default function App() {
         <Route path="system" element={<SystemHealthPage />} />
         <Route path="monitoring" element={<InfraMonitoringPage />} />
         <Route path="analytics" element={<PlatformAnalyticsPage />} />
+        <Route path="pricing" element={<PricingManagementPage />} />
         <Route path="notifications" element={<PlatformNotificationsPage />} />
         <Route path="logs" element={<PlatformLogsPage />} />
         <Route path="player-releases" element={<PlayerReleasesPage />} />
@@ -404,6 +411,7 @@ export default function App() {
         <Route path="orgs/:id" element={<OrgDetailPage />} />
         <Route path="settings/branding" element={<ManagementBrandingPage />} />
         <Route path="analytics" element={<ManagementAnalyticsPage />} />
+        <Route path="pricing" element={<ManagementPricingPage />} />
         <Route path="notifications" element={<ManagementNotificationsPage />} />
         <Route path="logs" element={<ManagementLogsPage />} />
         <Route path="releases" element={<ManagementReleasesPage />} />

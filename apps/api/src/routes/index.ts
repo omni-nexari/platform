@@ -35,6 +35,9 @@ import { datasyncRoutes } from './datasync.js';
 import { videowallPlaylistRoutes } from './videowall-playlists.js';
 import { ruleSetsRoutes } from './rule-sets.js';
 import { aiRoutes } from './ai.js';
+import { billingRoutes } from './billing.js';
+import { pricingRoutes } from './pricing.js';
+import { publicRoutes } from './public.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoute);
@@ -73,5 +76,8 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(videowallPlaylistRoutes, { prefix: '/videowall-playlists' });
   await app.register(ruleSetsRoutes, { prefix: '/rule-sets' });
   await app.register(aiRoutes, { prefix: '/ai' });
+  await app.register(billingRoutes, { prefix: '/billing' });
+  await app.register(pricingRoutes, { prefix: '/pricing' });
+  await app.register(publicRoutes, { prefix: '/public' });
 }
 
