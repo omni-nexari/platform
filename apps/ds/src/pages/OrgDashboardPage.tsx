@@ -1,18 +1,22 @@
 ﻿import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api.js';
+import { api, buildApiUrl } from '../lib/api.js';
 import { useAuthStore } from '../lib/auth.js';
+import { useCmsEnabled, usePosEnabled } from '../lib/modules.js';
 import { Skeleton } from '../components/UiPrimitives.js';
 import {
   Monitor,
-  Image,
   ListVideo,
   CalendarDays,
   Plus,
   ChevronDown,
   HardDrive,
-  Lock,
+  Play,
+  ShoppingCart,
+  DollarSign,
+  Clock,
+  Receipt,
 } from 'lucide-react';
 
 interface Workspace {
@@ -28,12 +32,6 @@ interface OrgInfo {
   storage: { usedBytes: number; limitBytes: number };
 }
 
-interface ContentTypeStat {
-  type: string;
-  total: number;
-  published: number;
-}
-
 interface WsSummary {
   deviceTotal: number;
   deviceOnline: number;
@@ -41,13 +39,33 @@ interface WsSummary {
   deviceError: number;
   devicePowerOn: number;
   devicePowerOff: number;
-  contentStats: ContentTypeStat[];
+  contentStats: { type: string; total: number; published: number }[];
   playlistTotal: number;
   playlistActive: number;
   playlistPublishedCount: number;
   scheduleTotal: number;
   scheduleActive: number;
   schedulePublishedCount: number;
+}
+
+interface SignageAnalytics {
+  totalPlays: number;
+  byDay: { date: string; plays: number; durationMs: number }[];
+}
+
+interface PosAnalytics {
+  totalOrders: number;
+  totalRevenue: number;
+  avgTicket: number;
+  byDay: { date: string; orders: number; revenue: number }[];
+}
+
+interface DeviceRow {
+  id: string;
+  name: string;
+  status: string;
+  latestScreenshotId: string | null;
+  latestFrameAt: number | null;
 }
 
 function formatBytes(bytes: number): string {
@@ -57,357 +75,121 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
+function formatMoney(cents: number): string {
+  const dollars = cents / 100;
+  if (dollars >= 1_000_000) return `$${(dollars / 1_000_000).toFixed(1)}M`;
+  if (dollars >= 1_000) return `$${(dollars / 1_000).toFixed(1)}k`;
+  return `$${dollars.toFixed(2)}`;
+}
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function timeGreeting(name: string) {
   const h = new Date().getHours();
   const w = h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening';
   return `Good ${w}, ${name.split(' ')[0]}`;
 }
 
-// ── Device Card ────────────────────────────────────────────────────────────────
+// ── Compact stat card (matches marketing preview style) ───────────────────────
 
-function DeviceCard({
-  total, online, offline, error, powerOn, powerOff, onClick, onAdd,
-}: {
-  total: number; online: number; offline: number; error: number;
-  powerOn: number; powerOff: number;
-  onClick?: () => void; onAdd?: () => void;
-}) {
-  const pct = (n: number) => (total > 0 ? (n / total) * 100 : 0);
-
-  return (
-    <div
-      className="rounded-2xl border flex flex-col overflow-hidden transition-colors duration-200 cursor-pointer"
-      style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
-      onClick={onClick}
-      onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'rgba(59,130,246,0.5)')}
-      onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--card-border)')}
-    >
-      <div className="h-0.5 w-full" style={{ background: 'linear-gradient(90deg, #3b82f6, #38bdf8)' }} />
-      <div className="p-5 flex flex-col flex-1">
-        <div className="flex items-start justify-between mb-6">
-          <div>
-            <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center mb-3"
-              style={{ background: 'rgba(59,130,246,0.15)' }}
-            >
-              <Monitor className="w-5 h-5" style={{ color: '#60a5fa' }} />
-            </div>
-            <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
-              Total Devices
-            </p>
-            <div className="text-4xl font-bold tracking-tight mt-0.5" style={{ color: 'var(--text)' }}>
-              {total}
-            </div>
-          </div>
-          <button
-            onClick={(e) => { e.stopPropagation(); onAdd?.(); }}
-            className="w-8 h-8 rounded-xl border flex items-center justify-center transition-all"
-            style={{ borderColor: 'var(--card-border)', color: 'var(--text-muted)', background: 'transparent' }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = 'rgba(59,130,246,0.6)';
-              e.currentTarget.style.color = '#60a5fa';
-              e.currentTarget.style.background = 'rgba(59,130,246,0.1)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = 'var(--card-border)';
-              e.currentTarget.style.color = 'var(--text-muted)';
-              e.currentTarget.style.background = 'transparent';
-            }}
-          >
-            <Plus className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="mt-auto">
-          <div className="flex h-1.5 rounded-full overflow-hidden mb-3" style={{ background: 'rgba(255,255,255,0.06)' }}>
-            {pct(online)  > 0 && <div style={{ width: `${pct(online)}%`,  background: '#34d399', transition: 'width 0.7s ease' }} />}
-            {pct(error)   > 0 && <div style={{ width: `${pct(error)}%`,   marginLeft: 2, background: '#fbbf24', transition: 'width 0.7s ease' }} />}
-            {pct(offline) > 0 && <div style={{ width: `${pct(offline)}%`, marginLeft: 2, background: '#475569', transition: 'width 0.7s ease' }} />}
-            {total === 0  && <div className="w-full" style={{ background: 'rgba(255,255,255,0.07)' }} />}
-          </div>
-          <div className="grid grid-cols-3 gap-1">
-            {[
-              { label: 'Online',  count: online,  color: '#34d399' },
-              { label: 'Error',   count: error,   color: '#fbbf24' },
-              { label: 'Offline', count: offline, color: '#475569' },
-            ].map(({ label, count, color }) => (
-              <div key={label}>
-                <div className="flex items-center gap-1.5 mb-0.5">
-                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
-                  <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{label}</span>
-                </div>
-                <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>{count}</span>
-              </div>
-            ))}
-          </div>
-          {total > 0 && (
-            <div className="mt-3 pt-3 border-t flex gap-4" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-              <div>
-                <div className="flex items-center gap-1.5 mb-0.5">
-                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: '#34d399' }} />
-                  <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Power on</span>
-                </div>
-                <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>{powerOn}</span>
-              </div>
-              <div>
-                <div className="flex items-center gap-1.5 mb-0.5">
-                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: '#475569' }} />
-                  <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Power off</span>
-                </div>
-                <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>{powerOff}</span>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Content Card ──────────────────────────────────────────────────────────────
-
-const CONTENT_TYPE_META: Record<string, { label: string; color: string }> = {
-  image:        { label: 'Image',      color: '#f59e0b' },
-  video:        { label: 'Video',      color: '#38bdf8' },
-  html5:        { label: 'HTML5',      color: '#4ade80' },
-  pdf:          { label: 'PDF',        color: '#f87171' },
-  presentation: { label: 'PPTX',      color: '#c084fc' },
-  web_url:      { label: 'Web URL',    color: '#60a5fa' },
-  zone_layout:  { label: 'Zone',       color: '#2dd4bf' },
-  menu_board:   { label: 'Menu Board', color: '#fb7185' },
-};
-
-const TYPE_ORDER = ['image', 'video', 'html5', 'pdf', 'presentation', 'web_url', 'zone_layout', 'menu_board'];
-
-function ContentCard({
-  stats,
-  onClick,
-}: {
-  stats: ContentTypeStat[];
-  onClick?: () => void;
-}) {
-  const ordered = TYPE_ORDER
-    .map(t => stats.find(s => s.type === t))
-    .filter((s): s is ContentTypeStat => !!s && s.total > 0)
-    .slice(0, 3); // show top 3 types in the stat grid
-  const totalAll     = stats.reduce((s, r) => s + r.total, 0);
-  const publishedAll = stats.reduce((s, r) => s + r.published, 0);
-
-  return (
-    <div
-      onClick={onClick}
-      className="rounded-2xl border flex flex-col overflow-hidden transition-all duration-200 cursor-pointer hover:scale-[1.02] hover:shadow-xl hover:shadow-black/30"
-      style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
-    >
-      <div className="h-0.5 w-full" style={{ background: 'linear-gradient(90deg, #f59e0b, #f97316)' }} />
-      <div className="p-5 flex flex-col flex-1">
-        <div className="flex items-start justify-between mb-6">
-          <div>
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-3" style={{ background: 'rgba(245,158,11,0.15)' }}>
-              <Image className="w-5 h-5" style={{ color: '#fbbf24' }} />
-            </div>
-            <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Total Content</p>
-            <div className="text-4xl font-bold tracking-tight mt-0.5" style={{ color: 'var(--text)' }}>{totalAll}</div>
-          </div>
-        </div>
-        <div className="mt-auto">
-          {ordered.length > 0 ? (
-            <div className="grid grid-cols-3 gap-1">
-              {ordered.map(s => {
-                const meta = CONTENT_TYPE_META[s.type] ?? { label: s.type, color: '#94a3b8' };
-                return (
-                  <div key={s.type}>
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: meta.color }} />
-                      <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{meta.label}</span>
-                    </div>
-                    <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>{s.total}</span>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="grid grid-cols-3 gap-1">
-              {[
-                { label: 'Published', count: publishedAll, color: '#fbbf24' },
-                { label: 'On screens', count: publishedAll, color: '#34d399' },
-                { label: 'Total', count: totalAll, color: '#475569' },
-              ].map(({ label, count, color }) => (
-                <div key={label}>
-                  <div className="flex items-center gap-1.5 mb-0.5">
-                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
-                    <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{label}</span>
-                  </div>
-                  <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>{count}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Playlist Card ──────────────────────────────────────────────────────────────────
-
-function PlaylistCard({
-  total,
-  active,
-  published,
-  onClick,
-}: {
-  total: number;
-  active: number;
-  published: number;
-  onClick?: () => void;
-}) {
-  return (
-    <div
-      onClick={onClick}
-      className="rounded-2xl border flex flex-col overflow-hidden transition-all duration-200 cursor-pointer hover:scale-[1.02] hover:shadow-xl hover:shadow-black/30"
-      style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
-    >
-      <div className="h-0.5 w-full" style={{ background: 'linear-gradient(90deg, #8b5cf6, #a855f7)' }} />
-      <div className="p-5 flex flex-col flex-1">
-        <div className="flex items-start justify-between mb-6">
-          <div>
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-3" style={{ background: 'rgba(139,92,246,0.15)' }}>
-              <ListVideo className="w-5 h-5" style={{ color: '#a78bfa' }} />
-            </div>
-            <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Total Playlists</p>
-            <div className="text-4xl font-bold tracking-tight mt-0.5" style={{ color: 'var(--text)' }}>{total}</div>
-          </div>
-        </div>
-        <div className="mt-auto grid grid-cols-3 gap-1">
-          {[
-            { label: 'With content', count: active,         color: '#a78bfa' },
-            { label: 'On screens',   count: published,      color: '#34d399' },
-            { label: 'Empty',        count: total - active, color: '#475569' },
-          ].map(({ label, count, color }) => (
-            <div key={label}>
-              <div className="flex items-center gap-1.5 mb-0.5">
-                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
-                <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{label}</span>
-              </div>
-              <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>{count}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Schedule Card ──────────────────────────────────────────────────────────────────
-
-function ScheduleCard({
-  total,
-  active,
-  published,
-  onClick,
-}: {
-  total: number;
-  active: number;
-  published: number;
-  onClick?: () => void;
-}) {
-  return (
-    <div
-      onClick={onClick}
-      className="rounded-2xl border flex flex-col overflow-hidden transition-all duration-200 cursor-pointer hover:scale-[1.02] hover:shadow-xl hover:shadow-black/30"
-      style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
-    >
-      <div className="h-0.5 w-full" style={{ background: 'linear-gradient(90deg, #14b8a6, #10b981)' }} />
-      <div className="p-5 flex flex-col flex-1">
-        <div className="flex items-start justify-between mb-6">
-          <div>
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-3" style={{ background: 'rgba(20,184,166,0.15)' }}>
-              <CalendarDays className="w-5 h-5" style={{ color: '#2dd4bf' }} />
-            </div>
-            <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Total Schedules</p>
-            <div className="text-4xl font-bold tracking-tight mt-0.5" style={{ color: 'var(--text)' }}>{total}</div>
-          </div>
-        </div>
-        <div className="mt-auto grid grid-cols-3 gap-1">
-          {[
-            { label: 'Active',     count: active,         color: '#2dd4bf' },
-            { label: 'On screens', count: published,      color: '#34d399' },
-            { label: 'Inactive',   count: total - active, color: '#475569' },
-          ].map(({ label, count, color }) => (
-            <div key={label}>
-              <div className="flex items-center gap-1.5 mb-0.5">
-                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
-                <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{label}</span>
-              </div>
-              <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>{count}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Module (Coming Soon) Card ──────────────────────────────────────────────────
-
-function ModuleCard({
-  label, icon, topGradient, iconBg, glowColor, previewBg, description, onClick, live,
+function StatCard({
+  label, value, tone, icon: Icon, onClick,
 }: {
   label: string;
-  icon: React.ReactNode;
-  topGradient: string;
-  iconBg: string;
-  glowColor: string;
-  previewBg: string;
-  description: string;
+  value: string | number;
+  tone: string;
+  icon: React.ElementType;
   onClick?: () => void;
-  live?: boolean;
 }) {
   return (
     <div
       onClick={onClick}
-      className={`rounded-2xl border flex flex-col overflow-hidden transition-all duration-200
-        ${onClick ? 'cursor-pointer hover:scale-[1.02] hover:shadow-xl hover:shadow-black/30' : ''}`}
-      style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
+      className={`rounded-xl border p-4 flex flex-col gap-2 transition-colors duration-150 ${onClick ? 'cursor-pointer' : ''}`}
+      style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}
+      onMouseEnter={(e) => { if (onClick) e.currentTarget.style.borderColor = tone + '66'; }}
+      onMouseLeave={(e) => { if (onClick) e.currentTarget.style.borderColor = 'var(--card-border)'; }}
     >
-      <div className="h-0.5 w-full" style={{ background: topGradient }} />
-      <div className="flex items-center justify-between px-4 pt-4 pb-2">
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: iconBg }}>
-            {icon}
-          </div>
-          <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>{label}</span>
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{label}</span>
+        <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: tone + '22' }}>
+          <Icon size={13} style={{ color: tone }} />
         </div>
-        <span
-          className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border
-            ${live
-              ? 'border-emerald-500/50 text-emerald-400 bg-emerald-500/10'
-              : ''}`}
-          style={live ? {} : { borderColor: 'var(--card-border)', color: 'var(--text-muted)' }}
-        >
-          {live ? 'Live' : 'Soon'}
-        </span>
       </div>
-      <div
-        className="mx-3 rounded-xl overflow-hidden relative flex items-center justify-center"
-        style={{ aspectRatio: '16/9', background: previewBg }}
-      >
-        <div className="absolute inset-0"
-          style={{ backgroundImage: `radial-gradient(circle at 50% 50%, ${glowColor} 0%, transparent 65%)`, opacity: 0.28 }}
-        />
-        <div className="relative" style={{ opacity: 0.2, transform: 'scale(2.8)' }}>{icon}</div>
-        {!live && (
+      <div className="text-2xl font-bold tracking-tight" style={{ color: tone }}>{value}</div>
+    </div>
+  );
+}
+
+// ── Bar chart ─────────────────────────────────────────────────────────────────
+
+function BarChart({
+  data, color, label,
+}: {
+  data: number[];
+  color: string;
+  label: string;
+}) {
+  const max = Math.max(1, ...data);
+  return (
+    <div className="rounded-xl border p-4" style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}>
+      <p className="text-xs font-medium mb-3" style={{ color: 'var(--text-muted)' }}>{label}</p>
+      <div className="flex items-end gap-1 h-20">
+        {data.map((v, i) => (
           <div
-            className="absolute bottom-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
-            style={{ background: 'rgba(0,0,0,0.55)', border: '1px solid rgba(255,255,255,0.1)' }}
-          >
-            <Lock className="w-2.5 h-2.5" style={{ color: 'rgba(255,255,255,0.45)' }} />
-          </div>
-        )}
+            key={i}
+            className="flex-1 rounded-t min-h-[2px] transition-all"
+            style={{
+              height: `${(v / max) * 100}%`,
+              background: `linear-gradient(180deg, ${color}, ${color}33)`,
+            }}
+          />
+        ))}
       </div>
-      <div className="px-4 py-3">
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{description}</p>
+    </div>
+  );
+}
+
+// ── Live screens grid ─────────────────────────────────────────────────────────
+
+function LiveScreensGrid({ devices }: { devices: DeviceRow[] }) {
+  const slots = devices.slice(0, 9);
+  return (
+    <div className="rounded-xl border p-4" style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}>
+      <p className="text-xs font-medium mb-3" style={{ color: 'var(--text-muted)' }}>Live screens</p>
+      <div className="grid grid-cols-3 gap-1.5">
+        {Array.from({ length: 9 }).map((_, i) => {
+          const device = slots[i];
+          const isOnline = device?.status === 'online';
+          const hasShot = !!device?.latestScreenshotId;
+          return (
+            <div
+              key={i}
+              className="aspect-video rounded overflow-hidden relative"
+              style={{
+                background: isOnline
+                  ? 'rgba(58,123,255,0.15)'
+                  : 'rgba(255,255,255,0.05)',
+              }}
+            >
+              {device && hasShot && (
+                <img
+                  src={buildApiUrl(`/devices/${device.id}/screenshots/${device.latestScreenshotId}${device.latestFrameAt ? `?t=${device.latestFrameAt}` : ''}`)}
+                  alt={device.name}
+                  className="w-full h-full object-cover"
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                />
+              )}
+              {device && isOnline && !hasShot && (
+                <div
+                  className="absolute inset-0 rounded"
+                  style={{ background: 'rgba(79,242,209,0.18)' }}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -418,6 +200,8 @@ function ModuleCard({
 export default function OrgDashboardPage() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  const cmsEnabled = useCmsEnabled();
+  const posEnabled = usePosEnabled();
   const [searchParams, setSearchParams] = useSearchParams();
   const [wsOpen, setWsOpen] = useState(false);
   const [selectedWsId, setSelectedWsId] = useState<string | null>(searchParams.get('workspaceId'));
@@ -427,7 +211,6 @@ export default function OrgDashboardPage() {
     queryFn: () => api.get('/auth/me'),
     enabled: !!user,
     retry: false,
-    // Match AppLayout so the shared cache always reflects fresh server state.
     staleTime: 0,
     refetchOnWindowFocus: 'always',
   });
@@ -460,6 +243,7 @@ export default function OrgDashboardPage() {
 
   const selectedWs = workspaces.find((w) => w.id === selectedWsId);
 
+  // Workspace summary (device / playlist / schedule counts)
   const { data: summary, isLoading: loadingSummary } = useQuery<WsSummary>({
     queryKey: ['ws-summary', selectedWsId],
     queryFn: () => api.get(`/workspaces/${selectedWsId}/summary`),
@@ -467,11 +251,91 @@ export default function OrgDashboardPage() {
     refetchInterval: 30_000,
   });
 
-  const storage      = me?.storage;
-  const storagePct   = storage ? Math.min(100, (storage.usedBytes / storage.limitBytes) * 100) : 0;
+  // Signage analytics — 14 days for chart + today's play count
+  const analyticsFrom = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 13);
+    return d.toISOString().slice(0, 10);
+  })();
+  const analyticsTo = todayIso();
+
+  const { data: signageAnalytics } = useQuery<SignageAnalytics>({
+    queryKey: ['dash-signage-analytics', selectedWsId, analyticsFrom],
+    queryFn: () =>
+      api.get(
+        `/analytics/summary?workspaceId=${selectedWsId}&from=${analyticsFrom}T00:00:00.000Z&to=${analyticsTo}T23:59:59.999Z`,
+      ),
+    enabled: !!selectedWsId && cmsEnabled,
+    refetchInterval: 60_000,
+    select: (d: any) => ({
+      totalPlays: Number(d.totalPlays ?? 0),
+      byDay: (d.byDay ?? []) as SignageAnalytics['byDay'],
+    }),
+  });
+
+  // POS analytics — 14 days for chart + today's order/revenue totals
+  const { data: posAnalytics } = useQuery<PosAnalytics>({
+    queryKey: ['dash-pos-analytics', selectedWsId, analyticsFrom],
+    queryFn: () =>
+      api.get(
+        `/pos/analytics/summary?workspaceId=${selectedWsId}&from=${analyticsFrom}T00:00:00.000Z&to=${analyticsTo}T23:59:59.999Z`,
+      ),
+    enabled: !!selectedWsId && posEnabled,
+    refetchInterval: 60_000,
+    select: (d: any) => ({
+      totalOrders: Number(d.totalOrders ?? 0),
+      totalRevenue: Number(d.totalRevenue ?? 0),
+      avgTicket: Number(d.avgTicket ?? 0),
+      byDay: (d.byDay ?? []) as PosAnalytics['byDay'],
+    }),
+  });
+
+  // Devices list (for live screens thumbnails)
+  const { data: devices = [] } = useQuery<DeviceRow[]>({
+    queryKey: ['dash-devices', selectedWsId],
+    queryFn: () => api.get(`/devices?workspaceId=${selectedWsId}`),
+    enabled: !!selectedWsId && cmsEnabled,
+    refetchInterval: 30_000,
+    select: (list: any[]) =>
+      list.map((d) => ({
+        id: d.id,
+        name: d.name,
+        status: d.status,
+        latestScreenshotId: d.latestScreenshotId ?? null,
+        latestFrameAt: d.latestFrameAt ?? null,
+      })),
+  });
+
+  // Derived today stats
+  const today = todayIso();
+  const signageTodayEntry = signageAnalytics?.byDay.find((d) => d.date === today);
+  const playsToday = signageTodayEntry?.plays ?? signageAnalytics?.totalPlays ?? 0;
+  const signageChartData = (signageAnalytics?.byDay ?? []).map((d) => d.plays);
+
+  const posTodayEntry = posAnalytics?.byDay.find((d) => d.date === today);
+  const ordersToday = posTodayEntry?.orders ?? 0;
+  const revenueToday = posTodayEntry?.revenue ?? 0; // already in dollars from pos analytics
+  const posChartData = (posAnalytics?.byDay ?? []).map((d) => d.orders);
+
+  // POS pending from live stats endpoint
+  const { data: posLiveStats } = useQuery<{ pendingOrders: number; avgTicketCents: number }>({
+    queryKey: ['dash-pos-live', selectedWsId],
+    queryFn: () => {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const f = thirtyDaysAgo.toISOString();
+      const t = new Date().toISOString();
+      return api.get(`/pos/mgmt/orders/stats/summary?workspaceId=${selectedWsId}&from=${f}&to=${t}`);
+    },
+    enabled: !!selectedWsId && posEnabled,
+    refetchInterval: 30_000,
+  });
+
+  const storage    = me?.storage;
+  const storagePct = storage ? Math.min(100, (storage.usedBytes / storage.limitBytes) * 100) : 0;
   const storageUsed  = formatBytes(storage?.usedBytes ?? 0);
   const storageLimit = formatBytes(storage?.limitBytes ?? 0);
-  const userName     = me?.user.name ?? '';
+  const userName   = me?.user.name ?? '';
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -555,76 +419,204 @@ export default function OrgDashboardPage() {
       </div>
 
       {/* Main content */}
-      <div className="p-8 max-w-6xl mx-auto w-full">
-        {/* Module cards */}
-        {loadingSummary ? (
-          <div className="grid grid-cols-4 gap-4 mb-5">
-            {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-44 rounded-2xl" />)}
-          </div>
-        ) : (
-          <div className="grid grid-cols-4 gap-4 mb-5">
-            <DeviceCard
-              total={summary?.deviceTotal ?? 0}
-              online={summary?.deviceOnline ?? 0}
-              offline={summary?.deviceOffline ?? 0}
-              error={summary?.deviceError ?? 0}
-              powerOn={summary?.devicePowerOn ?? 0}
-              powerOff={summary?.devicePowerOff ?? 0}
-              onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/devices`)}
-              onAdd={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/devices`)}
-            />
-            <ContentCard
-              stats={summary?.contentStats ?? []}
-              onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/content`)}
-            />
-            <PlaylistCard
-              total={summary?.playlistTotal ?? 0}
-              active={summary?.playlistActive ?? 0}
-              published={summary?.playlistPublishedCount ?? 0}
-              onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/playlist`)}
-            />
-            <ScheduleCard
-              total={summary?.scheduleTotal ?? 0}
-              active={summary?.scheduleActive ?? 0}
-              published={summary?.schedulePublishedCount ?? 0}
-              onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/schedule`)}
-            />
+      <div className="p-6 max-w-6xl mx-auto w-full space-y-8">
+
+        {/* ── Signage section ─────────────────────────────────────────────── */}
+        {cmsEnabled && (
+          <div>
+            {posEnabled && (
+              <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: '#3b82f6' }}>
+                Signage
+              </p>
+            )}
+
+            {/* Stat cards */}
+            {loadingSummary ? (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                <StatCard
+                  label="Online Devices"
+                  value={summary?.deviceOnline ?? 0}
+                  tone="#22c55e"
+                  icon={Monitor}
+                  onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/devices`)}
+                />
+                <StatCard
+                  label="Active Playlists"
+                  value={summary?.playlistActive ?? 0}
+                  tone="#3b82f6"
+                  icon={ListVideo}
+                  onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/playlist`)}
+                />
+                <StatCard
+                  label="Active Schedules"
+                  value={summary?.scheduleActive ?? 0}
+                  tone="#2dd4bf"
+                  icon={CalendarDays}
+                  onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/schedule`)}
+                />
+                <StatCard
+                  label="Plays Today"
+                  value={playsToday >= 1000 ? `${(playsToday / 1000).toFixed(1)}k` : playsToday}
+                  tone="#ff3ea5"
+                  icon={Play}
+                  onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/analytics`)}
+                />
+              </div>
+            )}
+
+            {/* Chart + Live screens */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+              <div className="lg:col-span-2">
+                {signageChartData.length > 0 ? (
+                  <BarChart data={signageChartData} color="#3b82f6" label="Playback activity (14 days)" />
+                ) : (
+                  <div
+                    className="rounded-xl border p-4 flex items-center justify-center h-full"
+                    style={{ background: 'var(--card)', borderColor: 'var(--card-border)', minHeight: 120 }}
+                  >
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>No playback data yet</span>
+                  </div>
+                )}
+              </div>
+              <LiveScreensGrid devices={devices} />
+            </div>
           </div>
         )}
 
-        {/* Storage */}
-        <div className="grid grid-cols-1 gap-4">
-          <div
-            className="rounded-2xl border p-5 flex flex-col justify-between"
-            style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
-          >
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <HardDrive className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
-                <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Storage</span>
-              </div>
-              <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                {storagePct.toFixed(1)}% used
+        {/* ── POS section ─────────────────────────────────────────────────── */}
+        {posEnabled && (
+          <div>
+            {cmsEnabled && (
+              <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: '#f59e0b' }}>
+                Point of Sale
               </p>
+            )}
+
+            {/* Stat cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+              <StatCard
+                label="Orders Today"
+                value={ordersToday}
+                tone="#f59e0b"
+                icon={ShoppingCart}
+                onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/pos/orders`)}
+              />
+              <StatCard
+                label="Revenue Today"
+                value={revenueToday >= 1000 ? `$${(revenueToday / 1000).toFixed(1)}k` : `$${revenueToday.toFixed(2)}`}
+                tone="#22c55e"
+                icon={DollarSign}
+                onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/pos/analytics`)}
+              />
+              <StatCard
+                label="Pending Orders"
+                value={posLiveStats?.pendingOrders ?? 0}
+                tone="#fbbf24"
+                icon={Clock}
+                onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/pos/orders`)}
+              />
+              <StatCard
+                label="Avg Ticket"
+                value={formatMoney(posLiveStats?.avgTicketCents ?? 0)}
+                tone="#a78bfa"
+                icon={Receipt}
+                onClick={() => selectedWsId && navigate(`/workspaces/${selectedWsId}/pos/analytics`)}
+              />
             </div>
-            <div>
-              <div className="h-2 rounded-full overflow-hidden mb-3" style={{ background: 'rgba(255,255,255,0.07)' }}>
-                <div
-                  className="h-full rounded-full"
-                  style={{
-                    width: `${storagePct}%`,
-                    transition: 'width 0.7s ease',
-                    background: storagePct > 80
-                      ? 'linear-gradient(90deg, #f97316, #ef4444)'
-                      : 'linear-gradient(90deg, #3b82f6, #06b6d4)',
-                  }}
-                />
+
+            {/* POS chart */}
+            {posChartData.length > 0 ? (
+              <BarChart data={posChartData} color="#f59e0b" label="Orders (14 days)" />
+            ) : (
+              <div
+                className="rounded-xl border p-4 flex items-center justify-center"
+                style={{ background: 'var(--card)', borderColor: 'var(--card-border)', minHeight: 120 }}
+              >
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>No order data yet</span>
               </div>
-              <div className="text-2xl font-bold" style={{ color: 'var(--text)' }}>{storageUsed}</div>
-              <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>of {storageLimit} total</div>
-            </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Storage ─────────────────────────────────────────────────────── */}
+        <div
+          className="rounded-xl border p-4"
+          style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <HardDrive className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+            <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Storage</span>
+            <span className="text-xs ml-auto" style={{ color: 'var(--text-muted)' }}>{storagePct.toFixed(1)}% used</span>
+          </div>
+          <div className="h-1.5 rounded-full overflow-hidden mb-2" style={{ background: 'rgba(255,255,255,0.07)' }}>
+            <div
+              className="h-full rounded-full"
+              style={{
+                width: `${storagePct}%`,
+                transition: 'width 0.7s ease',
+                background: storagePct > 80
+                  ? 'linear-gradient(90deg, #f97316, #ef4444)'
+                  : 'linear-gradient(90deg, #3b82f6, #06b6d4)',
+              }}
+            />
+          </div>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-lg font-bold" style={{ color: 'var(--text)' }}>{storageUsed}</span>
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>of {storageLimit} total</span>
           </div>
         </div>
+
+      </div>
+    </div>
+  );
+}
+
+            {/* POS chart */}
+            {posChartData.length > 0 ? (
+              <BarChart data={posChartData} color="#f59e0b" label="Orders (14 days)" />
+            ) : (
+              <div
+                className="rounded-xl border p-4 flex items-center justify-center"
+                style={{ background: 'var(--card)', borderColor: 'var(--card-border)', minHeight: 120 }}
+              >
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>No order data yet</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Storage ─────────────────────────────────────────────────────── */}
+        <div
+          className="rounded-xl border p-4"
+          style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <HardDrive className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+            <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Storage</span>
+            <span className="text-xs ml-auto" style={{ color: 'var(--text-muted)' }}>{storagePct.toFixed(1)}% used</span>
+          </div>
+          <div className="h-1.5 rounded-full overflow-hidden mb-2" style={{ background: 'rgba(255,255,255,0.07)' }}>
+            <div
+              className="h-full rounded-full"
+              style={{
+                width: `${storagePct}%`,
+                transition: 'width 0.7s ease',
+                background: storagePct > 80
+                  ? 'linear-gradient(90deg, #f97316, #ef4444)'
+                  : 'linear-gradient(90deg, #3b82f6, #06b6d4)',
+              }}
+            />
+          </div>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-lg font-bold" style={{ color: 'var(--text)' }}>{storageUsed}</span>
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>of {storageLimit} total</span>
+          </div>
+        </div>
+
       </div>
     </div>
   );
