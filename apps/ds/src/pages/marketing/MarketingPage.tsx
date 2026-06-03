@@ -6,7 +6,6 @@ import {
   LayoutGrid,
   Users,
   BarChart2,
-  Zap,
   Layers,
   ChevronDown,
   Check,
@@ -201,7 +200,7 @@ function CheckIcon({ val }: { val: boolean | string }) {
 function PlanCard({ name, price, period, badge, badgeColor, description, features, cta, highlight }: PlanCardProps) {
   return (
     <div
-      className="relative flex flex-col rounded-2xl p-7 border transition-shadow"
+      className="nx-card-lift relative flex flex-col rounded-2xl p-7 border"
       style={{
         background: highlight ? 'rgba(58,123,255,0.08)' : 'rgba(255,255,255,0.04)',
         borderColor: highlight ? 'rgba(58,123,255,0.5)' : 'rgba(255,255,255,0.08)',
@@ -271,7 +270,7 @@ function FaqItem({ q, a }: { q: string; a: string }) {
 
 function Section({ id, children, className = '', style }: { id?: string; children: React.ReactNode; className?: string; style?: React.CSSProperties }) {
   return (
-    <section id={id} className={`py-20 px-4 ${className}`} style={style}>
+    <section id={id} className={`relative py-20 px-4 ${className}`} style={style}>
       <div className="max-w-6xl mx-auto">{children}</div>
     </section>
   );
@@ -310,18 +309,59 @@ export default function MarketingPage() {
   const [pricingTab, setPricingTab] = useState<PricingTab>('signage');
 
   return (
-    <div className="min-h-dvh" style={{ background: '#0b0d11', color: '#e8eaf0' }}>
+    <div className="min-h-dvh relative overflow-x-hidden" style={{ background: '#0b0d11', color: '#e8eaf0' }}>
+
+      {/* ── Global styles & animations ──────────────────────────────────────── */}
+      <style>{`
+        @keyframes nx-fade-up {
+          from { opacity: 0; transform: translateY(24px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes nx-float {
+          0%, 100% { transform: translateY(0); }
+          50%      { transform: translateY(-14px); }
+        }
+        @keyframes nx-pulse-dot {
+          0%, 100% { opacity: 1; }
+          50%      { opacity: 0.35; }
+        }
+        .nx-anim { opacity: 0; animation: nx-fade-up 0.7s cubic-bezier(0.22,1,0.36,1) forwards; }
+        .nx-d1 { animation-delay: 0.05s; }
+        .nx-d2 { animation-delay: 0.15s; }
+        .nx-d3 { animation-delay: 0.25s; }
+        .nx-d4 { animation-delay: 0.35s; }
+        .nx-d5 { animation-delay: 0.45s; }
+        .nx-grid {
+          background-image:
+            linear-gradient(to right, rgba(255,255,255,0.035) 1px, transparent 1px),
+            linear-gradient(to bottom, rgba(255,255,255,0.035) 1px, transparent 1px);
+          background-size: 56px 56px;
+          -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 75%);
+          mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 75%);
+        }
+        .nx-card-lift { transition: transform 0.25s cubic-bezier(0.22,1,0.36,1), border-color 0.25s, box-shadow 0.25s; }
+        .nx-card-lift:hover { transform: translateY(-4px); border-color: rgba(58,123,255,0.35) !important; box-shadow: 0 12px 40px -12px rgba(58,123,255,0.25); }
+        @media (prefers-reduced-motion: reduce) {
+          .nx-anim, .nx-card-lift { animation: none !important; opacity: 1 !important; transform: none !important; }
+        }
+      `}</style>
+
+      {/* Ambient background grid + glow orbs */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 nx-grid" style={{ height: 900 }} />
+      <div aria-hidden className="pointer-events-none absolute" style={{ top: -120, left: '15%', width: 520, height: 520, borderRadius: '50%', background: 'radial-gradient(circle, rgba(58,123,255,0.20), transparent 70%)', filter: 'blur(40px)' }} />
+      <div aria-hidden className="pointer-events-none absolute" style={{ top: 40, right: '10%', width: 460, height: 460, borderRadius: '50%', background: 'radial-gradient(circle, rgba(79,242,209,0.14), transparent 70%)', filter: 'blur(40px)' }} />
+      <div aria-hidden className="pointer-events-none absolute" style={{ top: 320, left: '40%', width: 380, height: 380, borderRadius: '50%', background: 'radial-gradient(circle, rgba(255,62,165,0.10), transparent 70%)', filter: 'blur(50px)' }} />
 
       {/* ── Nav ─────────────────────────────────────────────────────────────── */}
       <header
         className="sticky top-0 z-50 border-b"
-        style={{ background: 'rgba(11,13,17,0.88)', backdropFilter: 'blur(12px)', borderColor: 'rgba(255,255,255,0.07)' }}
+        style={{ background: 'rgba(11,13,17,0.72)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', borderColor: 'rgba(255,255,255,0.07)' }}
       >
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2.5">
             <img src="/logo/nexari.png" alt="Nexari OmniHub" className="h-7" />
           </Link>
-          <nav className="hidden md:flex items-center gap-6 text-sm text-[#7a8299]">
+          <nav className="hidden md:flex items-center gap-7 text-sm text-[#9aa3b8]">
             <a href="#features" className="hover:text-white transition-colors">Features</a>
             <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
             <a href="#compare" className="hover:text-white transition-colors">Compare</a>
@@ -330,14 +370,14 @@ export default function MarketingPage() {
           <div className="flex items-center gap-3">
             <Link
               to="/login"
-              className="text-sm text-[#7a8299] hover:text-white transition-colors hidden sm:block"
+              className="text-sm text-[#9aa3b8] hover:text-white transition-colors hidden sm:block"
             >
               Sign In
             </Link>
             <Link
               to="/login"
-              className="text-sm font-semibold px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
-              style={{ background: '#3a7bff', color: '#fff' }}
+              className="text-sm font-semibold px-4 py-2 rounded-lg transition-all hover:opacity-90"
+              style={{ background: 'linear-gradient(135deg, #3a7bff, #5a93ff)', color: '#fff', boxShadow: '0 4px 16px -4px rgba(58,123,255,0.6)' }}
             >
               Start Free Trial
             </Link>
@@ -346,42 +386,45 @@ export default function MarketingPage() {
       </header>
 
       {/* ── Hero ────────────────────────────────────────────────────────────── */}
-      <section className="pt-24 pb-20 px-4">
+      <section className="relative pt-24 pb-16 px-4">
         <div className="max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-full mb-6"
-            style={{ background: 'rgba(58,123,255,0.12)', color: '#3a7bff', border: '1px solid rgba(58,123,255,0.25)' }}>
-            <Zap size={11} />
+          <div className="nx-anim nx-d1 inline-flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-full mb-6"
+            style={{ background: 'rgba(58,123,255,0.12)', color: '#6ea0ff', border: '1px solid rgba(58,123,255,0.3)' }}>
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full rounded-full bg-[#4ff2d1]" style={{ animation: 'nx-pulse-dot 1.8s ease-in-out infinite' }} />
+            </span>
             60-day free trial — no credit card required
           </div>
-          <h1 className="text-4xl md:text-6xl font-extrabold text-white leading-[1.1] mb-6">
-            Manage every screen,<br />
-            <span style={{ color: '#3a7bff' }}>playlist</span> and{' '}
-            <span style={{ color: '#4ff2d1' }}>client</span><br />
-            from one platform.
+          <h1 className="nx-anim nx-d2 text-4xl md:text-6xl font-extrabold leading-[1.08] mb-6 tracking-tight">
+            <span className="text-white">Manage every screen,</span><br />
+            <span style={{ background: 'linear-gradient(135deg, #3a7bff, #4ff2d1)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>playlist</span>
+            <span className="text-white"> and </span>
+            <span style={{ background: 'linear-gradient(135deg, #4ff2d1, #ff3ea5)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>client</span>
+            <br /><span className="text-white">from one platform.</span>
           </h1>
-          <p className="text-lg text-[#7a8299] max-w-2xl mx-auto mb-10">
+          <p className="nx-anim nx-d3 text-lg text-[#9aa3b8] max-w-2xl mx-auto mb-10">
             Nexari OmniHub is a multi-tenant digital signage platform for management companies and
             venue operators — content, scheduling, devices, SyncPlay, and POS-connected menu boards in one dashboard.
           </p>
-          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+          <div className="nx-anim nx-d4 flex flex-col sm:flex-row gap-3 justify-center">
             <Link
               to="/login"
-              className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-base font-semibold transition-opacity hover:opacity-90"
-              style={{ background: '#3a7bff', color: '#fff' }}
+              className="inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-xl text-base font-semibold transition-all hover:opacity-90 hover:-translate-y-0.5"
+              style={{ background: 'linear-gradient(135deg, #3a7bff, #5a93ff)', color: '#fff', boxShadow: '0 8px 28px -8px rgba(58,123,255,0.7)' }}
             >
               Start Free Trial <ArrowRight size={16} />
             </Link>
             <a
               href="#pricing"
-              className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-base font-semibold border transition-colors hover:bg-white/5"
-              style={{ borderColor: 'rgba(255,255,255,0.12)', color: '#e8eaf0' }}
+              className="inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-xl text-base font-semibold border transition-colors hover:bg-white/5"
+              style={{ borderColor: 'rgba(255,255,255,0.14)', color: '#e8eaf0' }}
             >
               See Pricing
             </a>
           </div>
 
           {/* Trust badges */}
-          <div className="mt-10 flex flex-wrap items-center justify-center gap-6 text-xs text-[#7a8299]">
+          <div className="nx-anim nx-d5 mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-xs text-[#7a8299]">
             {[
               { icon: Clock, text: '60-day free trial' },
               { icon: Shield, text: 'No credit card needed' },
@@ -389,22 +432,93 @@ export default function MarketingPage() {
               { icon: Building2, text: 'Multi-tenant ready' },
             ].map(({ icon: Icon, text }) => (
               <div key={text} className="flex items-center gap-1.5">
-                <Icon size={13} className="text-[#3a7bff]" />
+                <Icon size={13} className="text-[#4ff2d1]" />
                 {text}
               </div>
             ))}
           </div>
         </div>
+
+        {/* ── Dashboard mockup preview ──────────────────────────────────────── */}
+        <div className="nx-anim nx-d5 max-w-5xl mx-auto mt-16 px-2">
+          <div
+            className="relative rounded-2xl border overflow-hidden"
+            style={{
+              borderColor: 'rgba(255,255,255,0.1)',
+              background: 'linear-gradient(180deg, rgba(18,21,28,0.9), rgba(11,13,17,0.95))',
+              boxShadow: '0 40px 120px -40px rgba(58,123,255,0.35), 0 0 0 1px rgba(255,255,255,0.04)',
+            }}
+          >
+            {/* Browser chrome */}
+            <div className="flex items-center gap-2 px-4 h-10 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)', background: 'rgba(255,255,255,0.02)' }}>
+              <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#ff5f57' }} />
+              <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#febc2e' }} />
+              <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#28c840' }} />
+              <div className="ml-4 flex-1 max-w-xs h-5 rounded-md text-[10px] flex items-center justify-center text-[#7a8299]" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                app.nexari.ai/dashboard
+              </div>
+            </div>
+            {/* Mock dashboard body */}
+            <div className="grid grid-cols-12 gap-px" style={{ background: 'rgba(255,255,255,0.05)' }}>
+              {/* Sidebar */}
+              <div className="hidden sm:flex col-span-3 lg:col-span-2 flex-col gap-2 p-4" style={{ background: '#0e1117' }}>
+                {['Dashboard', 'Content', 'Playlists', 'Schedules', 'Devices', 'Analytics'].map((item, i) => (
+                  <div key={item} className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px]"
+                    style={i === 0 ? { background: 'rgba(58,123,255,0.15)', color: '#6ea0ff' } : { color: '#7a8299' }}>
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: i === 0 ? '#3a7bff' : 'rgba(255,255,255,0.2)' }} />
+                    {item}
+                  </div>
+                ))}
+              </div>
+              {/* Main panel */}
+              <div className="col-span-12 sm:col-span-9 lg:col-span-10 p-5" style={{ background: '#0b0d11' }}>
+                {/* Stat cards */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+                  {[
+                    { label: 'Online Devices', value: '248', tone: '#22c55e' },
+                    { label: 'Active Playlists', value: '36', tone: '#3a7bff' },
+                    { label: 'Client Orgs', value: '14', tone: '#4ff2d1' },
+                    { label: 'Plays Today', value: '12.4k', tone: '#ff3ea5' },
+                  ].map((s) => (
+                    <div key={s.label} className="rounded-lg p-3 border" style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.06)' }}>
+                      <div className="text-[10px] text-[#7a8299] mb-1">{s.label}</div>
+                      <div className="text-lg font-bold" style={{ color: s.tone }}>{s.value}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* Chart + screen grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                  <div className="lg:col-span-2 rounded-lg p-4 border" style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.06)' }}>
+                    <div className="text-[10px] text-[#7a8299] mb-3">Playback activity</div>
+                    <div className="flex items-end gap-1.5 h-24">
+                      {[40, 65, 50, 80, 55, 90, 70, 100, 60, 85, 45, 75].map((h, i) => (
+                        <div key={i} className="flex-1 rounded-t" style={{ height: `${h}%`, background: `linear-gradient(180deg, #3a7bff, rgba(58,123,255,0.2))` }} />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-lg p-4 border" style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.06)' }}>
+                    <div className="text-[10px] text-[#7a8299] mb-3">Live screens</div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {Array.from({ length: 9 }).map((_, i) => (
+                        <div key={i} className="aspect-video rounded" style={{ background: i % 4 === 0 ? 'rgba(79,242,209,0.25)' : i % 3 === 0 ? 'rgba(58,123,255,0.25)' : 'rgba(255,255,255,0.06)' }} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* ── Platform support strip ───────────────────────────────────────────── */}
-      <div className="border-y py-5" style={{ borderColor: 'rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.02)' }}>
-        <div className="max-w-5xl mx-auto px-4 flex flex-wrap items-center justify-center gap-6 text-xs text-[#7a8299]">
-          <span className="font-semibold text-[#b0b8cc]">Runs on:</span>
+      <div className="relative border-y py-5" style={{ borderColor: 'rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.02)' }}>
+        <div className="max-w-5xl mx-auto px-4 flex flex-wrap items-center justify-center gap-3 gap-y-3 text-xs text-[#7a8299]">
+          <span className="font-semibold text-[#b0b8cc] mr-2">Runs on:</span>
           {['Samsung Tizen', 'Android', 'Windows', 'Raspberry Pi', 'ePaper Displays', 'ESP32'].map((p) => (
             <span
               key={p}
-              className="px-3 py-1 rounded-full"
+              className="px-3 py-1 rounded-full transition-colors hover:text-[#b0b8cc]"
               style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
             >
               {p}
@@ -481,7 +595,7 @@ export default function MarketingPage() {
           ].map(({ icon: Icon, color, title, body }) => (
             <div
               key={title}
-              className="rounded-2xl p-6 border transition-colors hover:border-[rgba(255,255,255,0.15)]"
+              className="nx-card-lift rounded-2xl p-6 border"
               style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.07)' }}
             >
               <div
@@ -640,7 +754,7 @@ export default function MarketingPage() {
           ].map(({ icon: Icon, color, title, body }) => (
             <div
               key={title}
-              className="rounded-2xl p-6 border"
+              className="nx-card-lift rounded-2xl p-6 border"
               style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.07)' }}
             >
               <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-4" style={{ background: `${color}1a` }}>
@@ -664,18 +778,20 @@ export default function MarketingPage() {
 
       {/* ── CTA strip ───────────────────────────────────────────────────────── */}
       <section
-        className="py-20 px-4 border-t"
-        style={{ borderColor: 'rgba(255,255,255,0.06)', background: 'rgba(58,123,255,0.06)' }}
+        className="relative py-24 px-4 border-t overflow-hidden"
+        style={{ borderColor: 'rgba(255,255,255,0.06)' }}
       >
-        <div className="max-w-2xl mx-auto text-center">
-          <h2 className="text-3xl font-extrabold text-white mb-4">Ready to get started?</h2>
-          <p className="text-[#7a8299] mb-8">
+        <div aria-hidden className="pointer-events-none absolute inset-0" style={{ background: 'radial-gradient(ellipse 60% 100% at 50% 100%, rgba(58,123,255,0.18), transparent 70%)' }} />
+        <div aria-hidden className="pointer-events-none absolute" style={{ bottom: -160, left: '50%', transform: 'translateX(-50%)', width: 600, height: 320, borderRadius: '50%', background: 'radial-gradient(circle, rgba(79,242,209,0.12), transparent 70%)', filter: 'blur(50px)' }} />
+        <div className="relative max-w-2xl mx-auto text-center">
+          <h2 className="text-3xl md:text-4xl font-extrabold text-white mb-4">Ready to get started?</h2>
+          <p className="text-[#9aa3b8] mb-8 text-lg">
             60-day free trial, 3 screens, no credit card required. Set up your first workspace in minutes.
           </p>
           <Link
             to="/login"
-            className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl font-semibold text-base transition-opacity hover:opacity-90"
-            style={{ background: '#3a7bff', color: '#fff' }}
+            className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl font-semibold text-base transition-all hover:opacity-90 hover:-translate-y-0.5"
+            style={{ background: 'linear-gradient(135deg, #3a7bff, #5a93ff)', color: '#fff', boxShadow: '0 8px 28px -8px rgba(58,123,255,0.7)' }}
           >
             Start Free Trial <ArrowRight size={16} />
           </Link>
@@ -684,7 +800,7 @@ export default function MarketingPage() {
 
       {/* ── Footer ──────────────────────────────────────────────────────────── */}
       <footer
-        className="border-t py-10 px-4"
+        className="relative border-t py-10 px-4"
         style={{ borderColor: 'rgba(255,255,255,0.07)', background: '#0b0d11' }}
       >
         <div className="max-w-6xl mx-auto">
