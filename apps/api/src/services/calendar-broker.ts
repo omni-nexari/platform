@@ -99,6 +99,22 @@ async function pollAndPush(contentId: string): Promise<void> {
   const ctx = await loadContext(contentId);
   if (!ctx) return; // content deleted or connection removed; subscription will be cleaned on next event
 
+  // If the connection is already in error state, notify devices without hitting
+  // the upstream provider again. The error persists until the user reconnects.
+  if (ctx.conn.status === 'error') {
+    const subs2 = subscribers.get(contentId);
+    const errs2 = errorStreak.get(contentId) ?? 0;
+    errorStreak.set(contentId, errs2 + 1);
+    if (errs2 === 0 && subs2) {
+      const msg = ctx.conn.lastErrorMessage ?? 'Calendar connection requires reconnection';
+      for (const deviceId of subs2) {
+        sendCommand(deviceId, { type: 'calendar_unavailable', payload: { contentId, error: msg } });
+      }
+    }
+    rescheduleTimer(contentId, ctx.meta.refreshSeconds);
+    return;
+  }
+
   const view = ctx.meta.view ?? 'week';
   const days = view === 'day' || view === 'meeting_room' ? 1 : view === 'month' ? 31 : 7;
   const from = new Date(); from.setHours(0, 0, 0, 0);
