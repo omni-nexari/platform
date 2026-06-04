@@ -50,7 +50,7 @@ import {
   organisations,
   clientOrgOwnerInvitations,
 } from '@signage/db';
-import { eq, and, asc, desc } from 'drizzle-orm';
+import { eq, and, asc, desc, inArray } from 'drizzle-orm';
 import { writeAuditLog } from '../services/audit.js';
 
 // ── Auth types (mirrors superadmin.ts) ────────────────────────────────────────
@@ -678,7 +678,7 @@ export async function pricingRoutes(app: FastifyInstance) {
   // ==========================================================================
 
   // ── GET /pricing/my-mc/pricing ─────────────────────────────────────────────
-  // MC admin views their own wholesale rates (read-only).
+  // MC admin views their own wholesale rates with plan details and retail prices.
   app.get('/my-mc/pricing', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
     const caller = req.user as PlatformAdminCaller;
     if (isOwnerCaller(caller)) {
@@ -690,6 +690,36 @@ export async function pricingRoutes(app: FastifyInstance) {
       orderBy: [asc(managementCompanyPricing.currency)],
     });
 
-    return reply.send(pricing);
+    if (pricing.length === 0) return reply.send([]);
+
+    const planIds = [...new Set(pricing.map((p) => p.planId).filter((id): id is string => !!id))];
+
+    const [plans, planPrices] = await Promise.all([
+      db.query.pricingPlans.findMany({ where: inArray(pricingPlans.id, planIds) }),
+      db.query.pricingPlanPrices.findMany({
+        where: and(inArray(pricingPlanPrices.planId, planIds), eq(pricingPlanPrices.isActive, true)),
+      }),
+    ]);
+
+    const planMap = Object.fromEntries(plans.map((p) => [p.id, p]));
+    const priceMap = Object.fromEntries(planPrices.map((pp) => [`${pp.planId}-${pp.currency}`, pp]));
+
+    const result = pricing.map((row) => {
+      const plan = planMap[row.planId!];
+      const retailPrice = priceMap[`${row.planId}-${row.currency}`];
+      return {
+        planId: row.planId,
+        planKey: plan?.planKey ?? '',
+        planName: plan?.name ?? '',
+        currency: row.currency,
+        wholesaleAmountCents: row.wholesaleCents ?? 0,
+        retailAmountCents: retailPrice?.amountCents ?? 0,
+        screensIncluded: plan?.screensIncluded ?? 0,
+        billingPeriod: plan?.billingPeriod ?? 'monthly',
+        module: plan?.module ?? 'signage',
+      };
+    });
+
+    return reply.send(result);
   });
 }

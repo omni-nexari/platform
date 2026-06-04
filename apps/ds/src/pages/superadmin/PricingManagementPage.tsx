@@ -602,7 +602,15 @@ function McWholesaleTab() {
 
   const { data: overrides = [], isLoading: loadingOverrides } = useQuery<McPricingOverride[]>({
     queryKey: ['mc-pricing', selectedMcId],
-    queryFn: () => saApi.get(`/pricing/mc/${selectedMcId}/pricing`),
+    queryFn: () => saApi.get<{ mc: ManagementCompany; pricing: Array<Record<string, unknown>> }>(`/pricing/mc/${selectedMcId}/pricing`),
+    select: (data) => (Array.isArray(data) ? data : (data.pricing ?? [])).map((p) => ({
+      id: p.id as string,
+      managementCompanyId: p.managementCompanyId as string,
+      planId: p.planId as string,
+      currency: p.currency as string,
+      wholesaleAmountCents: (p.wholesaleCents as number | null) ?? 0,
+      plan: p.plan as McPricingOverride['plan'],
+    })),
     enabled: !!selectedMcId,
   });
 
