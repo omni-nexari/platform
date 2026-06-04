@@ -736,6 +736,13 @@ export async function contentRoutes(app: FastifyInstance) {
     });
     if (!conn) return reply.status(404).send({ error: 'Connection not found' });
     if (conn.workspaceId !== item.workspaceId) return reply.status(403).send({ error: 'Connection mismatch' });
+    if (conn.status === 'error') {
+      return reply.status(424).send({
+        error: 'Calendar connection requires reconnection',
+        detail: conn.lastErrorMessage ?? 'Token refresh failed. Please reconnect this calendar integration.',
+        connectionId: conn.id,
+      });
+    }
 
     const fromD = q.from ? new Date(q.from) : new Date();
     const toD = q.to ? new Date(q.to) : new Date(Date.now() + 7 * 86_400_000);

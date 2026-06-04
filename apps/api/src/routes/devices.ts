@@ -2898,6 +2898,13 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
     if (!conn) return reply.status(404).send({ error: 'Connection not found' });
     if (conn.workspaceId !== item.workspaceId) return reply.status(403).send({ error: 'Connection mismatch' });
+    if (conn.status === 'error') {
+      return reply.status(424).send({
+        error: 'Calendar connection requires reconnection',
+        detail: conn.lastErrorMessage ?? 'Token refresh failed. Please reconnect this calendar integration.',
+        connectionId: conn.id,
+      });
+    }
 
     const fromD = q.from ? new Date(q.from) : new Date();
     const toD = q.to ? new Date(q.to) : new Date(Date.now() + 7 * 86_400_000);
@@ -2917,6 +2924,7 @@ export async function deviceRoutes(app: FastifyInstance) {
         : events;
       return reply.send({ events: safe });
     } catch (e) {
+      req.log.error({ err: e, contentId: id, connectionId: meta.connectionId }, 'Calendar provider error');
       const msg = e instanceof Error ? e.message : String(e);
       return reply.status(502).send({ error: 'Provider error', detail: msg });
     }
