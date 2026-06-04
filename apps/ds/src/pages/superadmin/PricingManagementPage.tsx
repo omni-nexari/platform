@@ -618,7 +618,7 @@ function McWholesaleTab() {
       planId: p.planId,
       currency: p.currency,
       wholesaleAmountCents: p.wholesaleCents ?? 0,
-      plan: p.plan,
+      ...(p.plan ? { plan: p.plan } : {}),
     })),
     enabled: !!selectedMcId,
   });
