@@ -392,6 +392,9 @@ function ZoneLayoutPreview({ item, large = false }: { item: ContentItem; large?:
           const label = isContent
             ? (zone.source?.contentName ?? '')
             : isPlaylist ? (zone.source?.playlistName ?? 'Playlist') : 'Empty';
+          // Canvas and other non-file types don't have thumbnails on the server
+          const THUMBNAIL_TYPES = new Set(['image', 'video', 'pdf', 'presentation', 'html5']);
+          const hasThumbnail = isContent && THUMBNAIL_TYPES.has(zone.source?.contentType ?? '');
 
           return (
             <div
@@ -399,7 +402,7 @@ function ZoneLayoutPreview({ item, large = false }: { item: ContentItem; large?:
               className="absolute overflow-hidden"
               style={{ left, top, width, height, border: '1px solid rgba(255,255,255,0.08)' }}
             >
-              {isContent && zone.source?.contentId ? (
+              {hasThumbnail && zone.source?.contentId ? (
                 <AuthImg
                   itemId={zone.source.contentId}
                   alt={label}
@@ -409,7 +412,9 @@ function ZoneLayoutPreview({ item, large = false }: { item: ContentItem; large?:
                 <div className="w-full h-full flex flex-col items-center justify-center gap-0.5 bg-[#1a2234]">
                   {isPlaylist
                     ? <ListVideo size={10} className="text-sky-400 shrink-0" />
-                    : <LayoutGrid size={10} className="text-slate-500 shrink-0" />}
+                    : zone.source?.contentType === 'canvas'
+                      ? <Paintbrush size={10} className="text-violet-400 shrink-0" />
+                      : <LayoutGrid size={10} className="text-slate-500 shrink-0" />}
                   <span className="text-[7px] leading-tight text-slate-400 text-center px-0.5 truncate max-w-full">{label}</span>
                 </div>
               )}
