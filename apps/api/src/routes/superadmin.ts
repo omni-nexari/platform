@@ -343,6 +343,7 @@ async function buildPortalAuthUser(caller: PlatformAdminCaller) {
     companyHeadingFontPreset: company?.headingFontPreset ?? null,
     companyBodyFontPreset: company?.bodyFontPreset ?? null,
     companyLoginBackgroundUrl: company?.loginBackgroundUrl ?? null,
+    companyPlan: company?.plan ?? null,
   };
 }
 
@@ -1594,6 +1595,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
         companyHeadingFontPreset: company?.headingFontPreset ?? null,
         companyBodyFontPreset: company?.bodyFontPreset ?? null,
         companyLoginBackgroundUrl: company?.loginBackgroundUrl ?? null,
+        companyPlan: company?.plan ?? null,
       },
     });
   });
@@ -2932,15 +2934,15 @@ export async function superAdminRoutes(app: FastifyInstance) {
       where: eq(orgStorageQuotas.orgId, id),
     });
     const defaults: Record<string, number> = {
-      starter: 5_368_709_120,
+      basic: 5_368_709_120,
+      starter: 5_368_709_120, // legacy alias
       pro: 53_687_091_200,
-      enterprise: 536_870_912_000,
     };
 
     return reply.send(
       quota ?? {
         orgId: id,
-        limitBytes: defaults[org.plan] ?? defaults['starter'],
+        limitBytes: defaults[org.plan] ?? defaults['basic'],
         usedBytes: 0,
         alertThresholdPct: 90,
       },

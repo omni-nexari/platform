@@ -24,6 +24,7 @@ export interface SAUser {
   companyHeadingFontPreset?: 'modern' | 'editorial' | 'geometric' | 'mono' | null;
   companyBodyFontPreset?: 'modern' | 'editorial' | 'geometric' | 'mono' | null;
   companyLoginBackgroundUrl?: string | null;
+  companyPlan?: 'basic' | 'pro' | null;
 }
 
 interface SAAuthState {

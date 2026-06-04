@@ -27,3 +27,16 @@ export function usePosEnabled(): boolean {
   const modules = useOrgModules();
   return modules === 'pos' || modules === 'both';
 }
+
+export type OrgPlan = 'basic' | 'pro';
+
+/** Returns the plan for the authenticated org. Defaults to 'basic'. */
+export function useOrgPlan(): OrgPlan {
+  const plan = useAuthStore((s) => s.org?.plan);
+  return plan === 'pro' ? 'pro' : 'basic';
+}
+
+/** True when the org is on the Pro plan (SyncPlay, Video Walls, Smart Playlists). */
+export function useIsProPlan(): boolean {
+  return useOrgPlan() === 'pro';
+}

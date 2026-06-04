@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
+import { useIsProPlan } from '../../lib/modules.js';
 import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTagPills.js';
 import BulkTagModal from '../../components/BulkTagModal.js';
 import DevicePickerModal from '../../components/DevicePickerModal.js';
@@ -492,6 +493,7 @@ export default function PlaylistPage() {
   const { wsId } = useParams<{ wsId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const isProPlan = useIsProPlan();
 
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [confirmName, setConfirmName] = useState('');
@@ -524,14 +526,14 @@ export default function PlaylistPage() {
   const { data: syncPlaylistData, isLoading: isLoadingSync } = useQuery<SyncPlaylist[]>({
     queryKey: ['sync-playlists', wsId],
     queryFn: () => api.get<SyncPlaylist[]>(`/sync-playlists?workspaceId=${wsId!}`),
-    enabled: !!wsId,
+    enabled: !!wsId && isProPlan,
   });
   const syncItems = syncPlaylistData ?? [];
 
   const { data: videowallPlaylistData, isLoading: isLoadingVideowall } = useQuery<VideoWallPlaylist[]>({
     queryKey: ['videowall-playlists', wsId],
     queryFn: () => api.get<VideoWallPlaylist[]>(`/videowall-playlists?workspaceId=${wsId!}`),
-    enabled: !!wsId,
+    enabled: !!wsId && isProPlan,
   });
   const videowallItems = videowallPlaylistData ?? [];
 
@@ -719,9 +721,9 @@ export default function PlaylistPage() {
           </div>
         )}
 
-        {/* Type filter — All / General / Sync / Video Wall */}
+        {/* Type filter — All / General / Sync / Video Wall (Sync + VideoWall only for Pro) */}
         <div className="mb-5 flex items-center gap-2 flex-wrap">
-          {(['all', 'general', 'sync', 'videowall'] as TypeFilter[]).map((t) => {
+          {(['all', 'general', ...(isProPlan ? ['sync', 'videowall'] : [])] as TypeFilter[]).map((t) => {
             const label = t === 'all' ? 'All' : t === 'general' ? 'General' : t === 'sync' ? 'Sync' : 'Video Wall';
             const count = t === 'all'
               ? generalItems.length + syncItems.length + videowallItems.length
@@ -935,27 +937,32 @@ export default function PlaylistPage() {
               </button>
               <button
                 onClick={() => setCreateKind('sync')}
-                className="text-left rounded-xl border p-4 transition-colors hover:border-[var(--accent)]"
+                disabled={!isProPlan}
+                className="text-left rounded-xl border p-4 transition-colors hover:border-[var(--accent)] disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+                title={!isProPlan ? 'Upgrade to Pro to use Sync Playlists' : undefined}
               >
-                <Layers2 size={22} className="mb-2" style={{ color: 'rgb(168,85,247)' }} />
+                <Layers2 size={22} className="mb-2" style={{ color: isProPlan ? 'rgb(168,85,247)' : 'var(--text-muted)' }} />
                 <div className="text-sm font-semibold text-[var(--text)]">Sync Playlist</div>
                 <div className="mt-1 text-xs text-[var(--text-muted)]">
-                  Frame-aligned playback across multiple screens.
+                  {isProPlan ? 'Frame-aligned playback across multiple screens.' : 'Pro plan required.'}
                 </div>
               </button>
               <button
                 onClick={() => {
+                  if (!isProPlan) return;
                   setCreateOpen(false);
                   navigate(`/workspaces/${wsId!}/playlist/videowall/new`);
                 }}
-                className="text-left rounded-xl border p-4 transition-colors hover:border-[var(--accent)]"
+                disabled={!isProPlan}
+                className="text-left rounded-xl border p-4 transition-colors hover:border-[var(--accent)] disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+                title={!isProPlan ? 'Upgrade to Pro to use Video Wall Playlists' : undefined}
               >
-                <LayoutGrid size={22} className="mb-2" style={{ color: 'rgb(20,184,166)' }} />
+                <LayoutGrid size={22} className="mb-2" style={{ color: isProPlan ? 'rgb(20,184,166)' : 'var(--text-muted)' }} />
                 <div className="text-sm font-semibold text-[var(--text)]">Video Wall Playlist</div>
                 <div className="mt-1 text-xs text-[var(--text-muted)]">
-                  Assign different content to each screen in a video wall.
+                  {isProPlan ? 'Assign different content to each screen in a video wall.' : 'Pro plan required.'}
                 </div>
               </button>
             </div>

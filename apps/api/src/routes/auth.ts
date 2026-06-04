@@ -1015,9 +1015,9 @@ export async function authRoutes(app: FastifyInstance) {
     });
 
     const planDefaults: Record<string, number> = {
-      starter: 5_368_709_120,
+      basic: 5_368_709_120,
+      starter: 5_368_709_120, // legacy alias
       pro: 53_687_091_200,
-      enterprise: 536_870_912_000,
     };
 
     if (!req.cookies[CSRF_COOKIE]) {
@@ -1032,7 +1032,7 @@ export async function authRoutes(app: FastifyInstance) {
       org: resolvedOrg,
       storage: {
         usedBytes: Number(storageUsageRow?.usedBytes ?? 0),
-        limitBytes: quota?.limitBytes ?? planDefaults[resolvedOrg.plan] ?? planDefaults.starter,
+        limitBytes: quota?.limitBytes ?? planDefaults[resolvedOrg.plan] ?? planDefaults.basic,
       },
     });
   });

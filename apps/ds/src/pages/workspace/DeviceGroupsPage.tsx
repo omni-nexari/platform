@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router';
 import { useState, useMemo } from 'react';
 import { toast } from 'sonner';
 import { api } from '../../lib/api.js';
+import { useIsProPlan } from '../../lib/modules.js';
 import { Layers, Plus, ChevronRight, Monitor, LayoutGrid, MapPin, Tag, Search, Check } from 'lucide-react';
 import {
   Badge,
@@ -104,6 +105,7 @@ export default function DeviceGroupsPage() {
   const { wsId } = useParams<{ wsId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const isProPlan = useIsProPlan();
 
   const [wizard, setWizard] = useState<WizardState>(INITIAL_WIZARD);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -390,18 +392,22 @@ export default function DeviceGroupsPage() {
                   <div className="grid grid-cols-2 gap-2">
                     {GROUP_TYPES.map((t) => {
                       const m = TYPE_META[t];
+                      const isProOnly = t === 'sync' || t === 'videowall';
+                      const locked = isProOnly && !isProPlan;
                       return (
                         <button
                           key={t}
                           type="button"
-                          onClick={() => setWizard((w) => ({ ...w, type: t }))}
-                          className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors ${
+                          onClick={() => !locked && setWizard((w) => ({ ...w, type: t }))}
+                          disabled={locked}
+                          title={locked ? 'Upgrade to Pro to use this group type' : undefined}
+                          className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                             wizard.type === t
                               ? 'border-[var(--blue)] bg-[var(--blue)]/10 text-[var(--text)]'
                               : 'border-[var(--card-border)] text-[var(--text-muted)] hover:text-[var(--text)]'
                           }`}
                         >
-                          {m.icon} {m.label}
+                          {m.icon} {m.label}{locked ? ' (Pro)' : ''}
                         </button>
                       );
                     })}
