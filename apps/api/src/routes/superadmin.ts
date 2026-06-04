@@ -1651,7 +1651,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
         .values({
           name: companyName,
           slug: tempSlug,
-          plan: plan ?? 'starter',
+          plan: plan ?? 'basic',
           allowedModules: allowedModules ?? 'signage',
           createdByOwnerId: caller.sub,
         })
@@ -1675,7 +1675,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
           orgRole: 'owner',
           inviteType: 'management_company_admin',
           companyName,
-          plan: plan ?? 'starter',
+          plan: plan ?? 'basic',
           allowedModules: allowedModules ?? 'signage',
           branding: {
             portalTitle: company.portalTitle ?? null,
@@ -1694,7 +1694,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
         action: 'MANAGEMENT_COMPANY_CREATED',
         entityType: 'management_company',
         entityId: company.id,
-        meta: { adminEmail: initialAdminEmail, companyName, plan: plan ?? 'starter', allowedModules: allowedModules ?? 'signage' },
+        meta: { adminEmail: initialAdminEmail, companyName, plan: plan ?? 'basic', allowedModules: allowedModules ?? 'signage' },
         ipAddress: req.ip,
       });
 
@@ -1752,7 +1752,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
           name: z.string().min(2).max(120).optional(),
           billingEmail: z.string().email().nullable().optional(),
           suspended: z.boolean().optional(),
-          plan: z.enum(['starter', 'pro', 'enterprise']).optional(),
+          plan: z.enum(['basic', 'pro']).optional(),
           allowedModules: z.enum(['signage', 'pos', 'both']).optional(),
         })
         .safeParse(req.body);
@@ -2376,7 +2376,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
     const body = z
       .object({
         name: z.string().min(2).max(100).optional(),
-        plan: z.enum(['starter', 'pro', 'enterprise']).optional(),
+        plan: z.enum(['basic', 'pro']).optional(),
         modules: z.enum(['signage', 'pos', 'both']).optional(),
         suspended: z.boolean().optional(),
       })

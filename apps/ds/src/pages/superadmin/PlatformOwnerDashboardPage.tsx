@@ -67,7 +67,7 @@ function StatCard({
 function PlatformOwnerView() {
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
-  const [selectedPlan, setSelectedPlan] = useState<'starter' | 'pro' | 'enterprise'>('starter');
+  const [selectedPlan, setSelectedPlan] = useState<'basic' | 'pro'>('basic');
   const [selectedModules, setSelectedModules] = useState<'signage' | 'pos' | 'both'>('signage');
 
   const { data: analytics, isLoading: analyticsLoading } = useQuery({
@@ -95,7 +95,7 @@ function PlatformOwnerView() {
       void qc.invalidateQueries({ queryKey: ['sa-companies'] });
       void qc.invalidateQueries({ queryKey: ['sa-analytics'] });
       form.reset();
-      setSelectedPlan('starter');
+      setSelectedPlan('basic');
       setSelectedModules('signage');
       setShowCreate(false);
     },
@@ -257,11 +257,11 @@ function PlatformOwnerView() {
 
       {/* Create company modal */}
       {showCreate && (
-        <Modal onClose={() => { setShowCreate(false); setSelectedPlan('starter'); setSelectedModules('signage'); }} size="md">
+        <Modal onClose={() => { setShowCreate(false); setSelectedPlan('basic'); setSelectedModules('signage'); }} size="md">
           <ModalHeader
             title="New Management Company"
             subtitle="An invite will be sent to the initial admin immediately."
-            onClose={() => { setShowCreate(false); setSelectedPlan('starter'); setSelectedModules('signage'); }}
+            onClose={() => { setShowCreate(false); setSelectedPlan('basic'); setSelectedModules('signage'); }}
           />
           <ModalBody>
             <form
@@ -306,7 +306,7 @@ function PlatformOwnerView() {
               <div className="border-t pt-4" style={{ borderColor: 'var(--card-border)' }}>
                 <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-3">Plan</p>
                 <div className="flex flex-wrap gap-2">
-                  {(['starter', 'pro', 'enterprise'] as const).map((p) => (
+                  {(['basic', 'pro'] as const).map((p) => (
                     <button
                       key={p}
                       type="button"
@@ -348,7 +348,7 @@ function PlatformOwnerView() {
             </form>
           </ModalBody>
           <ModalFooter>
-            <ModalSecondaryButton onClick={() => { setShowCreate(false); setSelectedPlan('starter'); setSelectedModules('signage'); }}>
+            <ModalSecondaryButton onClick={() => { setShowCreate(false); setSelectedPlan('basic'); setSelectedModules('signage'); }}>
               Cancel
             </ModalSecondaryButton>
             <ModalPrimaryButton

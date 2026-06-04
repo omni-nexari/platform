@@ -107,9 +107,8 @@ const ROLE_TONES = {
 } as const;
 
 const PLAN_TONES = {
-  starter: 'neutral',
+  basic: 'neutral',
   pro: 'accent',
-  enterprise: 'success',
 } as const;
 
 const MODULE_TONES = {
@@ -137,7 +136,7 @@ export default function ManagementCompanyDetailPage() {
   const [showInvite, setShowInvite] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [showBrandingOptions, setShowBrandingOptions] = useState(false);
-  const [selectedPlan, setSelectedPlan] = useState<'starter' | 'pro' | 'enterprise' | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<'basic' | 'pro' | null>(null);
   const [selectedModules, setSelectedModules] = useState<'signage' | 'pos' | 'both' | null>(null);
   const [nameInput, setNameInput] = useState('');
   const [editingName, setEditingName] = useState(false);
@@ -425,7 +424,7 @@ export default function ManagementCompanyDetailPage() {
 
       {/* ── Plan & Allowed Modules ── */}
       {company && (() => {
-        const currentPlan = company.plan as 'starter' | 'pro' | 'enterprise';
+        const currentPlan = company.plan as 'basic' | 'pro';
         const currentModules = company.allowedModules as 'signage' | 'pos' | 'both';
         const activePlan = selectedPlan ?? currentPlan;
         const activeModules = selectedModules ?? currentModules;
@@ -442,7 +441,7 @@ export default function ManagementCompanyDetailPage() {
               <div>
                 <p className="text-sm font-medium mb-3">Subscription plan</p>
                 <div className="flex flex-wrap gap-2">
-                  {(['starter', 'pro', 'enterprise'] as const).map((p) => (
+                  {(['basic', 'pro'] as const).map((p) => (
                     <button
                       key={p}
                       onClick={() => setSelectedPlan(p)}

@@ -15,7 +15,7 @@ export const ManagementCompanySchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
   slug: z.string(),
-  plan: z.enum(['starter', 'pro', 'enterprise']).default('starter'),
+  plan: z.enum(['basic', 'pro']).default('basic'),
   allowedModules: z.enum(['signage', 'pos', 'both']).default('signage'),
   billingEmail: z.string().email().nullable(),
   logoUrl: z.string().nullable().optional(),
@@ -63,7 +63,7 @@ export const CreateManagementCompanySchema = z.object({
   /** email of the first admin to invite immediately after creation */
   initialAdminEmail: z.string().email(),
   initialAdminName: z.string().min(1).max(120),
-  plan: z.enum(['starter', 'pro', 'enterprise']).default('starter'),
+  plan: z.enum(['basic', 'pro']).default('basic'),
   allowedModules: z.enum(['signage', 'pos', 'both']).default('signage'),
 });
 export type CreateManagementCompanyInput = z.infer<typeof CreateManagementCompanySchema>;

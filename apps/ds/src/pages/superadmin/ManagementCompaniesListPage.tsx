@@ -41,9 +41,8 @@ function getResellerPortalPath(slug: string): string | null {
 }
 
 const PLAN_TONES = {
-  starter: 'neutral',
+  basic: 'neutral',
   pro: 'accent',
-  enterprise: 'success',
 } as const;
 
 const MODULE_TONES = {
@@ -63,7 +62,7 @@ export default function ManagementCompaniesListPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [search, setSearch] = useState('');
   const [companyToDelete, setCompanyToDelete] = useState<CompanyRow | null>(null);
-  const [selectedPlan, setSelectedPlan] = useState<'starter' | 'pro' | 'enterprise'>('starter');
+  const [selectedPlan, setSelectedPlan] = useState<'basic' | 'pro'>('basic');
   const [selectedModules, setSelectedModules] = useState<'signage' | 'pos' | 'both'>('signage');
 
   const { data: companies = [], isLoading } = useQuery({
@@ -88,7 +87,7 @@ export default function ManagementCompaniesListPage() {
       toast.success('Reseller created and invite sent');
       void qc.invalidateQueries({ queryKey: ['sa-companies'] });
       reset();
-      setSelectedPlan('starter');
+      setSelectedPlan('basic');
       setSelectedModules('signage');
       setShowCreate(false);
     },
@@ -372,11 +371,11 @@ export default function ManagementCompaniesListPage() {
 
       {/* Create company modal */}
       {showCreate && (
-        <Modal onClose={() => { setShowCreate(false); reset(); setSelectedPlan('starter'); setSelectedModules('signage'); }} size="md">
+        <Modal onClose={() => { setShowCreate(false); reset(); setSelectedPlan('basic'); setSelectedModules('signage'); }} size="md">
           <ModalHeader
             title="New Reseller (SI)"
             subtitle="Set up the SI account and send the first admin their invitation."
-            onClose={() => { setShowCreate(false); reset(); setSelectedPlan('starter'); setSelectedModules('signage'); }}
+            onClose={() => { setShowCreate(false); reset(); setSelectedPlan('basic'); setSelectedModules('signage'); }}
           />
           <ModalBody>
             <form
@@ -426,7 +425,7 @@ export default function ManagementCompaniesListPage() {
               <div className="border-t pt-4" style={{ borderColor: 'var(--card-border)' }}>
                 <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-3">Subscription Plan</p>
                 <div className="flex flex-wrap gap-2">
-                  {(['starter', 'pro', 'enterprise'] as const).map((p) => (
+                  {(['basic', 'pro'] as const).map((p) => (
                     <button
                       key={p}
                       type="button"
@@ -470,7 +469,7 @@ export default function ManagementCompaniesListPage() {
             </form>
           </ModalBody>
           <ModalFooter>
-            <ModalSecondaryButton type="button" onClick={() => { setShowCreate(false); reset(); setSelectedPlan('starter'); setSelectedModules('signage'); }} className="flex-1">
+            <ModalSecondaryButton type="button" onClick={() => { setShowCreate(false); reset(); setSelectedPlan('basic'); setSelectedModules('signage'); }} className="flex-1">
               Cancel
             </ModalSecondaryButton>
             <ModalPrimaryButton
