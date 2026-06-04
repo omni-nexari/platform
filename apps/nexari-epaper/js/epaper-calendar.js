@@ -725,7 +725,7 @@ window.EpaperCalendar = (function () {
     var tz            = meta.timezone || 'UTC';
     var lookaheadDays = (view === 'day' || view === 'meeting_room') ? 1 : (view === 'month' ? 31 : 7);
 
-    var inst = { id: id, midnightTimer: null, boundaryTimer: null, lastSig: '', lastKnownEvents: [], lastBoundaryRender: 0, container: container, content: content };
+    var inst = { id: id, midnightTimer: null, boundaryTimer: null, lastSig: null, lastKnownEvents: [], lastBoundaryRender: 0, container: container, content: content };
     _instances[id] = inst;
 
     var doRender = function (evs) {
@@ -765,22 +765,29 @@ window.EpaperCalendar = (function () {
           var evs = body.events || [];
           var sig = eventsSignature(evs);
           try { localStorage.setItem('cal_events_' + id, JSON.stringify({ events: evs, cachedAt: Date.now() })); } catch (e) {}
-          if (sig !== inst.lastSig) {
+          // inst.lastSig is null until first render; always render on first fetch
+          // (even empty events list) so the calendar frame is visible.
+          if (inst.lastSig === null || sig !== inst.lastSig) {
             inst.lastSig = sig;
             doRender(evs);
           }
         })
         .catch(function (err) {
           logger.warn('[EpaperCalendar] fetch failed: ' + (err && err.message));
-          if (inst.lastSig) return; // keep existing render on screen
+          if (inst.lastSig !== null) return; // keep existing render on screen
+          // No prior render — try cache, then fall back to empty calendar
+          // so the container is never left as a blank white div.
           try {
             var cached = localStorage.getItem('cal_events_' + id);
             if (cached) {
               var parsed = JSON.parse(cached);
               inst.lastSig = eventsSignature(parsed.events || []);
               doRender(parsed.events || []);
+              return;
             }
           } catch (e) {}
+          inst.lastSig = '';
+          doRender([]);
         });
     };
 
