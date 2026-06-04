@@ -36,37 +36,6 @@ interface McPricing {
   module: string;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatCents(cents: number, currency: string) {
-  return new Intl.NumberFormat('en-CA', { style: 'currency', currency }).format(cents / 100);
-}
-
-const PERIOD_LABELS: Record<string, string> = {
-  monthly: 'Monthly',
-  annual: 'Annual',
-};
-
-const MODULE_LABELS: Record<string, string> = {
-  signage: 'CMS',
-  pos: 'POS',
-  both: 'CMS + POS',
-};
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface McPricing {
-  planId: string;
-  planKey: string;
-  planName: string;
-  currency: string;
-  wholesaleAmountCents: number;
-  retailAmountCents: number;
-  screensIncluded: number;
-  billingPeriod: 'monthly' | 'annual';
-  module: string;
-}
-
 interface ManagedOrg {
   id: string;
   name: string;
