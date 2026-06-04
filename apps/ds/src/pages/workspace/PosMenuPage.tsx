@@ -8,7 +8,7 @@ import {
   ImagePlus, Eye, EyeOff,
   Camera, Utensils, ChefHat,
   UploadCloud, GripVertical, AlertCircle,
-  Clock, Calendar, Link2, Plug, RefreshCw, ShieldAlert, QrCode, Globe,
+  Clock, Calendar, Link2, RefreshCw, ShieldAlert, QrCode, Globe,
 } from 'lucide-react';
 import {
   Badge,
@@ -261,7 +261,7 @@ export default function PosMenuPage() {
   const qc = useQueryClient();
 
   // Top-level tab
-  const [activeTab, setActiveTab] = useState<'builder' | 'schedules' | 'integrations'>('builder');
+  const [activeTab, setActiveTab] = useState<'builder' | 'schedules'>('builder');
 
   // Selection state
   const [selectedMenuId, setSelectedMenuId] = useState<string | null>(null);
@@ -495,9 +495,8 @@ export default function PosMenuPage() {
       {/* Tab bar */}
       <div className="flex gap-1 border-b border-[var(--border)] -mt-2">
         {([
-          { id: 'builder',      label: 'Menu Builder', icon: <Utensils className="w-3.5 h-3.5" /> },
-          { id: 'schedules',    label: 'Schedules',    icon: <Clock     className="w-3.5 h-3.5" /> },
-          { id: 'integrations', label: 'Integrations', icon: <Plug      className="w-3.5 h-3.5" /> },
+          { id: 'builder',   label: 'Menu Builder', icon: <Utensils className="w-3.5 h-3.5" /> },
+          { id: 'schedules', label: 'Schedules',    icon: <Clock     className="w-3.5 h-3.5" /> },
         ] as const).map((tab) => (
           <button
             key={tab.id}
@@ -526,9 +525,6 @@ export default function PosMenuPage() {
           pending={createScheduleMut.isPending || updateScheduleMut.isPending}
         />
       )}
-
-      {/* ── Integrations tab ── */}
-      {activeTab === 'integrations' && <IntegrationsTab />}
 
       {/* ── Builder tab ── */}
       {activeTab === 'builder' && (
@@ -2082,42 +2078,6 @@ function SchedulesTab({
             </div>
           );
         })}
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// IntegrationsTab
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const INTEGRATIONS = [
-  { id: 'square', name: 'Square POS', description: 'Sync menu items and orders from Square.', status: 'coming-soon' as const },
-  { id: 'toast', name: 'Toast POS', description: 'Import menus and real-time item 86 from Toast.', status: 'coming-soon' as const },
-  { id: 'ubereats', name: 'Uber Eats', description: 'Display live order queue and item availability.', status: 'coming-soon' as const },
-  { id: 'doordash', name: 'DoorDash', description: 'Connect DoorDash store for menu sync.', status: 'coming-soon' as const },
-];
-
-function IntegrationsTab() {
-  return (
-    <div className="space-y-4">
-      <h3 className="font-semibold text-sm">Integrations</h3>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {INTEGRATIONS.map((intg) => (
-          <div key={intg.id} className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Plug className="w-4 h-4 text-[var(--text-muted)]" />
-                <span className="font-medium text-sm">{intg.name}</span>
-              </div>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--surface-raised)] text-[var(--text-muted)] border border-[var(--border)]">
-                Coming Soon
-              </span>
-            </div>
-            <p className="text-xs text-[var(--text-muted)]">{intg.description}</p>
-            <button disabled className="ui-button-secondary text-xs opacity-40 cursor-not-allowed mt-auto">Connect</button>
-          </div>
-        ))}
       </div>
     </div>
   );

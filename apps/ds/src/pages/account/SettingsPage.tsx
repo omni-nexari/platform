@@ -166,6 +166,7 @@ type SectionId =
   | 'pos-kiosk'
   | 'pos-loyalty'
   | 'pos-uber-eats'
+  | 'pos-integrations'
   | 'integrations';
 
 const SECTIONS: {
@@ -194,7 +195,7 @@ const SECTIONS: {
   { id: 'pos-hardware',   label: 'Hardware',      icon: Printer,         group: 'Point of Sale', posOnly: true },
   { id: 'pos-kiosk',      label: 'Kiosk',         icon: Smartphone,      group: 'Point of Sale', posOnly: true },
   { id: 'pos-loyalty',    label: 'Loyalty',       icon: Gift,            group: 'Point of Sale', posOnly: true },
-  { id: 'pos-uber-eats',  label: 'Uber Eats',     icon: ShoppingBag,     group: 'Point of Sale', posOnly: true },
+  { id: 'pos-integrations', label: 'Integrations', icon: Plug,            group: 'Point of Sale', posOnly: true },
 ];
 
 const SECTION_LABELS: Record<SectionId, string> = {
@@ -214,8 +215,9 @@ const SECTION_LABELS: Record<SectionId, string> = {
   'pos-tables':     'Tables',
   'pos-hardware':   'Hardware',
   'pos-kiosk':      'Kiosk',
-  'pos-loyalty':    'Loyalty',
-  'pos-uber-eats':  'Uber Eats',
+  'pos-loyalty':       'Loyalty',
+  'pos-uber-eats':      'Uber Eats',
+  'pos-integrations':   'Integrations',
 };
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
@@ -4182,6 +4184,72 @@ type UberEatsStore = {
 
 type WizardStep = 'idle' | 'store-select' | 'import-prompt' | 'sync-prompt';
 
+// ─── POS Integrations Section ─────────────────────────────────────────────────
+
+const POS_INTEGRATION_CATALOG = [
+  { id: 'square',   name: 'Square POS',  description: 'Sync menu items and orders from Square.',        status: 'coming-soon' as const },
+  { id: 'toast',    name: 'Toast POS',   description: 'Import menus and real-time item 86 from Toast.',  status: 'coming-soon' as const },
+  { id: 'ubereats', name: 'Uber Eats',   description: 'Display live order queue and item availability.', status: 'available'   as const },
+  { id: 'doordash', name: 'DoorDash',    description: 'Connect DoorDash store for menu sync.',            status: 'coming-soon' as const },
+];
+
+function PosIntegrationsSection({ wsId }: { wsId: string | null }) {
+  const uberRef = useRef<HTMLDivElement>(null);
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <h3 className="text-sm font-semibold mb-3">Available Integrations</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {POS_INTEGRATION_CATALOG.map((intg) => (
+            <div
+              key={intg.id}
+              className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] flex flex-col gap-2"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Plug size={14} className="text-[var(--text-muted)]" />
+                  <span className="font-medium text-sm">{intg.name}</span>
+                </div>
+                {intg.status === 'coming-soon' ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--surface-raised)] text-[var(--text-muted)] border border-[var(--border)]">
+                    Coming Soon
+                  </span>
+                ) : (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-500 border border-green-500/20">
+                    Available
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-[var(--text-muted)]">{intg.description}</p>
+              {intg.status === 'coming-soon' ? (
+                <button disabled className="ui-button-secondary text-xs opacity-40 cursor-not-allowed mt-auto">
+                  Connect
+                </button>
+              ) : (
+                <button
+                  className="ui-button-secondary text-xs mt-auto"
+                  onClick={() => uberRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                >
+                  Manage →
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div ref={uberRef}>
+        <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
+          <ShoppingBag size={14} className="text-[var(--text-muted)]" />
+          Uber Eats
+        </h3>
+        <PosUberEatsSection wsId={wsId} />
+      </div>
+    </div>
+  );
+}
+
 function PosUberEatsSection({ wsId }: { wsId: string | null }) {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -4998,7 +5066,7 @@ export default function SettingsPage() {
 
   const WORKSPACE_SECTIONS: SectionId[] = [
     'workspace', 'tags', 'emergency', 'api-keys', 'integrations',
-    'pos-restaurant', 'pos-menu', 'pos-tables', 'pos-hardware', 'pos-kiosk', 'pos-loyalty', 'pos-uber-eats',
+    'pos-restaurant', 'pos-menu', 'pos-tables', 'pos-hardware', 'pos-kiosk', 'pos-loyalty', 'pos-integrations',
   ];
   const needsWorkspacePicker = WORKSPACE_SECTIONS.includes(activeSection);
 
@@ -5070,8 +5138,8 @@ export default function SettingsPage() {
           {activeSection === 'pos-tables'     && <PosTablesSection wsId={resolvedWsId} />}
           {activeSection === 'pos-hardware'   && <ComingSoon title="Hardware" description="Receipt printer, barcode scanner, and cash drawer setup coming soon." />}
           {activeSection === 'pos-kiosk'      && <PosKioskSection wsId={resolvedWsId} />}
-          {activeSection === 'pos-loyalty'    && <PosLoyaltySection wsId={resolvedWsId} />}
-          {activeSection === 'pos-uber-eats'  && <PosUberEatsSection wsId={resolvedWsId} />}
+          {activeSection === 'pos-loyalty'       && <PosLoyaltySection wsId={resolvedWsId} />}
+          {activeSection === 'pos-integrations' && <PosIntegrationsSection wsId={resolvedWsId} />}
           {activeSection === 'billing'         && <BillingSection />}
         </div>
       </div>
