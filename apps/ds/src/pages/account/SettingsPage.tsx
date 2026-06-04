@@ -4187,10 +4187,12 @@ type WizardStep = 'idle' | 'store-select' | 'import-prompt' | 'sync-prompt';
 // ─── POS Integrations Section ─────────────────────────────────────────────────
 
 const POS_INTEGRATION_CATALOG = [
-  { id: 'square',   name: 'Square POS',  description: 'Sync menu items and orders from Square.',        status: 'coming-soon' as const },
-  { id: 'toast',    name: 'Toast POS',   description: 'Import menus and real-time item 86 from Toast.',  status: 'coming-soon' as const },
-  { id: 'ubereats', name: 'Uber Eats',   description: 'Display live order queue and item availability.', status: 'available'   as const },
-  { id: 'doordash', name: 'DoorDash',    description: 'Connect DoorDash store for menu sync.',            status: 'coming-soon' as const },
+  { id: 'square',   name: 'Square POS',  description: 'Sync menu items and orders from Square.',               status: 'coming-soon' as const },
+  { id: 'toast',    name: 'Toast POS',   description: 'Import menus and real-time item 86 from Toast.',         status: 'coming-soon' as const },
+  { id: 'clover',   name: 'Clover',      description: 'Sync orders and menu data from your Clover POS.',        status: 'coming-soon' as const },
+  { id: 'moneris',  name: 'Moneris',     description: 'Process payments and sync transaction data via Moneris.', status: 'coming-soon' as const },
+  { id: 'ubereats', name: 'Uber Eats',   description: 'Display live order queue and item availability.',         status: 'available'   as const },
+  { id: 'doordash', name: 'DoorDash',    description: 'Connect DoorDash store for menu sync.',                   status: 'coming-soon' as const },
 ];
 
 function PosIntegrationsSection({ wsId }: { wsId: string | null }) {
