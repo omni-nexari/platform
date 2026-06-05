@@ -6,7 +6,7 @@ export default defineConfig({
   base: './',
   resolve: {
     alias: {
-      '@sync': path.resolve(__dirname, '../nexari-html5-sync/src'),
+      '@sync': path.resolve(__dirname, '../player-web/src/sync'),
     },
     // Allow .js imports to resolve to .ts source when using Vite
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs'],

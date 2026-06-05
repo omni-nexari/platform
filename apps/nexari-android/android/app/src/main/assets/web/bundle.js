@@ -6349,7 +6349,8 @@ var DeviceMessageSchema = external_exports.discriminatedUnion("type", [
       dns: external_exports.string().optional(),
       connectionType: external_exports.enum(["wifi", "ethernet"]).optional(),
       wifiSsid: external_exports.string().optional(),
-      wifiStrength: external_exports.number().int().optional()
+      wifiStrength: external_exports.number().int().optional(),
+      serialNumber: external_exports.string().optional()
     })
   }),
   external_exports.object({
