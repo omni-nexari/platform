@@ -1535,6 +1535,13 @@ export async function contentRoutes(app: FastifyInstance) {
     const absPath = path.resolve(STORAGE_ROOT, servePath);
     try { await fs.access(absPath); } catch {
       if (process.env['NODE_ENV'] !== 'production') req.log.warn({ contentId: id, servePath, absPath, storageRoot: STORAGE_ROOT }, '[thumb] file not found on disk');
+      // Self-heal: if a thumbnail_path was recorded but the file is gone, clear it
+      // so subsequent list loads stop requesting a thumbnail that will 404.
+      if (item.thumbnailPath) {
+        await db.update(contentItems)
+          .set({ thumbnailPath: null, updatedAt: new Date() })
+          .where(eq(contentItems.id, id));
+      }
       return reply.status(404).send({ error: 'Thumbnail not found on disk' });
     }
 
