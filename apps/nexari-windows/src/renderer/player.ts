@@ -256,7 +256,7 @@ async function startSyncGroupPlayback(content: Playlist) {
 
     if (!urls.length) { console.warn('[Sync] no video URLs'); playCurrentItem(); return; }
 
-    console.info(`[Sync] starting relay sync groupId=${content.syncGroupId} peers=${expectedPeers} pinnedLeader=${effectiveLeaderId} (manifest=${pinnedLeaderId} allTizen=${content.allTizen})`);
+    console.info(`[Sync] starting relay sync groupId=${content.syncGroupId} peers=${expectedPeers} pinnedLeader=${effectiveLeaderId} allTizen=${content.allTizen}`);
     _syncActive = true;
     await startSync({
       apiBase,
