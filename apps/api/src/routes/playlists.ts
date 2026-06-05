@@ -711,6 +711,7 @@ export async function playlistRoutes(app: FastifyInstance) {
     const resolvedItems = await db.select({
       id: contentItems.id,
       duration: contentItems.duration,
+      type: contentItems.type,
     }).from(contentItems)
       .where(and(
         queryConditions,
