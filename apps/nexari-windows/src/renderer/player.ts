@@ -241,12 +241,9 @@ async function startSyncGroupPlayback(content: Playlist) {
     const peers = (content.syncPlay?.peers ?? []) as Array<{ deviceId: string; leaderPriority?: number | null }>;
     const expectedPeers = Math.max(1, peers.length - 1);
     // peers is already sorted by leaderPriority asc from the API; peers[0] is the designated leader.
-    const pinnedLeaderId = peers[0]?.deviceId ?? '';
-    // In cross-OS groups (allTizen===false), the Tizen relay implementation is
-    // follower-only: it can't send LOAD_URL or GO. The Windows player must be
-    // the leader so it broadcasts LOAD_URL and sends GO. Force ourselves as
-    // leader by pinning to our own deviceId whenever allTizen===false.
-    const effectiveLeaderId = (content.allTizen === false) ? deviceId : pinnedLeaderId;
+    // Both Windows and Android use the same full sync engine (leader + follower capable),
+    // so respect the manifest's designated leader — do NOT override to self.
+    const effectiveLeaderId = peers[0]?.deviceId ?? '';
     // In dev mode force cloud relay so sync goes through the local API server
     // (192.168.1.17) rather than a direct LAN connection to the leader device,
     // which may not be in the CSP allowlist.
