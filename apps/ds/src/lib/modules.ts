@@ -33,7 +33,9 @@ export type OrgPlan = 'basic' | 'pro';
 /** Returns the plan for the authenticated org. Defaults to 'basic'. */
 export function useOrgPlan(): OrgPlan {
   const plan = useAuthStore((s) => s.org?.plan);
-  return plan === 'pro' ? 'pro' : 'basic';
+  // 'enterprise' is a legacy value that maps to pro; anything else defaults to basic
+  if (plan === 'pro' || plan === 'enterprise') return 'pro';
+  return 'basic';
 }
 
 /** True when the org is on the Pro plan (SyncPlay, Video Walls, Smart Playlists). */
