@@ -7117,6 +7117,7 @@ var _leaderReady = false;
 var _followerReady = /* @__PURE__ */ new Set();
 var _goSent = false;
 var _loadReceived = false;
+var _loopingPhase = false;
 var _phaseTimer = null;
 var _phaseStartedAt = 0;
 var _peerHeads = /* @__PURE__ */ new Map();
@@ -7138,6 +7139,7 @@ async function init(cfg) {
   _followerReady = /* @__PURE__ */ new Set();
   _goSent = false;
   _loadReceived = false;
+  _loopingPhase = false;
   _phaseStartedAt = 0;
   _ewma = 0;
   _ewmaN = 0;
@@ -7152,7 +7154,7 @@ async function init(cfg) {
   logger.info(`[Sync] init deviceId=${cfg.deviceId} group=${cfg.groupId} role=${_role2} pinned=${(_d = cfg.pinnedLeaderId) != null ? _d : "none"}`);
   cfg.onStatus("Connecting to relay\u2026");
   setOnLoop(() => {
-    if (!_stopped) {
+    if (!_stopped && _loopingPhase) {
       logger.info("[Sync] prebuffer ready \u2014 sending LOOP_READY");
       _wsSend({ type: "LOOP_READY", groupId: _cfg.groupId, deviceId: _cfg.deviceId });
     }
@@ -7407,15 +7409,11 @@ function _dispatch(msg) {
   }
   if (msg["type"] === "GO") {
     if (_role2 !== "follower") return;
-    if (_goSent) {
-      logger.info("[Sync] GO ignored \u2014 LOOP_GO already handled play");
-      _startPhase();
-      return;
-    }
     const serverAt = Number(msg["playAt"]);
     const localPlay = _serverToLocal(serverAt) + _selfLatency;
     logger.info(`[Sync] GO \u2192 play in T-${Math.round(localPlay - Date.now())}ms`);
     _goSent = true;
+    _loopingPhase = true;
     _cfg.schedulePlay(localPlay);
     _startPhase();
     return;
@@ -7440,7 +7438,7 @@ function _dispatch(msg) {
     const localPlayAt = _serverToLocal(serverAt);
     logger.info(`[Sync] LOOP_GO \u2192 play in T-${Math.round(localPlayAt - Date.now())}ms`);
     _cfg.schedulePlay(localPlayAt);
-    _goSent = true;
+    _loopingPhase = true;
     _phaseStartedAt = Date.now();
     _ewma = 0;
     _ewmaN = 0;
@@ -7480,6 +7478,7 @@ async function _runLeader() {
 function _checkAllReady() {
   if (!_leaderReady || _followerReady.size < _peers.length || _goSent || _stopped) return;
   _goSent = true;
+  _loopingPhase = true;
   const localPlay = Date.now() + GO_AHEAD_MS;
   const serverPlay = _localToServer(localPlay);
   const dur = _cfg.getEngineDuration();
@@ -7514,6 +7513,7 @@ async function _resyncLeader() {
     _leaderReady = false;
     _followerReady = /* @__PURE__ */ new Set();
     _goSent = false;
+    _loopingPhase = false;
     if (_cfg.restartEngine) {
       try {
         _cfg.restartEngine();
