@@ -43,6 +43,7 @@ interface ContentItem {
   validUntil: string | null;
   orientation: string;
   folderId?: string | null;
+  thumbnailPath?: string | null;
   playlistCount?: number;
   scheduleCount?: number;
   metadata?: string | null;
@@ -493,7 +494,8 @@ function Thumb({ item, large = false }: { item: ContentItem; large?: boolean }) 
   };
 
   const hasThumbnail =
-    (item.type === 'image' || item.type === 'video' || item.type === 'pdf' || item.type === 'presentation' || item.type === 'html5') &&
+    (item.type === 'image' ||
+      ((item.type === 'video' || item.type === 'pdf' || item.type === 'presentation' || item.type === 'html5') && !!item.thumbnailPath)) &&
     !imgFailed &&
     !missingThumbnailSourceIds.has(item.id);
 
