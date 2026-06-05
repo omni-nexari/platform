@@ -235,15 +235,21 @@ export default function SyncPlaylistEditorPage() {
                 >
                   {/* Thumbnail */}
                   <div className="shrink-0 w-20 h-12 rounded-lg overflow-hidden bg-[var(--bg)]">
-                    <AuthImg
-                      itemId={item.contentId}
-                      className="w-full h-full object-cover"
-                      fallback={
-                        <div className={`w-full h-full flex items-center justify-center ${color}`}>
-                          <span className="text-[9px] font-bold uppercase text-white px-1">{item.type || '…'}</span>
-                        </div>
-                      }
-                    />
+                    {(['image','video','pdf','presentation','html5'].includes(item.type)) ? (
+                      <AuthImg
+                        itemId={item.contentId}
+                        className="w-full h-full object-cover"
+                        fallback={
+                          <div className={`w-full h-full flex items-center justify-center ${color}`}>
+                            <span className="text-[9px] font-bold uppercase text-white px-1">{item.type || '…'}</span>
+                          </div>
+                        }
+                      />
+                    ) : (
+                      <div className={`w-full h-full flex items-center justify-center ${color}`}>
+                        <span className="text-[9px] font-bold uppercase text-white px-1">{item.type || '…'}</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Index */}

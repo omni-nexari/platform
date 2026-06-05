@@ -323,7 +323,7 @@ export default function ZoneLayoutEditor({ initialZones, workspaceId, saving, on
                 }}
               >
                 {/* Content thumbnail fill */}
-                {zone.source?.type === 'content' && zone.source.contentId ? (
+                {zone.source?.type === 'content' && zone.source.contentId && (['image','video','pdf','presentation','html5'].includes(zone.source.contentType ?? '')) ? (
                   <div className="absolute inset-0 rounded-xl overflow-hidden">
                     <AuthImg
                       itemId={zone.source.contentId}

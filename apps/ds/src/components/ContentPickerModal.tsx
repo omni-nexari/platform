@@ -320,11 +320,14 @@ export default function ContentPickerModal({
   function handleConfirm() {
     const picked: PickedItem[] = [...selected].map(id => {
       const c = contentMap[id];
-      if (c) return {
-        id, type: 'content', name: c.name, contentType: c.type, duration: c.duration,
-        thumbnailContentId: c.id,
-        orientation: c.orientation,
-      };
+      if (c) {
+        const FILE_THUMB_TYPES = new Set(['image', 'video', 'pdf', 'presentation', 'html5']);
+        return {
+          id, type: 'content', name: c.name, contentType: c.type, duration: c.duration,
+          thumbnailContentId: FILE_THUMB_TYPES.has(c.type ?? '') ? c.id : null,
+          orientation: c.orientation,
+        };
+      }
       const p = playlistMap[id];
       if (p) return {
         id, type: 'playlist', name: p.name, duration: p.totalDuration,

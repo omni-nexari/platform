@@ -455,14 +455,14 @@ export default function ScheduleEditorPage() {
         playlistId: schedule.defaultPlaylistId ?? null,
         contentId: schedule.defaultContentId ?? null,
         label: schedule.defaultPlaylist?.name ?? schedule.defaultContent?.name ?? '',
-        thumbnailContentId: schedule.defaultPlaylist?.thumbnailContentId ?? schedule.defaultContentId ?? null,
+        thumbnailContentId: schedule.defaultPlaylist?.thumbnailContentId ?? null,
       });
       setSlots(schedule.slots.map(s => ({
         localId: s.id,
         playlistId: s.playlistId,
         contentId: s.contentId,
         label: s.label ?? s.playlist?.name ?? s.content?.name ?? 'Unnamed',
-        thumbnailContentId: s.playlist?.thumbnailContentId ?? s.contentId ?? null,
+        thumbnailContentId: s.playlist?.thumbnailContentId ?? (s.content?.thumbnailPath ? s.contentId : null) ?? null,
         startTime: s.startTime,
         endTime: s.endTime,
         recurrenceType: s.recurrenceType === 'once' ? 'once' : 'weekly',
