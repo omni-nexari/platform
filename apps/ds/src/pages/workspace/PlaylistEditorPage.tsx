@@ -392,7 +392,7 @@ export default function PlaylistEditorPage() {
           name: item.content?.name ?? item.nestedPlaylist?.name ?? 'Unknown',
           duration: item.duration ?? item.content?.duration ?? item.nestedPlaylist?.totalDuration ?? 10,
           transitionEffect: item.transitionEffect,
-          thumbnailContentId: item.contentId ?? item.nestedPlaylist?.thumbnailContentId ?? null,
+          thumbnailContentId: (item.content?.thumbnailPath ? item.contentId : null) ?? item.nestedPlaylist?.thumbnailContentId ?? null,
           orientation: item.content?.orientation ?? 'any',
           conditions: item.conditions ?? '{}',
         })),

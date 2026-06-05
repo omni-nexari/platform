@@ -43,6 +43,7 @@ export async function syncPlaylistRoutes(app: FastifyInstance) {
           durationSeconds: syncPlaylistItems.durationSeconds,
           sortOrder: syncPlaylistItems.sortOrder,
           contentDuration: contentItems.duration,
+          contentType: contentItems.type,
         })
         .from(syncPlaylistItems)
         .leftJoin(contentItems, and(eq(syncPlaylistItems.contentId, contentItems.id), isNull(contentItems.deletedAt)))
@@ -57,7 +58,10 @@ export async function syncPlaylistRoutes(app: FastifyInstance) {
         const dur = item.durationSeconds ?? item.contentDuration ?? 10;
         durationMap[pid]! += dur;
         if (item.contentId && previewMap[pid]!.length < 4) {
-          previewMap[pid]!.push(item.contentId);
+          const SYNC_THUMB_TYPES = new Set(['image', 'video', 'pdf', 'presentation', 'html5']);
+          if (SYNC_THUMB_TYPES.has(item.contentType ?? '')) {
+            previewMap[pid]!.push(item.contentId);
+          }
         }
       }
     }

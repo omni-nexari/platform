@@ -108,9 +108,15 @@ export async function playlistRoutes(app: FastifyInstance) {
     const expiredMap: Record<string, boolean> = {};
 
     if (playlistIds.length > 0) {
+      const THUMB_TYPES = ['image', 'video', 'pdf', 'presentation', 'html5'];
       const previewItems = await db
         .select({ playlistId: playlistItems.playlistId, contentId: playlistItems.contentId, position: playlistItems.position })
         .from(playlistItems)
+        .innerJoin(contentItems, and(
+          eq(playlistItems.contentId, contentItems.id),
+          inArray(contentItems.type, THUMB_TYPES),
+          isNull(contentItems.deletedAt),
+        ))
         .where(and(inArray(playlistItems.playlistId, playlistIds), isNotNull(playlistItems.contentId)))
         .orderBy(asc(playlistItems.position));
 
@@ -335,8 +341,9 @@ export async function playlistRoutes(app: FastifyInstance) {
       totalDuration += dur;
     }
 
-    // Use the first content item as the playlist thumbnail
-    const firstContentId = incomingItems.find(i => i.contentId)?.contentId ?? null;
+    // Use the first file-type content item as the playlist thumbnail
+    const THUMB_TYPES_SET = new Set(['image', 'video', 'pdf', 'presentation', 'html5']);
+    const firstContentId = incomingItems.find(i => i.contentId && THUMB_TYPES_SET.has(contentRows.find(c => c.id === i.contentId)?.type ?? ''))?.contentId ?? null;
 
     // Replace items atomically
     await db.delete(playlistItems).where(eq(playlistItems.playlistId, id));
@@ -454,9 +461,15 @@ export async function playlistRoutes(app: FastifyInstance) {
     });
     const totalDuration = allItems.reduce((acc, it) => acc + (it.duration ?? 10), 0);
 
+    const allContentIds = allItems.map(i => i.contentId).filter((v): v is string => !!v);
+    const allContentTypes = allContentIds.length > 0
+      ? await db.query.contentItems.findMany({ where: inArray(contentItems.id, allContentIds), columns: { id: true, type: true } })
+      : [];
+    const typeMap: Record<string, string> = Object.fromEntries(allContentTypes.map(c => [c.id, c.type]));
+    const THUMB_TYPES_ADD = new Set(['image', 'video', 'pdf', 'presentation', 'html5']);
     const firstContentId = allItems
       .sort((a, b) => a.position - b.position)
-      .find((i) => i.contentId)?.contentId ?? null;
+      .find((i) => i.contentId && THUMB_TYPES_ADD.has(typeMap[i.contentId] ?? ''))?.contentId ?? null;
 
     await db.update(playlists).set({
       itemCount: allItems.length,
@@ -546,7 +559,13 @@ export async function playlistRoutes(app: FastifyInstance) {
     );
 
     const totalDuration = remaining.reduce((acc, it) => acc + (it.duration ?? 10), 0);
-    const firstContentId = remaining.find((i) => i.contentId)?.contentId ?? null;
+    const remContentIds = remaining.map(i => i.contentId).filter((v): v is string => !!v);
+    const remContentTypes = remContentIds.length > 0
+      ? await db.query.contentItems.findMany({ where: inArray(contentItems.id, remContentIds), columns: { id: true, type: true } })
+      : [];
+    const remTypeMap: Record<string, string> = Object.fromEntries(remContentTypes.map(c => [c.id, c.type]));
+    const THUMB_DEL = new Set(['image', 'video', 'pdf', 'presentation', 'html5']);
+    const firstContentId = remaining.find((i) => i.contentId && THUMB_DEL.has(remTypeMap[i.contentId] ?? ''))?.contentId ?? null;
 
     await db.update(playlists).set({
       itemCount: remaining.length,
@@ -716,11 +735,13 @@ export async function playlistRoutes(app: FastifyInstance) {
     }
 
     const totalDuration = resolvedItems.reduce((acc, i) => acc + (i.duration ?? 10), 0);
+    const THUMB_SMART = new Set(['image', 'video', 'pdf', 'presentation', 'html5']);
+    const firstThumbId = resolvedItems.find(i => THUMB_SMART.has(i.type ?? ''))?.id ?? null;
 
     const [updated] = await db.update(playlists).set({
       itemCount: resolvedItems.length,
       totalDuration,
-      thumbnailContentId: resolvedItems[0]?.id ?? null,
+      thumbnailContentId: firstThumbId,
       updatedAt: new Date(),
     }).where(eq(playlists.id, id)).returning();
 
@@ -1110,10 +1131,18 @@ export async function playlistRoutes(app: FastifyInstance) {
 
     const totalDuration = validItems.reduce((acc, i) => acc + (i.duration ?? 10), 0);
 
+    const validContentIds = validItems.map(i => i.contentId).filter((v): v is string => !!v);
+    const importContentTypes = validContentIds.length > 0
+      ? await db.query.contentItems.findMany({ where: inArray(contentItems.id, validContentIds), columns: { id: true, type: true } })
+      : [];
+    const importTypeMap: Record<string, string> = Object.fromEntries(importContentTypes.map(c => [c.id, c.type]));
+    const THUMB_IMPORT = new Set(['image', 'video', 'pdf', 'presentation', 'html5']);
+    const importThumbId = validItems.find(i => i.contentId && THUMB_IMPORT.has(importTypeMap[i.contentId] ?? ''))?.contentId ?? null;
+
     const [updated] = await db.update(playlists).set({
       itemCount: validItems.length,
       totalDuration,
-      thumbnailContentId: validItems[0]?.contentId ?? null,
+      thumbnailContentId: importThumbId,
       updatedAt: new Date(),
     }).where(eq(playlists.id, newPlaylist.id)).returning();
 
