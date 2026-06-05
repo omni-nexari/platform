@@ -1949,6 +1949,10 @@ const Player = {
     let selfLatencyMs = 0; // computed from PEERS: max(group latencies) - 200 (own baseline)
     // Clock offset: serverTime = localTime + _relayClockOffset
     let _relayClockOffset = 0;
+    // True after the first GO/LOOP_GO fires. Mirrors _loopingPhase in sync.ts:
+    // before first play, send READY (so the leader's _checkAllReady fires);
+    // after first play, send LOOP_READY (so the relay barrier fires for loops).
+    let _loopingPhase = false;
 
     const sendIfOpen = (ws: WebSocket, obj: object) => {
       if (ws.readyState === 1) try { ws.send(JSON.stringify(obj)); } catch {}
@@ -1988,9 +1992,11 @@ const Player = {
       });
     };
 
-    // Poll until the current video is ready (src set and can play), then send LOOP_READY.
-    // Using LOOP_READY (not READY) so the relay server barrier fires for the initial play
-    // the same way it does for subsequent loops — all devices must be ready before GO.
+    // Poll until the current video is ready, then send the appropriate ready signal:
+    //   - Before first play (_loopingPhase=false): send READY so the leader's
+    //     _checkAllReady() fires and issues a GO with a precise timestamp.
+    //   - After first play (_loopingPhase=true): send LOOP_READY so the relay
+    //     barrier fires LOOP_GO for loop synchronisation.
     const pollAndSendReady = (ws: WebSocket) => {
       if (stopped || readySent) return;
       const video = self._activeSyncVideo ||
@@ -1998,8 +2004,13 @@ const Player = {
           ?.querySelector('video') as HTMLVideoElement | null;
       if (video && (video.readyState >= 2 || video.src)) {
         readySent = true;
-        sendIfOpen(ws, { type: 'LOOP_READY', groupId, deviceId });
-        logger.info('[SyncRelay] LOOP_READY sent (initial, item ' + currentItemIndex + ')');
+        if (_loopingPhase) {
+          sendIfOpen(ws, { type: 'LOOP_READY', groupId, deviceId });
+          logger.info('[SyncRelay] LOOP_READY sent (loop, item ' + currentItemIndex + ')');
+        } else {
+          sendIfOpen(ws, { type: 'READY' });
+          logger.info('[SyncRelay] READY sent (initial, item ' + currentItemIndex + ')');
+        }
       } else {
         setTimeout(() => pollAndSendReady(ws), 300);
       }
@@ -2090,6 +2101,7 @@ const Player = {
         if (t === 'GO' || t === 'LOOP_GO') {
           logger.info('[SyncRelay] ' + t + ' playAt=' + msg.playAt);
           if (t === 'LOOP_GO') currentItemIndex = (currentItemIndex + 1);
+          _loopingPhase = true; // subsequent pollAndSendReady calls will use LOOP_READY
           schedulePlayAt(Number(msg.playAt));
           return;
         }
