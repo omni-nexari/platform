@@ -284,7 +284,6 @@ function isMainPublicAuthPath(pathname: string) {
     || pathname.startsWith('/accept-invite/')
     || pathname.startsWith('/accept-management-company-invite/')
     || pathname.startsWith('/accept-client-org-invite/')
-    || pathname.startsWith('/marketing')
     // Public device display pages — no session auth needed
     || pathname.startsWith('/kiosk/')
     || pathname.startsWith('/kitchen/')
@@ -360,10 +359,10 @@ export default function App() {
       {/* QR menu — no auth, no PIN */}
       <Route path="/qr/:wsId/:menuId" element={<QrMenuPage />} />
 
-      {/* Marketing pages — public, no auth */}
-      <Route path="/marketing" element={<MarketingPage />} />
-      <Route path="/marketing/terms" element={<TermsPage />} />
-      <Route path="/marketing/privacy" element={<PrivacyPage />} />
+      {/* Marketing pages — all require login */}
+      <Route path="/marketing" element={<RequireAuth><MarketingPage /></RequireAuth>} />
+      <Route path="/marketing/terms" element={<RequireAuth><TermsPage /></RequireAuth>} />
+      <Route path="/marketing/privacy" element={<RequireAuth><PrivacyPage /></RequireAuth>} />
 
       {/* Public auth */}
       <Route path="/login" element={<LoginPage />} />

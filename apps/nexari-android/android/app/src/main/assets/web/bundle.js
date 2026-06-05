@@ -7407,9 +7407,15 @@ function _dispatch(msg) {
   }
   if (msg["type"] === "GO") {
     if (_role2 !== "follower") return;
+    if (_goSent) {
+      logger.info("[Sync] GO ignored \u2014 LOOP_GO already handled play");
+      _startPhase();
+      return;
+    }
     const serverAt = Number(msg["playAt"]);
     const localPlay = _serverToLocal(serverAt) + _selfLatency;
     logger.info(`[Sync] GO \u2192 play in T-${Math.round(localPlay - Date.now())}ms`);
+    _goSent = true;
     _cfg.schedulePlay(localPlay);
     _startPhase();
     return;
@@ -7434,6 +7440,7 @@ function _dispatch(msg) {
     const localPlayAt = _serverToLocal(serverAt);
     logger.info(`[Sync] LOOP_GO \u2192 play in T-${Math.round(localPlayAt - Date.now())}ms`);
     _cfg.schedulePlay(localPlayAt);
+    _goSent = true;
     _phaseStartedAt = Date.now();
     _ewma = 0;
     _ewmaN = 0;
