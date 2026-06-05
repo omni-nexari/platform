@@ -364,9 +364,17 @@ function _dispatch(msg: Record<string, unknown>): void {
 
   if (msg['type'] === 'GO') {
     if (_role !== 'follower') return;
+    // If LOOP_GO already scheduled the initial play (relay barrier fired first),
+    // ignore this GO to prevent a second _doPlayOrSwap call that would rewind the video.
+    if (_goSent) {
+      logger.info('[Sync] GO ignored — LOOP_GO already handled play');
+      _startPhase();
+      return;
+    }
     const serverAt = Number(msg['playAt']);
     const localPlay = _serverToLocal(serverAt) + _selfLatency;
     logger.info(`[Sync] GO → play in T-${Math.round(localPlay - Date.now())}ms`);
+    _goSent = true;
     _cfg.schedulePlay(localPlay);
     _startPhase();
     return;
@@ -393,6 +401,11 @@ function _dispatch(msg: Record<string, unknown>): void {
     const localPlayAt = _serverToLocal(serverAt);
     logger.info(`[Sync] LOOP_GO → play in T-${Math.round(localPlayAt - Date.now())}ms`);
     _cfg.schedulePlay(localPlayAt);
+    // Mark GO as "already handled" so _checkAllReady (on the leader) does not
+    // also send a GO when READY arrives from the follower. Without this guard,
+    // two schedulePlayAt calls fire: first from LOOP_GO (~800 ms), then from GO
+    // (~1500 ms later), causing _doPlayOrSwap to rewind the video after ~1 s.
+    _goSent = true;
     _phaseStartedAt = Date.now(); _ewma = 0; _ewmaN = 0;
     return;
   }
