@@ -81,6 +81,10 @@ let _leaderReady = false;
 let _followerReady = new Set<string>();
 let _goSent = false;
 let _loadReceived = false;
+// True after the first GO/LOOP_GO fires. LOOP_READY is only sent in this phase
+// so the initial play is always coordinated by GO, not LOOP_GO. This prevents
+// a double-play where both LOOP_GO (~800 ms) and GO (~1500 ms) fire on startup.
+let _loopingPhase = false;
 let _phaseTimer: ReturnType<typeof setInterval> | null = null;
 let _phaseStartedAt = 0;
 let _peerHeads = new Map<string, { serverNow: number; posMs: number; at: number }>();
@@ -101,6 +105,7 @@ let _peerLatencies   = new Map<string, number>(); // deviceId → measured laten
 export async function init(cfg: SyncConfig): Promise<void> {
   _cfg = cfg; _stopped = false; _peers = [];
   _leaderReady = false; _followerReady = new Set(); _goSent = false; _loadReceived = false;
+  _loopingPhase = false;
   _phaseStartedAt = 0; _ewma = 0; _ewmaN = 0;
   if (_followerResyncTimer) { clearTimeout(_followerResyncTimer); _followerResyncTimer = null; }
   _ownLatencyMs  = cfg.playLatencyMs ?? 0;
@@ -118,7 +123,11 @@ export async function init(cfg: SyncConfig): Promise<void> {
   cfg.onStatus('Connecting to relay…');
 
   setOnLoop(() => {
-    if (!_stopped) {
+    // Only send LOOP_READY after the first GO/LOOP_GO has already fired (_loopingPhase).
+    // This ensures the initial play is always coordinated by GO (not LOOP_GO), and
+    // avoids the race where LOOP_GO fires during prepare() and GO fires 700 ms later,
+    // causing _doPlayOrSwap() to rewind the video at ~1 second into playback.
+    if (!_stopped && _loopingPhase) {
       logger.info('[Sync] prebuffer ready — sending LOOP_READY');
       _wsSend({ type: 'LOOP_READY', groupId: _cfg.groupId, deviceId: _cfg.deviceId });
     }
@@ -364,17 +373,11 @@ function _dispatch(msg: Record<string, unknown>): void {
 
   if (msg['type'] === 'GO') {
     if (_role !== 'follower') return;
-    // If LOOP_GO already scheduled the initial play (relay barrier fired first),
-    // ignore this GO to prevent a second _doPlayOrSwap call that would rewind the video.
-    if (_goSent) {
-      logger.info('[Sync] GO ignored — LOOP_GO already handled play');
-      _startPhase();
-      return;
-    }
     const serverAt = Number(msg['playAt']);
     const localPlay = _serverToLocal(serverAt) + _selfLatency;
     logger.info(`[Sync] GO → play in T-${Math.round(localPlay - Date.now())}ms`);
     _goSent = true;
+    _loopingPhase = true; // subsequent LOOP_READY calls from EOS are now legitimate
     _cfg.schedulePlay(localPlay);
     _startPhase();
     return;
@@ -401,11 +404,7 @@ function _dispatch(msg: Record<string, unknown>): void {
     const localPlayAt = _serverToLocal(serverAt);
     logger.info(`[Sync] LOOP_GO → play in T-${Math.round(localPlayAt - Date.now())}ms`);
     _cfg.schedulePlay(localPlayAt);
-    // Mark GO as "already handled" so _checkAllReady (on the leader) does not
-    // also send a GO when READY arrives from the follower. Without this guard,
-    // two schedulePlayAt calls fire: first from LOOP_GO (~800 ms), then from GO
-    // (~1500 ms later), causing _doPlayOrSwap to rewind the video after ~1 s.
-    _goSent = true;
+    _loopingPhase = true;
     _phaseStartedAt = Date.now(); _ewma = 0; _ewmaN = 0;
     return;
   }
@@ -455,6 +454,7 @@ async function _runLeader(): Promise<void> {
 function _checkAllReady(): void {
   if (!_leaderReady || _followerReady.size < _peers.length || _goSent || _stopped) return;
   _goSent = true;
+  _loopingPhase = true; // subsequent LOOP_READY calls from EOS are now legitimate
   const localPlay = Date.now() + GO_AHEAD_MS;
   const serverPlay = _localToServer(localPlay);
   const dur = _cfg.getEngineDuration();
@@ -483,7 +483,7 @@ async function _resyncLeader(): Promise<void> {
   _resyncInProgress = true;
   try {
     _stopPhase();
-    _leaderReady = false; _followerReady = new Set(); _goSent = false;
+    _leaderReady = false; _followerReady = new Set(); _goSent = false; _loopingPhase = false;
     if (_cfg.restartEngine) { try { _cfg.restartEngine(); } catch {} }
     if (_playlistUrls.length > 0) setPlaylist(_playlistUrls);
     await _runLeader();
