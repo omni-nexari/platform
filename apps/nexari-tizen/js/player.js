@@ -7659,12 +7659,14 @@ const Player = {
             case 'RELOAD':
                 location.reload();
                 break;
-            case 'REBOOT':
-                // Prefer full TV reboot; fallback to app reload if not supported
-                if (!this.invokeTVControl('rebootTv')) {
-                    location.reload();
-                }
+            case 'REBOOT': {
+                // MDC §2.1.11 – CMD_POWER [0x02] + CMD_RESET [0xA1] — covers all firmware
+                const _rdId = this._scannedMdcId != null ? { displayId: this._scannedMdcId } : {};
+                this.sendLocalMdcXhr('reboot_device', _rdId)
+                    .then(() => logger.info('[cmd] MDC reboot_device sent, mdcId=', this._scannedMdcId))
+                    .catch((e) => logger.warn('[cmd] REBOOT MDC failed:', e));
                 break;
+            }
             case 'RELAUNCH_APP': {
                 // Schedule re-launch via Tizen Alarm, then exit so Tizen restarts us
                 try {
@@ -7680,15 +7682,14 @@ const Player = {
                 }
                 break;
             }
-            case 'POWER_OFF':
-                // Use MDC standby_set via Node bridge (LFD 6.5 — no hospitality/virtualStandby)
-                this.sendLocalMdcXhr('standby_set', { value: 1 })
-                    .then(() => logger.info('[cmd] MDC standby_set 1 (power off)'))
-                    .catch(() => {
-                    // Fallback to webapis power chain
-                    this.invokeTVControl('powerOff', Object.assign({}, (payload || {})));
-                });
+            case 'POWER_OFF': {
+                // MDC §2.1.11 – CMD_POWER [0x00] = Power OFF
+                const _poId = this._scannedMdcId != null ? { displayId: this._scannedMdcId } : {};
+                this.sendLocalMdcXhr('power_off', _poId)
+                    .then(() => logger.info('[cmd] MDC power_off sent, mdcId=', this._scannedMdcId))
+                    .catch((e) => logger.warn('[cmd] POWER_OFF MDC failed:', e));
                 break;
+            }
             case 'REQUEST_LOG_BURST': {
                 const max = (_a = payload === null || payload === void 0 ? void 0 : payload.max) !== null && _a !== void 0 ? _a : 200;
                 try {
@@ -7726,15 +7727,14 @@ const Player = {
                 }
                 break;
             }
-            case 'POWER_ON':
-                // Use MDC standby_set via Node bridge (LFD 6.5)
-                this.sendLocalMdcXhr('standby_set', { value: 0 })
-                    .then(() => logger.info('[cmd] MDC standby_set 0 (power on)'))
-                    .catch(() => {
-                    // Fallback to webapis power chain
-                    this.invokeTVControl('powerOn');
-                });
+            case 'POWER_ON': {
+                // MDC §2.1.11 – CMD_POWER [0x01] = Power ON
+                const _ponId = this._scannedMdcId != null ? { displayId: this._scannedMdcId } : {};
+                this.sendLocalMdcXhr('power_on', _ponId)
+                    .then(() => logger.info('[cmd] MDC power_on sent, mdcId=', this._scannedMdcId))
+                    .catch((e) => logger.warn('[cmd] POWER_ON MDC failed:', e));
                 break;
+            }
             case 'SET_NTP':
                 this.applyNtpSettings(payload || {});
                 break;

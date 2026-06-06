@@ -136,7 +136,7 @@ window.TVControl = {
             try {
               b2b[method](...args,
                 () => logger.info('[TVControl] b2b panel off via', method),
-                (e) => logger.warn('[TVControl] b2b panel off cb error', method, (e && e.message) || e),
+                (e) => logger.warn('[TVControl] b2b panel off cb error', method, (e && e.message) || e)
               );
               logger.info('[TVControl] Power off requested via b2bcontrol.' + method);
               return true;
@@ -245,7 +245,7 @@ window.TVControl = {
             try {
               b2b[method](...args,
                 () => logger.info('[TVControl] b2b panel on via', method),
-                (e) => logger.warn('[TVControl] b2b panel on cb error', method, (e && e.message) || e),
+                (e) => logger.warn('[TVControl] b2b panel on cb error', method, (e && e.message) || e)
               );
               logger.info('[TVControl] Power on requested via b2bcontrol.' + method);
               return true;
@@ -394,7 +394,7 @@ window.TVControl = {
         logger.info('[TVControl] Rebooting device via b2bapis.b2bcontrol.reboot');
         this.apis.b2bControl.reboot(
           () => logger.info('[TVControl] b2bcontrol.reboot succeeded'),
-          (e) => logger.warn('[TVControl] b2bcontrol.reboot cb error', (e && e.message) || e),
+          (e) => logger.warn('[TVControl] b2bcontrol.reboot cb error', (e && e.message) || e)
         );
         return true;
       }

@@ -840,7 +840,8 @@ var server = http.createServer(function(req, res) {
         });
         return;
       } else if (key === 'REBOOT') {
-        packet = buildPacket(CMD_RESET, [0x00]);
+        // MDC §2.1.11 – Power Control: 0x02 = Reboot
+        packet = buildPacket(CMD_POWER, [0x02]);
       } else if (KEY_CODES[key] !== undefined) {
         packet = buildPacket(CMD_KEY, [KEY_CODES[key]]);
       } else {
@@ -2058,6 +2059,24 @@ var server = http.createServer(function(req, res) {
           var dataBytes = [];
           for (var di = 6; di < buf.length - 1; di++) dataBytes.push(buf[di]);
           res.writeHead(200); res.end(JSON.stringify({ ok: true, rawHex: rawHex, displayId: parseAckDisplayId(buf), data: dataBytes, value: buf[6] }));
+        });
+        return;
+      } else if (action === 'power_off') {
+        // MDC §2.1.11 – Power OFF (0x00)
+        packet = buildPacket(CMD_POWER, [0x00]);
+      } else if (action === 'power_on') {
+        // MDC §2.1.11 – Power ON (0x01)
+        packet = buildPacket(CMD_POWER, [0x01]);
+      } else if (action === 'reboot_device') {
+        // Send CMD_POWER [0x02] (newer firmware) then CMD_RESET [0xA1] (older firmware).
+        // Always send both — fire-and-forget. CMD_POWER [0x02] is ignored on older firmware
+        // without producing a TCP error, so we cannot rely on err to gate the fallback.
+        // One of the two will trigger a reboot; the other is safely ignored.
+        sendMdcPacket(buildPacket(CMD_POWER, [0x02]), function() {
+          sendMdcPacket(buildPacket(CMD_RESET, [0x00]), function() {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, action: action }));
+          });
         });
         return;
       } else {
