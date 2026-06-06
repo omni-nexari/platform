@@ -153,7 +153,7 @@ async function miRequest(
     'api_key': token,
     ...(bodyStr ? { 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(bodyStr)) } : {}),
   };
-  const { ok, status, text } = await nodeRequest(url, { method, headers, body: bodyStr });
+  const { ok, status, text } = await nodeRequest(url, { method, headers, ...(bodyStr ? { body: bodyStr } : {}) });
   let data: unknown = null;
   try { data = JSON.parse(text); } catch { data = text || null; }
   return { ok, status, data };
