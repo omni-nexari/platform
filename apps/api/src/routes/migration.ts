@@ -7,7 +7,9 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { createWriteStream } from 'node:fs';
 import { getQueue, QUEUE_NAMES } from '../queues/index.js';
-import { processContentMedia, detectType } from '../services/media-processing.js';
+import { processContentMedia } from '../services/media-processing.js';
+import https from 'node:https';
+import http from 'node:http';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -45,9 +47,97 @@ function validateMiPath(miPath: string): boolean {
   );
 }
 
+/** Detect the Nexari media type from MIME type and filename extension. */
+function mimeToNexariType(mimeType: string, fileName: string): string {
+  const m = mimeType.toLowerCase();
+  const ext = path.extname(fileName).toLowerCase();
+  if (m.startsWith('video/') || ['.mp4', '.mov', '.avi', '.webm', '.mkv'].includes(ext)) return 'video';
+  if (m === 'application/pdf' || ext === '.pdf') return 'pdf';
+  if (m.includes('presentation') || m.includes('powerpoint') || ['.pptx', '.ppt', '.key'].includes(ext)) return 'presentation';
+  if (m.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'].includes(ext)) return 'image';
+  return 'image';
+}
+
+/** Make an HTTP/HTTPS request with SSL verification disabled, returning buffered text response. */
+function nodeRequest(
+  url: string,
+  options: { method?: string; headers?: Record<string, string>; body?: string },
+): Promise<{ ok: boolean; status: number; text: string }> {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const isHttps = parsed.protocol === 'https:';
+    const mod: typeof https = isHttps ? https : (http as unknown as typeof https);
+    const req = mod.request(
+      {
+        hostname: parsed.hostname,
+        port: Number(parsed.port) || (isHttps ? 443 : 80),
+        path: `${parsed.pathname}${parsed.search}`,
+        method: options.method ?? 'GET',
+        headers: options.headers ?? {},
+        rejectUnauthorized: false,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => {
+          const status = res.statusCode ?? 0;
+          resolve({ ok: status >= 200 && status < 300, status, text: Buffer.concat(chunks).toString('utf8') });
+        });
+      },
+    );
+    req.on('error', reject);
+    if (options.body) req.write(options.body);
+    req.end();
+  });
+}
+
+/** Stream a MagicInfo content download to a WriteStream, computing SHA-256 hash simultaneously. */
+function nodeStreamDownload(
+  url: string,
+  token: string,
+  writeStream: ReturnType<typeof createWriteStream>,
+  hashStream: ReturnType<typeof crypto.createHash>,
+): Promise<{ ok: boolean; status: number; fileSize: number }> {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const isHttps = parsed.protocol === 'https:';
+    const mod: typeof https = isHttps ? https : (http as unknown as typeof https);
+    let fileSize = 0;
+    const req = mod.request(
+      {
+        hostname: parsed.hostname,
+        port: Number(parsed.port) || (isHttps ? 443 : 80),
+        path: `${parsed.pathname}${parsed.search}`,
+        method: 'GET',
+        headers: { 'api_key': token, 'Accept': '*/*' },
+        rejectUnauthorized: false,
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        if (status < 200 || status >= 300) {
+          req.destroy();
+          writeStream.destroy();
+          resolve({ ok: false, status, fileSize: 0 });
+          return;
+        }
+        res.on('data', (chunk: Buffer) => {
+          fileSize += chunk.length;
+          hashStream.update(chunk);
+          writeStream.write(chunk);
+        });
+        res.on('end', () => writeStream.end());
+        writeStream.on('finish', () => resolve({ ok: true, status, fileSize }));
+        writeStream.on('error', reject);
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 /**
  * Make a proxied request to MagicInfo with the api_key header.
- * Uses node fetch with SSL verification disabled for self-signed certs.
+ * Uses node:https directly with SSL verification disabled for self-signed certs.
  */
 async function miRequest(
   baseUrl: string,
@@ -57,38 +147,16 @@ async function miRequest(
   body?: unknown,
 ): Promise<{ ok: boolean; status: number; data: unknown }> {
   const url = buildMiUrl(baseUrl, miPath);
-
-  // Node 18+ fetch with TLS override via env — we use undici's env var
-  // ALTERNATIVELY use the https module for self-signed cert support.
-  // We use node:https directly to control rejectUnauthorized.
-  const https = await import('node:https');
-  const agent = new https.Agent({ rejectUnauthorized: false });
-
+  const bodyStr = body ? JSON.stringify(body) : undefined;
   const headers: Record<string, string> = {
     'Accept': 'application/json',
     'api_key': token,
+    ...(bodyStr ? { 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(bodyStr)) } : {}),
   };
-  if (body) {
-    headers['Content-Type'] = 'application/json';
-  }
-
-  const response = await fetch(url, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-    // @ts-expect-error -- undici/node fetch accepts dispatcher
-    dispatcher: new (await import('undici').then(m => m.Agent))({ connect: { rejectUnauthorized: false } }),
-  });
-
+  const { ok, status, text } = await nodeRequest(url, { method, headers, body: bodyStr });
   let data: unknown = null;
-  const ct = response.headers.get('content-type') ?? '';
-  if (ct.includes('application/json')) {
-    data = await response.json();
-  } else if (response.ok) {
-    data = await response.text();
-  }
-
-  return { ok: response.ok, status: response.status, data };
+  try { data = JSON.parse(text); } catch { data = text || null; }
+  return { ok, status, data };
 }
 
 // ── Tag helper: find-or-create a category then find-or-create tags ────────────
@@ -161,27 +229,26 @@ export async function migrationRoutes(app: FastifyInstance) {
 
     try {
       const url = buildMiUrl(baseUrl, '/MagicInfo/restapi/v2.0/auth');
-
-      const https = await import('node:https');
-      const dispatcher = new (await import('undici').then(m => m.Agent))({ connect: { rejectUnauthorized: false } });
-
-      const res = await fetch(url, {
+      const bodyStr = JSON.stringify(payload);
+      const res = await nodeRequest(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify(payload),
-        // @ts-expect-error -- undici dispatcher
-        dispatcher,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Content-Length': String(Buffer.byteLength(bodyStr)),
+        },
+        body: bodyStr,
       });
 
       if (!res.ok) {
-        const text = await res.text().catch(() => '');
         return reply.status(401).send({
           error: `MagicInfo authentication failed (HTTP ${res.status})`,
-          detail: text.slice(0, 500),
+          detail: res.text.slice(0, 500),
         });
       }
 
-      const data = await res.json() as Record<string, unknown>;
+      let data: Record<string, unknown> = {};
+      try { data = JSON.parse(res.text) as Record<string, unknown>; } catch { /* ignore */ }
       const token = data['token'] as string | undefined;
       if (!token) {
         return reply.status(401).send({ error: 'MagicInfo login succeeded but no token returned' });
@@ -277,24 +344,7 @@ export async function migrationRoutes(app: FastifyInstance) {
     const downloadUrl = buildMiUrl(baseUrl, downloadPath);
 
     try {
-      const dispatcher = new (await import('undici').then(m => m.Agent))({ connect: { rejectUnauthorized: false } });
-      const res = await fetch(downloadUrl, {
-        headers: { 'api_key': token, 'Accept': '*/*' },
-        // @ts-expect-error -- undici dispatcher
-        dispatcher,
-      });
-
-      if (!res.ok) {
-        return reply.status(res.status).send({
-          error: `MagicInfo download failed (HTTP ${res.status}). Ensure your MagicInfo account has admin-level permissions for content download.`,
-        });
-      }
-
-      if (!res.body) {
-        return reply.status(502).send({ error: 'MagicInfo returned empty response body' });
-      }
-
-      const type = detectType(mimeType, fileName);
+      const type = mimeToNexariType(mimeType, fileName);
       const ext = path.extname(fileName) || '';
       const fileId = crypto.randomUUID();
       const relDir = path.join(user.orgId, workspaceId);
@@ -304,30 +354,18 @@ export async function migrationRoutes(app: FastifyInstance) {
 
       await fs.mkdir(absDir, { recursive: true });
 
-      // Stream MagicInfo response → disk + SHA-256
-      let fileSize = 0;
       const hashStream = crypto.createHash('sha256');
       const writeStream = createWriteStream(absPath);
+      const dl = await nodeStreamDownload(downloadUrl, token, writeStream, hashStream);
 
-      const reader = res.body.getReader();
-      await new Promise<void>((resolve, reject) => {
-        function pump() {
-          reader.read().then(({ done, value }) => {
-            if (done) {
-              writeStream.end();
-              return;
-            }
-            writeStream.write(value);
-            hashStream.update(value);
-            fileSize += value.length;
-            pump();
-          }).catch(reject);
-        }
-        writeStream.on('finish', resolve);
-        writeStream.on('error', reject);
-        pump();
-      });
+      if (!dl.ok) {
+        await fs.unlink(absPath).catch(() => undefined);
+        return reply.status(dl.status || 502).send({
+          error: `MagicInfo download failed (HTTP ${dl.status}). Ensure your MagicInfo account has admin-level permissions for content download.`,
+        });
+      }
 
+      const { fileSize } = dl;
       const fileHash = hashStream.digest('hex');
 
       // Duplicate detection within workspace
