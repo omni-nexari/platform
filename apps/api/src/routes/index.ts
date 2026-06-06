@@ -38,6 +38,7 @@ import { aiRoutes } from './ai.js';
 import { billingRoutes } from './billing.js';
 import { pricingRoutes } from './pricing.js';
 import { publicRoutes } from './public.js';
+import { migrationRoutes } from './migration.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoute);
@@ -79,5 +80,6 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(billingRoutes, { prefix: '/billing' });
   await app.register(pricingRoutes, { prefix: '/pricing' });
   await app.register(publicRoutes, { prefix: '/public' });
+  await app.register(migrationRoutes, { prefix: '/migration' });
 }
 

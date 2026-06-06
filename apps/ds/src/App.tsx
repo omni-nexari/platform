@@ -141,6 +141,7 @@ import IptvEditorPage from './pages/workspace/IptvEditorPage.js';
 import TemplateEditorPage from './pages/workspace/TemplateEditorPage.js';
 import LiveDataEditorPage from './pages/workspace/LiveDataEditorPage.js';
 import LiveLinkFaceEditorPage from './pages/workspace/LiveLinkFaceEditorPage.js';
+import MigrationPage from './pages/workspace/MigrationPage.js';
 import { buildApiUrl } from './lib/api.js';
 import KioskDisplayPage from './pages/kiosk/KioskDisplayPage.js';
 import KitchenDisplayPage from './pages/kitchen/KitchenDisplayPage.js';
@@ -490,6 +491,7 @@ export default function App() {
         <Route path="/workspaces/:wsId/template/new" element={<TemplateEditorPage />} />
         <Route path="/workspaces/:wsId/livedata/new" element={<LiveDataEditorPage />} />
         <Route path="/workspaces/:wsId/live-link-face/:id" element={<LiveLinkFaceEditorPage />} />
+        <Route path="/workspaces/:wsId/migrate" element={<MigrationPage />} />
       </Route>
 
       {/* Root redirect */}

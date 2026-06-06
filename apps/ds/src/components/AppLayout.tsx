@@ -52,6 +52,7 @@ import {
   Receipt,
   MessageSquare,
   ImageIcon,
+  ArrowDownToLine,
 } from 'lucide-react';
 
 interface Workspace {
@@ -425,6 +426,36 @@ export default function AppLayout() {
                               <Tag className="w-4 h-4" />
                               Tags
                             </NavLink>
+                            {(user?.orgRole === 'owner' || user?.orgRole === 'prime_owner' || user?.orgRole === 'admin') && (
+                              <NavLink
+                                to={`/workspaces/${ws.id}/migrate`}
+                                className={({ isActive }) =>
+                                  `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                    isActive
+                                      ? 'bg-[var(--blue)] text-white'
+                                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                  }`
+                                }
+                              >
+                                <ArrowDownToLine className="w-4 h-4" />
+                                Migrate from MagicInfo
+                              </NavLink>
+                            )}
+                            {(user?.orgRole === 'owner' || user?.orgRole === 'prime_owner' || user?.orgRole === 'admin') && (
+                              <NavLink
+                                to={`/workspaces/${ws.id}/migrate`}
+                                className={({ isActive }) =>
+                                  `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                    isActive
+                                      ? 'bg-[var(--blue)] text-white'
+                                      : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
+                                  }`
+                                }
+                              >
+                                <ArrowDownToLine className="w-4 h-4" />
+                                Migrate from MagicInfo
+                              </NavLink>
+                            )}
                             <NavLink
                               to={`/workspaces/${ws.id}/analytics`}
                               className={({ isActive }) =>

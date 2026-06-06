@@ -7651,7 +7651,7 @@ const Player = {
     },
     // Execute command
     executeCommand(command) {
-        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
+        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u;
         logger.info('Executing command:', command);
         const type = typeof command === 'string' ? command : command.type;
         const payload = typeof command === 'string' ? null : (command.payload || command.options || null);
@@ -7660,11 +7660,19 @@ const Player = {
                 location.reload();
                 break;
             case 'REBOOT': {
-                // MDC §2.1.11 – CMD_POWER [0x02] + CMD_RESET [0xA1] — covers all firmware
-                const _rdId = this._scannedMdcId != null ? { displayId: this._scannedMdcId } : {};
-                this.sendLocalMdcXhr('reboot_device', _rdId)
-                    .then(() => logger.info('[cmd] MDC reboot_device sent, mdcId=', this._scannedMdcId))
-                    .catch((e) => logger.warn('[cmd] REBOOT MDC failed:', e));
+                // b2bapis.b2bcontrol.rebootDevice — native B2B API (Since 2.4, all Tizen firmware)
+                try {
+                    const b2b = (_a = window.b2bapis) === null || _a === void 0 ? void 0 : _a.b2bcontrol;
+                    if (b2b && typeof b2b.rebootDevice === 'function') {
+                        b2b.rebootDevice(() => logger.info('[cmd] b2bcontrol.rebootDevice success'), (e) => logger.warn('[cmd] b2bcontrol.rebootDevice error:', (e && e.message) || e));
+                    }
+                    else {
+                        logger.warn('[cmd] b2bcontrol.rebootDevice not available');
+                    }
+                }
+                catch (e) {
+                    logger.warn('[cmd] REBOOT b2bcontrol threw:', e);
+                }
                 break;
             }
             case 'RELAUNCH_APP': {
@@ -7683,15 +7691,23 @@ const Player = {
                 break;
             }
             case 'POWER_OFF': {
-                // MDC §2.1.11 – CMD_POWER [0x00] = Power OFF
-                const _poId = this._scannedMdcId != null ? { displayId: this._scannedMdcId } : {};
-                this.sendLocalMdcXhr('power_off', _poId)
-                    .then(() => logger.info('[cmd] MDC power_off sent, mdcId=', this._scannedMdcId))
-                    .catch((e) => logger.warn('[cmd] POWER_OFF MDC failed:', e));
+                // b2bapis.b2bcontrol.setPowerOff — native B2B API, keeps networking alive (NetworkStandby ON)
+                try {
+                    const b2b = (_b = window.b2bapis) === null || _b === void 0 ? void 0 : _b.b2bcontrol;
+                    if (b2b && typeof b2b.setPowerOff === 'function') {
+                        b2b.setPowerOff(() => logger.info('[cmd] b2bcontrol.setPowerOff success'), (e) => logger.warn('[cmd] b2bcontrol.setPowerOff error:', (e && e.message) || e));
+                    }
+                    else {
+                        logger.warn('[cmd] b2bcontrol.setPowerOff not available');
+                    }
+                }
+                catch (e) {
+                    logger.warn('[cmd] POWER_OFF b2bcontrol threw:', e);
+                }
                 break;
             }
             case 'REQUEST_LOG_BURST': {
-                const max = (_a = payload === null || payload === void 0 ? void 0 : payload.max) !== null && _a !== void 0 ? _a : 200;
+                const max = (_c = payload === null || payload === void 0 ? void 0 : payload.max) !== null && _c !== void 0 ? _c : 200;
                 try {
                     const batch = (window.LogBuffer && window.LogBuffer.drain(max)) || [];
                     if (batch.length && this.deviceId) {
@@ -7703,10 +7719,10 @@ const Player = {
                             const byLevel = { debug: [], info: [], warn: [], error: [] };
                             for (const e of batch) {
                                 const lvl = (e.level && byLevel[e.level]) ? e.level : 'info';
-                                const ts = (_b = e.timestamp) !== null && _b !== void 0 ? _b : new Date().toISOString();
+                                const ts = (_d = e.timestamp) !== null && _d !== void 0 ? _d : new Date().toISOString();
                                 const msg = Array.isArray(e.message)
                                     ? e.message.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')
-                                    : String((_c = e.message) !== null && _c !== void 0 ? _c : '');
+                                    : String((_f = e.message) !== null && _f !== void 0 ? _f : '');
                                 byLevel[lvl].push(`${ts} ${msg}`);
                             }
                             for (const [level, lines] of Object.entries(byLevel)) {
@@ -7745,14 +7761,14 @@ const Player = {
                 this.applyLockSetting('buttonLock', payload === null || payload === void 0 ? void 0 : payload.lock);
                 break;
             case 'SET_ON_TIMER': {
-                const slot = Math.max(1, Math.min(7, Number((_d = payload === null || payload === void 0 ? void 0 : payload.slot) !== null && _d !== void 0 ? _d : 1)));
+                const slot = Math.max(1, Math.min(7, Number((_g = payload === null || payload === void 0 ? void 0 : payload.slot) !== null && _g !== void 0 ? _g : 1)));
                 this.sendLocalMdcXhr('on_timer_set', Object.assign({ slot }, (payload || {})))
                     .then((r) => logger.info('[cmd] SET_ON_TIMER slot', slot, r.ok))
                     .catch((e) => logger.warn('[cmd] SET_ON_TIMER failed:', e));
                 break;
             }
             case 'SET_OFF_TIMER': {
-                const slot = Math.max(1, Math.min(7, Number((_f = payload === null || payload === void 0 ? void 0 : payload.slot) !== null && _f !== void 0 ? _f : 1)));
+                const slot = Math.max(1, Math.min(7, Number((_h = payload === null || payload === void 0 ? void 0 : payload.slot) !== null && _h !== void 0 ? _h : 1)));
                 // off-timer is encoded as onEnable=0 + offEnable=1 in the same slot
                 this.sendLocalMdcXhr('on_timer_set', Object.assign({ slot, onEnable: 0, offEnable: 1 }, (payload || {})))
                     .then((r) => logger.info('[cmd] SET_OFF_TIMER slot', slot, r.ok))
@@ -7760,14 +7776,14 @@ const Player = {
                 break;
             }
             case 'CLEAR_ON_TIMER': {
-                const slot = Math.max(1, Math.min(7, Number((_g = payload === null || payload === void 0 ? void 0 : payload.slot) !== null && _g !== void 0 ? _g : 1)));
+                const slot = Math.max(1, Math.min(7, Number((_j = payload === null || payload === void 0 ? void 0 : payload.slot) !== null && _j !== void 0 ? _j : 1)));
                 this.sendLocalMdcXhr('on_timer_set', { slot, onEnable: 0, offEnable: 0 })
                     .then((r) => logger.info('[cmd] CLEAR_ON_TIMER slot', slot, r.ok))
                     .catch((e) => logger.warn('[cmd] CLEAR_ON_TIMER failed:', e));
                 break;
             }
             case 'CLEAR_OFF_TIMER': {
-                const slot = Math.max(1, Math.min(7, Number((_h = payload === null || payload === void 0 ? void 0 : payload.slot) !== null && _h !== void 0 ? _h : 1)));
+                const slot = Math.max(1, Math.min(7, Number((_k = payload === null || payload === void 0 ? void 0 : payload.slot) !== null && _k !== void 0 ? _k : 1)));
                 this.sendLocalMdcXhr('on_timer_set', { slot, onEnable: 0, offEnable: 0 })
                     .then((r) => logger.info('[cmd] CLEAR_OFF_TIMER slot', slot, r.ok))
                     .catch((e) => logger.warn('[cmd] CLEAR_OFF_TIMER failed:', e));
@@ -7795,13 +7811,13 @@ const Player = {
                 break;
             }
             case 'SET_VOLUME':
-                this.invokeTVControl('setVolume', (_k = (_j = payload === null || payload === void 0 ? void 0 : payload.level) !== null && _j !== void 0 ? _j : command.level) !== null && _k !== void 0 ? _k : null);
+                this.invokeTVControl('setVolume', (_m = (_l = payload === null || payload === void 0 ? void 0 : payload.level) !== null && _l !== void 0 ? _l : command.level) !== null && _m !== void 0 ? _m : null);
                 break;
             case 'VOLUME_UP':
-                this.invokeTVControl('volumeUp', (_m = (_l = payload === null || payload === void 0 ? void 0 : payload.step) !== null && _l !== void 0 ? _l : payload === null || payload === void 0 ? void 0 : payload.amount) !== null && _m !== void 0 ? _m : 2);
+                this.invokeTVControl('volumeUp', (_p = (_o = payload === null || payload === void 0 ? void 0 : payload.step) !== null && _o !== void 0 ? _o : payload === null || payload === void 0 ? void 0 : payload.amount) !== null && _p !== void 0 ? _p : 2);
                 break;
             case 'VOLUME_DOWN':
-                this.invokeTVControl('volumeDown', (_p = (_o = payload === null || payload === void 0 ? void 0 : payload.step) !== null && _o !== void 0 ? _o : payload === null || payload === void 0 ? void 0 : payload.amount) !== null && _p !== void 0 ? _p : 2);
+                this.invokeTVControl('volumeDown', (_r = (_q = payload === null || payload === void 0 ? void 0 : payload.step) !== null && _q !== void 0 ? _q : payload === null || payload === void 0 ? void 0 : payload.amount) !== null && _r !== void 0 ? _r : 2);
                 break;
             case 'MUTE':
                 this.invokeTVControl('setMute', true);
@@ -7839,7 +7855,7 @@ const Player = {
             case 'CAST_READY':
             case 'CAST_STATUS':
                 if (typeof Telemetry !== 'undefined' && Telemetry.setCastReady) {
-                    Telemetry.setCastReady((_s = (_r = (_q = payload === null || payload === void 0 ? void 0 : payload.ready) !== null && _q !== void 0 ? _q : payload) !== null && _r !== void 0 ? _r : command === null || command === void 0 ? void 0 : command.ready) !== null && _s !== void 0 ? _s : null);
+                    Telemetry.setCastReady((_u = (_t = (_s = payload === null || payload === void 0 ? void 0 : payload.ready) !== null && _s !== void 0 ? _s : payload) !== null && _t !== void 0 ? _t : command === null || command === void 0 ? void 0 : command.ready) !== null && _u !== void 0 ? _u : null);
                 }
                 break;
             case 'OTT_STATUS':
