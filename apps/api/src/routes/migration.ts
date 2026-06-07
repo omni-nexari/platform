@@ -222,7 +222,7 @@ export async function migrationRoutes(app: FastifyInstance) {
     const { baseUrl, username, password, totpCode } = body.data;
     const payload: Record<string, string> = {
       grantType: 'password',
-      username,
+      userId: username,
       password,
     };
     if (totpCode) payload['totp'] = totpCode;

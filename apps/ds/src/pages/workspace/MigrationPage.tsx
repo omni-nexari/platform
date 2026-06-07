@@ -308,8 +308,13 @@ export default function MigrationPage() {
       setStep(2);
       void loadReview(res.token);
     } catch (err: unknown) {
-      const e = err as { message?: string; data?: { error?: string } };
-      setConnectError(e.data?.error ?? e.message ?? 'Connection failed');
+      const e = err as { message?: string };
+      let msg = e.message ?? 'Connection failed';
+      try {
+        const parsed = JSON.parse(msg) as { error?: string; detail?: string };
+        msg = parsed.error ?? msg;
+      } catch { /* not JSON — use as-is */ }
+      setConnectError(msg);
     } finally {
       setConnecting(false);
     }
