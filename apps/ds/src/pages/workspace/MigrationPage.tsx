@@ -330,17 +330,17 @@ export default function MigrationPage() {
         baseUrl, token, method: 'GET', path: miPath,
       });
 
-      const [devData, contentData, playlistData, scheduleData] = await Promise.all([
+      const [devResult, contentResult, playlistResult, scheduleResult] = await Promise.allSettled([
         proxyWith('/restapi/v2.0/rms/devices?pageSize=5000&startIndex=1'),
         proxyWith('/restapi/v2.0/cms/contents?pageSize=1&startIndex=1'),
         proxyWith('/restapi/v2.0/cms/playlists?pageSize=1&startIndex=1'),
         proxyWith('/restapi/v2.0/dms/schedules/contents?pageSize=1&startIndex=1'),
       ]);
 
-      setDevices(unwrapItems(devData) as MiDevice[]);
-      setContentTotal(unwrapTotal(contentData));
-      setPlaylistTotal(unwrapTotal(playlistData));
-      setScheduleTotal(unwrapTotal(scheduleData));
+      if (devResult.status === 'fulfilled') setDevices(unwrapItems(devResult.value) as MiDevice[]);
+      setContentTotal(contentResult.status === 'fulfilled' ? unwrapTotal(contentResult.value) : 0);
+      setPlaylistTotal(playlistResult.status === 'fulfilled' ? unwrapTotal(playlistResult.value) : 0);
+      setScheduleTotal(scheduleResult.status === 'fulfilled' ? unwrapTotal(scheduleResult.value) : 0);
     } catch (err: unknown) {
       const e = err as { message?: string };
       setReviewError(e.message ?? 'Failed to load review data');
@@ -791,9 +791,10 @@ export default function MigrationPage() {
             ))}
           </div>
 
-          {/* Device table */}
+          {/* Device table — only shown when devices are present */}
+          {(reviewLoading || devices.length > 0) && (
           <SectionCard>
-            <SectionCardHeader className="text-sm font-semibold">Devices & Group Hierarchy</SectionCardHeader>
+            <SectionCardHeader className="text-sm font-semibold">Devices &amp; Group Hierarchy</SectionCardHeader>
             <SectionCardBody className="p-0">
               {reviewLoading ? (
                 <div className="p-4 space-y-2">
@@ -858,6 +859,7 @@ export default function MigrationPage() {
               )}
             </SectionCardBody>
           </SectionCard>
+          )}
 
           <div className="flex justify-between">
             <button onClick={() => setStep(1)} className="flex items-center gap-2 px-4 py-2 border border-[var(--border)] rounded-lg text-sm text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]">
