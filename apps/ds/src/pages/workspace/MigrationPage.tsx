@@ -566,8 +566,10 @@ export default function MigrationPage() {
           successContent++;
         }
       } catch (err: unknown) {
-        const e = err as { message?: string; data?: { error?: string } };
-        updateLog(content.contentId, { status: 'error', message: e.data?.error ?? e.message ?? 'Upload failed' });
+        const e = err as { message?: string };
+        let errMsg = e.message ?? 'Upload failed';
+        try { errMsg = (JSON.parse(errMsg) as { error?: string }).error ?? errMsg; } catch { /* use as-is */ }
+        updateLog(content.contentId, { status: 'error', message: errMsg });
         failed++;
       }
     }
