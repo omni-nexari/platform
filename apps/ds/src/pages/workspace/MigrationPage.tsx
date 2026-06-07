@@ -331,10 +331,10 @@ export default function MigrationPage() {
       });
 
       const [devData, contentData, playlistData, scheduleData] = await Promise.all([
-        proxyWith('/MagicInfo/restapi/v2.0/rms/devices?pageSize=5000&startIndex=1'),
-        proxyWith('/MagicInfo/restapi/v2.0/cms/contents?pageSize=1&startIndex=1'),
-        proxyWith('/MagicInfo/restapi/v2.0/cms/playlists?pageSize=1&startIndex=1'),
-        proxyWith('/MagicInfo/restapi/v2.0/dms/schedules/contents?pageSize=1&startIndex=1'),
+        proxyWith('/restapi/v2.0/rms/devices?pageSize=5000&startIndex=1'),
+        proxyWith('/restapi/v2.0/cms/contents?pageSize=1&startIndex=1'),
+        proxyWith('/restapi/v2.0/cms/playlists?pageSize=1&startIndex=1'),
+        proxyWith('/restapi/v2.0/dms/schedules/contents?pageSize=1&startIndex=1'),
       ]);
 
       setDevices(unwrapItems(devData) as MiDevice[]);
@@ -359,7 +359,7 @@ export default function MigrationPage() {
         const pages: MiContent[] = [];
         let startIndex = 1;
         while (true) {
-          const data = await miProxy(`/MagicInfo/restapi/v2.0/cms/contents?pageSize=200&startIndex=${startIndex}`);
+          const data = await miProxy(`/restapi/v2.0/cms/contents?pageSize=200&startIndex=${startIndex}`);
           const items = unwrapItems(data) as MiContent[];
           pages.push(...items);
           const total = unwrapTotal(data);
@@ -372,7 +372,7 @@ export default function MigrationPage() {
         const pages: MiPlaylist[] = [];
         let startIndex = 1;
         while (true) {
-          const data = await miProxy(`/MagicInfo/restapi/v2.0/cms/playlists?pageSize=200&startIndex=${startIndex}`);
+          const data = await miProxy(`/restapi/v2.0/cms/playlists?pageSize=200&startIndex=${startIndex}`);
           const items = unwrapItems(data) as MiPlaylist[];
           pages.push(...items);
           const total = unwrapTotal(data);
@@ -385,7 +385,7 @@ export default function MigrationPage() {
         const pages: MiSchedule[] = [];
         let startIndex = 1;
         while (true) {
-          const data = await miProxy(`/MagicInfo/restapi/v2.0/dms/schedules/contents?pageSize=200&startIndex=${startIndex}`);
+          const data = await miProxy(`/restapi/v2.0/dms/schedules/contents?pageSize=200&startIndex=${startIndex}`);
           const items = unwrapItems(data) as MiSchedule[];
           pages.push(...items);
           const total = unwrapTotal(data);
@@ -411,7 +411,7 @@ export default function MigrationPage() {
       next.add(playlistId);
       // Load detail to get items
       try {
-        const detail = await miProxy(`/MagicInfo/restapi/v2.0/cms/playlists/${playlistId}`);
+        const detail = await miProxy(`/restapi/v2.0/cms/playlists/${playlistId}`);
         const items = unwrapItems(detail) as MiPlaylistItem[];
         const contentItems2 = items.length ? items : ((detail as Record<string,unknown>)['items'] as MiPlaylistItem[] ?? []);
         const nextContent = new Set(selectedContentIds);
@@ -432,7 +432,7 @@ export default function MigrationPage() {
     if (checked) {
       next.add(scheduleId);
       try {
-        const detail = await miProxy(`/MagicInfo/restapi/v2.0/dms/schedules/contents/${scheduleId}`);
+        const detail = await miProxy(`/restapi/v2.0/dms/schedules/contents/${scheduleId}`);
         const channels: MiTimeChannel[] = (detail as Record<string,unknown>)['timeChannels'] as MiTimeChannel[] ?? [];
         for (const ch of channels) {
           if (ch.playlistId) {
@@ -583,7 +583,7 @@ export default function MigrationPage() {
         let items: MiPlaylistItem[] = pl.items ?? [];
         if (items.length === 0) {
           try {
-            const detail = await miProxy(`/MagicInfo/restapi/v2.0/cms/playlists/${pl.playlistId}`) as Record<string, unknown>;
+            const detail = await miProxy(`/restapi/v2.0/cms/playlists/${pl.playlistId}`) as Record<string, unknown>;
             items = (detail['items'] as MiPlaylistItem[]) ?? (unwrapItems(detail) as MiPlaylistItem[]);
           } catch { /* use empty */ }
         }
@@ -628,7 +628,7 @@ export default function MigrationPage() {
         let timeChannels: MiTimeChannel[] = sched.timeChannels ?? [];
         if (timeChannels.length === 0) {
           try {
-            const detail = await miProxy(`/MagicInfo/restapi/v2.0/dms/schedules/contents/${sched.scheduleId}`) as Record<string, unknown>;
+            const detail = await miProxy(`/restapi/v2.0/dms/schedules/contents/${sched.scheduleId}`) as Record<string, unknown>;
             timeChannels = (detail['timeChannels'] as MiTimeChannel[]) ?? [];
           } catch { /* use empty */ }
         }

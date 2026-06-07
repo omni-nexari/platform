@@ -228,7 +228,7 @@ export async function migrationRoutes(app: FastifyInstance) {
     if (totpCode) payload['totp'] = totpCode;
 
     try {
-      const url = buildMiUrl(baseUrl, '/MagicInfo/restapi/v2.0/auth');
+      const url = buildMiUrl(baseUrl, '/restapi/v2.0/auth');
       const bodyStr = JSON.stringify(payload);
       const res = await nodeRequest(url, {
         method: 'POST',
@@ -336,7 +336,7 @@ export async function migrationRoutes(app: FastifyInstance) {
     const initialApprovalState = wsSettings.approvalRequired && !new Set(['prime_owner', 'owner', 'admin', 'a-manager']).has(user.role) ? 'draft' : 'approved';
 
     // Build download URL
-    const downloadPath = `/MagicInfo/restapi/v2.0/cms/contents/${encodeURIComponent(miContentId)}/download`;
+    const downloadPath = `/restapi/v2.0/cms/contents/${encodeURIComponent(miContentId)}/download`;
     if (!validateMiPath(downloadPath)) {
       return reply.status(400).send({ error: 'Invalid content ID' });
     }
