@@ -57,10 +57,10 @@ interface MiTimeChannel {
 }
 
 interface MiSchedule {
-  scheduleId: string;
-  scheduleName: string;
+  scheduleId: string;   // normalized (from programId in v1.0 API)
+  scheduleName: string; // normalized (from programName in v1.0 API)
   tags?: string[];
-  groupId?: string;
+  groupId?: string | number;
   timeChannels?: MiTimeChannel[];
 }
 
@@ -277,6 +277,11 @@ export default function MigrationPage() {
     const d = data as Record<string, unknown> | null;
     if (!d) return [];
     if (Array.isArray(d['items'])) return d['items'] as unknown[];
+    // v1.0 API: items is an object { data: [...], recordsFiltered: N }
+    const itemsObj = d['items'] as Record<string, unknown> | null;
+    if (itemsObj && typeof itemsObj === 'object' && !Array.isArray(itemsObj) && Array.isArray(itemsObj['data'])) {
+      return itemsObj['data'] as unknown[];
+    }
     const inner = (d['data'] ?? d['result']) as Record<string, unknown> | null;
     if (inner && Array.isArray(inner['items'])) return inner['items'] as unknown[];
     return [];
@@ -287,6 +292,12 @@ export default function MigrationPage() {
     if (!d) return 0;
     const direct = d['totalCount'] ?? d['total'] ?? d['count'];
     if (typeof direct === 'number') return direct;
+    // v1.0 API: items is an object with recordsFiltered
+    const itemsObj = d['items'] as Record<string, unknown> | null;
+    if (itemsObj && typeof itemsObj === 'object' && !Array.isArray(itemsObj)) {
+      const t = itemsObj['recordsFiltered'] ?? itemsObj['totalCount'] ?? itemsObj['total'];
+      if (typeof t === 'number') return t;
+    }
     const inner = (d['data'] ?? d['result']) as Record<string, unknown> | null;
     if (inner) {
       const t = inner['totalCount'] ?? inner['total'];
@@ -339,7 +350,7 @@ export default function MigrationPage() {
         proxyWith('/restapi/v2.0/rms/devices?pageSize=5000&startIndex=1'),
         proxyWith('/restapi/v2.0/cms/contents?pageSize=1&startIndex=1'),
         proxyWith('/restapi/v2.0/cms/playlists?pageSize=1&startIndex=1'),
-        proxyWith('/restapi/v2.0/dms/schedules/contents?pageSize=1&startIndex=1'),
+        proxyWith('/restapi/v1.0/dms/schedule/contents?pageSize=1&startIndex=1'),
       ]);
 
       if (devResult.status === 'fulfilled') setDevices(unwrapItems(devResult.value) as MiDevice[]);
@@ -390,8 +401,14 @@ export default function MigrationPage() {
         const pages: MiSchedule[] = [];
         let startIndex = 1;
         while (true) {
-          const data = await miProxy(`/restapi/v2.0/dms/schedules/contents?pageSize=200&startIndex=${startIndex}`);
-          const items = unwrapItems(data) as MiSchedule[];
+          const data = await miProxy(`/restapi/v1.0/dms/schedule/contents?pageSize=200&startIndex=${startIndex}`);
+          // Normalize v1.0 field names (programId → scheduleId, programName → scheduleName)
+          const raw = unwrapItems(data) as Record<string, unknown>[];
+          const items: MiSchedule[] = raw.map(item => ({
+            ...item,
+            scheduleId: (item['scheduleId'] ?? item['programId'] ?? '') as string,
+            scheduleName: (item['scheduleName'] ?? item['programName'] ?? '') as string,
+          }));
           pages.push(...items);
           const total = unwrapTotal(data);
           if (pages.length >= total || items.length === 0) break;
@@ -437,7 +454,7 @@ export default function MigrationPage() {
     if (checked) {
       next.add(scheduleId);
       try {
-        const detail = await miProxy(`/restapi/v2.0/dms/schedules/contents/${scheduleId}`);
+        const detail = await miProxy(`/restapi/v1.0/dms/schedule/contents/${scheduleId}`);
         const channels: MiTimeChannel[] = (detail as Record<string,unknown>)['timeChannels'] as MiTimeChannel[] ?? [];
         for (const ch of channels) {
           if (ch.playlistId) {
@@ -632,7 +649,7 @@ export default function MigrationPage() {
         let timeChannels: MiTimeChannel[] = sched.timeChannels ?? [];
         if (timeChannels.length === 0) {
           try {
-            const detail = await miProxy(`/restapi/v2.0/dms/schedules/contents/${sched.scheduleId}`) as Record<string, unknown>;
+            const detail = await miProxy(`/restapi/v1.0/dms/schedule/contents/${sched.scheduleId}`) as Record<string, unknown>;
             timeChannels = (detail['timeChannels'] as MiTimeChannel[]) ?? [];
           } catch { /* use empty */ }
         }
