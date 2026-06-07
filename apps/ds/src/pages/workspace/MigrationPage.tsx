@@ -76,6 +76,10 @@ interface MiDevice {
   groupPath?: string;
   currentScheduleId?: string;
   scheduleId?: string;
+  // enriched from device detail call
+  contentScheduleId?: string;
+  contentScheduleName?: string;
+  messageScheduleName?: string;
 }
 
 type LogStatus = 'pending' | 'ok' | 'error' | 'skipped';
@@ -240,6 +244,11 @@ export default function MigrationPage() {
   const [playlistTotal, setPlaylistTotal] = useState<number | null>(null);
   const [scheduleTotal, setScheduleTotal] = useState<number | null>(null);
 
+  // Step 2 — Review extras
+  const [expandedScheduleIds, setExpandedScheduleIds] = useState(new Set<string>());
+  const [deviceScheduleItems, setDeviceScheduleItems] = useState<Record<string, MiContent[]>>({});
+  const [scheduleItemsLoading, setScheduleItemsLoading] = useState(new Set<string>());
+
   // Step 3 — Select
   const [activeTab, setActiveTab] = useState<'content' | 'playlists' | 'schedules'>('content');
   const [contentList, setContentList] = useState<MiContent[]>([]);
@@ -353,10 +362,51 @@ export default function MigrationPage() {
         proxyWith('/restapi/v1.0/dms/schedule/contents?pageSize=1&startIndex=1'),
       ]);
 
-      if (devResult.status === 'fulfilled') setDevices(unwrapItems(devResult.value) as MiDevice[]);
+      const rawDevices: MiDevice[] = devResult.status === 'fulfilled' ? unwrapItems(devResult.value) as MiDevice[] : [];
       setContentTotal(contentResult.status === 'fulfilled' ? unwrapTotal(contentResult.value) : 0);
       setPlaylistTotal(playlistResult.status === 'fulfilled' ? unwrapTotal(playlistResult.value) : 0);
       setScheduleTotal(scheduleResult.status === 'fulfilled' ? unwrapTotal(scheduleResult.value) : 0);
+
+      // Enrich devices with schedule info from device detail (batches of 8, up to 200 devices)
+      if (rawDevices.length > 0) {
+        setDevices(rawDevices);
+        const toEnrich = rawDevices.slice(0, 200);
+        const enriched = [...rawDevices];
+        const BATCH = 8;
+        for (let i = 0; i < toEnrich.length; i += BATCH) {
+          const batch = toEnrich.slice(i, i + BATCH);
+          const results = await Promise.allSettled(
+            batch.map(d => proxyWith(`/restapi/v2.0/rms/devices/${encodeURIComponent(d.deviceId)}`)),
+          );
+          results.forEach((r, bi) => {
+            const globalIdx = i + bi;
+            if (r.status === 'fulfilled') {
+              const detail = (r.value as Record<string, unknown>)['items'] as Record<string, unknown> | undefined;
+              if (detail) {
+                const base = enriched[globalIdx];
+                if (!base) return;
+                enriched[globalIdx] = {
+                  deviceId: base.deviceId,
+                  deviceName: base.deviceName,
+                  ...(base.deviceType !== undefined && { deviceType: base.deviceType }),
+                  ...(base.connectionStatus !== undefined && { connectionStatus: base.connectionStatus }),
+                  ...(base.serialNo !== undefined && { serialNo: base.serialNo }),
+                  ...(base.macAddress !== undefined && { macAddress: base.macAddress }),
+                  ...(base.groupId !== undefined && { groupId: base.groupId }),
+                  ...(base.groupName !== undefined && { groupName: base.groupName }),
+                  ...(base.groupPath !== undefined && { groupPath: base.groupPath }),
+                  ...(base.currentScheduleId !== undefined && { currentScheduleId: base.currentScheduleId }),
+                  ...(base.scheduleId !== undefined && { scheduleId: base.scheduleId }),
+                  ...(detail['contentScheduleId'] ? { contentScheduleId: detail['contentScheduleId'] as string } : {}),
+                  ...(detail['contentScheduleName'] ? { contentScheduleName: detail['contentScheduleName'] as string } : {}),
+                  ...(detail['messageScheduleName'] ? { messageScheduleName: detail['messageScheduleName'] as string } : {}),
+                };
+              }
+            }
+          });
+        }
+        setDevices([...enriched]);
+      }
     } catch (err: unknown) {
       const e = err as { message?: string };
       setReviewError(e.message ?? 'Failed to load review data');
@@ -694,6 +744,23 @@ export default function MigrationPage() {
     return acc;
   }, {});
 
+  async function toggleScheduleItems(scheduleId: string) {
+    if (expandedScheduleIds.has(scheduleId)) {
+      setExpandedScheduleIds(prev => { const s = new Set(prev); s.delete(scheduleId); return s; });
+      return;
+    }
+    setExpandedScheduleIds(prev => new Set([...prev, scheduleId]));
+    if (deviceScheduleItems[scheduleId]) return; // already loaded
+    setScheduleItemsLoading(prev => new Set([...prev, scheduleId]));
+    try {
+      const data = await miProxy(`/restapi/v2.0/cms/contents?scheduleId=${encodeURIComponent(scheduleId)}&pageSize=200&startIndex=1`);
+      const items = unwrapItems(data) as MiContent[];
+      setDeviceScheduleItems(prev => ({ ...prev, [scheduleId]: items }));
+    } catch { /* non-fatal */ } finally {
+      setScheduleItemsLoading(prev => { const s = new Set(prev); s.delete(scheduleId); return s; });
+    }
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   const totalSelected = selectedContentIds.size + selectedPlaylistIds.size + selectedScheduleIds.size;
@@ -833,7 +900,7 @@ export default function MigrationPage() {
                         <th className="text-left px-3 py-2 text-xs font-semibold text-[var(--text-muted)]">Type</th>
                         <th className="text-left px-3 py-2 text-xs font-semibold text-[var(--text-muted)]">Status</th>
                         <th className="text-left px-3 py-2 text-xs font-semibold text-[var(--text-muted)]">Serial</th>
-                        <th className="text-left px-3 py-2 text-xs font-semibold text-[var(--text-muted)]">Schedule</th>
+                        <th className="text-left px-3 py-2 text-xs font-semibold text-[var(--text-muted)]">Content Schedule</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -846,7 +913,13 @@ export default function MigrationPage() {
                           </tr>
                           {groupDevices.map(d => {
                             const breadcrumb = parseGroupPath(d.groupPath, d.groupName);
+                            const schedId = d.contentScheduleId;
+                            const schedName = d.contentScheduleName;
+                            const isExpanded = schedId ? expandedScheduleIds.has(schedId) : false;
+                            const isLoadingItems = schedId ? scheduleItemsLoading.has(schedId) : false;
+                            const schedItems = schedId ? (deviceScheduleItems[schedId] ?? null) : null;
                             return (
+                              <>
                               <tr key={d.deviceId} className="border-b border-[var(--border)] hover:bg-[var(--surface)]">
                                 <td className="px-3 py-2">
                                   <div className="flex items-center gap-1 flex-wrap">
@@ -866,10 +939,53 @@ export default function MigrationPage() {
                                   </Badge>
                                 </td>
                                 <td className="px-3 py-2 text-xs text-[var(--text-muted)] font-mono">{d.serialNo ?? d.macAddress ?? '—'}</td>
-                                <td className="px-3 py-2 text-xs text-[var(--text-muted)]">
-                                  {d.currentScheduleId ?? d.scheduleId ?? '—'}
+                                <td className="px-3 py-2 text-xs">
+                                  {schedName ? (
+                                    <button
+                                      onClick={() => schedId && void toggleScheduleItems(schedId)}
+                                      className="flex items-center gap-1 text-left text-[var(--blue)] hover:underline"
+                                    >
+                                      <ChevronRight className={`w-3 h-3 flex-shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                                      <span className="truncate max-w-[200px]">{schedName}</span>
+                                    </button>
+                                  ) : (
+                                    <span className="text-[var(--text-muted)]">
+                                      {reviewLoading ? <Skeleton className="h-3 w-24 inline-block" /> : (d.currentScheduleId ?? d.scheduleId ?? '—')}
+                                    </span>
+                                  )}
                                 </td>
                               </tr>
+                              {isExpanded && schedId && (
+                                <tr key={`${d.deviceId}-sched-items`} className="border-b border-[var(--border)] bg-[var(--surface)]">
+                                  <td colSpan={6} className="px-6 py-3">
+                                    {isLoadingItems ? (
+                                      <div className="space-y-1">{[1,2,3].map(i => <Skeleton key={i} className="h-4 w-full" />)}</div>
+                                    ) : schedItems && schedItems.length > 0 ? (
+                                      <div>
+                                        <p className="text-xs font-semibold text-[var(--text-muted)] mb-2 uppercase tracking-wide">
+                                          Content in this schedule ({schedItems.length})
+                                        </p>
+                                        <div className="space-y-1 max-h-60 overflow-y-auto">
+                                          {schedItems.map(c => (
+                                            <div key={c.contentId} className="flex items-center gap-2 text-xs text-[var(--text)]">
+                                              <Badge tone="neutral" className="flex-shrink-0">{c.mediaType ?? c.contentType ?? '?'}</Badge>
+                                              <span className="truncate">{c.contentName}</span>
+                                              {(c.totalSize ?? c.fileSize) ? (
+                                                <span className="text-[var(--text-muted)] flex-shrink-0">
+                                                  {((c.totalSize ?? c.fileSize ?? 0) / 1_048_576).toFixed(1)} MB
+                                                </span>
+                                              ) : null}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <p className="text-xs text-[var(--text-muted)]">No content items found for this schedule.</p>
+                                    )}
+                                  </td>
+                                </tr>
+                              )}
+                              </>
                             );
                           })}
                         </>
