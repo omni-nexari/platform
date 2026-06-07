@@ -301,14 +301,15 @@ export async function migrationRoutes(app: FastifyInstance) {
       baseUrl: z.string().url().max(500),
       token: z.string().min(1),
       miContentId: z.string().min(1).max(200),
-      fileName: z.string().min(1).max(500),
+      mainFileId: z.string().min(1).max(200),
+      mainFileName: z.string().min(1).max(500),
       mimeType: z.string().min(1).max(200),
       workspaceId: z.string().uuid(),
     }).safeParse(req.body);
 
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
-    const { baseUrl, token, miContentId, fileName, mimeType, workspaceId } = body.data;
+    const { baseUrl, token, miContentId: _miContentId, mainFileId, mainFileName, mimeType, workspaceId } = body.data;
 
     // Workspace access check
     const member = await checkWorkspaceAccess(workspaceId, user.sub);
@@ -335,13 +336,16 @@ export async function migrationRoutes(app: FastifyInstance) {
     try { wsSettings = JSON.parse(wsRow?.settings ?? '{}'); } catch { /* ignore */ }
     const initialApprovalState = wsSettings.approvalRequired && !new Set(['prime_owner', 'owner', 'admin', 'a-manager']).has(user.role) ? 'draft' : 'approved';
 
-    // Build download URL
-    const downloadPath = `/restapi/v2.0/cms/contents/download/${encodeURIComponent(miContentId)}`;
-    if (!validateMiPath(downloadPath)) {
-      return reply.status(400).send({ error: 'Invalid content ID' });
+    // Build download URL via GetFileLoader servlet (the MagicInfo REST download endpoints don't exist)
+    // Validate inputs to prevent path traversal
+    if (mainFileId.includes('/') || mainFileId.includes('..') || mainFileName.includes('..')) {
+      return reply.status(400).send({ error: 'Invalid mainFileId or mainFileName' });
     }
-
-    const downloadUrl = buildMiUrl(baseUrl, downloadPath);
+    const downloadUrl = buildMiUrl(
+      baseUrl,
+      `/servlet/GetFileLoader?paramPathConfName=CONTENTS_HOME&filepath=${encodeURIComponent(mainFileId)}/${encodeURIComponent(mainFileName)}`,
+    );
+    const fileName = mainFileName;
 
     try {
       const type = mimeToNexariType(mimeType, fileName);

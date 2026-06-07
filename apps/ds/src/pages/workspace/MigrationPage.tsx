@@ -16,8 +16,12 @@ import {
 interface MiContent {
   contentId: string;
   contentName: string;
-  contentType: string;
+  contentType?: string;   // legacy alias
+  mediaType: string;      // actual MagicInfo field
   fileSize?: number;
+  totalSize?: number;
+  mainFileId?: string;
+  mainFileName?: string;
   thumbnailUrl?: string;
   tags?: string[];
   groupId?: string;
@@ -112,8 +116,9 @@ function formatDuration(seconds?: number): string {
 }
 
 function contentTypeIcon(type: string) {
-  if (type?.toUpperCase().includes('VIDEO')) return <Film className="w-4 h-4 text-purple-400" />;
-  if (type?.toUpperCase().includes('PDF')) return <FileText className="w-4 h-4 text-red-400" />;
+  const t = (type ?? '').toUpperCase();
+  if (t.includes('VIDEO') || t === 'LFD') return <Film className="w-4 h-4 text-purple-400" />;
+  if (t === 'PDF') return <FileText className="w-4 h-4 text-red-400" />;
   return <Image className="w-4 h-4 text-blue-400" />;
 }
 
@@ -533,26 +538,23 @@ export default function MigrationPage() {
       appendLog({ type: 'content', miId: content.contentId, name: content.contentName, status: 'pending' });
 
       try {
-        // Determine fileName from contentName + type
-        const typeToExt: Record<string, string> = {
-          IMAGE: '.jpg', VIDEO: '.mp4', PDF: '.pdf', PRESENTATION: '.pptx',
-        };
-        const upperType = (content.contentType ?? '').toUpperCase();
-        const ext = typeToExt[upperType] ?? '';
-        const fileName = content.contentName.includes('.')
-          ? content.contentName
-          : `${content.contentName}${ext}`;
+        const mediaType = (content.mediaType ?? content.contentType ?? '').toUpperCase();
+        const mainFileName = content.mainFileName ?? content.contentName;
+        const mainFileId = content.mainFileId ?? content.contentId;
 
         const mimeMap: Record<string, string> = {
           IMAGE: 'image/jpeg', VIDEO: 'video/mp4', PDF: 'application/pdf',
           PRESENTATION: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          SAPP: 'application/zip', LFD: 'application/zip',
         };
-        const mimeType = mimeMap[upperType] ?? 'application/octet-stream';
+        const mimeType = mimeMap[mediaType] ?? 'application/octet-stream';
 
         const res = await api.post<{ nexariContentId: string; conflict?: boolean }>('/migration/magicinfo/download-and-upload', {
           baseUrl, token: miToken,
           miContentId: content.contentId,
-          fileName, mimeType,
+          mainFileId,
+          mainFileName,
+          mimeType,
           workspaceId: wsId,
         });
 
@@ -704,7 +706,7 @@ export default function MigrationPage() {
                 type="url"
                 value={baseUrl}
                 onChange={e => setBaseUrl(e.target.value)}
-                placeholder="https://your-server:7001"
+                placeholder="https://your-server:7002/MagicInfo"
                 className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--blue)]"
               />
             </div>
@@ -948,10 +950,10 @@ export default function MigrationPage() {
                             }}
                             className="rounded"
                           />
-                          {contentTypeIcon(c.contentType)}
+                          {contentTypeIcon(c.mediaType ?? c.contentType ?? '')}
                           <span className="flex-1 text-sm text-[var(--text)] truncate">{c.contentName}</span>
-                          <Badge tone="neutral">{c.contentType}</Badge>
-                          <span className="text-xs text-[var(--text-muted)]">{formatBytes(c.fileSize)}</span>
+                          <Badge tone="neutral">{c.mediaType ?? c.contentType}</Badge>
+                          <span className="text-xs text-[var(--text-muted)]">{formatBytes(c.totalSize ?? c.fileSize)}</span>
                         </label>
                       ))}
                     {contentList.length === 0 && !listLoading && (
