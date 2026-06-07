@@ -311,43 +311,42 @@ export async function migrationRoutes(app: FastifyInstance) {
 
     const { baseUrl, token, miContentId: _miContentId, mainFileId, mainFileName, mimeType, workspaceId } = body.data;
 
-    // Workspace access check
-    const member = await checkWorkspaceAccess(workspaceId, user.sub);
-    if (!member) return reply.status(403).send({ error: 'Forbidden' });
-
-    if (!ADMIN_ROLES.has(user.role)) {
-      return reply.status(403).send({ error: 'Insufficient permissions to upload content' });
-    }
-
-    // Storage quota check
-    const quota = await db.query.orgStorageQuotas.findFirst({
-      where: eq(orgStorageQuotas.orgId, user.orgId),
-    });
-    if (quota && quota.usedBytes >= quota.limitBytes) {
-      return reply.status(507).send({ error: 'Storage quota exceeded' });
-    }
-
-    // Workspace approval setting
-    const wsRow = await db.query.workspaces.findFirst({
-      where: eq(workspaces.id, workspaceId),
-      columns: { settings: true },
-    });
-    let wsSettings: { approvalRequired?: boolean } = {};
-    try { wsSettings = JSON.parse(wsRow?.settings ?? '{}'); } catch { /* ignore */ }
-    const initialApprovalState = wsSettings.approvalRequired && !new Set(['prime_owner', 'owner', 'admin', 'a-manager']).has(user.role) ? 'draft' : 'approved';
-
-    // Build download URL via GetFileLoader servlet (the MagicInfo REST download endpoints don't exist)
-    // Validate inputs to prevent path traversal
-    if (mainFileId.includes('/') || mainFileId.includes('..') || mainFileName.includes('..')) {
-      return reply.status(400).send({ error: 'Invalid mainFileId or mainFileName' });
-    }
-    const downloadUrl = buildMiUrl(
-      baseUrl,
-      `/servlet/GetFileLoader?paramPathConfName=CONTENTS_HOME&filepath=${encodeURIComponent(mainFileId)}/${encodeURIComponent(mainFileName)}`,
-    );
-    const fileName = mainFileName;
-
     try {
+      // Workspace access check
+      const member = await checkWorkspaceAccess(workspaceId, user.sub);
+      if (!member) return reply.status(403).send({ error: 'Forbidden' });
+
+      if (!ADMIN_ROLES.has(user.role)) {
+        return reply.status(403).send({ error: 'Insufficient permissions to upload content' });
+      }
+
+      // Storage quota check
+      const quota = await db.query.orgStorageQuotas.findFirst({
+        where: eq(orgStorageQuotas.orgId, user.orgId),
+      });
+      if (quota && quota.usedBytes >= quota.limitBytes) {
+        return reply.status(507).send({ error: 'Storage quota exceeded' });
+      }
+
+      // Workspace approval setting
+      const wsRow = await db.query.workspaces.findFirst({
+        where: eq(workspaces.id, workspaceId),
+        columns: { settings: true },
+      });
+      let wsSettings: { approvalRequired?: boolean } = {};
+      try { wsSettings = JSON.parse(wsRow?.settings ?? '{}'); } catch { /* ignore */ }
+      const initialApprovalState = wsSettings.approvalRequired && !new Set(['prime_owner', 'owner', 'admin', 'a-manager']).has(user.role) ? 'draft' : 'approved';
+
+      // Build download URL via GetFileLoader servlet (the MagicInfo REST download endpoints don't exist)
+      // Validate inputs to prevent path traversal
+      if (mainFileId.includes('/') || mainFileId.includes('..') || mainFileName.includes('..')) {
+        return reply.status(400).send({ error: 'Invalid mainFileId or mainFileName' });
+      }
+      const downloadUrl = buildMiUrl(
+        baseUrl,
+        `/servlet/GetFileLoader?paramPathConfName=CONTENTS_HOME&filepath=${encodeURIComponent(mainFileId)}/${encodeURIComponent(mainFileName)}`,
+      );
+      const fileName = mainFileName;
       const type = mimeToNexariType(mimeType, fileName);
       const ext = path.extname(fileName) || '';
       const fileId = crypto.randomUUID();
