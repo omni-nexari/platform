@@ -246,7 +246,7 @@ export default function MigrationPage() {
 
   // Step 2 — Review extras
   const [expandedScheduleIds, setExpandedScheduleIds] = useState(new Set<string>());
-  const [deviceScheduleItems, setDeviceScheduleItems] = useState<Record<string, MiContent[]>>({});
+  const [deviceScheduleItems, setDeviceScheduleItems] = useState<Record<string, { content: MiContent[]; playlists: MiPlaylist[] }>>({});
   const [scheduleItemsLoading, setScheduleItemsLoading] = useState(new Set<string>());
 
   // Step 3 — Select
@@ -753,9 +753,13 @@ export default function MigrationPage() {
     if (deviceScheduleItems[scheduleId]) return; // already loaded
     setScheduleItemsLoading(prev => new Set([...prev, scheduleId]));
     try {
-      const data = await miProxy(`/restapi/v2.0/cms/contents?scheduleId=${encodeURIComponent(scheduleId)}&pageSize=200&startIndex=1`);
-      const items = unwrapItems(data) as MiContent[];
-      setDeviceScheduleItems(prev => ({ ...prev, [scheduleId]: items }));
+      const [contentData, playlistData] = await Promise.allSettled([
+        miProxy(`/restapi/v2.0/cms/contents?scheduleId=${encodeURIComponent(scheduleId)}&pageSize=200&startIndex=1`),
+        miProxy(`/restapi/v2.0/cms/playlists?scheduleId=${encodeURIComponent(scheduleId)}&pageSize=200&startIndex=1`),
+      ]);
+      const content = contentData.status === 'fulfilled' ? (unwrapItems(contentData.value) as MiContent[]) : [];
+      const playlists = playlistData.status === 'fulfilled' ? (unwrapItems(playlistData.value) as MiPlaylist[]) : [];
+      setDeviceScheduleItems(prev => ({ ...prev, [scheduleId]: { content, playlists } }));
     } catch { /* non-fatal */ } finally {
       setScheduleItemsLoading(prev => { const s = new Set(prev); s.delete(scheduleId); return s; });
     }
@@ -917,7 +921,9 @@ export default function MigrationPage() {
                             const schedName = d.contentScheduleName;
                             const isExpanded = schedId ? expandedScheduleIds.has(schedId) : false;
                             const isLoadingItems = schedId ? scheduleItemsLoading.has(schedId) : false;
-                            const schedItems = schedId ? (deviceScheduleItems[schedId] ?? null) : null;
+                            const schedData = schedId ? (deviceScheduleItems[schedId] ?? null) : null;
+                            const schedItems = schedData?.content ?? null;
+                            const schedPlaylists = schedData?.playlists ?? null;
                             return (
                               <>
                               <tr key={d.deviceId} className="border-b border-[var(--border)] hover:bg-[var(--surface)]">
@@ -960,27 +966,49 @@ export default function MigrationPage() {
                                   <td colSpan={6} className="px-6 py-3">
                                     {isLoadingItems ? (
                                       <div className="space-y-1">{[1,2,3].map(i => <Skeleton key={i} className="h-4 w-full" />)}</div>
-                                    ) : schedItems && schedItems.length > 0 ? (
-                                      <div>
-                                        <p className="text-xs font-semibold text-[var(--text-muted)] mb-2 uppercase tracking-wide">
-                                          Content in this schedule ({schedItems.length})
-                                        </p>
-                                        <div className="space-y-1 max-h-60 overflow-y-auto">
-                                          {schedItems.map(c => (
-                                            <div key={c.contentId} className="flex items-center gap-2 text-xs text-[var(--text)]">
-                                              <Badge tone="neutral" className="flex-shrink-0">{c.mediaType ?? c.contentType ?? '?'}</Badge>
-                                              <span className="truncate">{c.contentName}</span>
-                                              {(c.totalSize ?? c.fileSize) ? (
-                                                <span className="text-[var(--text-muted)] flex-shrink-0">
-                                                  {((c.totalSize ?? c.fileSize ?? 0) / 1_048_576).toFixed(1)} MB
-                                                </span>
-                                              ) : null}
+                                    ) : (schedPlaylists && schedPlaylists.length > 0) || (schedItems && schedItems.length > 0) ? (
+                                      <div className="space-y-3">
+                                        {schedPlaylists && schedPlaylists.length > 0 && (
+                                          <div>
+                                            <p className="text-xs font-semibold text-[var(--text-muted)] mb-2 uppercase tracking-wide">
+                                              Playlists in this schedule ({schedPlaylists.length})
+                                            </p>
+                                            <div className="space-y-1 max-h-40 overflow-y-auto">
+                                              {schedPlaylists.map(p => (
+                                                <div key={p.playlistId} className="flex items-center gap-2 text-xs text-[var(--text)]">
+                                                  <Badge tone="accent" className="flex-shrink-0">PLAYLIST</Badge>
+                                                  <span className="truncate">{p.playlistName}</span>
+                                                  {p.itemCount != null && (
+                                                    <span className="text-[var(--text-muted)] flex-shrink-0">{p.itemCount} items</span>
+                                                  )}
+                                                </div>
+                                              ))}
                                             </div>
-                                          ))}
-                                        </div>
+                                          </div>
+                                        )}
+                                        {schedItems && schedItems.length > 0 && (
+                                          <div>
+                                            <p className="text-xs font-semibold text-[var(--text-muted)] mb-2 uppercase tracking-wide">
+                                              Content in this schedule ({schedItems.length})
+                                            </p>
+                                            <div className="space-y-1 max-h-40 overflow-y-auto">
+                                              {schedItems.map(c => (
+                                                <div key={c.contentId} className="flex items-center gap-2 text-xs text-[var(--text)]">
+                                                  <Badge tone="neutral" className="flex-shrink-0">{c.mediaType ?? c.contentType ?? '?'}</Badge>
+                                                  <span className="truncate">{c.contentName}</span>
+                                                  {(c.totalSize ?? c.fileSize) ? (
+                                                    <span className="text-[var(--text-muted)] flex-shrink-0">
+                                                      {((c.totalSize ?? c.fileSize ?? 0) / 1_048_576).toFixed(1)} MB
+                                                    </span>
+                                                  ) : null}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
                                       </div>
                                     ) : (
-                                      <p className="text-xs text-[var(--text-muted)]">No content items found for this schedule.</p>
+                                      <p className="text-xs text-[var(--text-muted)]">No content or playlists found for this schedule.</p>
                                     )}
                                   </td>
                                 </tr>
