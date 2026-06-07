@@ -241,7 +241,7 @@ export async function migrationRoutes(app: FastifyInstance) {
       });
 
       if (!res.ok) {
-        return reply.status(401).send({
+        return reply.status(422).send({
           error: `MagicInfo authentication failed (HTTP ${res.status})`,
           detail: res.text.slice(0, 500),
         });
@@ -251,7 +251,7 @@ export async function migrationRoutes(app: FastifyInstance) {
       try { data = JSON.parse(res.text) as Record<string, unknown>; } catch { /* ignore */ }
       const token = data['token'] as string | undefined;
       if (!token) {
-        return reply.status(401).send({ error: 'MagicInfo login succeeded but no token returned' });
+        return reply.status(422).send({ error: 'MagicInfo login succeeded but no token returned' });
       }
 
       return reply.send({ token });

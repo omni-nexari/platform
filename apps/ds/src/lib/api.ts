@@ -225,8 +225,7 @@ async function request<T>(
     || path === '/auth/refresh'
     || path === '/auth/logout'
     || path === '/auth/csrf'
-    || path === '/auth/session/bootstrap'
-    || path.startsWith('/migration/');
+    || path === '/auth/session/bootstrap';
 
   if (!isAuthEndpoint && (res.status === 401 || (path === '/auth/me' && res.status === 404))) {
     await refreshSession();
