@@ -63,7 +63,7 @@ export const CreateManagementCompanySchema = z.object({
   /** email of the first admin to invite immediately after creation */
   initialAdminEmail: z.string().email(),
   initialAdminName: z.string().min(1).max(120),
-  plan: z.enum(['basic', 'pro']).default('basic'),
+  plan: z.enum(['starter', 'pro', 'enterprise']).default('starter'),
   allowedModules: z.enum(['signage', 'pos', 'both']).default('signage'),
 });
 export type CreateManagementCompanyInput = z.infer<typeof CreateManagementCompanySchema>;

@@ -13,7 +13,7 @@ export const managementCompanies = pgTable('management_companies', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull().default('(pending setup)'),
   slug: text('slug').notNull().unique(),
-  plan: text('plan').notNull().default('basic'), // basic | pro
+  plan: text('plan').notNull().default('starter'), // starter | pro | enterprise
   allowedModules: text('allowed_modules').notNull().default('signage'), // signage | pos | both
   billingEmail: text('billing_email'),
   logoUrl: text('logo_url'),
