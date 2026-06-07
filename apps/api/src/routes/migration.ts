@@ -85,6 +85,9 @@ function nodeRequest(
         });
       },
     );
+    req.setTimeout(30_000, () => {
+      req.destroy(new Error('Request timed out after 30s'));
+    });
     req.on('error', reject);
     if (options.body) req.write(options.body);
     req.end();
@@ -103,6 +106,9 @@ function nodeStreamDownload(
     const isHttps = parsed.protocol === 'https:';
     const mod: typeof https = isHttps ? https : (http as unknown as typeof https);
     let fileSize = 0;
+    let settled = false;
+    const settle = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
+
     const req = mod.request(
       {
         hostname: parsed.hostname,
@@ -117,7 +123,7 @@ function nodeStreamDownload(
         if (status < 200 || status >= 300) {
           req.destroy();
           writeStream.destroy();
-          resolve({ ok: false, status, fileSize: 0 });
+          settle(() => resolve({ ok: false, status, fileSize: 0 }));
           return;
         }
         res.on('data', (chunk: Buffer) => {
@@ -125,12 +131,19 @@ function nodeStreamDownload(
           hashStream.update(chunk);
           writeStream.write(chunk);
         });
+        res.on('error', (err) => {
+          writeStream.destroy();
+          settle(() => reject(err));
+        });
         res.on('end', () => writeStream.end());
-        writeStream.on('finish', () => resolve({ ok: true, status, fileSize }));
-        writeStream.on('error', reject);
+        writeStream.on('finish', () => settle(() => resolve({ ok: true, status, fileSize })));
+        writeStream.on('error', (err) => settle(() => reject(err)));
       },
     );
-    req.on('error', reject);
+    req.setTimeout(90_000, () => {
+      req.destroy(new Error('MagicInfo download timed out after 90s'));
+    });
+    req.on('error', (err) => settle(() => reject(err)));
     req.end();
   });
 }
