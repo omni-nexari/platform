@@ -426,7 +426,9 @@ export async function migrationRoutes(app: FastifyInstance) {
       return reply.status(201).send({ nexariContentId: item.id, name: item.name, type: item.type, status: item.status });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      return reply.status(502).send({ error: `Download/upload failed: ${msg}` });
+      const stack = err instanceof Error ? err.stack : undefined;
+      req.log.error({ err, stack }, `migration download-and-upload error: ${msg}`);
+      return reply.status(500).send({ error: `Download/upload failed: ${msg}` });
     }
   });
 
