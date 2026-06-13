@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { useAuthStore } from './auth.js';
 import { buildApiUrl } from './api.js';
 
-export type SACallerType = 'platform_owner' | 'management_company_admin';
+export type SACallerType = 'management_company_admin';
 
 export interface SAUser {
   id: string;
@@ -57,9 +57,9 @@ export const useSAStore = create<SAAuthState>()(
   ),
 );
 
-/** Returns true if the currently authenticated admin is a Platform Owner */
+/** @deprecated always returns false since platform_owner access was removed */
 export function useIsPlatformOwner() {
-  return useSAStore((s) => s.user?.type === 'platform_owner');
+  return false;
 }
 
 // ── SA API client ─────────────────────────────────────────────────────────────
@@ -99,11 +99,7 @@ async function ensurePortalCsrfToken() {
 
 function getPortalLoginPath() {
   const storeUser = useSAStore.getState().user;
-  if (storeUser?.type === 'management_company_admin') {
-    return storeUser.companySlug ? `/${storeUser.companySlug}/login` : '/management/login';
-  }
-
-  return '/superadmin/login';
+  return storeUser?.companySlug ? `/${storeUser.companySlug}/login` : '/management/login';
 }
 
 function handlePortalUnauthorized() {

@@ -561,6 +561,20 @@
                         "when":  1780963200000,
                         "tag":  "0079_pos_phase3",
                         "breakpoints":  true
+                    },
+                    {
+                        "idx":  80,
+                        "version":  "7",
+                        "when":  1781365500983,
+                        "tag":  "0080_license_config",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  81,
+                        "version":  "7",
+                        "when":  1781365501983,
+                        "tag":  "0081_org_license_allocations",
+                        "breakpoints":  true
                     }
                 ]
 }

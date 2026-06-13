@@ -214,3 +214,15 @@ export function startLicenseHeartbeat(
   setTimeout(() => void tick(), 20_000);
   setInterval(() => void tick(), HEARTBEAT_INTERVAL_MS);
 }
+
+/**
+ * Trigger an immediate heartbeat (e.g. after a license-config save from the UI).
+ * Safe to call at any time — errors are swallowed.
+ */
+export async function triggerHeartbeat(): Promise<void> {
+  try {
+    await sendHeartbeat();
+  } catch {
+    /* ignore — just a best-effort immediate check */
+  }
+}

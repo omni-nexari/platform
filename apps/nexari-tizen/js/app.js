@@ -209,7 +209,12 @@
           Player.wsConnection.send(JSON.stringify({ type: 'remote_key', payload: { key: key } }));
           logger.debug('[rc-overlay] Sent remote_key:', key);
         } else if (key === 'POWER_OFF') {
-          if (typeof TVControl !== 'undefined') TVControl.powerOff();
+          try {
+            var b2b = (typeof b2bapis !== 'undefined') ? b2bapis.b2bcontrol : null;
+            if (b2b && typeof b2b.setPowerOff === 'function') {
+              b2b.setPowerOff(function() {}, function(e) { logger.warn('[rc-overlay] setPowerOff error:', e && e.message); });
+            } else if (typeof TVControl !== 'undefined') { TVControl.powerOff(); }
+          } catch (e) { logger.warn('[rc-overlay] POWER_OFF threw:', e); }
         } else if (key === 'POWER_ON') {
           if (typeof TVControl !== 'undefined') TVControl.powerOn();
         }

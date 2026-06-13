@@ -25,6 +25,8 @@ import {
   supportTicketMessages,
   platformIntegrations,
   licenseConfig,
+  orgLicenseAllocations,
+  orgSubscriptions,
 } from '@signage/db';
 import { encryptSecret } from '../services/crypto.js';
 import { bustUberCredCache } from '../lib/uber-eats.js';import { eq, isNull, count, sql, desc, and, inArray, asc, sum, gte, lte, gt } from 'drizzle-orm';
@@ -3796,6 +3798,136 @@ export async function superAdminRoutes(app: FastifyInstance) {
     // Trigger an immediate heartbeat after config change
     const { triggerHeartbeat } = await import('../services/license-client.js');
     void triggerHeartbeat();
+
+    return reply.status(204).send();
+  });
+
+  // ── License allocations ── GET /superadmin/license-allocations ─────────────
+  // Management admins can see all their client orgs with current usage and
+  // their allocated screen limits. POST/PUT per-org to set limits.
+
+  app.get('/license-allocations', async (req, reply) => {
+    const caller = getPortalCaller(app, req);
+    if (!caller) return reply.status(401).send({ error: 'Unauthorized' });
+
+    // Get all orgs belonging to this management company
+    const mcaId = caller.type === 'management_company_admin' ? caller.managementCompanyId : null;
+    if (!mcaId) return reply.status(403).send({ error: 'Management company admins only' });
+
+    // Orgs managed by this company (via org_subscriptions)
+    const managed = await db.query.orgSubscriptions.findMany({
+      where: and(
+        eq(orgSubscriptions.managedByCompanyId, mcaId),
+        eq(orgSubscriptions.status, 'active'),
+      ),
+      columns: { orgId: true },
+    });
+
+    const orgIds = managed.map((m) => m.orgId);
+    if (!orgIds.length) return reply.send({ orgs: [] });
+
+    // Fetch org details
+    const orgs = await db.query.organisations.findMany({
+      where: and(inArray(organisations.id, orgIds), isNull(organisations.deletedAt)),
+      columns: { id: true, name: true, slug: true },
+    });
+
+    // Fetch existing allocations
+    const allocs = await db.query.orgLicenseAllocations.findMany({
+      where: inArray(orgLicenseAllocations.orgId, orgIds),
+    });
+    const allocByOrg = new Map(allocs.map((a) => [a.orgId, a]));
+
+    // Current screen counts per org
+    const signageRows = await db
+      .select({ orgId: devices.orgId, c: count() })
+      .from(devices)
+      .where(
+        and(
+          inArray(devices.orgId, orgIds),
+          isNull(devices.deletedAt),
+          eq(devices.type, 'signage'),
+        ),
+      )
+      .groupBy(devices.orgId);
+
+    const posRows = await db
+      .select({ orgId: devices.orgId, c: count() })
+      .from(devices)
+      .where(
+        and(
+          inArray(devices.orgId, orgIds),
+          isNull(devices.deletedAt),
+          eq(devices.type, 'kiosk'),
+        ),
+      )
+      .groupBy(devices.orgId);
+
+    const sigByOrg = new Map(signageRows.map((r) => [r.orgId, Number(r.c)]));
+    const posByOrg  = new Map(posRows.map((r) => [r.orgId, Number(r.c)]));
+
+    const result = orgs.map((org) => {
+      const alloc = allocByOrg.get(org.id);
+      return {
+        orgId:              org.id,
+        orgName:            org.name,
+        orgSlug:            org.slug,
+        maxSignageScreens:  alloc?.maxSignageScreens ?? null,
+        maxPosScreens:      alloc?.maxPosScreens     ?? null,
+        enabledModules:     alloc?.enabledModules     ?? null,
+        notes:              alloc?.notes              ?? null,
+        currentSignageScreens: sigByOrg.get(org.id) ?? 0,
+        currentPosScreens:     posByOrg.get(org.id)  ?? 0,
+      };
+    });
+
+    return reply.send({ orgs: result });
+  });
+
+  app.put('/license-allocations/:orgId', async (req, reply) => {
+    const caller = getPortalCaller(app, req);
+    if (!caller) return reply.status(401).send({ error: 'Unauthorized' });
+    if (caller.type !== 'management_company_admin') return reply.status(403).send({ error: 'Forbidden' });
+
+    const { orgId } = req.params as { orgId: string };
+
+    // Verify this org belongs to the caller's company
+    const sub = await db.query.orgSubscriptions.findFirst({
+      where: and(
+        eq(orgSubscriptions.orgId, orgId),
+        eq(orgSubscriptions.managedByCompanyId, caller.managementCompanyId),
+      ),
+    });
+    if (!sub) return reply.status(404).send({ error: 'Org not found or not managed by your company' });
+
+    const body = z.object({
+      maxSignageScreens: z.number().int().min(0).nullable().optional(),
+      maxPosScreens:     z.number().int().min(0).nullable().optional(),
+      enabledModules:    z.array(z.enum(['signage', 'pos'])).nullable().optional(),
+      notes:             z.string().max(500).nullable().optional(),
+    }).safeParse(req.body);
+
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    const existing = await db.query.orgLicenseAllocations.findFirst({
+      where: eq(orgLicenseAllocations.orgId, orgId),
+    });
+
+    const patch = {
+      managementCompanyId: caller.managementCompanyId,
+      updatedById:         caller.sub,
+      updatedAt:           new Date(),
+      ...(body.data.maxSignageScreens !== undefined ? { maxSignageScreens: body.data.maxSignageScreens } : {}),
+      ...(body.data.maxPosScreens     !== undefined ? { maxPosScreens:     body.data.maxPosScreens }     : {}),
+      ...(body.data.enabledModules    !== undefined ? { enabledModules:    body.data.enabledModules }    : {}),
+      ...(body.data.notes             !== undefined ? { notes:             body.data.notes }             : {}),
+    };
+
+    if (existing) {
+      await db.update(orgLicenseAllocations).set(patch).where(eq(orgLicenseAllocations.orgId, orgId));
+    } else {
+      await db.insert(orgLicenseAllocations).values({ orgId, ...patch });
+    }
 
     return reply.status(204).send();
   });

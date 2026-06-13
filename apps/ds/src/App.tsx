@@ -25,14 +25,6 @@ const PAGE_TITLE_MAP: Record<string, string> = {
   employees: 'Employees',
   loyalty: 'Loyalty',
   expenses: 'Expenses',
-  // superadmin
-  orgs: 'Organisations',
-  companies: 'Companies',
-  system: 'System Health',
-  monitoring: 'Infrastructure',
-  notifications: 'Notifications',
-  logs: 'Logs',
-  releases: 'Releases',
 };
 
 function getPageTitle(pathname: string): string {
@@ -68,21 +60,8 @@ import TwoFactorPage from './pages/auth/TwoFactorPage.js';
 import AcceptInvitePage from './pages/auth/AcceptInvitePage.js';
 import ResetPasswordPage from './pages/auth/ResetPasswordPage.js';
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage.js';
-import SuperAdminLoginPage from './pages/superadmin/SuperAdminLoginPage.js';
-import SuperAdminLayout from './pages/superadmin/SuperAdminLayout.js';
-import OrgsListPage from './pages/superadmin/OrgsListPage.js';
-import OrgDetailPage from './pages/superadmin/OrgDetailPage.js';
-import SystemHealthPage from './pages/superadmin/SystemHealthPage.js';
-import InfraMonitoringPage from './pages/superadmin/InfraMonitoringPage.js';
-import ManagementCompaniesListPage from './pages/superadmin/ManagementCompaniesListPage.js';
-import ManagementCompanyDetailPage from './pages/superadmin/ManagementCompanyDetailPage.js';
-import PlatformOwnerDashboardPage from './pages/superadmin/PlatformOwnerDashboardPage.js';
-import PlatformAnalyticsPage from './pages/superadmin/PlatformAnalyticsPage.js';
-import PlatformNotificationsPage from './pages/superadmin/PlatformNotificationsPage.js';
-import PlatformLogsPage from './pages/superadmin/PlatformLogsPage.js';
-import PlayerReleasesPage from './pages/superadmin/PlayerReleasesPage.js';
-import SuperAdminSupportPage from './pages/superadmin/SuperAdminSupportPage.js';
-import SuperAdminSupportTicketDetailPage from './pages/superadmin/SuperAdminSupportTicketDetailPage.js';
+import OrgsListPage from './pages/management/OrgsListPage.js';
+import OrgDetailPage from './pages/management/OrgDetailPage.js';
 import ManagementLoginPage from './pages/management/ManagementLoginPage.js';
 import ManagementLayout from './pages/management/ManagementLayout.js';
 import ManagementDashboardPage from './pages/management/ManagementDashboardPage.js';
@@ -93,8 +72,8 @@ import ManagementSupportTicketDetailPage from './pages/management/ManagementSupp
 import ManagementBrandingPage from './pages/management/ManagementBrandingPage.js';
 import ManagementLogsPage from './pages/management/ManagementLogsPage.js';
 import ManagementReleasesPage from './pages/management/ManagementReleasesPage.js';
-import PricingManagementPage from './pages/superadmin/PricingManagementPage.js';
 import ManagementPricingPage from './pages/management/ManagementPricingPage.js';
+import ManagementLicensePage from './pages/management/ManagementLicensePage.js';
 import MarketingPage from './pages/marketing/MarketingPage.js';
 import { TermsPage, PrivacyPage } from './pages/marketing/LegalPages.js';
 import OrgSupportPage from './pages/support/OrgSupportPage.js';
@@ -249,18 +228,9 @@ function DisplayPinGateWrapper({ children }: { children: React.ReactNode }) {
   );
 }
 
-function RequirePlatformOwner({ children }: { children: React.ReactNode }) {
-  const { bootstrapped, user } = useSAStore();
-  if (!bootstrapped) return null;
-  if (!user) return <Navigate to="/superadmin/login" replace />;
-  if (user?.type !== 'platform_owner') return <Navigate to="/management" replace />;
-  return <>{children}</>;
-}
-
 function RequireManagementAdmin({ children }: { children: React.ReactNode }) {
   const { bootstrapped, user } = useSAStore();
   if (!bootstrapped) return null;
-  // Not logged in OR logged in as platform_owner → send to generic management login.
   if (!user || user.type !== 'management_company_admin') {
     return <Navigate to="/management/login" replace />;
   }
@@ -269,10 +239,8 @@ function RequireManagementAdmin({ children }: { children: React.ReactNode }) {
 
 function isPortalPath(pathname: string) {
   return (
-    pathname.startsWith('/superadmin') ||
     pathname.startsWith('/management') ||
     pathname.startsWith('/m/') ||
-    // /:slug/login — management portal login via short URL
     /^\/[a-z0-9][a-z0-9-]*\/login(?:\/.*)?$/.test(pathname)
   );
 }
@@ -294,10 +262,9 @@ function isMainPublicAuthPath(pathname: string) {
 }
 
 function isPortalPublicAuthPath(pathname: string) {
-  return pathname === '/superadmin/login'
-    || pathname === '/management/login'
+  return pathname === '/management/login'
     || /^\/m\/[^/]+(?:\/login)?$/.test(pathname)
-    || /^\/[a-z0-9][a-z0-9-]*\/login$/.test(pathname); // /:slug/login short URL
+    || /^\/[a-z0-9][a-z0-9-]*\/login$/.test(pathname);
 }
 
 function PortalAuthBootstrap({ children }: { children: React.ReactNode }) {
@@ -375,31 +342,6 @@ export default function App() {
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
       {/* Platform Owner portal */}
-      <Route path="/superadmin/login" element={<SuperAdminLoginPage />} />
-      <Route
-        path="/superadmin"
-        element={
-          <RequirePlatformOwner>
-            <SuperAdminLayout />
-          </RequirePlatformOwner>
-        }
-      >
-        <Route index element={<PlatformOwnerDashboardPage />} />
-        <Route path="orgs" element={<OrgsListPage />} />
-        <Route path="orgs/:id" element={<OrgDetailPage />} />
-        <Route path="companies" element={<ManagementCompaniesListPage />} />
-        <Route path="companies/:id" element={<ManagementCompanyDetailPage />} />
-        <Route path="system" element={<SystemHealthPage />} />
-        <Route path="monitoring" element={<InfraMonitoringPage />} />
-        <Route path="analytics" element={<PlatformAnalyticsPage />} />
-        <Route path="pricing" element={<PricingManagementPage />} />
-        <Route path="notifications" element={<PlatformNotificationsPage />} />
-        <Route path="logs" element={<PlatformLogsPage />} />
-        <Route path="player-releases" element={<PlayerReleasesPage />} />
-        <Route path="support" element={<SuperAdminSupportPage />} />
-        <Route path="support/:id" element={<SuperAdminSupportTicketDetailPage />} />
-      </Route>
-
       {/* Management Company portal — short URL: /:slug/login */}
       <Route path="/:slug/login" element={<ManagementLoginPage />} />
       {/* Backward compat: /m/:slug/login → /:slug/login */}
@@ -425,6 +367,7 @@ export default function App() {
         <Route path="releases" element={<ManagementReleasesPage />} />
         <Route path="support" element={<ManagementSupportPage />} />
         <Route path="support/:id" element={<ManagementSupportTicketDetailPage />} />
+        <Route path="license" element={<ManagementLicensePage />} />
       </Route>
 
       {/* Authenticated user shell */}

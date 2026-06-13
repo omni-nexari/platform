@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "predb:generate": "pnpm build",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/migrate.js",
     "db:studio": "drizzle-kit studio",

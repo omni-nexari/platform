@@ -6,7 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { Plus, Users, Calendar, Search } from 'lucide-react';
 import { z } from 'zod';
-import { saApi, useIsPlatformOwner } from '../../lib/superadmin-auth.js';
+import { saApi, useSAStore } from '../../lib/superadmin-auth.js';
 import {
   Badge,
   InlineActionButton,
@@ -20,11 +20,10 @@ import {
   Skeleton,
 } from '../../components/UiPrimitives.js';
 
-// The superadmin org creation endpoint accepts ownerEmail + ownerName + optional managementCompanyId
+// Management company admins create client orgs under their own company
 const CreateOrgFormSchema = z.object({
   ownerName: z.string().min(1, 'Full name is required').max(120),
   ownerEmail: z.string().email('Enter a valid email'),
-  managementCompanyId: z.string().uuid('Select a management company').optional(),
 });
 type CreateOrgFormData = z.infer<typeof CreateOrgFormSchema>;
 
@@ -40,11 +39,6 @@ interface OrgRow {
   memberCount: number;
   managementCompanyId: string | null;
   settings: string;
-}
-
-interface CompanyOption {
-  id: string;
-  name: string;
 }
 
 const PLAN_TONES = {
@@ -87,7 +81,7 @@ function getOrgStatus(org: OrgRow) {
 
 export default function OrgsListPage() {
   const qc = useQueryClient();
-  const isPO = useIsPlatformOwner();
+  const { user } = useSAStore();
   const [showCreate, setShowCreate] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -96,24 +90,19 @@ export default function OrgsListPage() {
     queryFn: () => saApi.get<OrgRow[]>('/superadmin/orgs'),
   });
 
-  // Only needed for platform owners who must pick a management company
-  const { data: companies = [] } = useQuery({
-    queryKey: ['sa-companies-options'],
-    queryFn: () => saApi.get<CompanyOption[]>('/superadmin/management-companies'),
-    enabled: !!isPO,
-    select: (rows: CompanyOption[]) => rows,
-  });
-
   const {
     register,
     handleSubmit,
     reset,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting: formSubmitting },
   } = useForm<CreateOrgFormData>({ resolver: zodResolver(CreateOrgFormSchema) });
 
   const createOrg = useMutation({
     mutationFn: (data: CreateOrgFormData) =>
-      saApi.post<{ org: OrgRow }>('/superadmin/orgs', data),
+      saApi.post<{ org: OrgRow }>('/superadmin/orgs', {
+        ...data,
+        managementCompanyId: user?.managementCompanyId,
+      }),
     onSuccess: () => {
       toast.success('Invite sent to organization owner');
       void qc.invalidateQueries({ queryKey: ['sa-orgs'] });
@@ -135,7 +124,6 @@ export default function OrgsListPage() {
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Action failed'),
   });
 
-  // Pending-setup orgs show a placeholder name — display them differently
   function displayOrgName(org: OrgRow) {
     return org.name === '(pending)' ? (
       <span className="text-[var(--text-muted)] italic">Pending setup…</span>
@@ -143,6 +131,7 @@ export default function OrgsListPage() {
       org.name
     );
   }
+
   const filtered = orgs.filter(
     (o) =>
       o.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -174,7 +163,6 @@ export default function OrgsListPage() {
         )}
       />
 
-      {/* Table */}
       <div className="ui-data-surface">
         {isLoading ? (
           <div className="p-4 space-y-2">
@@ -194,7 +182,7 @@ export default function OrgsListPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <Link
-                        to={`/superadmin/orgs/${org.id}`}
+                        to={`/management/orgs/${org.id}`}
                         className="font-medium transition-colors hover:text-[var(--blue)]"
                       >
                         {displayOrgName(org)}
@@ -222,10 +210,6 @@ export default function OrgsListPage() {
                       <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Members</p>
                       <p className="mt-1 tabular-nums text-[var(--text)]">{org.memberCount}</p>
                     </div>
-                    <div className="col-span-2">
-                      <p className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Created</p>
-                      <p className="mt-1 text-[var(--text-muted)]">{new Date(org.createdAt).toLocaleDateString()}</p>
-                    </div>
                   </div>
 
                   <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -235,7 +219,7 @@ export default function OrgsListPage() {
                     >
                       {org.suspendedAt ? 'Unsuspend' : 'Suspend'}
                     </InlineActionButton>
-                    <Link to={`/superadmin/orgs/${org.id}`} className="ui-inline-action-btn justify-center text-center">
+                    <Link to={`/management/orgs/${org.id}`} className="ui-inline-action-btn justify-center text-center">
                       View
                     </Link>
                   </div>
@@ -268,7 +252,7 @@ export default function OrgsListPage() {
                     <tr key={org.id}>
                       <td>
                         <Link
-                          to={`/superadmin/orgs/${org.id}`}
+                          to={`/management/orgs/${org.id}`}
                           className="font-medium hover:text-[var(--blue)] transition-colors"
                         >
                           {displayOrgName(org)}
@@ -301,10 +285,7 @@ export default function OrgsListPage() {
                           >
                             {org.suspendedAt ? 'Unsuspend' : 'Suspend'}
                           </InlineActionButton>
-                          <Link
-                            to={`/superadmin/orgs/${org.id}`}
-                            className="ui-inline-action-btn"
-                          >
+                          <Link to={`/management/orgs/${org.id}`} className="ui-inline-action-btn">
                             View
                           </Link>
                         </div>
@@ -318,7 +299,6 @@ export default function OrgsListPage() {
         )}
       </div>
 
-      {/* Invite Owner Modal */}
       {showCreate && (
         <Modal onClose={() => setShowCreate(false)} size="sm">
           <ModalHeader
@@ -326,7 +306,6 @@ export default function OrgsListPage() {
             subtitle="They'll receive an email to set up their organization."
             onClose={() => setShowCreate(false)}
           />
-
           <ModalBody>
             <form
               id="create-org-form"
@@ -343,40 +322,16 @@ export default function OrgsListPage() {
                 <input {...register('ownerEmail')} type="email" placeholder="jane@acme.com" className="input w-full" />
                 {errors.ownerEmail && <p className="text-xs text-[var(--danger)] mt-1">{errors.ownerEmail.message}</p>}
               </div>
-              {isPO && (
-                <div>
-                  <label className="block text-sm font-medium mb-1">Management Company</label>
-                  <select {...register('managementCompanyId')} className="input w-full">
-                    <option value="">None (direct client)</option>
-                    {companies.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                  {errors.managementCompanyId && (
-                    <p className="text-xs text-[var(--danger)] mt-1">{errors.managementCompanyId.message}</p>
-                  )}
-                </div>
-              )}
             </form>
           </ModalBody>
-
-            <ModalFooter>
-              <ModalSecondaryButton
-                type="button"
-                onClick={() => setShowCreate(false)}
-                className="flex-1"
-              >
-                Cancel
-              </ModalSecondaryButton>
-              <ModalPrimaryButton
-                form="create-org-form"
-                type="submit"
-                disabled={createOrg.isPending}
-                className="flex-1"
-              >
-                {createOrg.isPending ? 'Sending…' : 'Send Invite'}
-              </ModalPrimaryButton>
-            </ModalFooter>
+          <ModalFooter>
+            <ModalSecondaryButton type="button" onClick={() => setShowCreate(false)} className="flex-1">
+              Cancel
+            </ModalSecondaryButton>
+            <ModalPrimaryButton form="create-org-form" type="submit" disabled={createOrg.isPending || formSubmitting} className="flex-1">
+              {createOrg.isPending ? 'Sending…' : 'Send Invite'}
+            </ModalPrimaryButton>
+          </ModalFooter>
         </Modal>
       )}
     </div>
