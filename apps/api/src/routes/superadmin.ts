@@ -24,10 +24,10 @@ import {
   supportTickets,
   supportTicketMessages,
   platformIntegrations,
+  licenseConfig,
 } from '@signage/db';
 import { encryptSecret } from '../services/crypto.js';
-import { bustUberCredCache } from '../lib/uber-eats.js';
-import { eq, isNull, count, sql, desc, and, inArray, asc, sum, gte, lte, gt } from 'drizzle-orm';
+import { bustUberCredCache } from '../lib/uber-eats.js';import { eq, isNull, count, sql, desc, and, inArray, asc, sum, gte, lte, gt } from 'drizzle-orm';
 import * as argon2 from 'argon2';
 import Redis from 'ioredis';
 import { randomBytes } from 'node:crypto';
@@ -3731,6 +3731,74 @@ export async function superAdminRoutes(app: FastifyInstance) {
       return reply.status(204).send();
     },
   );
+
+  // ── License config ── GET/PUT /superadmin/license-config ─────────────────
+  // Management admins (and platform owners) can read and update the license
+  // credentials. The HMAC secret is stored encrypted; it is never returned
+  // in GET (only a masked hint so the UI can show it is set).
+
+  app.get('/license-config', async (req, reply) => {
+    const caller = getPortalCaller(app, req);
+    if (!caller) return reply.status(401).send({ error: 'Unauthorized' });
+
+    const row = await db.query.licenseConfig.findFirst();
+    if (!row) {
+      return reply.send({ configured: false });
+    }
+
+    return reply.send({
+      configured: true,
+      licenseKey: row.licenseKey,
+      hmacSecretSet: !!row.hmacSecret,
+      licenseServerUrl: row.licenseServerUrl,
+      isEnabled: row.isEnabled,
+      lastStatus: row.lastStatus,
+      lastCheckedAt: row.lastCheckedAt,
+      lastError: row.lastError,
+    });
+  });
+
+  app.put('/license-config', async (req, reply) => {
+    const caller = getPortalCaller(app, req);
+    if (!caller) return reply.status(401).send({ error: 'Unauthorized' });
+
+    const body = z.object({
+      licenseKey: z.string().min(1).max(100).optional(),
+      hmacSecret: z.string().min(1).max(500).optional(),
+      licenseServerUrl: z.string().url().max(500).optional(),
+      isEnabled: z.boolean().optional(),
+    }).safeParse(req.body);
+
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+    const { licenseKey, hmacSecret, licenseServerUrl, isEnabled } = body.data;
+
+    const existing = await db.query.licenseConfig.findFirst();
+
+    const patch = {
+      ...(licenseKey !== undefined ? { licenseKey } : {}),
+      ...(hmacSecret !== undefined ? { hmacSecret: encryptSecret(hmacSecret) } : {}),
+      ...(licenseServerUrl !== undefined ? { licenseServerUrl } : {}),
+      ...(isEnabled !== undefined ? { isEnabled } : {}),
+      updatedAt: new Date(),
+    };
+
+    if (existing) {
+      await db.update(licenseConfig).set(patch).where(eq(licenseConfig.id, existing.id));
+    } else {
+      await db.insert(licenseConfig).values({
+        licenseKey: licenseKey ?? null,
+        hmacSecret: hmacSecret ? (encryptSecret(hmacSecret) ?? null) : null,
+        licenseServerUrl: licenseServerUrl ?? null,
+        isEnabled: isEnabled ?? true,
+      });
+    }
+
+    // Trigger an immediate heartbeat after config change
+    const { triggerHeartbeat } = await import('../services/license-client.js');
+    void triggerHeartbeat();
+
+    return reply.status(204).send();
+  });
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

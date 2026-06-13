@@ -27,6 +27,7 @@ export * from './logs.js';
 export * from './pos.js';
 export * from './integrations.js';
 export * from './support.js';
+export * from './license-config.js';
 // Export only table/inferred types from triggerRules — condition/action types
 // are re-exported (with extensions) from ruleSets.ts, which takes precedence.
 export { deviceRules, type DeviceRule, type DeviceRuleInsert } from './triggerRules.js';

@@ -13,8 +13,9 @@
  */
 import { createHmac } from 'node:crypto';
 import { and, eq, isNull, ne, count } from 'drizzle-orm';
-import { db, devices, organisations, posMenus } from '@signage/db';
+import { db, devices, organisations, posMenus, licenseConfig } from '@signage/db';
 import { getRedis } from './redis.js';
+import { decryptSecret } from './crypto.js';
 
 const HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
 const CACHE_KEY = 'license:last-status';
@@ -107,9 +108,24 @@ async function collectUsage(): Promise<{
 }
 
 async function sendHeartbeat(): Promise<void> {
-  const licenseKey = process.env['LICENSE_KEY'];
-  const secret = process.env['LICENSE_SECRET'];
-  const serverUrl = process.env['LICENSE_SERVER_URL'];
+  // Read credentials from DB (UI-managed) first, fall back to env vars.
+  let licenseKey: string | null = null;
+  let secret: string | null = null;
+  let serverUrl: string | null = null;
+  let dbRowId: string | null = null;
+
+  const dbConfig = await db.query.licenseConfig.findFirst();
+  if (dbConfig?.isEnabled && dbConfig.licenseKey && dbConfig.hmacSecret && dbConfig.licenseServerUrl) {
+    licenseKey = dbConfig.licenseKey;
+    secret = decryptSecret(dbConfig.hmacSecret);
+    serverUrl = dbConfig.licenseServerUrl;
+    dbRowId = dbConfig.id;
+  } else {
+    licenseKey = process.env['LICENSE_KEY'] ?? null;
+    secret = process.env['LICENSE_SECRET'] ?? null;
+    serverUrl = process.env['LICENSE_SERVER_URL'] ?? null;
+  }
+
   if (!licenseKey || !secret || !serverUrl) {
     // No license configured — self-hosted dev / Nexari internal without enforcement
     return;
@@ -136,12 +152,29 @@ async function sendHeartbeat(): Promise<void> {
   });
 
   if (!res.ok) {
+    // Update DB error state if we used DB config
+    if (dbRowId) {
+      await db.update(licenseConfig).set({
+        lastStatus: null,
+        lastCheckedAt: new Date(),
+        lastError: `license server responded ${res.status}`,
+      }).where(eq(licenseConfig.id, dbRowId)).catch(() => undefined);
+    }
     throw new Error(`license server responded ${res.status}`);
   }
 
   const body = (await res.json()) as Omit<LicenseState, 'checkedAt'>;
   const state: LicenseState = { ...body, checkedAt: new Date().toISOString() };
   cachedState = state;
+
+  // Persist last-known status back into DB row
+  if (dbRowId) {
+    await db.update(licenseConfig).set({
+      lastStatus: state.status,
+      lastCheckedAt: new Date(),
+      lastError: null,
+    }).where(eq(licenseConfig.id, dbRowId)).catch(() => undefined);
+  }
 
   const redis = getRedis();
   if (redis) {
