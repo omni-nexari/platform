@@ -1,0 +1,60 @@
+# ── Build artefacts ────────────────────────────────────────────────────────────
+**/dist
+**/build
+**/.turbo
+
+# ── Dependencies (builder stage copies lockfile and installs fresh) ────────────
+**/node_modules
+
+# ── Test files ────────────────────────────────────────────────────────────────
+**/__tests__
+**/*.test.ts
+**/*.spec.ts
+**/*.test.tsx
+**/*.spec.tsx
+
+# ── Development + local tooling ───────────────────────────────────────────────
+**/.env
+**/.env.local
+**/.env.*.local
+apps/ds/.env*
+apps/api/.env*
+
+# ── Version control ───────────────────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+
+# ── Editor / IDE ──────────────────────────────────────────────────────────────
+.vscode
+.idea
+*.code-workspace
+.editorconfig
+
+# ── Documentation ─────────────────────────────────────────────────────────────
+Docs/
+README.md
+CHANGELOG.md
+*.md
+
+# ── Docker packaging (the Dockerfile itself is needed, but not the shell scripts
+#    or other docker/  meta files) ─────────────────────────────────────────────
+docker/
+
+# ── Infra config (not needed inside the container) ───────────────────────────
+infra/
+
+# ── Tools scripts ─────────────────────────────────────────────────────────────
+tools/
+
+# ── CI / GitHub Actions ───────────────────────────────────────────────────────
+.github/
+
+# ── Logs + temp files ─────────────────────────────────────────────────────────
+*.log
+*.txt
+*.tmp
+signage_uploads/
+
+# ── pnpm cache ────────────────────────────────────────────────────────────────
+.pnpm-store/

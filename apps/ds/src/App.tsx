@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Routes, Route, Navigate, useLocation, useParams } from 'react-router';
 
 /* ── WCAG 2.4.2 — Page title manager ──────────────────────────────────────── */
@@ -126,6 +126,7 @@ import KioskDisplayPage from './pages/kiosk/KioskDisplayPage.js';
 import KitchenDisplayPage from './pages/kitchen/KitchenDisplayPage.js';
 import QrMenuPage from './pages/qr/QrMenuPage.js';
 import PinGate from './components/PinGate.js';
+import SetupWizardPage from './pages/SetupWizardPage.js';
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -249,6 +250,7 @@ function isMainPublicAuthPath(pathname: string) {
   return pathname === '/login'
     || pathname === '/login/2fa'
     || pathname === '/forgot-password'
+    || pathname === '/setup'
     || pathname.startsWith('/reset-password/')
     || pathname.startsWith('/accept-invite/')
     || pathname.startsWith('/accept-management-company-invite/')
@@ -259,6 +261,32 @@ function isMainPublicAuthPath(pathname: string) {
     || pathname.startsWith('/qr/')
     // Waiter tablet — PIN-gated, no session auth
     || /^\/workspaces\/[^/]+\/pos(?:\/|$)/.test(pathname);
+}
+
+/**
+ * Checks setup status before redirecting the root path.
+ * On a fresh install, redirects to /setup instead of /dashboard.
+ */
+function RootRedirect() {
+  const [checked, setChecked] = useState(false);
+  const [setupComplete, setSetupComplete] = useState(true);
+
+  useEffect(() => {
+    fetch(buildApiUrl('/setup/status'))
+      .then((r) => r.json())
+      .then((data: { complete: boolean }) => {
+        setSetupComplete(data.complete);
+        setChecked(true);
+      })
+      .catch(() => {
+        // If the check fails, fall back to normal dashboard redirect
+        setChecked(true);
+      });
+  }, []);
+
+  if (!checked) return null;
+  if (!setupComplete) return <Navigate to="/setup" replace />;
+  return <Navigate to="/dashboard" replace />;
 }
 
 function isPortalPublicAuthPath(pathname: string) {
@@ -331,6 +359,9 @@ export default function App() {
       <Route path="/marketing" element={<RequireAuth><MarketingPage /></RequireAuth>} />
       <Route path="/marketing/terms" element={<RequireAuth><TermsPage /></RequireAuth>} />
       <Route path="/marketing/privacy" element={<RequireAuth><PrivacyPage /></RequireAuth>} />
+
+      {/* First-run setup wizard — unauthenticated, only accessible before any admin exists */}
+      <Route path="/setup" element={<SetupWizardPage />} />
 
       {/* Public auth */}
       <Route path="/login" element={<LoginPage />} />
@@ -437,8 +468,8 @@ export default function App() {
         <Route path="/workspaces/:wsId/migrate" element={<MigrationPage />} />
       </Route>
 
-      {/* Root redirect */}
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      {/* Root redirect — checks setup status on first visit */}
+      <Route path="/" element={<RootRedirect />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </PortalAuthBootstrap>
