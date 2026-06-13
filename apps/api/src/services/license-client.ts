@@ -12,8 +12,8 @@
  *   LICENSE_SERVER_URL  — e.g. https://admin.nexari.io
  */
 import { createHmac } from 'node:crypto';
-import { and, eq, isNull, ne, count } from 'drizzle-orm';
-import { db, devices, organisations, posMenus, licenseConfig } from '@signage/db';
+import { and, desc, eq, gte, inArray, isNull, ne, count } from 'drizzle-orm';
+import { db, devices, organisations, posMenus, licenseConfig, logEntries } from '@signage/db';
 import { getRedis } from './redis.js';
 import { decryptSecret } from './crypto.js';
 
@@ -37,6 +37,8 @@ export interface LicenseState {
 }
 
 let cachedState: LicenseState | null = null;
+/** Timestamp of the last successful heartbeat send — used to window log collection. */
+let lastHeartbeatAt: Date = new Date(Date.now() - HEARTBEAT_INTERVAL_MS * 2);
 
 /** Current license state (from last heartbeat or Redis cache). */
 export function getLicenseState(): LicenseState | null {
@@ -107,6 +109,48 @@ async function collectUsage(): Promise<{
   };
 }
 
+/** Collect recent error/warn log entries to include in the next heartbeat. */
+async function collectRecentLogs(since: Date): Promise<Array<{
+  level: 'error' | 'warn';
+  source: string;
+  message: string;
+  meta?: Record<string, unknown>;
+  appVersion?: string;
+  loggedAt: number;
+}>> {
+  try {
+    const rows = await db
+      .select({
+        level: logEntries.level,
+        source: logEntries.source,
+        message: logEntries.message,
+        meta: logEntries.meta,
+        appVersion: logEntries.appVersion,
+        createdAt: logEntries.createdAt,
+      })
+      .from(logEntries)
+      .where(
+        and(
+          gte(logEntries.createdAt, since),
+          inArray(logEntries.level, ['error', 'warn']),
+        ),
+      )
+      .orderBy(desc(logEntries.createdAt))
+      .limit(100);
+
+    return rows.map((r) => ({
+      level: r.level as 'error' | 'warn',
+      source: r.source,
+      message: r.message,
+      ...(r.meta ? { meta: r.meta as Record<string, unknown> } : {}),
+      ...(r.appVersion ? { appVersion: r.appVersion } : {}),
+      loggedAt: r.createdAt.getTime(),
+    }));
+  } catch {
+    return [];
+  }
+}
+
 async function sendHeartbeat(): Promise<void> {
   // Read credentials from DB (UI-managed) first, fall back to env vars.
   let licenseKey: string | null = null;
@@ -137,6 +181,7 @@ async function sendHeartbeat(): Promise<void> {
     .digest('hex');
 
   const usage = await collectUsage();
+  const logs = await collectRecentLogs(lastHeartbeatAt);
 
   const res = await fetch(`${serverUrl.replace(/\/+$/, '')}/heartbeat`, {
     method: 'POST',
@@ -148,6 +193,7 @@ async function sendHeartbeat(): Promise<void> {
       instanceVersion: process.env['APP_VERSION'] ?? null,
       instanceUrl: process.env['APP_URL'] ?? null,
       usage,
+      ...(logs.length > 0 ? { logs } : {}),
     }),
   });
 
@@ -166,6 +212,7 @@ async function sendHeartbeat(): Promise<void> {
   const body = (await res.json()) as Omit<LicenseState, 'checkedAt'>;
   const state: LicenseState = { ...body, checkedAt: new Date().toISOString() };
   cachedState = state;
+  lastHeartbeatAt = new Date();
 
   // Persist last-known status back into DB row
   if (dbRowId) {
