@@ -38,6 +38,7 @@ import {
 } from '../services/ws.js';
 import { notifyDeviceStatusChange } from '../services/notifications.js';
 import { ensureEpaperVariant, type EpaperFitMode } from '../services/epaper-variants.js';
+import { isPairingBlocked, getLicenseState } from '../services/license-client.js';
 
 /** 6-char uppercase code avoiding confusable chars (0,O,I,1) */
 function generatePairingCode(): string {
@@ -618,6 +619,18 @@ export async function deviceRoutes(app: FastifyInstance) {
   // ── POST /devices/pair/claim ─ authenticated user pairs a device ───────────
   app.post('/pair/claim', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
+
+    // License enforcement — a suspended or revoked license cannot pair new screens.
+    if (isPairingBlocked()) {
+      const status = getLicenseState()?.status;
+      return reply.status(402).send({
+        error: 'license_blocked',
+        message:
+          status === 'revoked'
+            ? 'This instance license has been revoked. Contact your provider.'
+            : 'This instance license is suspended. New screens cannot be paired until it is reactivated.',
+      });
+    }
 
     const body = ClaimDeviceSchema.safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });

@@ -9,6 +9,7 @@ import { registerRoutes } from './routes/index.js';
 import { startLogCleanup } from './services/log-cleanup.js';
 import { startLogAlerts } from './services/log-alert.js';
 import { startJobs } from './services/jobs.js';
+import { startLicenseHeartbeat } from './services/license-client.js';
 import { startWorkers, stopWorkers } from './workers/index.js';
 import { closeQueues } from './queues/index.js';
 import { createPinoDbStream } from './services/pino-db-stream.js';
@@ -44,6 +45,7 @@ async function start() {
   startLogCleanup();
   startLogAlerts();
   startJobs();
+  startLicenseHeartbeat(app.log);
   startWorkers(app.log);
 
   await registerPlugins(app);
