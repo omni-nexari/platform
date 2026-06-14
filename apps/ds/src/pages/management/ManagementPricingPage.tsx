@@ -133,8 +133,8 @@ function ClientPricingTab({ wholesalePlans }: { wholesalePlans: McPricing[] }) {
     return (
       <EmptyState
         icon={<DollarSign size={28} />}
-        title="No client organisations"
-        description="You don't have any client organisations to configure pricing for."
+        title="No client organizations"
+        description="You don't have any client organizations to configure pricing for."
       />
     );
   }
@@ -149,13 +149,13 @@ function ClientPricingTab({ wholesalePlans }: { wholesalePlans: McPricing[] }) {
       >
         <Info size={15} className="shrink-0 mt-0.5 text-[var(--text-muted)]" />
         <p className="text-[var(--text-muted)]">
-          Set custom prices for each client organisation. These override the standard retail rates they'd otherwise see.
+          Set custom prices for each client organization. These override the standard retail rates they'd otherwise see.
           Your profit is the difference between what you charge them and your wholesale cost.
         </p>
       </div>
 
       <div>
-        <label className="block text-xs font-medium mb-1.5 text-[var(--text-muted)]">Select Client Organisation</label>
+        <label className="block text-xs font-medium mb-1.5 text-[var(--text-muted)]">Select Client Organization</label>
         <select
           value={selectedOrgId ?? ''}
           onChange={(e) => { setSelectedOrgId(e.target.value || null); setShowAddForm(false); reset(); }}
@@ -348,7 +348,7 @@ export default function ManagementPricingPage() {
             <Info size={15} className="shrink-0 mt-0.5 text-[var(--text-muted)]" />
             <p className="text-[var(--text-muted)]">
               These are the wholesale rates negotiated for your account. Retail prices shown are the standard rates
-              your client organisations see. The difference is your margin.
+              your client organizations see. The difference is your margin.
             </p>
           </div>
 

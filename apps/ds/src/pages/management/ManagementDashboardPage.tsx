@@ -146,7 +146,7 @@ export default function ManagementDashboardPage() {
         {/* Stat cards */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <StatCard
-            label="Client Organisations"
+            label="Client Organizations"
             value={summary?.totalOrganizations}
             loading={analyticsLoading}
             icon={Building2}
@@ -190,7 +190,7 @@ export default function ManagementDashboardPage() {
             <div>
               <p className="font-medium">Manage Client Orgs</p>
               <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                View, manage and suspend client organisations
+                View, manage and suspend client organizations
               </p>
             </div>
           </Link>
@@ -217,7 +217,7 @@ export default function ManagementDashboardPage() {
         <Modal onClose={() => setShowInvite(false)} size="sm">
           <ModalHeader
             title="Invite New Client"
-            subtitle="An email invitation will be sent to set up their organisation."
+            subtitle="An email invitation will be sent to set up their organization."
             onClose={() => setShowInvite(false)}
           />
           <ModalBody>

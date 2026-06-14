@@ -466,7 +466,7 @@ export default function ManagementBrandingPage() {
                 <div className="px-3 py-2 rounded-lg text-white text-sm font-medium" style={{ background: 'var(--blue)' }}>
                   Dashboard
                 </div>
-                <div className="px-3 py-2 rounded-lg text-sm text-[var(--text-muted)]">Client Organisations</div>
+                <div className="px-3 py-2 rounded-lg text-sm text-[var(--text-muted)]">Client Organizations</div>
                 <div className="px-3 py-2 rounded-lg text-sm text-[var(--text-muted)]">Branding</div>
               </div>
             </div>

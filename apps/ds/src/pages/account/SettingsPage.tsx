@@ -328,7 +328,7 @@ function GeneralSection() {
           <SettingRow label="Email" hint="Used for login and notifications">
             <span className="text-sm text-[var(--text-muted)]">{user?.email}</span>
           </SettingRow>
-          <SettingRow label="Role" hint="Your role in this organisation">
+          <SettingRow label="Role" hint="Your role in this organization">
             <span className="text-sm capitalize text-[var(--text-muted)]">{user?.orgRole}</span>
           </SettingRow>
         </SectionCardBody>
@@ -735,7 +735,7 @@ function OrganizationSection() {
           <h3 className="text-sm font-semibold">Organization Info</h3>
         </SectionCardHeader>
         <SectionCardBody>
-          <SettingRow label="Your Role" hint="Your role in this organisation">
+          <SettingRow label="Your Role" hint="Your role in this organization">
             <RoleBadge roleId={user?.orgRole ?? 'member'} />
           </SettingRow>
         </SectionCardBody>
@@ -743,7 +743,7 @@ function OrganizationSection() {
 
       {!canManage && (
         <Callout tone="accent">
-          Contact an organisation owner or admin to manage members and settings.
+          Contact an organization owner or admin to manage members and settings.
         </Callout>
       )}
 
@@ -1938,7 +1938,7 @@ function EmergencySection({ workspaces, selectedWsId }: { workspaces: Workspace[
                   onChange={(e) => setScope(e.target.value)}
                   className="input w-full"
                 >
-                  <option value="org">Entire Organisation</option>
+                  <option value="org">Entire Organization</option>
                   {workspaces.map((ws) => (
                     <option key={ws.id} value={`workspace:${ws.id}`}>
                       Workspace: {ws.name}
@@ -1976,7 +1976,7 @@ function EmergencySection({ workspaces, selectedWsId }: { workspaces: Workspace[
 
       {!canManage && (
         <Callout tone="accent">
-          Only organisation admins and owners can activate emergency overrides.
+          Only organization admins and owners can activate emergency overrides.
         </Callout>
       )}
     </div>
@@ -4844,7 +4844,7 @@ function BillingSection() {
   if (!isOwner) {
     return (
       <Callout tone="accent">
-        Only organisation owners can view billing information.
+        Only organization owners can view billing information.
       </Callout>
     );
   }

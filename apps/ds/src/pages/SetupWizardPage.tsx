@@ -10,7 +10,7 @@ import { api } from '../lib/api.js';
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
 const step1Schema = z.object({
-  orgName: z.string().min(1, 'Organisation name is required').max(200),
+  orgName: z.string().min(1, 'Organization name is required').max(200),
 });
 
 const step2Schema = z.object({
@@ -34,7 +34,7 @@ type Step3 = z.infer<typeof step3Schema>;
 // ── Step indicator ────────────────────────────────────────────────────────────
 
 const STEPS = [
-  { label: 'Organisation', icon: Building2 },
+  { label: 'Organization', icon: Building2 },
   { label: 'Admin Account', icon: UserCircle2 },
   { label: 'License', icon: Key },
 ];
@@ -82,7 +82,7 @@ function StepIndicator({ current }: { current: number }) {
   );
 }
 
-// ── Step 1 — Organisation ─────────────────────────────────────────────────────
+// ── Step 1 — Organization ─────────────────────────────────────────────────────
 
 function Step1({ onNext }: { onNext: (data: Step1) => void }) {
   const { register, handleSubmit, formState: { errors } } = useForm<Step1>({
@@ -92,15 +92,15 @@ function Step1({ onNext }: { onNext: (data: Step1) => void }) {
   return (
     <form onSubmit={handleSubmit(onNext)} className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold text-[var(--text)]">Name your organisation</h2>
+        <h2 className="text-lg font-semibold text-[var(--text)]">Name your organization</h2>
         <p className="text-sm text-[var(--text-muted)] mt-1">
-          This is the name of the company or organisation operating this platform.
+          This is the name of the company or organization operating this platform.
           It appears in the management portal and on-screen branding.
         </p>
       </div>
 
       <div>
-        <label className="block text-sm font-medium mb-1">Organisation name</label>
+        <label className="block text-sm font-medium mb-1">Organization name</label>
         <input
           {...register('orgName')}
           type="text"

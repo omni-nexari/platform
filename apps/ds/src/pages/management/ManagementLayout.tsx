@@ -10,7 +10,7 @@ import PortalNotificationTray from '../../components/PortalNotificationTray.js';
 
 const NAV = [
   { to: '/management', icon: LayoutDashboard, label: 'Dashboard', end: true as const },
-  { to: '/management/orgs', icon: Building2, label: 'Client Organisations', end: false as const },
+  { to: '/management/orgs', icon: Building2, label: 'Client Organizations', end: false as const },
   { to: '/management/analytics', icon: BarChart2, label: 'Analytics', end: false as const },
   { to: '/management/pricing', icon: Tag, label: 'Pricing', end: false as const },
   { to: '/management/logs', icon: ScrollText, label: 'Logs', end: false as const },

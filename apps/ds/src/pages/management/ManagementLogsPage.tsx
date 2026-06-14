@@ -7,7 +7,7 @@ export default function ManagementLogsPage() {
       showOrgFilter={false}
       showPurge={false}
       title="Logs"
-      subtitle="Device and dashboard logs for your organisations. Click 'Load Logs' to fetch."
+      subtitle="Device and dashboard logs for your organizations. Click 'Load Logs' to fetch."
     />
   );
 }

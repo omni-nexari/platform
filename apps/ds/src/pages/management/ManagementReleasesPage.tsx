@@ -58,7 +58,7 @@ export default function ManagementReleasesPage() {
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <PageHeader
         title="App Releases"
-        description="Review platform-approved releases and approve them for your client organisations."
+        description="Review platform-approved releases and approve them for your client organizations."
       />
 
       {/* Platform tabs */}
