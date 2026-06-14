@@ -18,8 +18,8 @@ echo "│  Each value will be entered once; they are written to .env.        │
 echo "└─────────────────────────────────────────────────────────────────────┘"
 echo ""
 
-DB_PASSWORD=$(openssl rand -base64 32 | tr -d '\n')
-REDIS_PASSWORD=$(openssl rand -base64 32 | tr -d '\n')
+DB_PASSWORD=$(openssl rand -base64 48 | tr -d '+/=\n' | cut -c1-32)
+REDIS_PASSWORD=$(openssl rand -base64 48 | tr -d '+/=\n' | cut -c1-32)
 JWT_SECRET=$(openssl rand -hex 48)
 JWT_REFRESH_SECRET=$(openssl rand -hex 48)
 TOKEN_ENCRYPTION_KEY=$(openssl rand -hex 32)

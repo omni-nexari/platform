@@ -47,7 +47,7 @@ services:
       redis-server
       --requirepass ${REDIS_PASSWORD}
       --maxmemory 512mb
-      --maxmemory-policy allkeys-lru
+      --maxmemory-policy noeviction
       --appendonly yes
       --bind 0.0.0.0
     volumes:
