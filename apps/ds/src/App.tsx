@@ -74,8 +74,7 @@ import ManagementLogsPage from './pages/management/ManagementLogsPage.js';
 import ManagementReleasesPage from './pages/management/ManagementReleasesPage.js';
 import ManagementPricingPage from './pages/management/ManagementPricingPage.js';
 import ManagementLicensePage from './pages/management/ManagementLicensePage.js';
-import MarketingPage from './pages/marketing/MarketingPage.js';
-import { TermsPage, PrivacyPage } from './pages/marketing/LegalPages.js';
+
 import OrgSupportPage from './pages/support/OrgSupportPage.js';
 import OrgSupportTicketDetailPage from './pages/support/OrgSupportTicketDetailPage.js';
 import AcceptManagementCompanyInvitePage from './pages/auth/AcceptManagementCompanyInvitePage.js';
@@ -354,11 +353,6 @@ export default function App() {
       <Route path="/kitchen/:wsId" element={<DisplayPinGateWrapper><KitchenDisplayPage /></DisplayPinGateWrapper>} />
       {/* QR menu — no auth, no PIN */}
       <Route path="/qr/:wsId/:menuId" element={<QrMenuPage />} />
-
-      {/* Marketing pages — all require login */}
-      <Route path="/marketing" element={<RequireAuth><MarketingPage /></RequireAuth>} />
-      <Route path="/marketing/terms" element={<RequireAuth><TermsPage /></RequireAuth>} />
-      <Route path="/marketing/privacy" element={<RequireAuth><PrivacyPage /></RequireAuth>} />
 
       {/* First-run setup wizard — unauthenticated, only accessible before any admin exists */}
       <Route path="/setup" element={<SetupWizardPage />} />

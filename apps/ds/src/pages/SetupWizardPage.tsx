@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { CheckCircle2, Building2, UserCircle2, Key } from 'lucide-react';
-import { api } from '../../lib/api.js';
+import { api } from '../lib/api.js';
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
