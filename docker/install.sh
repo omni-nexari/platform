@@ -182,11 +182,28 @@ API_PUBLIC_URL="https://${DOMAIN}"
 
 # ── Extra CORS origins (LAN access) ──────────────────────────────────────────
 section "LAN / Extra Origins (Optional)"
-echo "Allow access from a local IP in addition to your domain."
+echo "Allow access from this server's local IP in addition to your domain."
 echo "Useful for on-site setup or devices that can't reach the public domain."
-echo "Example: http://192.168.1.17"
 echo ""
-prompt_optional APP_EXTRA_ORIGINS "LAN IP(s) — comma-separated, no trailing slash"
+
+# Auto-detect the server's primary LAN IP
+DETECTED_LAN_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)
+if [[ -z "$DETECTED_LAN_IP" ]]; then
+  DETECTED_LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+fi
+
+if [[ -n "$DETECTED_LAN_IP" ]]; then
+  echo "  Detected local IP: ${DETECTED_LAN_IP}"
+  read -rp "  Add http://${DETECTED_LAN_IP} as an allowed origin? [Y/n]: " LAN_CHOICE
+  if [[ ! "$LAN_CHOICE" =~ ^[Nn]$ ]]; then
+    APP_EXTRA_ORIGINS="http://${DETECTED_LAN_IP}"
+    info "LAN access enabled for http://${DETECTED_LAN_IP}"
+  else
+    prompt_optional APP_EXTRA_ORIGINS "  Custom extra origins (comma-separated, no trailing slash)"
+  fi
+else
+  prompt_optional APP_EXTRA_ORIGINS "  Extra origins (comma-separated, no trailing slash)"
+fi
 
 # ── Email delivery ─────────────────────────────────────────────────────────────
 section "Email Delivery (Resend)"
