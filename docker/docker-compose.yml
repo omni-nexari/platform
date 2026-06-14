@@ -63,7 +63,7 @@ services:
 
   # ── Nexari Platform API ──────────────────────────────────────────────────────
   api:
-    image: ghcr.io/chiho23/platform:${NEXARI_VERSION:-latest}
+    image: ghcr.io/omni-nexari/platform:${NEXARI_VERSION:-latest}
     restart: unless-stopped
     env_file: .env
     environment:

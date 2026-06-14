@@ -343,7 +343,7 @@ info "nginx.conf written"
 # ── Pull Docker image ─────────────────────────────────────────────────────────
 section "Pulling Docker image"
 docker compose pull
-info "Image pulled: ghcr.io/chiho23/platform:${NEXARI_VERSION}"
+info "Image pulled: ghcr.io/omni-nexari/platform:${NEXARI_VERSION}"
 
 # ── Start database + redis ─────────────────────────────────────────────────────
 section "Starting postgres + redis"
