@@ -67,3 +67,33 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             SKIP_PLAYWRIGHT=0
+
+  release-package:
+    name: Upload install package to GitHub Release
+    runs-on: ubuntu-latest
+    # Only run on real version tags, not workflow_dispatch
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Package docker/ directory
+        run: |
+          mkdir -p _pkg/nexari
+          cp docker/docker-compose.yml \
+             docker/nginx.conf.template \
+             docker/.env.template \
+             docker/generate-keys.sh \
+             docker/install.sh \
+             docker/update.sh \
+             _pkg/nexari/
+          chmod +x _pkg/nexari/generate-keys.sh _pkg/nexari/install.sh _pkg/nexari/update.sh
+          tar -czf nexari-install.tar.gz -C _pkg nexari
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nexari-install.tar.gz
