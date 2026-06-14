@@ -116,6 +116,7 @@ export async function setupRoutes(app: FastifyInstance) {
       }
     });
 
-    return reply.status(201).send({ ok: true });
+    const adminUrl = process.env['NEXARI_ADMIN_URL'] ?? null;
+    return reply.status(201).send({ ok: true, adminUrl });
   });
 }
