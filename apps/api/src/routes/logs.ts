@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { db, logEntries, organisations } from '@signage/db';
+import { db, logEntries, organizations } from '@signage/db';
 import { eq, and, lt, lte, desc, count, sql, inArray } from 'drizzle-orm';
 import { logBus } from '../services/log-bus.js';
 
@@ -153,12 +153,12 @@ export async function logsRoutes(app: FastifyInstance) {
     let allowedOrgIds: string[] | null = null;
     if (caller.type === 'management_company_admin' && caller.managementCompanyId) {
       const orgs = await db
-        .select({ id: organisations.id })
-        .from(organisations)
+        .select({ id: organizations.id })
+        .from(organizations)
         .where(
           and(
-            eq(organisations.managementCompanyId, caller.managementCompanyId),
-            sql`${organisations.deletedAt} IS NULL`,
+            eq(organizations.managementCompanyId, caller.managementCompanyId),
+            sql`${organizations.deletedAt} IS NULL`,
           ),
         );
       allowedOrgIds = orgs.map((o) => o.id);
@@ -292,12 +292,12 @@ export async function logsRoutes(app: FastifyInstance) {
     let allowedOrgIds: Set<string> | null = null;
     if (caller.type === 'management_company_admin' && caller.managementCompanyId) {
       const orgs = await db
-        .select({ id: organisations.id })
-        .from(organisations)
+        .select({ id: organizations.id })
+        .from(organizations)
         .where(
           and(
-            eq(organisations.managementCompanyId, caller.managementCompanyId),
-            sql`${organisations.deletedAt} IS NULL`,
+            eq(organizations.managementCompanyId, caller.managementCompanyId),
+            sql`${organizations.deletedAt} IS NULL`,
           ),
         );
       allowedOrgIds = new Set(orgs.map((o) => o.id));
@@ -391,11 +391,11 @@ export async function logsRoutes(app: FastifyInstance) {
     let allowedOrgIds: string[] | null = null;
     if (caller.type === 'management_company_admin' && caller.managementCompanyId) {
       const orgs = await db
-        .select({ id: organisations.id })
-        .from(organisations)
+        .select({ id: organizations.id })
+        .from(organizations)
         .where(and(
-          eq(organisations.managementCompanyId, caller.managementCompanyId),
-          sql`${organisations.deletedAt} IS NULL`,
+          eq(organizations.managementCompanyId, caller.managementCompanyId),
+          sql`${organizations.deletedAt} IS NULL`,
         ));
       allowedOrgIds = orgs.map((o) => o.id);
       if (allowedOrgIds.length === 0) {

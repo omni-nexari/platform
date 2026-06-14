@@ -1,4 +1,4 @@
-import { db, users, organisations, orgInvitations, refreshTokens, workspaceMembers, workspaces, managementCompanyAdmins, managementCompanyAdminInvitations, clientOrgOwnerInvitations, managementCompanies } from '@signage/db';
+import { db, users, organizations, orgInvitations, refreshTokens, workspaceMembers, workspaces, managementCompanyAdmins, managementCompanyAdminInvitations, clientOrgOwnerInvitations, managementCompanies } from '@signage/db';
 import { eq, and, isNull, gt } from 'drizzle-orm';
 import * as argon2 from 'argon2';
 import { authenticator } from 'otplib';
@@ -180,9 +180,9 @@ export async function acceptInvite(
   if (orgSetup) {
     // Owner is setting up their org for the first time
     await db
-      .update(organisations)
+      .update(organizations)
       .set({ name: orgSetup.orgName, slug: orgSetup.orgSlug, updatedAt: new Date() })
-      .where(eq(organisations.id, orgId));
+      .where(eq(organizations.id, orgId));
 
     const wsSlug = orgSetup.workspaceName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const [ws] = await db
@@ -282,12 +282,12 @@ export async function acceptMgmtAdminInvite(
       .where(eq(managementCompanies.id, managementCompanyId));
 
     let ownerUser: typeof users.$inferSelect | null = null;
-    let ownerOrg: typeof organisations.$inferSelect | null = null;
+    let ownerOrg: typeof organizations.$inferSelect | null = null;
     let ownerWorkspace: typeof workspaces.$inferSelect | null = null;
 
     if (ownerDashboard && admin) {
       const [org] = await tx
-        .insert(organisations)
+        .insert(organizations)
         .values({
           name: ownerDashboard.orgName,
           slug: ownerDashboard.orgSlug,
@@ -370,7 +370,7 @@ export async function acceptClientOrgInvite(
 ) {
   // Finalise the pending org
   await db
-    .update(organisations)
+    .update(organizations)
     .set({
       name: orgSetup.orgName,
       slug: orgSetup.orgSlug,
@@ -381,7 +381,7 @@ export async function acceptClientOrgInvite(
       billingOwnerCompanyId: managementCompanyId,
       updatedAt: new Date(),
     })
-    .where(eq(organisations.id, organizationId));
+    .where(eq(organizations.id, organizationId));
 
   // Create the default workspace
   const wsSlug = orgSetup.workspaceName

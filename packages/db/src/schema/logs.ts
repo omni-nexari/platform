@@ -8,7 +8,7 @@ import {
   index,
 } from 'drizzle-orm/pg-core';
 import { desc } from 'drizzle-orm';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 import { devices } from './devices.js';
 import { users } from './users.js';
 
@@ -18,7 +18,7 @@ export const logEntries = pgTable('log_entries', {
   level: text('level').notNull(),        // 'debug' | 'info' | 'warn' | 'error'
   message: text('message').notNull(),
   meta: jsonb('meta'),
-  orgId: uuid('org_id').references(() => organisations.id, { onDelete: 'cascade' }),
+  orgId: uuid('org_id').references(() => organizations.id, { onDelete: 'cascade' }),
   deviceId: uuid('device_id').references(() => devices.id, { onDelete: 'set null' }),
   userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
   appVersion: text('app_version'),

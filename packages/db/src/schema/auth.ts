@@ -17,7 +17,7 @@ export const platformOwners = pgTable('platform_owners', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const organisations = pgTable('organisations', {
+export const organizations = pgTable('organisations', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
@@ -37,7 +37,7 @@ export const organisations = pgTable('organisations', {
 
 export const orgInvitations = pgTable('org_invitations', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
   invitedBy: uuid('invited_by').notNull(),
   email: text('email').notNull(),
   orgRole: text('org_role').notNull(),
@@ -63,7 +63,7 @@ export const refreshTokens = pgTable('refresh_tokens', {
 
 export const auditLog = pgTable('audit_log', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').references(() => organisations.id),
+  orgId: uuid('org_id').references(() => organizations.id),
   actorId: uuid('actor_id'),
   actorType: text('actor_type').notNull().default('user'), // user | device | system
   action: text('action').notNull(),

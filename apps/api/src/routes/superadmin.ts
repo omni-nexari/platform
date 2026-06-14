@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   db,
   platformOwners,
-  organisations,
+  organizations,
   users,
   workspaces,
   devices,
@@ -451,21 +451,21 @@ export async function superAdminRoutes(app: FastifyInstance) {
     const toIso = to.toISOString();
 
     const orgScope = companyId
-      ? and(isNull(organisations.deletedAt), eq(organisations.managementCompanyId, companyId))
-      : isNull(organisations.deletedAt);
+      ? and(isNull(organizations.deletedAt), eq(organizations.managementCompanyId, companyId))
+      : isNull(organizations.deletedAt);
 
     const [orgRow] = await db
       .select({
         total: count(),
-        suspended: sql<number>`COUNT(*) FILTER (WHERE ${organisations.suspendedAt} IS NOT NULL)::int`,
+        suspended: sql<number>`COUNT(*) FILTER (WHERE ${organizations.suspendedAt} IS NOT NULL)::int`,
       })
-      .from(organisations)
+      .from(organizations)
       .where(orgScope);
 
     const [userRow] = await db
       .select({ total: count() })
       .from(users)
-      .innerJoin(organisations, eq(users.orgId, organisations.id))
+      .innerJoin(organizations, eq(users.orgId, organizations.id))
       .where(
         and(
           orgScope,
@@ -476,7 +476,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
     const [workspaceRow] = await db
       .select({ total: count() })
       .from(workspaces)
-      .innerJoin(organisations, eq(workspaces.orgId, organisations.id))
+      .innerJoin(organizations, eq(workspaces.orgId, organizations.id))
       .where(and(orgScope, isNull(workspaces.deletedAt)));
 
     const [deviceRow] = await db
@@ -485,21 +485,21 @@ export async function superAdminRoutes(app: FastifyInstance) {
         online: sql<number>`COUNT(*) FILTER (WHERE ${devices.status} = 'online')::int`,
       })
       .from(devices)
-      .innerJoin(organisations, eq(devices.orgId, organisations.id))
+      .innerJoin(organizations, eq(devices.orgId, organizations.id))
       .where(and(orgScope, isNull(devices.deletedAt)));
 
     const [contentRow] = await db
       .select({ total: count() })
       .from(contentItems)
       .innerJoin(workspaces, eq(contentItems.workspaceId, workspaces.id))
-      .innerJoin(organisations, eq(workspaces.orgId, organisations.id))
+      .innerJoin(organizations, eq(workspaces.orgId, organizations.id))
       .where(and(orgScope, isNull(workspaces.deletedAt), isNull(contentItems.deletedAt)));
 
     const [playlistRow] = await db
       .select({ total: count() })
       .from(playlists)
       .innerJoin(workspaces, eq(playlists.workspaceId, workspaces.id))
-      .innerJoin(organisations, eq(workspaces.orgId, organisations.id))
+      .innerJoin(organizations, eq(workspaces.orgId, organizations.id))
       .where(and(orgScope, isNull(workspaces.deletedAt), isNull(playlists.deletedAt)));
 
     const [scheduleRow] = await db
@@ -509,27 +509,27 @@ export async function superAdminRoutes(app: FastifyInstance) {
       })
       .from(schedules)
       .innerJoin(workspaces, eq(schedules.workspaceId, workspaces.id))
-      .innerJoin(organisations, eq(workspaces.orgId, organisations.id))
+      .innerJoin(organizations, eq(workspaces.orgId, organizations.id))
       .where(and(orgScope, isNull(workspaces.deletedAt), isNull(schedules.deletedAt)));
 
     const [storageUsageRow] = await db
       .select({ used: sum(contentItems.fileSize) })
       .from(contentItems)
       .innerJoin(workspaces, eq(contentItems.workspaceId, workspaces.id))
-      .innerJoin(organisations, eq(workspaces.orgId, organisations.id))
+      .innerJoin(organizations, eq(workspaces.orgId, organizations.id))
       .where(and(orgScope, isNull(workspaces.deletedAt), isNull(contentItems.deletedAt)));
 
     const [storageLimitRow] = await db
       .select({ limit: sum(orgStorageQuotas.limitBytes) })
       .from(orgStorageQuotas)
-      .innerJoin(organisations, eq(orgStorageQuotas.orgId, organisations.id))
+      .innerJoin(organizations, eq(orgStorageQuotas.orgId, organizations.id))
       .where(orgScope);
 
     const [screenshotRow] = await db
       .select({ total: count() })
       .from(deviceScreenshots)
       .innerJoin(devices, eq(deviceScreenshots.deviceId, devices.id))
-      .innerJoin(organisations, eq(devices.orgId, organisations.id))
+      .innerJoin(organizations, eq(devices.orgId, organizations.id))
       .where(and(orgScope, isNull(devices.deletedAt)));
 
     const [playTotalsRow] = await db
@@ -539,7 +539,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
       })
       .from(playEvents)
       .innerJoin(devices, eq(playEvents.deviceId, devices.id))
-      .innerJoin(organisations, eq(devices.orgId, organisations.id))
+      .innerJoin(organizations, eq(devices.orgId, organizations.id))
       .where(and(orgScope, isNull(devices.deletedAt), gte(playEvents.startedAt, from), lte(playEvents.startedAt, to)));
 
     const playsByDayRows = await db
@@ -550,7 +550,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
       })
       .from(playEvents)
       .innerJoin(devices, eq(playEvents.deviceId, devices.id))
-      .innerJoin(organisations, eq(devices.orgId, organisations.id))
+      .innerJoin(organizations, eq(devices.orgId, organizations.id))
       .where(and(orgScope, isNull(devices.deletedAt), gte(playEvents.startedAt, from), lte(playEvents.startedAt, to)))
       .groupBy(sql`DATE_TRUNC('day', ${playEvents.startedAt})`)
       .orderBy(asc(sql`DATE_TRUNC('day', ${playEvents.startedAt})`));
@@ -562,25 +562,25 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
     const organizationsByMonthRows = await db
       .select({
-        month: sql<string>`DATE_TRUNC('month', ${organisations.createdAt})::DATE::TEXT`,
+        month: sql<string>`DATE_TRUNC('month', ${organizations.createdAt})::DATE::TEXT`,
         organizations: count(),
       })
-      .from(organisations)
-      .where(and(orgScope, gte(organisations.createdAt, monthWindow), lte(organisations.createdAt, to)))
-      .groupBy(sql`DATE_TRUNC('month', ${organisations.createdAt})`)
-      .orderBy(asc(sql`DATE_TRUNC('month', ${organisations.createdAt})`));
+      .from(organizations)
+      .where(and(orgScope, gte(organizations.createdAt, monthWindow), lte(organizations.createdAt, to)))
+      .groupBy(sql`DATE_TRUNC('month', ${organizations.createdAt})`)
+      .orderBy(asc(sql`DATE_TRUNC('month', ${organizations.createdAt})`));
 
     const planBreakdownRows = await db
-      .select({ plan: organisations.plan, total: count() })
-      .from(organisations)
+      .select({ plan: organizations.plan, total: count() })
+      .from(organizations)
       .where(orgScope)
-      .groupBy(organisations.plan)
+      .groupBy(organizations.plan)
       .orderBy(desc(count()));
 
     const [pendingClientInviteRow] = await db
       .select({ total: count() })
       .from(clientOrgOwnerInvitations)
-      .innerJoin(organisations, eq(clientOrgOwnerInvitations.organizationId, organisations.id))
+      .innerJoin(organizations, eq(clientOrgOwnerInvitations.organizationId, organizations.id))
       .where(
         and(
           orgScope,
@@ -649,7 +649,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
         ) AS play_count,
         o.created_at::text AS created_at,
         CASE WHEN o.suspended_at IS NULL THEN 'active' ELSE 'suspended' END AS status
-      FROM organisations o
+      FROM organizations o
       ${isOwnerCaller(caller) ? sql`LEFT JOIN management_companies mc ON mc.id = o.management_company_id` : sql``}
       WHERE o.deleted_at IS NULL
       ${companyId ? sql`AND o.management_company_id = ${companyId}` : sql``}
@@ -677,7 +677,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
         ${isOwnerCaller(caller) ? sql`mc.name AS reseller_name,` : sql``}
         o.created_at::text AS created_at,
         CASE WHEN o.suspended_at IS NULL THEN 'active' ELSE 'suspended' END AS status
-      FROM organisations o
+      FROM organizations o
       ${isOwnerCaller(caller) ? sql`LEFT JOIN management_companies mc ON mc.id = o.management_company_id` : sql``}
       WHERE o.deleted_at IS NULL
       ${companyId ? sql`AND o.management_company_id = ${companyId}` : sql``}
@@ -737,7 +737,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
         ) AS play_count,
         w.created_at::text AS created_at
       FROM workspaces w
-      INNER JOIN organisations o ON o.id = w.org_id
+      INNER JOIN organizations o ON o.id = w.org_id
       ${isOwnerCaller(caller) ? sql`LEFT JOIN management_companies mc ON mc.id = o.management_company_id` : sql``}
       WHERE w.deleted_at IS NULL
         AND o.deleted_at IS NULL
@@ -767,13 +767,13 @@ export async function superAdminRoutes(app: FastifyInstance) {
             mc.name,
             (
               SELECT COUNT(*)::int
-              FROM organisations o
+              FROM organizations o
               WHERE o.management_company_id = mc.id
                 AND o.deleted_at IS NULL
             ) AS org_count,
             (
               SELECT COUNT(*)::int
-              FROM organisations o
+              FROM organizations o
               WHERE o.management_company_id = mc.id
                 AND o.deleted_at IS NULL
                 AND o.suspended_at IS NOT NULL
@@ -781,7 +781,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
             (
               SELECT COUNT(*)::int
               FROM users u
-              INNER JOIN organisations o ON o.id = u.org_id
+              INNER JOIN organizations o ON o.id = u.org_id
               WHERE o.management_company_id = mc.id
                 AND o.deleted_at IS NULL
                 AND u.deleted_at IS NULL
@@ -789,7 +789,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
             (
               SELECT COUNT(*)::int
               FROM workspaces w
-              INNER JOIN organisations o ON o.id = w.org_id
+              INNER JOIN organizations o ON o.id = w.org_id
               WHERE o.management_company_id = mc.id
                 AND o.deleted_at IS NULL
                 AND w.deleted_at IS NULL
@@ -797,7 +797,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
             (
               SELECT COUNT(*)::int
               FROM devices d
-              INNER JOIN organisations o ON o.id = d.org_id
+              INNER JOIN organizations o ON o.id = d.org_id
               WHERE o.management_company_id = mc.id
                 AND o.deleted_at IS NULL
                 AND d.deleted_at IS NULL
@@ -806,7 +806,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
               SELECT SUM(COALESCE(ci.file_size, 0))::bigint
               FROM content_items ci
               INNER JOIN workspaces w ON w.id = ci.workspace_id
-              INNER JOIN organisations o ON o.id = w.org_id
+              INNER JOIN organizations o ON o.id = w.org_id
               WHERE o.management_company_id = mc.id
                 AND o.deleted_at IS NULL
                 AND w.deleted_at IS NULL
@@ -1194,8 +1194,8 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
       const [orgsRow] = await db
         .select({ total: count() })
-        .from(organisations)
-        .where(isNull(organisations.deletedAt));
+        .from(organizations)
+        .where(isNull(organizations.deletedAt));
 
       const [usersRow] = await db
         .select({ total: count() })
@@ -1222,11 +1222,11 @@ export async function superAdminRoutes(app: FastifyInstance) {
           id: workspaces.id,
           name: workspaces.name,
           orgId: workspaces.orgId,
-          orgName: organisations.name,
+          orgName: organizations.name,
         })
         .from(workspaces)
-        .innerJoin(organisations, eq(organisations.id, workspaces.orgId))
-        .where(and(isNull(workspaces.deletedAt), isNull(organisations.deletedAt)));
+        .innerJoin(organizations, eq(organizations.id, workspaces.orgId))
+        .where(and(isNull(workspaces.deletedAt), isNull(organizations.deletedAt)));
 
       const deviceRows = await db
         .select({
@@ -1234,11 +1234,11 @@ export async function superAdminRoutes(app: FastifyInstance) {
           name: devices.name,
           orgId: devices.orgId,
           workspaceId: devices.workspaceId,
-          orgName: organisations.name,
+          orgName: organizations.name,
           workspaceName: workspaces.name,
         })
         .from(devices)
-        .leftJoin(organisations, eq(organisations.id, devices.orgId))
+        .leftJoin(organizations, eq(organizations.id, devices.orgId))
         .leftJoin(workspaces, eq(workspaces.id, devices.workspaceId))
         .where(isNull(devices.deletedAt));
 
@@ -1619,10 +1619,10 @@ export async function superAdminRoutes(app: FastifyInstance) {
         .groupBy(managementCompanyAdmins.managementCompanyId);
 
       const orgCounts = await db
-        .select({ companyId: organisations.managementCompanyId, cnt: count() })
-        .from(organisations)
-        .where(isNull(organisations.deletedAt))
-        .groupBy(organisations.managementCompanyId);
+        .select({ companyId: organizations.managementCompanyId, cnt: count() })
+        .from(organizations)
+        .where(isNull(organizations.deletedAt))
+        .groupBy(organizations.managementCompanyId);
 
       const adminMap = Object.fromEntries(adminCounts.map((r) => [r.companyId, Number(r.cnt)]));
       const orgMap = Object.fromEntries(orgCounts.map((r) => [r.companyId ?? '', Number(r.cnt)]));
@@ -1734,8 +1734,8 @@ export async function superAdminRoutes(app: FastifyInstance) {
         );
       const [orgsRow] = await db
         .select({ total: count() })
-        .from(organisations)
-        .where(and(eq(organisations.managementCompanyId, id), isNull(organisations.deletedAt)));
+        .from(organizations)
+        .where(and(eq(organizations.managementCompanyId, id), isNull(organizations.deletedAt)));
 
       return reply.send({
         ...company,
@@ -1792,12 +1792,12 @@ export async function superAdminRoutes(app: FastifyInstance) {
       // their sidebars reflect the change immediately.
       if (body.data.allowedModules !== undefined && body.data.allowedModules !== company.allowedModules) {
         const childOrgs = await db
-          .select({ id: organisations.id, settings: organisations.settings })
-          .from(organisations)
+          .select({ id: organizations.id, settings: organizations.settings })
+          .from(organizations)
           .where(
             and(
-              eq(organisations.managementCompanyId, id),
-              isNull(organisations.deletedAt),
+              eq(organizations.managementCompanyId, id),
+              isNull(organizations.deletedAt),
             ),
           );
         for (const org of childOrgs) {
@@ -1809,9 +1809,9 @@ export async function superAdminRoutes(app: FastifyInstance) {
           }
           parsed.modules = body.data.allowedModules;
           await db
-            .update(organisations)
+            .update(organizations)
             .set({ settings: JSON.stringify(parsed), updatedAt: new Date() })
-            .where(eq(organisations.id, org.id));
+            .where(eq(organizations.id, org.id));
         }
       }
 
@@ -1834,8 +1834,8 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
       const [orgsRow] = await db
         .select({ total: count() })
-        .from(organisations)
-        .where(and(eq(organisations.managementCompanyId, id), isNull(organisations.deletedAt)));
+        .from(organizations)
+        .where(and(eq(organizations.managementCompanyId, id), isNull(organizations.deletedAt)));
 
       const activeOrgCount = Number(orgsRow?.total ?? 0);
       if (activeOrgCount > 0) {
@@ -2228,12 +2228,12 @@ export async function superAdminRoutes(app: FastifyInstance) {
     const companyId = isOwnerCaller(caller) ? null : caller.managementCompanyId;
 
     const whereClause = companyId
-      ? and(isNull(organisations.deletedAt), eq(organisations.managementCompanyId, companyId))
-      : isNull(organisations.deletedAt);
+      ? and(isNull(organizations.deletedAt), eq(organizations.managementCompanyId, companyId))
+      : isNull(organizations.deletedAt);
 
-    const orgs = await db.query.organisations.findMany({
+    const orgs = await db.query.organizations.findMany({
       where: whereClause,
-      orderBy: [desc(organisations.createdAt)],
+      orderBy: [desc(organizations.createdAt)],
     });
 
     const memberCounts = await db
@@ -2251,7 +2251,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const caller = req.user as PlatformAdminCaller;
 
-    const org = await db.query.organisations.findFirst({ where: eq(organisations.id, id) });
+    const org = await db.query.organizations.findFirst({ where: eq(organizations.id, id) });
     if (!org || org.deletedAt) return reply.status(404).send({ error: 'Not found' });
 
     if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
@@ -2308,7 +2308,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
     const tempSlug = `pending-${randomToken(4)}`;
     const [org] = await db
-      .insert(organisations)
+      .insert(organizations)
       .values({
         name: '(pending)',
         slug: tempSlug,
@@ -2370,7 +2370,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const caller = req.user as PlatformAdminCaller;
 
-    const org = await db.query.organisations.findFirst({ where: eq(organisations.id, id) });
+    const org = await db.query.organizations.findFirst({ where: eq(organizations.id, id) });
     if (!org || org.deletedAt) return reply.status(404).send({ error: 'Not found' });
 
     if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
@@ -2407,7 +2407,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
     }
 
     const [updated] = await db
-      .update(organisations)
+      .update(organizations)
       .set({
         name: body.data.name ?? org.name,
         plan: body.data.plan ?? org.plan,
@@ -2415,7 +2415,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
         suspendedAt: newSuspendedAt,
         updatedAt: new Date(),
       })
-      .where(eq(organisations.id, id))
+      .where(eq(organizations.id, id))
       .returning();
 
     return reply.send(updated);
@@ -2424,17 +2424,17 @@ export async function superAdminRoutes(app: FastifyInstance) {
   // ── DELETE /superadmin/orgs/:id  (platform owner only) ─────────────────────
   app.delete('/orgs/:id', { onRequest: [app.authenticatePlatformOwner] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const org = await db.query.organisations.findFirst({ where: eq(organisations.id, id) });
+    const org = await db.query.organizations.findFirst({ where: eq(organizations.id, id) });
     if (!org || org.deletedAt) return reply.status(404).send({ error: 'Not found' });
 
     await db
-      .update(organisations)
+      .update(organizations)
       .set({
         slug: deletedSlugTombstone(org.slug),
         deletedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(organisations.id, id));
+      .where(eq(organizations.id, id));
 
     await writeAuditLog({
       orgId: id,
@@ -2454,7 +2454,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const caller = req.user as PlatformAdminCaller;
 
-    const org = await db.query.organisations.findFirst({ where: eq(organisations.id, id) });
+    const org = await db.query.organizations.findFirst({ where: eq(organizations.id, id) });
     if (!org || org.deletedAt) return reply.status(404).send({ error: 'Org not found' });
 
     if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
@@ -2519,7 +2519,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
       const { id, inviteId } = req.params as { id: string; inviteId: string };
       const caller = req.user as PlatformAdminCaller;
 
-      const org = await db.query.organisations.findFirst({ where: eq(organisations.id, id) });
+      const org = await db.query.organizations.findFirst({ where: eq(organizations.id, id) });
       if (!org || org.deletedAt) return reply.status(404).send({ error: 'Org not found' });
 
       if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
@@ -2631,7 +2631,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
     }).safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
-    const org = await db.query.organisations.findFirst({ where: eq(organisations.id, body.data.orgId) });
+    const org = await db.query.organizations.findFirst({ where: eq(organizations.id, body.data.orgId) });
     if (!org || org.deletedAt) return reply.status(404).send({ error: 'Organization not found' });
     if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
       return reply.status(403).send({ error: 'Forbidden' });
@@ -2925,7 +2925,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const caller = req.user as PlatformAdminCaller;
 
-    const org = await db.query.organisations.findFirst({ where: eq(organisations.id, id) });
+    const org = await db.query.organizations.findFirst({ where: eq(organizations.id, id) });
     if (!org || org.deletedAt) return reply.status(404).send({ error: 'Not found' });
 
     if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
@@ -2956,7 +2956,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const caller = req.user as PlatformAdminCaller;
 
-    const org = await db.query.organisations.findFirst({ where: eq(organisations.id, id) });
+    const org = await db.query.organizations.findFirst({ where: eq(organizations.id, id) });
     if (!org || org.deletedAt) return reply.status(404).send({ error: 'Not found' });
 
     if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
@@ -3088,7 +3088,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
       const caller = req.user as PlatformAdminCaller;
       const { id } = req.params as { id: string };
 
-      const org = await db.query.organisations.findFirst({ where: eq(organisations.id, id) });
+      const org = await db.query.organizations.findFirst({ where: eq(organizations.id, id) });
       if (!org || org.deletedAt) return reply.status(404).send({ error: 'Organization not found' });
       if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
         return reply.status(403).send({ error: 'Forbidden' });
@@ -3155,7 +3155,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
       const { id } = req.params as { id: string };
       const caller  = req.user as PlatformAdminCaller;
 
-      const org = await db.query.organisations.findFirst({ where: eq(organisations.id, id) });
+      const org = await db.query.organizations.findFirst({ where: eq(organizations.id, id) });
       if (!org || org.deletedAt) return reply.status(404).send({ error: 'Not found' });
       if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
         return reply.status(403).send({ error: 'Forbidden' });
@@ -3214,7 +3214,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
           t.created_at, t.updated_at
         FROM support_tickets t
         LEFT JOIN management_companies mc ON mc.id = t.company_id
-        LEFT JOIN organisations o ON o.id = t.org_id
+        LEFT JOIN organizations o ON o.id = t.org_id
         ${whereClause}
         ORDER BY t.updated_at DESC
         LIMIT ${limit} OFFSET ${offset}
@@ -3428,7 +3428,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
       const filters = [
         sql`(t.company_id = ${caller.managementCompanyId}::uuid OR t.org_id IN (
-          SELECT id FROM organisations WHERE management_company_id = ${caller.managementCompanyId}::uuid
+          SELECT id FROM organizations WHERE management_company_id = ${caller.managementCompanyId}::uuid
         ))`,
         status   ? sql`t.status = ${status}`   : undefined,
         category ? sql`t.category = ${category}` : undefined,
@@ -3448,7 +3448,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
           t.created_at, t.updated_at
         FROM support_tickets t
         LEFT JOIN management_companies mc ON mc.id = t.company_id
-        LEFT JOIN organisations o ON o.id = t.org_id
+        LEFT JOIN organizations o ON o.id = t.org_id
         WHERE ${sql.join(filters, sql` AND `)}
         ORDER BY t.updated_at DESC
         LIMIT 100
@@ -3470,7 +3470,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
         WHERE t.status NOT IN ('resolved', 'closed')
           AND (
             t.company_id = ${caller.managementCompanyId}::uuid
-            OR t.org_id IN (SELECT id FROM organisations WHERE management_company_id = ${caller.managementCompanyId}::uuid)
+            OR t.org_id IN (SELECT id FROM organizations WHERE management_company_id = ${caller.managementCompanyId}::uuid)
           )
           AND EXISTS (
             SELECT 1 FROM support_ticket_messages m
@@ -3501,11 +3501,11 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
       // If opening on behalf of a client org, validate the org belongs to this company
       if (orgId) {
-        const org = await db.query.organisations.findFirst({
+        const org = await db.query.organizations.findFirst({
           where: and(
-            eq(organisations.id, orgId),
-            eq(organisations.managementCompanyId, caller.managementCompanyId),
-            isNull(organisations.deletedAt),
+            eq(organizations.id, orgId),
+            eq(organizations.managementCompanyId, caller.managementCompanyId),
+            isNull(organizations.deletedAt),
           ),
           columns: { id: true },
         });
@@ -3555,10 +3555,10 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
       const allowed =
         ticket.companyId === caller.managementCompanyId ||
-        (ticket.orgId && await db.query.organisations.findFirst({
+        (ticket.orgId && await db.query.organizations.findFirst({
           where: and(
-            eq(organisations.id, ticket.orgId),
-            eq(organisations.managementCompanyId, caller.managementCompanyId),
+            eq(organizations.id, ticket.orgId),
+            eq(organizations.managementCompanyId, caller.managementCompanyId),
           ),
           columns: { id: true },
         }).then(Boolean));
@@ -3591,10 +3591,10 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
       const allowed =
         ticket.companyId === caller.managementCompanyId ||
-        (ticket.orgId && await db.query.organisations.findFirst({
+        (ticket.orgId && await db.query.organizations.findFirst({
           where: and(
-            eq(organisations.id, ticket.orgId),
-            eq(organisations.managementCompanyId, caller.managementCompanyId),
+            eq(organizations.id, ticket.orgId),
+            eq(organizations.managementCompanyId, caller.managementCompanyId),
           ),
           columns: { id: true },
         }).then(Boolean));
@@ -3827,8 +3827,8 @@ export async function superAdminRoutes(app: FastifyInstance) {
     if (!orgIds.length) return reply.send({ orgs: [] });
 
     // Fetch org details
-    const orgs = await db.query.organisations.findMany({
-      where: and(inArray(organisations.id, orgIds), isNull(organisations.deletedAt)),
+    const orgs = await db.query.organizations.findMany({
+      where: and(inArray(organizations.id, orgIds), isNull(organizations.deletedAt)),
       columns: { id: true, name: true, slug: true },
     });
 
@@ -3988,7 +3988,7 @@ async function resolvePartyName(companyId: string | null, orgId: string | null):
     if (c) return c.name;
   }
   if (orgId) {
-    const o = await db.query.organisations.findFirst({ where: eq(organisations.id, orgId), columns: { name: true } });
+    const o = await db.query.organizations.findFirst({ where: eq(organizations.id, orgId), columns: { name: true } });
     if (o) return o.name;
   }
   return 'Unknown';

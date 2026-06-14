@@ -1,11 +1,11 @@
 import { relations } from 'drizzle-orm';
 import { pgTable, uuid, text, boolean, integer, jsonb, timestamp, index } from 'drizzle-orm/pg-core';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 import { users } from './users.js';
 
 export const outboundWebhooks = pgTable('outbound_webhooks', {
   id:        uuid('id').primaryKey().defaultRandom(),
-  orgId:     uuid('org_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+  orgId:     uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   name:      text('name').notNull(),
   url:       text('url').notNull(),
   /** Random hex secret used for HMAC-SHA256 request signing */
@@ -38,7 +38,7 @@ export const webhookDeliveries = pgTable('webhook_deliveries', {
 }));
 
 export const outboundWebhooksRelations = relations(outboundWebhooks, ({ one, many }) => ({
-  org:       one(organisations, { fields: [outboundWebhooks.orgId],     references: [organisations.id] }),
+  org:       one(organizations, { fields: [outboundWebhooks.orgId],     references: [organizations.id] }),
   creator:   one(users,         { fields: [outboundWebhooks.createdBy], references: [users.id] }),
   deliveries: many(webhookDeliveries),
 }));

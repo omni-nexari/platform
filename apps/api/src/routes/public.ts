@@ -11,7 +11,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   db,
-  organisations,
+  organizations,
   orgInvitations,
   orgSubscriptions,
   pricingPlans,
@@ -176,7 +176,7 @@ export async function publicRoutes(app: FastifyInstance) {
     // The org name is pre-filled with what they entered; they can change it
     // during setup.
     const tempSlug = `pending-${randomToken(8)}`;
-    const [org] = await db.insert(organisations).values({
+    const [org] = await db.insert(organizations).values({
       name: orgName,
       slug: tempSlug,
       plan: resolvedPlan?.planKey ?? 'starter',

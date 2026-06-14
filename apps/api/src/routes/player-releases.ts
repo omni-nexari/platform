@@ -3,7 +3,7 @@ import { db, playerReleases, playerReleaseApprovals, devices } from '@signage/db
 import { eq, desc, and, isNull, inArray, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { sendCommand } from '../services/ws.js';
-import { organisations } from '@signage/db';
+import { organizations } from '@signage/db';
 
 const PLATFORMS = ['tizen', 'windows', 'epaper', 'android'] as const;
 type ReleasePlatform = typeof PLATFORMS[number];
@@ -43,8 +43,8 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
     const caller = req.user as { sub: string; orgId?: string; role?: string; type?: string };
     let managementApproved = false;
     if (caller.orgId) {
-      const org = await db.query.organisations.findFirst({
-        where: eq(organisations.id, caller.orgId),
+      const org = await db.query.organizations.findFirst({
+        where: eq(organizations.id, caller.orgId),
         columns: { managementCompanyId: true },
       });
       if (org?.managementCompanyId) {

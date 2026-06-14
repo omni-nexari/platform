@@ -28,7 +28,7 @@ export const managementCompanies = pgTable('management_companies', {
   // Billing model for client orgs under this company:
   //   reseller  — Nexari invoices SI at wholesale; SI bills their clients
   //   direct    — Nexari bills clients directly via Stripe; SI earns commission
-  //   flexible  — model chosen per-org via billingOwnerCompanyId on organisations
+  //   flexible  — model chosen per-org via billingOwnerCompanyId on organizations
   billingModel: text('billing_model').notNull().default('flexible'),
   stripeCustomerId: text('stripe_customer_id'),            // used in reseller model
   defaultCommissionPct: numeric('default_commission_pct', { precision: 5, scale: 2 }),
@@ -90,7 +90,7 @@ export const managementCompanyAdminInvitations = pgTable(
 // ---------------------------------------------------------------------------
 export const clientOrgOwnerInvitations = pgTable('client_org_owner_invitations', {
   id: uuid('id').primaryKey().defaultRandom(),
-  // bare UUIDs to avoid circular import with auth.ts (organisations)
+  // bare UUIDs to avoid circular import with auth.ts (organizations)
   organizationId: uuid('organization_id').notNull(),
   managementCompanyId: uuid('management_company_id')
     .notNull()

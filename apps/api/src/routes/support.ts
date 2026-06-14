@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { db, supportTickets, supportTicketMessages, organisations, platformOwners } from '@signage/db';
+import { db, supportTickets, supportTicketMessages, organizations, platformOwners } from '@signage/db';
 import { eq, and, asc, isNull } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
@@ -101,8 +101,8 @@ export async function supportRoutes(app: FastifyInstance) {
     const { category, subject, priority, message } = body.data;
 
     // Look up org's management company (if any)
-    const org = await db.query.organisations.findFirst({
-      where: and(eq(organisations.id, user.orgId), isNull(organisations.deletedAt)),
+    const org = await db.query.organizations.findFirst({
+      where: and(eq(organizations.id, user.orgId), isNull(organizations.deletedAt)),
       columns: { managementCompanyId: true },
     });
 

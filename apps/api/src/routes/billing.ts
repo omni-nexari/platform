@@ -19,7 +19,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
   db,
-  organisations,
+  organizations,
   devices,
   pricingPlans,
   pricingPlanPrices,
@@ -145,11 +145,11 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   }
 
   // Activate the org if it was pending/trialing
-  await db.update(organisations).set({
+  await db.update(organizations).set({
     status: 'active',
     plan: planId,
     updatedAt: now,
-  }).where(eq(organisations.id, orgId));
+  }).where(eq(organizations.id, orgId));
 
   await writeAuditLog({
     orgId,
@@ -303,11 +303,11 @@ async function handleSubscriptionDeleted(stripeSub: Stripe.Subscription) {
   }).where(eq(orgSubscriptions.id, sub.id));
 
   // Suspend the org
-  await db.update(organisations).set({
+  await db.update(organizations).set({
     status: 'suspended',
     suspendedAt: now,
     updatedAt: now,
-  }).where(eq(organisations.id, sub.orgId));
+  }).where(eq(organizations.id, sub.orgId));
 
   await writeAuditLog({
     orgId: sub.orgId,
@@ -335,8 +335,8 @@ export async function billingRoutes(app: FastifyInstance) {
       orderBy: [desc(orgSubscriptions.createdAt)],
     });
 
-    const org = await db.query.organisations.findFirst({
-      where: eq(organisations.id, user.orgId),
+    const org = await db.query.organizations.findFirst({
+      where: eq(organizations.id, user.orgId),
       columns: { id: true, plan: true, status: true },
     });
 
@@ -417,8 +417,8 @@ export async function billingRoutes(app: FastifyInstance) {
     }
 
     // Look up the org for customer creation
-    const org = await db.query.organisations.findFirst({
-      where: eq(organisations.id, user.orgId),
+    const org = await db.query.organizations.findFirst({
+      where: eq(organizations.id, user.orgId),
       columns: { id: true, name: true },
     });
     if (!org) return reply.status(404).send({ error: 'Organisation not found' });

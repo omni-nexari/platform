@@ -4,13 +4,13 @@ import {
   text,
   timestamp,
 } from 'drizzle-orm/pg-core';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 import { users } from './users.js';
 import { workspaces } from './workspaces.js';
 
 export const apiKeys = pgTable('api_keys', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
   workspaceId: uuid('workspace_id').references(() => workspaces.id), // NULL = org-scoped
   createdBy: uuid('created_by').notNull().references(() => users.id),
   name: text('name').notNull(),

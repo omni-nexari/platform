@@ -7,7 +7,7 @@ import {
   numeric,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 import { workspaces } from './workspaces.js';
 import { devices } from './devices.js';
 import { syncGroups } from './sync.js';
@@ -21,7 +21,7 @@ import { syncGroups } from './sync.js';
  */
 export const deviceGroups = pgTable('device_groups', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
   workspaceId: uuid('workspace_id').references(() => workspaces.id),
   name: text('name').notNull(),
   type: text('type').notNull().default('location'), // sync | videowall | location | tag

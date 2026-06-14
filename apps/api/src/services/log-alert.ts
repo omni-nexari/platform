@@ -12,7 +12,7 @@
 import {
   db,
   platformAdminNotifications,
-  organisations,
+  organizations,
   managementCompanyAdmins,
   platformOwners,
   devices,
@@ -56,8 +56,8 @@ async function handleEntry(entry: LogBusEntry): Promise<void> {
   try {
     const [device, org] = await Promise.all([
       db.query.devices.findFirst({ where: eq(devices.id, deviceId), columns: { name: true } }),
-      db.query.organisations.findFirst({
-        where: eq(organisations.id, orgId),
+      db.query.organizations.findFirst({
+        where: eq(organizations.id, orgId),
         columns: { name: true, managementCompanyId: true },
       }),
     ]);

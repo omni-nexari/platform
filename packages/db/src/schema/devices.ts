@@ -10,7 +10,7 @@ import {
   jsonb,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 import { workspaces } from './workspaces.js';
 import { users } from './users.js';
 import { playlists } from './playlists.js';
@@ -19,7 +19,7 @@ import { schedules } from './schedules.js';
 
 export const devices = pgTable('devices', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').references(() => organisations.id),
+  orgId: uuid('org_id').references(() => organizations.id),
   workspaceId: uuid('workspace_id').references(() => workspaces.id),
   name: text('name').notNull().default('New Display'),
   pairingCode: text('pairing_code').unique(),

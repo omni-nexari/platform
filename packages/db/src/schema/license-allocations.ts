@@ -1,5 +1,5 @@
 import { pgTable, uuid, integer, text, timestamp } from 'drizzle-orm/pg-core';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 
 // ---------------------------------------------------------------------------
 // Org license allocations
@@ -15,7 +15,7 @@ import { organisations } from './auth.js';
 // ---------------------------------------------------------------------------
 export const orgLicenseAllocations = pgTable('org_license_allocations', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }).unique(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }).unique(),
   managementCompanyId: uuid('management_company_id'), // which partner set this
 
   // Screen limits — null means the org can use the full platform license capacity

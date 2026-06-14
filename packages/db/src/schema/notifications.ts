@@ -5,12 +5,12 @@ import {
   boolean,
   timestamp,
 } from 'drizzle-orm/pg-core';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 import { users } from './users.js';
 
 export const notifications = pgTable('notifications', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
   userId: uuid('user_id').notNull().references(() => users.id),
   type: text('type').notNull(), // device_offline | storage_warning | content_expiry | invite | system
   title: text('title').notNull(),

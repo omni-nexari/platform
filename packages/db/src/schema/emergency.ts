@@ -1,5 +1,5 @@
 import { pgTable, uuid, text, timestamp } from 'drizzle-orm/pg-core';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 import { workspaces } from './workspaces.js';
 import { users } from './users.js';
 
@@ -9,7 +9,7 @@ import { users } from './users.js';
  */
 export const emergencyOverrides = pgTable('emergency_overrides', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
   workspaceId: uuid('workspace_id').references(() => workspaces.id),
   createdBy: uuid('created_by').notNull().references(() => users.id),
   scope: text('scope').notNull().default('org'), // org | workspace | tag | device

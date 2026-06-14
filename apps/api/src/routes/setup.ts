@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import * as argon2 from 'argon2';
-import { db, platformOwners, organisations, licenseConfig } from '@signage/db';
+import { db, platformOwners, organizations, licenseConfig } from '@signage/db';
 import { count, eq } from 'drizzle-orm';
 
 // ── Validators ────────────────────────────────────────────────────────────────
@@ -88,7 +88,7 @@ export async function setupRoutes(app: FastifyInstance) {
         .replace(/^-|-$/g, '')
         .slice(0, 63);
 
-      await tx.insert(organisations).values({
+      await tx.insert(organizations).values({
         name: orgName,
         slug,
         plan: 'starter',

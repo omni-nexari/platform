@@ -7,7 +7,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { type AnyPgColumn } from 'drizzle-orm/pg-core';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 import { users } from './users.js';
 import { playlists } from './playlists.js';
 
@@ -15,7 +15,7 @@ export const workspaces = pgTable(
   'workspaces',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    orgId: uuid('org_id').notNull().references(() => organisations.id),
+    orgId: uuid('org_id').notNull().references(() => organizations.id),
     name: text('name').notNull(),
     slug: text('slug').notNull(),
     timezone: text('timezone').notNull().default('UTC'),

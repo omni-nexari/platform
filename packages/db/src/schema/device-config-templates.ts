@@ -1,11 +1,11 @@
 import { relations } from 'drizzle-orm';
 import { pgTable, uuid, text, jsonb, timestamp, index } from 'drizzle-orm/pg-core';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 import { users } from './users.js';
 
 export const deviceConfigTemplates = pgTable('device_config_templates', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
   description: text('description'),
   /** Partial device config object — same fields as PATCH /devices/:id body */
@@ -18,9 +18,9 @@ export const deviceConfigTemplates = pgTable('device_config_templates', {
 }));
 
 export const deviceConfigTemplatesRelations = relations(deviceConfigTemplates, ({ one }) => ({
-  org: one(organisations, {
+  org: one(organizations, {
     fields: [deviceConfigTemplates.orgId],
-    references: [organisations.id],
+    references: [organizations.id],
   }),
   creator: one(users, {
     fields: [deviceConfigTemplates.createdBy],

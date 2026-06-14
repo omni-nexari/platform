@@ -7,7 +7,7 @@ import {
   numeric,
   timestamp,
 } from 'drizzle-orm/pg-core';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 import { managementCompanies } from './management.js';
 
 // ---------------------------------------------------------------------------
@@ -76,7 +76,7 @@ export const managementCompanyPricing = pgTable('management_company_pricing', {
 // ---------------------------------------------------------------------------
 export const orgPricingOverrides = pgTable('org_pricing_overrides', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
   planId: uuid('plan_id').notNull().references(() => pricingPlans.id),
   currency: text('currency').notNull(),
   overrideCents: integer('override_cents').notNull(),
@@ -100,7 +100,7 @@ export const orgPricingOverrides = pgTable('org_pricing_overrides', {
 // ---------------------------------------------------------------------------
 export const orgSubscriptions = pgTable('org_subscriptions', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
   planId: uuid('plan_id').notNull().references(() => pricingPlans.id),
   currency: text('currency').notNull().default('CAD'),
   // trialing | active | past_due | canceled | paused
@@ -139,7 +139,7 @@ export const orgSubscriptions = pgTable('org_subscriptions', {
 // ---------------------------------------------------------------------------
 export const screenUsageRecords = pgTable('screen_usage_records', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
   subscriptionId: uuid('subscription_id').notNull().references(() => orgSubscriptions.id),
   screenCount: integer('screen_count').notNull(),
   reportedAt: timestamp('reported_at', { withTimezone: true }).notNull().defaultNow(),
@@ -154,7 +154,7 @@ export const screenUsageRecords = pgTable('screen_usage_records', {
 // ---------------------------------------------------------------------------
 export const invoices = pgTable('invoices', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id),
+  orgId: uuid('org_id').notNull().references(() => organizations.id),
   subscriptionId: uuid('subscription_id').references(() => orgSubscriptions.id),
   // Set when this is a wholesale invoice to an SI (reseller model)
   managementCompanyId: uuid('management_company_id'),

@@ -7,7 +7,7 @@ import path from 'node:path';
 import {
   db,
   users,
-  organisations,
+  organizations,
   refreshTokens,
   orgStorageQuotas,
   managementCompanies,
@@ -146,8 +146,8 @@ function getSetCookieDiagnostics(reply: FastifyReply) {
 
 async function hasActiveOrganisation(orgId: string | null | undefined) {
   if (!orgId) return false;
-  const org = await db.query.organisations.findFirst({
-    where: and(eq(organisations.id, orgId), isNull(organisations.deletedAt)),
+  const org = await db.query.organizations.findFirst({
+    where: and(eq(organizations.id, orgId), isNull(organizations.deletedAt)),
     columns: { id: true },
   });
   return Boolean(org);
@@ -369,7 +369,7 @@ export async function authRoutes(app: FastifyInstance) {
     const { token } = req.params as { token: string };
     const invite = await findValidInvite(token);
     if (!invite) return reply.status(410).send({ error: 'Invite not found or expired' });
-    const org = await db.query.organisations.findFirst({ where: eq(organisations.id, invite.orgId) });
+    const org = await db.query.organizations.findFirst({ where: eq(organizations.id, invite.orgId) });
     const isPendingSetup = org?.slug.startsWith('pending-') ?? false;
     return reply.send({ email: invite.email, orgRole: invite.orgRole, orgName: isPendingSetup ? '' : (org?.name ?? ''), isPendingSetup });
   });
@@ -380,7 +380,7 @@ export async function authRoutes(app: FastifyInstance) {
     const invite = await findValidInvite(token);
     if (!invite) return reply.status(410).send({ error: 'Invite not found or expired' });
 
-    const org = await db.query.organisations.findFirst({ where: eq(organisations.id, invite.orgId) });
+    const org = await db.query.organizations.findFirst({ where: eq(organizations.id, invite.orgId) });
     const isPendingSetup = org?.slug.startsWith('pending-') ?? false;
 
     if (isPendingSetup) {
@@ -388,8 +388,8 @@ export async function authRoutes(app: FastifyInstance) {
       if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
       // Ensure slug is not taken by another org
-      const slugTaken = await db.query.organisations.findFirst({
-        where: and(eq(organisations.slug, body.data.orgSlug), isNull(organisations.deletedAt)),
+      const slugTaken = await db.query.organizations.findFirst({
+        where: and(eq(organizations.slug, body.data.orgSlug), isNull(organizations.deletedAt)),
       });
       if (slugTaken) return reply.status(409).send({ error: 'Slug already taken' });
 
@@ -597,17 +597,17 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     if (body.data.createOwnerDashboardAccount && body.data.ownerOrgSlug) {
-      const softDeletedOrgSlugMatch = await db.query.organisations.findFirst({
-        where: and(eq(organisations.slug, body.data.ownerOrgSlug), isNotNull(organisations.deletedAt)),
+      const softDeletedOrgSlugMatch = await db.query.organizations.findFirst({
+        where: and(eq(organizations.slug, body.data.ownerOrgSlug), isNotNull(organizations.deletedAt)),
       });
       if (softDeletedOrgSlugMatch && softDeletedOrgSlugMatch.deletedAt) {
         await db
-          .update(organisations)
+          .update(organizations)
           .set({ slug: deletedSlugTombstone(softDeletedOrgSlugMatch.slug), updatedAt: new Date() })
-          .where(eq(organisations.id, softDeletedOrgSlugMatch.id));
+          .where(eq(organizations.id, softDeletedOrgSlugMatch.id));
       }
-      const slugTaken = await db.query.organisations.findFirst({
-        where: and(eq(organisations.slug, body.data.ownerOrgSlug), isNull(organisations.deletedAt)),
+      const slugTaken = await db.query.organizations.findFirst({
+        where: and(eq(organizations.slug, body.data.ownerOrgSlug), isNull(organizations.deletedAt)),
       });
       if (slugTaken) {
         return reply.status(409).send({ error: 'This dashboard organization slug is already taken, please choose another' });
@@ -727,17 +727,17 @@ export async function authRoutes(app: FastifyInstance) {
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
     // Ensure org slug is not already taken
-    const softDeletedOrgSlugMatch = await db.query.organisations.findFirst({
-      where: eq(organisations.slug, body.data.orgSlug),
+    const softDeletedOrgSlugMatch = await db.query.organizations.findFirst({
+      where: eq(organizations.slug, body.data.orgSlug),
     });
     if (softDeletedOrgSlugMatch && softDeletedOrgSlugMatch.deletedAt) {
       await db
-        .update(organisations)
+        .update(organizations)
         .set({ slug: deletedSlugTombstone(softDeletedOrgSlugMatch.slug), updatedAt: new Date() })
-        .where(eq(organisations.id, softDeletedOrgSlugMatch.id));
+        .where(eq(organizations.id, softDeletedOrgSlugMatch.id));
     }
-    const slugTaken = await db.query.organisations.findFirst({
-      where: and(eq(organisations.slug, body.data.orgSlug), isNull(organisations.deletedAt)),
+    const slugTaken = await db.query.organizations.findFirst({
+      where: and(eq(organizations.slug, body.data.orgSlug), isNull(organizations.deletedAt)),
     });
     if (slugTaken) return reply.status(409).send({ error: 'Org slug already taken' });
 
@@ -960,8 +960,8 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.status(401).send({ error: 'Unauthorized' });
     }
 
-    const org = await db.query.organisations.findFirst({
-      where: and(eq(organisations.id, orgId), isNull(organisations.deletedAt)),
+    const org = await db.query.organizations.findFirst({
+      where: and(eq(organizations.id, orgId), isNull(organizations.deletedAt)),
       columns: { id: true, name: true, slug: true, plan: true, settings: true, managementCompanyId: true },
     });
     if (!org) {

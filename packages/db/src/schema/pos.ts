@@ -10,7 +10,7 @@ import {
   time,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 import { workspaces } from './workspaces.js';
 import { devices } from './devices.js';
 
@@ -21,7 +21,7 @@ export const posMenus = pgTable(
   'pos_menus',
   {
     id:          uuid('id').primaryKey().defaultRandom(),
-    orgId:       uuid('org_id').notNull().references(() => organisations.id),
+    orgId:       uuid('org_id').notNull().references(() => organizations.id),
     workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id),
     name:        text('name').notNull(),
     description: text('description'),
@@ -112,7 +112,7 @@ export const posOrders = pgTable(
   'pos_orders',
   {
     id:           uuid('id').primaryKey().defaultRandom(),
-    orgId:        uuid('org_id').notNull().references(() => organisations.id),
+    orgId:        uuid('org_id').notNull().references(() => organizations.id),
     workspaceId:  uuid('workspace_id').notNull().references(() => workspaces.id),
     // Which kiosk device placed the order (nullable — could be manual entry)
     deviceId:     uuid('device_id').references(() => devices.id, { onDelete: 'set null' }),
@@ -189,7 +189,7 @@ export const posRestaurants = pgTable(
   'pos_restaurants',
   {
     id:              uuid('id').primaryKey().defaultRandom(),
-    orgId:           uuid('org_id').notNull().references(() => organisations.id),
+    orgId:           uuid('org_id').notNull().references(() => organizations.id),
     workspaceId:     uuid('workspace_id').notNull().references(() => workspaces.id),
     name:            text('name').notNull().default(''),
     address:         text('address'),
@@ -266,7 +266,7 @@ export const posInventoryItems = pgTable(
   'pos_inventory_items',
   {
     id:            uuid('id').primaryKey().defaultRandom(),
-    orgId:         uuid('org_id').notNull().references(() => organisations.id),
+    orgId:         uuid('org_id').notNull().references(() => organizations.id),
     workspaceId:   uuid('workspace_id').notNull().references(() => workspaces.id),
     name:          text('name').notNull(),
     sku:           text('sku'),
@@ -292,7 +292,7 @@ export const posEmployees = pgTable(
   'pos_employees',
   {
     id:          uuid('id').primaryKey().defaultRandom(),
-    orgId:       uuid('org_id').notNull().references(() => organisations.id),
+    orgId:       uuid('org_id').notNull().references(() => organizations.id),
     workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id),
     name:        text('name').notNull(),
     email:       text('email'),
@@ -337,7 +337,7 @@ export const posLoyaltyCustomers = pgTable(
   'pos_loyalty_customers',
   {
     id:          uuid('id').primaryKey().defaultRandom(),
-    orgId:       uuid('org_id').notNull().references(() => organisations.id),
+    orgId:       uuid('org_id').notNull().references(() => organizations.id),
     workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id),
     phone:       text('phone'),        // primary lookup key
     email:       text('email'),
@@ -380,7 +380,7 @@ export const posExpenses = pgTable(
   'pos_expenses',
   {
     id:          uuid('id').primaryKey().defaultRandom(),
-    orgId:       uuid('org_id').notNull().references(() => organisations.id),
+    orgId:       uuid('org_id').notNull().references(() => organizations.id),
     workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id),
     category:    text('category').notNull().default('other'),  // 'supplies' | 'utilities' | 'wages' | 'maintenance' | 'other'
     description: text('description').notNull(),
@@ -403,7 +403,7 @@ export const posPurchaseOrders = pgTable(
   'pos_purchase_orders',
   {
     id:          uuid('id').primaryKey().defaultRandom(),
-    orgId:       uuid('org_id').notNull().references(() => organisations.id),
+    orgId:       uuid('org_id').notNull().references(() => organizations.id),
     workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id),
     poNumber:    integer('po_number').notNull(),  // sequential per workspace
     supplier:    text('supplier').notNull(),

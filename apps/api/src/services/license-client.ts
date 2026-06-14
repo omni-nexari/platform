@@ -13,7 +13,7 @@
  */
 import { createHmac } from 'node:crypto';
 import { and, desc, eq, gte, inArray, isNull, ne, count } from 'drizzle-orm';
-import { db, devices, organisations, posMenus, licenseConfig, logEntries } from '@signage/db';
+import { db, devices, organizations, posMenus, licenseConfig, logEntries } from '@signage/db';
 import { getRedis } from './redis.js';
 import { decryptSecret } from './crypto.js';
 
@@ -88,8 +88,8 @@ async function collectUsage(): Promise<{
 
   const [orgRow] = await db
     .select({ c: count() })
-    .from(organisations)
-    .where(isNull(organisations.deletedAt));
+    .from(organizations)
+    .where(isNull(organizations.deletedAt));
 
   const [posMenuRow] = await db
     .select({ c: count() })

@@ -6,13 +6,13 @@ import {
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 
 export const users = pgTable(
   'users',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    orgId: uuid('org_id').notNull().references(() => organisations.id),
+    orgId: uuid('org_id').notNull().references(() => organizations.id),
     email: text('email').notNull(),
     passwordHash: text('password_hash'), // NULL if SSO only
     name: text('name').notNull().default(''),

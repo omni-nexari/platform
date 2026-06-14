@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { db, users, organisations, orgInvitations } from '@signage/db';
+import { db, users, organizations, orgInvitations } from '@signage/db';
 import { eq, and, isNull, gt } from 'drizzle-orm';
 import { z } from 'zod';
 import { randomBytes } from 'crypto';
@@ -70,8 +70,8 @@ export async function orgRoutes(app: FastifyInstance) {
     });
     if (existing) return reply.status(409).send({ error: 'User is already a member' });
 
-    const org = await db.query.organisations.findFirst({
-      where: and(eq(organisations.id, actor.orgId), isNull(organisations.deletedAt)),
+    const org = await db.query.organizations.findFirst({
+      where: and(eq(organizations.id, actor.orgId), isNull(organizations.deletedAt)),
     });
     if (!org) return reply.status(404).send({ error: 'Organisation not found' });
 

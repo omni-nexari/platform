@@ -47,7 +47,7 @@ import {
   orgPricingOverrides,
   orgSubscriptions,
   managementCompanies,
-  organisations,
+  organizations,
   clientOrgOwnerInvitations,
 } from '@signage/db';
 import { eq, and, asc, desc, inArray } from 'drizzle-orm';
@@ -130,8 +130,8 @@ const UpdateSubStatusSchema = z.object({
 // ── Helper: verify MC admin owns the org ──────────────────────────────────────
 
 async function mcOwnsOrg(managementCompanyId: string, orgId: string): Promise<boolean> {
-  const org = await db.query.organisations.findFirst({
-    where: eq(organisations.id, orgId),
+  const org = await db.query.organizations.findFirst({
+    where: eq(organizations.id, orgId),
     columns: { id: true, managementCompanyId: true },
   });
   return org?.managementCompanyId === managementCompanyId;
@@ -485,8 +485,8 @@ export async function pricingRoutes(app: FastifyInstance) {
       if (!owns) return reply.status(403).send({ error: 'Access denied' });
     }
 
-    const org = await db.query.organisations.findFirst({
-      where: eq(organisations.id, orgId),
+    const org = await db.query.organizations.findFirst({
+      where: eq(organizations.id, orgId),
       columns: { id: true, name: true },
     });
     if (!org) return reply.status(404).send({ error: 'Organisation not found' });
@@ -572,8 +572,8 @@ export async function pricingRoutes(app: FastifyInstance) {
     const sub = await db.query.orgSubscriptions.findFirst({
       where: eq(orgSubscriptions.orgId, orgId),
     });
-    const org = await db.query.organisations.findFirst({
-      where: eq(organisations.id, orgId),
+    const org = await db.query.organizations.findFirst({
+      where: eq(organizations.id, orgId),
       columns: { id: true, name: true, status: true, plan: true },
     });
     if (!org) return reply.status(404).send({ error: 'Organisation not found' });

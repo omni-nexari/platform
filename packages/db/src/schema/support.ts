@@ -5,7 +5,7 @@ import {
   timestamp,
 } from 'drizzle-orm/pg-core';
 import { managementCompanies } from './management.js';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 
 // ---------------------------------------------------------------------------
 // Support tickets — communication channel between superadmin ↔ resellers
@@ -20,7 +20,7 @@ export const supportTickets = pgTable('support_tickets', {
   /** Set when the ticket comes from (or on behalf of) a reseller */
   companyId: uuid('company_id').references(() => managementCompanies.id, { onDelete: 'set null' }),
   /** Set when the ticket comes from a client org */
-  orgId: uuid('org_id').references(() => organisations.id, { onDelete: 'set null' }),
+  orgId: uuid('org_id').references(() => organizations.id, { onDelete: 'set null' }),
   /** management_company_admins.id — bare FK (avoids cross-schema import) */
   submittedByAdminId: uuid('submitted_by_admin_id'),
   /** users.id — bare FK */

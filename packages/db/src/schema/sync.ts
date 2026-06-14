@@ -9,7 +9,7 @@ import {
   jsonb,
   primaryKey,
 } from 'drizzle-orm/pg-core';
-import { organisations } from './auth.js';
+import { organizations } from './auth.js';
 import { workspaces } from './workspaces.js';
 import { users } from './users.js';
 import { contentItems } from './content.js';
@@ -21,7 +21,7 @@ import { devices } from './devices.js';
  */
 export const syncPlaylists = pgTable('sync_playlists', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
   createdBy: uuid('created_by').notNull().references(() => users.id),
   name: text('name').notNull(),
@@ -48,7 +48,7 @@ export const syncPlaylistItems = pgTable('sync_playlist_items', {
  */
 export const syncGroups = pgTable('sync_groups', {
   id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
   /** Samsung SyncPlay group ID: CRC-16 of this UUID, 0-65535. Checked for collisions at creation. */
@@ -98,9 +98,9 @@ export const syncGroupMembers = pgTable('sync_group_members', {
 // ── Relations ────────────────────────────────────────────────────────────────
 
 export const syncPlaylistsRelations = relations(syncPlaylists, ({ one, many }) => ({
-  org: one(organisations, {
+  org: one(organizations, {
     fields: [syncPlaylists.orgId],
-    references: [organisations.id],
+    references: [organizations.id],
   }),
   workspace: one(workspaces, {
     fields: [syncPlaylists.workspaceId],
@@ -125,9 +125,9 @@ export const syncPlaylistItemsRelations = relations(syncPlaylistItems, ({ one })
 }));
 
 export const syncGroupsRelations = relations(syncGroups, ({ one, many }) => ({
-  org: one(organisations, {
+  org: one(organizations, {
     fields: [syncGroups.orgId],
-    references: [organisations.id],
+    references: [organizations.id],
   }),
   workspace: one(workspaces, {
     fields: [syncGroups.workspaceId],
