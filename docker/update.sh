@@ -42,9 +42,10 @@ docker compose ps >/dev/null 2>&1 || die "Docker Compose stack not running — s
 # ── Optionally pin version ─────────────────────────────────────────────────────
 if [[ -n "$NEW_VERSION" ]]; then
   section "Pinning version to $NEW_VERSION"
-  # Replace NEXARI_VERSION= line in .env
-  sed -i "s|^NEXARI_VERSION=.*|NEXARI_VERSION=${NEW_VERSION}|" .env
-  info "NEXARI_VERSION set to $NEW_VERSION in .env"
+  # Strip leading 'v' — image tags in GHCR are published without it (e.g. 0.1.7 not v0.1.7)
+  BARE_VERSION="${NEW_VERSION#v}"
+  sed -i "s|^NEXARI_VERSION=.*|NEXARI_VERSION=${BARE_VERSION}|" .env
+  info "NEXARI_VERSION set to $BARE_VERSION in .env"
 fi
 
 CURRENT_VERSION=$(grep '^NEXARI_VERSION=' .env | cut -d= -f2 || echo "latest")

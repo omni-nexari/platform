@@ -46,8 +46,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # tag push: v1.2.3 → 1.2.3 + 1.2 + latest
+            # tag push: v1.2.3 → 1.2.3 + v1.2.3 + 1.2 + latest
             type=semver,pattern={{version}}
+            type=semver,pattern=v{{version}}
             type=semver,pattern={{major}}.{{minor}}
             # manual dispatch: use input tag
             type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
