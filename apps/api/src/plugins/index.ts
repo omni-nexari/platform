@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { networkInterfaces } from 'node:os';
 import { registerSwagger } from './swagger.js';
 import fastifyCors from '@fastify/cors';
 import fastifyHelmet from '@fastify/helmet';
@@ -17,6 +18,20 @@ function normalizeOrigin(origin: string): string {
   return origin.replace(/\/$/, '');
 }
 
+function getServerLanOrigins(): string[] {
+  const origins: string[] = [];
+  const nets = networkInterfaces();
+  for (const iface of Object.values(nets)) {
+    for (const addr of iface ?? []) {
+      if (addr.family === 'IPv4' && !addr.internal) {
+        origins.push(`http://${addr.address}`);
+        origins.push(`https://${addr.address}`);
+      }
+    }
+  }
+  return origins;
+}
+
 function getAllowedOrigins(): Set<string> {
   const configuredAppUrl = process.env['APP_URL'] ?? 'https://ds.chiho.app';
   const extraOrigins = (process.env['APP_EXTRA_ORIGINS'] ?? '')
@@ -29,6 +44,8 @@ function getAllowedOrigins(): Set<string> {
     'http://localhost:5173',
     'http://127.0.0.1:5173',
     ...extraOrigins.map(normalizeOrigin),
+    // Auto-include every LAN IP this server is listening on (no env var needed)
+    ...getServerLanOrigins().map(normalizeOrigin),
   ]);
 }
 
