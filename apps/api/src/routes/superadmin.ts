@@ -649,7 +649,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
         ) AS play_count,
         o.created_at::text AS created_at,
         CASE WHEN o.suspended_at IS NULL THEN 'active' ELSE 'suspended' END AS status
-      FROM organizations o
+      FROM organisations o
       ${isOwnerCaller(caller) ? sql`LEFT JOIN management_companies mc ON mc.id = o.management_company_id` : sql``}
       WHERE o.deleted_at IS NULL
       ${companyId ? sql`AND o.management_company_id = ${companyId}` : sql``}
@@ -677,7 +677,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
         ${isOwnerCaller(caller) ? sql`mc.name AS reseller_name,` : sql``}
         o.created_at::text AS created_at,
         CASE WHEN o.suspended_at IS NULL THEN 'active' ELSE 'suspended' END AS status
-      FROM organizations o
+      FROM organisations o
       ${isOwnerCaller(caller) ? sql`LEFT JOIN management_companies mc ON mc.id = o.management_company_id` : sql``}
       WHERE o.deleted_at IS NULL
       ${companyId ? sql`AND o.management_company_id = ${companyId}` : sql``}
@@ -737,7 +737,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
         ) AS play_count,
         w.created_at::text AS created_at
       FROM workspaces w
-      INNER JOIN organizations o ON o.id = w.org_id
+      INNER JOIN organisations o ON o.id = w.org_id
       ${isOwnerCaller(caller) ? sql`LEFT JOIN management_companies mc ON mc.id = o.management_company_id` : sql``}
       WHERE w.deleted_at IS NULL
         AND o.deleted_at IS NULL
@@ -767,13 +767,13 @@ export async function superAdminRoutes(app: FastifyInstance) {
             mc.name,
             (
               SELECT COUNT(*)::int
-              FROM organizations o
+              FROM organisations o
               WHERE o.management_company_id = mc.id
                 AND o.deleted_at IS NULL
             ) AS org_count,
             (
               SELECT COUNT(*)::int
-              FROM organizations o
+              FROM organisations o
               WHERE o.management_company_id = mc.id
                 AND o.deleted_at IS NULL
                 AND o.suspended_at IS NOT NULL
@@ -781,7 +781,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
             (
               SELECT COUNT(*)::int
               FROM users u
-              INNER JOIN organizations o ON o.id = u.org_id
+              INNER JOIN organisations o ON o.id = u.org_id
               WHERE o.management_company_id = mc.id
                 AND o.deleted_at IS NULL
                 AND u.deleted_at IS NULL
@@ -789,7 +789,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
             (
               SELECT COUNT(*)::int
               FROM workspaces w
-              INNER JOIN organizations o ON o.id = w.org_id
+              INNER JOIN organisations o ON o.id = w.org_id
               WHERE o.management_company_id = mc.id
                 AND o.deleted_at IS NULL
                 AND w.deleted_at IS NULL
@@ -797,7 +797,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
             (
               SELECT COUNT(*)::int
               FROM devices d
-              INNER JOIN organizations o ON o.id = d.org_id
+              INNER JOIN organisations o ON o.id = d.org_id
               WHERE o.management_company_id = mc.id
                 AND o.deleted_at IS NULL
                 AND d.deleted_at IS NULL
@@ -806,7 +806,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
               SELECT SUM(COALESCE(ci.file_size, 0))::bigint
               FROM content_items ci
               INNER JOIN workspaces w ON w.id = ci.workspace_id
-              INNER JOIN organizations o ON o.id = w.org_id
+              INNER JOIN organisations o ON o.id = w.org_id
               WHERE o.management_company_id = mc.id
                 AND o.deleted_at IS NULL
                 AND w.deleted_at IS NULL
@@ -3214,7 +3214,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
           t.created_at, t.updated_at
         FROM support_tickets t
         LEFT JOIN management_companies mc ON mc.id = t.company_id
-        LEFT JOIN organizations o ON o.id = t.org_id
+        LEFT JOIN organisations o ON o.id = t.org_id
         ${whereClause}
         ORDER BY t.updated_at DESC
         LIMIT ${limit} OFFSET ${offset}
@@ -3428,7 +3428,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
       const filters = [
         sql`(t.company_id = ${caller.managementCompanyId}::uuid OR t.org_id IN (
-          SELECT id FROM organizations WHERE management_company_id = ${caller.managementCompanyId}::uuid
+          SELECT id FROM organisations WHERE management_company_id = ${caller.managementCompanyId}::uuid
         ))`,
         status   ? sql`t.status = ${status}`   : undefined,
         category ? sql`t.category = ${category}` : undefined,
@@ -3448,7 +3448,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
           t.created_at, t.updated_at
         FROM support_tickets t
         LEFT JOIN management_companies mc ON mc.id = t.company_id
-        LEFT JOIN organizations o ON o.id = t.org_id
+        LEFT JOIN organisations o ON o.id = t.org_id
         WHERE ${sql.join(filters, sql` AND `)}
         ORDER BY t.updated_at DESC
         LIMIT 100
@@ -3470,7 +3470,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
         WHERE t.status NOT IN ('resolved', 'closed')
           AND (
             t.company_id = ${caller.managementCompanyId}::uuid
-            OR t.org_id IN (SELECT id FROM organizations WHERE management_company_id = ${caller.managementCompanyId}::uuid)
+            OR t.org_id IN (SELECT id FROM organisations WHERE management_company_id = ${caller.managementCompanyId}::uuid)
           )
           AND EXISTS (
             SELECT 1 FROM support_ticket_messages m
