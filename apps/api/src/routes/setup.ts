@@ -144,6 +144,19 @@ export async function setupRoutes(app: FastifyInstance) {
     });
 
     const adminUrl = process.env['NEXARI_ADMIN_URL'] ?? null;
-    return reply.status(201).send({ ok: true, adminUrl, managementSlug: slug });
+    const appUrl = (process.env['APP_URL'] ?? '').replace(/\/$/, '');
+    // Pull the first entry from APP_EXTRA_ORIGINS as the LAN base URL
+    const lanUrl = (process.env['APP_EXTRA_ORIGINS'] ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)[0] ?? null;
+
+    return reply.status(201).send({
+      ok: true,
+      adminUrl,
+      managementSlug: slug,
+      appUrl: appUrl || null,
+      lanUrl,
+    });
   });
 }

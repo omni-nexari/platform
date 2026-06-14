@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { CheckCircle2, Building2, UserCircle2, Key } from 'lucide-react';
+import { CheckCircle2, Building2, UserCircle2, Key, ExternalLink } from 'lucide-react';
 import { api } from '../lib/api.js';
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
@@ -265,6 +264,83 @@ function Step3({
   );
 }
 
+// ── Success screen ────────────────────────────────────────────────────────────
+
+interface SetupResult {
+  managementSlug: string;
+  appUrl: string | null;
+  lanUrl: string | null;
+}
+
+function LinkRow({ label, href }: { label: string; href: string }) {
+  return (
+    <a
+      href={href}
+      className="flex items-center justify-between gap-3 rounded-lg border px-4 py-3 hover:bg-[var(--surface-elevated,var(--surface))] transition-colors"
+      style={{ borderColor: 'var(--card-border)' }}
+    >
+      <div>
+        <p className="text-xs text-[var(--text-muted)] mb-0.5">{label}</p>
+        <p className="text-sm font-mono text-[var(--text)] break-all">{href}</p>
+      </div>
+      <ExternalLink className="w-4 h-4 shrink-0 text-[var(--text-muted)]" />
+    </a>
+  );
+}
+
+function SuccessScreen({ result }: { result: SetupResult }) {
+  const { managementSlug, appUrl, lanUrl } = result;
+  const domainPortalLogin = appUrl ? `${appUrl}/${managementSlug}/login` : null;
+  const lanPortalLogin = lanUrl ? `${lanUrl}/${managementSlug}/login` : null;
+  const domainDashboard = appUrl ?? null;
+  const lanDashboard = lanUrl ?? null;
+
+  return (
+    <div className="space-y-6">
+      {/* Success banner */}
+      <div className="flex flex-col items-center gap-3 py-2">
+        <div className="w-14 h-14 rounded-full bg-[var(--green)]/15 flex items-center justify-center">
+          <CheckCircle2 className="w-8 h-8 text-[var(--green)]" />
+        </div>
+        <div className="text-center">
+          <h2 className="text-xl font-bold text-[var(--text)]">Setup complete!</h2>
+          <p className="text-sm text-[var(--text-muted)] mt-1">
+            Your platform is ready. Use the links below to get started.
+          </p>
+        </div>
+      </div>
+
+      {/* Management portal */}
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-2">
+          Management portal login
+        </p>
+        <div className="space-y-2">
+          {domainPortalLogin && <LinkRow label="Via domain" href={domainPortalLogin} />}
+          {lanPortalLogin && <LinkRow label="Via local network" href={lanPortalLogin} />}
+        </div>
+      </div>
+
+      {/* Dashboard */}
+      {(domainDashboard || lanDashboard) && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-2">
+            Platform dashboard
+          </p>
+          <div className="space-y-2">
+            {domainDashboard && <LinkRow label="Via domain" href={domainDashboard} />}
+            {lanDashboard && <LinkRow label="Via local network" href={lanDashboard} />}
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs text-center text-[var(--text-muted)]">
+        Sign in with the email and password you just created.
+      </p>
+    </div>
+  );
+}
+
 // ── Main wizard ───────────────────────────────────────────────────────────────
 
 export default function SetupWizardPage() {
@@ -273,8 +349,7 @@ export default function SetupWizardPage() {
   const [step1Data, setStep1Data] = useState<Step1 | null>(null);
   const [step2Data, setStep2Data] = useState<Step2 | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const handleStep1 = (data: Step1) => {
+  const [setupResult, setSetupResult] = useState<SetupResult | null>(null);
     setStep1Data(data);
     setStep(1);
   };
@@ -289,7 +364,13 @@ export default function SetupWizardPage() {
 
     setIsSubmitting(true);
     try {
-      const result = await api.post<{ ok: boolean; adminUrl: string | null; managementSlug: string }>('/setup', {
+      const result = await api.post<{
+        ok: boolean;
+        adminUrl: string | null;
+        managementSlug: string;
+        appUrl: string | null;
+        lanUrl: string | null;
+      }>('/setup', {
         orgName: step1Data.orgName,
         name: step2Data.name,
         email: step2Data.email,
@@ -297,15 +378,36 @@ export default function SetupWizardPage() {
         licenseKey: data.licenseKey || undefined,
       });
 
-      toast.success('Platform setup complete! Redirecting to your management portal…');
-      // Redirect to the management company login — these are the credentials they just created
-      const loginPath = `/${result.managementSlug}/login`;
-      setTimeout(() => navigate(loginPath), 1500);
+      toast.success('Platform setup complete!');
+      setSetupResult({
+        managementSlug: result.managementSlug,
+        appUrl: result.appUrl,
+        lanUrl: result.lanUrl,
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Setup failed. Please try again.');
       setIsSubmitting(false);
     }
   };
+
+  // Show success screen once setup completes
+  if (setupResult) {
+    return (
+      <div className="min-h-dvh flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <div className="mb-8 text-center">
+            <img src="/logo/nexari.png" alt="Nexari" className="h-10 mx-auto mb-4" />
+          </div>
+          <div
+            className="rounded-2xl border p-6"
+            style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}
+          >
+            <SuccessScreen result={setupResult} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-dvh flex items-center justify-center p-4">
