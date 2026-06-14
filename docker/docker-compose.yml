@@ -93,6 +93,18 @@ services:
     expose:
       - "3000"
 
+  # ── DS static file initialiser ─────────────────────────────────────────────
+  # Copies the pre-built DS SPA from the API image into the ds_static volume
+  # so nginx can serve it. Runs once and exits.
+  ds-init:
+    image: ghcr.io/omni-nexari/platform:${NEXARI_VERSION:-latest}
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c", "cp -r /app/apps/ds/dist/. /var/www/ds/ && echo 'DS static files copied'"]
+    volumes:
+      - ds_static:/var/www/ds
+    networks:
+      - internal
+
   # ── nginx reverse proxy ───────────────────────────────────────────────────────
   nginx:
     image: nginx:1.27-alpine
@@ -111,6 +123,7 @@ services:
       - uploads:/var/signage/uploads:ro
     depends_on:
       - api
+      - ds-init
     networks:
       - internal
       - external
