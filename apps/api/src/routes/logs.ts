@@ -141,7 +141,7 @@ export async function logsRoutes(app: FastifyInstance) {
    *   before_id     cursor: return rows with id < before_id  (pagination)
    *   limit         number of rows (default 100, max 500)
    */
-  app.get('/', { onRequest: [app.authenticatePlatformOwner] }, async (req, reply) => {
+  app.get('/', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
     const caller = req.user as { type: string; managementCompanyId?: string };
 
@@ -385,7 +385,7 @@ export async function logsRoutes(app: FastifyInstance) {
    * Aggregate counts: total, byLevel, bySource, oldestAt, newestAt.
    * Scoped like GET /logs: platform owners see all; management admins see their orgs.
    */
-  app.get('/stats', { onRequest: [app.authenticatePlatformOwner] }, async (req, reply) => {
+  app.get('/stats', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
     const caller = req.user as { type: string; managementCompanyId?: string };
 
     let allowedOrgIds: string[] | null = null;
@@ -432,7 +432,7 @@ export async function logsRoutes(app: FastifyInstance) {
    * Returns hourly error/warn/info bucket counts for the last 24 h for one device.
    * Used by the LogViewer sparkline when a device filter is active.
    */
-  app.get('/device-timeline', { onRequest: [app.authenticatePlatformOwner] }, async (req, reply) => {
+  app.get('/device-timeline', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
     const { device_id: deviceId } = req.query as { device_id?: string };
     if (!deviceId) return reply.status(400).send({ error: 'device_id is required' });
 
