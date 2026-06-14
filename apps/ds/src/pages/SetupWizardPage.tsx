@@ -344,12 +344,13 @@ function SuccessScreen({ result }: { result: SetupResult }) {
 // ── Main wizard ───────────────────────────────────────────────────────────────
 
 export default function SetupWizardPage() {
-  const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [step1Data, setStep1Data] = useState<Step1 | null>(null);
   const [step2Data, setStep2Data] = useState<Step2 | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [setupResult, setSetupResult] = useState<SetupResult | null>(null);
+
+  const handleStep1 = (data: Step1) => {
     setStep1Data(data);
     setStep(1);
   };
