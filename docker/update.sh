@@ -62,6 +62,11 @@ section "Running database migrations"
 docker compose run --rm api node packages/db/scripts/migrate.js
 info "Migrations complete"
 
+# ── Refresh DS static files ───────────────────────────────────────────────────
+section "Refreshing DS static files"
+docker compose up --no-deps ds-init
+info "DS static files updated"
+
 # ── Restart API (no-deps keeps postgres/redis untouched) ──────────────────────
 section "Restarting API"
 docker compose up -d --no-deps api
