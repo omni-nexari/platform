@@ -1,7 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import * as argon2 from 'argon2';
-import { db, platformOwners, organizations, licenseConfig } from '@signage/db';
+import {
+  db,
+  platformOwners,
+  organizations,
+  licenseConfig,
+  managementCompanies,
+  managementCompanyAdmins,
+} from '@signage/db';
 import { count, eq } from 'drizzle-orm';
 
 // ── Validators ────────────────────────────────────────────────────────────────
@@ -72,22 +79,23 @@ export async function setupRoutes(app: FastifyInstance) {
     // Hash password with argon2id (same as the rest of the auth layer)
     const passwordHash = await argon2.hash(password);
 
-    // Create owner + org in a single transaction
+    // Derive a URL-safe slug from the org name (shared by org + management company)
+    const slug = orgName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 63);
+
+    // Create all records in a single transaction
     await db.transaction(async (tx) => {
-      // 1. Platform owner account
+      // 1. Platform owner account (Nexari superadmin identity)
       await tx.insert(platformOwners).values({
         name,
         email,
         passwordHash,
       });
 
-      // 2. Default organisation (slug derived from orgName)
-      const slug = orgName
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '')
-        .slice(0, 63);
-
+      // 2. Default organisation
       await tx.insert(organizations).values({
         name: orgName,
         slug,
@@ -95,7 +103,26 @@ export async function setupRoutes(app: FastifyInstance) {
         status: 'active',
       });
 
-      // 3. Optional license config seed
+      // 3. Management company — the partner's portal identity
+      const [company] = await tx
+        .insert(managementCompanies)
+        .values({
+          name: orgName,
+          slug,
+          plan: 'starter',
+        })
+        .returning({ id: managementCompanies.id });
+
+      // 4. Management company admin — the credentials the partner uses to log in
+      await tx.insert(managementCompanyAdmins).values({
+        managementCompanyId: company!.id,
+        name,
+        email,
+        passwordHash,
+        role: 'owner',
+      });
+
+      // 5. Optional license config seed
       if (licenseKey) {
         const [existingConfig] = await tx
           .select({ id: licenseConfig.id })
@@ -117,6 +144,6 @@ export async function setupRoutes(app: FastifyInstance) {
     });
 
     const adminUrl = process.env['NEXARI_ADMIN_URL'] ?? null;
-    return reply.status(201).send({ ok: true, adminUrl });
+    return reply.status(201).send({ ok: true, adminUrl, managementSlug: slug });
   });
 }

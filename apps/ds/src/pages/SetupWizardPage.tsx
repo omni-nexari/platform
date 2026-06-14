@@ -289,7 +289,7 @@ export default function SetupWizardPage() {
 
     setIsSubmitting(true);
     try {
-      const result = await api.post<{ ok: boolean; adminUrl: string | null }>('/setup', {
+      const result = await api.post<{ ok: boolean; adminUrl: string | null; managementSlug: string }>('/setup', {
         orgName: step1Data.orgName,
         name: step2Data.name,
         email: step2Data.email,
@@ -297,16 +297,10 @@ export default function SetupWizardPage() {
         licenseKey: data.licenseKey || undefined,
       });
 
-      toast.success('Platform setup complete! Redirecting to management portal…');
-      // Short delay so the toast is visible before navigation
-      const target = result.adminUrl ?? '/login';
-      setTimeout(() => {
-        if (result.adminUrl) {
-          window.location.href = result.adminUrl;
-        } else {
-          navigate(target);
-        }
-      }, 1500);
+      toast.success('Platform setup complete! Redirecting to your management portal…');
+      // Redirect to the management company login — these are the credentials they just created
+      const loginPath = `/${result.managementSlug}/login`;
+      setTimeout(() => navigate(loginPath), 1500);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Setup failed. Please try again.');
       setIsSubmitting(false);
