@@ -180,6 +180,14 @@ done
 APP_URL="https://${DOMAIN}"
 API_PUBLIC_URL="https://${DOMAIN}"
 
+# ── Extra CORS origins (LAN access) ──────────────────────────────────────────
+section "LAN / Extra Origins (Optional)"
+echo "Allow access from a local IP in addition to your domain."
+echo "Useful for on-site setup or devices that can't reach the public domain."
+echo "Example: http://192.168.1.17"
+echo ""
+prompt_optional APP_EXTRA_ORIGINS "LAN IP(s) — comma-separated, no trailing slash"
+
 # ── Email delivery ─────────────────────────────────────────────────────────────
 section "Email Delivery (Resend)"
 echo "Required for password resets and workspace invitations."
@@ -291,6 +299,7 @@ TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY}
 DOMAIN=${DOMAIN}
 APP_URL=${APP_URL}
 API_PUBLIC_URL=${API_PUBLIC_URL}
+APP_EXTRA_ORIGINS=${APP_EXTRA_ORIGINS}
 
 # ── Email ──
 RESEND_API_KEY=${RESEND_API_KEY}
