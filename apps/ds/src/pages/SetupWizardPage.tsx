@@ -10,6 +10,7 @@ import { api } from '../lib/api.js';
 
 const step1Schema = z.object({
   orgName: z.string().min(1, 'Organization name is required').max(200),
+  workspaceName: z.string().min(1, 'Workspace name is required').max(200),
 });
 
 const step2Schema = z.object({
@@ -84,17 +85,19 @@ function StepIndicator({ current }: { current: number }) {
 // ── Step 1 — Organization ─────────────────────────────────────────────────────
 
 function Step1({ onNext }: { onNext: (data: Step1) => void }) {
-  const { register, handleSubmit, formState: { errors } } = useForm<Step1>({
+  const { register, handleSubmit, formState: { errors }, watch } = useForm<Step1>({
     resolver: zodResolver(step1Schema),
   });
+
+  const orgName = watch('orgName', '');
 
   return (
     <form onSubmit={handleSubmit(onNext)} className="space-y-5">
       <div>
         <h2 className="text-lg font-semibold text-[var(--text)]">Name your organization</h2>
         <p className="text-sm text-[var(--text-muted)] mt-1">
-          This is the name of the company or organization operating this platform.
-          It appears in the management portal and on-screen branding.
+          This is the company operating this platform. It appears in the management
+          portal and on-screen branding.
         </p>
       </div>
 
@@ -109,6 +112,22 @@ function Step1({ onNext }: { onNext: (data: Step1) => void }) {
         />
         {errors.orgName && (
           <p className="text-xs text-[var(--danger)] mt-1">{errors.orgName.message}</p>
+        )}
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium mb-1">First workspace name</label>
+        <input
+          {...register('workspaceName')}
+          type="text"
+          placeholder={orgName || 'e.g. Main Office'}
+          className="input w-full"
+        />
+        <p className="text-xs text-[var(--text-muted)] mt-1">
+          A workspace groups your screens and content. You can create more later.
+        </p>
+        {errors.workspaceName && (
+          <p className="text-xs text-[var(--danger)] mt-1">{errors.workspaceName.message}</p>
         )}
       </div>
 
@@ -373,6 +392,7 @@ export default function SetupWizardPage() {
         lanUrl: string | null;
       }>('/setup', {
         orgName: step1Data.orgName,
+        workspaceName: step1Data.workspaceName,
         name: step2Data.name,
         email: step2Data.email,
         password: step2Data.password,

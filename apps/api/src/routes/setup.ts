@@ -6,6 +6,8 @@ import {
   platformOwners,
   organizations,
   users,
+  workspaces,
+  workspaceMembers,
   licenseConfig,
   managementCompanies,
   managementCompanyAdmins,
@@ -21,6 +23,8 @@ const SetupBodySchema = z.object({
   password: z.string().min(8).max(128),
   // Organisation name (the "company" that owns this platform install)
   orgName: z.string().min(1).max(200),
+  // First workspace name (defaults to org name if omitted)
+  workspaceName: z.string().min(1).max(200).optional(),
   // Optional — configure license on first-run if the partner already has a key
   licenseKey: z.string().optional(),
 });
@@ -75,7 +79,7 @@ export async function setupRoutes(app: FastifyInstance) {
       });
     }
 
-    const { name, email, password, orgName, licenseKey } = parsed.data;
+    const { name, email, password, orgName, workspaceName, licenseKey } = parsed.data;
 
     // Hash password with argon2id (same as the rest of the auth layer)
     const passwordHash = await argon2.hash(password);
@@ -123,23 +127,44 @@ export async function setupRoutes(app: FastifyInstance) {
         role: 'owner',
       });
 
-      // 6. Dashboard user — same credentials, owner role in the default org
+      // 5. Dashboard user — same credentials, owner role in the default org
       const [org] = await tx
         .select({ id: organizations.id })
         .from(organizations)
         .where(eq(organizations.slug, slug))
         .limit(1);
 
-      await tx.insert(users).values({
+      const [newUser] = await tx.insert(users).values({
         orgId: org!.id,
         name,
         email,
         passwordHash,
         orgRole: 'owner',
         status: 'active',
+      }).returning({ id: users.id });
+
+      // 6. Default workspace + add owner as admin member
+      const wsName = workspaceName?.trim() || orgName;
+      const wsSlug = wsName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 63);
+
+      const [workspace] = await tx.insert(workspaces).values({
+        orgId: org!.id,
+        name: wsName,
+        slug: wsSlug,
+      }).returning({ id: workspaces.id });
+
+      await tx.insert(workspaceMembers).values({
+        workspaceId: workspace!.id,
+        userId: newUser!.id,
+        role: 'admin',
+        addedBy: newUser!.id,
       });
 
-      // 6. Optional license config seed
+      // 7. Optional license config seed
       if (licenseKey) {
         const [existingConfig] = await tx
           .select({ id: licenseConfig.id })
