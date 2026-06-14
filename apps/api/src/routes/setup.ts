@@ -5,6 +5,7 @@ import {
   db,
   platformOwners,
   organizations,
+  users,
   licenseConfig,
   managementCompanies,
   managementCompanyAdmins,
@@ -122,7 +123,23 @@ export async function setupRoutes(app: FastifyInstance) {
         role: 'owner',
       });
 
-      // 5. Optional license config seed
+      // 6. Dashboard user — same credentials, owner role in the default org
+      const [org] = await tx
+        .select({ id: organizations.id })
+        .from(organizations)
+        .where(eq(organizations.slug, slug))
+        .limit(1);
+
+      await tx.insert(users).values({
+        orgId: org!.id,
+        name,
+        email,
+        passwordHash,
+        orgRole: 'owner',
+        status: 'active',
+      });
+
+      // 6. Optional license config seed
       if (licenseKey) {
         const [existingConfig] = await tx
           .select({ id: licenseConfig.id })
