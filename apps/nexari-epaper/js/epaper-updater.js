@@ -17,27 +17,26 @@
 window.EpaperUpdater = (function() {
   'use strict';
 
-  var UPDATE_HOST_ALLOWLIST = ['ds.chiho.app', 'updates.chiho.app'];
-
   /**
-   * Resolve a possibly-relative URL against the API base, then enforce the
-   * host allowlist. Returns null if the host is not allowed.
+   * Resolve a possibly-relative URL against the API base, then verify the
+   * host matches the configured API host. This allows OTA downloads from the
+   * partner's own domain without hardcoding any specific hostname.
    */
   function resolveUrl(wgtUrl) {
     var absolute;
+    var apiBase = (window.CONFIG && CONFIG.API_BASE) ? CONFIG.API_BASE : '';
     if (/^https?:\/\//.test(wgtUrl)) {
       absolute = wgtUrl;
     } else {
-      var base = (window.CONFIG && CONFIG.API_BASE)
-        ? CONFIG.API_BASE.replace(/\/api\/v1\/?$/, '')
-        : '';
+      var base = apiBase.replace(/\/api\/v1\/?$/, '');
       absolute = base + (wgtUrl.charAt(0) === '/' ? wgtUrl : '/' + wgtUrl);
     }
     try {
       var u = new URL(absolute);
       if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
-      if (UPDATE_HOST_ALLOWLIST.indexOf(u.hostname) === -1) {
-        logger.error('[Updater] refusing download from non-allowlisted host:', u.hostname);
+      var allowedHost = apiBase ? new URL(apiBase).hostname : '';
+      if (!allowedHost || u.hostname !== allowedHost) {
+        logger.error('[Updater] refusing download from non-allowlisted host:', u.hostname, '(expected:', allowedHost + ')');
         return null;
       }
       return absolute;

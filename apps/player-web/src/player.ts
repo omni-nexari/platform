@@ -35,15 +35,17 @@ function escapeHtml(s: unknown): string {
   return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-/** Hosts permitted as origin for OTA installer downloads (player-web shells). */
-const UPDATE_HOST_ALLOWLIST: readonly string[] = ['ds.chiho.app', 'updates.chiho.app'];
-
-/** Return true if `url` is an http(s) URL whose host is in UPDATE_HOST_ALLOWLIST. */
-function isAllowedUpdateUrl(url: string): boolean {
+/**
+ * Return true if `url` is an http(s) URL whose host matches the current
+ * API base host. This allows OTA downloads from the partner's own domain
+ * without hardcoding any specific hostname.
+ */
+function isAllowedUpdateUrl(url: string, apiBase: string): boolean {
   try {
     const u = new URL(url);
     if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
-    return UPDATE_HOST_ALLOWLIST.indexOf(u.hostname) !== -1;
+    const apiHost = new URL(apiBase).hostname;
+    return u.hostname === apiHost;
   } catch {
     return false;
   }
@@ -533,7 +535,7 @@ export class Player {
         const url = String(msg['apkUrl'] ?? msg['wgtUrl'] ?? '');
         const version = String(msg['version'] ?? '');
         if (!url || !version) { this.send({ type:'app_update_failed', error:'missing url/version' }); return; }
-        if (!isAllowedUpdateUrl(url)) {
+        if (!isAllowedUpdateUrl(url, this.cfg.apiBase)) {
           this.send({ type:'app_update_failed', error:'Download URL host not allowed' });
           return;
         }
@@ -630,7 +632,7 @@ export class Player {
         const version = String(payload?.['version'] ?? '');
         const sha256 = payload?.['sha256'] as string | undefined;
         if (!url || !version) { this.send({ type:'app_update_failed', error:'missing url/version' }); return; }
-        if (!isAllowedUpdateUrl(url)) {
+        if (!isAllowedUpdateUrl(url, this.cfg.apiBase)) {
           this.send({ type:'app_update_failed', error:'Download URL host not allowed' });
           return;
         }
