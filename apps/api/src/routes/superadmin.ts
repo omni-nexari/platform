@@ -48,6 +48,7 @@ import {
 } from '@signage/shared';
 import { sendInviteEmail, sendSupportNotificationEmail } from '../services/email.js';
 import { writeAuditLog } from '../services/audit.js';
+import { canUseMultiTenant, getLicenseTierLabel } from '../services/license-client.js';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 const BRANDING_ASSET_TYPES = new Set(['logo', 'favicon', 'login-background']);
@@ -2279,6 +2280,14 @@ export async function superAdminRoutes(app: FastifyInstance) {
   // ── POST /superadmin/orgs ───────────────────────────────────────────────────
   app.post('/orgs', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
     const caller = req.user as PlatformAdminCaller;
+
+    if (!canUseMultiTenant()) {
+      return reply.status(403).send({
+        error: 'license_feature_unavailable',
+        message: `Creating multiple organizations requires the Pro plan. Your current plan is ${getLicenseTierLabel()}.`,
+        feature: 'multi_tenant',
+      });
+    }
 
     const body = z
       .object({

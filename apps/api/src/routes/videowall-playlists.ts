@@ -13,6 +13,7 @@ import {
 import { eq, and, isNull, inArray, asc, desc } from 'drizzle-orm';
 import { sendCommand, isDeviceOnline } from '../services/ws.js';
 import { writeAuditLog } from '../services/audit.js';
+import { canUseVideoWalls, getLicenseTierLabel } from '../services/license-client.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -174,6 +175,14 @@ export async function videowallPlaylistRoutes(app: FastifyInstance) {
     const user = req.user as AuthUser;
     if (!['owner', 'admin', 'editor'].includes(user.role)) {
       return reply.status(403).send({ error: 'Forbidden' });
+    }
+
+    if (!canUseVideoWalls()) {
+      return reply.status(403).send({
+        error: 'license_feature_unavailable',
+        message: `Video walls require the Pro plan. Your current plan is ${getLicenseTierLabel()}.`,
+        feature: 'videowall',
+      });
     }
 
     const body = req.body as { workspaceId?: string; name?: string; groupId?: string };

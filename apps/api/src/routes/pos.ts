@@ -32,6 +32,26 @@ import {
   workspaces,
 } from '@signage/db';
 import { sendCommand } from '../services/ws.js';
+import { canUsePOS } from '../services/license-client.js';
+
+// ─── License gate: all authenticated POS management routes require the POS module ──
+// Applied as a preHandler hook on the /mgmt/* path prefix inside posRoutes.
+function rejectPosIfUnlicensed(
+  req: { url: string; user?: unknown },
+  reply: { status: (c: number) => { send: (b: unknown) => unknown } },
+  done: () => void,
+) {
+  // Only gate authenticated management routes (not kiosk/display/order endpoints)
+  if (req.url.includes('/mgmt/') && !canUsePOS()) {
+    reply.status(403).send({
+      error: 'license_feature_unavailable',
+      message: 'POS / menu board features require a license with the POS module.',
+      feature: 'pos',
+    });
+    return;
+  }
+  done();
+}
 
 // ─── Helper: notify POS display devices when config changes ─────────────────
 async function notifyPosDevices(orgId: string, workspaceId: string, displayTypes: string[]): Promise<void> {
@@ -235,6 +255,9 @@ const VALID_ACTIVE_STATUSES = ['pending', 'preparing', 'ready'] as const;
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 
 export async function posRoutes(app: FastifyInstance) {
+  // Gate all authenticated management endpoints on the POS license module
+  app.addHook('preHandler', rejectPosIfUnlicensed as Parameters<typeof app.addHook>[1]);
+
   function createHttpError(statusCode: number, message: string) {
     const error = new Error(message) as Error & { statusCode: number };
     error.statusCode = statusCode;

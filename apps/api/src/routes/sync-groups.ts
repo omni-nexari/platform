@@ -12,6 +12,7 @@ import { eq, and, isNull, desc, ne, inArray } from 'drizzle-orm';
 import { writeAuditLog } from '../services/audit.js';
 import { sendCommand, isDeviceOnline } from '../services/ws.js';
 import { allocateSyncPlayGroupId } from '../services/syncplay-allocator.js';
+import { canUseSyncPlay, getLicenseTierLabel } from '../services/license-client.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -113,6 +114,14 @@ export async function syncGroupRoutes(app: FastifyInstance) {
   app.post('/', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
     const body = req.body as { workspaceId: string; name: string; syncPlaylistId?: string };
+
+    if (!canUseSyncPlay()) {
+      return reply.status(403).send({
+        error: 'license_feature_unavailable',
+        message: `SyncPlay requires the Pro plan. Your current plan is ${getLicenseTierLabel()}.`,
+        feature: 'syncplay',
+      });
+    }
 
     if (!body.workspaceId || !body.name?.trim()) {
       return reply.status(400).send({ error: 'workspaceId and name required' });

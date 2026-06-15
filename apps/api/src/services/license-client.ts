@@ -30,11 +30,25 @@ export type LicenseStatus =
 
 export interface LicenseState {
   status: LicenseStatus;
+  /** 'signage' | 'pos' | 'both'. When null/undefined, defaults to 'signage'. */
   allowedModules: string;
+  /** 'basic' | 'pro' | null. Null means no tier restriction (e.g. Nexari-owned keys). */
+  signageTier: string | null;
   maxScreens: number | null;
+  /** Max POS locations. null = unlimited. */
+  maxLocations: number | null;
   gracePct: number;
+  /** Trial config from the license server (used for initial trial enforcement). */
+  trialDays: number;
+  trialMaxScreens: number;
   checkedAt: string;
 }
+
+// ── Trial boot timestamp ─────────────────────────────────────────────────────
+// Stored in Redis so it persists across restarts. Key: 'license:trial-start'
+const TRIAL_START_KEY = 'license:trial-start';
+const TRIAL_DAYS_DEFAULT = 60;
+const TRIAL_MAX_SCREENS_DEFAULT = 3;
 
 let cachedState: LicenseState | null = null;
 /** Timestamp of the last successful heartbeat send — used to window log collection. */
@@ -45,7 +59,7 @@ export function getLicenseState(): LicenseState | null {
   return cachedState;
 }
 
-/** True when new device pairing should be blocked. */
+/** True when new device pairing should be blocked (suspended or revoked). */
 export function isPairingBlocked(): boolean {
   const s = cachedState?.status;
   return s === 'suspended' || s === 'revoked';
@@ -54,6 +68,52 @@ export function isPairingBlocked(): boolean {
 /** True when the whole instance should be locked out. */
 export function isInstanceLocked(): boolean {
   return cachedState?.status === 'revoked';
+}
+
+// ── Feature gates (all return true when no license is configured = dev mode) ─
+
+/** SyncPlay and synchronized multi-screen playback — requires Pro tier. */
+export function canUseSyncPlay(): boolean {
+  if (!cachedState) return false; // no license = trial = restricted
+  const tier = cachedState.signageTier;
+  return tier === 'pro' || tier === null; // null = no tier restriction
+}
+
+/** Video wall grid mapping — requires Pro tier. */
+export function canUseVideoWalls(): boolean {
+  return canUseSyncPlay();
+}
+
+/** Multi-tenant: creating more than one organisation — requires Pro tier. */
+export function canUseMultiTenant(): boolean {
+  return canUseSyncPlay();
+}
+
+/** POS/menu board features — requires 'pos' or 'both' module. */
+export function canUsePOS(): boolean {
+  if (!cachedState) return false;
+  const m = cachedState.allowedModules;
+  return m === 'pos' || m === 'both';
+}
+
+/** Whether the current screen count would exceed license limits. */
+export function isOverScreenLimit(currentScreens: number): boolean {
+  if (!cachedState) {
+    // Trial mode: enforce trial screen limit
+    return currentScreens >= TRIAL_MAX_SCREENS_DEFAULT;
+  }
+  if (cachedState.maxScreens == null) return false;
+  const limit = Math.floor(cachedState.maxScreens * (1 + cachedState.gracePct / 100));
+  return currentScreens >= limit;
+}
+
+/** Human-readable tier name for error messages. */
+export function getLicenseTierLabel(): string {
+  if (!cachedState) return 'trial';
+  const tier = cachedState.signageTier;
+  if (tier === 'pro') return 'Pro';
+  if (tier === 'basic') return 'Basic';
+  return 'your current plan';
 }
 
 async function collectUsage(): Promise<{
