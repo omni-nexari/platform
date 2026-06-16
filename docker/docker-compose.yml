@@ -110,8 +110,8 @@ services:
     image: nginx:1.27-alpine
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8081:80"
-      - "127.0.0.1:8441:443"
+      - "${NEXARI_HTTP_BIND:-0.0.0.0}:${NEXARI_HTTP_PORT:-80}:80"
+      - "${NEXARI_HTTPS_BIND:-0.0.0.0}:${NEXARI_HTTPS_PORT:-443}:443"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       # DS static files are served by nginx directly (faster than proxying to api)

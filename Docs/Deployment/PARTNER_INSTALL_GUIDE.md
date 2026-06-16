@@ -26,6 +26,10 @@ This guide walks a technical partner through deploying the Nexari Platform on a 
 
 Create an **A record** pointing your chosen domain to the VM's public IP address before running the installer. Let's Encrypt certificate issuance requires this to be live.
 
+If this VM is dedicated to Nexari, the Docker stack should own ports `80` and `443` directly.
+If the host already runs another reverse proxy or other web services, set alternate bind/port values in `.env`
+and place a reverse proxy in front of Nexari.
+
 ---
 
 ## Step 1 — Obtain the install package
@@ -50,6 +54,17 @@ nexari/
   install.sh
   update.sh
 ```
+
+For shared-host deployments behind another reverse proxy, you can set these optional `.env` values after install:
+
+```dotenv
+NEXARI_HTTP_BIND=127.0.0.1
+NEXARI_HTTP_PORT=8081
+NEXARI_HTTPS_BIND=127.0.0.1
+NEXARI_HTTPS_PORT=8441
+```
+
+On a dedicated VM, leave them unset so Nexari listens directly on `80/443`.
 
 ---
 
