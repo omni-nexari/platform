@@ -69,12 +69,18 @@ android {
             buildConfigField("String",  "DEFAULT_OTA_URL",  "\"\"")
         }
         // Self-hosted APK with in-app OTA enabled.
+        // For partner builds, pass -PpartnerApiBase and -PpartnerWsBase to Gradle.
         create("self") {
             dimension = "channel"
+            val partnerApi = (project.findProperty("partnerApiBase") as String?)
+                ?: "https://ds.chiho.app/api/v1"
+            val partnerWs = (project.findProperty("partnerWsBase") as String?)
+                ?: "wss://ds.chiho.app"
+            val otaBase = partnerApi.removeSuffix("/api/v1")
             buildConfigField("boolean", "OTA_ENABLED", "true")
-            buildConfigField("String",  "DEFAULT_API_BASE", "\"https://ds.chiho.app/api/v1\"")
-            buildConfigField("String",  "DEFAULT_WS_BASE",  "\"wss://ds.chiho.app\"")
-            buildConfigField("String",  "DEFAULT_OTA_URL",  "\"https://ds.chiho.app/android/update.json\"")
+            buildConfigField("String",  "DEFAULT_API_BASE", "\"$partnerApi\"")
+            buildConfigField("String",  "DEFAULT_WS_BASE",  "\"$partnerWs\"")
+            buildConfigField("String",  "DEFAULT_OTA_URL",  "\"$otaBase/android/update.json\"")
         }
         // Google Play / Managed Play â€” Play handles updates.
         create("play") {
