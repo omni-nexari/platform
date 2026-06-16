@@ -364,6 +364,7 @@ export default function MarketingPage() {
           <nav className="hidden md:flex items-center gap-7 text-sm text-[#9aa3b8]">
             <a href="#features" className="hover:text-white transition-colors">Features</a>
             <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
+            <a href="#compare" className="hover:text-white transition-colors">Compare</a>
             <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
           </nav>
           <div className="flex items-center gap-3">
@@ -657,6 +658,51 @@ export default function MarketingPage() {
         </p>
       </Section>
 
+      {/* ── Plan comparison ─────────────────────────────────────────────────── */}
+      <Section id="compare" className="border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' } as React.CSSProperties}>
+        <SectionLabel>Compare</SectionLabel>
+        <SectionTitle>Choose the right plan</SectionTitle>
+        <SectionSubtitle>
+          All plans include a 60-day free trial. No credit card required.
+        </SectionSubtitle>
+
+        <div className="overflow-x-auto rounded-2xl border" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+          <table className="w-full text-sm min-w-[540px]">
+            <thead>
+              <tr style={{ background: 'rgba(255,255,255,0.04)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                <th className="text-left px-5 py-3.5 font-semibold text-[#b0b8cc]">Plan</th>
+                <th className="text-left px-4 py-3.5 font-semibold text-[#b0b8cc]">Price</th>
+                <th className="text-center px-4 py-3.5 font-semibold text-[#b0b8cc]">POS</th>
+                <th className="text-center px-4 py-3.5 font-semibold text-[#b0b8cc]">Scheduling</th>
+                <th className="text-center px-4 py-3.5 font-semibold text-[#b0b8cc]">SyncPlay / Video Wall</th>
+                <th className="text-center px-4 py-3.5 font-semibold text-[#b0b8cc]">Multi-tenant</th>
+              </tr>
+            </thead>
+            <tbody>
+              {COMPETITORS.filter((r) => r.nexari).map((row, i) => (
+                <tr
+                  key={row.name}
+                  style={{
+                    background: i % 2 === 0 ? 'rgba(58,123,255,0.04)' : 'rgba(255,255,255,0.02)',
+                    borderBottom: '1px solid rgba(255,255,255,0.06)',
+                  }}
+                >
+                  <td className="px-5 py-3 font-medium text-white">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#3a7bff] mr-2 mb-0.5" />
+                    {row.name}
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-[#4ff2d1]">{row.price}</td>
+                  <td className="px-4 py-3 text-center"><CheckIcon val={row.pos} /></td>
+                  <td className="px-4 py-3 text-center"><CheckIcon val={row.scheduling} /></td>
+                  <td className="px-4 py-3 text-center"><CheckIcon val={row.syncplay} /></td>
+                  <td className="px-4 py-3 text-center"><CheckIcon val={row.multitenant} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+
       {/* ── Use cases ───────────────────────────────────────────────────────── */}
       <Section className="border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' } as React.CSSProperties}>
         <SectionLabel>Use Cases</SectionLabel>
@@ -760,6 +806,7 @@ export default function MarketingPage() {
             <div className="flex flex-wrap gap-6 text-xs text-[#7a8299]">
               <a href="#features" className="hover:text-white transition-colors">Features</a>
               <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
+              <a href="#compare" className="hover:text-white transition-colors">Compare</a>
               <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
               <Link to="/login" className="hover:text-white transition-colors">Sign In</Link>
               <a
