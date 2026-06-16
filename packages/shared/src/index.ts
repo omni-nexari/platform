@@ -11,3 +11,4 @@ export * from './videowall.js';
 export * from './display-presets.js';
 export * from './schemas/support.js';
 export * from './schemas/ruleset.js';
+export * from './license-public-key.js';

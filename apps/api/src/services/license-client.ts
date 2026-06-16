@@ -1,21 +1,25 @@
 /**
- * License heartbeat client.
+ * License client — handles BOTH online (HMAC heartbeat) and offline (.lic cert) modes.
  *
- * Phones home to the Nexari admin license server every ~15 minutes, reporting
- * screen + org counts so usage can be tracked and billed. The response tells
- * this instance its license status; we cache the last good response in Redis so
- * a transient outage of the license server never locks out a partner's screens.
+ * Online mode (default):
+ *   Phones home to admin.nexari.ca every ~15 minutes. Requires internet.
+ *   Enforcement state is cached in Redis for 24h.
  *
- * Partners configure three env vars on their install:
- *   LICENSE_KEY         — the plain license key
- *   LICENSE_SECRET      — the HMAC secret
- *   LICENSE_SERVER_URL  — e.g. https://admin.nexari.io
+ * Offline mode:
+ *   Verifies a signed Ed25519 JWT (.lic file) locally — no network ever needed.
+ *   Cert payload contains all entitlements + expiry baked in and cryptographically signed.
+ *
+ * Both modes:
+ *   Enforcement state is loaded on boot and kept in memory.
+ *   The same gate functions (canUseSyncPlay, isOverScreenLimit, etc.) work for both.
  */
 import { createHmac } from 'node:crypto';
+import { createPublicKey, verify as cryptoVerify } from 'node:crypto';
 import { and, desc, eq, gte, inArray, isNull, ne, count } from 'drizzle-orm';
 import { db, devices, organizations, posMenus, licenseConfig, logEntries } from '@signage/db';
 import { getRedis } from './redis.js';
 import { decryptSecret } from './crypto.js';
+import { NEXARI_LICENSE_PUBLIC_KEYS } from '@signage/shared';
 
 const HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
 const CACHE_KEY = 'license:last-status';
@@ -37,24 +41,51 @@ export interface LicenseState {
   maxScreens: number | null;
   /** Max POS locations. null = unlimited. */
   maxLocations: number | null;
+  /** Screens included per POS location (default 3). */
+  posScreensPerLocation: number;
   gracePct: number;
   /** Trial config from the license server (used for initial trial enforcement). */
   trialDays: number;
   trialMaxScreens: number;
+  /** ISO string of when this license expires. null = perpetual. */
+  expiresAt: string | null;
+  /** 'monthly' | 'annual' | null */
+  billingPeriod: string | null;
+  /** Plan type label e.g. 'signage-pro', 'bundle-basic' */
+  planType: string | null;
+  /** Source of this state */
+  source: 'heartbeat' | 'offline-cert' | 'cache';
   checkedAt: string;
 }
 
+// ── Offline cert payload shape ───────────────────────────────────────────────
+interface OfflineCertPayload {
+  kid: string;
+  licenseKey: string;
+  planType: string;
+  modules: string;
+  signageTier: string | null;
+  maxSignageScreens: number | null;
+  maxLocations: number | null;
+  posScreensPerLocation: number;
+  features: string[];
+  billingPeriod: string;
+  issuedAt: number;   // unix seconds
+  expiresAt: number;  // unix seconds
+  graceDays: number;
+  partnerName: string | null;
+  instanceUrl: string | null;
+}
+
 // ── Trial boot timestamp ─────────────────────────────────────────────────────
-// Stored in Redis so it persists across restarts. Key: 'license:trial-start'
 const TRIAL_START_KEY = 'license:trial-start';
 const TRIAL_DAYS_DEFAULT = 60;
 const TRIAL_MAX_SCREENS_DEFAULT = 3;
 
 let cachedState: LicenseState | null = null;
-/** Timestamp of the last successful heartbeat send — used to window log collection. */
 let lastHeartbeatAt: Date = new Date(Date.now() - HEARTBEAT_INTERVAL_MS * 2);
 
-/** Current license state (from last heartbeat or Redis cache). */
+/** Current license state (from last heartbeat, offline cert, or Redis cache). */
 export function getLicenseState(): LicenseState | null {
   return cachedState;
 }
@@ -70,13 +101,13 @@ export function isInstanceLocked(): boolean {
   return cachedState?.status === 'revoked';
 }
 
-// ── Feature gates (all return true when no license is configured = dev mode) ─
+// ── Feature gates (all return false when no license = trial mode) ─────────────
 
 /** SyncPlay and synchronized multi-screen playback — requires Pro tier. */
 export function canUseSyncPlay(): boolean {
-  if (!cachedState) return false; // no license = trial = restricted
+  if (!cachedState) return false;
   const tier = cachedState.signageTier;
-  return tier === 'pro' || tier === null; // null = no tier restriction
+  return tier === 'pro' || tier === null;
 }
 
 /** Video wall grid mapping — requires Pro tier. */
@@ -96,15 +127,29 @@ export function canUsePOS(): boolean {
   return m === 'pos' || m === 'both';
 }
 
-/** Whether the current screen count would exceed license limits. */
+/** Whether the current signage screen count would exceed license limits. */
 export function isOverScreenLimit(currentScreens: number): boolean {
   if (!cachedState) {
-    // Trial mode: enforce trial screen limit
     return currentScreens >= TRIAL_MAX_SCREENS_DEFAULT;
   }
   if (cachedState.maxScreens == null) return false;
   const limit = Math.floor(cachedState.maxScreens * (1 + cachedState.gracePct / 100));
   return currentScreens >= limit;
+}
+
+/** Whether the current POS location count would exceed license limits. */
+export function isOverLocationLimit(currentLocations: number): boolean {
+  if (!cachedState) return true; // no license = trial = POS not available
+  if (cachedState.maxLocations == null) return false;
+  return currentLocations >= cachedState.maxLocations;
+}
+
+/** Whether extra POS screens at a location exceed the per-location allowance. */
+export function isOverExtraPosScreenLimit(totalScreensAtLocation: number): boolean {
+  if (!cachedState) return true;
+  const included = cachedState.posScreensPerLocation ?? 3;
+  // Grace doesn't apply to per-location screen limits
+  return totalScreensAtLocation > included;
 }
 
 /** Human-readable tier name for error messages. */
@@ -115,6 +160,76 @@ export function getLicenseTierLabel(): string {
   if (tier === 'basic') return 'Basic';
   return 'your current plan';
 }
+
+// ── Offline cert verification ────────────────────────────────────────────────
+
+/**
+ * Verify and parse an offline .lic JWT.
+ * Returns a LicenseState if valid, throws if signature invalid or cert expired past grace.
+ */
+export function verifyOfflineCert(jwt: string): LicenseState {
+  const parts = jwt.trim().split('.');
+  if (parts.length !== 3) throw new Error('Invalid cert format: expected 3 parts');
+
+  const [headerB64, payloadB64, sigB64] = parts as [string, string, string];
+
+  // Decode header to get kid
+  let header: { alg: string; kid: string };
+  try {
+    header = JSON.parse(Buffer.from(headerB64, 'base64url').toString());
+  } catch {
+    throw new Error('Invalid cert header');
+  }
+  if (header.alg !== 'EdDSA') throw new Error(`Unsupported algorithm: ${header.alg}`);
+
+  const publicKeyPem = NEXARI_LICENSE_PUBLIC_KEYS[header.kid];
+  if (!publicKeyPem) throw new Error(`Unknown key id: ${header.kid}`);
+
+  // Verify signature
+  const signingInput = `${headerB64}.${payloadB64}`;
+  const sig = Buffer.from(sigB64, 'base64url');
+  const publicKey = createPublicKey(publicKeyPem);
+  const valid = cryptoVerify(null, Buffer.from(signingInput), publicKey, sig);
+  if (!valid) throw new Error('Certificate signature is invalid — cert may be tampered');
+
+  // Decode payload
+  let payload: OfflineCertPayload;
+  try {
+    payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString()) as OfflineCertPayload;
+  } catch {
+    throw new Error('Invalid cert payload');
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const graceSec = (payload.graceDays ?? 30) * 24 * 3600;
+
+  // Determine status
+  let status: LicenseStatus = 'ok';
+  if (nowSec > payload.expiresAt + graceSec) {
+    status = 'revoked'; // past grace — hard block
+  } else if (nowSec > payload.expiresAt) {
+    status = 'grace'; // expired but within grace — warn, still functional
+  }
+
+  return {
+    status,
+    allowedModules: payload.modules,
+    signageTier: payload.signageTier,
+    maxScreens: payload.maxSignageScreens,
+    maxLocations: payload.maxLocations,
+    posScreensPerLocation: payload.posScreensPerLocation ?? 3,
+    gracePct: 10, // offline certs don't carry gracePct (they use graceDays for expiry only)
+    trialDays: 0,
+    trialMaxScreens: 0,
+    expiresAt: new Date(payload.expiresAt * 1000).toISOString(),
+    billingPeriod: payload.billingPeriod,
+    planType: payload.planType,
+    source: 'offline-cert',
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+// ── Usage collection ─────────────────────────────────────────────────────────
 
 async function collectUsage(): Promise<{
   activeScreens: number;
@@ -169,7 +284,6 @@ async function collectUsage(): Promise<{
   };
 }
 
-/** Collect recent error/warn log entries to include in the next heartbeat. */
 async function collectRecentLogs(since: Date): Promise<Array<{
   level: 'error' | 'warn';
   source: string;
@@ -211,8 +325,9 @@ async function collectRecentLogs(since: Date): Promise<Array<{
   }
 }
 
+// ── Heartbeat (online mode) ───────────────────────────────────────────────────
+
 async function sendHeartbeat(): Promise<void> {
-  // Read credentials from DB (UI-managed) first, fall back to env vars.
   let licenseKey: string | null = null;
   let secret: string | null = null;
   let serverUrl: string | null = null;
@@ -230,10 +345,7 @@ async function sendHeartbeat(): Promise<void> {
     serverUrl = process.env['LICENSE_SERVER_URL'] ?? null;
   }
 
-  if (!licenseKey || !secret || !serverUrl) {
-    // No license configured — self-hosted dev / Nexari internal without enforcement
-    return;
-  }
+  if (!licenseKey || !secret || !serverUrl) return;
 
   const timestamp = Date.now();
   const signature = createHmac('sha256', secret)
@@ -258,7 +370,6 @@ async function sendHeartbeat(): Promise<void> {
   });
 
   if (!res.ok) {
-    // Update DB error state if we used DB config
     if (dbRowId) {
       await db.update(licenseConfig).set({
         lastStatus: null,
@@ -269,12 +380,16 @@ async function sendHeartbeat(): Promise<void> {
     throw new Error(`license server responded ${res.status}`);
   }
 
-  const body = (await res.json()) as Omit<LicenseState, 'checkedAt'>;
-  const state: LicenseState = { ...body, checkedAt: new Date().toISOString() };
+  const body = (await res.json()) as Omit<LicenseState, 'checkedAt' | 'source'>;
+  const state: LicenseState = {
+    ...body,
+    posScreensPerLocation: body.posScreensPerLocation ?? 3,
+    source: 'heartbeat',
+    checkedAt: new Date().toISOString(),
+  };
   cachedState = state;
   lastHeartbeatAt = new Date();
 
-  // Persist last-known status back into DB row
   if (dbRowId) {
     await db.update(licenseConfig).set({
       lastStatus: state.status,
@@ -302,24 +417,64 @@ async function loadCachedState(): Promise<void> {
   }
 }
 
-/** Start the heartbeat loop. Call once at server startup. */
+// ── Boot-time cert loader ─────────────────────────────────────────────────────
+
+/**
+ * Try to load and verify the offline cert from the DB.
+ * Returns true if an offline cert was found and loaded successfully.
+ */
+async function tryLoadOfflineCert(): Promise<boolean> {
+  try {
+    const dbConfig = await db.query.licenseConfig.findFirst();
+    const mode = dbConfig?.licenseMode ?? 'online';
+    if ((mode === 'offline' || mode === 'both') && dbConfig?.signedCert) {
+      const state = verifyOfflineCert(dbConfig.signedCert);
+      cachedState = state;
+      return true;
+    }
+  } catch (err) {
+    // Corrupt/tampered cert — log but don't crash
+    console.error('[license] offline cert verification failed:', err);
+  }
+  return false;
+}
+
+/** Start the license enforcement system. Call once at server startup. */
 export function startLicenseHeartbeat(
   log: { info: (msg: string) => void; error: (obj: unknown, msg?: string) => void },
 ): void {
-  void loadCachedState();
-
-  const tick = async (): Promise<void> => {
-    try {
-      await sendHeartbeat();
-    } catch (err) {
-      // Never throw — a license-server outage must not crash the platform.
-      log.error(err, '[license] heartbeat failed (using cached state)');
+  // Boot sequence:
+  // 1. If offline cert present → load it (no network)
+  // 2. Regardless, also load Redis cache (in case we're in 'both' mode)
+  // 3. Start heartbeat loop only if mode is 'online' or 'both'
+  void (async () => {
+    const offlineLoaded = await tryLoadOfflineCert();
+    if (offlineLoaded) {
+      log.info('[license] offline cert loaded and verified');
+    } else {
+      await loadCachedState();
     }
-  };
 
-  // First beat shortly after boot, then on the interval.
-  setTimeout(() => void tick(), 20_000);
-  setInterval(() => void tick(), HEARTBEAT_INTERVAL_MS);
+    // Check if heartbeat is needed
+    const dbConfig = await db.query.licenseConfig.findFirst().catch(() => null);
+    const mode = dbConfig?.licenseMode ?? 'online';
+    if (mode === 'offline') {
+      // Pure offline — no heartbeat loop
+      log.info('[license] running in offline mode, heartbeat disabled');
+      return;
+    }
+
+    const tick = async (): Promise<void> => {
+      try {
+        await sendHeartbeat();
+      } catch (err) {
+        log.error(err, '[license] heartbeat failed (using cached state)');
+      }
+    };
+
+    setTimeout(() => void tick(), 20_000);
+    setInterval(() => void tick(), HEARTBEAT_INTERVAL_MS);
+  })();
 }
 
 /**
@@ -330,6 +485,7 @@ export async function triggerHeartbeat(): Promise<void> {
   try {
     await sendHeartbeat();
   } catch {
-    /* ignore — just a best-effort immediate check */
+    /* ignore */
   }
 }
+

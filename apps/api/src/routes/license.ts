@@ -20,11 +20,9 @@ export async function licenseRoutes(app: FastifyInstance) {
   app.get('/status', { onRequest: [app.authenticate] }, async (_req, reply) => {
     const state = getLicenseState();
     if (!state) {
-      // No license configured (self-hosted dev / internal) — report unlicensed/trial.
       return reply.send({
         configured: false,
         status: 'trial',
-        // Feature availability: all restricted in trial mode
         features: {
           syncplay: false,
           videowall: false,
@@ -44,9 +42,13 @@ export async function licenseRoutes(app: FastifyInstance) {
       signageTier: state.signageTier,
       maxScreens: state.maxScreens,
       maxLocations: state.maxLocations,
+      posScreensPerLocation: state.posScreensPerLocation,
       gracePct: state.gracePct,
+      expiresAt: state.expiresAt,
+      billingPeriod: state.billingPeriod,
+      planType: state.planType,
+      source: state.source,
       checkedAt: state.checkedAt,
-      // Pre-computed feature flags so the frontend doesn't need to re-implement tier logic
       features: {
         syncplay: canUseSyncPlay(),
         videowall: canUseVideoWalls(),

@@ -11,9 +11,9 @@
     instanceUrl (captured automatically from heartbeats).
 
     Platforms built:
-      tizen   — NexariPlayer.wgt  (Tizen SSSP commercial display)
-      epaper  — NexariEPaper.wgt  (Samsung ePaper display)
-      android — nexari-android.apk
+      tizen   -- NexariPlayer.wgt  (Tizen SSSP commercial display)
+      epaper  -- NexariEPaper.wgt  (Samsung ePaper display)
+      android -- nexari-android.apk
 
     Generic platforms (Windows, ESP32) do not need per-partner builds.
     Register them once using -RegisterGeneric.
@@ -40,14 +40,14 @@
     SSH port. Default: 5551
 
 .PARAMETER SkipBuild
-    Skip the actual build step — just re-upload and re-register an existing artifact.
+    Skip the actual build step -- just re-upload and re-register an existing artifact.
 
 .PARAMETER RegisterGeneric
     Register the current Windows installer and ESP32 firmware as generic builds
-    for the selected partner (no rebuild — uses existing files on server).
+    for the selected partner (no rebuild -- uses existing files on server).
 
 .EXAMPLE
-    # Interactive — pick partner from list, build all platforms:
+    # Interactive -- pick partner from list, build all platforms:
     .\tools\build-partner-players.ps1
 
     # Tizen only:
@@ -235,7 +235,7 @@ foreach ($plat in $platforms) {
                     Remove-Item "$TizenDir\*.wgt" -ErrorAction SilentlyContinue
                     & $TizenCli package --type wgt --sign $SignProfile -o $TizenDir -- $tmp 2>&1 | Out-Null
                     $wgt = Get-ChildItem $TizenDir -Filter '*.wgt' | Select-Object -First 1
-                    if (-not $wgt) { throw "Tizen package failed — no WGT produced" }
+                    if (-not $wgt) { throw "Tizen package failed -- no WGT produced" }
                     if ($wgt.Name -ne 'NexariPlayer.wgt') { Rename-Item $wgt.FullName "$TizenDir\NexariPlayer.wgt" -Force }
                     $env:API_BASE = $null; $env:WS_URL = $null
                 } finally { Pop-Location }
@@ -269,7 +269,7 @@ foreach ($plat in $platforms) {
                     Remove-Item "$EpaperDir\*.wgt" -ErrorAction SilentlyContinue
                     & $TizenCli package --type wgt --sign $SignProfile -o $EpaperDir -- $tmp 2>&1 | Out-Null
                     $wgt = Get-ChildItem $EpaperDir -Filter '*.wgt' | Select-Object -First 1
-                    if (-not $wgt) { throw "ePaper package failed — no WGT produced" }
+                    if (-not $wgt) { throw "ePaper package failed -- no WGT produced" }
                     if ($wgt.Name -ne 'NexariEPaper.wgt') { Rename-Item $wgt.FullName "$EpaperDir\NexariEPaper.wgt" -Force }
                     $env:API_BASE = $null; $env:WS_URL = $null
                 } finally { Pop-Location }

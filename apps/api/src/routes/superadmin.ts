@@ -3763,6 +3763,9 @@ export async function superAdminRoutes(app: FastifyInstance) {
       hmacSecretSet: !!row.hmacSecret,
       licenseServerUrl: row.licenseServerUrl,
       isEnabled: row.isEnabled,
+      licenseMode: row.licenseMode,
+      certExpiresAt: row.certExpiresAt,
+      signedCertSet: !!row.signedCert,
       lastStatus: row.lastStatus,
       lastCheckedAt: row.lastCheckedAt,
       lastError: row.lastError,
@@ -3809,6 +3812,74 @@ export async function superAdminRoutes(app: FastifyInstance) {
     void triggerHeartbeat();
 
     return reply.status(204).send();
+  });
+
+  // ── POST /superadmin/license-config/upload-cert ──────────────────────────────
+  // Upload an offline .lic certificate. The cert is verified against the embedded
+  // Ed25519 public key before being stored. Once stored, the instance switches to
+  // offline mode and no longer requires a heartbeat for enforcement.
+
+  app.post('/license-config/upload-cert', async (req, reply) => {
+    const caller = getPortalCaller(app, req);
+    if (!caller) return reply.status(401).send({ error: 'Unauthorized' });
+
+    const body = z.object({
+      cert: z.string().min(10),
+      mode: z.enum(['online', 'offline', 'both']).default('offline'),
+    }).safeParse(req.body);
+
+    if (!body.success) return reply.status(400).send({ error: 'cert is required' });
+
+    const { verifyOfflineCert } = await import('../services/license-client.js');
+
+    let certState;
+    try {
+      certState = verifyOfflineCert(body.data.cert);
+    } catch (err) {
+      return reply.status(400).send({ error: `Invalid certificate: ${String(err)}` });
+    }
+
+    const certExpiresAt = certState.expiresAt ? new Date(certState.expiresAt) : null;
+
+    const existing = await db.query.licenseConfig.findFirst();
+    const patch = {
+      signedCert: body.data.cert,
+      licenseMode: body.data.mode,
+      certExpiresAt,
+      lastError: null,
+      updatedAt: new Date(),
+    };
+
+    if (existing) {
+      await db.update(licenseConfig).set(patch).where(eq(licenseConfig.id, existing.id));
+    } else {
+      await db.insert(licenseConfig).values({
+        signedCert: body.data.cert,
+        licenseMode: body.data.mode,
+        certExpiresAt,
+        isEnabled: true,
+      });
+    }
+
+    // Reload cert into memory immediately
+    const { triggerHeartbeat: _th, ...licClient } = await import('../services/license-client.js');
+    // Re-verify to update in-memory state
+    try {
+      const freshState = verifyOfflineCert(body.data.cert);
+      // @ts-expect-error — set internal state via re-export
+      if (typeof licClient['_setStateForTest'] === 'function') licClient['_setStateForTest'](freshState);
+    } catch { /* swallow */ }
+
+    return reply.send({
+      ok: true,
+      planType: certState.planType,
+      modules: certState.allowedModules,
+      signageTier: certState.signageTier,
+      maxScreens: certState.maxScreens,
+      maxLocations: certState.maxLocations,
+      expiresAt: certState.expiresAt,
+      status: certState.status,
+    });
   });
 
   // ── License allocations ── GET /superadmin/license-allocations ─────────────

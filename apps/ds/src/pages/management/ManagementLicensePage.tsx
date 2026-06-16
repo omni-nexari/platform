@@ -24,6 +24,9 @@ interface LicenseConfigData {
   hmacSecretSet?: boolean;
   licenseServerUrl?: string | null;
   isEnabled?: boolean;
+  licenseMode?: string | null;
+  certExpiresAt?: string | null;
+  signedCertSet?: boolean;
   lastStatus?: string | null;
   lastCheckedAt?: string | null;
   lastError?: string | null;
@@ -220,6 +223,9 @@ export default function ManagementLicensePage() {
   const [tab, setTab] = useState<'platform' | 'clients'>('platform');
   const [showSecret, setShowSecret] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [certText, setCertText] = useState('');
+  const [certMode, setCertMode] = useState<'offline' | 'both'>('offline');
+  const [uploadingCert, setUploadingCert] = useState(false);
 
   const { data: config, isLoading: configLoading } = useQuery<LicenseConfigData>({
     queryKey: ['license-config'],
@@ -388,10 +394,119 @@ export default function ManagementLicensePage() {
               )}
             </SectionCardBody>
           </SectionCard>
+
+          {/* Offline Certificate */}
+          <SectionCard>
+            <SectionCardHeader>Offline License Certificate</SectionCardHeader>
+            <SectionCardBody>
+              {configLoading ? (
+                <Skeleton className="h-16 w-full" />
+              ) : (
+                <div className="space-y-4 max-w-lg">
+                  {config?.signedCertSet && (
+                    <div className="rounded-lg border p-3 text-sm space-y-1" style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}>
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span className="font-medium">Offline cert installed</span>
+                      </div>
+                      {config.certExpiresAt && (
+                        <p className="text-xs text-[var(--text-muted)]">
+                          Expires: <strong>{new Date(config.certExpiresAt).toLocaleDateString()}</strong>
+                          {' '}({relativeTime(config.certExpiresAt)})
+                        </p>
+                      )}
+                      <p className="text-xs text-[var(--text-muted)]">
+                        Mode: <strong className="capitalize">{config.licenseMode ?? 'online'}</strong>
+                        {config.licenseMode === 'offline' && ' — heartbeat disabled, fully air-gapped'}
+                        {config.licenseMode === 'both' && ' — cert for enforcement + heartbeat for billing analytics'}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="space-y-1.5">
+                    <label className="ui-label">Paste .lic certificate content</label>
+                    <textarea
+                      className="ui-input w-full font-mono text-xs"
+                      rows={5}
+                      placeholder="Paste the contents of the .lic file here…"
+                      value={certText}
+                      onChange={(e) => setCertText(e.target.value)}
+                    />
+                    <p className="text-xs text-[var(--text-muted)]">
+                      Or upload the .lic file directly:{' '}
+                      <label className="cursor-pointer text-[var(--blue)] hover:underline">
+                        browse
+                        <input
+                          type="file"
+                          accept=".lic"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            file.text().then(setCertText).catch(() => undefined);
+                          }}
+                        />
+                      </label>
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="ui-label">License mode after upload</label>
+                    <div className="flex gap-2">
+                      {(['offline', 'both'] as const).map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setCertMode(m)}
+                          className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                            certMode === m
+                              ? 'border-[var(--blue)] bg-[var(--blue)]/10 text-[var(--blue)]'
+                              : 'text-[var(--text-muted)] hover:text-[var(--text-default)]'
+                          }`}
+                          style={{ borderColor: certMode === m ? 'var(--blue)' : 'var(--card-border)' }}
+                        >
+                          {m === 'offline' ? 'Offline only (air-gapped)' : 'Offline cert + heartbeat'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={!certText.trim() || uploadingCert}
+                    onClick={async () => {
+                      setUploadingCert(true);
+                      try {
+                        await saApi.post('/superadmin/license-config/upload-cert', {
+                          cert: certText.trim(),
+                          mode: certMode,
+                        });
+                        toast.success('Offline certificate installed — license enforced locally');
+                        setCertText('');
+                        void qc.invalidateQueries({ queryKey: ['license-config'] });
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : 'Failed to upload certificate');
+                      } finally {
+                        setUploadingCert(false);
+                      }
+                    }}
+                    className="btn-primary disabled:opacity-50"
+                  >
+                    {uploadingCert ? 'Verifying & installing…' : 'Install offline certificate'}
+                  </button>
+
+                  <p className="text-xs text-[var(--text-muted)]">
+                    The certificate signature is verified locally against the Nexari public key
+                    before being stored. A tampered or expired cert will be rejected.
+                  </p>
+                </div>
+              )}
+            </SectionCardBody>
+          </SectionCard>
         </>
       )}
 
-      {/* â”€â”€ Tab: Client Allocations â”€â”€ */}
+      {/* ── Tab: Client Allocations ── */}
       {tab === 'clients' && (
         <>
           {/* Summary row */}
