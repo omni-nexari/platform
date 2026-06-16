@@ -421,6 +421,21 @@ section "Starting API"
 docker compose up -d api
 info "Waiting for API to become healthy..."
 for i in $(seq 1 40); do
+  if docker compose ps api | grep -q "healthy"; then
+    info "API is healthy"
+    break
+  fi
+  if [[ $i -eq 40 ]]; then
+    die "API did not become healthy in time. Check: docker compose logs api"
+  fi
+  sleep 5
+done
+
+# ── Start nginx ────────────────────────────────────────────────────────────────
+section "Starting nginx"
+docker compose up -d nginx
+info "nginx started"
+
 # ── TLS certificate ────────────────────────────────────────────────────────────
 section "TLS Certificate"
 echo ""
@@ -439,28 +454,13 @@ if [[ -n "${CERTBOT_EMAIL:-}" ]]; then
 else
   echo "To obtain a free Let's Encrypt certificate later, run:"
   echo ""
-  echo "    docker compose --profile tls run --rm certbot certonly \\\"
-  echo "      --webroot -w /var/www/certbot \\\"
-  echo "      -d ${DOMAIN} \\\"
+  echo "    docker compose --profile tls run --rm certbot certonly \\"
+  echo "      --webroot -w /var/www/certbot \\"
+  echo "      -d ${DOMAIN} \\"
   echo "      --email admin@${DOMAIN} --agree-tos --no-eff-email"
   echo ""
   echo "Then reload nginx:  docker compose exec nginx nginx -s reload"
 fi
-echo ""
-echo "To auto-renew (add to crontab):"
-echo "    0 3 * * * cd $SCRIPT_DIR && docker compose --profile tls run --rm certbot renew --quiet && docker compose exec nginx nginx -s reload"
-# ── TLS certificate ────────────────────────────────────────────────────────────
-section "TLS Certificate"
-echo ""
-echo "nginx is now running on port 80 and 443."
-echo "To obtain a free Let's Encrypt certificate, run:"
-echo ""
-echo "    docker compose --profile tls run --rm certbot certonly \\"
-echo "      --webroot -w /var/www/certbot \\"
-echo "      -d ${DOMAIN} \\"
-echo "      --email admin@${DOMAIN} --agree-tos --no-eff-email"
-echo ""
-echo "Then reload nginx:  docker compose exec nginx nginx -s reload"
 echo ""
 echo "To auto-renew (add to crontab):"
 echo "    0 3 * * * cd $SCRIPT_DIR && docker compose --profile tls run --rm certbot renew --quiet && docker compose exec nginx nginx -s reload"
