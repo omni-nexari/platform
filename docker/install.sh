@@ -180,6 +180,18 @@ done
 APP_URL="https://${DOMAIN}"
 API_PUBLIC_URL="https://${DOMAIN}"
 
+echo ""
+echo "Optional but recommended: provide an email for Let's Encrypt issuance and renewal."
+echo "If you skip it, the installer will still set up nginx, but you'll need to run certbot manually."
+echo ""
+while true; do
+  prompt_optional CERTBOT_EMAIL "  CERTBOT_EMAIL (Let's Encrypt contact email)"
+  if [[ -z "${CERTBOT_EMAIL:-}" || "$CERTBOT_EMAIL" =~ ^[^@]+@[^@]+\.[^@]+$ ]]; then
+    break
+  fi
+  warn "Enter a valid email address or leave it blank to skip."
+done
+
 # ── Extra CORS origins (LAN access) ──────────────────────────────────────────
 section "LAN / Extra Origins (Optional)"
 echo "Allow access from this server's local IP in addition to your domain."
@@ -284,6 +296,7 @@ section "Configuration Summary"
 echo ""
 echo "  Domain:         $DOMAIN"
 echo "  App URL:        $APP_URL"
+echo "  Cert email:     ${CERTBOT_EMAIL:-(not configured)}"
 echo "  Email from:     $RESEND_FROM_MAIL"
 echo "  Google OAuth:   ${GOOGLE_OAUTH_CLIENT_ID:-(not configured)}"
 echo "  Microsoft OAuth:${MICROSOFT_OAUTH_CLIENT_ID:-(not configured)}"
@@ -408,21 +421,34 @@ section "Starting API"
 docker compose up -d api
 info "Waiting for API to become healthy..."
 for i in $(seq 1 40); do
-  if docker compose ps api | grep -q "healthy"; then
-    info "API is healthy"
-    break
-  fi
-  if [[ $i -eq 40 ]]; then
-    die "API did not become healthy in time. Check: docker compose logs api"
-  fi
-  sleep 5
-done
+# ── TLS certificate ────────────────────────────────────────────────────────────
+section "TLS Certificate"
+echo ""
+echo "nginx is now running on port 80 and 443."
 
-# ── Start nginx ────────────────────────────────────────────────────────────────
-section "Starting nginx"
-docker compose up -d nginx
-info "nginx started"
-
+if [[ -n "${CERTBOT_EMAIL:-}" ]]; then
+  info "Obtaining Let's Encrypt certificate for ${DOMAIN}..."
+  docker compose --profile tls run --rm certbot certonly \
+    --webroot -w /var/www/certbot \
+    -d "${DOMAIN}" \
+    --email "${CERTBOT_EMAIL}" \
+    --agree-tos \
+    --no-eff-email
+  docker compose exec nginx nginx -s reload
+  info "Certificate installed and nginx reloaded."
+else
+  echo "To obtain a free Let's Encrypt certificate later, run:"
+  echo ""
+  echo "    docker compose --profile tls run --rm certbot certonly \\\"
+  echo "      --webroot -w /var/www/certbot \\\"
+  echo "      -d ${DOMAIN} \\\"
+  echo "      --email admin@${DOMAIN} --agree-tos --no-eff-email"
+  echo ""
+  echo "Then reload nginx:  docker compose exec nginx nginx -s reload"
+fi
+echo ""
+echo "To auto-renew (add to crontab):"
+echo "    0 3 * * * cd $SCRIPT_DIR && docker compose --profile tls run --rm certbot renew --quiet && docker compose exec nginx nginx -s reload"
 # ── TLS certificate ────────────────────────────────────────────────────────────
 section "TLS Certificate"
 echo ""

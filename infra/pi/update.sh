@@ -35,6 +35,12 @@ sudo systemctl restart signage-api
 
 echo "==> [update] Updating nginx config..."
 sudo cp "$APP_DIR/infra/nginx/signage.conf" /etc/nginx/sites-available/signage.conf
+if [[ -f "$APP_DIR/infra/nginx/platform.nexari.ca.conf" ]]; then
+    sudo cp "$APP_DIR/infra/nginx/platform.nexari.ca.conf" /etc/nginx/sites-available/platform.nexari.ca.conf
+    if [[ ! -L /etc/nginx/sites-enabled/platform.nexari.ca.conf ]]; then
+        sudo ln -s /etc/nginx/sites-available/platform.nexari.ca.conf /etc/nginx/sites-enabled/platform.nexari.ca.conf
+    fi
+fi
 sudo nginx -t && sudo systemctl reload nginx
 
 # ── Tizen assets directory ────────────────────────────────────────────────────

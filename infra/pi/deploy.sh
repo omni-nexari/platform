@@ -71,24 +71,39 @@ fi
 # Remove default site if still present
 [[ -L /etc/nginx/sites-enabled/default ]] && sudo rm -f /etc/nginx/sites-enabled/default
 
+# Install the platform vhost alongside signage so platform.nexari.ca serves
+# the correct origin certificate and proxy path.
+if [[ -f "$APP_DIR/infra/nginx/platform.nexari.ca.conf" ]]; then
+    sudo cp "$APP_DIR/infra/nginx/platform.nexari.ca.conf" /etc/nginx/sites-available/platform.nexari.ca.conf
+    if [[ ! -L /etc/nginx/sites-enabled/platform.nexari.ca.conf ]]; then
+        sudo ln -s /etc/nginx/sites-available/platform.nexari.ca.conf /etc/nginx/sites-enabled/platform.nexari.ca.conf
+    fi
+fi
+
 sudo nginx -t
 sudo systemctl reload nginx
 
 # ── TLS / certbot ─────────────────────────────────────────────────────────────
 if [[ -n "$CERTBOT_EMAIL" ]]; then
-    CERT_PATH="/etc/letsencrypt/live/ds.chiho.app/fullchain.pem"
-    if [[ ! -f "$CERT_PATH" ]]; then
-        echo "==> [deploy] Obtaining TLS certificate via certbot..."
-        sudo certbot --nginx \
-            -d ds.chiho.app \
-            --email "$CERTBOT_EMAIL" \
-            --agree-tos \
-            --non-interactive \
-            --redirect
-        sudo systemctl reload nginx
-    else
-        echo "==> [deploy] TLS cert already exists, skipping certbot."
-    fi
+    ensure_cert() {
+        local domain="$1"
+        local cert_path="/etc/letsencrypt/live/$domain/fullchain.pem"
+        if [[ ! -f "$cert_path" ]]; then
+            echo "==> [deploy] Obtaining TLS certificate for $domain via certbot..."
+            sudo certbot --nginx \
+                -d "$domain" \
+                --email "$CERTBOT_EMAIL" \
+                --agree-tos \
+                --non-interactive \
+                --redirect
+            sudo systemctl reload nginx
+        else
+            echo "==> [deploy] TLS cert already exists for $domain, skipping certbot."
+        fi
+    }
+
+    ensure_cert ds.chiho.app
+    ensure_cert platform.nexari.ca
 fi
 
 # ── systemd service ───────────────────────────────────────────────────────────

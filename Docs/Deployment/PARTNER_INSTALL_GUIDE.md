@@ -99,6 +99,7 @@ The installer will prompt for each value in turn. All secrets are masked as you 
 | Nexari license key | Provided by Nexari | — |
 | MQTT settings | Optional — for ESP32/e-paper | — |
 | Playwright / Chromium | Optional — see note below | — |
+| Let's Encrypt email | Recommended for automatic TLS issuance | Optional |
 
 > **Playwright note:** Chromium is used only for generating HTML5 package thumbnail images. Disabling it saves ~600 MB of disk space. HTML5 content will still play correctly on devices; only the thumbnail in the management portal will show a placeholder.
 
@@ -111,10 +112,13 @@ After confirming the summary, the installer:
 5. Runs database migrations
 6. Starts the API, waits for healthy status
 7. Starts nginx
+8. If you provided a Let's Encrypt email, issues and installs the TLS certificate automatically
 
 ### Obtain a TLS certificate
 
-Once nginx is running, issue a Let's Encrypt certificate:
+If you provided `CERTBOT_EMAIL` during installation, the certificate is issued automatically.
+
+If you skipped that prompt, issue a Let's Encrypt certificate manually after nginx is running:
 
 ```bash
 docker compose --profile tls run --rm certbot certonly \
