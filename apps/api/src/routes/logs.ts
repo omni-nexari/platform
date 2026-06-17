@@ -224,6 +224,7 @@ export async function logsRoutes(app: FastifyInstance) {
     { onRequest: [(app as any).authenticatePlatformAdmin] },
     async (req: any, reply) => {
       const token =
+        (req.cookies?.platform_sa_access_token as string | undefined) ??
         (req.cookies?.sa_access_token as string | undefined) ??
         (req.cookies?.access_token   as string | undefined) ??
         null;
@@ -267,6 +268,7 @@ export async function logsRoutes(app: FastifyInstance) {
     const cookieHeader = (req.headers as Record<string, string | undefined>)['cookie'];
     const token = (
       qs.get('token') ??
+      parseCookie(cookieHeader, 'platform_sa_access_token') ??
       parseCookie(cookieHeader, 'sa_access_token') ??
       parseCookie(cookieHeader, 'access_token')
     );

@@ -11,8 +11,10 @@ import fastifyMultipart from '@fastify/multipart';
 import { getRedis, isAccessTokenRevoked } from '../services/redis.js';
 
 const CSRF_COOKIE = 'csrf_token';
-const SA_ACCESS_COOKIE = 'sa_access_token';
-const SA_CSRF_COOKIE = 'sa_csrf_token';
+const PORTAL_ACCESS_COOKIE = 'platform_sa_access_token';
+const PORTAL_CSRF_COOKIE = 'platform_sa_csrf_token';
+const LEGACY_SA_ACCESS_COOKIE = 'sa_access_token';
+const LEGACY_SA_CSRF_COOKIE = 'sa_csrf_token';
 
 function normalizeOrigin(origin: string): string {
   return origin.replace(/\/$/, '');
@@ -139,16 +141,17 @@ export async function registerPlugins(app: FastifyInstance) {
     // rather than using startsWith so it works regardless of any leading prefix.
     const urlPath = req.url.split('?')[0] ?? req.url;
     // Portal-only route prefixes (platform owner / management admin).
-    // These routes use sa_access_token + sa_csrf_token regardless of URL prefix stripping.
+    // These routes use dedicated platform_sa_* cookies to avoid collisions with
+    // other Nexari apps running under a shared parent domain.
     const PORTAL_SEGMENTS = ['/superadmin', '/player-releases', '/monitoring'];
     // '/logs' alone would also match /devices/:id/logs — only treat as portal if NOT a device sub-route
     const isLogsPortalRoute = urlPath.includes('/logs') && !urlPath.includes('/devices/');
     const isPortalRequest = PORTAL_SEGMENTS.some((seg) => urlPath.includes(seg)) || isLogsPortalRoute;
     if (isPortalRequest) {
       return {
-        accessCookie: SA_ACCESS_COOKIE,
+        accessCookie: PORTAL_ACCESS_COOKIE,
         refreshCookie: null,
-        csrfCookie: SA_CSRF_COOKIE,
+        csrfCookie: PORTAL_CSRF_COOKIE,
       };
     }
 
@@ -174,7 +177,8 @@ export async function registerPlugins(app: FastifyInstance) {
   async function verifyCsrf(req: FastifyRequest, reply: FastifyReply) {
     if (!requiresCsrf(req)) return;
     const { csrfCookie } = getSessionCookieNames(req);
-    const cookieToken = req.cookies?.[csrfCookie];
+    const cookieToken = req.cookies?.[csrfCookie]
+      ?? (csrfCookie === PORTAL_CSRF_COOKIE ? req.cookies?.[LEGACY_SA_CSRF_COOKIE] : undefined);
     const headerToken = req.headers['x-csrf-token'];
     const normalizedHeader = Array.isArray(headerToken) ? headerToken[0] : headerToken;
     if (!cookieToken || !normalizedHeader || cookieToken !== normalizedHeader) {
@@ -187,7 +191,7 @@ export async function registerPlugins(app: FastifyInstance) {
     const bearerToken = authorization?.startsWith('Bearer ')
       ? authorization.slice('Bearer '.length).trim()
       : null;
-    const cookieToken = req.cookies?.[SA_ACCESS_COOKIE];
+    const cookieToken = req.cookies?.[PORTAL_ACCESS_COOKIE] ?? req.cookies?.[LEGACY_SA_ACCESS_COOKIE];
     const token = bearerToken || cookieToken;
 
     if (!token) {

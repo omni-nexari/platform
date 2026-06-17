@@ -55,8 +55,10 @@ const BRANDING_ASSET_TYPES = new Set(['logo', 'favicon', 'login-background']);
 const MAIN_ACCESS_COOKIE = 'access_token';
 const MAIN_REFRESH_COOKIE = 'refresh_token';
 const MAIN_CSRF_COOKIE = 'csrf_token';
-const SA_ACCESS_COOKIE = 'sa_access_token';
-const SA_CSRF_COOKIE = 'sa_csrf_token';
+const PORTAL_ACCESS_COOKIE = 'platform_sa_access_token';
+const PORTAL_CSRF_COOKIE = 'platform_sa_csrf_token';
+const LEGACY_SA_ACCESS_COOKIE = 'sa_access_token';
+const LEGACY_SA_CSRF_COOKIE = 'sa_csrf_token';
 
 async function findExistingPath(startPath: string): Promise<{ path: string; exact: boolean }> {
   let currentPath = path.resolve(startPath);
@@ -164,32 +166,40 @@ function randomToken(bytes = 32): string {
 const secureCookies = process.env['COOKIE_SECURE'] !== 'false';
 
 function setPortalAccessCookie(reply: FastifyReply, token: string) {
-  void reply.setCookie(SA_ACCESS_COOKIE, token, {
+  void reply.setCookie(PORTAL_ACCESS_COOKIE, token, {
     httpOnly: true,
     secure: secureCookies,
     sameSite: 'lax',
     path: '/',
     maxAge: 60 * 60 * 8,
   });
+
+  // Clear any legacy shared-domain cookie so future requests stop carrying it.
+  reply.clearCookie(LEGACY_SA_ACCESS_COOKIE, { path: '/' });
 }
 
 function setPortalCsrfCookie(reply: FastifyReply, token = randomToken(24)) {
-  void reply.setCookie(SA_CSRF_COOKIE, token, {
+  void reply.setCookie(PORTAL_CSRF_COOKIE, token, {
     httpOnly: false,
     secure: secureCookies,
     sameSite: 'lax',
     path: '/',
     maxAge: 60 * 60 * 8,
   });
+
+  // Clear any legacy shared-domain cookie so future requests stop carrying it.
+  reply.clearCookie(LEGACY_SA_CSRF_COOKIE, { path: '/' });
   return token;
 }
 
 function clearPortalAccessCookie(reply: FastifyReply) {
-  reply.clearCookie(SA_ACCESS_COOKIE, { path: '/' });
+  reply.clearCookie(PORTAL_ACCESS_COOKIE, { path: '/' });
+  reply.clearCookie(LEGACY_SA_ACCESS_COOKIE, { path: '/' });
 }
 
 function clearPortalCsrfCookie(reply: FastifyReply) {
-  reply.clearCookie(SA_CSRF_COOKIE, { path: '/' });
+  reply.clearCookie(PORTAL_CSRF_COOKIE, { path: '/' });
+  reply.clearCookie(LEGACY_SA_CSRF_COOKIE, { path: '/' });
 }
 
 function setMainAccessCookie(reply: FastifyReply, token: string) {
@@ -287,7 +297,7 @@ function readPortalAccessToken(req: FastifyRequest): string | null {
     return authorization.slice('Bearer '.length).trim();
   }
 
-  return req.cookies?.[SA_ACCESS_COOKIE] ?? null;
+  return req.cookies?.[PORTAL_ACCESS_COOKIE] ?? req.cookies?.[LEGACY_SA_ACCESS_COOKIE] ?? null;
 }
 
 function getPortalCaller(app: FastifyInstance, req: FastifyRequest): PlatformAdminCaller | null {
@@ -1449,7 +1459,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
       return reply.status(401).send({ error: 'Unauthorized' });
     }
 
-    if (!req.cookies?.[SA_CSRF_COOKIE]) {
+    if (!req.cookies?.[PORTAL_CSRF_COOKIE]) {
       setPortalCsrfCookie(reply);
     }
 

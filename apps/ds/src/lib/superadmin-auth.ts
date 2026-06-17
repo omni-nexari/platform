@@ -64,7 +64,7 @@ export function useIsPlatformOwner() {
 
 // ── SA API client ─────────────────────────────────────────────────────────────
 
-const CSRF_COOKIE = 'sa_csrf_token';
+const CSRF_COOKIE = 'platform_sa_csrf_token';
 
 function buildPortalApiUrl(path: string) {
   return buildApiUrl(path);
