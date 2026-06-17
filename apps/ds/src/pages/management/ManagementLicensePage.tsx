@@ -1,4 +1,4 @@
-﻿import { useState } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -202,7 +202,7 @@ function OrgAllocationRow({ org }: { org: OrgAllocation }) {
               </div>
               <div className="col-span-2 sm:col-span-4 flex gap-2 pt-1">
                 <button type="submit" className="btn-primary text-sm" disabled={save.isPending}>
-                  {save.isPending ? 'Savingâ€¦' : 'Save'}
+                  {save.isPending ? 'Saving...' : 'Save'}
                 </button>
                 <button type="button" className="workspace-page-action text-sm" onClick={() => setEditing(false)}>
                   Cancel
@@ -265,7 +265,7 @@ export default function ManagementLicensePage() {
     setTesting(true);
     try {
       await saApi.post('/superadmin/license-config/test');
-      toast.success('Heartbeat triggered â€” refreshing statusâ€¦');
+      toast.success('Heartbeat triggered - refreshing status...');
       setTimeout(() => void qc.invalidateQueries({ queryKey: ['license-config'] }), 3000);
     } catch {
       toast.error('Failed to trigger heartbeat');
@@ -362,14 +362,14 @@ export default function ManagementLicensePage() {
                       HMAC Secret
                       {config?.hmacSecretSet && (
                         <span className="ml-2 text-xs text-[var(--text-muted)] font-normal">
-                          (set â€” enter new value to rotate)
+                          (set - enter new value to rotate)
                         </span>
                       )}
                     </label>
                     <div className="relative">
                       <input id="hmacSecret" type={showSecret ? 'text' : 'password'}
                         className="ui-input w-full pr-10 font-mono"
-                        placeholder={config?.hmacSecretSet ? 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢' : 'Enter HMAC secret'}
+                        placeholder={config?.hmacSecretSet ? '****************' : 'Enter HMAC secret'}
                         {...register('hmacSecret')} />
                       <button type="button" onClick={() => setShowSecret((v) => !v)}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-default)]"
@@ -388,7 +388,7 @@ export default function ManagementLicensePage() {
                     <label htmlFor="isEnabled" className="text-sm">Enable license heartbeat</label>
                   </div>
                   <button type="submit" className="btn-primary" disabled={isSubmitting || !isDirty}>
-                    {isSubmitting ? 'Savingâ€¦' : 'Save'}
+                    {isSubmitting ? 'Saving...' : 'Save'}
                   </button>
                 </form>
               )}
@@ -567,7 +567,7 @@ export default function ManagementLicensePage() {
           </SectionCard>
 
           <p className="text-xs text-[var(--text-muted)]">
-            Limits are advisory â€” set max screens to control capacity per client.
+            Limits are advisory - set max screens to control capacity per client.
             Leave blank for unlimited. Module overrides restrict which features each org can access.
           </p>
         </>
