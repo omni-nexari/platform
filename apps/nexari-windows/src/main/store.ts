@@ -6,6 +6,16 @@ import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
 
+export function getDefaultApiBase(): string {
+  const configured = process.env.NEXARI_PLAYER_API_BASE ?? process.env.PLAYER_API_BASE;
+  const normalized = configured?.trim().replace(/\/$/, '');
+  if (normalized) return normalized;
+
+  return process.env.NEXARI_DEV === '1'
+    ? 'http://192.168.1.17/api/v1'
+    : 'https://ds.chiho.app/api/v1';
+}
+
 export interface StoreSchema {
   deviceToken: string;
   deviceId: string;
@@ -21,9 +31,7 @@ export interface StoreSchema {
 const DEFAULTS: StoreSchema = {
   deviceToken: '',
   deviceId: '',
-  apiBase: process.env.NEXARI_DEV === '1'
-    ? 'http://192.168.1.17/api/v1'
-    : 'https://ds.chiho.app/api/v1',
+  apiBase: getDefaultApiBase(),
   kioskPinHash: '',
   workspaceId: '',
   groupId: '',

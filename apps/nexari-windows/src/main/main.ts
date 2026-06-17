@@ -13,7 +13,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { autoUpdater } from 'electron-updater';
-import { getStore } from './store.js';
+import { getDefaultApiBase, getStore } from './store.js';
 import { createPlayerWindow } from './windows/player.js';
 import { createPairingWindow } from './windows/pairing.js';
 import { connectWs } from './ws-client.js';
@@ -109,9 +109,7 @@ app.on('ready', async () => {
   // Expose full config to renderer (player bootstrap)
   ipcMain.handle('app:getConfig', () => {
     const s = getStore();
-    const defaultApiBase = process.env.NEXARI_DEV === '1'
-      ? 'http://192.168.1.17/api/v1'
-      : 'https://ds.chiho.app/api/v1';
+    const defaultApiBase = getDefaultApiBase();
     return {
       apiBase:     s.get('apiBase') || defaultApiBase,
       deviceToken: s.get('deviceToken') || '',
@@ -172,11 +170,7 @@ app.on('ready', async () => {
   });
 
   // Expose default API base URL to renderer (pairing form)
-  ipcMain.handle('app:getDefaultApiBase', () =>
-    process.env.NEXARI_DEV === '1'
-      ? 'http://192.168.1.17/api/v1'
-      : 'https://ds.chiho.app/api/v1'
-  );
+  ipcMain.handle('app:getDefaultApiBase', () => getDefaultApiBase());
 
   // Allow renderer to trigger an update check manually (from settings overlay)
   ipcMain.handle('app:checkForUpdates', () => {
@@ -191,7 +185,7 @@ app.on('ready', async () => {
   //   - frame-src remains permissive because user content may include
   //     arbitrary iframes (HTML5 ads, calendars, dashboards).
   const apiBase = (getStore().get('apiBase') as string | undefined)
-    || (process.env.NEXARI_DEV === '1' ? 'http://192.168.1.17/api/v1' : 'https://ds.chiho.app/api/v1');
+    || getDefaultApiBase();
   const connectSrcHosts = new Set<string>(['ws://localhost:*', 'http://localhost:*', 'https://localhost:*']);
   try {
     const u = new URL(apiBase);

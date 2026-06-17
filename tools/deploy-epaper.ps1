@@ -1,11 +1,11 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    PROD build of nexari-epaper: bakes ds.chiho.app URL, signs, uploads to Pi.
+    PROD build of nexari-epaper: bakes platform.nexari.ca URL, signs, uploads to Pi.
 
 .DESCRIPTION
     1. Bumps patch version in package.json + config.xml.
-    2. Runs "npm run build" (API_BASE=https://ds.chiho.app/api/v1, WS_URL=wss://ds.chiho.app).
+    2. Runs build-info generation (API_BASE=https://platform.nexari.ca/api/v1, WS_URL=wss://platform.nexari.ca).
     3. Packages + signs with the nado-prod profile.
     4. Uploads NexariEPaper.wgt + sssp_config.xml to /var/signage/tizen/epaper/ on the Pi.
     5. Optionally installs directly onto the panel via SDB.
@@ -44,6 +44,8 @@ param(
     [string]$SuperadminEmail    = "chiho.lee23@gmail.com",
     [string]$SuperadminPassword = "",
     [string]$ReleaseNotes       = "",
+    [string]$PlayerApiBase      = "https://platform.nexari.ca/api/v1",
+    [string]$PlayerWsUrl        = "wss://platform.nexari.ca",
 
     [switch]$NoBuild,
     [switch]$InstallOnPanel,
@@ -129,12 +131,21 @@ if (-not $NoBuild) {
     if (-not (Test-Path $TizenCli)) { throw "Tizen CLI not found at: $TizenCli" }
 
     Write-Host ""
-    Write-Host "==> Building PROD app (API: https://ds.chiho.app)..." -ForegroundColor Cyan
+    Write-Host "==> Building PROD app (API: $PlayerApiBase)..." -ForegroundColor Cyan
 
     Push-Location $SrcDir
     try {
-        npm run build 2>&1 | Write-Host
-        if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
+        $prevApiBase = $env:API_BASE
+        $prevWsUrl = $env:WS_URL
+        try {
+            $env:API_BASE = $PlayerApiBase
+            $env:WS_URL = $PlayerWsUrl
+            node scripts/generate-build-info.cjs 2>&1 | Write-Host
+            if ($LASTEXITCODE -ne 0) { throw "generate-build-info failed" }
+        } finally {
+            $env:API_BASE = $prevApiBase
+            $env:WS_URL = $prevWsUrl
+        }
     } finally { Pop-Location }
 
     $tmp = "$env:TEMP\nexari-epaper-prod"
@@ -229,8 +240,8 @@ if ($SuperadminEmail -ne "" -and $SuperadminPassword -eq "") {
         [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secPwd))
 }
 if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
-    $ApiBase     = "https://ds.chiho.app"
-    $DownloadUrl = "https://ds.chiho.app/tizen/epaper/NexariEPaper.wgt"
+    $ApiBase     = "https://platform.nexari.ca"
+    $DownloadUrl = "https://platform.nexari.ca/tizen/epaper/NexariEPaper.wgt"
     Write-Host ""
     Write-Host "==> Publishing release v$appVer to $ApiBase ..." -ForegroundColor Cyan
     $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
@@ -275,6 +286,6 @@ if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
 # -- Summary -------------------------------------------------------------------
 Write-Host ""
 Write-Host "Done." -ForegroundColor Green
-Write-Host "  PROD build : v$appVer  (API: https://ds.chiho.app)" -ForegroundColor Green
-Write-Host "  SSSP URL (HTTPS): https://ds.chiho.app/tizen/epaper/sssp_config.xml" -ForegroundColor Gray
+Write-Host "  PROD build : v$appVer  (API: https://platform.nexari.ca)" -ForegroundColor Green
+Write-Host "  SSSP URL (HTTPS): https://platform.nexari.ca/tizen/epaper/sssp_config.xml" -ForegroundColor Gray
 Write-Host "  SSSP URL (LAN):   http://${PiHost}/tizen/epaper/sssp_config.xml" -ForegroundColor Gray

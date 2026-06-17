@@ -31,7 +31,8 @@ param(
 
     [string]$SuperadminEmail    = "chiho.lee23@gmail.com",
     [string]$SuperadminPassword = "",
-    [string]$ApiBase            = "https://ds.chiho.app/api/v1",
+    [string]$PlayerApiBase      = "https://platform.nexari.ca/api/v1",
+    [string]$ApiBase            = "https://platform.nexari.ca/api/v1",
     [string]$ReleaseNotes       = ""
 )
 
@@ -69,9 +70,21 @@ if (-not $SkipBuild) {
     Write-Host "=== Step 3: electron-builder --win --x64 ===" -ForegroundColor Cyan
     Push-Location $AppDir
     try {
+        $previousPlayerApiBase = $env:NEXARI_PLAYER_API_BASE
+        if ($PlayerApiBase -ne "") {
+            $env:NEXARI_PLAYER_API_BASE = $PlayerApiBase.Trim().TrimEnd('/')
+            Write-Host "Player default API base: $($env:NEXARI_PLAYER_API_BASE)" -ForegroundColor DarkGray
+        }
         pnpm run package
         if ($LASTEXITCODE -ne 0) { throw "electron-builder failed" }
-    } finally { Pop-Location }
+    } finally {
+        if ($null -ne $previousPlayerApiBase) {
+            $env:NEXARI_PLAYER_API_BASE = $previousPlayerApiBase
+        } else {
+            Remove-Item Env:NEXARI_PLAYER_API_BASE -ErrorAction SilentlyContinue
+        }
+        Pop-Location
+    }
 } else {
     Write-Host "=== -SkipBuild: using existing installer in $ReleaseDir ===" -ForegroundColor DarkGray
 }
@@ -140,7 +153,7 @@ if ($SuperadminEmail -ne "" -and $SuperadminPassword -eq "") {
 }
 if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
     $ApiBase = $ApiBase.TrimEnd('/')
-    $DownloadUrl = "https://ds.chiho.app/windows/nexari-windows-setup.exe"
+    $DownloadUrl = "https://platform.nexari.ca/windows/nexari-windows-setup.exe"
 
     Write-Host ""
     Write-Host "=== Publishing release v$newVersion to DS API ===" -ForegroundColor Cyan
@@ -192,6 +205,6 @@ Write-Host ""
 Write-Host "==================================================" -ForegroundColor Green
 Write-Host "  nexari-windows  $newVersion  PROD build complete" -ForegroundColor Green
 Write-Host "  Installer: $InstallerPath" -ForegroundColor Green
-Write-Host "  OTA URL:   https://ds.chiho.app/windows/nexari-windows-setup.exe" -ForegroundColor Green
-Write-Host "  Auto-upd:  https://ds.chiho.app/windows/latest.yml" -ForegroundColor Green
+Write-Host "  OTA URL:   https://platform.nexari.ca/windows/nexari-windows-setup.exe" -ForegroundColor Green
+Write-Host "  Auto-upd:  https://platform.nexari.ca/windows/latest.yml" -ForegroundColor Green
 Write-Host "==================================================" -ForegroundColor Green

@@ -314,10 +314,10 @@ async function collectRecentLogs(since: Date): Promise<Array<{
 
     return rows.map((r) => ({
       level: r.level as 'error' | 'warn',
-      source: r.source,
-      message: r.message,
+      source: r.source.slice(0, 50),
+      message: r.message.slice(0, 2000),
       ...(r.meta ? { meta: r.meta as Record<string, unknown> } : {}),
-      ...(r.appVersion ? { appVersion: r.appVersion } : {}),
+      ...(r.appVersion ? { appVersion: r.appVersion.slice(0, 50) } : {}),
       loggedAt: r.createdAt.getTime(),
     }));
   } catch {

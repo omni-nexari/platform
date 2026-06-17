@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Deploy Nexari ESP32 firmware to production (ds.chiho.app).
+    Deploy Nexari ESP32 firmware to production (platform.nexari.ca).
 
 .DESCRIPTION
     Bumps the patch version in package.json, builds the nexari-esp32-prod

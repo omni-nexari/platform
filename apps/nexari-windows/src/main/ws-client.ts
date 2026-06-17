@@ -8,7 +8,7 @@
  */
 import WebSocket, { type RawData } from 'ws';
 import { app, BrowserWindow, ipcMain, screen } from 'electron';
-import { getStore } from './store.js';
+import { getDefaultApiBase, getStore } from './store.js';
 import { getSystemInfo, getWifiSsid } from './os-bridge.js';
 import os from 'os';
 
@@ -163,7 +163,7 @@ export function connectWs(playerWindow: BrowserWindow) {
 
 function connect() {
   const store = getStore();
-  const apiBase = store.get('apiBase') || 'https://ds.chiho.app/api/v1';
+  const apiBase = store.get('apiBase') || getDefaultApiBase();
   const token   = store.get('deviceToken');
   if (!token) return;
 

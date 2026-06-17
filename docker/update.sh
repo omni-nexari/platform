@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+platform.nexari.ca#!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # Nexari Platform — Update Script
 #

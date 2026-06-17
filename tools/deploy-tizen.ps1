@@ -27,13 +27,13 @@
     Superadmin password. Required when SuperadminEmail is provided.
 
 .PARAMETER ApiBase
-    DS API base URL. Defaults to https://ds.chiho.app
+    DS API base URL. Defaults to https://platform.nexari.ca
 
 .PARAMETER ReleaseNotes
     Optional release notes stored with the player_releases record.
 
 .EXAMPLE
-    # Build + deploy (default — always builds with ds.chiho.app API URL):
+    # Build + deploy (default — always builds with platform.nexari.ca API URL):
     .\tools\deploy-tizen.ps1 -PiHost 192.168.1.17
 
     # Build + deploy + publish release to DS portal:
@@ -50,7 +50,7 @@ param(
 
     [string]$SuperadminEmail = "chiho.lee23@gmail.com",
     [string]$SuperadminPassword = "",
-    [string]$ApiBase = "",
+    [string]$ApiBase = "https://platform.nexari.ca",
     [string]$ReleaseNotes = "",
 
     # Auto-bump version before packing. Default "" = use current version from package.json.
@@ -60,7 +60,7 @@ param(
     [string]$BumpVersion = "",
 
     # Skip the Tizen CLI build step (use existing NexariPlayer.wgt as-is).
-    # By default this script always builds with npm run build (ds.chiho.app API URL).
+    # By default this script always builds with npm run build:platform (platform.nexari.ca API URL).
     [switch]$NoBuild,
 
     # Tizen Studio CLI path (tizen.bat)
@@ -71,9 +71,6 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-
-# Default API base to local Pi IP so LAN calls work without hairpin NAT
-if ($ApiBase -eq "") { $ApiBase = "http://$PiHost" }
 
 $RepoRoot  = Split-Path -Parent $PSScriptRoot
 $TizenDir  = Join-Path $RepoRoot "apps\nexari-tizen"
@@ -130,7 +127,7 @@ if ($BumpVersion -ne "") {
 
 # -- Tizen CLI build (skipped only if -NoBuild is passed) --------------------
 if (-not $NoBuild) {
-    Write-Host "==> Building prod Tizen app (API: https://ds.chiho.app)..." -ForegroundColor Cyan
+    Write-Host "==> Building prod Tizen app (API: https://platform.nexari.ca)..." -ForegroundColor Cyan
 
     if (-not (Test-Path $TizenCli)) {
         throw "Tizen CLI not found at: $TizenCli - install Tizen Studio or pass -TizenCli"
@@ -138,9 +135,9 @@ if (-not $NoBuild) {
 
     Push-Location $TizenDir
     try {
-        Write-Host "  Running npm run build..."
-        npm run build 2>&1 | Write-Host
-        if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
+        Write-Host "  Running npm run build:platform..."
+        npm run build:platform 2>&1 | Write-Host
+        if ($LASTEXITCODE -ne 0) { throw "npm run build:platform failed" }
     } finally {
         Pop-Location
     }
@@ -271,7 +268,7 @@ if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
 
     $pkgJson = Get-Content (Join-Path $TizenDir "package.json") -Raw | ConvertFrom-Json
     $Version = $pkgJson.version
-    $DownloadUrl = "https://ds.chiho.app/tizen/NexariPlayer.wgt"
+    $DownloadUrl = "https://platform.nexari.ca/tizen/NexariPlayer.wgt"
 
     Write-Host "==> Publishing release v$Version to $ApiBase ..." -ForegroundColor Cyan
 
@@ -326,6 +323,6 @@ else {
 $finalVer = (Get-Content (Join-Path $TizenDir "package.json") -Raw | ConvertFrom-Json).version
 Write-Host ""
 Write-Host "Done." -ForegroundColor Green
-Write-Host "  Prod build : v$finalVer  (API: https://ds.chiho.app)" -ForegroundColor Green
-Write-Host "  TV launcher URL (HTTPS): https://ds.chiho.app/tizen/sssp_config.xml" -ForegroundColor Gray
+Write-Host "  Prod build : v$finalVer  (API: https://platform.nexari.ca)" -ForegroundColor Green
+Write-Host "  TV launcher URL (HTTPS): https://platform.nexari.ca/tizen/sssp_config.xml" -ForegroundColor Gray
 Write-Host "  TV launcher URL (LAN):   http://${PiHost}/tizen/sssp_config.xml" -ForegroundColor Gray

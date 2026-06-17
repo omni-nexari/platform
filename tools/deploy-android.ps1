@@ -9,7 +9,7 @@
 
     1. Builds @signage/player-web.
     2. Syncs the bundle into Android assets.
-    3. Runs Gradle assembleSelfRelease (prod API: https://ds.chiho.app).
+    3. Runs Gradle assembleSelfRelease (test API: https://platform.nexari.ca).
     4. Uploads the APK to the Pi at /var/signage/android/nexari-android.apk.
     5. Optionally installs the APK on a USB-connected device via ADB.
     6. Optionally publishes an OTA release record to the DS API.
@@ -34,9 +34,11 @@ param(
 
     [string]$SuperadminEmail = "chiho.lee23@gmail.com",
     [string]$SuperadminPassword = "",
-    [string]$ApiBase = "https://ds.chiho.app/api/v1",
+    [string]$ApiBase = "https://platform.nexari.ca/api/v1",
+    [string]$PlayerApiBase = "https://platform.nexari.ca/api/v1",
+    [string]$PlayerWsBase = "wss://platform.nexari.ca",
     [string]$ReleaseNotes = "",
-    [string]$OtaUrl = "https://ds.chiho.app/android/nexari-android.apk"
+    [string]$OtaUrl = "https://platform.nexari.ca/android/nexari-android.apk"
 )
 
 $ErrorActionPreference = "Stop"
@@ -159,7 +161,9 @@ if (-not $SkipBuild) {
     Ensure-GradleWrapper $AndroidDir
     Push-Location $AndroidDir
     try {
-        .\gradlew.bat assembleSelfRelease
+        .\gradlew.bat assembleSelfRelease `
+            "-PpartnerApiBase=$PlayerApiBase" `
+            "-PpartnerWsBase=$PlayerWsBase"
         if ($LASTEXITCODE -ne 0) { throw "Gradle assembleSelfRelease failed" }
     } finally { Pop-Location }
 } else {
