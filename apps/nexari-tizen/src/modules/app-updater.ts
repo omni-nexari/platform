@@ -21,8 +21,21 @@
 
 namespace AppUpdater {
 
-  /** Hosts permitted as the origin for OTA downloads. */
-  const UPDATE_HOST_ALLOWLIST: string[] = ['ds.chiho.app', 'updates.chiho.app'];
+  /** Hosts permitted as the origin for OTA downloads.
+   * Always includes the host from CONFIG.API_BASE so partner instances work. */
+  function getAllowedHosts(): string[] {
+    const hosts: string[] = [];
+    try {
+      const apiBase: string = (typeof CONFIG !== 'undefined' && (CONFIG as any).API_BASE)
+        ? String((CONFIG as any).API_BASE)
+        : '';
+      if (apiBase) {
+        const u = new URL(apiBase.replace(/\/api\/v1\/?$/, ''));
+        if (u.hostname) hosts.push(u.hostname);
+      }
+    } catch (_) {}
+    return hosts;
+  }
 
   interface AppUpdateMsg {
     wgtUrl: string;
@@ -53,8 +66,9 @@ namespace AppUpdater {
     try {
       const u = new URL(absolute);
       if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
-      if (UPDATE_HOST_ALLOWLIST.indexOf(u.hostname) === -1) {
-        console.error('[AppUpdater] Refusing download from non-allowlisted host:', u.hostname);
+      const allowedHosts = getAllowedHosts();
+      if (allowedHosts.indexOf(u.hostname) === -1) {
+        console.error('[AppUpdater] Refusing download from non-allowlisted host:', u.hostname, '(allowed:', allowedHosts.join(', '), ')');
         return null;
       }
       return absolute;

@@ -181,6 +181,40 @@ server {
         proxy_read_timeout 3600s;
     }
 
+    # ── Player app downloads — stable per-platform URLs for device provisioning ─
+    # Files are placed at /var/nexari/player-builds/{platform}/ on the host via SCP
+    # by build-partner-players.ps1. Devices and users download directly from here.
+    location /tizen/ {
+        alias /var/nexari/player-builds/tizen/;
+        autoindex off;
+        add_header Content-Disposition 'attachment';
+        add_header Cache-Control "no-cache";
+    }
+    location /epaper/ {
+        alias /var/nexari/player-builds/epaper/;
+        autoindex off;
+        add_header Content-Disposition 'attachment';
+        add_header Cache-Control "no-cache";
+    }
+    location /android/ {
+        alias /var/nexari/player-builds/android/;
+        autoindex off;
+        add_header Content-Disposition 'attachment';
+        add_header Cache-Control "no-cache";
+    }
+    location /windows/ {
+        alias /var/nexari/player-builds/windows/;
+        autoindex off;
+        add_header Content-Disposition 'attachment';
+        add_header Cache-Control "no-cache";
+    }
+    location /esp32/ {
+        alias /var/nexari/player-builds/esp32/;
+        autoindex off;
+        add_header Content-Disposition 'attachment';
+        add_header Cache-Control "no-cache";
+    }
+
     # ── DS SPA fallback — all unmatched paths serve index.html ───────────────
     location / {
         try_files $uri $uri/ /index.html;

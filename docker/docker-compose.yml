@@ -122,6 +122,9 @@ services:
       - certbot_certs:/etc/letsencrypt:ro
       # Uploads served directly by nginx via internal X-Accel-Redirect
       - uploads:/var/signage/uploads:ro
+      # Player app downloads — populated by build-partner-players.ps1 via SCP
+      # Files land at /var/nexari/player-builds/{platform}/{filename}
+      - /var/nexari/player-builds:/var/nexari/player-builds:ro
     depends_on:
       - api
       - ds-init

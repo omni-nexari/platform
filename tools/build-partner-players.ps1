@@ -64,9 +64,16 @@ param(
     [ValidateSet("", "tizen", "epaper", "android", "windows", "esp32")]
     [string]$Platform = "",
 
+    # Admin server (nexari-admin) — used for API calls (and SCP if same machine)
     [string]$PiHost    = "192.168.1.17",
     [string]$PiUser    = "chiho",
     [int]$SshPort      = 5551,
+
+    # Platform server — where Docker nginx serves /tizen/, /android/, etc.
+    # Defaults to the same machine as the admin server.
+    [string]$PlatformSshHost = "",
+    [string]$PlatformSshUser = "",
+    [int]$PlatformSshPort    = 0,
 
     # Path to a pre-built Windows installer (required when -Platform windows)
     [string]$WindowsInstallerPath = "",
@@ -84,9 +91,6 @@ $EpaperDir    = Join-Path $RepoRoot "apps\nexari-epaper"
 $AndroidDir   = Join-Path $RepoRoot "apps\nexari-android"
 $TizenCli     = "C:\tizen-studio\tools\ide\bin\tizen.bat"
 $SignProfile   = "nado-prod"
-$RemoteBuildsDir = "/var/nexari-admin/player-builds"
-$RemoteGenericDir = "/var/nexari-admin/player-generic"
-$PublicBaseUrl = "https://nexari.ca/player"
 
 # ── Auth to nexari-admin API ──────────────────────────────────────────────────
 if ($AdminPassword -eq "") {
@@ -188,17 +192,24 @@ Write-Host ""
 Write-Host "Building for: $($partner.Name)" -ForegroundColor Cyan
 if ($instanceUrl) { Write-Host "  Instance: $instanceUrl" }
 
-# ── Build dir on server ───────────────────────────────────────────────────────
-$buildUuid  = [System.Guid]::NewGuid().ToString()
-$SshTarget  = "$PiUser@$PiHost"
+# ── SSH targets ───────────────────────────────────────────────────────────────
+# Admin server (for API calls, used with $PiHost/$SshPort)
+$SshTarget   = "$PiUser@$PiHost"
 $sshPortArgs = @("-p", $SshPort)
-$remoteBuildDir = "$RemoteBuildsDir/$buildUuid"
 
-ssh @sshPortArgs $SshTarget "mkdir -p '$remoteBuildDir'"
+# Platform server — where /var/nexari/player-builds/ lives inside Docker.
+# Defaults to the same machine as the admin server.
+$platSshHost = if ($PlatformSshHost -ne "") { $PlatformSshHost } else { $PiHost }
+$platSshUser = if ($PlatformSshUser -ne "") { $PlatformSshUser } else { $PiUser }
+$platSshPort = if ($PlatformSshPort -ne 0)  { $PlatformSshPort }  else { $SshPort }
+$PlatformSshTarget  = "${platSshUser}@${platSshHost}"
+$RemoteBuildsRoot    = "/var/nexari/player-builds"
 
 function Register-Build {
     param([string]$Plat, [string]$Filename, [string]$Ver, [string]$BldUuid)
-    $dlUrl = "$PublicBaseUrl/p/$BldUuid/$Filename"
+    # Download URL points to the partner's own platform instance URL.
+    # The file is served by the platform nginx at /{platform}/{filename}.
+    $dlUrl = "$instanceUrl/$Plat/$Filename"
     $body = @{
         partnerId        = $partner.Id
         licenseKeyId     = $partner.LicenseKeyId
@@ -254,8 +265,9 @@ foreach ($plat in $platforms) {
                 } finally { Pop-Location }
             }
             $ver = (Get-Content "$TizenDir\package.json" -Raw | ConvertFrom-Json).version
-            scp -P $SshPort "$TizenDir\NexariPlayer.wgt" "${SshTarget}:${remoteBuildDir}/NexariPlayer.wgt"
-            Register-Build -Plat tizen -Filename "NexariPlayer.wgt" -Ver $ver -BldUuid $buildUuid
+            ssh -p $platSshPort $PlatformSshTarget "mkdir -p $RemoteBuildsRoot/tizen"
+            scp -P $platSshPort "$TizenDir\NexariPlayer.wgt" "${PlatformSshTarget}:${RemoteBuildsRoot}/tizen/NexariPlayer.wgt"
+            Register-Build -Plat tizen -Filename "NexariPlayer.wgt" -Ver $ver -BldUuid ""
             Write-Host "  Done. v$ver" -ForegroundColor Green
         }
 
@@ -288,8 +300,9 @@ foreach ($plat in $platforms) {
                 } finally { Pop-Location }
             }
             $ver = (Get-Content "$EpaperDir\package.json" -Raw | ConvertFrom-Json).version
-            scp -P $SshPort "$EpaperDir\NexariEPaper.wgt" "${SshTarget}:${remoteBuildDir}/NexariEPaper.wgt"
-            Register-Build -Plat epaper -Filename "NexariEPaper.wgt" -Ver $ver -BldUuid $buildUuid
+            ssh -p $platSshPort $PlatformSshTarget "mkdir -p $RemoteBuildsRoot/epaper"
+            scp -P $platSshPort "$EpaperDir\NexariEPaper.wgt" "${PlatformSshTarget}:${RemoteBuildsRoot}/epaper/NexariEPaper.wgt"
+            Register-Build -Plat epaper -Filename "NexariEPaper.wgt" -Ver $ver -BldUuid ""
             Write-Host "  Done. v$ver" -ForegroundColor Green
         }
 
@@ -320,16 +333,45 @@ foreach ($plat in $platforms) {
             $ApkSrc = "$AndroidDir\android\app\build\outputs\apk\self\release\app-self-release.apk"
             if (-not (Test-Path $ApkSrc)) { Write-Error "APK not found: $ApkSrc"; continue }
             $apkFilename = "nexari-android.apk"
-            scp -P $SshPort "$ApkSrc" "${SshTarget}:${remoteBuildDir}/$apkFilename"
-            Register-Build -Plat android -Filename $apkFilename -Ver $ver -BldUuid $buildUuid
+            ssh -p $platSshPort $PlatformSshTarget "mkdir -p $RemoteBuildsRoot/android"
+            scp -P $platSshPort "$ApkSrc" "${PlatformSshTarget}:${RemoteBuildsRoot}/android/$apkFilename"
+            Register-Build -Plat android -Filename $apkFilename -Ver $ver -BldUuid ""
             Write-Host "  Done. v$ver" -ForegroundColor Green
         }
 
         "windows" {
+            $winAppDir     = Join-Path $RepoRoot "apps\nexari-windows"
+            $winReleaseDir = Join-Path $winAppDir "release"
+
+            if (-not $SkipBuild) {
+                Write-Host "  Building player-web bundle..."
+                Push-Location $RepoRoot
+                try {
+                    pnpm --filter "@signage/player-web" build
+                    if ($LASTEXITCODE -ne 0) { throw "player-web build failed" }
+                } finally { Pop-Location }
+
+                Write-Host "  Bumping version..."
+                Push-Location $winAppDir
+                try {
+                    npm version patch --no-git-tag-version | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "npm version patch failed" }
+                } finally { Pop-Location }
+
+                Write-Host "  Running electron-builder (NSIS)..."
+                Push-Location $winAppDir
+                try {
+                    $env:NEXARI_PLAYER_API_BASE = $apiBase
+                    pnpm run package
+                    if ($LASTEXITCODE -ne 0) { throw "electron-builder failed" }
+                } finally {
+                    Remove-Item Env:NEXARI_PLAYER_API_BASE -ErrorAction SilentlyContinue
+                    Pop-Location
+                }
+            }
+
             $src = if ($WindowsInstallerPath -ne "") { $WindowsInstallerPath } else {
-                # Look for an installer in the nexari-windows release dir
-                $winDir = Join-Path $RepoRoot "apps\nexari-windows\release"
-                Get-ChildItem $winDir -Filter '*-setup.exe' -ErrorAction SilentlyContinue |
+                Get-ChildItem $winReleaseDir -Filter '*-setup.exe' -ErrorAction SilentlyContinue |
                     Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
             }
             if (-not $src -or -not (Test-Path $src)) {
@@ -338,8 +380,9 @@ foreach ($plat in $platforms) {
             }
             $filename = "nexari-windows-setup.exe"
             $ver = if ($src -match '(\d+\.\d+\.\d+)') { $Matches[1] } else { "0.0.0" }
-            scp -P $SshPort "$src" "${SshTarget}:${remoteBuildDir}/$filename"
-            Register-Build -Plat windows -Filename $filename -Ver $ver -BldUuid $buildUuid
+            ssh -p $platSshPort $PlatformSshTarget "mkdir -p $RemoteBuildsRoot/windows"
+            scp -P $platSshPort "$src" "${PlatformSshTarget}:${RemoteBuildsRoot}/windows/$filename"
+            Register-Build -Plat windows -Filename $filename -Ver $ver -BldUuid ""
             Write-Host "  Done. v$ver" -ForegroundColor Green
         }
 
@@ -357,8 +400,9 @@ foreach ($plat in $platforms) {
             Push-Location (Join-Path $RepoRoot "apps\nexari-esp32")
             $ver = try { (Get-Content "platformio.ini" | Select-String 'version\s*=\s*(.+)').Matches[0].Groups[1].Value.Trim() } catch { "0.0.0" }
             Pop-Location
-            scp -P $SshPort "$src" "${SshTarget}:${remoteBuildDir}/$filename"
-            Register-Build -Plat esp32 -Filename $filename -Ver $ver -BldUuid $buildUuid
+            ssh -p $platSshPort $PlatformSshTarget "mkdir -p $RemoteBuildsRoot/esp32"
+            scp -P $platSshPort "$src" "${PlatformSshTarget}:${RemoteBuildsRoot}/esp32/$filename"
+            Register-Build -Plat esp32 -Filename $filename -Ver $ver -BldUuid ""
             Write-Host "  Done. v$ver" -ForegroundColor Green
         }
     }
