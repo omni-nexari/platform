@@ -87,6 +87,9 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     networks:
       - internal
     # Expose to nginx but not directly to the host
