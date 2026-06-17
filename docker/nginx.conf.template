@@ -184,6 +184,15 @@ server {
     # ── Player app downloads — stable per-platform URLs for device provisioning ─
     # Files are placed at /var/nexari/player-builds/{platform}/ on the host via SCP
     # by build-partner-players.ps1. Devices and users download directly from here.
+    #
+    # Exact-match redirects so /tizen (no slash) → /tizen/ (correct location block).
+    # This is what browsers and URL Launcher will request when typed without slash.
+    location = /tizen   { return 301 /tizen/; }
+    location = /epaper  { return 301 /epaper/; }
+    location = /android { return 301 /android/; }
+    location = /windows { return 301 /windows/; }
+    location = /esp32   { return 301 /esp32/; }
+
     location /tizen/ {
         alias /var/nexari/player-builds/tizen/;
         autoindex off;

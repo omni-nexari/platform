@@ -265,10 +265,14 @@ foreach ($plat in $platforms) {
                 } finally { Pop-Location }
             }
             $ver = (Get-Content "$TizenDir\package.json" -Raw | ConvertFrom-Json).version
+            # Update sssp_config.xml with current version + WGT byte-size
+            Push-Location $TizenDir
+            npm run pack:sssp 2>&1 | Out-Null  # warns about /var/signage/tizen not existing on Windows, that's fine
+            Pop-Location
             ssh -p $platSshPort $PlatformSshTarget "mkdir -p $RemoteBuildsRoot/tizen"
-            scp -P $platSshPort "$TizenDir\NexariPlayer.wgt" "${PlatformSshTarget}:${RemoteBuildsRoot}/tizen/NexariPlayer.wgt"
+            scp -P $platSshPort "$TizenDir\NexariPlayer.wgt" "$TizenDir\sssp_config.xml" "${PlatformSshTarget}:${RemoteBuildsRoot}/tizen/"
             Register-Build -Plat tizen -Filename "NexariPlayer.wgt" -Ver $ver -BldUuid ""
-            Write-Host "  Done. v$ver" -ForegroundColor Green
+            Write-Host "  Done. v$ver  SSSP: $instanceUrl/tizen/sssp_config.xml" -ForegroundColor Green
         }
 
         "epaper" {
@@ -300,10 +304,18 @@ foreach ($plat in $platforms) {
                 } finally { Pop-Location }
             }
             $ver = (Get-Content "$EpaperDir\package.json" -Raw | ConvertFrom-Json).version
+            # Patch sssp_config.xml with current version + WGT byte-size (same as deploy-epaper.ps1)
+            $epaperSsspPath = "$EpaperDir\sssp_config.xml"
+            $wgtBytes = (Get-Item "$EpaperDir\NexariEPaper.wgt").Length
+            $ssspXml = [System.IO.File]::ReadAllText($epaperSsspPath)
+            $ssspXml = $ssspXml -replace '<size>\d+</size>', "<size>$wgtBytes</size>"
+            $ssspXml = $ssspXml -replace '<ver>[^<]*</ver>', "<ver>$ver</ver>"
+            [System.IO.File]::WriteAllText($epaperSsspPath, $ssspXml)
+            Write-Host "  sssp_config.xml: <ver>$ver</ver> <size>$wgtBytes</size>" -ForegroundColor DarkGray
             ssh -p $platSshPort $PlatformSshTarget "mkdir -p $RemoteBuildsRoot/epaper"
-            scp -P $platSshPort "$EpaperDir\NexariEPaper.wgt" "${PlatformSshTarget}:${RemoteBuildsRoot}/epaper/NexariEPaper.wgt"
+            scp -P $platSshPort "$EpaperDir\NexariEPaper.wgt" "$EpaperDir\sssp_config.xml" "${PlatformSshTarget}:${RemoteBuildsRoot}/epaper/"
             Register-Build -Plat epaper -Filename "NexariEPaper.wgt" -Ver $ver -BldUuid ""
-            Write-Host "  Done. v$ver" -ForegroundColor Green
+            Write-Host "  Done. v$ver  SSSP: $instanceUrl/epaper/sssp_config.xml" -ForegroundColor Green
         }
 
         "android" {
