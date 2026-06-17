@@ -3882,6 +3882,27 @@ export async function superAdminRoutes(app: FastifyInstance) {
     });
   });
 
+  // ── POST /superadmin/license-config/test ────────────────────────────────────
+  // Trigger an immediate license heartbeat and return the resulting status.
+  // Used by the UI "Test Connection" button.
+
+  app.post('/license-config/test', async (req, reply) => {
+    const caller = getPortalCaller(app, req);
+    if (!caller) return reply.status(401).send({ error: 'Unauthorized' });
+
+    const { triggerHeartbeat, getLicenseState } = await import('../services/license-client.js');
+    await triggerHeartbeat().catch(() => {});
+
+    const state = getLicenseState();
+    const row = await db.query.licenseConfig.findFirst();
+    return reply.send({
+      ok: true,
+      status: state?.status ?? null,
+      lastCheckedAt: state?.checkedAt ?? row?.lastCheckedAt ?? null,
+      lastError: row?.lastError ?? null,
+    });
+  });
+
   // ── License allocations ── GET /superadmin/license-allocations ─────────────
   // Management admins can see all their client orgs with current usage and
   // their allocated screen limits. POST/PUT per-org to set limits.
