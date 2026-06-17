@@ -61,12 +61,17 @@ param(
     [string]$AdminPassword = "",
     [string]$AdminApiBase  = "https://admin.nexari.ca/api/v1",
 
-    [ValidateSet("", "tizen", "epaper", "android")]
+    [ValidateSet("", "tizen", "epaper", "android", "windows", "esp32")]
     [string]$Platform = "",
 
     [string]$PiHost    = "192.168.1.17",
     [string]$PiUser    = "chiho",
     [int]$SshPort      = 5551,
+
+    # Path to a pre-built Windows installer (required when -Platform windows)
+    [string]$WindowsInstallerPath = "",
+    # Path to a pre-built ESP32 firmware .bin (required when -Platform esp32)
+    [string]$Esp32BinPath = "",
 
     [switch]$SkipBuild,
     [switch]$RegisterGeneric
@@ -142,7 +147,7 @@ Write-Host "Fetching partners..." -ForegroundColor Cyan
 $resp = Invoke-AdminApi -Method Get -Path "/partners"
 $allPartners = $resp.partners
 
-$partnerInfos = $allPartners | ForEach-Object {
+$partnerInfos = @($allPartners | ForEach-Object {
     [PSCustomObject]@{
         Id           = $_.id
         Name         = $_.name
@@ -150,7 +155,7 @@ $partnerInfos = $allPartners | ForEach-Object {
         InstanceUrl  = $_.instanceUrl
         LicenseKeyId = $_.licenseKeyId
     }
-}
+})
 
 # ── Partner picker ────────────────────────────────────────────────────────────
 Write-Host ""
@@ -210,7 +215,7 @@ function Register-Build {
     return $dlUrl
 }
 
-$platforms = if ($Platform -ne "") { @($Platform) } else { @("tizen", "epaper", "android") }
+$platforms = if ($Platform -ne "") { @($Platform) } else { @("tizen", "epaper", "android", "windows", "esp32") }
 
 foreach ($plat in $platforms) {
     Write-Host ""
@@ -317,6 +322,43 @@ foreach ($plat in $platforms) {
             $apkFilename = "nexari-android.apk"
             scp -P $SshPort "$ApkSrc" "${SshTarget}:${remoteBuildDir}/$apkFilename"
             Register-Build -Plat android -Filename $apkFilename -Ver $ver -BldUuid $buildUuid
+            Write-Host "  Done. v$ver" -ForegroundColor Green
+        }
+
+        "windows" {
+            $src = if ($WindowsInstallerPath -ne "") { $WindowsInstallerPath } else {
+                # Look for an installer in the nexari-windows release dir
+                $winDir = Join-Path $RepoRoot "apps\nexari-windows\release"
+                Get-ChildItem $winDir -Filter '*-setup.exe' -ErrorAction SilentlyContinue |
+                    Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+            }
+            if (-not $src -or -not (Test-Path $src)) {
+                Write-Warning "  Windows: no installer found. Build with deploy-windows.ps1 first, or pass -WindowsInstallerPath. Skipping."
+                continue
+            }
+            $filename = "nexari-windows-setup.exe"
+            $ver = if ($src -match '(\d+\.\d+\.\d+)') { $Matches[1] } else { "0.0.0" }
+            scp -P $SshPort "$src" "${SshTarget}:${remoteBuildDir}/$filename"
+            Register-Build -Plat windows -Filename $filename -Ver $ver -BldUuid $buildUuid
+            Write-Host "  Done. v$ver" -ForegroundColor Green
+        }
+
+        "esp32" {
+            $src = if ($Esp32BinPath -ne "") { $Esp32BinPath } else {
+                $esp32Dir = Join-Path $RepoRoot "apps\nexari-esp32\.pio\build\esp32dev"
+                $bin = Join-Path $esp32Dir "firmware.bin"
+                if (Test-Path $bin) { $bin } else { $null }
+            }
+            if (-not $src -or -not (Test-Path $src)) {
+                Write-Warning "  ESP32: no firmware.bin found. Build with deploy-esp32.ps1 first, or pass -Esp32BinPath. Skipping."
+                continue
+            }
+            $filename = "nexari-esp32.bin"
+            Push-Location (Join-Path $RepoRoot "apps\nexari-esp32")
+            $ver = try { (Get-Content "platformio.ini" | Select-String 'version\s*=\s*(.+)').Matches[0].Groups[1].Value.Trim() } catch { "0.0.0" }
+            Pop-Location
+            scp -P $SshPort "$src" "${SshTarget}:${remoteBuildDir}/$filename"
+            Register-Build -Plat esp32 -Filename $filename -Ver $ver -BldUuid $buildUuid
             Write-Host "  Done. v$ver" -ForegroundColor Green
         }
     }

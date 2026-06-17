@@ -22,18 +22,14 @@
 #>
 param(
     [string]$PiHost  = "192.168.1.17",
-
     [string]$PiUser  = "chiho",
     [int]$SshPort    = 5551,
 
     [switch]$SkipBuild,
-    [switch]$NoUpload,
+    # -Upload to push to the old /var/signage/windows path (legacy, not normally needed)
+    [switch]$Upload,
 
-    [string]$SuperadminEmail    = "chiho.lee23@gmail.com",
-    [string]$SuperadminPassword = "",
-    [string]$PlayerApiBase      = "https://platform.nexari.ca/api/v1",
-    [string]$ApiBase            = "https://platform.nexari.ca/api/v1",
-    [string]$ReleaseNotes       = ""
+    [string]$PlayerApiBase = "https://platform.nexari.ca/api/v1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -107,99 +103,31 @@ $sizeMB = [math]::Round((Get-Item $InstallerPath).Length / 1MB, 1)
 Write-Host ""
 Write-Host "Installer: $InstallerPath  ($sizeMB MB)"
 
-# --- Upload to Pi ---
-if (-not $NoUpload) {
+# --- Legacy upload to /var/signage/windows (only when -Upload is passed) ---
+if ($Upload) {
     Write-Host ""
-    Write-Host "=== Uploading installer to Pi ===" -ForegroundColor Cyan
+    Write-Host "=== Uploading installer to Pi (legacy path) ===" -ForegroundColor Cyan
 
     $RemoteDir = "/var/signage/windows"
     $SshTarget = "$PiUser@$PiHost"
     $sshPortArgs = @("-p", $SshPort)
 
-    foreach ($cmd in @("ssh", "scp")) {
-        if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
-            throw "Required command not found: $cmd - install OpenSSH client from Windows Optional Features"
-        }
-    }
-
     ssh @sshPortArgs $SshTarget "sudo mkdir -p '$RemoteDir' && sudo chown '${PiUser}:${PiUser}' '$RemoteDir'"
-    if ($LASTEXITCODE -ne 0) { throw "Failed to create remote directory $RemoteDir" }
-
-    # Upload installer with a fixed name so the download link never changes
     scp -P $SshPort "$InstallerPath" "${SshTarget}:${RemoteDir}/nexari-windows-setup.exe"
-    if ($LASTEXITCODE -ne 0) { throw "SCP installer upload failed" }
-
-    # Upload latest.yml for the electron-updater auto-update check
     if (Test-Path $LatestYmlPath) {
         scp -P $SshPort "$LatestYmlPath" "${SshTarget}:${RemoteDir}/latest.yml"
-        if ($LASTEXITCODE -ne 0) { throw "SCP latest.yml upload failed" }
-    } else {
-        Write-Host "  (latest.yml not found - skipping)" -ForegroundColor DarkGray
     }
-
-    Write-Host "Verifying files on Pi..."
-    ssh @sshPortArgs $SshTarget "ls -lh '$RemoteDir/'"
-    if ($LASTEXITCODE -ne 0) { throw "Remote verification failed" }
     Write-Host "Upload complete." -ForegroundColor Green
-} else {
-    Write-Host "(-NoUpload set - skipping Pi upload)" -ForegroundColor DarkGray
 }
 
-# --- Publish release record to DS API (optional) ---
-if ($SuperadminEmail -ne "" -and $SuperadminPassword -eq "") {
-    $secPwd = Read-Host "Superadmin password for $SuperadminEmail" -AsSecureString
-    $SuperadminPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
-        [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secPwd))
-}
-if ($SuperadminEmail -ne "" -and $SuperadminPassword -ne "") {
-    $ApiBase = $ApiBase.TrimEnd('/')
-    $DownloadUrl = "https://platform.nexari.ca/windows/nexari-windows-setup.exe"
-
-    Write-Host ""
-    Write-Host "=== Publishing release v$newVersion to DS API ===" -ForegroundColor Cyan
-
-    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-    try {
-        $loginBody = @{ email = $SuperadminEmail; password = $SuperadminPassword } | ConvertTo-Json
-        $null = Invoke-WebRequest -Method Post `
-            -Uri "$ApiBase/superadmin/auth/login" `
-            -ContentType "application/json" `
-            -Body $loginBody `
-            -WebSession $session `
-            -UseBasicParsing
-    } catch {
-        Write-Host "WARNING: Superadmin login failed - skipping release publish. $_" -ForegroundColor Yellow
-        $session = $null
-    }
-
-    if ($session) {
-        $csrfToken = $session.Cookies.GetCookies("$ApiBase/") |
-            Where-Object { $_.Name -eq 'sa_csrf_token' } |
-            Select-Object -First 1 -ExpandProperty Value
-
-        try {
-            $releaseBody = @{ platform = "windows"; version = $newVersion; downloadUrl = $DownloadUrl }
-            if ($ReleaseNotes -ne "") { $releaseBody.releaseNotes = $ReleaseNotes }
-
-            $publishResp = Invoke-RestMethod -Method Post `
-                -Uri "$ApiBase/player-releases" `
-                -ContentType "application/json" `
-                -WebSession $session `
-                -Headers @{ 'X-CSRF-Token' = $csrfToken } `
-                -Body ($releaseBody | ConvertTo-Json)
-            Write-Host "  Release published: v$($publishResp.version) (id=$($publishResp.id))" -ForegroundColor Green
-        } catch {
-            $errBody = $_.ErrorDetails.Message
-            if ($errBody -and ($errBody | ConvertFrom-Json -ErrorAction SilentlyContinue).code -eq '23505') {
-                Write-Host "  Release v$newVersion already exists - skipping." -ForegroundColor DarkGray
-            } else {
-                Write-Host "WARNING: Failed to publish release - $_" -ForegroundColor Yellow
-            }
-        }
-    }
-} else {
-    Write-Host "(Skipping release publish - add -SuperadminEmail / -SuperadminPassword to publish)" -ForegroundColor DarkGray
-}
+Write-Host ""
+Write-Host "==================================================" -ForegroundColor Green
+Write-Host "  nexari-windows  $newVersion  build complete"      -ForegroundColor Green
+Write-Host "  Installer: $InstallerPath"                        -ForegroundColor Green
+Write-Host ""
+Write-Host "  To register for a partner:"                       -ForegroundColor Cyan
+Write-Host "  .\tools\build-partner-players.ps1 -Platform windows" -ForegroundColor Cyan
+Write-Host "==================================================" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "==================================================" -ForegroundColor Green
