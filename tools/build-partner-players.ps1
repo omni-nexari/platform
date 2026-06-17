@@ -103,9 +103,14 @@ try {
     Write-Error "Login failed: $_"
     exit 1
 }
-$csrfToken = $session.Cookies.GetCookies("$AdminApiBase/") |
+$csrfToken = $session.Cookies.GetCookies("https://admin.nexari.ca/") |
     Where-Object { $_.Name -eq 'sa_csrf_token' } |
     Select-Object -First 1 -ExpandProperty Value
+if (-not $csrfToken) {
+    # Dump all cookies to help diagnose
+    $allCookies = $session.Cookies.GetCookies("https://admin.nexari.ca/")
+    Write-Warning "sa_csrf_token not found. Cookies present: $($allCookies | ForEach-Object { $_.Name })"
+}
 Write-Host "Logged in as $AdminEmail" -ForegroundColor Green
 
 function Invoke-AdminApi {
@@ -121,7 +126,14 @@ function Invoke-AdminApi {
         $params.ContentType = "application/json"
         $params.Body = ($Body | ConvertTo-Json -Compress)
     }
-    (Invoke-RestMethod @params)
+    try {
+        (Invoke-RestMethod @params)
+    } catch {
+        $statusCode = if ($_.Exception.Response) { $_.Exception.Response.StatusCode.value__ } else { 0 }
+        $body = try { $_.ErrorDetails.Message } catch { $_.Exception.Message }
+        Write-Error "API $Method $Path -> $statusCode : $body"
+        throw
+    }
 }
 
 # ── Fetch partner list ────────────────────────────────────────────────────────
@@ -130,17 +142,13 @@ Write-Host "Fetching partners..." -ForegroundColor Cyan
 $resp = Invoke-AdminApi -Method Get -Path "/partners"
 $allPartners = $resp.partners
 
-# For each partner, get their instanceUrl from the first active license key
-Write-Host "Fetching instance URLs..." -ForegroundColor Cyan
-$partnerInfos = foreach ($p in $allPartners) {
-    $detail = Invoke-AdminApi -Method Get -Path "/partners/$($p.id)"
-    $activeKey = $detail.licenseKeys | Where-Object { $_.status -in @('active','grace') } | Select-Object -First 1
+$partnerInfos = $allPartners | ForEach-Object {
     [PSCustomObject]@{
-        Id          = $p.id
-        Name        = $p.name
-        Status      = $p.status
-        InstanceUrl = $activeKey?.instanceUrl
-        LicenseKeyId = $activeKey?.id
+        Id           = $_.id
+        Name         = $_.name
+        Status       = $_.status
+        InstanceUrl  = $_.instanceUrl
+        LicenseKeyId = $_.licenseKeyId
     }
 }
 
