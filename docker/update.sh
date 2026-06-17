@@ -84,9 +84,25 @@ for i in $(seq 1 40); do
   sleep 5
 done
 
-# ── Reload nginx to pick up any new static assets ─────────────────────────────
-section "Reloading nginx"
-docker compose exec nginx nginx -s reload 2>/dev/null || warn "nginx reload skipped (not running?)"
+# ── Regenerate nginx.conf + reload ────────────────────────────────────────────
+section "Updating nginx config"
+# Regenerate nginx.conf from the template so new location blocks are applied
+# on every update, not just fresh installs.
+if [[ -f nginx.conf.template ]]; then
+  DOMAIN=$(grep '^NEXARI_DOMAIN=' .env | cut -d= -f2 || echo "")
+  if [[ -n "$DOMAIN" ]]; then
+    cp nginx.conf nginx.conf.bak 2>/dev/null || true
+    sed "s/NEXARI_DOMAIN/${DOMAIN}/g" nginx.conf.template > nginx.conf
+    info "nginx.conf regenerated for domain: $DOMAIN"
+  else
+    warn "NEXARI_DOMAIN not found in .env — skipping nginx.conf regeneration"
+  fi
+else
+  warn "nginx.conf.template not found — skipping nginx.conf regeneration"
+fi
+docker compose exec nginx nginx -t 2>/dev/null && \
+  docker compose exec nginx nginx -s reload 2>/dev/null && \
+  info "nginx reloaded" || warn "nginx reload skipped (not running?)"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 section "Update Complete"
