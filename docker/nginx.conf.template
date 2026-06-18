@@ -1,7 +1,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# nginx configuration for Nexari Platform
+# nginx configuration for Nexari Platform (behind-reverse-proxy mode)
 # Generated from nginx.conf.template by install.sh — do not edit directly.
 # To change settings, edit nginx.conf.template and re-run install.sh.
+#
+# ARCHITECTURE: TLS is terminated by the bare-metal nginx on the host, which
+# proxies plain HTTP to this container on port 80.  This config must be
+# HTTP-only — no ssl_certificate directives and no HTTP→HTTPS redirect.
+# The upstream proxy must set X-Forwarded-Proto: https so the API can
+# generate correct absolute URLs.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # WebSocket upgrade helper — keeps Connection: keep-alive for normal requests
@@ -15,48 +21,18 @@ upstream nexari_api {
     keepalive 32;
 }
 
-# ── HTTP: ACME challenge + redirect to HTTPS ──────────────────────────────────
 server {
     listen 80;
     listen [::]:80;
-    server_name NEXARI_DOMAIN;
-
-    # Let's Encrypt ACME challenge (served from certbot volume)
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-
-    location / {
-        return 301 https://$host$request_uri;
-    }
-}
-
-# ── HTTPS ─────────────────────────────────────────────────────────────────────
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
-    server_name NEXARI_DOMAIN;
-
-    # TLS certificates managed by certbot
-    ssl_certificate     /etc/letsencrypt/live/NEXARI_DOMAIN/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/NEXARI_DOMAIN/privkey.pem;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256;
-    ssl_prefer_server_ciphers off;
-    ssl_session_cache   shared:SSL:10m;
-    ssl_session_timeout 1d;
+    server_name _;
 
     # Allow large file uploads (videos up to 2 GB)
     client_max_body_size 2g;
 
     # ── Security headers ───────────────────────────────────────────────────────
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Frame-Options           "SAMEORIGIN" always;
-    add_header X-Content-Type-Options    "nosniff" always;
-    add_header X-XSS-Protection          "1; mode=block" always;
-    add_header Referrer-Policy           "strict-origin-when-cross-origin" always;
-    add_header Permissions-Policy        "camera=(), microphone=(), geolocation=()" always;
+    add_header X-Frame-Options        "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy        "strict-origin-when-cross-origin" always;
 
     # ── DS SPA (management portal + player dashboard) ─────────────────────────
     root /var/www/ds;
@@ -88,9 +64,8 @@ server {
         proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   X-Forwarded-Proto $http_x_forwarded_proto;
         proxy_read_timeout 60s;
-        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
         add_header X-Content-Type-Options    "nosniff" always;
         add_header Cross-Origin-Resource-Policy "cross-origin" always;
         # Allow framing from TV player apps (app:// origin)
@@ -104,12 +79,33 @@ server {
         proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   X-Forwarded-Proto $http_x_forwarded_proto;
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
         proxy_buffering    off;
         proxy_cache        off;
         add_header         X-Accel-Buffering "no" always;
+    }
+
+    # ── Content file upload — stream directly to API, no nginx temp-file buffer ─
+    # proxy_request_buffering off prevents nginx from spooling the entire multipart
+    # body to disk before forwarding.  Without this, large video uploads exhaust
+    # the nginx container's /var/cache temp space and hit the 120 s proxy timeout.
+    # client_max_body_size 0 disables the nginx body-size limit at the location
+    # level — the API enforces its own 2 GB cap via @fastify/multipart.
+    location /api/v1/content/upload {
+        proxy_pass         http://nexari_api/api/v1/content/upload;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $http_x_forwarded_proto;
+        client_max_body_size    0;
+        proxy_request_buffering off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        client_body_timeout 600s;
+        add_header X-Content-Type-Options    "nosniff" always;
     }
 
     # ── API proxy (all non-WebSocket routes) ──────────────────────────────────
@@ -119,10 +115,10 @@ server {
         proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_request_buffering off;
         proxy_read_timeout 120s;
         proxy_send_timeout 120s;
-        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
         add_header X-Content-Type-Options    "nosniff" always;
     }
 
@@ -185,12 +181,15 @@ server {
     # Files are placed at /var/nexari/player-builds/{platform}/ on the host via SCP
     # by build-partner-players.ps1. Devices and users download directly from here.
     #
-    # Exact-match redirects so /tizen (no slash) → /tizen/ (correct location block).
-    # This is what browsers and URL Launcher will request when typed without slash.
-    location = /tizen   { return 301 /tizen/; }
-    location = /epaper  { return 301 /epaper/; }
-    location = /android { return 301 /android/; }
-    location = /windows { return 301 /windows/; }
+    # Exact-match redirects for bare platform paths.
+    # /tizen redirects to the SSSP config XML so Samsung displays that follow
+    # the redirect get the manifest directly.  /android and /windows redirect
+    # to their respective installer files.  302 (not 301) because the filenames
+    # can change across releases.
+    location = /tizen   { return 302 /tizen/sssp_config.xml; }
+    location = /epaper  { return 302 /epaper/sssp_config.xml; }
+    location = /android { return 302 /android/nexari-android.apk; }
+    location = /windows { return 302 /windows/nexari-windows-setup.exe; }
     location = /esp32   { return 301 /esp32/; }
 
     location /tizen/ {

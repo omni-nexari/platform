@@ -74,8 +74,6 @@ services:
       PLAYWRIGHT_BROWSERS_PATH: /opt/playwright-browsers
     volumes:
       - uploads:/var/signage/uploads
-      - tizen:/var/signage/tizen
-      - android:/var/signage/android
     depends_on:
       postgres:
         condition: service_healthy
@@ -150,10 +148,6 @@ volumes:
   redisdata:
     driver: local
   uploads:
-    driver: local
-  tizen:
-    driver: local
-  android:
     driver: local
   ds_static:
     driver: local

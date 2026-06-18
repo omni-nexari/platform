@@ -89,13 +89,14 @@ section "Updating nginx config"
 # Regenerate nginx.conf from the template so new location blocks are applied
 # on every update, not just fresh installs.
 if [[ -f nginx.conf.template ]]; then
-  DOMAIN=$(grep '^NEXARI_DOMAIN=' .env | cut -d= -f2 || echo "")
+  # install.sh writes DOMAIN= to .env; handle both that and the legacy NEXARI_DOMAIN= key
+  DOMAIN=$(grep '^DOMAIN=' .env | cut -d= -f2 || grep '^NEXARI_DOMAIN=' .env | cut -d= -f2 || echo "")
   if [[ -n "$DOMAIN" ]]; then
     cp nginx.conf nginx.conf.bak 2>/dev/null || true
     sed "s/NEXARI_DOMAIN/${DOMAIN}/g" nginx.conf.template > nginx.conf
     info "nginx.conf regenerated for domain: $DOMAIN"
   else
-    warn "NEXARI_DOMAIN not found in .env — skipping nginx.conf regeneration"
+    warn "DOMAIN not found in .env — skipping nginx.conf regeneration"
   fi
 else
   warn "nginx.conf.template not found — skipping nginx.conf regeneration"
@@ -103,6 +104,21 @@ fi
 docker compose exec nginx nginx -t 2>/dev/null && \
   docker compose exec nginx nginx -s reload 2>/dev/null && \
   info "nginx reloaded" || warn "nginx reload skipped (not running?)"
+
+# ── Ensure player-builds directory exists ─────────────────────────────────────
+section "Player Builds Directory"
+if [[ ! -d /var/nexari/player-builds ]]; then
+  mkdir -p \
+    /var/nexari/player-builds/windows \
+    /var/nexari/player-builds/android \
+    /var/nexari/player-builds/tizen \
+    /var/nexari/player-builds/epaper \
+    /var/nexari/player-builds/esp32
+  chmod -R 755 /var/nexari/player-builds
+  info "Created /var/nexari/player-builds/ — copy player binaries here for the Download buttons to work"
+else
+  info "/var/nexari/player-builds/ already exists"
+fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 section "Update Complete"

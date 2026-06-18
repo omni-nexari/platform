@@ -406,16 +406,17 @@ type PlatformTab = 'tizen' | 'android' | 'windows';
 function PairInstructions() {
   const [tab, setTab] = useState<PlatformTab>('tizen');
   const [copied, setCopied] = useState(false);
-  const playerUrl = `${window.location.origin}/tizen`;
 
   // Download URLs are always served from the partner's own platform instance.
-  // The /android/, /windows/ paths are served by the platform nginx from the
-  // player_builds volume, populated by build-partner-players.ps1.
-  const androidUrl = `${window.location.origin}/android/nexari-android.apk`;
-  const windowsUrl = `${window.location.origin}/windows/nexari-windows-setup.exe`;
+  // Files are placed at /var/nexari/player-builds/{platform}/ on the server
+  // by build-partner-players.ps1 via SCP.
+  const tizenSsspUrl = `${window.location.origin}/tizen/sssp_config.xml`;
+  const tizenWgtUrl  = `${window.location.origin}/tizen/NexariPlayer.wgt`;
+  const androidUrl   = `${window.location.origin}/android/nexari-android.apk`;
+  const windowsUrl   = `${window.location.origin}/windows/nexari-windows-setup.exe`;
 
   function copy() {
-    navigator.clipboard.writeText(playerUrl).then(() => {
+    navigator.clipboard.writeText(tizenSsspUrl).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -449,23 +450,46 @@ function PairInstructions() {
 
       <div className="p-4 space-y-3">
         {tab === 'tizen' && (
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">Player URL (Tizen / URL Launcher)</p>
-            <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
-              <span className="flex-1 font-mono text-xs text-[var(--text)] truncate select-all">{playerUrl}</span>
-              <button
-                type="button"
-                onClick={copy}
-                className="shrink-0 flex items-center gap-1 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors text-xs"
-                title="Copy URL"
-              >
-                {copied ? <CheckCheck size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                {copied ? 'Copied' : 'Copy'}
-              </button>
+          <div className="space-y-3">
+            <p className="text-xs text-[var(--text-muted)]">Enter the SSSP Config URL in Samsung MagicInfo or the display&apos;s URL Launcher settings. The display downloads and installs the player app automatically.</p>
+            {/* SSSP Config URL */}
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">SSSP Config URL</p>
+              <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+                <span className="flex-1 font-mono text-xs text-[var(--text)] truncate select-all">{tizenSsspUrl}</span>
+                <button
+                  type="button"
+                  onClick={copy}
+                  className="shrink-0 flex items-center gap-1 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors text-xs"
+                  title="Copy SSSP config URL"
+                >
+                  {copied ? <CheckCheck size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
             </div>
-            <ol className="mt-3 space-y-1.5 text-xs text-[var(--text-muted)] list-none">
-              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">1</span>Open <strong className="text-[var(--text)]">URL Launcher</strong> on the Samsung display.</li>
-              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">2</span>Enter the URL above — the pairing code appears on screen.</li>
+            {/* Download buttons */}
+            <div className="flex gap-2">
+              <a
+                href={tizenWgtUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 flex items-center gap-2 justify-center rounded-lg bg-[var(--blue)] hover:bg-[var(--blue-hover,#2563eb)] text-white text-sm font-semibold px-4 py-2.5 transition-colors"
+              >
+                <Download size={14} /> Download WGT
+              </a>
+              <a
+                href={tizenSsspUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 flex items-center gap-2 justify-center rounded-lg border border-[var(--border)] bg-[var(--card)] hover:opacity-80 text-[var(--text)] text-sm font-semibold px-4 py-2.5 transition-colors"
+              >
+                <Download size={14} /> Config XML
+              </a>
+            </div>
+            <ol className="space-y-1.5 text-xs text-[var(--text-muted)] list-none">
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">1</span>In <strong className="text-[var(--text)]">Samsung MagicInfo</strong> or the display&apos;s <strong className="text-[var(--text)]">URL Launcher</strong> settings, paste the SSSP Config URL above.</li>
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">2</span>The display downloads and installs <strong className="text-[var(--text)]">Nexari Player</strong> — a pairing code appears on screen.</li>
               <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">3</span>Enter that code in the <strong className="text-[var(--text)]">Pairing Code</strong> field below.</li>
             </ol>
           </div>

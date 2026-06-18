@@ -465,6 +465,23 @@ echo ""
 echo "To auto-renew (add to crontab):"
 echo "    0 3 * * * cd $SCRIPT_DIR && docker compose --profile tls run --rm certbot renew --quiet && docker compose exec nginx nginx -s reload"
 
+# ── Create player-builds directory structure ──────────────────────────────────
+# nginx serves player app downloads from this host path.
+# Populated by build-partner-players.ps1 via SCP.
+section "Player Builds Directory"
+mkdir -p \
+  /var/nexari/player-builds/windows \
+  /var/nexari/player-builds/android \
+  /var/nexari/player-builds/tizen \
+  /var/nexari/player-builds/epaper \
+  /var/nexari/player-builds/esp32
+chmod -R 755 /var/nexari/player-builds
+info "Created /var/nexari/player-builds/{windows,android,tizen,epaper,esp32}"
+warn "Player files are NOT included — deploy them with build-partner-players.ps1 or copy manually:"
+warn "  Windows:  /var/nexari/player-builds/windows/nexari-windows-setup.exe"
+warn "  Android:  /var/nexari/player-builds/android/nexari-android.apk"
+warn "  Tizen:    /var/nexari/player-builds/tizen/<app>.wgt"
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 section "Installation Complete"
 echo ""
