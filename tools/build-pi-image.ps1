@@ -125,10 +125,15 @@ $pkgContent = Get-Content $pkgPath -Raw
 $pkgContent = $pkgContent -replace '"version": "[^"]*"', "`"version`": `"$newVersion`""
 Set-Content $pkgPath $pkgContent -NoNewline
 
-git add package.json
-git commit -m "chore: bump to $newVersion"
-if ($LASTEXITCODE -ne 0) { Write-Fail "git commit failed" }
-Write-Ok "Version bumped and committed"
+$versionChanged = git diff --quiet package.json ; $versionChanged = $LASTEXITCODE -ne 0
+if ($versionChanged) {
+    git add package.json
+    git commit -m "chore: bump to $newVersion"
+    if ($LASTEXITCODE -ne 0) { Write-Fail "git commit failed" }
+    Write-Ok "Version bumped and committed"
+} else {
+    Write-Ok "Version already at $newVersion — skipping commit"
+}
 
 # ── Archive & upload ───────────────────────────────────────────────────────────
 Write-Step "Archiving repo and uploading to Pi"
