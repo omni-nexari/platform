@@ -169,7 +169,8 @@ echo 'BUILD_DONE'
 "@
 
 Write-Host ""
-$buildOutput = ssh -p $SshPort "${SshUser}@${PiHost}" $buildCmd 2>&1
+# Pipe the script via stdin so multi-line heredoc survives Windows SSH arg passing
+$buildOutput = $buildCmd | ssh -p $SshPort "${SshUser}@${PiHost}" "bash" 2>&1
 $buildOutput | ForEach-Object { Write-Host "    $_" }
 
 if ($LASTEXITCODE -ne 0 -or ($buildOutput | Where-Object { $_ -eq 'BUILD_DONE' }).Count -eq 0) {
