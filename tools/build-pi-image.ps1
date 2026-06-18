@@ -174,8 +174,14 @@ echo 'BUILD_DONE'
 "@
 
 Write-Host ""
-# Pipe the script via stdin so multi-line heredoc survives Windows SSH arg passing
-$buildOutput = $buildCmd | ssh -p $SshPort "${SshUser}@${PiHost}" "bash" 2>&1
+# Write build script to a temp .sh file with Unix line endings, SCP it, then run it.
+# This avoids the Windows CRLF / SSH argument-passing issues.
+$tmpScript = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.sh'
+[System.IO.File]::WriteAllText($tmpScript, $buildCmd.Replace("`r`n", "`n").Replace("`r", "`n"))
+scp -P $SshPort $tmpScript "${SshUser}@${PiHost}:/tmp/nexari-build.sh" | Out-Null
+Remove-Item $tmpScript -Force
+
+$buildOutput = ssh -p $SshPort "${SshUser}@${PiHost}" "bash /tmp/nexari-build.sh ; rm -f /tmp/nexari-build.sh" 2>&1
 $buildOutput | ForEach-Object { Write-Host "    $_" }
 
 if ($LASTEXITCODE -ne 0 -or ($buildOutput | Where-Object { $_ -eq 'BUILD_DONE' }).Count -eq 0) {
