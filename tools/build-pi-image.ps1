@@ -186,35 +186,39 @@ $buildOutput = ssh -p $SshPort "${SshUser}@${PiHost}" "bash /tmp/nexari-build.sh
 $buildExitCode = $LASTEXITCODE
 $buildOutput | ForEach-Object { Write-Host "    $_" }
 
-if ($buildExitCode -ne 0 -or ($buildOutput | Where-Object { $_ -eq 'BUILD_DONE' }).Count -eq 0) {
-    Write-Fail "Docker build failed"
+# Wrap in array so .Count works under Set-StrictMode -Version Latest
+if ($buildExitCode -ne 0 -or (@($buildOutput) | Where-Object { $_ -match 'BUILD_DONE' }).Count -eq 0) {
+    Write-Fail "Docker build failed (exit $buildExitCode)"
 }
 
 Write-Ok "Image built: $imageTag"
 
-# ── Summary ────────────────────────────────────────────────────────────────────
-Write-Host ""
-Write-Host "  Image is ready on the Pi." -ForegroundColor Green
-Write-Host "  To deploy:  ssh -p $SshPort ${SshUser}@${PiHost} `"cd /opt/nexari && bash update.sh --version v$newVersion`"" -ForegroundColor White
-Write-Host ""
-
-# ── Optionally push tag → triggers GitHub Actions GHCR release ────────────────
+# ── Push to GitHub (always) ────────────────────────────────────────────────────
+# Both git and Pi must be on the same version. Push commits + force-update the
+# tag so GHCR also gets a matching multi-arch image for partner installs.
 if (-not $NoPush) {
-    Write-Step "Push to GitHub"
-    Write-Host "  Pushing v$newVersion will trigger GitHub Actions to build and publish"
-    Write-Host "  a multi-arch image to GHCR so partners can pull it.`n"
-    $answer = Read-Host "  Push git tag v$newVersion to GitHub? [y/N]"
-    if ($answer -match '^[Yy]') {
-        git tag "v$newVersion"
-        git push origin main --tags
-        if ($LASTEXITCODE -ne 0) { Write-Fail "git push failed" }
-        Write-Ok "Tag v$newVersion pushed -- GitHub Actions will build the GHCR image"
-        Write-Host "  Follow progress at: https://github.com/omni-nexari/platform/actions" -ForegroundColor Cyan
-    } else {
-        Write-Warn "Skipped — tag v$newVersion not pushed. Partners won't get this build yet."
-        Write-Host "  Push later with:  git tag v$newVersion && git push origin main --tags" -ForegroundColor White
-    }
+    Write-Step "Pushing to GitHub"
+    git push origin main
+    if ($LASTEXITCODE -ne 0) { Write-Fail "git push failed" }
+    # Force-update the tag in case it already exists (e.g. re-running for same version)
+    git tag -f "v$newVersion"
+    git push origin "v$newVersion" --force
+    if ($LASTEXITCODE -ne 0) { Write-Fail "git tag push failed" }
+    Write-Ok "Pushed main + tag v$newVersion -- GitHub Actions will build the GHCR image"
+    Write-Host "  Follow: https://github.com/omni-nexari/platform/actions" -ForegroundColor DarkGray
 }
 
+# ── Deploy on Pi (using locally-built image — skip GHCR pull) ─────────────────
+Write-Step "Deploying v$newVersion on Pi"
+Write-Host "  Running update.sh --version v$newVersion --skip-pull"
+ssh -p $SshPort "${SshUser}@${PiHost}" "cd /opt/nexari && bash update.sh --version v$newVersion --skip-pull"
+if ($LASTEXITCODE -ne 0) { Write-Fail "Deploy failed" }
+Write-Ok "Deployed v$newVersion on Pi"
+
+# ── Summary ────────────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "Done." -ForegroundColor Green
+Write-Host "Done. Pi is running v$newVersion." -ForegroundColor Green
+if (-not $NoPush) {
+    Write-Host "  GitHub Actions is building the GHCR image for partner installs." -ForegroundColor DarkGray
+    Write-Host "  Follow: https://github.com/omni-nexari/platform/actions" -ForegroundColor DarkGray
+}

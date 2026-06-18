@@ -28,9 +28,11 @@ die()     { echo -e "${RED}✖${RESET}  $*" >&2; exit 1; }
 
 # ── CLI args ──────────────────────────────────────────────────────────────────
 NEW_VERSION=""
+SKIP_PULL=0
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --version) NEW_VERSION="$2"; shift 2 ;;
+    --version)    NEW_VERSION="$2"; shift 2 ;;
+    --skip-pull)  SKIP_PULL=1; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -52,9 +54,14 @@ CURRENT_VERSION=$(grep '^NEXARI_VERSION=' .env | cut -d= -f2 || echo "latest")
 info "Updating to version: $CURRENT_VERSION"
 
 # ── Pull new image ─────────────────────────────────────────────────────────────
-section "Pulling image"
-docker compose pull api
-info "Image pulled"
+if [[ "$SKIP_PULL" -eq 1 ]]; then
+  section "Skipping image pull (using locally-built image)"
+  info "Image: $(docker images --format '{{.Repository}}:{{.Tag}}' | grep "omni-nexari/platform" | head -1 || echo 'local')"
+else
+  section "Pulling image"
+  docker compose pull api
+  info "Image pulled"
+fi
 
 # ── Run migrations ─────────────────────────────────────────────────────────────
 section "Running database migrations"
