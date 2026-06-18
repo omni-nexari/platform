@@ -180,17 +180,38 @@ done
 APP_URL="https://${DOMAIN}"
 API_PUBLIC_URL="https://${DOMAIN}"
 
+# ── Deployment mode ────────────────────────────────────────────────────────────
+section "Deployment Mode"
+echo "  standalone    — Docker handles TLS directly (ports 80 + 443, Let's Encrypt)"
+echo "  behind-proxy  — An external reverse proxy handles TLS; Docker nginx binds"
+echo "                  to a local port only (e.g. 8081)"
 echo ""
-echo "Optional but recommended: provide an email for Let's Encrypt issuance and renewal."
-echo "If you skip it, the installer will still set up nginx, but you'll need to run certbot manually."
-echo ""
-while true; do
-  prompt_optional CERTBOT_EMAIL "  CERTBOT_EMAIL (Let's Encrypt contact email)"
-  if [[ -z "${CERTBOT_EMAIL:-}" || "$CERTBOT_EMAIL" =~ ^[^@]+@[^@]+\.[^@]+$ ]]; then
-    break
-  fi
-  warn "Enter a valid email address or leave it blank to skip."
-done
+read -rp "  Deploying behind a reverse proxy? [y/N]: " PROXY_CHOICE
+if [[ "$PROXY_CHOICE" =~ ^[Yy]$ ]]; then
+  BEHIND_PROXY=true
+  echo ""
+  read -rp "  HTTP port for Docker nginx [8081]: " HTTP_PORT_INPUT
+  NEXARI_HTTP_PORT="${HTTP_PORT_INPUT:-8081}"
+  NEXARI_HTTP_BIND="0.0.0.0"
+  CERTBOT_EMAIL=""
+  info "Behind-proxy mode: Docker nginx will bind on ${NEXARI_HTTP_BIND}:${NEXARI_HTTP_PORT}"
+  info "Your upstream proxy must set: X-Forwarded-Proto: https, proxy_buffering off, client_max_body_size 2g"
+else
+  BEHIND_PROXY=false
+  NEXARI_HTTP_PORT="80"
+  NEXARI_HTTP_BIND="0.0.0.0"
+  echo ""
+  echo "Optional but recommended: provide an email for Let's Encrypt issuance and renewal."
+  echo "If you skip it, the installer will still set up nginx, but you'll need to run certbot manually."
+  echo ""
+  while true; do
+    prompt_optional CERTBOT_EMAIL "  CERTBOT_EMAIL (Let's Encrypt contact email)"
+    if [[ -z "${CERTBOT_EMAIL:-}" || "$CERTBOT_EMAIL" =~ ^[^@]+@[^@]+\.[^@]+$ ]]; then
+      break
+    fi
+    warn "Enter a valid email address or leave it blank to skip."
+  done
+fi
 
 # ── Extra CORS origins (LAN access) ──────────────────────────────────────────
 section "LAN / Extra Origins (Optional)"
@@ -262,7 +283,7 @@ MICROSOFT_OAUTH_TENANT_ID="common"
 echo ""
 echo "  Nexari Admin remote monitoring:"
 prompt_optional NEXARI_LICENSE_KEY "  NEXARI_LICENSE_KEY"
-NEXARI_ADMIN_URL="https://admin.nexari.io"
+NEXARI_ADMIN_URL="https://admin.nexari.ca"
 
 echo ""
 echo "  MQTT (for ESP32/e-paper devices):"
@@ -296,6 +317,7 @@ section "Configuration Summary"
 echo ""
 echo "  Domain:         $DOMAIN"
 echo "  App URL:        $APP_URL"
+echo "  Mode:           $([ "$BEHIND_PROXY" = "true" ] && echo "behind-proxy (port ${NEXARI_HTTP_PORT})" || echo "standalone")"
 echo "  Cert email:     ${CERTBOT_EMAIL:-(not configured)}"
 echo "  Email from:     $RESEND_FROM_MAIL"
 echo "  Google OAuth:   ${GOOGLE_OAUTH_CLIENT_ID:-(not configured)}"
@@ -306,7 +328,7 @@ echo "  Playwright:     $([ "$SIGNAGE_SKIP_PLAYWRIGHT" = "1" ] && echo disabled 
 echo "  Image version:  $NEXARI_VERSION"
 echo ""
 read -rp "Proceed with installation? [yes/no]: " CONFIRM
-if [[ "$CONFIRM" != "yes" ]]; then
+if [[ "$CONFIRM" != "yes" && "$CONFIRM" != "y" ]]; then
   echo "Aborted."
   exit 0
 fi
@@ -348,6 +370,7 @@ MICROSOFT_OAUTH_TENANT_ID=${MICROSOFT_OAUTH_TENANT_ID}
 # ── Nexari Admin ──
 NEXARI_LICENSE_KEY=${NEXARI_LICENSE_KEY}
 NEXARI_ADMIN_URL=${NEXARI_ADMIN_URL}
+LICENSE_SERVER_URL=${NEXARI_ADMIN_URL}
 
 # ── MQTT ──
 MQTT_HOST=${MQTT_HOST}
@@ -364,6 +387,10 @@ SIGNAGE_SKIP_PLAYWRIGHT=${SIGNAGE_SKIP_PLAYWRIGHT}
 COOKIE_SECURE=true
 NODE_OPTIONS=--max-old-space-size=2048
 NEXARI_VERSION=${NEXARI_VERSION}
+
+# ── Network binding ──
+NEXARI_HTTP_PORT=${NEXARI_HTTP_PORT}
+NEXARI_HTTP_BIND=${NEXARI_HTTP_BIND}
 EOF
 
 chmod 600 .env
@@ -439,31 +466,41 @@ info "nginx started"
 # ── TLS certificate ────────────────────────────────────────────────────────────
 section "TLS Certificate"
 echo ""
-echo "nginx is now running on port 80 and 443."
 
-if [[ -n "${CERTBOT_EMAIL:-}" ]]; then
-  info "Obtaining Let's Encrypt certificate for ${DOMAIN}..."
-  docker compose --profile tls run --rm certbot certonly \
-    --webroot -w /var/www/certbot \
-    -d "${DOMAIN}" \
-    --email "${CERTBOT_EMAIL}" \
-    --agree-tos \
-    --no-eff-email
-  docker compose exec nginx nginx -s reload
-  info "Certificate installed and nginx reloaded."
+if [[ "$BEHIND_PROXY" = "true" ]]; then
+  info "Behind-proxy mode — TLS is handled by your upstream reverse proxy."
+  echo ""
+  echo "Your upstream proxy must:"
+  echo "  - Terminate TLS and forward HTTP to this host on port ${NEXARI_HTTP_PORT}"
+  echo "  - proxy_set_header X-Forwarded-Proto https"
+  echo "  - proxy_buffering off"
+  echo "  - client_max_body_size 2g"
 else
-  echo "To obtain a free Let's Encrypt certificate later, run:"
+  echo "nginx is now running on port 80 and 443."
+  if [[ -n "${CERTBOT_EMAIL:-}" ]]; then
+    info "Obtaining Let's Encrypt certificate for ${DOMAIN}..."
+    docker compose --profile tls run --rm certbot certonly \
+      --webroot -w /var/www/certbot \
+      -d "${DOMAIN}" \
+      --email "${CERTBOT_EMAIL}" \
+      --agree-tos \
+      --no-eff-email
+    docker compose exec nginx nginx -s reload
+    info "Certificate installed and nginx reloaded."
+  else
+    echo "To obtain a free Let's Encrypt certificate later, run:"
+    echo ""
+    echo "    docker compose --profile tls run --rm certbot certonly \\"
+    echo "      --webroot -w /var/www/certbot \\"
+    echo "      -d ${DOMAIN} \\"
+    echo "      --email admin@${DOMAIN} --agree-tos --no-eff-email"
+    echo ""
+    echo "Then reload nginx:  docker compose exec nginx nginx -s reload"
+  fi
   echo ""
-  echo "    docker compose --profile tls run --rm certbot certonly \\"
-  echo "      --webroot -w /var/www/certbot \\"
-  echo "      -d ${DOMAIN} \\"
-  echo "      --email admin@${DOMAIN} --agree-tos --no-eff-email"
-  echo ""
-  echo "Then reload nginx:  docker compose exec nginx nginx -s reload"
+  echo "To auto-renew (add to crontab):"
+  echo "    0 3 * * * cd $SCRIPT_DIR && docker compose --profile tls run --rm certbot renew --quiet && docker compose exec nginx nginx -s reload"
 fi
-echo ""
-echo "To auto-renew (add to crontab):"
-echo "    0 3 * * * cd $SCRIPT_DIR && docker compose --profile tls run --rm certbot renew --quiet && docker compose exec nginx nginx -s reload"
 
 # ── Create player-builds directory structure ──────────────────────────────────
 # nginx serves player app downloads from this host path.
