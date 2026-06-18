@@ -157,6 +157,7 @@ $imageTag  = "ghcr.io/omni-nexari/platform:$newVersion"
 $skipPw    = if ($SkipPlaywright) { "1" } else { "0" }
 
 $buildCmd  = @"
+exec 2>&1
 set -e
 echo '  Extracting source...'
 rm -rf /tmp/nexari-build
@@ -181,10 +182,11 @@ $tmpScript = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.sh'
 scp -P $SshPort $tmpScript "${SshUser}@${PiHost}:/tmp/nexari-build.sh" | Out-Null
 Remove-Item $tmpScript -Force
 
-$buildOutput = ssh -p $SshPort "${SshUser}@${PiHost}" "bash /tmp/nexari-build.sh ; rm -f /tmp/nexari-build.sh" 2>&1
+$buildOutput = ssh -p $SshPort "${SshUser}@${PiHost}" "bash /tmp/nexari-build.sh ; rm -f /tmp/nexari-build.sh"
+$buildExitCode = $LASTEXITCODE
 $buildOutput | ForEach-Object { Write-Host "    $_" }
 
-if ($LASTEXITCODE -ne 0 -or ($buildOutput | Where-Object { $_ -eq 'BUILD_DONE' }).Count -eq 0) {
+if ($buildExitCode -ne 0 -or ($buildOutput | Where-Object { $_ -eq 'BUILD_DONE' }).Count -eq 0) {
     Write-Fail "Docker build failed"
 }
 
