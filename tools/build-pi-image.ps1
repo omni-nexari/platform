@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Bump version, build the Docker image directly on the Pi, and optionally
     push the git tag to trigger the GHCR release workflow for partner downloads.
@@ -55,10 +55,10 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-function Write-Step  { param([string]$Msg) Write-Host "`n── $Msg" -ForegroundColor Cyan }
-function Write-Ok    { param([string]$Msg) Write-Host "  ✔  $Msg" -ForegroundColor Green }
-function Write-Warn  { param([string]$Msg) Write-Host "  ⚠  $Msg" -ForegroundColor Yellow }
-function Write-Fail  { param([string]$Msg) Write-Host "  ✖  $Msg" -ForegroundColor Red; exit 1 }
+function Write-Step  { param([string]$Msg) Write-Host "`n-- $Msg" -ForegroundColor Cyan }
+function Write-Ok    { param([string]$Msg) Write-Host "  OK  $Msg" -ForegroundColor Green }
+function Write-Warn  { param([string]$Msg) Write-Host "  !!  $Msg" -ForegroundColor Yellow }
+function Write-Fail  { param([string]$Msg) Write-Host "  XX  $Msg" -ForegroundColor Red; exit 1 }
 
 function Invoke-Ssh {
     param([string]$Cmd)
@@ -194,7 +194,7 @@ if (-not $NoPush) {
         git tag "v$newVersion"
         git push origin main --tags
         if ($LASTEXITCODE -ne 0) { Write-Fail "git push failed" }
-        Write-Ok "Tag v$newVersion pushed — GitHub Actions will build the GHCR image"
+        Write-Ok "Tag v$newVersion pushed -- GitHub Actions will build the GHCR image"
         Write-Host "  Follow progress at: https://github.com/omni-nexari/platform/actions" -ForegroundColor Cyan
     } else {
         Write-Warn "Skipped — tag v$newVersion not pushed. Partners won't get this build yet."
