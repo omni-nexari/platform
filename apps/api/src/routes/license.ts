@@ -1,14 +1,7 @@
-/**
- * License status — read-only endpoint the frontend polls to show a banner when
- * the instance's license is in grace/overlimit/suspended/revoked state, and to
- * know which features are available for the current plan tier.
- *
- * The actual state is owned by the license heartbeat client; this route just
- * surfaces the last-known value to authenticated users.
- */
 import type { FastifyInstance } from 'fastify';
 import {
   getLicenseState,
+  canUseSignage,
   canUseSyncPlay,
   canUseVideoWalls,
   canUseMultiTenant,
@@ -19,11 +12,16 @@ export async function licenseRoutes(app: FastifyInstance) {
   // ── GET /license/status ─────────────────────────────────────────────────────
   app.get('/status', { onRequest: [app.authenticate] }, async (_req, reply) => {
     const state = getLicenseState();
+
+    // After boot, getLicenseState() always returns the trial state when no paid
+    // license is configured.  The !state branch is a safety fallback for the
+    // very short window between server start and async trial-state loading.
     if (!state) {
       return reply.send({
         configured: false,
         status: 'trial',
         features: {
+          signage: true,
           syncplay: false,
           videowall: false,
           multiTenant: false,
@@ -32,11 +30,15 @@ export async function licenseRoutes(app: FastifyInstance) {
         trial: {
           maxScreens: 3,
           days: 60,
+          expiresAt: null,
         },
       });
     }
+
+    const isTrialMode = state.source === 'trial';
+
     return reply.send({
-      configured: true,
+      configured: !isTrialMode,
       status: state.status,
       allowedModules: state.allowedModules,
       signageTier: state.signageTier,
@@ -49,7 +51,15 @@ export async function licenseRoutes(app: FastifyInstance) {
       planType: state.planType,
       source: state.source,
       checkedAt: state.checkedAt,
+      ...(isTrialMode && {
+        trial: {
+          maxScreens: state.maxScreens ?? 3,
+          days: 60,
+          expiresAt: state.expiresAt,
+        },
+      }),
       features: {
+        signage: canUseSignage(),
         syncplay: canUseSyncPlay(),
         videowall: canUseVideoWalls(),
         multiTenant: canUseMultiTenant(),

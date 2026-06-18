@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import AdmZip from 'adm-zip';
 import { db, devices, deviceScreenshots, deviceHeartbeats, workspaces, workspaceMembers, schedules, scheduleSlots, playlists, playlistItems, contentItems, syncGroups, syncGroupMembers, syncPlaylists, syncPlaylistItems, playerReleases, playEvents, deviceGroupMembers, deviceGroups, calendarConnections, deviceRules, bleScanResults, posRestaurants, canvasProjects } from '@signage/db';
-import { eq, and, isNull, desc, asc, inArray, sql, ilike, gte, lte, lt } from 'drizzle-orm';
+import { eq, and, isNull, ne, count, desc, asc, inArray, sql, ilike, gte, lte, lt } from 'drizzle-orm';
 import { z } from 'zod';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
@@ -38,7 +38,7 @@ import {
 } from '../services/ws.js';
 import { notifyDeviceStatusChange } from '../services/notifications.js';
 import { ensureEpaperVariant, type EpaperFitMode } from '../services/epaper-variants.js';
-import { isPairingBlocked, getLicenseState } from '../services/license-client.js';
+import { isPairingBlocked, getLicenseState, isOverScreenLimit, canUsePOS } from '../services/license-client.js';
 
 /** 6-char uppercase code avoiding confusable chars (0,O,I,1) */
 function generatePairingCode(): string {
@@ -634,6 +634,34 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     const body = ClaimDeviceSchema.safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    const claimType = body.data.type ?? 'signage';
+
+    // License enforcement — check POS module access for kiosk devices.
+    if (claimType === 'kiosk' && !canUsePOS()) {
+      return reply.status(402).send({
+        error: 'license_module_unavailable',
+        message: 'POS / menu board features require a license with the POS module.',
+      });
+    }
+
+    // License enforcement — enforce signage screen count limit.
+    // Count ALL active signage devices on the platform (license is platform-wide).
+    if (claimType === 'signage') {
+      const [signageCountRow] = await db
+        .select({ c: count() })
+        .from(devices)
+        .where(and(isNull(devices.deletedAt), ne(devices.status, 'unclaimed'), eq(devices.type, 'signage')));
+      const currentSignageScreens = Number(signageCountRow?.c ?? 0);
+      if (isOverScreenLimit(currentSignageScreens)) {
+        const state = getLicenseState();
+        const maxScreens = state?.maxScreens ?? 3;
+        return reply.status(402).send({
+          error: 'screen_limit_reached',
+          message: `Your license allows up to ${maxScreens} screen${maxScreens !== 1 ? 's' : ''}. Remove unused screens or upgrade your license to add more.`,
+        });
+      }
+    }
 
     const workspace = await db.query.workspaces.findFirst({
       where: and(

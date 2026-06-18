@@ -9,6 +9,7 @@ import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyMultipart from '@fastify/multipart';
 import { getRedis, isAccessTokenRevoked } from '../services/redis.js';
+import { isInstanceLocked } from '../services/license-client.js';
 
 const CSRF_COOKIE = 'csrf_token';
 const PORTAL_ACCESS_COOKIE = 'platform_sa_access_token';
@@ -227,6 +228,25 @@ export async function registerPlugins(app: FastifyInstance) {
       }
       const csrfResult = await verifyCsrf(req, reply);
       if (csrfResult) return csrfResult;
+
+      // License enforcement — a revoked license locks the entire instance.
+      // Exempt: auth (login/refresh), license status, health, and management
+      // portal routes so the admin can still log in and fix the license.
+      if (isInstanceLocked()) {
+        const url = (req.url ?? '').split('?')[0]!;
+        const isExempt =
+          url.includes('/auth/') ||
+          url.includes('/license') ||
+          url.includes('/superadmin') ||
+          url.includes('/health') ||
+          url.includes('/notifications/ws');
+        if (!isExempt) {
+          return reply.status(402).send({
+            error: 'license_revoked',
+            message: 'This instance license has been revoked. Please contact your provider to restore access.',
+          });
+        }
+      }
     } catch (error) {
       if (shouldLogAuthDiagnostics && req.url.startsWith('/auth/')) {
         req.log.warn({

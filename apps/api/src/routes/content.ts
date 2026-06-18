@@ -84,7 +84,77 @@ async function checkWorkspaceAccess(wsId: string, userId: string) {
   });
 }
 
+// ── Chunked-upload helpers ────────────────────────────────────────────────────
+// Large files (e.g. > 80 MB) are split into chunks by the client so they pass
+// through Cloudflare's 100 MB request-body limit. The server saves each chunk
+// to a temp directory and assembles them when the last chunk arrives.
+
+const CHUNK_DIR_BASE = path.resolve(STORAGE_ROOT, '.chunks');
+
+async function saveChunk(uploadId: string, chunkIndex: number, stream: AsyncIterable<Buffer>): Promise<void> {
+  const dir = path.join(CHUNK_DIR_BASE, uploadId);
+  await fs.mkdir(dir, { recursive: true });
+  const dest = path.join(dir, `chunk_${chunkIndex}`);
+  const { createWriteStream } = await import('node:fs');
+  const ws = createWriteStream(dest);
+  for await (const chunk of stream) ws.write(chunk);
+  await new Promise<void>((resolve, reject) => {
+    ws.end();
+    ws.on('finish', resolve);
+    ws.on('error', reject);
+  });
+}
+
+async function countChunksReceived(uploadId: string): Promise<number> {
+  try {
+    const entries = await fs.readdir(path.join(CHUNK_DIR_BASE, uploadId));
+    return entries.filter((e) => e.startsWith('chunk_')).length;
+  } catch {
+    return 0;
+  }
+}
+
+async function assembleChunks(
+  uploadId: string,
+  chunkCount: number,
+  destPath: string,
+): Promise<{ fileSize: number; fileHash: string }> {
+  const { createWriteStream } = await import('node:fs');
+  const ws = createWriteStream(destPath);
+  const hashStream = crypto.createHash('sha256');
+  let fileSize = 0;
+  for (let i = 0; i < chunkCount; i++) {
+    const data = await fs.readFile(path.join(CHUNK_DIR_BASE, uploadId, `chunk_${i}`));
+    hashStream.update(data);
+    fileSize += data.length;
+    await new Promise<void>((resolve, reject) => ws.write(data, (e) => (e ? reject(e) : resolve())));
+  }
+  await new Promise<void>((resolve, reject) => { ws.end(); ws.on('finish', resolve); ws.on('error', reject); });
+  // Remove temp chunk dir once assembled
+  await fs.rm(path.join(CHUNK_DIR_BASE, uploadId), { recursive: true, force: true });
+  return { fileSize, fileHash: hashStream.digest('hex') };
+}
+
+/** Delete chunk directories that are more than 24 hours old (aborted uploads). */
+async function cleanupStaleChunks(): Promise<void> {
+  try {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const entries = await fs.readdir(CHUNK_DIR_BASE);
+    for (const entry of entries) {
+      const dir = path.join(CHUNK_DIR_BASE, entry);
+      try {
+        const stat = await fs.stat(dir);
+        if (stat.mtimeMs < cutoff) {
+          await fs.rm(dir, { recursive: true, force: true });
+        }
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+}
+
 export async function contentRoutes(app: FastifyInstance) {
+  // Clean up leftover chunk directories from aborted uploads (older than 24 h).
+  void cleanupStaleChunks();
 
   // ── GET /content/widgets/weather?lat=&lon=&units= ─────────────────────────
   const weatherCache = new Map<string, { data: unknown; cachedAt: number }>();
@@ -380,7 +450,10 @@ export async function contentRoutes(app: FastifyInstance) {
     });
   });
 
-  // ── POST /content/upload  (multipart) ─────────────────────────────────────
+  // ── POST /content/upload  (multipart; supports chunked via X-Upload-Id / X-Chunk-Index / X-Chunk-Count) ──
+  // Large files are split into ≤ 80 MB chunks by the client to pass through
+  // Cloudflare's 100 MB request-body limit. Intermediate chunks return 202;
+  // the final chunk triggers assembly and returns the full ContentItem (201).
   app.post('/upload', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
     const q = req.query as Record<string, string>;
@@ -390,6 +463,34 @@ export async function contentRoutes(app: FastifyInstance) {
     const member = await checkWorkspaceAccess(wsId, user.sub);
     if (!member) return reply.status(403).send({ error: 'Forbidden' });
     if (!UPLOAD_ROLES.has(user.role)) return reply.status(403).send({ error: 'Insufficient permissions to upload content' });
+
+    // ── Chunked upload detection ────────────────────────────────────────────
+    const uploadId = req.headers['x-upload-id'] as string | undefined;
+    const chunkIndexStr = req.headers['x-chunk-index'] as string | undefined;
+    const chunkCountStr = req.headers['x-chunk-count'] as string | undefined;
+    const isChunked = !!(uploadId && chunkIndexStr !== undefined && chunkCountStr !== undefined);
+    const chunkIndex = isChunked ? parseInt(chunkIndexStr!, 10) : 0;
+    const chunkCount = isChunked ? parseInt(chunkCountStr!, 10) : 1;
+
+    if (isChunked && (isNaN(chunkIndex) || isNaN(chunkCount) || chunkIndex < 0 || chunkCount < 1 || chunkIndex >= chunkCount)) {
+      return reply.status(400).send({ error: 'Invalid chunk parameters' });
+    }
+
+    const data = await req.file();
+    if (!data) return reply.status(400).send({ error: 'No file provided' });
+
+    const mime = data.mimetype;
+    const originalName = data.filename;
+
+    // ── Chunked: save this chunk; return 202 unless it's the last ──────────
+    if (isChunked) {
+      await saveChunk(uploadId!, chunkIndex, data.file);
+      const received = await countChunksReceived(uploadId!);
+      if (received < chunkCount) {
+        return reply.status(202).send({ uploadId, chunkIndex, received });
+      }
+      // All chunks received — fall through to assemble + process
+    }
 
     // Determine initial approval state based on workspace settings
     const wsRow = await db.query.workspaces.findFirst({ where: eq(workspaces.id, wsId), columns: { settings: true } });
@@ -402,14 +503,10 @@ export async function contentRoutes(app: FastifyInstance) {
       where: eq(orgStorageQuotas.orgId, user.orgId),
     });
     if (quota && quota.usedBytes >= quota.limitBytes) {
+      if (isChunked) await fs.rm(path.join(CHUNK_DIR_BASE, uploadId!), { recursive: true, force: true }).catch(() => undefined);
       return reply.status(507).send({ error: 'Storage quota exceeded' });
     }
 
-    const data = await req.file();
-    if (!data) return reply.status(400).send({ error: 'No file provided' });
-
-    const mime = data.mimetype;
-    const originalName = data.filename;
     const type = detectType(mime, originalName);
 
     // Build storage path: STORAGE_ROOT/{orgId}/{wsId}/{uuid}.ext
@@ -422,21 +519,29 @@ export async function contentRoutes(app: FastifyInstance) {
 
     await fs.mkdir(absDir, { recursive: true });
 
-    // Stream to disk while computing SHA-256 for duplicate detection
+    // ── Write final file to disk ─────────────────────────────────────────
     let fileSize = 0;
-    const hashStream = crypto.createHash('sha256');
-    const writeStream = (await import('node:fs')).createWriteStream(absPath);
-    for await (const chunk of data.file) {
-      writeStream.write(chunk);
-      hashStream.update(chunk);
-      fileSize += chunk.length;
+    let fileHash: string;
+
+    if (isChunked) {
+      // Assemble all saved chunks → final file (also removes temp dir)
+      ({ fileSize, fileHash } = await assembleChunks(uploadId!, chunkCount, absPath));
+    } else {
+      // Stream single upload directly to disk while computing hash
+      const hashStream = crypto.createHash('sha256');
+      const writeStream = (await import('node:fs')).createWriteStream(absPath);
+      for await (const chunk of data.file) {
+        writeStream.write(chunk);
+        hashStream.update(chunk);
+        fileSize += chunk.length;
+      }
+      await new Promise<void>((resolve, reject) => {
+        writeStream.end();
+        writeStream.on('finish', resolve);
+        writeStream.on('error', reject);
+      });
+      fileHash = hashStream.digest('hex');
     }
-    await new Promise<void>((resolve, reject) => {
-      writeStream.end();
-      writeStream.on('finish', resolve);
-      writeStream.on('error', reject);
-    });
-    const fileHash = hashStream.digest('hex');
 
     // Reject malicious ZIPs (zip-slip / zip-bomb) before doing any DB work.
     if (type === 'html5') {

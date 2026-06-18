@@ -15,8 +15,8 @@
  */
 import { createHmac } from 'node:crypto';
 import { createPublicKey, verify as cryptoVerify } from 'node:crypto';
-import { and, desc, eq, gte, inArray, isNull, ne, count } from 'drizzle-orm';
-import { db, devices, organizations, posMenus, licenseConfig, logEntries } from '@signage/db';
+import { and, asc, desc, eq, gte, inArray, isNull, ne, count } from 'drizzle-orm';
+import { db, devices, organizations, posMenus, licenseConfig, logEntries, platformOwners } from '@signage/db';
 import { getRedis } from './redis.js';
 import { decryptSecret } from './crypto.js';
 import { NEXARI_LICENSE_PUBLIC_KEYS } from '@signage/shared';
@@ -27,6 +27,7 @@ const CACHE_TTL_S = 24 * 60 * 60; // 24h
 
 export type LicenseStatus =
   | 'ok'
+  | 'trial'
   | 'grace'
   | 'overlimit'
   | 'suspended'
@@ -54,7 +55,7 @@ export interface LicenseState {
   /** Plan type label e.g. 'signage-pro', 'bundle-basic' */
   planType: string | null;
   /** Source of this state */
-  source: 'heartbeat' | 'offline-cert' | 'cache';
+  source: 'heartbeat' | 'offline-cert' | 'cache' | 'trial';
   checkedAt: string;
 }
 
@@ -83,30 +84,49 @@ const TRIAL_DAYS_DEFAULT = 60;
 const TRIAL_MAX_SCREENS_DEFAULT = 3;
 
 let cachedState: LicenseState | null = null;
+/** Computed trial state — used when no heartbeat/cert license is configured. */
+let trialCachedState: LicenseState | null = null;
 let lastHeartbeatAt: Date = new Date(Date.now() - HEARTBEAT_INTERVAL_MS * 2);
 
-/** Current license state (from last heartbeat, offline cert, or Redis cache). */
+/**
+ * Current effective license state.
+ * Returns the heartbeat / offline-cert state when configured;
+ * falls back to the computed trial state otherwise.
+ */
 export function getLicenseState(): LicenseState | null {
-  return cachedState;
+  return cachedState ?? trialCachedState;
 }
 
-/** True when new device pairing should be blocked (suspended or revoked). */
+/** True when new device pairing should be blocked (suspended, expired trial, or revoked). */
 export function isPairingBlocked(): boolean {
-  const s = cachedState?.status;
+  const s = getLicenseState()?.status;
   return s === 'suspended' || s === 'revoked';
 }
 
-/** True when the whole instance should be locked out. */
+/** True when the whole instance should be locked out (license revoked). */
 export function isInstanceLocked(): boolean {
-  return cachedState?.status === 'revoked';
+  return getLicenseState()?.status === 'revoked';
 }
 
-// ── Feature gates (all return false when no license = trial mode) ─────────────
+// ── Feature gates ─────────────────────────────────────────────────────────────
 
-/** SyncPlay and synchronized multi-screen playback — requires Pro tier. */
+/** Signage module — false when license is POS-only, expired trial, or revoked. */
+export function canUseSignage(): boolean {
+  const state = getLicenseState();
+  if (!state) return true; // shouldn't happen after boot
+  const s = state.status;
+  if (s === 'suspended' || s === 'revoked') return false;
+  return state.allowedModules !== 'pos';
+}
+
+/** SyncPlay and synchronized multi-screen playback — requires Pro tier signage license. */
 export function canUseSyncPlay(): boolean {
-  if (!cachedState) return false;
-  const tier = cachedState.signageTier;
+  const state = getLicenseState();
+  if (!state) return false;
+  const s = state.status;
+  if (s === 'suspended' || s === 'revoked' || s === 'trial') return false;
+  if (state.allowedModules === 'pos') return false;
+  const tier = state.signageTier;
   return tier === 'pro' || tier === null;
 }
 
@@ -122,40 +142,44 @@ export function canUseMultiTenant(): boolean {
 
 /** POS/menu board features — requires 'pos' or 'both' module. */
 export function canUsePOS(): boolean {
-  if (!cachedState) return false;
-  const m = cachedState.allowedModules;
+  const state = getLicenseState();
+  if (!state) return false;
+  const s = state.status;
+  if (s === 'suspended' || s === 'revoked' || s === 'trial') return false;
+  const m = state.allowedModules;
   return m === 'pos' || m === 'both';
 }
 
 /** Whether the current signage screen count would exceed license limits. */
 export function isOverScreenLimit(currentScreens: number): boolean {
-  if (!cachedState) {
-    return currentScreens >= TRIAL_MAX_SCREENS_DEFAULT;
-  }
-  if (cachedState.maxScreens == null) return false;
-  const limit = Math.floor(cachedState.maxScreens * (1 + cachedState.gracePct / 100));
+  const state = getLicenseState();
+  if (!state) return currentScreens >= TRIAL_MAX_SCREENS_DEFAULT;
+  if (state.maxScreens == null) return false;
+  const limit = Math.floor(state.maxScreens * (1 + (state.gracePct ?? 0) / 100));
   return currentScreens >= limit;
 }
 
 /** Whether the current POS location count would exceed license limits. */
 export function isOverLocationLimit(currentLocations: number): boolean {
-  if (!cachedState) return true; // no license = trial = POS not available
-  if (cachedState.maxLocations == null) return false;
-  return currentLocations >= cachedState.maxLocations;
+  const state = getLicenseState();
+  if (!state) return true; // no license = trial = POS not available
+  if (state.maxLocations == null) return false;
+  return currentLocations >= state.maxLocations;
 }
 
 /** Whether extra POS screens at a location exceed the per-location allowance. */
 export function isOverExtraPosScreenLimit(totalScreensAtLocation: number): boolean {
-  if (!cachedState) return true;
-  const included = cachedState.posScreensPerLocation ?? 3;
-  // Grace doesn't apply to per-location screen limits
+  const state = getLicenseState();
+  if (!state) return true;
+  const included = state.posScreensPerLocation ?? 3;
   return totalScreensAtLocation > included;
 }
 
 /** Human-readable tier name for error messages. */
 export function getLicenseTierLabel(): string {
-  if (!cachedState) return 'trial';
-  const tier = cachedState.signageTier;
+  const state = getLicenseState();
+  if (!state || state.source === 'trial') return 'trial';
+  const tier = state.signageTier;
   if (tier === 'pro') return 'Pro';
   if (tier === 'basic') return 'Basic';
   return 'your current plan';
@@ -439,15 +463,59 @@ async function tryLoadOfflineCert(): Promise<boolean> {
   return false;
 }
 
+// ── Trial state loader ───────────────────────────────────────────────────────
+
+/**
+ * Compute the trial LicenseState from the first platform owner's creation time.
+ * This is stored in trialCachedState and returned by getLicenseState() when no
+ * heartbeat / offline cert license is configured.
+ */
+async function loadTrialState(): Promise<void> {
+  try {
+    const owner = await db.query.platformOwners.findFirst({
+      columns: { createdAt: true },
+      orderBy: [asc(platformOwners.createdAt)],
+    });
+    if (!owner) return; // setup not yet complete
+
+    const trialExpiredAt = new Date(owner.createdAt.getTime() + TRIAL_DAYS_DEFAULT * 24 * 60 * 60 * 1000);
+    const isExpired = Date.now() > trialExpiredAt.getTime();
+
+    trialCachedState = {
+      status: isExpired ? 'suspended' : 'trial',
+      allowedModules: 'signage',
+      signageTier: 'basic',
+      maxScreens: TRIAL_MAX_SCREENS_DEFAULT,
+      maxLocations: null,
+      posScreensPerLocation: 3,
+      gracePct: 0,
+      trialDays: TRIAL_DAYS_DEFAULT,
+      trialMaxScreens: TRIAL_MAX_SCREENS_DEFAULT,
+      expiresAt: trialExpiredAt.toISOString(),
+      billingPeriod: null,
+      planType: 'trial',
+      source: 'trial',
+      checkedAt: new Date().toISOString(),
+    };
+  } catch (err) {
+    console.error('[license] failed to compute trial state:', err);
+  }
+}
+
 /** Start the license enforcement system. Call once at server startup. */
 export function startLicenseHeartbeat(
   log: { info: (msg: string) => void; error: (obj: unknown, msg?: string) => void },
 ): void {
   // Boot sequence:
-  // 1. If offline cert present → load it (no network)
-  // 2. Regardless, also load Redis cache (in case we're in 'both' mode)
-  // 3. Start heartbeat loop only if mode is 'online' or 'both'
+  // 1. Always compute trial state first (used as fallback when no license configured)
+  // 2. If offline cert present → load it (no network)
+  // 3. Regardless, also load Redis cache (in case we're in 'both' mode)
+  // 4. Start heartbeat loop only if mode is 'online' or 'both'
   void (async () => {
+    // Trial state is the lowest-priority fallback — load it first so it's
+    // always available even if subsequent steps fail.
+    await loadTrialState();
+
     const offlineLoaded = await tryLoadOfflineCert();
     if (offlineLoaded) {
       log.info('[license] offline cert loaded and verified');

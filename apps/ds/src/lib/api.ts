@@ -105,6 +105,8 @@ async function refreshSession(): Promise<void> {
 
 type FormRequestOptions = {
   onUploadProgress?: (progress: number | null) => void;
+  /** Extra request headers (e.g. X-Upload-Id for chunked uploads). */
+  headers?: Record<string, string>;
 };
 
 type FormRequestResult = {
@@ -130,6 +132,12 @@ function performFormRequest(
 
     if (csrfToken) {
       xhr.setRequestHeader('X-CSRF-Token', csrfToken);
+    }
+
+    if (options.headers) {
+      for (const [key, value] of Object.entries(options.headers)) {
+        xhr.setRequestHeader(key, value);
+      }
     }
 
     xhr.upload.onprogress = (event) => {

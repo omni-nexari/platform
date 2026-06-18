@@ -18,6 +18,7 @@ import {
   ModalSecondaryButton,
 } from './UiPrimitives.js';
 import { useCmsEnabled, usePosEnabled } from '../lib/modules.js';
+import LicenseBanner from './LicenseBanner.js';
 import {
   LayoutDashboard,
   Monitor,
@@ -262,7 +263,9 @@ export default function AppLayout() {
   const contentEnabled = cmsEnabled;
 
   return (
-    <div className="flex h-screen bg-[var(--surface)] overflow-hidden">
+    <div className="flex flex-col h-screen bg-[var(--surface)]">
+      <LicenseBanner />
+      <div className="flex flex-1 overflow-hidden">
       {sidebarOpen && (
         <button
           type="button"
@@ -878,6 +881,7 @@ export default function AppLayout() {
           </ModalFooter>
         </Modal>
       )}
+      </div>
     </div>
   );
 }
