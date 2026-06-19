@@ -1,12 +1,129 @@
 import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
+import { db, emailConfig as emailConfigTable } from '@signage/db';
+import { decryptSecret } from './crypto.js';
 
-const resend = new Resend(process.env['RESEND_API_KEY']);
-
-// admin@mail.chiho.app — platform-level: superadmin invites, reseller onboarding
-const FROM_ADMIN = `"OmniHub" <${process.env['RESEND_FROM_ADMIN'] ?? 'admin@mail.chiho.app'}>`;
-// mail@mail.chiho.app — user-level: org member invites, password reset
-const FROM_MAIL = `"OmniHub" <${process.env['RESEND_FROM_MAIL'] ?? 'mail@mail.chiho.app'}>`;
 const APP_URL = (process.env['APP_URL'] ?? 'https://ds.chiho.app').replace(/\/+$/, '');
+
+// ── Email config (DB-backed, falls back to env vars) ──────────────────────────
+
+interface ResolvedEmailConfig {
+  provider: 'resend' | 'smtp' | 'disabled';
+  resendApiKey?: string;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpSecure?: boolean;
+  smtpUser?: string;
+  smtpPassword?: string;
+  fromAdmin: string;
+  fromMail: string;
+}
+
+let _configCache: ResolvedEmailConfig | null = null;
+let _configCachedAt = 0;
+const CONFIG_TTL_MS = 5 * 60 * 1000;
+
+async function getEmailConfig(): Promise<ResolvedEmailConfig> {
+  const now = Date.now();
+  if (_configCache && now - _configCachedAt < CONFIG_TTL_MS) return _configCache;
+
+  const ENV_FROM_ADMIN = `"OmniHub" <${process.env['RESEND_FROM_ADMIN'] ?? 'admin@mail.chiho.app'}>`;
+  const ENV_FROM_MAIL  = `"OmniHub" <${process.env['RESEND_FROM_MAIL']  ?? 'mail@mail.chiho.app'}>`;
+
+  try {
+    const row = await db.query.emailConfig.findFirst();
+    if (row) {
+      const cfg: ResolvedEmailConfig = {
+        provider:  (row.provider as 'resend' | 'smtp' | 'disabled') ?? 'resend',
+        fromAdmin: row.fromAdmin ? `"OmniHub" <${row.fromAdmin}>` : ENV_FROM_ADMIN,
+        fromMail:  row.fromMail  ? `"OmniHub" <${row.fromMail}>`  : ENV_FROM_MAIL,
+      };
+      if (cfg.provider === 'resend' && row.resendApiKeyEnc) {
+        cfg.resendApiKey = decryptSecret(row.resendApiKeyEnc) ?? undefined;
+      } else if (cfg.provider === 'smtp') {
+        cfg.smtpHost     = row.smtpHost     ?? undefined;
+        cfg.smtpPort     = row.smtpPort     ?? 587;
+        cfg.smtpSecure   = row.smtpSecure   ?? true;
+        cfg.smtpUser     = row.smtpUser     ?? undefined;
+        if (row.smtpPasswordEnc) cfg.smtpPassword = decryptSecret(row.smtpPasswordEnc) ?? undefined;
+      }
+      _configCache = cfg;
+      _configCachedAt = now;
+      return cfg;
+    }
+  } catch { /* DB not ready — fall through to env-var defaults */ }
+
+  // Env-var fallback: existing deployments work unchanged
+  _configCache = {
+    provider:  process.env['RESEND_API_KEY'] ? 'resend' : 'disabled',
+    resendApiKey: process.env['RESEND_API_KEY'],
+    fromAdmin: ENV_FROM_ADMIN,
+    fromMail:  ENV_FROM_MAIL,
+  };
+  _configCachedAt = now;
+  return _configCache;
+}
+
+/** Call this after saving new email config via the portal. */
+export function invalidateEmailConfigCache(): void {
+  _configCache = null;
+  _configCachedAt = 0;
+}
+
+interface SendEmailParams {
+  from: 'admin' | 'mail';
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+}
+
+async function sendEmail(params: SendEmailParams): Promise<void> {
+  const cfg = await getEmailConfig();
+
+  if (cfg.provider === 'disabled') {
+    // eslint-disable-next-line no-console
+    console.warn('[email] Email sending is disabled — skipping:', params.subject);
+    return;
+  }
+
+  const fromAddress = params.from === 'admin' ? cfg.fromAdmin : cfg.fromMail;
+
+  if (cfg.provider === 'smtp') {
+    const transporter = nodemailer.createTransport({
+      host: cfg.smtpHost,
+      port: cfg.smtpPort ?? 587,
+      secure: cfg.smtpSecure ?? true,
+      auth: cfg.smtpUser && cfg.smtpPassword
+        ? { user: cfg.smtpUser, pass: cfg.smtpPassword }
+        : undefined,
+    });
+    await transporter.sendMail({
+      from: fromAddress,
+      to:   params.to,
+      subject: params.subject,
+      html: params.html,
+      text: params.text,
+    });
+    return;
+  }
+
+  // Default: Resend
+  const apiKey = cfg.resendApiKey ?? process.env['RESEND_API_KEY'];
+  if (!apiKey) throw new Error('No Resend API key configured');
+  const resend = new Resend(apiKey);
+  const { error } = await resend.emails.send({
+    from:    fromAddress,
+    to:      [params.to],
+    subject: params.subject,
+    html:    params.html,
+    text:    params.text,
+  });
+  if (error) throw new Error(error.message);
+}
+
+// Keep a reference for the email-config test route (reuses getEmailConfig)
+export { getEmailConfig, emailConfigTable };
 
 function absoluteUrl(url: string | null | undefined): string | null {
   if (!url) return null;
@@ -251,24 +368,23 @@ export async function sendInviteEmail(
       : `You've been invited to ${displayOrgName} (role: ${ctx.orgRole})${ctx.workspaceName ? `, workspace: ${ctx.workspaceName}` : ''}.\n\nAccept: ${link}\n\nExpires in 7 days.`;
   }
 
-  const from =
+  const fromType: 'admin' | 'mail' =
     ctx.inviteType === 'management_company_admin' || ctx.inviteType === 'client_org_owner'
-      ? FROM_ADMIN
-      : FROM_MAIL;
+      ? 'admin'
+      : 'mail';
   const ctaText =
     ctx.inviteType === 'management_company_admin'
       ? 'Set Up Your Reseller Account'
       : ctx.inviteType === 'client_org_owner'
         ? 'Accept & Set Up Your Organization'
         : 'Accept Invitation';
-  const { error } = await resend.emails.send({
-    from,
-    to: [to],
+  await sendEmail({
+    from: fromType,
+    to,
     subject,
     html: card(subject, bodyHtml, { text: ctaText, href: link }, ctx.branding),
     text: bodyText,
   });
-  if (error) throw new Error(error.message);
 }
 
 // ── Password reset email ─────────────────────────────────────────────────────
@@ -278,9 +394,9 @@ export async function sendPasswordResetEmail(
   resetToken: string,
 ): Promise<void> {
   const link = `${APP_URL}/reset-password/${encodeURIComponent(resetToken)}`;
-  const { error } = await resend.emails.send({
-    from: FROM_MAIL,
-    to: [to],
+  await sendEmail({
+    from: 'mail',
+    to,
     subject: 'Reset your OmniHub password',
     html: card(
       'Reset your password',
@@ -292,7 +408,6 @@ export async function sendPasswordResetEmail(
     ),
     text: `Reset your OmniHub password:\n${link}\n\nExpires in 1 hour.`,
   });
-  if (error) throw new Error(error.message);
 }
 
 export async function sendResellerOnboardingConfirmationEmail(
@@ -328,9 +443,9 @@ export async function sendResellerOnboardingConfirmationEmail(
 
   const bodyText = `${greeting}\n\nYour reseller account for ${ctx.companyName} is ready.\n\nReseller portal: ${ctx.resellerPortalLink}\nClient dashboard: ${ctx.dashboardLink}\n\nUse the same email and password you just created to sign in to both.`;
 
-  const { error } = await resend.emails.send({
-    from: FROM_ADMIN,
-    to: [to],
+  await sendEmail({
+    from: 'admin',
+    to,
     subject: `${ctx.companyName} is ready on OmniHub`,
     html: card(
       'Your reseller setup is complete',
@@ -340,7 +455,6 @@ export async function sendResellerOnboardingConfirmationEmail(
     ),
     text: bodyText,
   });
-  if (error) throw new Error(error.message);
 }
 
 // ── Support ticket notification ───────────────────────────────────────────────
@@ -381,9 +495,9 @@ export async function sendSupportNotificationEmail(ctx: SupportNotificationConte
 
   const textBody = `${greeting}\n\nNew reply on ticket: ${ctx.subject}\n\n${ctx.body}\n\nView ticket: ${ticketUrl}`;
 
-  const { error } = await resend.emails.send({
-    from: FROM_ADMIN,
-    to: [ctx.to],
+  await sendEmail({
+    from: 'admin',
+    to: ctx.to,
     subject: `[OmniHub Support] ${ctx.subject}`,
     html: card(
       'New reply on your ticket',
@@ -392,5 +506,4 @@ export async function sendSupportNotificationEmail(ctx: SupportNotificationConte
     ),
     text: textBody,
   });
-  if (error) throw new Error(error.message);
 }

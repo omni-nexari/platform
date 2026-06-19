@@ -239,29 +239,93 @@ else
 fi
 
 # ── Email delivery ─────────────────────────────────────────────────────────────
-section "Email Delivery (Resend)"
-echo "Required for password resets and workspace invitations."
-echo "Sign up at https://resend.com — free tier supports 3000 emails/month."
+section "Email Delivery"
+echo "Used for password resets and workspace invitations."
+echo "You can skip this now and configure email later from the management portal"
+echo "(Settings → Branding → Email & Notifications)."
+echo ""
+echo "  1) Resend cloud API (sign up at https://resend.com — free tier: 3 000 emails/month)"
+echo "  2) SMTP / Gmail / Office 365 (use your existing email provider)"
+echo "  3) Skip — configure email later from the portal"
 echo ""
 
-prompt_secret RESEND_API_KEY "RESEND_API_KEY"
+EMAIL_PROVIDER="disabled"
+RESEND_API_KEY=""
+RESEND_FROM_ADMIN=""
+RESEND_FROM_MAIL=""
+SMTP_HOST=""
+SMTP_PORT="587"
+SMTP_SECURE="true"
+SMTP_USER=""
+SMTP_PASSWORD=""
 
 while true; do
-  prompt_plain RESEND_FROM_ADMIN "From address for system emails (must be verified in Resend)"
-  if [[ ! "$RESEND_FROM_ADMIN" =~ ^[^@]+@[^@]+\.[^@]+$ ]]; then
-    warn "Enter a valid email address."
-  else
-    break
-  fi
-done
+  read -rp "Choose [1/2/3]: " _EMAIL_CHOICE
+  case "$_EMAIL_CHOICE" in
+    1)
+      EMAIL_PROVIDER="resend"
+      prompt_secret RESEND_API_KEY "RESEND_API_KEY"
 
-while true; do
-  prompt_plain RESEND_FROM_MAIL "From address for user emails"
-  if [[ ! "$RESEND_FROM_MAIL" =~ ^[^@]+@[^@]+\.[^@]+$ ]]; then
-    warn "Enter a valid email address."
-  else
-    break
-  fi
+      while true; do
+        prompt_plain RESEND_FROM_ADMIN "From address for system emails (must be verified in Resend)"
+        if [[ ! "$RESEND_FROM_ADMIN" =~ ^[^@]+@[^@]+\.[^@]+$ ]]; then
+          warn "Enter a valid email address."
+        else
+          break
+        fi
+      done
+
+      while true; do
+        prompt_plain RESEND_FROM_MAIL "From address for user emails"
+        if [[ ! "$RESEND_FROM_MAIL" =~ ^[^@]+@[^@]+\.[^@]+$ ]]; then
+          warn "Enter a valid email address."
+        else
+          break
+        fi
+      done
+      break
+      ;;
+    2)
+      EMAIL_PROVIDER="smtp"
+      echo "  Examples:"
+      echo "    Gmail:      smtp.gmail.com  port 587  (use an App Password)"
+      echo "    Office 365: smtp.office365.com  port 587"
+      echo ""
+
+      prompt_plain SMTP_HOST "SMTP host (e.g. smtp.gmail.com)"
+      prompt_optional SMTP_PORT "SMTP port [587]"
+      SMTP_PORT="${SMTP_PORT:-587}"
+      prompt_optional SMTP_SECURE "TLS/STARTTLS — true or false [true]"
+      SMTP_SECURE="${SMTP_SECURE:-true}"
+      prompt_plain SMTP_USER "SMTP username / email"
+      prompt_secret SMTP_PASSWORD "SMTP password / app password"
+
+      while true; do
+        prompt_plain RESEND_FROM_ADMIN "From address for system emails"
+        if [[ ! "$RESEND_FROM_ADMIN" =~ ^[^@]+@[^@]+\.[^@]+$ ]]; then
+          warn "Enter a valid email address."
+        else
+          break
+        fi
+      done
+
+      while true; do
+        prompt_plain RESEND_FROM_MAIL "From address for user emails"
+        if [[ ! "$RESEND_FROM_MAIL" =~ ^[^@]+@[^@]+\.[^@]+$ ]]; then
+          warn "Enter a valid email address."
+        else
+          break
+        fi
+      done
+      break
+      ;;
+    3)
+      EMAIL_PROVIDER="disabled"
+      ok "Email skipped — configure later from the management portal."
+      break
+      ;;
+    *) warn "Enter 1, 2, or 3." ;;
+  esac
 done
 
 # ── Optional integrations ──────────────────────────────────────────────────────
@@ -319,7 +383,7 @@ echo "  Domain:         $DOMAIN"
 echo "  App URL:        $APP_URL"
 echo "  Mode:           $([ "$BEHIND_PROXY" = "true" ] && echo "behind-proxy (port ${NEXARI_HTTP_PORT})" || echo "standalone")"
 echo "  Cert email:     ${CERTBOT_EMAIL:-(not configured)}"
-echo "  Email from:     $RESEND_FROM_MAIL"
+echo "  Email:          ${EMAIL_PROVIDER} ${RESEND_FROM_MAIL:+(from: $RESEND_FROM_MAIL)}"
 echo "  Google OAuth:   ${GOOGLE_OAUTH_CLIENT_ID:-(not configured)}"
 echo "  Microsoft OAuth:${MICROSOFT_OAUTH_CLIENT_ID:-(not configured)}"
 echo "  Nexari license: ${NEXARI_LICENSE_KEY:-(not configured)}"
@@ -354,9 +418,15 @@ API_PUBLIC_URL=${API_PUBLIC_URL}
 APP_EXTRA_ORIGINS=${APP_EXTRA_ORIGINS}
 
 # ── Email ──
+EMAIL_PROVIDER=${EMAIL_PROVIDER}
 RESEND_API_KEY=${RESEND_API_KEY}
 RESEND_FROM_ADMIN=${RESEND_FROM_ADMIN}
 RESEND_FROM_MAIL=${RESEND_FROM_MAIL}
+SMTP_HOST=${SMTP_HOST}
+SMTP_PORT=${SMTP_PORT}
+SMTP_SECURE=${SMTP_SECURE}
+SMTP_USER=${SMTP_USER}
+SMTP_PASSWORD=${SMTP_PASSWORD}
 
 # ── Google OAuth ──
 GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID}

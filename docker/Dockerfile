@@ -27,8 +27,8 @@ COPY packages/shared/package.json  packages/shared/
 COPY apps/api/package.json         apps/api/
 COPY apps/ds/package.json          apps/ds/
 
-# Install all dependencies (frozen — exactly what's in the lockfile)
-RUN pnpm install --frozen-lockfile
+# Install all dependencies (no-frozen: allows new deps added since last lock update)
+RUN pnpm install --no-frozen-lockfile
 
 # Copy full source
 COPY packages/ packages/

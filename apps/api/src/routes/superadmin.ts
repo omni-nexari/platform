@@ -27,8 +27,9 @@ import {
   licenseConfig,
   orgLicenseAllocations,
   orgSubscriptions,
+  emailConfig,
 } from '@signage/db';
-import { encryptSecret } from '../services/crypto.js';
+import { encryptSecret, decryptSecret } from '../services/crypto.js';
 import { bustUberCredCache } from '../lib/uber-eats.js';import { eq, isNull, count, sql, desc, and, inArray, asc, sum, gte, lte, gt } from 'drizzle-orm';
 import * as argon2 from 'argon2';
 import Redis from 'ioredis';
@@ -46,7 +47,7 @@ import {
   ReplyToTicketSchema,
   UpdateTicketSchema,
 } from '@signage/shared';
-import { sendInviteEmail, sendSupportNotificationEmail } from '../services/email.js';
+import { sendInviteEmail, sendSupportNotificationEmail, invalidateEmailConfigCache } from '../services/email.js';
 import { writeAuditLog } from '../services/audit.js';
 import { canUseMultiTenant, getLicenseTierLabel } from '../services/license-client.js';
 
@@ -3971,15 +3972,28 @@ export async function superAdminRoutes(app: FastifyInstance) {
       });
       orgIds = allOrgs.map((o) => o.id);
     } else {
-      // Management company admin: only orgs they manage via orgSubscriptions
-      const managed = await db.query.orgSubscriptions.findMany({
-        where: and(
-          eq(orgSubscriptions.managedByCompanyId, caller.managementCompanyId),
-          eq(orgSubscriptions.status, 'active'),
-        ),
-        columns: { orgId: true },
-      });
-      orgIds = managed.map((m) => m.orgId);
+      // Management company admin: orgs via orgSubscriptions (reseller) OR direct
+      // managementCompanyId link (default org created during setup wizard).
+      const [viaSubscriptions, viaDirect] = await Promise.all([
+        db.query.orgSubscriptions.findMany({
+          where: and(
+            eq(orgSubscriptions.managedByCompanyId, caller.managementCompanyId),
+            eq(orgSubscriptions.status, 'active'),
+          ),
+          columns: { orgId: true },
+        }),
+        db.query.organizations.findMany({
+          where: and(
+            eq(organizations.managementCompanyId, caller.managementCompanyId),
+            isNull(organizations.deletedAt),
+          ),
+          columns: { id: true },
+        }),
+      ]);
+      orgIds = [...new Set([
+        ...viaSubscriptions.map((m) => m.orgId),
+        ...viaDirect.map((o) => o.id),
+      ])];
     }
 
     if (!orgIds.length) return reply.send({ orgs: [] });
@@ -4049,14 +4063,24 @@ export async function superAdminRoutes(app: FastifyInstance) {
     const { orgId } = req.params as { orgId: string };
 
     if (!isOwnerCaller(caller)) {
-      // Management company admin: verify this org is under their company
-      const sub = await db.query.orgSubscriptions.findFirst({
-        where: and(
-          eq(orgSubscriptions.orgId, orgId),
-          eq(orgSubscriptions.managedByCompanyId, caller.managementCompanyId),
-        ),
-      });
-      if (!sub) return reply.status(404).send({ error: 'Org not found or not managed by your company' });
+      // Management company admin: verify ownership via orgSubscriptions or direct link
+      const [sub, directOrg] = await Promise.all([
+        db.query.orgSubscriptions.findFirst({
+          where: and(
+            eq(orgSubscriptions.orgId, orgId),
+            eq(orgSubscriptions.managedByCompanyId, caller.managementCompanyId),
+          ),
+        }),
+        db.query.organizations.findFirst({
+          where: and(
+            eq(organizations.id, orgId),
+            eq(organizations.managementCompanyId, caller.managementCompanyId),
+            isNull(organizations.deletedAt),
+          ),
+          columns: { id: true },
+        }),
+      ]);
+      if (!sub && !directOrg) return reply.status(404).send({ error: 'Org not found or not managed by your company' });
     } else {
       // Platform owner: verify the org exists on this instance
       const org = await db.query.organizations.findFirst({
@@ -4096,6 +4120,158 @@ export async function superAdminRoutes(app: FastifyInstance) {
     }
 
     return reply.status(204).send();
+  });
+
+  // ── Email config ── GET/PUT/test /superadmin/email-config ─────────────────
+  // Read / update platform-level email delivery settings.
+  // Owner OR management_company_admin can call these routes.
+
+  app.get('/email-config', async (req, reply) => {
+    const caller = getPortalCaller(app, req);
+    if (!caller) return reply.status(401).send({ error: 'Unauthorized' });
+
+    const row = await db.query.emailConfig.findFirst();
+
+    if (!row) {
+      // No row yet — return env-var defaults so the UI shows something sensible
+      return reply.send({
+        provider:         process.env['RESEND_API_KEY'] ? 'resend' : 'disabled',
+        resendApiKeySet:  !!process.env['RESEND_API_KEY'],
+        smtpHost:         null,
+        smtpPort:         587,
+        smtpSecure:       true,
+        smtpUser:         null,
+        smtpPasswordSet:  false,
+        fromAdmin:        process.env['RESEND_FROM_ADMIN'] ?? null,
+        fromMail:         process.env['RESEND_FROM_MAIL']  ?? null,
+      });
+    }
+
+    return reply.send({
+      provider:        row.provider,
+      resendApiKeySet: !!row.resendApiKeyEnc,
+      smtpHost:        row.smtpHost,
+      smtpPort:        row.smtpPort,
+      smtpSecure:      row.smtpSecure,
+      smtpUser:        row.smtpUser,
+      smtpPasswordSet: !!row.smtpPasswordEnc,
+      fromAdmin:       row.fromAdmin,
+      fromMail:        row.fromMail,
+    });
+  });
+
+  app.put('/email-config', async (req, reply) => {
+    const caller = getPortalCaller(app, req);
+    if (!caller) return reply.status(401).send({ error: 'Unauthorized' });
+
+    const body = z.object({
+      provider:      z.enum(['resend', 'smtp', 'disabled']),
+      resendApiKey:  z.string().max(200).optional(),
+      smtpHost:      z.string().max(500).optional(),
+      smtpPort:      z.number().int().min(1).max(65535).optional(),
+      smtpSecure:    z.boolean().optional(),
+      smtpUser:      z.string().max(500).optional(),
+      smtpPassword:  z.string().max(500).optional(),
+      fromAdmin:     z.string().email().max(500).optional(),
+      fromMail:      z.string().email().max(500).optional(),
+    }).safeParse(req.body);
+
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+    const d = body.data;
+
+    const existing = await db.query.emailConfig.findFirst();
+
+    const patch = {
+      provider:         d.provider,
+      smtpHost:         d.smtpHost         ?? null,
+      smtpPort:         d.smtpPort         ?? 587,
+      smtpSecure:       d.smtpSecure       ?? true,
+      smtpUser:         d.smtpUser         ?? null,
+      fromAdmin:        d.fromAdmin        ?? null,
+      fromMail:         d.fromMail         ?? null,
+      updatedAt:        new Date(),
+      // Encrypt secrets when provided; keep existing if omitted (undefined means "no change")
+      ...(d.resendApiKey !== undefined
+        ? { resendApiKeyEnc: d.resendApiKey ? encryptSecret(d.resendApiKey) : null }
+        : {}),
+      ...(d.smtpPassword !== undefined
+        ? { smtpPasswordEnc: d.smtpPassword ? encryptSecret(d.smtpPassword) : null }
+        : {}),
+    };
+
+    if (existing) {
+      await db.update(emailConfig).set(patch).where(eq(emailConfig.id, existing.id));
+    } else {
+      await db.insert(emailConfig).values(patch);
+    }
+
+    invalidateEmailConfigCache();
+    return reply.status(204).send();
+  });
+
+  app.post('/email-config/test', async (req, reply) => {
+    const caller = getPortalCaller(app, req);
+    if (!caller) return reply.status(401).send({ error: 'Unauthorized' });
+
+    // Find the caller's email address to send the test to
+    let toAddress: string | null = null;
+    if (isOwnerCaller(caller)) {
+      const owner = await db.query.platformOwners.findFirst({
+        where: eq(platformOwners.id, caller.sub),
+        columns: { email: true },
+      });
+      toAddress = owner?.email ?? null;
+    } else {
+      const admin = await db.query.managementCompanyAdmins.findFirst({
+        where: eq(managementCompanyAdmins.id, caller.sub),
+        columns: { email: true },
+      });
+      toAddress = admin?.email ?? null;
+    }
+
+    if (!toAddress) return reply.status(400).send({ error: 'Could not resolve caller email' });
+
+    try {
+      // Import sendEmail indirectly via the public email functions; use
+      // sendPasswordResetEmail as a quick smoke-test since it's the simplest
+      // payload (no external branding lookup needed).
+      // Instead, build a minimal direct test using nodemailer / Resend path.
+      const { getEmailConfig: _getEmailConfig } = await import('../services/email.js');
+      const cfg = await _getEmailConfig();
+
+      if (cfg.provider === 'disabled') {
+        return reply.status(400).send({ error: 'Email sending is currently disabled' });
+      }
+
+      const subject = 'OmniHub email test';
+      const html    = '<p>This is a test email from your OmniHub platform. If you received this, your email settings are working correctly.</p>';
+      const text    = 'OmniHub email test — settings are working correctly.';
+
+      if (cfg.provider === 'smtp') {
+        const nodemailer = await import('nodemailer');
+        const transporter = nodemailer.default.createTransport({
+          host:   cfg.smtpHost,
+          port:   cfg.smtpPort ?? 587,
+          secure: cfg.smtpSecure ?? true,
+          auth:   cfg.smtpUser && cfg.smtpPassword
+            ? { user: cfg.smtpUser, pass: cfg.smtpPassword }
+            : undefined,
+        });
+        await transporter.sendMail({ from: cfg.fromAdmin, to: toAddress, subject, html, text });
+      } else {
+        const { Resend } = await import('resend');
+        const apiKey = cfg.resendApiKey ?? process.env['RESEND_API_KEY'];
+        if (!apiKey) return reply.status(400).send({ error: 'No Resend API key configured' });
+        const resend = new Resend(apiKey);
+        const { error } = await resend.emails.send({ from: cfg.fromAdmin, to: [toAddress], subject, html, text });
+        if (error) throw new Error(error.message);
+      }
+
+      return reply.send({ ok: true, sentTo: toAddress });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.status(500).send({ error: message });
+    }
   });
 }
 

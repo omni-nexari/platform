@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ChevronDown, ChevronUp, Palette, Sparkles } from 'lucide-react';
-import { useMutation } from '@tanstack/react-query';
+import { ChevronDown, ChevronUp, Mail, Palette, Sparkles } from 'lucide-react';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { BrandingFontPreset } from '@signage/shared';
 import { PageHeader, Callout } from '../../components/UiPrimitives.js';
@@ -501,6 +501,283 @@ export default function ManagementBrandingPage() {
           </div>
         ) : null}
       </div>
+
+      <EmailConfigSection />
+    </div>
+  );
+}
+
+// ─── Email & Notifications section ────────────────────────────────────────────
+
+interface EmailConfigData {
+  provider: 'resend' | 'smtp' | 'disabled';
+  resendApiKeySet: boolean;
+  smtpHost: string | null;
+  smtpPort: number | null;
+  smtpSecure: boolean | null;
+  smtpUser: string | null;
+  smtpPasswordSet: boolean;
+  fromAdmin: string | null;
+  fromMail: string | null;
+}
+
+const emailSchema = z.object({
+  provider:     z.enum(['resend', 'smtp', 'disabled']),
+  resendApiKey: z.string().max(200).optional(),
+  smtpHost:     z.string().max(500).optional(),
+  smtpPort:     z.coerce.number().int().min(1).max(65535).optional(),
+  smtpSecure:   z.boolean().optional(),
+  smtpUser:     z.string().max(500).optional(),
+  smtpPassword: z.string().max(500).optional(),
+  fromAdmin:    z.union([z.literal(''), z.string().email('Must be a valid email')]).optional(),
+  fromMail:     z.union([z.literal(''), z.string().email('Must be a valid email')]).optional(),
+});
+type EmailFormData = z.infer<typeof emailSchema>;
+
+function EmailConfigSection() {
+  const [open, setOpen] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const initialized = useRef(false);
+
+  const { data, isLoading, refetch } = useQuery<EmailConfigData>({
+    queryKey: ['email-config'],
+    queryFn:  () => saApi.get('/superadmin/email-config'),
+  });
+
+  const form = useForm<EmailFormData>({
+    resolver: zodResolver(emailSchema),
+    defaultValues: {
+      provider:     'resend',
+      resendApiKey: '',
+      smtpHost:     '',
+      smtpPort:     587,
+      smtpSecure:   true,
+      smtpUser:     '',
+      smtpPassword: '',
+      fromAdmin:    '',
+      fromMail:     '',
+    },
+  });
+
+  useEffect(() => {
+    if (data && !initialized.current) {
+      initialized.current = true;
+      form.reset({
+        provider:     data.provider,
+        resendApiKey: '',  // never pre-fill secrets
+        smtpHost:     data.smtpHost     ?? '',
+        smtpPort:     data.smtpPort     ?? 587,
+        smtpSecure:   data.smtpSecure   ?? true,
+        smtpUser:     data.smtpUser     ?? '',
+        smtpPassword: '',  // never pre-fill secrets
+        fromAdmin:    data.fromAdmin    ?? '',
+        fromMail:     data.fromMail     ?? '',
+      });
+    }
+  }, [data, form]);
+
+  const saveEmail = useMutation({
+    mutationFn: async (values: EmailFormData) => {
+      const payload: Record<string, unknown> = { provider: values.provider };
+      if (values.provider === 'resend') {
+        if (values.resendApiKey) payload.resendApiKey = values.resendApiKey;
+      }
+      if (values.provider === 'smtp') {
+        payload.smtpHost     = values.smtpHost     || undefined;
+        payload.smtpPort     = values.smtpPort;
+        payload.smtpSecure   = values.smtpSecure;
+        payload.smtpUser     = values.smtpUser     || undefined;
+        if (values.smtpPassword) payload.smtpPassword = values.smtpPassword;
+      }
+      if (values.fromAdmin) payload.fromAdmin = values.fromAdmin;
+      if (values.fromMail)  payload.fromMail  = values.fromMail;
+      await saApi.put('/superadmin/email-config', payload);
+    },
+    onSuccess: () => {
+      initialized.current = false;  // allow re-init on next fetch
+      refetch();
+      toast.success('Email settings saved');
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to save email settings'),
+  });
+
+  async function handleTest() {
+    setTesting(true);
+    try {
+      const result = await saApi.post<{ ok: boolean; sentTo?: string; error?: string }>('/superadmin/email-config/test', {});
+      if (result.ok) {
+        toast.success(`Test email sent to ${result.sentTo ?? 'you'}`);
+      } else {
+        toast.error(result.error ?? 'Test failed');
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Test failed');
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  const provider = form.watch('provider');
+
+  return (
+    <div className="rounded-2xl border p-4 sm:p-6" style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-start justify-between gap-4 text-left"
+      >
+        <div className="flex items-center gap-3">
+          <Mail size={16} className="text-[var(--text-muted)] mt-0.5 shrink-0" />
+          <div>
+            <p className="text-base font-semibold text-[var(--text)]">Email &amp; Notifications</p>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              Configure the email provider used for invitations, password resets, and support notifications.
+              {data && !isLoading && (
+                <span className="ml-2 inline-block rounded-full px-2 py-0.5 text-xs font-medium"
+                  style={{
+                    background: data.provider === 'disabled'
+                      ? 'color-mix(in srgb, var(--red) 15%, transparent)'
+                      : 'color-mix(in srgb, var(--green) 15%, transparent)',
+                    color: data.provider === 'disabled' ? 'var(--red)' : 'var(--green)',
+                  }}
+                >
+                  {data.provider === 'smtp' ? 'SMTP' : data.provider === 'resend' ? 'Resend' : 'Disabled'}
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+        <span className="mt-1 inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--card-border)] text-[var(--text-muted)]">
+          {open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+        </span>
+      </button>
+
+      {open && (
+        <form
+          onSubmit={form.handleSubmit((values) => saveEmail.mutate(values))}
+          className="mt-6 space-y-6 border-t pt-6"
+          style={{ borderColor: 'var(--card-border)' }}
+        >
+          {/* Provider selector */}
+          <div className="grid grid-cols-3 gap-3">
+            {(['resend', 'smtp', 'disabled'] as const).map((p) => (
+              <label
+                key={p}
+                className="flex cursor-pointer flex-col gap-1 rounded-xl border p-4 transition-colors"
+                style={{
+                  borderColor: provider === p ? 'var(--blue)' : 'var(--card-border)',
+                  background: provider === p
+                    ? 'color-mix(in srgb, var(--blue) 10%, transparent)'
+                    : 'var(--bg2)',
+                }}
+              >
+                <input
+                  type="radio"
+                  {...form.register('provider')}
+                  value={p}
+                  className="sr-only"
+                />
+                <span className="text-sm font-semibold capitalize">{p === 'resend' ? 'Resend' : p === 'smtp' ? 'SMTP / Gmail / Office 365' : 'Disabled'}</span>
+                <span className="text-xs text-[var(--text-muted)]">
+                  {p === 'resend' && 'Use Resend cloud API (requires API key)'}
+                  {p === 'smtp'   && 'Use any SMTP server, Gmail, or Office 365'}
+                  {p === 'disabled' && 'No emails will be sent'}
+                </span>
+              </label>
+            ))}
+          </div>
+
+          {/* Resend fields */}
+          {provider === 'resend' && (
+            <div className="space-y-4">
+              <div className="grid gap-1.5">
+                <label className="text-sm font-medium">Resend API Key</label>
+                <input
+                  {...form.register('resendApiKey')}
+                  type="password"
+                  placeholder={data?.resendApiKeySet ? '••••••••  (leave blank to keep existing)' : 're_…'}
+                  className="field-input"
+                  autoComplete="new-password"
+                />
+                {form.formState.errors.resendApiKey && (
+                  <p className="text-xs text-[var(--red)]">{form.formState.errors.resendApiKey.message}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* SMTP fields */}
+          {provider === 'smtp' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-[1fr_120px_auto] gap-3 items-end">
+                <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">SMTP Host</label>
+                  <input {...form.register('smtpHost')} placeholder="smtp.gmail.com" className="field-input" />
+                </div>
+                <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">Port</label>
+                  <input {...form.register('smtpPort')} type="number" placeholder="587" className="field-input" />
+                </div>
+                <label className="flex cursor-pointer items-center gap-2 pb-2">
+                  <input {...form.register('smtpSecure')} type="checkbox" className="h-4 w-4 rounded" />
+                  <span className="text-sm">TLS</span>
+                </label>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">Username / Email</label>
+                  <input {...form.register('smtpUser')} placeholder="you@gmail.com" className="field-input" />
+                </div>
+                <div className="grid gap-1.5">
+                  <label className="text-sm font-medium">Password / App Password</label>
+                  <input
+                    {...form.register('smtpPassword')}
+                    type="password"
+                    placeholder={data?.smtpPasswordSet ? '••••••••  (leave blank to keep existing)' : 'App password…'}
+                    className="field-input"
+                    autoComplete="new-password"
+                  />
+                </div>
+              </div>
+              <div className="rounded-lg border p-3 text-xs text-[var(--text-muted)]" style={{ borderColor: 'var(--card-border)', background: 'var(--bg2)' }}>
+                <strong>Gmail:</strong> host <code>smtp.gmail.com</code>, port <code>587</code>, TLS on — use an <a className="text-[var(--blue)] underline" href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer">App Password</a>.&nbsp;
+                <strong>Office 365:</strong> host <code>smtp.office365.com</code>, port <code>587</code>, TLS on.
+              </div>
+            </div>
+          )}
+
+          {/* Shared from-address fields */}
+          {provider !== 'disabled' && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <label className="text-sm font-medium">From — Platform emails</label>
+                <input {...form.register('fromAdmin')} type="email" placeholder="admin@yourcompany.com" className="field-input" />
+                <p className="text-xs text-[var(--text-muted)]">Used for reseller invites and onboarding.</p>
+              </div>
+              <div className="grid gap-1.5">
+                <label className="text-sm font-medium">From — User emails</label>
+                <input {...form.register('fromMail')} type="email" placeholder="mail@yourcompany.com" className="field-input" />
+                <p className="text-xs text-[var(--text-muted)]">Used for password resets and org invites.</p>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button type="submit" disabled={saveEmail.isPending} className="workspace-page-action">
+              {saveEmail.isPending ? 'Saving…' : 'Save Email Settings'}
+            </button>
+            <button
+              type="button"
+              onClick={handleTest}
+              disabled={testing}
+              className="rounded-lg border px-4 py-2 text-sm font-medium transition-colors hover:bg-[var(--bg2)]"
+              style={{ borderColor: 'var(--card-border)' }}
+            >
+              {testing ? 'Sending…' : 'Send Test Email'}
+            </button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }
