@@ -47,7 +47,7 @@ import {
   ReplyToTicketSchema,
   UpdateTicketSchema,
 } from '@signage/shared';
-import { sendInviteEmail, sendSupportNotificationEmail, invalidateEmailConfigCache } from '../services/email.js';
+import { sendInviteEmail, sendSupportNotificationEmail, invalidateEmailConfigCache, getEmailConfig } from '../services/email.js';
 import { writeAuditLog } from '../services/audit.js';
 import { canUseMultiTenant, getLicenseTierLabel } from '../services/license-client.js';
 
