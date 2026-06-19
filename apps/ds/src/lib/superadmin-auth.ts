@@ -102,7 +102,14 @@ function getPortalLoginPath() {
   return storeUser?.companySlug ? `/${storeUser.companySlug}/login` : '/management/login';
 }
 
+// Guard against multiple navigations triggered by React Query retries.
+// After the first handlePortalUnauthorized() call, the page begins navigating
+// away. Subsequent calls (from retry attempts) are no-ops.
+let _saRedirectPending = false;
+
 function handlePortalUnauthorized() {
+  if (_saRedirectPending) return;
+  _saRedirectPending = true;
   useSAStore.getState().clearAuth();
   window.location.href = getPortalLoginPath();
 }
