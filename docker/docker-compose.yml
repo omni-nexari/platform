@@ -74,6 +74,8 @@ services:
       PLAYWRIGHT_BROWSERS_PATH: /opt/playwright-browsers
     volumes:
       - uploads:/var/signage/uploads
+      - tizen:/var/signage/tizen
+      - android:/var/signage/android
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,9 +87,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     networks:
       - internal
-      - external
     # Expose to nginx but not directly to the host
     expose:
       - "3000"
@@ -120,9 +124,6 @@ services:
       - certbot_certs:/etc/letsencrypt:ro
       # Uploads served directly by nginx via internal X-Accel-Redirect
       - uploads:/var/signage/uploads:ro
-      # Player app downloads — populated by build-partner-players.ps1 via SCP
-      # Files land at /var/nexari/player-builds/{platform}/{filename}
-      - /var/nexari/player-builds:/var/nexari/player-builds:ro
     depends_on:
       - api
       - ds-init
@@ -148,6 +149,10 @@ volumes:
   redisdata:
     driver: local
   uploads:
+    driver: local
+  tizen:
+    driver: local
+  android:
     driver: local
   ds_static:
     driver: local
