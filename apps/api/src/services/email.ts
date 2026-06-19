@@ -30,38 +30,48 @@ async function getEmailConfig(): Promise<ResolvedEmailConfig> {
   const ENV_FROM_ADMIN = `"OmniHub" <${process.env['RESEND_FROM_ADMIN'] ?? 'admin@mail.chiho.app'}>`;
   const ENV_FROM_MAIL  = `"OmniHub" <${process.env['RESEND_FROM_MAIL']  ?? 'mail@mail.chiho.app'}>`;
 
+  let resolved: ResolvedEmailConfig | null = null;
+
   try {
     const row = await db.query.emailConfig.findFirst();
     if (row) {
+      const provider = (row.provider as 'resend' | 'smtp' | 'disabled') ?? 'resend';
       const cfg: ResolvedEmailConfig = {
-        provider:  (row.provider as 'resend' | 'smtp' | 'disabled') ?? 'resend',
+        provider,
         fromAdmin: row.fromAdmin ? `"OmniHub" <${row.fromAdmin}>` : ENV_FROM_ADMIN,
         fromMail:  row.fromMail  ? `"OmniHub" <${row.fromMail}>`  : ENV_FROM_MAIL,
       };
-      if (cfg.provider === 'resend' && row.resendApiKeyEnc) {
-        cfg.resendApiKey = decryptSecret(row.resendApiKeyEnc) ?? undefined;
-      } else if (cfg.provider === 'smtp') {
-        cfg.smtpHost     = row.smtpHost     ?? undefined;
-        cfg.smtpPort     = row.smtpPort     ?? 587;
-        cfg.smtpSecure   = row.smtpSecure   ?? true;
-        cfg.smtpUser     = row.smtpUser     ?? undefined;
-        if (row.smtpPasswordEnc) cfg.smtpPassword = decryptSecret(row.smtpPasswordEnc) ?? undefined;
+      if (provider === 'resend' && row.resendApiKeyEnc) {
+        const key = decryptSecret(row.resendApiKeyEnc);
+        if (key) cfg.resendApiKey = key;
+      } else if (provider === 'smtp') {
+        if (row.smtpHost)      cfg.smtpHost     = row.smtpHost;
+        if (row.smtpPort != null) cfg.smtpPort  = row.smtpPort;
+        cfg.smtpSecure = row.smtpSecure ?? true;
+        if (row.smtpUser)      cfg.smtpUser     = row.smtpUser;
+        if (row.smtpPasswordEnc) {
+          const pass = decryptSecret(row.smtpPasswordEnc);
+          if (pass) cfg.smtpPassword = pass;
+        }
       }
-      _configCache = cfg;
-      _configCachedAt = now;
-      return cfg;
+      resolved = cfg;
     }
   } catch { /* DB not ready — fall through to env-var defaults */ }
 
-  // Env-var fallback: existing deployments work unchanged
-  _configCache = {
-    provider:  process.env['RESEND_API_KEY'] ? 'resend' : 'disabled',
-    resendApiKey: process.env['RESEND_API_KEY'],
-    fromAdmin: ENV_FROM_ADMIN,
-    fromMail:  ENV_FROM_MAIL,
-  };
+  if (!resolved) {
+    // Env-var fallback: existing deployments work unchanged
+    const apiKey = process.env['RESEND_API_KEY'];
+    resolved = {
+      provider:  apiKey ? 'resend' : 'disabled',
+      ...(apiKey ? { resendApiKey: apiKey } : {}),
+      fromAdmin: ENV_FROM_ADMIN,
+      fromMail:  ENV_FROM_MAIL,
+    };
+  }
+
+  _configCache = resolved;
   _configCachedAt = now;
-  return _configCache;
+  return resolved;
 }
 
 /** Call this after saving new email config via the portal. */

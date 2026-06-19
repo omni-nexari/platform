@@ -4232,12 +4232,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
     if (!toAddress) return reply.status(400).send({ error: 'Could not resolve caller email' });
 
     try {
-      // Import sendEmail indirectly via the public email functions; use
-      // sendPasswordResetEmail as a quick smoke-test since it's the simplest
-      // payload (no external branding lookup needed).
-      // Instead, build a minimal direct test using nodemailer / Resend path.
-      const { getEmailConfig: _getEmailConfig } = await import('../services/email.js');
-      const cfg = await _getEmailConfig();
+      const cfg = await getEmailConfig();
 
       if (cfg.provider === 'disabled') {
         return reply.status(400).send({ error: 'Email sending is currently disabled' });
