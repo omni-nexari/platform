@@ -299,7 +299,7 @@ export default function ManagementLicensePage() {
                 : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text)]'
             }`}
           >
-            {t === 'platform' ? 'Platform License' : 'Client Allocations'}
+            {t === 'platform' ? 'Platform License' : 'Client Organizations'}
           </button>
         ))}
       </div>
@@ -535,9 +535,9 @@ export default function ManagementLicensePage() {
                 </div>
               ) : totalAlloc.length === 0 ? (
                 <div className="p-8 text-center text-sm text-[var(--text-muted)]">
-                  No managed client organizations found.
+                  No client organizations found.
                   <br />
-                  <span className="text-xs">Orgs need an active reseller subscription to appear here.</span>
+                  <span className="text-xs">Create an organization from the Organizations page to get started.</span>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -567,8 +567,8 @@ export default function ManagementLicensePage() {
           </SectionCard>
 
           <p className="text-xs text-[var(--text-muted)]">
-            Limits are advisory - set max screens to control capacity per client.
-            Leave blank for unlimited. Module overrides restrict which features each org can access.
+            Limits are advisory — set max screens to control capacity per client.
+            Leave blank for unlimited. Module overrides restrict which Nexari features each org can access.
           </p>
         </>
       )}

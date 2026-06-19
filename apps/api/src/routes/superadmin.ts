@@ -3911,20 +3911,27 @@ export async function superAdminRoutes(app: FastifyInstance) {
     const caller = getPortalCaller(app, req);
     if (!caller) return reply.status(401).send({ error: 'Unauthorized' });
 
-    // Get all orgs belonging to this management company
-    const mcaId = caller.type === 'management_company_admin' ? caller.managementCompanyId : null;
-    if (!mcaId) return reply.status(403).send({ error: 'Management company admins only' });
+    let orgIds: string[];
 
-    // Orgs managed by this company (via org_subscriptions)
-    const managed = await db.query.orgSubscriptions.findMany({
-      where: and(
-        eq(orgSubscriptions.managedByCompanyId, mcaId),
-        eq(orgSubscriptions.status, 'active'),
-      ),
-      columns: { orgId: true },
-    });
+    if (isOwnerCaller(caller)) {
+      // Platform owner: all orgs on this instance
+      const allOrgs = await db.query.organizations.findMany({
+        where: isNull(organizations.deletedAt),
+        columns: { id: true },
+      });
+      orgIds = allOrgs.map((o) => o.id);
+    } else {
+      // Management company admin: only orgs they manage via orgSubscriptions
+      const managed = await db.query.orgSubscriptions.findMany({
+        where: and(
+          eq(orgSubscriptions.managedByCompanyId, caller.managementCompanyId),
+          eq(orgSubscriptions.status, 'active'),
+        ),
+        columns: { orgId: true },
+      });
+      orgIds = managed.map((m) => m.orgId);
+    }
 
-    const orgIds = managed.map((m) => m.orgId);
     if (!orgIds.length) return reply.send({ orgs: [] });
 
     // Fetch org details
@@ -3988,18 +3995,26 @@ export async function superAdminRoutes(app: FastifyInstance) {
   app.put('/license-allocations/:orgId', async (req, reply) => {
     const caller = getPortalCaller(app, req);
     if (!caller) return reply.status(401).send({ error: 'Unauthorized' });
-    if (caller.type !== 'management_company_admin') return reply.status(403).send({ error: 'Forbidden' });
 
     const { orgId } = req.params as { orgId: string };
 
-    // Verify this org belongs to the caller's company
-    const sub = await db.query.orgSubscriptions.findFirst({
-      where: and(
-        eq(orgSubscriptions.orgId, orgId),
-        eq(orgSubscriptions.managedByCompanyId, caller.managementCompanyId),
-      ),
-    });
-    if (!sub) return reply.status(404).send({ error: 'Org not found or not managed by your company' });
+    if (!isOwnerCaller(caller)) {
+      // Management company admin: verify this org is under their company
+      const sub = await db.query.orgSubscriptions.findFirst({
+        where: and(
+          eq(orgSubscriptions.orgId, orgId),
+          eq(orgSubscriptions.managedByCompanyId, caller.managementCompanyId),
+        ),
+      });
+      if (!sub) return reply.status(404).send({ error: 'Org not found or not managed by your company' });
+    } else {
+      // Platform owner: verify the org exists on this instance
+      const org = await db.query.organizations.findFirst({
+        where: and(eq(organizations.id, orgId), isNull(organizations.deletedAt)),
+        columns: { id: true },
+      });
+      if (!org) return reply.status(404).send({ error: 'Org not found' });
+    }
 
     const body = z.object({
       maxSignageScreens: z.number().int().min(0).nullable().optional(),
@@ -4015,7 +4030,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
     });
 
     const patch = {
-      managementCompanyId: caller.managementCompanyId,
+      managementCompanyId: isOwnerCaller(caller) ? null : caller.managementCompanyId,
       updatedById:         caller.sub,
       updatedAt:           new Date(),
       ...(body.data.maxSignageScreens !== undefined ? { maxSignageScreens: body.data.maxSignageScreens } : {}),
