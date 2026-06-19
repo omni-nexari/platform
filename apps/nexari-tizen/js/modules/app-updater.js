@@ -20,8 +20,23 @@
  */
 var AppUpdater;
 (function (AppUpdater) {
-    /** Hosts permitted as the origin for OTA downloads. */
-    const UPDATE_HOST_ALLOWLIST = ['ds.chiho.app', 'updates.chiho.app'];
+    /** Hosts permitted as the origin for OTA downloads.
+     * Always includes the host from CONFIG.API_BASE so partner instances work. */
+    function getAllowedHosts() {
+        const hosts = [];
+        try {
+            const apiBase = (typeof CONFIG !== 'undefined' && CONFIG.API_BASE)
+                ? String(CONFIG.API_BASE)
+                : '';
+            if (apiBase) {
+                const u = new URL(apiBase.replace(/\/api\/v1\/?$/, ''));
+                if (u.hostname)
+                    hosts.push(u.hostname);
+            }
+        }
+        catch (_) { }
+        return hosts;
+    }
     /**
      * Resolve a possibly-relative file URL against the CMS base URL, then
      * enforce the host allowlist. Returns null if the resolved URL is not
@@ -43,8 +58,9 @@ var AppUpdater;
             const u = new URL(absolute);
             if (u.protocol !== 'https:' && u.protocol !== 'http:')
                 return null;
-            if (UPDATE_HOST_ALLOWLIST.indexOf(u.hostname) === -1) {
-                console.error('[AppUpdater] Refusing download from non-allowlisted host:', u.hostname);
+            const allowedHosts = getAllowedHosts();
+            if (allowedHosts.indexOf(u.hostname) === -1) {
+                console.error('[AppUpdater] Refusing download from non-allowlisted host:', u.hostname, '(allowed:', allowedHosts.join(', '), ')');
                 return null;
             }
             return absolute;

@@ -265,10 +265,15 @@ foreach ($plat in $platforms) {
                 } finally { Pop-Location }
             }
             $ver = (Get-Content "$TizenDir\package.json" -Raw | ConvertFrom-Json).version
-            # Update sssp_config.xml with current version + WGT byte-size
-            Push-Location $TizenDir
-            npm run pack:sssp 2>&1 | Out-Null  # warns about /var/signage/tizen not existing on Windows, that's fine
-            Pop-Location
+            # Patch sssp_config.xml with current version + WGT byte-size (same as epaper; avoids
+            # calling npm run pack:sssp which tries to copy to /var/signage/tizen on Linux)
+            $tizenSsspPath = "$TizenDir\sssp_config.xml"
+            $wgtBytes = (Get-Item "$TizenDir\NexariPlayer.wgt").Length
+            $ssspXml = [System.IO.File]::ReadAllText($tizenSsspPath)
+            $ssspXml = $ssspXml -replace '<size>\d+</size>', "<size>$wgtBytes</size>"
+            $ssspXml = $ssspXml -replace '<ver>[^<]*</ver>', "<ver>$ver</ver>"
+            [System.IO.File]::WriteAllText($tizenSsspPath, $ssspXml)
+            Write-Host "  sssp_config.xml: <ver>$ver</ver> <size>$wgtBytes</size>" -ForegroundColor DarkGray
             ssh -p $platSshPort $PlatformSshTarget "mkdir -p $RemoteBuildsRoot/tizen"
             scp -P $platSshPort "$TizenDir\NexariPlayer.wgt" "$TizenDir\sssp_config.xml" "${PlatformSshTarget}:${RemoteBuildsRoot}/tizen/"
             Register-Build -Plat tizen -Filename "NexariPlayer.wgt" -Ver $ver -BldUuid ""
