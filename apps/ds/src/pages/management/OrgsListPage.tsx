@@ -21,11 +21,19 @@ import {
 } from '../../components/UiPrimitives.js';
 
 // Management company admins create client orgs under their own company
-const CreateOrgFormSchema = z.object({
+
+// Mode A: invite an owner via email
+const InviteOrgSchema = z.object({
   ownerName: z.string().min(1, 'Full name is required').max(120),
   ownerEmail: z.string().email('Enter a valid email'),
 });
-type CreateOrgFormData = z.infer<typeof CreateOrgFormSchema>;
+type InviteOrgData = z.infer<typeof InviteOrgSchema>;
+
+// Mode B: create directly without sending any email
+const DirectCreateSchema = z.object({
+  orgName: z.string().min(2, 'Organization name is required').max(100),
+});
+type DirectCreateData = z.infer<typeof DirectCreateSchema>;
 
 interface OrgRow {
   id: string;
@@ -83,6 +91,7 @@ export default function OrgsListPage() {
   const qc = useQueryClient();
   const { user } = useSAStore();
   const [showCreate, setShowCreate] = useState(false);
+  const [createMode, setCreateMode] = useState<'invite' | 'direct'>('invite');
   const [search, setSearch] = useState('');
 
   const { data: orgs = [], isLoading } = useQuery({
@@ -90,29 +99,34 @@ export default function OrgsListPage() {
     queryFn: () => saApi.get<OrgRow[]>('/superadmin/orgs'),
   });
 
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors, isSubmitting: formSubmitting },
-  } = useForm<CreateOrgFormData>({ resolver: zodResolver(CreateOrgFormSchema) });
+  const inviteForm = useForm<InviteOrgData>({ resolver: zodResolver(InviteOrgSchema) });
+  const directForm = useForm<DirectCreateData>({ resolver: zodResolver(DirectCreateSchema) });
 
   const createOrg = useMutation({
-    mutationFn: (data: CreateOrgFormData) =>
+    mutationFn: (payload: Record<string, unknown>) =>
       saApi.post<{ org: OrgRow }>('/superadmin/orgs', {
-        ...data,
+        ...payload,
         managementCompanyId: user?.managementCompanyId,
       }),
-    onSuccess: () => {
-      toast.success('Invite sent to organization owner');
+    onSuccess: (_, vars) => {
+      const msg = vars['skipInvite'] ? 'Organization created' : 'Invite sent to organization owner';
+      toast.success(msg);
       void qc.invalidateQueries({ queryKey: ['sa-orgs'] });
-      reset();
+      inviteForm.reset();
+      directForm.reset();
       setShowCreate(false);
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to send invite');
+      toast.error(err instanceof Error ? err.message : 'Failed to create organization');
     },
   });
+
+  const handleCloseCreate = () => {
+    setShowCreate(false);
+    setCreateMode('invite');
+    inviteForm.reset();
+    directForm.reset();
+  };
 
   const suspendOrg = useMutation({
     mutationFn: ({ id, suspended }: { id: string; suspended: boolean }) =>
@@ -300,36 +314,100 @@ export default function OrgsListPage() {
       </div>
 
       {showCreate && (
-        <Modal onClose={() => setShowCreate(false)} size="sm">
+        <Modal onClose={handleCloseCreate} size="sm">
           <ModalHeader
-            title="Invite Organization Owner"
-            subtitle="They'll receive an email to set up their organization."
-            onClose={() => setShowCreate(false)}
+            title={createMode === 'invite' ? 'Invite Organization Owner' : 'Create Organization'}
+            subtitle={
+              createMode === 'invite'
+                ? "They'll receive an email to set up their organization."
+                : 'Create an organization directly — no email sent. You manage it on their behalf.'
+            }
+            onClose={handleCloseCreate}
           />
           <ModalBody>
-            <form
-              id="create-org-form"
-              onSubmit={handleSubmit((d) => createOrg.mutate(d))}
-              className="space-y-4"
-            >
-              <div>
-                <label className="block text-sm font-medium mb-1">Full name</label>
-                <input {...register('ownerName')} placeholder="Jane Smith" className="input w-full" />
-                {errors.ownerName && <p className="text-xs text-[var(--danger)] mt-1">{errors.ownerName.message}</p>}
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Email address</label>
-                <input {...register('ownerEmail')} type="email" placeholder="jane@acme.com" className="input w-full" />
-                {errors.ownerEmail && <p className="text-xs text-[var(--danger)] mt-1">{errors.ownerEmail.message}</p>}
-              </div>
-            </form>
+            {/* Mode toggle */}
+            <div className="flex rounded-lg overflow-hidden border mb-4" style={{ borderColor: 'var(--card-border)' }}>
+              <button
+                type="button"
+                onClick={() => setCreateMode('invite')}
+                className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${
+                  createMode === 'invite'
+                    ? 'bg-[var(--blue)] text-white'
+                    : 'text-[var(--text-muted)] hover:bg-white/5'
+                }`}
+              >
+                Email Invite
+              </button>
+              <button
+                type="button"
+                onClick={() => setCreateMode('direct')}
+                className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${
+                  createMode === 'direct'
+                    ? 'bg-[var(--blue)] text-white'
+                    : 'text-[var(--text-muted)] hover:bg-white/5'
+                }`}
+              >
+                Create Directly
+              </button>
+            </div>
+
+            {createMode === 'invite' ? (
+              <form
+                id="create-org-form"
+                onSubmit={inviteForm.handleSubmit((d) =>
+                  createOrg.mutate({ ownerName: d.ownerName, ownerEmail: d.ownerEmail }),
+                )}
+                className="space-y-4"
+              >
+                <div>
+                  <label className="block text-sm font-medium mb-1">Full name</label>
+                  <input {...inviteForm.register('ownerName')} placeholder="Jane Smith" className="input w-full" />
+                  {inviteForm.formState.errors.ownerName && (
+                    <p className="text-xs text-[var(--danger)] mt-1">{inviteForm.formState.errors.ownerName.message}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Email address</label>
+                  <input {...inviteForm.register('ownerEmail')} type="email" placeholder="jane@acme.com" className="input w-full" />
+                  {inviteForm.formState.errors.ownerEmail && (
+                    <p className="text-xs text-[var(--danger)] mt-1">{inviteForm.formState.errors.ownerEmail.message}</p>
+                  )}
+                </div>
+              </form>
+            ) : (
+              <form
+                id="create-org-form"
+                onSubmit={directForm.handleSubmit((d) =>
+                  createOrg.mutate({ orgName: d.orgName, skipInvite: true }),
+                )}
+                className="space-y-4"
+              >
+                <div>
+                  <label className="block text-sm font-medium mb-1">Organization name</label>
+                  <input {...directForm.register('orgName')} placeholder="Acme Corp" className="input w-full" />
+                  {directForm.formState.errors.orgName && (
+                    <p className="text-xs text-[var(--danger)] mt-1">{directForm.formState.errors.orgName.message}</p>
+                  )}
+                </div>
+                <p className="text-xs text-[var(--text-muted)]">
+                  The organization will be created and activated immediately. You can invite the client owner later from the organization detail page.
+                </p>
+              </form>
+            )}
           </ModalBody>
           <ModalFooter>
-            <ModalSecondaryButton type="button" onClick={() => setShowCreate(false)} className="flex-1">
+            <ModalSecondaryButton type="button" onClick={handleCloseCreate} className="flex-1">
               Cancel
             </ModalSecondaryButton>
-            <ModalPrimaryButton form="create-org-form" type="submit" disabled={createOrg.isPending || formSubmitting} className="flex-1">
-              {createOrg.isPending ? 'Sending…' : 'Send Invite'}
+            <ModalPrimaryButton
+              form="create-org-form"
+              type="submit"
+              disabled={createOrg.isPending}
+              className="flex-1"
+            >
+              {createOrg.isPending
+                ? createMode === 'invite' ? 'Sending…' : 'Creating…'
+                : createMode === 'invite' ? 'Send Invite' : 'Create Organization'}
             </ModalPrimaryButton>
           </ModalFooter>
         </Modal>

@@ -2291,12 +2291,27 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
     const body = z
       .object({
-        ownerEmail: z.string().email(),
-        ownerName: z.string().min(1).max(120),
+        // Invite flow (skipInvite falsy): both required
+        ownerEmail: z.string().email().optional(),
+        ownerName: z.string().min(1).max(120).optional(),
+        // Direct-create flow: org name required, no email sent
+        orgName: z.string().min(2).max(100).optional(),
+        skipInvite: z.boolean().optional().default(false),
         managementCompanyId: z.string().uuid().optional(),
       })
       .safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    const { skipInvite, orgName, ownerEmail, ownerName } = body.data;
+
+    // Validate required fields per mode
+    if (skipInvite) {
+      if (!orgName) return reply.status(400).send({ error: 'orgName is required when skipInvite is true' });
+    } else {
+      if (!ownerEmail || !ownerName) {
+        return reply.status(400).send({ error: 'ownerEmail and ownerName are required' });
+      }
+    }
 
     const resolvedCompanyId = isOwnerCaller(caller)
       ? (body.data.managementCompanyId ?? null)
@@ -2315,48 +2330,79 @@ export async function superAdminRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Management company not found' });
     }
 
-    const tempSlug = `pending-${randomToken(4)}`;
-    const [org] = await db
-      .insert(organizations)
-      .values({
-        name: '(pending)',
-        slug: tempSlug,
-        plan: 'starter',
-        status: 'pending',
+    let org: typeof organizations.$inferSelect;
+
+    if (skipInvite) {
+      // ── Direct create: active org with a real name, no invitation ──────────
+      const directSlug = orgName!
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 63);
+      // Ensure slug uniqueness with a short random suffix
+      const uniqueSlug = `${directSlug}-${randomToken(3)}`;
+
+      const [created] = await db
+        .insert(organizations)
+        .values({
+          name: orgName!,
+          slug: uniqueSlug,
+          plan: 'starter',
+          status: 'active',
+          managementCompanyId: resolvedCompanyId,
+          originatingAdminId: isOwnerCaller(caller) ? null : caller.sub,
+          primaryAccountManagerId: isOwnerCaller(caller) ? null : caller.sub,
+          billingOwnerCompanyId: resolvedCompanyId,
+        })
+        .returning();
+      if (!created) return reply.status(500).send({ error: 'Failed to create org' });
+      org = created;
+    } else {
+      // ── Invite flow: pending org + email to the owner ──────────────────────
+      const tempSlug = `pending-${randomToken(4)}`;
+      const [created] = await db
+        .insert(organizations)
+        .values({
+          name: '(pending)',
+          slug: tempSlug,
+          plan: 'starter',
+          status: 'pending',
+          managementCompanyId: resolvedCompanyId,
+          originatingAdminId: isOwnerCaller(caller) ? null : caller.sub,
+          primaryAccountManagerId: isOwnerCaller(caller) ? null : caller.sub,
+          billingOwnerCompanyId: resolvedCompanyId,
+        })
+        .returning();
+      if (!created) return reply.status(500).send({ error: 'Failed to create org' });
+      org = created;
+
+      const token = randomToken();
+      await db.insert(clientOrgOwnerInvitations).values({
+        organizationId: org.id,
         managementCompanyId: resolvedCompanyId,
-        originatingAdminId: isOwnerCaller(caller) ? null : caller.sub,
-        primaryAccountManagerId: isOwnerCaller(caller) ? null : caller.sub,
-        billingOwnerCompanyId: resolvedCompanyId,
-      })
-      .returning();
-    if (!org) return reply.status(500).send({ error: 'Failed to create org' });
-
-    const token = randomToken();
-    await db.insert(clientOrgOwnerInvitations).values({
-      organizationId: org.id,
-      managementCompanyId: resolvedCompanyId,
-      invitedByOwnerId: isOwnerCaller(caller) ? caller.sub : null,
-      invitedByAdminId: isOwnerCaller(caller) ? null : caller.sub,
-      email: body.data.ownerEmail.toLowerCase(),
-      token,
-      expiresAt: inviteExpiry(7),
-    });
-
-    try {
-      await sendInviteEmail(body.data.ownerEmail, token, {
-        recipientName: body.data.ownerName,
-        orgRole: 'owner',
-        inviteType: 'client_org_owner',
-        companyName: company.name,
-        branding: {
-          portalTitle: company.portalTitle ?? company.name,
-          logoUrl: company.logoUrl ?? null,
-          primaryColor: company.primaryColor ?? null,
-          accentColor: company.accentColor ?? null,
-        },
+        invitedByOwnerId: isOwnerCaller(caller) ? caller.sub : null,
+        invitedByAdminId: isOwnerCaller(caller) ? null : caller.sub,
+        email: ownerEmail!.toLowerCase(),
+        token,
+        expiresAt: inviteExpiry(7),
       });
-    } catch (err) {
-      app.log.error({ err }, 'Failed to send client org owner invite email');
+
+      try {
+        await sendInviteEmail(ownerEmail!, token, {
+          recipientName: ownerName!,
+          orgRole: 'owner',
+          inviteType: 'client_org_owner',
+          companyName: company.name,
+          branding: {
+            portalTitle: company.portalTitle ?? company.name,
+            logoUrl: company.logoUrl ?? null,
+            primaryColor: company.primaryColor ?? null,
+            accentColor: company.accentColor ?? null,
+          },
+        });
+      } catch (err) {
+        app.log.error({ err }, 'Failed to send client org owner invite email');
+      }
     }
 
     await writeAuditLog({
@@ -2365,7 +2411,11 @@ export async function superAdminRoutes(app: FastifyInstance) {
       action: 'CLIENT_ORG_CREATED',
       entityType: 'organisation',
       entityId: org.id,
-      meta: { ownerEmail: body.data.ownerEmail, managementCompanyId: resolvedCompanyId },
+      meta: {
+        skipInvite,
+        ...(skipInvite ? { orgName } : { ownerEmail }),
+        managementCompanyId: resolvedCompanyId,
+      },
       ipAddress: req.ip,
     });
 

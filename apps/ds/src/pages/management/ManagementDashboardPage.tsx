@@ -36,6 +36,11 @@ const InviteClientSchema = z.object({
 });
 type InviteClientData = z.infer<typeof InviteClientSchema>;
 
+const DirectClientSchema = z.object({
+  orgName: z.string().min(2, 'Organization name is required').max(100),
+});
+type DirectClientData = z.infer<typeof DirectClientSchema>;
+
 // ── Stat card ────────────────────────────────────────────────────────────────
 function StatCard({
   label,
@@ -87,20 +92,24 @@ export default function ManagementDashboardPage() {
   });
 
   const inviteForm = useForm<InviteClientData>({ resolver: zodResolver(InviteClientSchema) });
+  const directForm = useForm<DirectClientData>({ resolver: zodResolver(DirectClientSchema) });
+  const [createMode, setCreateMode] = useState<'invite' | 'direct'>('invite');
 
   const inviteClient = useMutation({
-    mutationFn: (data: InviteClientData) =>
-      saApi.post<{ org: unknown }>('/superadmin/orgs', data),
-    onSuccess: () => {
-      toast.success('Invite sent to client org owner');
+    mutationFn: (payload: Record<string, unknown>) =>
+      saApi.post<{ org: unknown }>('/superadmin/orgs', payload),
+    onSuccess: (_, vars) => {
+      const msg = vars['skipInvite'] ? 'Organization created' : 'Invite sent to client org owner';
+      toast.success(msg);
       void qc.invalidateQueries({ queryKey: ['mca-analytics'] });
       inviteForm.reset();
+      directForm.reset();
       setShowInvite(false);
+      setCreateMode('invite');
     },
-    onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to send invite'),
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed'),
   });
 
-  const { errors: inviteErrors } = inviteForm.formState;
   const summary = analytics?.summary;
   const activeAlerts = analytics?.alerts ?? [];
 
@@ -212,47 +221,100 @@ export default function ManagementDashboardPage() {
         </div>
       </div>
 
-      {/* Invite client modal */}
+      {/* Invite / create client modal */}
       {showInvite && (
-        <Modal onClose={() => setShowInvite(false)} size="sm">
+        <Modal onClose={() => { setShowInvite(false); setCreateMode('invite'); inviteForm.reset(); directForm.reset(); }} size="sm">
           <ModalHeader
-            title="Invite New Client"
-            subtitle="An email invitation will be sent to set up their organization."
-            onClose={() => setShowInvite(false)}
+            title={createMode === 'invite' ? 'Invite New Client' : 'Create Organization'}
+            subtitle={
+              createMode === 'invite'
+                ? 'An email invitation will be sent to set up their organization.'
+                : 'Create an organization directly — no email sent. You manage it on their behalf.'
+            }
+            onClose={() => { setShowInvite(false); setCreateMode('invite'); inviteForm.reset(); directForm.reset(); }}
           />
           <ModalBody>
-            <form
-              id="invite-client-form"
-              onSubmit={inviteForm.handleSubmit((d) => inviteClient.mutate(d))}
-              className="space-y-4"
-            >
-              <div>
-                <label className="ui-label">Client's Full Name</label>
-                <input
-                  {...inviteForm.register('ownerName')}
-                  className="ui-input"
-                  placeholder="Jane Smith"
-                />
-                {inviteErrors.ownerName && (
-                  <p className="ui-field-error">{inviteErrors.ownerName.message}</p>
+            {/* Mode toggle */}
+            <div className="flex rounded-lg overflow-hidden border mb-4" style={{ borderColor: 'var(--card-border)' }}>
+              <button
+                type="button"
+                onClick={() => setCreateMode('invite')}
+                className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${
+                  createMode === 'invite' ? 'bg-[var(--blue)] text-white' : 'text-[var(--text-muted)] hover:bg-white/5'
+                }`}
+              >
+                Email Invite
+              </button>
+              <button
+                type="button"
+                onClick={() => setCreateMode('direct')}
+                className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${
+                  createMode === 'direct' ? 'bg-[var(--blue)] text-white' : 'text-[var(--text-muted)] hover:bg-white/5'
+                }`}
+              >
+                Create Directly
+              </button>
+            </div>
+
+            {createMode === 'invite' ? (
+              <form
+                id="invite-client-form"
+                onSubmit={inviteForm.handleSubmit((d) =>
+                  inviteClient.mutate({ ownerName: d.ownerName, ownerEmail: d.ownerEmail }),
                 )}
-              </div>
-              <div>
-                <label className="ui-label">Client's Email</label>
-                <input
-                  {...inviteForm.register('ownerEmail')}
-                  type="email"
-                  className="ui-input"
-                  placeholder="jane@clientco.com"
-                />
-                {inviteErrors.ownerEmail && (
-                  <p className="ui-field-error">{inviteErrors.ownerEmail.message}</p>
+                className="space-y-4"
+              >
+                <div>
+                  <label className="ui-label">Client's Full Name</label>
+                  <input
+                    {...inviteForm.register('ownerName')}
+                    className="ui-input"
+                    placeholder="Jane Smith"
+                  />
+                  {inviteForm.formState.errors.ownerName && (
+                    <p className="ui-field-error">{inviteForm.formState.errors.ownerName.message}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="ui-label">Client's Email</label>
+                  <input
+                    {...inviteForm.register('ownerEmail')}
+                    type="email"
+                    className="ui-input"
+                    placeholder="jane@clientco.com"
+                  />
+                  {inviteForm.formState.errors.ownerEmail && (
+                    <p className="ui-field-error">{inviteForm.formState.errors.ownerEmail.message}</p>
+                  )}
+                </div>
+              </form>
+            ) : (
+              <form
+                id="invite-client-form"
+                onSubmit={directForm.handleSubmit((d) =>
+                  inviteClient.mutate({ orgName: d.orgName, skipInvite: true }),
                 )}
-              </div>
-            </form>
+                className="space-y-4"
+              >
+                <div>
+                  <label className="ui-label">Organization Name</label>
+                  <input
+                    {...directForm.register('orgName')}
+                    className="ui-input"
+                    placeholder="Acme Corp"
+                  />
+                  {directForm.formState.errors.orgName && (
+                    <p className="ui-field-error">{directForm.formState.errors.orgName.message}</p>
+                  )}
+                </div>
+                <p className="text-xs text-[var(--text-muted)]">
+                  The organization will be created and activated immediately. You can invite the client owner later from the organization detail page.
+                </p>
+              </form>
+            )}
           </ModalBody>
           <ModalFooter>
-            <ModalSecondaryButton onClick={() => setShowInvite(false)}>
+            <ModalSecondaryButton onClick={() => { setShowInvite(false); setCreateMode('invite'); inviteForm.reset(); directForm.reset(); }}>
               Cancel
             </ModalSecondaryButton>
             <ModalPrimaryButton
@@ -260,7 +322,9 @@ export default function ManagementDashboardPage() {
               type="submit"
               disabled={inviteClient.isPending}
             >
-              {inviteClient.isPending ? 'Sending…' : 'Send Invite'}
+              {inviteClient.isPending
+                ? createMode === 'invite' ? 'Sending…' : 'Creating…'
+                : createMode === 'invite' ? 'Send Invite' : 'Create Organization'}
             </ModalPrimaryButton>
           </ModalFooter>
         </Modal>

@@ -101,12 +101,12 @@ export async function setupRoutes(app: FastifyInstance) {
       });
 
       // 2. Default organisation
-      await tx.insert(organizations).values({
+      const [defaultOrg] = await tx.insert(organizations).values({
         name: orgName,
         slug,
         plan: 'starter',
         status: 'active',
-      });
+      }).returning({ id: organizations.id });
 
       // 3. Management company — the partner's portal identity
       const [company] = await tx
@@ -118,6 +118,13 @@ export async function setupRoutes(app: FastifyInstance) {
         })
         .returning({ id: managementCompanies.id });
 
+      // Link the default org to the management company so it appears in
+      // "Client Organizations" when the partner logs into the management portal
+      await tx
+        .update(organizations)
+        .set({ managementCompanyId: company!.id })
+        .where(eq(organizations.id, defaultOrg!.id));
+
       // 4. Management company admin — the credentials the partner uses to log in
       await tx.insert(managementCompanyAdmins).values({
         managementCompanyId: company!.id,
@@ -128,11 +135,7 @@ export async function setupRoutes(app: FastifyInstance) {
       });
 
       // 5. Dashboard user — same credentials, owner role in the default org
-      const [org] = await tx
-        .select({ id: organizations.id })
-        .from(organizations)
-        .where(eq(organizations.slug, slug))
-        .limit(1);
+      const org = defaultOrg!;
 
       const [newUser] = await tx.insert(users).values({
         orgId: org!.id,
