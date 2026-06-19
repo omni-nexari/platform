@@ -186,8 +186,9 @@ $buildOutput = ssh -p $SshPort "${SshUser}@${PiHost}" "bash /tmp/nexari-build.sh
 $buildExitCode = $LASTEXITCODE
 $buildOutput | ForEach-Object { Write-Host "    $_" }
 
-# Wrap in array so .Count works under Set-StrictMode -Version Latest
-if ($buildExitCode -ne 0 -or (@($buildOutput) | Where-Object { $_ -match 'BUILD_DONE' }).Count -eq 0) {
+# Wrap pipeline result in @() so .Count works under Set-StrictMode -Version Latest
+# (Where-Object returns a plain string when exactly one item matches, not an array)
+if ($buildExitCode -ne 0 -or @(@($buildOutput) | Where-Object { $_ -match 'BUILD_DONE' }).Count -eq 0) {
     Write-Fail "Docker build failed (exit $buildExitCode)"
 }
 
