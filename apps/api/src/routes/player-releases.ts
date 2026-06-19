@@ -2,11 +2,27 @@ import type { FastifyInstance } from 'fastify';
 import { db, playerReleases, playerReleaseApprovals, devices } from '@signage/db';
 import { eq, desc, and, isNull, inArray, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
+import { createWriteStream } from 'node:fs';
+import * as fs from 'node:fs/promises';
+import path from 'node:path';
 import { sendCommand } from '../services/ws.js';
 import { organizations } from '@signage/db';
 
 const PLATFORMS = ['tizen', 'windows', 'epaper', 'android'] as const;
 type ReleasePlatform = typeof PLATFORMS[number];
+
+const PLAYER_BUILDS_ROOT = process.env['PLAYER_BUILDS_ROOT'] ?? '/var/nexari/player-builds';
+const UPLOAD_SIZE_LIMIT   = 250 * 1024 * 1024; // 250 MB per file
+
+// Allowed extensions per platform (prevent arbitrary file uploads)
+const ALLOWED_EXTENSIONS: Record<string, string[]> = {
+  tizen:   ['.wgt', '.xml'],
+  epaper:  ['.wgt', '.xml'],
+  android: ['.apk'],
+  windows: ['.exe', '.yml'],
+  esp32:   ['.bin'],
+};
 
 const CreateReleaseSchema = z.object({
   version: z.string().min(1),
@@ -223,5 +239,93 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
       .onConflictDoNothing();
 
     return reply.send({ ok: true });
+  });
+
+  // ── POST /player-releases/upload/:platform  ───────────────────────────────
+  // Upload one or more player artifacts (WGT + sssp_config.xml, APK, EXE + latest.yml, BIN)
+  // for a specific platform. Files are saved to PLAYER_BUILDS_ROOT/{platform}/ which nginx
+  // aliases directly so they are immediately downloadable at /{platform}/{filename}.
+  // Returns sha256 + sizeBytes of the main artifact, used by the subsequent POST / call.
+  app.post('/upload/:platform', { onRequest: [app.authenticatePlatformOwner] }, async (req, reply) => {
+    const { platform } = req.params as { platform: string };
+
+    // Allow 'esp32' in addition to the release platforms
+    const validPlatforms = [...PLATFORMS, 'esp32'] as const;
+    if (!(validPlatforms as readonly string[]).includes(platform)) {
+      return reply.status(400).send({ error: `Invalid platform. Must be one of: ${validPlatforms.join(', ')}` });
+    }
+
+    const allowed = ALLOWED_EXTENSIONS[platform] ?? [];
+    const dir = path.join(PLAYER_BUILDS_ROOT, platform);
+    await fs.mkdir(dir, { recursive: true });
+
+    const savedFiles: {
+      filename: string;
+      sizeBytes: number;
+      sha256: string;
+      downloadUrl: string;
+    }[] = [];
+
+    const appUrl = (process.env['APP_URL'] ?? '').replace(/\/+$/, '');
+
+    for await (const part of req.files()) {
+      const safeName = path.basename(part.filename);
+      const ext = path.extname(safeName).toLowerCase();
+
+      if (allowed.length > 0 && !allowed.includes(ext)) {
+        // Drain and reject
+        for await (const _ of part.file) { /* drain */ }
+        return reply.status(400).send({ error: `File extension ${ext} is not allowed for platform ${platform}` });
+      }
+
+      const filePath = path.join(dir, safeName);
+      const hash = createHash('sha256');
+      let size = 0;
+
+      const ws = createWriteStream(filePath);
+      for await (const chunk of part.file) {
+        ws.write(chunk);
+        hash.update(chunk);
+        size += chunk.length;
+        if (size > UPLOAD_SIZE_LIMIT) {
+          ws.destroy();
+          await fs.unlink(filePath).catch(() => {});
+          return reply.status(413).send({ error: `File exceeds ${Math.round(UPLOAD_SIZE_LIMIT / 1024 / 1024)} MB limit` });
+        }
+      }
+      await new Promise<void>((res, rej) => {
+        ws.end();
+        ws.on('finish', res);
+        ws.on('error', rej);
+      });
+
+      savedFiles.push({
+        filename: safeName,
+        sizeBytes: size,
+        sha256: hash.digest('hex'),
+        downloadUrl: `${appUrl}/${platform}/${safeName}`,
+      });
+    }
+
+    if (!savedFiles.length) {
+      return reply.status(400).send({ error: 'No files provided' });
+    }
+
+    // Main artifact: the binary (WGT / APK / EXE / BIN)
+    const binaryExts = new Set(['.wgt', '.apk', '.exe', '.bin']);
+    const artifact = savedFiles.find(f => binaryExts.has(path.extname(f.filename).toLowerCase()))
+      ?? savedFiles[0]!;
+
+    // Manifest: SSSP config XML (Tizen/ePaper) or latest.yml (Windows electron-updater)
+    const manifestExts = new Set(['.xml', '.yml', '.yaml']);
+    const manifest = savedFiles.find(f => manifestExts.has(path.extname(f.filename).toLowerCase()));
+
+    return reply.send({
+      files:       savedFiles,
+      artifactUrl: artifact.downloadUrl,
+      sizeBytes:   artifact.sizeBytes,
+      sha256:      artifact.sha256,
+      ...(manifest ? { manifestUrl: manifest.downloadUrl } : {}),
+    });
   });
 }

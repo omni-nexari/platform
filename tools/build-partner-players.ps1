@@ -64,16 +64,12 @@ param(
     [ValidateSet("", "tizen", "epaper", "android", "windows", "esp32")]
     [string]$Platform = "",
 
-    # Admin server (nexari-admin) — used for API calls (and SCP if same machine)
-    [string]$PiHost    = "192.168.1.17",
-    [string]$PiUser    = "chiho",
-    [int]$SshPort      = 5551,
-
-    # Platform server — where Docker nginx serves /tizen/, /android/, etc.
-    # Defaults to the same machine as the admin server.
-    [string]$PlatformSshHost = "",
-    [string]$PlatformSshUser = "",
-    [int]$PlatformSshPort    = 0,
+    # Credentials for the partner's platform owner account.
+    # Used to publish releases via the platform API (no SSH required).
+    # Defaults to AdminEmail/AdminPassword for self-hosted setups where they
+    # are the same person.  Override when the platform owner is different.
+    [string]$PlatformOwnerEmail    = "",
+    [string]$PlatformOwnerPassword = "",
 
     # Path to a pre-built Windows installer (required when -Platform windows)
     [string]$WindowsInstallerPath = "",
@@ -192,18 +188,117 @@ Write-Host ""
 Write-Host "Building for: $($partner.Name)" -ForegroundColor Cyan
 if ($instanceUrl) { Write-Host "  Instance: $instanceUrl" }
 
-# ── SSH targets ───────────────────────────────────────────────────────────────
-# Admin server (for API calls, used with $PiHost/$SshPort)
-$SshTarget   = "$PiUser@$PiHost"
-$sshPortArgs = @("-p", $SshPort)
+# ── Platform API session (lazy — one login per script run) ───────────────────
+$script:platSession = $null
+$script:platCsrf    = $null
 
-# Platform server — where /var/nexari/player-builds/ lives inside Docker.
-# Defaults to the same machine as the admin server.
-$platSshHost = if ($PlatformSshHost -ne "") { $PlatformSshHost } else { $PiHost }
-$platSshUser = if ($PlatformSshUser -ne "") { $PlatformSshUser } else { $PiUser }
-$platSshPort = if ($PlatformSshPort -ne 0)  { $PlatformSshPort }  else { $SshPort }
-$PlatformSshTarget  = "${platSshUser}@${platSshHost}"
-$RemoteBuildsRoot    = "/var/nexari/player-builds"
+function Get-PlatformSession {
+    if ($script:platSession) { return }
+
+    $email    = if ($PlatformOwnerEmail    -ne "") { $PlatformOwnerEmail    } else { $AdminEmail    }
+    $password = if ($PlatformOwnerPassword -ne "") { $PlatformOwnerPassword } else { $AdminPassword }
+
+    $script:platSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $loginBody = @{ email = $email; password = $password } | ConvertTo-Json -Compress
+    try {
+        $null = Invoke-WebRequest -Method Post `
+            -Uri "$instanceUrl/api/v1/superadmin/auth/login" `
+            -ContentType "application/json" `
+            -Body $loginBody `
+            -WebSession $script:platSession `
+            -UseBasicParsing
+        $script:platCsrf = $script:platSession.Cookies.GetCookies($instanceUrl) |
+            Where-Object { $_.Name -eq 'sa_csrf_token' } |
+            Select-Object -First 1 -ExpandProperty Value
+        Write-Host "  Logged in to platform as $email" -ForegroundColor DarkGray
+    } catch {
+        Write-Warning "  Platform login failed: $($_.Exception.Message) — platform releases will be skipped"
+        $script:platSession = $null
+    }
+}
+
+# Upload one or more local files to the partner's platform via the upload API.
+# Returns the parsed JSON response, or $null on failure.
+function Send-PlatformFiles {
+    param([string]$Plat, [string[]]$FilePaths)
+
+    Get-PlatformSession
+    if (-not $script:platSession) { return $null }
+
+    Write-Host "  Uploading $($FilePaths.Count) file(s) to platform..." -ForegroundColor DarkGray
+
+    $boundary = "----FormBoundary" + [System.Guid]::NewGuid().ToString("N")
+    $stream   = New-Object System.IO.MemoryStream
+
+    foreach ($fp in $FilePaths) {
+        $name = Split-Path $fp -Leaf
+        $mime = if ($name -match '\.(xml|yml|yaml)$') { 'text/plain; charset=utf-8' } else { 'application/octet-stream' }
+        $hdr  = "--$boundary`r`nContent-Disposition: form-data; name=`"files`"; filename=`"$name`"`r`nContent-Type: $mime`r`n`r`n"
+        $hdrB = [System.Text.Encoding]::UTF8.GetBytes($hdr)
+        $stream.Write($hdrB, 0, $hdrB.Length)
+
+        $fileB = [System.IO.File]::ReadAllBytes($fp)
+        $stream.Write($fileB, 0, $fileB.Length)
+
+        $sep = [System.Text.Encoding]::UTF8.GetBytes("`r`n")
+        $stream.Write($sep, 0, $sep.Length)
+    }
+    $close = [System.Text.Encoding]::UTF8.GetBytes("--$boundary--`r`n")
+    $stream.Write($close, 0, $close.Length)
+    $body = $stream.ToArray()
+    $stream.Dispose()
+
+    try {
+        $resp = Invoke-WebRequest -Method Post `
+            -Uri "$instanceUrl/api/v1/player-releases/upload/$Plat" `
+            -ContentType "multipart/form-data; boundary=$boundary" `
+            -Body $body `
+            -WebSession $script:platSession `
+            -Headers @{ 'X-CSRF-Token' = $script:platCsrf } `
+            -UseBasicParsing
+        return $resp.Content | ConvertFrom-Json
+    } catch {
+        Write-Warning "  Platform upload failed: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+# Create + auto-approve a platform release so it appears in /management/releases.
+function Publish-PlatformRelease {
+    param([string]$Plat, [string]$Ver, $UploadResult)
+
+    if (-not $script:platSession -or -not $UploadResult) { return }
+
+    try {
+        $body = @{
+            platform    = $Plat
+            version     = $Ver
+            downloadUrl = $UploadResult.artifactUrl
+            sizeBytes   = $UploadResult.sizeBytes
+            sha256      = $UploadResult.sha256
+        }
+        if ($UploadResult.manifestUrl) { $body.manifestUrl = $UploadResult.manifestUrl }
+
+        $release = Invoke-RestMethod -Method Post `
+            -Uri "$instanceUrl/api/v1/player-releases" `
+            -ContentType "application/json" `
+            -Body ($body | ConvertTo-Json -Compress) `
+            -WebSession $script:platSession `
+            -Headers @{ 'X-CSRF-Token' = $script:platCsrf }
+
+        # Auto-approve so it appears immediately in the management portal
+        $null = Invoke-RestMethod -Method Post `
+            -Uri "$instanceUrl/api/v1/player-releases/$($release.id)/approve" `
+            -ContentType "application/json" `
+            -Body '{}' `
+            -WebSession $script:platSession `
+            -Headers @{ 'X-CSRF-Token' = $script:platCsrf }
+
+        Write-Host "  Platform release published + approved: v$Ver (id=$($release.id))" -ForegroundColor Green
+    } catch {
+        Write-Warning "  Failed to publish platform release: $($_.Exception.Message)"
+    }
+}
 
 function Register-Build {
     param([string]$Plat, [string]$Filename, [string]$Ver, [string]$BldUuid)
@@ -274,8 +369,8 @@ foreach ($plat in $platforms) {
             $ssspXml = $ssspXml -replace '<ver>[^<]*</ver>', "<ver>$ver</ver>"
             [System.IO.File]::WriteAllText($tizenSsspPath, $ssspXml)
             Write-Host "  sssp_config.xml: <ver>$ver</ver> <size>$wgtBytes</size>" -ForegroundColor DarkGray
-            ssh -p $platSshPort $PlatformSshTarget "mkdir -p $RemoteBuildsRoot/tizen"
-            scp -P $platSshPort "$TizenDir\NexariPlayer.wgt" "$TizenDir\sssp_config.xml" "${PlatformSshTarget}:${RemoteBuildsRoot}/tizen/"
+            $uploadResult = Send-PlatformFiles -Plat tizen -FilePaths @("$TizenDir\NexariPlayer.wgt", "$TizenDir\sssp_config.xml")
+            Publish-PlatformRelease -Plat tizen -Ver $ver -UploadResult $uploadResult
             Register-Build -Plat tizen -Filename "NexariPlayer.wgt" -Ver $ver -BldUuid ""
             Write-Host "  Done. v$ver  SSSP: $instanceUrl/tizen/sssp_config.xml" -ForegroundColor Green
         }
@@ -317,8 +412,8 @@ foreach ($plat in $platforms) {
             $ssspXml = $ssspXml -replace '<ver>[^<]*</ver>', "<ver>$ver</ver>"
             [System.IO.File]::WriteAllText($epaperSsspPath, $ssspXml)
             Write-Host "  sssp_config.xml: <ver>$ver</ver> <size>$wgtBytes</size>" -ForegroundColor DarkGray
-            ssh -p $platSshPort $PlatformSshTarget "mkdir -p $RemoteBuildsRoot/epaper"
-            scp -P $platSshPort "$EpaperDir\NexariEPaper.wgt" "$EpaperDir\sssp_config.xml" "${PlatformSshTarget}:${RemoteBuildsRoot}/epaper/"
+            $uploadResult = Send-PlatformFiles -Plat epaper -FilePaths @("$EpaperDir\NexariEPaper.wgt", "$EpaperDir\sssp_config.xml")
+            Publish-PlatformRelease -Plat epaper -Ver $ver -UploadResult $uploadResult
             Register-Build -Plat epaper -Filename "NexariEPaper.wgt" -Ver $ver -BldUuid ""
             Write-Host "  Done. v$ver  SSSP: $instanceUrl/epaper/sssp_config.xml" -ForegroundColor Green
         }
@@ -350,8 +445,8 @@ foreach ($plat in $platforms) {
             $ApkSrc = "$AndroidDir\android\app\build\outputs\apk\self\release\app-self-release.apk"
             if (-not (Test-Path $ApkSrc)) { Write-Error "APK not found: $ApkSrc"; continue }
             $apkFilename = "nexari-android.apk"
-            ssh -p $platSshPort $PlatformSshTarget "mkdir -p $RemoteBuildsRoot/android"
-            scp -P $platSshPort "$ApkSrc" "${PlatformSshTarget}:${RemoteBuildsRoot}/android/$apkFilename"
+            $uploadResult = Send-PlatformFiles -Plat android -FilePaths @($ApkSrc)
+            Publish-PlatformRelease -Plat android -Ver $ver -UploadResult $uploadResult
             Register-Build -Plat android -Filename $apkFilename -Ver $ver -BldUuid ""
             Write-Host "  Done. v$ver" -ForegroundColor Green
         }
@@ -397,8 +492,14 @@ foreach ($plat in $platforms) {
             }
             $filename = "nexari-windows-setup.exe"
             $ver = if ($src -match '(\d+\.\d+\.\d+)') { $Matches[1] } else { "0.0.0" }
-            ssh -p $platSshPort $PlatformSshTarget "mkdir -p $RemoteBuildsRoot/windows"
-            scp -P $platSshPort "$src" "${PlatformSshTarget}:${RemoteBuildsRoot}/windows/$filename"
+            # Upload the exe + latest.yml (electron auto-updater manifest) if present
+            $releaseDir  = Split-Path $src -Parent
+            $latestYml   = Join-Path $releaseDir 'latest.yml'
+            $uploadFiles = @($src) + @(if (Test-Path $latestYml) { $latestYml } else { })
+            $uploadResult = Send-PlatformFiles -Plat windows -FilePaths $uploadFiles
+            # Rename artifact URL to the fixed filename
+            if ($uploadResult) { $uploadResult.artifactUrl = "$instanceUrl/windows/$filename" }
+            Publish-PlatformRelease -Plat windows -Ver $ver -UploadResult $uploadResult
             Register-Build -Plat windows -Filename $filename -Ver $ver -BldUuid ""
             Write-Host "  Done. v$ver" -ForegroundColor Green
         }
@@ -417,8 +518,8 @@ foreach ($plat in $platforms) {
             Push-Location (Join-Path $RepoRoot "apps\nexari-esp32")
             $ver = try { (Get-Content "platformio.ini" | Select-String 'version\s*=\s*(.+)').Matches[0].Groups[1].Value.Trim() } catch { "0.0.0" }
             Pop-Location
-            ssh -p $platSshPort $PlatformSshTarget "mkdir -p $RemoteBuildsRoot/esp32"
-            scp -P $platSshPort "$src" "${PlatformSshTarget}:${RemoteBuildsRoot}/esp32/$filename"
+            $uploadResult = Send-PlatformFiles -Plat esp32 -FilePaths @($src)
+            # ESP32 has no player_releases entry (no approval flow) — just register to admin
             Register-Build -Plat esp32 -Filename $filename -Ver $ver -BldUuid ""
             Write-Host "  Done. v$ver" -ForegroundColor Green
         }
@@ -430,5 +531,6 @@ Write-Host ""
 Write-Host "=================================================" -ForegroundColor Green
 Write-Host "  Builds complete for: $($partner.Name)"          -ForegroundColor Green
 Write-Host "  Platforms: $($platforms -join ', ')"            -ForegroundColor Green
-Write-Host "  Partner can download at: https://partners.nexari.ca/downloads" -ForegroundColor Green
+Write-Host "  Partner downloads:   https://partners.nexari.ca/downloads"           -ForegroundColor Green
+Write-Host "  Management releases: $instanceUrl/management/releases" -ForegroundColor Green
 Write-Host "=================================================" -ForegroundColor Green

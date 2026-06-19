@@ -71,11 +71,13 @@ services:
       DATABASE_URL: postgresql://signage:${DB_PASSWORD}@postgres:5432/signage
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       STORAGE_ROOT: /var/signage/uploads
+      PLAYER_BUILDS_ROOT: /var/nexari/player-builds
       PLAYWRIGHT_BROWSERS_PATH: /opt/playwright-browsers
     volumes:
       - uploads:/var/signage/uploads
       - tizen:/var/signage/tizen
       - android:/var/signage/android
+      - /var/nexari/player-builds:/var/nexari/player-builds
     depends_on:
       postgres:
         condition: service_healthy
@@ -124,6 +126,8 @@ services:
       - certbot_certs:/etc/letsencrypt:ro
       # Uploads served directly by nginx via internal X-Accel-Redirect
       - uploads:/var/signage/uploads:ro
+      # Player builds served directly by nginx (WGT, APK, EXE, BIN)
+      - /var/nexari/player-builds:/var/nexari/player-builds:ro
     depends_on:
       - api
       - ds-init
