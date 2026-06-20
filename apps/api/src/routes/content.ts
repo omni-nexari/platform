@@ -1536,7 +1536,17 @@ export async function contentRoutes(app: FastifyInstance) {
       } else if (item.type === 'presentation') {
         await generatePresentationThumb(absPath, thumbAbs);
       } else if (item.type === 'html5') {
-        await generateHtml5Thumb(absPath, thumbAbs);
+        const ok = await generateHtml5Thumb(absPath, thumbAbs);
+        if (!ok) {
+          // Playwright not installed or chromium unavailable — clear any stale
+          // thumbnailPath so the client knows no thumbnail exists
+          if (item.thumbnailPath) {
+            await db.update(contentItems)
+              .set({ thumbnailPath: null, updatedAt: new Date() })
+              .where(eq(contentItems.id, id));
+          }
+          return reply.status(422).send({ error: 'HTML5 thumbnail generation unavailable (Playwright/Chromium not installed)' });
+        }
       }
     } catch (e) {
       await db.update(contentItems)

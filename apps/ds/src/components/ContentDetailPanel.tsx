@@ -896,7 +896,7 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
   const regenThumbMut = useMutation({
     mutationFn: () => api.post(`/content/${itemId}/regenerate-thumbnail`),
     onSuccess: () => { toast.success('Thumbnail regenerated'); setThumbFailed(false); setThumbRev((r) => r + 1); invalidate(); },
-    onError: () => toast.error('Thumbnail generation failed — check server logs'),
+    onError: () => { toast.error('Thumbnail generation failed — check server logs'); setThumbFailed(true); invalidate(); },
   });
 
   const [reprocessWizardOpen, setReprocessWizardOpen] = useState(false);
