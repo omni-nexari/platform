@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
@@ -858,6 +858,7 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
   const [confirmPublishOpen, setConfirmPublishOpen] = useState(false);
   const [thumbRev, setThumbRev] = useState(0);
   const [thumbFailed, setThumbFailed] = useState(false);
+  const regenAttemptedRef = useRef(false);
 
   // Fetch item details
   const { data: item, isLoading } = useQuery<ContentDetail>({
@@ -865,6 +866,13 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
     queryFn: () => api.get(`/content/${itemId}`),
     enabled: !!itemId,
   });
+
+  // Reset thumbnail state when switching items
+  useEffect(() => {
+    setThumbFailed(false);
+    setThumbRev(0);
+    regenAttemptedRef.current = false;
+  }, [itemId]);
 
   // Sync edit state when item loads / changes
   useEffect(() => {
@@ -971,7 +979,7 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
 
   if (!itemId) return null;
 
-  const hasThumbnail = item && (item.type === 'image' || item.type === 'video' || item.type === 'pdf' || item.type === 'presentation' || item.type === 'html5');
+  const hasThumbnail = item && !thumbFailed && (item.type === 'image' || item.type === 'video' || item.type === 'pdf' || item.type === 'presentation' || item.type === 'html5');
   const isZoneLayout = item?.type === 'zone_layout';
   const isMenuBoard  = item?.type === 'menu_board';
   const [menuBoardEditOpen, setMenuBoardEditOpen] = useState(false);
@@ -1024,7 +1032,8 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
               className="w-full h-full object-contain"
               revision={thumbRev}
               onError={(status) => {
-                if (status === 404 && !regenThumbMut.isPending) {
+                if (status === 404 && !regenThumbMut.isPending && !regenAttemptedRef.current) {
+                  regenAttemptedRef.current = true;
                   regenThumbMut.mutate();
                 } else {
                   setThumbFailed(true);
