@@ -10,6 +10,9 @@ import fastifyWebsocket from '@fastify/websocket';
 import fastifyMultipart from '@fastify/multipart';
 import { getRedis, isAccessTokenRevoked } from '../services/redis.js';
 import { isInstanceLocked } from '../services/license-client.js';
+import { createHash } from 'node:crypto';
+import { db, apiKeys } from '@signage/db';
+import { eq, and, isNull, gt, or } from 'drizzle-orm';
 
 const CSRF_COOKIE = 'csrf_token';
 const PORTAL_ACCESS_COOKIE = 'platform_sa_access_token';
@@ -299,6 +302,76 @@ export async function registerPlugins(app: FastifyInstance) {
       payload.type !== 'platform_owner' &&
       payload.type !== 'management_company_admin'
     ) {
+      return reply.status(403).send({ error: 'Forbidden' });
+    }
+  });
+
+  // Bearer sk_live_* API key with player:deploy scope — no CSRF required (stateless).
+  // Used by build-partner-players.ps1 to upload player artifacts without cookie login.
+  app.decorate('authenticateDeployKey', async (req: FastifyRequest, reply: FastifyReply) => {
+    const authorization = req.headers.authorization;
+    const rawKey = authorization?.startsWith('Bearer sk_live_')
+      ? authorization.slice('Bearer '.length).trim()
+      : null;
+    if (!rawKey) {
+      return reply.status(401).send({ error: 'Unauthorized: Authorization: Bearer sk_live_... required' });
+    }
+    const keyHash = createHash('sha256').update(rawKey).digest('hex');
+    const now = new Date();
+    const [key] = await db
+      .select({ id: apiKeys.id, orgId: apiKeys.orgId, scopes: apiKeys.scopes })
+      .from(apiKeys)
+      .where(
+        and(
+          eq(apiKeys.keyHash, keyHash),
+          isNull(apiKeys.revokedAt),
+          or(isNull(apiKeys.expiresAt), gt(apiKeys.expiresAt, now)),
+        ),
+      )
+      .limit(1);
+    if (!key) return reply.status(401).send({ error: 'Invalid, revoked, or expired API key' });
+    if (!key.scopes.split(' ').includes('player:deploy')) {
+      return reply.status(403).send({ error: 'API key missing player:deploy scope' });
+    }
+    // Fire-and-forget last-used stamp
+    void db.update(apiKeys).set({ lastUsedAt: now }).where(eq(apiKeys.id, key.id));
+  });
+
+  // Accepts either a platform_owner cookie session OR a deploy key Bearer token.
+  // Used by player-releases POST routes so both the management UI and build script work.
+  async function verifyDeployKey(req: FastifyRequest): Promise<boolean> {
+    const authorization = req.headers.authorization;
+    const rawKey = authorization?.startsWith('Bearer sk_live_')
+      ? authorization.slice('Bearer '.length).trim()
+      : null;
+    if (!rawKey) return false;
+    const keyHash = createHash('sha256').update(rawKey).digest('hex');
+    const now = new Date();
+    const [key] = await db
+      .select({ id: apiKeys.id, scopes: apiKeys.scopes })
+      .from(apiKeys)
+      .where(
+        and(
+          eq(apiKeys.keyHash, keyHash),
+          isNull(apiKeys.revokedAt),
+          or(isNull(apiKeys.expiresAt), gt(apiKeys.expiresAt, now)),
+        ),
+      )
+      .limit(1);
+    if (!key || !key.scopes.split(' ').includes('player:deploy')) return false;
+    void db.update(apiKeys).set({ lastUsedAt: now }).where(eq(apiKeys.id, key.id));
+    return true;
+  }
+
+  app.decorate('authenticateDeployKeyOrPlatformOwner', async (req: FastifyRequest, reply: FastifyReply) => {
+    // Fast path: Bearer deploy key
+    if (await verifyDeployKey(req)) return;
+    // Fallback: platform_owner cookie session
+    const payload = await verifyPortalJwt(req, reply);
+    if (!payload) return;
+    const csrfResult = await verifyCsrf(req, reply);
+    if (csrfResult) return csrfResult;
+    if (payload.type !== 'platform_owner') {
       return reply.status(403).send({ error: 'Forbidden' });
     }
   });

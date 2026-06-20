@@ -71,6 +71,11 @@ param(
     [string]$PlatformOwnerEmail    = "",
     [string]$PlatformOwnerPassword = "",
 
+    # Override the platform deploy API key (sk_live_*) instead of using the one
+    # stored in nexari-admin. Useful for first-time setup before the partner has
+    # saved their key via partners.nexari.ca/downloads.
+    [string]$DeployApiKey = "",
+
     # Override the instance URL from the DB (useful when the partner's instanceUrl
     # record hasn't been updated yet, e.g. after moving from dev to a new domain).
     [string]$InstanceUrl = "",
@@ -158,6 +163,7 @@ $partnerInfos = @($allPartners | ForEach-Object {
         Status       = $_.status
         InstanceUrl  = $_.instanceUrl
         LicenseKeyId = $_.licenseKeyId
+        DeployKey    = $_.platformDeployKey
     }
 })
 
@@ -194,33 +200,15 @@ Write-Host ""
 Write-Host "Building for: $($partner.Name)" -ForegroundColor Cyan
 if ($instanceUrl) { Write-Host "  Instance: $instanceUrl" }
 
-# ── Platform API session (lazy — one login per script run) ───────────────────
-$script:platSession = $null
-$script:platCsrf    = $null
-
-function Get-PlatformSession {
-    if ($script:platSession) { return }
-
-    $email    = if ($PlatformOwnerEmail    -ne "") { $PlatformOwnerEmail    } else { $AdminEmail    }
-    $password = if ($PlatformOwnerPassword -ne "") { $PlatformOwnerPassword } else { $AdminPassword }
-
-    $script:platSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-    $loginBody = @{ email = $email; password = $password } | ConvertTo-Json -Compress
-    try {
-        $null = Invoke-WebRequest -Method Post `
-            -Uri "$instanceUrl/api/v1/superadmin/auth/login" `
-            -ContentType "application/json" `
-            -Body $loginBody `
-            -WebSession $script:platSession `
-            -UseBasicParsing
-        $script:platCsrf = $script:platSession.Cookies.GetCookies($instanceUrl) |
-            Where-Object { $_.Name -eq 'sa_csrf_token' } |
-            Select-Object -First 1 -ExpandProperty Value
-        Write-Host "  Logged in to platform as $email" -ForegroundColor DarkGray
-    } catch {
-        Write-Warning "  Platform login failed: $($_.Exception.Message) -- platform releases will be skipped"
-        $script:platSession = $null
-    }
+# ── Platform deploy key ───────────────────────────────────────────────────────
+# Prefer the -DeployApiKey param override, then fall back to the key stored in nexari-admin.
+$script:deployKey = if ($DeployApiKey -ne "") { $DeployApiKey } else { $partner.DeployKey }
+if (-not $script:deployKey) {
+    Write-Warning "No deploy API key for $($partner.Name)."
+    Write-Warning "  1. On their platform go to Settings > API Keys and create a key with scope 'player:deploy'."
+    Write-Warning "  2. Save it at partners.nexari.ca > Downloads > Platform Deploy Key."
+    Write-Warning "  OR pass -DeployApiKey sk_live_... to this script."
+    Write-Warning "  Uploads and releases will be skipped -- only nexari-admin registration will run."
 }
 
 # Upload one or more local files to the partner's platform via the upload API.
@@ -228,8 +216,7 @@ function Get-PlatformSession {
 function Send-PlatformFiles {
     param([string]$Plat, [string[]]$FilePaths)
 
-    Get-PlatformSession
-    if (-not $script:platSession) { return $null }
+    if (-not $script:deployKey) { return $null }
 
     Write-Host "  Uploading $($FilePaths.Count) file(s) to platform..." -ForegroundColor DarkGray
 
@@ -259,8 +246,7 @@ function Send-PlatformFiles {
             -Uri "$instanceUrl/api/v1/player-releases/upload/$Plat" `
             -ContentType "multipart/form-data; boundary=$boundary" `
             -Body $body `
-            -WebSession $script:platSession `
-            -Headers @{ 'X-CSRF-Token' = $script:platCsrf } `
+            -Headers @{ 'Authorization' = "Bearer $($script:deployKey)" } `
             -UseBasicParsing
         return $resp.Content | ConvertFrom-Json
     } catch {
@@ -273,7 +259,7 @@ function Send-PlatformFiles {
 function Publish-PlatformRelease {
     param([string]$Plat, [string]$Ver, $UploadResult)
 
-    if (-not $script:platSession -or -not $UploadResult) { return }
+    if (-not $script:deployKey -or -not $UploadResult) { return }
 
     try {
         $body = @{
@@ -285,20 +271,18 @@ function Publish-PlatformRelease {
         }
         if ($UploadResult.manifestUrl) { $body.manifestUrl = $UploadResult.manifestUrl }
 
+        $headers = @{ 'Authorization' = "Bearer $($script:deployKey)"; 'Content-Type' = 'application/json' }
+
         $release = Invoke-RestMethod -Method Post `
             -Uri "$instanceUrl/api/v1/player-releases" `
-            -ContentType "application/json" `
-            -Body ($body | ConvertTo-Json -Compress) `
-            -WebSession $script:platSession `
-            -Headers @{ 'X-CSRF-Token' = $script:platCsrf }
+            -Headers $headers `
+            -Body ($body | ConvertTo-Json -Compress)
 
         # Auto-approve so it appears immediately in the management portal
         $null = Invoke-RestMethod -Method Post `
             -Uri "$instanceUrl/api/v1/player-releases/$($release.id)/approve" `
-            -ContentType "application/json" `
-            -Body '{}' `
-            -WebSession $script:platSession `
-            -Headers @{ 'X-CSRF-Token' = $script:platCsrf }
+            -Headers $headers `
+            -Body '{}'
 
         Write-Host "  Platform release published + approved: v$Ver (id=$($release.id))" -ForegroundColor Green
     } catch {

@@ -14,6 +14,7 @@ const SCOPES = [
   'devices:read',
   'sensor:write',
   'analytics:read',
+  'player:deploy',
 ] as const;
 
 function generateKey() {

@@ -97,8 +97,8 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
     return reply.send(releases);
   });
 
-  /** Superadmin: publish a new release (marks it as latest for its platform) */
-  app.post('/', { onRequest: [app.authenticatePlatformOwner] }, async (req, reply) => {
+  /** Superadmin or deploy key: publish a new release (marks it as latest for its platform) */
+  app.post('/', { onRequest: [app.authenticateDeployKeyOrPlatformOwner] }, async (req, reply) => {
     const body = CreateReleaseSchema.safeParse(req.body);
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
@@ -178,8 +178,8 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
     return reply.send({ releaseId: id, version: release.version, platform: release.platform, sentToDevices: sent });
   });
 
-  // ── POST /player-releases/:id/approve  (platform owner) ──────────────────
-  app.post('/:id/approve', { onRequest: [app.authenticatePlatformOwner] }, async (req, reply) => {
+  // ── POST /player-releases/:id/approve  (platform owner or deploy key) ─────
+  app.post('/:id/approve', { onRequest: [app.authenticateDeployKeyOrPlatformOwner] }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const [updated] = await db
       .update(playerReleases)
@@ -246,7 +246,7 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
   // for a specific platform. Files are saved to PLAYER_BUILDS_ROOT/{platform}/ which nginx
   // aliases directly so they are immediately downloadable at /{platform}/{filename}.
   // Returns sha256 + sizeBytes of the main artifact, used by the subsequent POST / call.
-  app.post('/upload/:platform', { onRequest: [app.authenticatePlatformOwner] }, async (req, reply) => {
+  app.post('/upload/:platform', { onRequest: [app.authenticateDeployKey] }, async (req, reply) => {
     const { platform } = req.params as { platform: string };
 
     // Allow 'esp32' in addition to the release platforms
