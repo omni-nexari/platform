@@ -396,13 +396,12 @@ window.ContentManager = {
           reject(new Error('Download canceled'));
         },
         oncompleted: (id, fullPath) => {
-          logger.info(`Download completed via Tizen API: ${customFileName}`);
-          try {
-            resolve(this.toUri(this.storagePath + '/' + customFileName));
-          } catch (error) {
-            logger.error('Error resolving downloaded file:', error);
-            reject(error);
-          }
+          logger.info(`Download completed via Tizen API: ${customFileName}`, fullPath);
+          // Use actual fullPath from Tizen rather than reconstructing the virtual path.
+          const uri = fullPath
+            ? (fullPath.startsWith('file://') ? fullPath : 'file://' + fullPath)
+            : this.toUri(this.storagePath + '/' + customFileName);
+          resolve(uri);
         },
         onfailed: (id, error) => {
           logger.error(`Download failed (${customFileName}):`, error);
@@ -583,21 +582,18 @@ window.ContentManager = {
           oncompleted: (id, fullPath) => {
             logger.info('Download completed:', fullPath);
             this.activeDownloads.delete(id);
+            // Use actual fullPath reported by Tizen (more reliable than reconstructing
+            // from storagePath + fileName, which can be wrong if Tizen renamed the file).
+            const uri = fullPath
+              ? (fullPath.startsWith('file://') ? fullPath : 'file://' + fullPath)
+              : this.toUri(this.storagePath + '/' + fileName);
+            if (content && content.id) {
+              this.cachedUrlMap.set(String(content.id), uri);
+            }
             if (window.Player && typeof window.Player.handleDownloadProgress === 'function') {
               window.Player.handleDownloadProgress(100);
             }
-            
-            // Convert file path to URI
-            try {
-              const uri = this.toUri(this.storagePath + '/' + fileName);
-              if (content && content.id) {
-                this.cachedUrlMap.set(String(content.id), uri);
-              }
-              resolve(uri);
-            } catch (error) {
-              logger.error('Failed to resolve downloaded file:', error);
-              reject(error);
-            }
+            resolve(uri);
           },
 
           onfailed: (id, error) => {

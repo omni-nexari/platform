@@ -4696,7 +4696,20 @@ const Player = {
         logger.error('Failed to play video:', error);
       });
     };
-    
+
+    // Wire onended so the playlist controller advances / loops even when AVPlay
+    // fell back to HTML5 (onstreamcompleted is never fired in that path).
+    // currentVideoEndedCallback is set by renderPlaylistStandard before calling
+    // renderVideo; use a closure so we always read the latest value at end-time.
+    video.onended = () => {
+      try {
+        const cb = (this as any).currentVideoEndedCallback;
+        if (typeof cb === 'function') cb();
+      } catch (e) {
+        logger.warn('HTML5 onended callback error:', e);
+      }
+    };
+
     video.onerror = (error) => {
       logger.error('Video error:', error);
     };
