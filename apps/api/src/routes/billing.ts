@@ -24,9 +24,11 @@ import {
   pricingPlans,
   pricingPlanPrices,
   orgSubscriptions,
+  orgLicenseAllocations,
   invoices,
   screenUsageRecords,
 } from '@signage/db';
+import { getLicenseState } from '../services/license-client.js';
 import { eq, and, isNull, desc, count } from 'drizzle-orm';
 import {
   getStripe,
@@ -363,6 +365,38 @@ export async function billingRoutes(app: FastifyInstance) {
       trialDaysLeft,
       trialScreenLimit: sub?.trialScreenLimit ?? null,
       orgStatus: org?.status ?? null,
+    });
+  });
+
+  // ── GET /billing/license-info ─────────────────────────────────────────────
+  // Returns license tier, allocation limits, and current screen counts for the
+  // authenticated org. Works for both Stripe-billed and license-key-managed orgs.
+  app.get('/license-info', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+
+    const [allocation, screenCount] = await Promise.all([
+      db.query.orgLicenseAllocations.findFirst({
+        where: eq(orgLicenseAllocations.orgId, user.orgId),
+      }),
+      getOrgScreenCount(user.orgId),
+    ]);
+
+    const licenseState = getLicenseState();
+
+    return reply.send({
+      // License-key derived info (platform-wide)
+      status: licenseState?.status ?? null,
+      signageTier: licenseState?.signageTier ?? null,
+      allowedModules: licenseState?.allowedModules ?? 'signage',
+      expiresAt: licenseState?.expiresAt ?? null,
+      planType: licenseState?.planType ?? null,
+      platformMaxScreens: licenseState?.maxScreens ?? null,
+      // Per-org allocation set by management/partner
+      maxSignageScreens: allocation?.maxSignageScreens ?? null,
+      maxPosScreens: allocation?.maxPosScreens ?? null,
+      enabledModules: allocation?.enabledModules ?? null,
+      // Live counts
+      screenCount,
     });
   });
 

@@ -152,6 +152,7 @@ type SectionId =
   | 'general'
   | 'security'
   | 'organization'
+  | 'license'
   | 'billing'
   | 'workspace'
   | 'tags'
@@ -181,6 +182,7 @@ const SECTIONS: {
   { id: 'general',      label: 'General',         icon: User,          group: 'Account' },
   { id: 'security',     label: 'Security',         icon: Shield,        group: 'Account' },
   { id: 'organization', label: 'Organization',     icon: Building2,     group: 'Organization' },
+  { id: 'license',      label: 'License',           icon: ShieldCheck,   group: 'Organization' },
   { id: 'billing',      label: 'Billing',          icon: CreditCard,    group: 'Organization' },
   { id: 'workspace',    label: 'Workspace',        icon: LayoutGrid,    group: 'Workspace' },
   { id: 'tags',         label: 'Tags',             icon: Tag,           group: 'Workspace' },
@@ -204,6 +206,7 @@ const SECTION_LABELS: Record<SectionId, string> = {
   general:          'General',
   security:         'Security',
   organization:     'Organization',
+  license:          'License',
   billing:          'Billing',
   workspace:        'Workspace',
   tags:             'Tags',
@@ -4796,6 +4799,132 @@ function trialDaysLeft(trialEndsAt: string | null): number {
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
 }
 
+// ─── License Section ──────────────────────────────────────────────────────────
+
+interface LicenseInfo {
+  status: 'ok' | 'trial' | 'grace' | 'overlimit' | 'suspended' | 'revoked' | null;
+  signageTier: 'basic' | 'pro' | null;
+  allowedModules: string;
+  expiresAt: string | null;
+  planType: string | null;
+  platformMaxScreens: number | null;
+  maxSignageScreens: number | null;
+  maxPosScreens: number | null;
+  enabledModules: string[] | null;
+  screenCount: number;
+}
+
+const LICENSE_STATUS_TONES: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> = {
+  ok:        'success',
+  trial:     'neutral',
+  grace:     'warning',
+  overlimit: 'warning',
+  suspended: 'danger',
+  revoked:   'danger',
+};
+
+function LicenseSection() {
+  const { data, isLoading } = useQuery<LicenseInfo>({
+    queryKey: ['billing-license-info'],
+    queryFn: () => api.get('/billing/license-info'),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-24" />
+        <Skeleton className="h-24" />
+      </div>
+    );
+  }
+
+  const modules = data?.enabledModules ?? (data?.allowedModules ? [data.allowedModules] : null);
+  const tier = data?.signageTier;
+  const effectiveSignageMax = data?.maxSignageScreens ?? data?.platformMaxScreens;
+  const hasPosModule = modules ? modules.some(m => m === 'pos' || m === 'both') : (data?.allowedModules === 'pos' || data?.allowedModules === 'both');
+
+  return (
+    <div className="space-y-4">
+      {/* Status card */}
+      <SectionCard>
+        <SectionCardHeader>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold">License Status</span>
+            {data?.status && (
+              <Badge tone={LICENSE_STATUS_TONES[data.status] ?? 'neutral'}>
+                {data.status.charAt(0).toUpperCase() + data.status.slice(1)}
+              </Badge>
+            )}
+          </div>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+            <div>
+              <dt className="text-xs text-[var(--text-muted)]">Plan</dt>
+              <dd className="font-medium capitalize">{data?.planType?.replace(/-/g, ' ') ?? '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-[var(--text-muted)]">Tier</dt>
+              <dd className="font-medium capitalize">{tier ?? '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-[var(--text-muted)]">Modules</dt>
+              <dd className="font-medium capitalize">{modules?.join(', ') ?? data?.allowedModules ?? '—'}</dd>
+            </div>
+            {data?.expiresAt && (
+              <div>
+                <dt className="text-xs text-[var(--text-muted)]">Expires</dt>
+                <dd className="font-medium">{formatBillingDate(data.expiresAt)}</dd>
+              </div>
+            )}
+          </dl>
+        </SectionCardBody>
+      </SectionCard>
+
+      {/* Signage screens card */}
+      <SectionCard>
+        <SectionCardHeader>
+          <span className="text-sm font-semibold">Signage Screens</span>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+            <div>
+              <dt className="text-xs text-[var(--text-muted)]">Connected Screens</dt>
+              <dd className="font-medium">{data?.screenCount ?? '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-[var(--text-muted)]">Allocated Limit</dt>
+              <dd className="font-medium">{effectiveSignageMax ?? 'Unlimited'}</dd>
+            </div>
+          </dl>
+          {effectiveSignageMax != null && (data?.screenCount ?? 0) >= effectiveSignageMax && (
+            <div className="mt-3">
+              <Callout tone="warning">Screen limit reached. Contact your administrator to increase allocation.</Callout>
+            </div>
+          )}
+        </SectionCardBody>
+      </SectionCard>
+
+      {/* POS card — only show when POS module is included */}
+      {hasPosModule && (
+        <SectionCard>
+          <SectionCardHeader>
+            <span className="text-sm font-semibold">Point of Sale</span>
+          </SectionCardHeader>
+          <SectionCardBody>
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+              <div>
+                <dt className="text-xs text-[var(--text-muted)]">Max POS Screens</dt>
+                <dd className="font-medium">{data?.maxPosScreens ?? 'Per plan'}</dd>
+              </div>
+            </dl>
+          </SectionCardBody>
+        </SectionCard>
+      )}
+    </div>
+  );
+}
+
 function BillingSection() {
   const user = useAuthStore((s) => s.user);
   const isOwner = user?.orgRole === 'owner' || user?.orgRole === 'prime_owner';
@@ -5183,6 +5312,7 @@ export default function SettingsPage() {
           {activeSection === 'pos-kiosk'      && <PosKioskSection wsId={resolvedWsId} />}
           {activeSection === 'pos-loyalty'       && <PosLoyaltySection wsId={resolvedWsId} />}
           {activeSection === 'pos-integrations' && <PosIntegrationsSection wsId={resolvedWsId} />}
+          {activeSection === 'license'          && <LicenseSection />}
           {activeSection === 'billing'         && <BillingSection />}
           {activeSection === 'migrate'         && <MigrateSection wsId={resolvedWsId} />}
         </div>

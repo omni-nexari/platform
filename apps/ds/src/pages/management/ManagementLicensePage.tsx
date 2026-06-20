@@ -51,8 +51,6 @@ interface AllocationsData {
 interface LicenseFormValues {
   licenseKey: string;
   hmacSecret: string;
-  licenseServerUrl: string;
-  isEnabled: boolean;
 }
 
 interface AllocFormValues {
@@ -242,17 +240,15 @@ export default function ManagementLicensePage() {
     values: {
       licenseKey: config?.licenseKey ?? '',
       hmacSecret: '',
-      licenseServerUrl: config?.licenseServerUrl ?? 'https://admin.nexari.chiho.app',
-      isEnabled: config?.isEnabled ?? true,
     },
   });
 
   const saveLicense = useMutation({
     mutationFn: (vals: LicenseFormValues) => saApi.put('/superadmin/license-config', {
-      ...(vals.licenseKey       ? { licenseKey:       vals.licenseKey }       : {}),
-      ...(vals.hmacSecret       ? { hmacSecret:       vals.hmacSecret }       : {}),
-      ...(vals.licenseServerUrl ? { licenseServerUrl: vals.licenseServerUrl } : {}),
-      isEnabled: vals.isEnabled,
+      ...(vals.licenseKey  ? { licenseKey:  vals.licenseKey }  : {}),
+      ...(vals.hmacSecret  ? { hmacSecret:  vals.hmacSecret }  : {}),
+      licenseServerUrl: 'https://admin.nexari.ca',
+      isEnabled: true,
     }),
     onSuccess: () => {
       toast.success('License configuration saved');
@@ -378,15 +374,7 @@ export default function ManagementLicensePage() {
                       </button>
                     </div>
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="ui-label" htmlFor="licenseServerUrl">License Server URL</label>
-                    <input id="licenseServerUrl" className="ui-input w-full"
-                      placeholder="https://admin.nexari.chiho.app" {...register('licenseServerUrl')} />
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <input id="isEnabled" type="checkbox" className="ui-checkbox" {...register('isEnabled')} />
-                    <label htmlFor="isEnabled" className="text-sm">Enable license heartbeat</label>
-                  </div>
+                  <p className="text-xs text-[var(--text-muted)]">License server: <span className="font-mono">https://admin.nexari.ca</span></p>
                   <button type="submit" className="btn-primary" disabled={isSubmitting || !isDirty}>
                     {isSubmitting ? 'Saving...' : 'Save'}
                   </button>
