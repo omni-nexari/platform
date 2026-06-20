@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { api } from '../lib/api.js';
 import AssignedTagPills, { type AssignedTag } from './AssignedTagPills.js';
 import { ToggleSwitch } from './UiPrimitives.js';
+import { useIsProPlan } from '../lib/modules.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -211,6 +212,7 @@ export default function PublishWizardModal({
   onClose,
   onDone,
 }: PublishWizardModalProps) {
+  const isProPlan = useIsProPlan();
   const [step, setStep] = useState<1 | 2>(() => skipModeStep ? 2 : 1);
   const [mode, setMode] = useState<PublishMode | null>(() => skipModeStep ? 'single' : null);
 
@@ -447,6 +449,7 @@ export default function PublishWizardModal({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
 
               {/* Videowall tile */}
+              {isProPlan && (
               <button
                 onClick={() => handleModeSelect('videowall')}
                 className="flex flex-col items-start gap-3 p-5 rounded-2xl border border-[var(--card-border)] bg-[var(--card)] hover:border-[var(--accent)] hover:bg-[var(--accent)]/5 transition-colors text-left group"
@@ -461,6 +464,7 @@ export default function PublishWizardModal({
                   </p>
                 </div>
               </button>
+              )}
 
               {/* Single tile */}
               <button

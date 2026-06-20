@@ -402,19 +402,6 @@ export default function AppLayout() {
                               Schedules
                             </NavLink>
                             <NavLink
-                              to={`/workspaces/${ws.id}/canvas/new`}
-                              className={({ isActive }) =>
-                                `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
-                                  isActive
-                                    ? 'bg-[var(--blue)] text-white'
-                                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                                }`
-                              }
-                            >
-                              <Paintbrush className="w-4 h-4" />
-                              Canvas
-                            </NavLink>
-                            <NavLink
                               to={`/workspaces/${ws.id}/tags`}
                               className={({ isActive }) =>
                                 `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${

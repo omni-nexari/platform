@@ -33,8 +33,8 @@ export type OrgPlan = 'basic' | 'pro';
 /** Returns the plan for the authenticated org. Defaults to 'basic'. */
 export function useOrgPlan(): OrgPlan {
   const plan = useAuthStore((s) => s.org?.plan);
-  // 'enterprise' is a legacy value that maps to pro; anything else defaults to basic
-  if (plan === 'pro' || plan === 'enterprise') return 'pro';
+  // 'enterprise' is a legacy value; 'signage-pro' and 'bundle-pro' are license planType values
+  if (plan === 'pro' || plan === 'enterprise' || plan === 'signage-pro' || plan === 'bundle-pro' || plan === 'bundle-basic') return 'pro';
   return 'basic';
 }
 

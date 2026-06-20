@@ -53,6 +53,7 @@ import {
   clearLoginFailures,
   LOGIN_LOCKOUT_THRESHOLD,
 } from '../services/login-lockout.js';
+import { getLicenseState } from '../services/license-client.js';
 
 const REFRESH_COOKIE = 'refresh_token';
 const ACCESS_COOKIE = 'access_token';
@@ -989,11 +990,17 @@ export async function authRoutes(app: FastifyInstance) {
         orgSettings.modules = company.allowedModules;
       }
     }
+    // Derive effective plan from the live license tier so the frontend
+    // feature gates (SyncPlay, Video Walls) reflect the actual license.
+    const licenseState = getLicenseState();
+    const effectivePlan = (licenseState?.signageTier === 'pro' || org.plan === 'pro' || org.plan === 'enterprise')
+      ? 'pro'
+      : org.plan;
     const resolvedOrg = {
       id: org.id,
       name: org.name,
       slug: org.slug,
-      plan: org.plan,
+      plan: effectivePlan,
       settings: JSON.stringify(orgSettings),
     };
 

@@ -943,14 +943,6 @@ export default function ContentPage() {
           onClick: () => setUploadOpen(true),
         },
         {
-          id: 'create-design',
-          label: 'Create Design',
-          description: 'Build a canvas layout',
-          icon: <Paintbrush size={16} />,
-          iconClassName: 'bg-violet-500/15 text-violet-400',
-          onClick: () => navigate(`/workspaces/${wsId}/canvas/new`),
-        },
-        {
           id: 'zone-layout',
           label: 'Zone Layout',
           description: 'Multi-zone signage',
@@ -967,36 +959,12 @@ export default function ContentPage() {
           onClick: () => navigate(`/workspaces/${wsId}/calendar/new`),
         },
         {
-          id: 'live-link-face',
-          label: 'Live Link Face',
-          description: 'Epic Live Link stream',
-          icon: <Scan size={16} />,
-          iconClassName: 'bg-pink-500/15 text-pink-400',
-          onClick: () => navigate(`/workspaces/${wsId}/live-link-face/new`),
-        },
-        {
           id: 'iptv',
           label: 'IPTV',
           description: 'Live TV channels',
           icon: <Tv size={16} />,
           iconClassName: 'bg-orange-500/15 text-orange-400',
           onClick: () => navigate(`/workspaces/${wsId}/iptv/new`),
-        },
-        {
-          id: 'template',
-          label: 'Template',
-          description: 'Start from a template',
-          icon: <FileCode2 size={16} />,
-          iconClassName: 'bg-cyan-500/15 text-cyan-400',
-          onClick: () => navigate(`/workspaces/${wsId}/template/new`),
-        },
-        {
-          id: 'livedata',
-          label: 'LiveData',
-          description: 'Feeds & real-time streams',
-          icon: <Activity size={16} />,
-          iconClassName: 'bg-sky-500/15 text-sky-400',
-          onClick: () => navigate(`/workspaces/${wsId}/livedata/new`),
         },
       ]
     : [];
