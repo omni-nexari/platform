@@ -2120,6 +2120,7 @@ const API_KEY_SCOPES = [
   { id: 'devices:read',    label: 'Devices Read' },
   { id: 'sensor:write',    label: 'Sensor Write' },
   { id: 'analytics:read',  label: 'Analytics Read' },
+  { id: 'player:deploy',   label: 'Player Deploy' },
 ];
 
 function ApiKeysSection({ selectedWsId }: { selectedWsId: string | null }) {
