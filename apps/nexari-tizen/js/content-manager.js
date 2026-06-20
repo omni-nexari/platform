@@ -383,17 +383,49 @@ window.ContentManager = {
   // Download with Tizen Download API using custom filename (for SyncPlay)
   downloadWithTizenAPICustomName(content, customFileName) {
     return new Promise((resolve, reject) => {
+      let downloadId = null;
+      let settled = false;
+      let completionWatchdog = null;
+      let maxTimeWatchdog = null;
+
+      const settle = (fn) => {
+        if (settled) return;
+        settled = true;
+        if (completionWatchdog) { clearTimeout(completionWatchdog); completionWatchdog = null; }
+        if (maxTimeWatchdog) { clearTimeout(maxTimeWatchdog); maxTimeWatchdog = null; }
+        // Cancel stalled Tizen download to free the slot before falling back to XHR.
+        if (downloadId != null) {
+          try { tizen.download.cancel(downloadId); } catch (_) {}
+        }
+        fn();
+      };
+
+      const fallbackToXhr = (reason) => {
+        logger.warn(`Tizen Download stalled for ${customFileName} (${reason}), falling back to XHR`);
+        settle(() => {
+          this.downloadContentWithName(content, customFileName).then(resolve).catch(reject);
+        });
+      };
+
+      // 5-minute hard cap: prevents isDownloadingContent from sticking true forever.
+      maxTimeWatchdog = setTimeout(() => fallbackToXhr('max-time-5min'), 5 * 60 * 1000);
+
       const listener = {
         onprogress: (id, receivedSize, totalSize) => {
           const progress = Math.round((receivedSize / totalSize) * 100);
           logger.info(`Download progress (${customFileName}): ${progress}%`);
+          // When progress hits 100% but oncompleted hasn't fired yet, start a watchdog.
+          // Some Tizen firmware versions stall between transfer-complete and file-sealed.
+          if (progress >= 100 && !completionWatchdog && !settled) {
+            completionWatchdog = setTimeout(() => fallbackToXhr('oncompleted-not-fired-after-100pct'), 15_000);
+          }
         },
         onpaused: (id) => {
           logger.warn(`Download paused: ${customFileName}`);
         },
         oncanceled: (id) => {
           logger.warn(`Download canceled: ${customFileName}`);
-          reject(new Error('Download canceled'));
+          if (!settled) settle(() => reject(new Error('Download canceled')));
         },
         oncompleted: (id, fullPath) => {
           logger.info(`Download completed via Tizen API: ${customFileName}`, fullPath);
@@ -401,14 +433,13 @@ window.ContentManager = {
           const uri = fullPath
             ? (fullPath.startsWith('file://') ? fullPath : 'file://' + fullPath)
             : this.toUri(this.storagePath + '/' + customFileName);
-          resolve(uri);
+          settle(() => resolve(uri));
         },
         onfailed: (id, error) => {
           logger.error(`Download failed (${customFileName}):`, error);
-          // Fallback to XHR on Tizen API failure
-          this.downloadContentWithName(content, customFileName)
-            .then(resolve)
-            .catch(reject);
+          settle(() => {
+            this.downloadContentWithName(content, customFileName).then(resolve).catch(reject);
+          });
         }
       };
 
@@ -417,18 +448,17 @@ window.ContentManager = {
         content.url,
         destinationDir,
         customFileName,
-        'CELLULAR_WIFI' // Allow download on both cellular and WiFi
+        'ALL' // 'CELLULAR_WIFI' is not a valid Tizen enum; 'ALL' = any available network
       );
 
       try {
-        const downloadId = tizen.download.start(request, listener);
+        downloadId = tizen.download.start(request, listener);
         logger.info(`Started Tizen download for ${customFileName} (ID: ${downloadId})`);
       } catch (error) {
         logger.error(`Tizen download start failed for ${customFileName}:`, error);
-        // Fallback to XHR
-        this.downloadContentWithName(content, customFileName)
-          .then(resolve)
-          .catch(reject);
+        settle(() => {
+          this.downloadContentWithName(content, customFileName).then(resolve).catch(reject);
+        });
       }
     });
   },
@@ -548,6 +578,34 @@ window.ContentManager = {
   // Download using Tizen Download API (for large files)
   async downloadWithTizenAPI(content) {
     return new Promise((resolve, reject) => {
+      let downloadId = null;
+      let settled = false;
+      let completionWatchdog = null;
+      let maxTimeWatchdog = null;
+
+      const settle = (fn) => {
+        if (settled) return;
+        settled = true;
+        if (completionWatchdog) { clearTimeout(completionWatchdog); completionWatchdog = null; }
+        if (maxTimeWatchdog) { clearTimeout(maxTimeWatchdog); maxTimeWatchdog = null; }
+        // Cancel stalled Tizen download to free the slot before falling back to XHR.
+        if (downloadId != null) {
+          try { tizen.download.cancel(downloadId); } catch (_) {}
+          this.activeDownloads.delete(downloadId);
+        }
+        fn();
+      };
+
+      const fallbackToXhr = (reason) => {
+        logger.warn('Tizen Download API stalled (' + reason + '), falling back to XHR');
+        settle(() => {
+          this.downloadContentFallback(content).then(resolve).catch(reject);
+        });
+      };
+
+      // 5-minute hard cap: prevents isDownloadingContent from sticking true forever.
+      maxTimeWatchdog = setTimeout(() => fallbackToXhr('max-time-5min'), 5 * 60 * 1000);
+
       try {
         const fileName = this.getFileName(content);
         // Tizen DownloadRequest expects destination directory path (not file path)
@@ -557,7 +615,7 @@ window.ContentManager = {
           content.url,
           destinationDir,
           fileName,
-          'CELLULAR_WIFI' // Allow download on both cellular and WiFi
+          'ALL' // 'CELLULAR_WIFI' is not a valid Tizen enum; 'ALL' = any available network
         );
 
         const listener = {
@@ -567,6 +625,11 @@ window.ContentManager = {
             if (window.Player && typeof window.Player.handleDownloadProgress === 'function') {
               window.Player.handleDownloadProgress(percent);
             }
+            // When progress hits 100% but oncompleted hasn't fired yet, start a watchdog.
+            // Some Tizen firmware versions stall between transfer-complete and file-sealed.
+            if (percent >= 100 && !completionWatchdog && !settled) {
+              completionWatchdog = setTimeout(() => fallbackToXhr('oncompleted-not-fired-after-100pct'), 15_000);
+            }
           },
 
           onpaused: (id) => {
@@ -575,13 +638,11 @@ window.ContentManager = {
 
           oncanceled: (id) => {
             logger.warn('Download canceled:', id);
-            this.activeDownloads.delete(id);
-            reject(new Error('Download canceled'));
+            if (!settled) settle(() => reject(new Error('Download canceled')));
           },
 
           oncompleted: (id, fullPath) => {
             logger.info('Download completed:', fullPath);
-            this.activeDownloads.delete(id);
             // Use actual fullPath reported by Tizen (more reliable than reconstructing
             // from storagePath + fileName, which can be wrong if Tizen renamed the file).
             const uri = fullPath
@@ -593,34 +654,32 @@ window.ContentManager = {
             if (window.Player && typeof window.Player.handleDownloadProgress === 'function') {
               window.Player.handleDownloadProgress(100);
             }
-            resolve(uri);
+            settle(() => resolve(uri));
           },
 
           onfailed: (id, error) => {
             logger.error('Download failed:', error.name, error.message);
-            this.activeDownloads.delete(id);
             if (window.Player && typeof window.Player.handleDownloadProgress === 'function') {
               window.Player.handleDownloadProgress(0);
             }
-            
             // Fallback to XMLHttpRequest on failure
             logger.info('Falling back to XMLHttpRequest...');
-            this.downloadContentFallback(content)
-              .then(resolve)
-              .catch(reject);
+            settle(() => {
+              this.downloadContentFallback(content).then(resolve).catch(reject);
+            });
           }
         };
 
-        const downloadId = tizen.download.start(downloadRequest, listener);
+        downloadId = tizen.download.start(downloadRequest, listener);
         this.activeDownloads.set(downloadId, { content, fileName });
         logger.info(`Started download with ID: ${downloadId}`);
 
       } catch (error) {
         logger.error('Failed to start Tizen download:', error);
         // Fallback to XMLHttpRequest
-        this.downloadContentFallback(content)
-          .then(resolve)
-          .catch(reject);
+        settle(() => {
+          this.downloadContentFallback(content).then(resolve).catch(reject);
+        });
       }
     });
   },

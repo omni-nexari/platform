@@ -3351,23 +3351,18 @@ const Player = {
                 this.avplayReady = false;
                 this.renderVideoHTML5(container, content);
             };
-            // CRITICAL: Follow Samsung's official sequence from sample code
-            // 1. Open FIRST
-            logger.info('AVPlay: Opening URL:', content.url);
+            // Samsung-documented mandatory call order (verified against working AVPlay demo):
+            //   open → setListener → setDisplayRect → setDisplayMethod → [streaming props] → prepareAsync → play
+            // NOTE: setDisplayMethod MUST be called BEFORE prepareAsync — calling it inside
+            // the success callback (after prepare) causes silent playback failure on Tizen 6.5+.
+            // Fallback panel size: default to 1920×1080 if panel detection didn't run yet.
+            const viewportWidth = this._panelWidth || 1920;
+            const viewportHeight = this._panelHeight || 1080;
+            const isLocalFile = content.url && content.url.startsWith('file:///');
+            // 1. Open URL → state: NONE → IDLE
+            logger.info('AVPlay: open', content.url);
             webapis.avplay.open(content.url);
-            logger.debug('AVPlay: Open complete');
-            // Apply profile after open (more reliable on some firmwares)
-            this.applyAvPlayProfile(content);
-            // 2. Set display rect SECOND (Samsung samples do this before setListener)
-            // Samsung docs claim setDisplayRect uses a fixed 1920x1080 coordinate space, but on
-            // commercial signage panels the rect maps to native panel pixels — passing 1920x1080
-            // on a 4K panel renders in the top-left quadrant. Use the cached panel resolution
-            // detected at init via tizen.systeminfo / productinfo.
-            const viewportWidth = this._panelWidth;
-            const viewportHeight = this._panelHeight;
-            webapis.avplay.setDisplayRect(0, 0, viewportWidth, viewportHeight);
-            logger.info('AVPlay: Display rect set', viewportWidth, viewportHeight);
-            // 3. Set listener THIRD (after open and setDisplayRect, before prepare)
+            // 2. Attach event listener (must be first thing after open)
             webapis.avplay.setListener({
                 onbufferingstart: () => {
                     logger.debug('AVPlay buffering started');
@@ -3380,8 +3375,6 @@ const Player = {
                 },
                 onstreamcompleted: () => {
                     logger.info('AVPlay stream completed');
-                    // Let the playlist handler decide whether it can loop/transition seamlessly.
-                    // If it returns true, it handled looping/transition itself.
                     let handled = false;
                     if (this.currentVideoEndedCallback) {
                         try {
@@ -3395,72 +3388,65 @@ const Player = {
                         this.setAvPlayVisualMode(false);
                     }
                 },
-                oncurrentplaytime: (currentTime) => {
-                    // Optional: track playback time
+                oncurrentplaytime: (_currentTime) => {
+                    // throttled position tracking — no-op here
                 },
                 onerror: (eventType) => {
+                    logger.warn('AVPlay onerror:', eventType);
                     this.setAvPlayVisualMode(false);
                     fallbackToHtml5(eventType);
                 },
                 onevent: (eventType, eventData) => {
                     logger.debug('AVPlay event:', eventType, eventData);
-                }
+                },
             });
-            const isLocalFile = content.url && content.url.startsWith('file:///');
-            // Configure buffering only for network streams (not needed for local files)
+            // 3. Set render area in screen pixels
+            webapis.avplay.setDisplayRect(0, 0, viewportWidth, viewportHeight);
+            logger.info('AVPlay: setDisplayRect', viewportWidth, viewportHeight);
+            // 4. Set scaling mode — MUST be before prepare()
+            webapis.avplay.setDisplayMethod('PLAYER_DISPLAY_MODE_FULL_SCREEN');
+            logger.debug('AVPlay: setDisplayMethod FULL_SCREEN');
+            // 5. Apply adaptive/buffer streaming profile (no-op for local files)
+            this.applyAvPlayProfile(content);
             if (!isLocalFile) {
                 try {
                     webapis.avplay.setTimeoutForBuffering(10);
-                    logger.debug('AVPlay: Buffering timeout set to 10s');
                 }
-                catch (err) {
-                    logger.debug('setTimeoutForBuffering not supported');
-                }
+                catch (_) { /* not supported on all firmware */ }
             }
-            logger.debug('AVPlay: Starting prepareAsync...');
+            // 6. Prepare async → state: IDLE → READY
+            logger.debug('AVPlay: prepareAsync...');
             webapis.avplay.prepareAsync(() => {
                 try {
-                    logger.debug('AVPlay: Prepare complete, setting display mode');
-                    // Set display method after prepare succeeds
-                    webapis.avplay.setDisplayMethod('PLAYER_DISPLAY_MODE_FULL_SCREEN');
-                    // Re-apply display rect after prepare in case resolution changed
-                    try {
-                        webapis.avplay.setDisplayRect(0, 0, viewportWidth, viewportHeight);
-                        logger.debug('AVPlay: Display rect set after prepare', viewportWidth, viewportHeight);
-                    }
-                    catch (rectErr) {
-                        logger.warn('AVPlay: setDisplayRect after prepare failed', rectErr);
-                    }
-                    // Apply videowall ROI crop when this is a wall tile.
-                    // setVideoRoi is B2B/LFD only (Tizen 6.0+) and must be called after
-                    // prepareAsync completes (player is in READY state).
+                    // Make DOM transparent so the hardware video plane shows through
                     this.setAvPlayVisualMode(true);
-                    logger.debug('Enabled AVPlay visual mode');
-                    // Start playback
-                    logger.debug('AVPlay: Calling play()');
+                    // 7. Play → state: READY → PLAYING
                     webapis.avplay.play();
                     this.avplayReady = true;
-                    logger.info('AVPlay playback started');
-                    // Watchdog: check if playback actually starts
-                    // Local files should start immediately, network streams may take a few seconds
+                    logger.info('AVPlay: playback started');
+                    // Watchdog: if not actually playing after a short delay, fall back to HTML5.
+                    // Catches: unsupported codec, empty file, IDLE/NONE after silent error.
                     const watchdogDelay = isLocalFile ? 3000 : 5000;
                     setTimeout(() => {
                         var _a, _b, _c, _d;
                         try {
                             const state = (_b = (_a = webapis.avplay).getState) === null || _b === void 0 ? void 0 : _b.call(_a);
                             const time = (_d = (_c = webapis.avplay).getCurrentTime) === null || _d === void 0 ? void 0 : _d.call(_c);
-                            // Only fallback if state is PLAYING but time hasn't progressed at all
-                            if (state === 'PLAYING' && time === 0) {
-                                logger.warn('AVPlay appears stalled (state:', state, 'time:', time, '). Falling back to HTML5');
+                            // NONE / IDLE = AVPlay stopped itself (error or empty stream)
+                            // PLAYING + time=0 = play() was accepted but frames never advanced
+                            const notPlaying = !state || state === 'NONE' || state === 'IDLE'
+                                || (state === 'PLAYING' && (time !== null && time !== void 0 ? time : 1) === 0);
+                            if (notPlaying) {
+                                logger.warn('AVPlay watchdog: not playing (state=' + state + ' time=' + time + '), falling back to HTML5');
                                 this.setAvPlayVisualMode(false);
-                                fallbackToHtml5('stalled');
+                                fallbackToHtml5('watchdog state=' + state);
                             }
                             else {
-                                logger.debug('AVPlay watchdog OK - state:', state, 'time:', time);
+                                logger.debug('AVPlay watchdog OK: state=' + state + ' time=' + time);
                             }
                         }
                         catch (watchErr) {
-                            logger.debug('Watchdog check failed', watchErr);
+                            logger.debug('AVPlay watchdog check failed:', watchErr);
                         }
                     }, watchdogDelay);
                 }
@@ -4247,6 +4233,7 @@ const Player = {
         }
     },
     resetAvPlay() {
+        var _a, _b;
         try {
             this._stopIptvWatchdog();
             // Always clear IPTV overlay and pending reconnect timer when resetting AVPlay.
@@ -4254,13 +4241,34 @@ const Player = {
             this._hideIptvOverlay();
             if (typeof webapis !== 'undefined' && webapis.avplay) {
                 try {
-                    webapis.avplay.stop();
+                    // Samsung docs: stop() is only valid in PLAYING/PAUSED/READY states;
+                    // close() is only valid in IDLE state.  Check state first to avoid
+                    // throwing on an already-idle/closed player.
+                    const state = (_b = (_a = webapis.avplay).getState) === null || _b === void 0 ? void 0 : _b.call(_a);
+                    if (state === 'PLAYING' || state === 'PAUSED' || state === 'READY') {
+                        try {
+                            webapis.avplay.stop();
+                        }
+                        catch (_) { }
+                    }
+                    if (state !== 'NONE') {
+                        try {
+                            webapis.avplay.close();
+                        }
+                        catch (_) { }
+                    }
                 }
-                catch (e) { }
-                try {
-                    webapis.avplay.close();
+                catch (_stateErr) {
+                    // getState unavailable or threw — best-effort stop+close
+                    try {
+                        webapis.avplay.stop();
+                    }
+                    catch (_) { }
+                    try {
+                        webapis.avplay.close();
+                    }
+                    catch (_) { }
                 }
-                catch (e) { }
                 this.setAvPlayVisualMode(false);
                 this.currentAvPlayProfileKey = null;
             }
