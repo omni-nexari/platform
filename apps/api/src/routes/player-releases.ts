@@ -120,6 +120,17 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
         sizeBytes: sizeBytes ?? null,
         isLatest: true,
       })
+      .onConflictDoUpdate({
+        target: [playerReleases.platform, playerReleases.version],
+        set: {
+          downloadUrl, releaseNotes,
+          manifestUrl: manifestUrl ?? null,
+          sha512: sha512 ?? null,
+          sha256: sha256 ?? null,
+          sizeBytes: sizeBytes ?? null,
+          isLatest: true,
+        },
+      })
       .returning();
 
     return reply.status(201).send(release);

@@ -181,7 +181,9 @@ export const playerReleases = pgTable('player_releases', {
   superadminApprovedAt:  timestamp('superadmin_approved_at', { withTimezone: true }),
   publishedAt:           timestamp('published_at', { withTimezone: true }).notNull().defaultNow(),
   createdAt:             timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  uniqueIndex('player_releases_platform_version_unique').on(t.platform, t.version),
+]);
 
 /** Per-management-company approval of a player release.
  *  Created when a management-company admin clicks "Approve for clients".
