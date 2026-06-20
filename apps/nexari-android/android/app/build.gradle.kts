@@ -23,8 +23,8 @@ android {
         applicationId = "app.chiho.nexari"
         minSdk = 24
         targetSdk = 34
-        versionCode = 120
-        versionName = "0.1.20"
+        versionCode = 121
+        versionName = "0.1.21"
 
         // Manifest-wide opt-in is now off; res/xml/network_security.xml is the
         // single source of truth and permits HTTP only to whitelisted LAN hosts
@@ -120,6 +120,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.google.code.gson:gson:2.11.0")
 }
+
 
 
 
