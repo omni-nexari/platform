@@ -56,8 +56,8 @@ import { Player, type PlatformAdapter } from '@signage/player-web';
 
 const adapter: PlatformAdapter = createAndroidAdapter(); // implemented in Kotlin via @JavascriptInterface
 const player = new Player({
-  apiBase:   'https://ds.chiho.app/api/v1',
-  wsBase:    'wss://ds.chiho.app',
+  apiBase:   'https://your-platform.example.com/api/v1',
+  wsBase:    'wss://your-platform.example.com',
   adapter,
   container: document.getElementById('player-root')!,
 });

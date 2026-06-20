@@ -5923,7 +5923,7 @@ var ManagementCompanySchema = external_exports.object({
   id: external_exports.string().uuid(),
   name: external_exports.string(),
   slug: external_exports.string(),
-  plan: external_exports.enum(["starter", "pro", "enterprise"]).default("starter"),
+  plan: external_exports.enum(["basic", "pro"]).default("basic"),
   allowedModules: external_exports.enum(["signage", "pos", "both"]).default("signage"),
   billingEmail: external_exports.string().email().nullable(),
   logoUrl: external_exports.string().nullable().optional(),
@@ -7573,12 +7573,12 @@ async function _fetchPlaylistUrls() {
 function escapeHtml3(s) {
   return String(s != null ? s : "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
-var UPDATE_HOST_ALLOWLIST = ["ds.chiho.app", "updates.chiho.app"];
-function isAllowedUpdateUrl(url) {
+function isAllowedUpdateUrl(url, apiBase) {
   try {
     const u = new URL(url);
     if (u.protocol !== "https:" && u.protocol !== "http:") return false;
-    return UPDATE_HOST_ALLOWLIST.indexOf(u.hostname) !== -1;
+    const apiHost = new URL(apiBase).hostname;
+    return u.hostname === apiHost;
   } catch (e) {
     return false;
   }
@@ -7867,7 +7867,7 @@ var Player = class {
 
   <!-- URL hint -->
   <p style="font-size:14px;color:#555;margin:0 0 32px;">
-    Dashboard: <span style="color:#4a9eff;">${escapeHtml3(serverHost || "ds.chiho.app")}</span>
+    Dashboard: <span style="color:#4a9eff;">${escapeHtml3(serverHost || "")}</span>
   </p>
 
   <!-- Connection settings (collapsible) -->
@@ -8075,7 +8075,7 @@ var Player = class {
           this.send({ type: "app_update_failed", error: "missing url/version" });
           return;
         }
-        if (!isAllowedUpdateUrl(url)) {
+        if (!isAllowedUpdateUrl(url, this.cfg.apiBase)) {
           this.send({ type: "app_update_failed", error: "Download URL host not allowed" });
           return;
         }
@@ -8206,7 +8206,7 @@ var Player = class {
           this.send({ type: "app_update_failed", error: "missing url/version" });
           return;
         }
-        if (!isAllowedUpdateUrl(url)) {
+        if (!isAllowedUpdateUrl(url, this.cfg.apiBase)) {
           this.send({ type: "app_update_failed", error: "Download URL host not allowed" });
           return;
         }

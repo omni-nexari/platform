@@ -13,7 +13,7 @@ export function getDefaultApiBase(): string {
 
   return process.env.NEXARI_DEV === '1'
     ? 'http://192.168.1.17/api/v1'
-    : 'https://ds.chiho.app/api/v1';
+    : '';
 }
 
 export interface StoreSchema {

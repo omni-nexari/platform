@@ -1,6 +1,6 @@
 {
   "version": "0.1.0",
-  "apkUrl": "https://ds.chiho.app/android/nexari-android-latest.apk",
+  "apkUrl": "https://your-platform.example.com/android/nexari-android-latest.apk",
   "sha256": "REPLACE_WITH_HEX_SHA256",
   "releasedAt": "2026-05-09T00:00:00Z",
   "minSupportedVersion": "0.1.0",

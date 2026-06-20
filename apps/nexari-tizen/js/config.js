@@ -5,10 +5,10 @@
 // If WS_URL is omitted, it will be derived from API_BASE (ws/wss + host:port).
 const defaultConfig = {
   // Backend API base URL
-  API_BASE: 'https://ds.chiho.app/api/v1',
+  API_BASE: '',
 
   // WebSocket URL for real-time updates
-  WS_URL: 'wss://ds.chiho.app',
+  WS_URL: '',
 
   // Heartbeat interval (30 seconds)
   HEARTBEAT_INTERVAL: 30000,

@@ -63,8 +63,8 @@ if (!adapter) {
   document.body.textContent = 'AndroidBridge not available';
 } else {
   const cfg = JSON.parse(window.AndroidBridge.getConfig());
-  const apiBase = cfg.apiBase || 'https://ds.chiho.app/api/v1';
-  const wsBase  = cfg.wsBase  || 'wss://ds.chiho.app';
+  const apiBase = cfg.apiBase || '';
+  const wsBase  = cfg.wsBase  || '';
   const player = new Player({ apiBase, wsBase, adapter, container: document.getElementById('player-root') });
   player.start().catch(e => {
     document.body.style.color = '#fff';

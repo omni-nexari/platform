@@ -672,7 +672,7 @@ export async function authRoutes(app: FastifyInstance) {
       result.ownerUser &&
       result.ownerWorkspace
     ) {
-      const appUrl = (process.env['APP_URL'] ?? 'https://ds.chiho.app').replace(/\/+$/, '');
+      const appUrl = (process.env['APP_URL'] ?? 'http://localhost:3000').replace(/\/+$/, '');
       const resellerPortalLink = `${appUrl}/${updatedCompany.slug}/login`;
       const dashboardLink = `${appUrl}/login`;
 

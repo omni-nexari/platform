@@ -236,7 +236,7 @@ async function startSyncGroupPlayback(content: Playlist) {
     const cfg = await window.nexari.getConfig();
     const deviceId  = cfg.deviceId  || localStorage.getItem('deviceId')  || '';
     const token     = cfg.deviceToken || localStorage.getItem('deviceToken') || '';
-    const apiBase   = cfg.apiBase   || localStorage.getItem('apiBase')   || 'https://ds.chiho.app/api/v1';
+    const apiBase   = cfg.apiBase   || localStorage.getItem('apiBase')   || '';
 
     const peers = (content.syncPlay?.peers ?? []) as Array<{ deviceId: string; leaderPriority?: number | null }>;
     const expectedPeers = Math.max(1, peers.length - 1);
@@ -890,7 +890,7 @@ async function renderMenuBoard(c: NormalizedContent, durationSec: number): Promi
     return;
   }
 
-  const apiBase = localStorage.getItem('apiBase') || 'https://ds.chiho.app/api/v1';
+  const apiBase = localStorage.getItem('apiBase') || '';
   const reqId   = `mb-${Date.now()}`;
   root.dataset['mbReqId'] = reqId;
   root.innerHTML = _mbBuildStateHtml(c.name || 'Menu Board', 'Loading the latest POS menu\u2026');
@@ -918,7 +918,7 @@ async function renderMenuBoard(c: NormalizedContent, durationSec: number): Promi
 // ---------------------------------------------------------------------------
 function renderDataSync(c: NormalizedContent, durationSec: number) {
   const token   = localStorage.getItem('deviceToken') || '';
-  const apiBase = (localStorage.getItem('apiBase') || 'https://ds.chiho.app/api/v1').replace(/\/api\/v1\/?$/, '');
+  const apiBase = (localStorage.getItem('apiBase') || '').replace(/\/api\/v1\/?$/, '');
   const url = `${apiBase}/api/v1/devices/device/content/${encodeURIComponent(c.id)}/datasync/${encodeURIComponent(token)}`;
   renderHTML({ ...c, url, webUrl: null }, durationSec);
 }
@@ -1185,7 +1185,7 @@ function renderZoneLayout(c: NormalizedContent, durationSec: number) {
   root.style.background = '#000';
 
   const token   = localStorage.getItem('deviceToken') || '';
-  const apiBase = localStorage.getItem('apiBase') || 'https://ds.chiho.app/api/v1';
+  const apiBase = localStorage.getItem('apiBase') || '';
 
   for (const zone of zones) {
     const rect = zone.rect ?? { x: 0, y: 0, width: ZONE_CANVAS_W, height: ZONE_CANVAS_H };
@@ -1220,7 +1220,7 @@ function renderZoneLayout(c: NormalizedContent, durationSec: number) {
 // ---------------------------------------------------------------------------
 function renderCalendar(c: NormalizedContent, durationSec: number) {
   const token      = localStorage.getItem('deviceToken') || '';
-  const apiBase    = localStorage.getItem('apiBase') || 'https://ds.chiho.app/api/v1';
+  const apiBase    = localStorage.getItem('apiBase') || '';
   const eventsUrl  = `${apiBase}/devices/device/content/${encodeURIComponent(c.id)}/calendar/events`;
   const contentName = (c as any).name || 'Calendar';
 

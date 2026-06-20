@@ -55,7 +55,7 @@ export interface Playlist {
 // Config helpers
 // ---------------------------------------------------------------------------
 function getApiBase(): string {
-  return (localStorage.getItem('apiBase') || 'https://ds.chiho.app/api/v1').replace(/\/$/, '');
+  return (localStorage.getItem('apiBase') || '').replace(/\/$/, '');
 }
 
 function getToken(): string {

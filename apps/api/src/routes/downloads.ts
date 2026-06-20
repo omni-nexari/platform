@@ -2,7 +2,7 @@
  * downloads.ts — public installer download endpoints.
  *
  * Provides unauthenticated routes used by the marketing landing page
- * (e.g. https://ds.chiho.app/windows) and by `electron-updater` running
+ * and by `electron-updater` running
  * on the desktop player to fetch the signed `latest.yml` manifest.
  *
  *   GET /downloads/:platform           302 → latest installer

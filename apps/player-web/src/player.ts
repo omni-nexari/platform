@@ -338,7 +338,7 @@ export class Player {
 
   <!-- URL hint -->
   <p style="font-size:14px;color:#555;margin:0 0 32px;">
-    Dashboard: <span style="color:#4a9eff;">${escapeHtml(serverHost || 'ds.chiho.app')}</span>
+    Dashboard: <span style="color:#4a9eff;">${escapeHtml(serverHost || '')}</span>
   </p>
 
   <!-- Connection settings (collapsible) -->

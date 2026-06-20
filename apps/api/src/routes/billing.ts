@@ -41,7 +41,7 @@ import type Stripe from 'stripe';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
-const APP_URL = (process.env['APP_URL'] ?? 'https://ds.chiho.app').replace(/\/+$/, '');
+const APP_URL = (process.env['APP_URL'] ?? 'http://localhost:3000').replace(/\/+$/, '');
 
 // ---------------------------------------------------------------------------
 // Helpers

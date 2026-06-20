@@ -71,6 +71,10 @@ param(
     [string]$PlatformOwnerEmail    = "",
     [string]$PlatformOwnerPassword = "",
 
+    # Override the instance URL from the DB (useful when the partner's instanceUrl
+    # record hasn't been updated yet, e.g. after moving from dev to a new domain).
+    [string]$InstanceUrl = "",
+
     # Path to a pre-built Windows installer (required when -Platform windows)
     [string]$WindowsInstallerPath = "",
     # Path to a pre-built ESP32 firmware .bin (required when -Platform esp32)
@@ -179,6 +183,8 @@ if (-not $partner.InstanceUrl -and -not $SkipBuild) {
 }
 
 $instanceUrl = $partner.InstanceUrl
+# Allow caller to override the URL from the DB (e.g. after domain migration)
+if ($InstanceUrl -ne "") { $instanceUrl = $InstanceUrl.TrimEnd('/') }
 $wsUrl = if ($instanceUrl) {
     $instanceUrl -replace '^https://', 'wss://' -replace '^http://', 'ws://'
 } else { "" }
@@ -212,7 +218,7 @@ function Get-PlatformSession {
             Select-Object -First 1 -ExpandProperty Value
         Write-Host "  Logged in to platform as $email" -ForegroundColor DarkGray
     } catch {
-        Write-Warning "  Platform login failed: $($_.Exception.Message) — platform releases will be skipped"
+        Write-Warning "  Platform login failed: $($_.Exception.Message) -- platform releases will be skipped"
         $script:platSession = $null
     }
 }
@@ -519,7 +525,7 @@ foreach ($plat in $platforms) {
             $ver = try { (Get-Content "platformio.ini" | Select-String 'version\s*=\s*(.+)').Matches[0].Groups[1].Value.Trim() } catch { "0.0.0" }
             Pop-Location
             $uploadResult = Send-PlatformFiles -Plat esp32 -FilePaths @($src)
-            # ESP32 has no player_releases entry (no approval flow) — just register to admin
+            # ESP32 has no player_releases entry (no approval flow) -- just register to admin
             Register-Build -Plat esp32 -Filename $filename -Ver $ver -BldUuid ""
             Write-Host "  Done. v$ver" -ForegroundColor Green
         }

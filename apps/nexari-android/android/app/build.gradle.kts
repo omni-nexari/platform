@@ -23,13 +23,13 @@ android {
         applicationId = "app.chiho.nexari"
         minSdk = 24
         targetSdk = 34
-        versionCode = 117
-        versionName = "0.1.17"
+        versionCode = 118
+        versionName = "0.1.18"
 
         // Manifest-wide opt-in is now off; res/xml/network_security.xml is the
         // single source of truth and permits HTTP only to whitelisted LAN hosts
         // (192.168.1.17, 10.0.2.2, localhost, 127.0.0.1). Production traffic to
-        // ds.chiho.app remains HTTPS-only.
+        // Production traffic is HTTPS-only to the configured platform host.
         manifestPlaceholders["usesCleartextTraffic"] = "false"
     }
 
@@ -73,9 +73,9 @@ android {
         create("self") {
             dimension = "channel"
             val partnerApi = (project.findProperty("partnerApiBase") as String?)
-                ?: "https://ds.chiho.app/api/v1"
+                ?: ""
             val partnerWs = (project.findProperty("partnerWsBase") as String?)
-                ?: "wss://ds.chiho.app"
+                ?: ""
             val otaBase = partnerApi.removeSuffix("/api/v1")
             buildConfigField("boolean", "OTA_ENABLED", "true")
             buildConfigField("String",  "DEFAULT_API_BASE", "\"$partnerApi\"")
@@ -86,8 +86,8 @@ android {
         create("play") {
             dimension = "channel"
             buildConfigField("boolean", "OTA_ENABLED", "false")
-            buildConfigField("String",  "DEFAULT_API_BASE", "\"https://ds.chiho.app/api/v1\"")
-            buildConfigField("String",  "DEFAULT_WS_BASE",  "\"wss://ds.chiho.app\"")
+            buildConfigField("String",  "DEFAULT_API_BASE", "\"\"")
+            buildConfigField("String",  "DEFAULT_WS_BASE",  "\"\"")
             buildConfigField("String",  "DEFAULT_OTA_URL",  "\"\"")
         }
     }
@@ -120,6 +120,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.google.code.gson:gson:2.11.0")
 }
+
 
 
 

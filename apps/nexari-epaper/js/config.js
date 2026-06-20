@@ -3,8 +3,8 @@
 //   1) window.__PLAYER_CONFIG__ (injected by build-info.js at build time)
 //   2) localStorage keys: PLAYER_API_BASE, PLAYER_WS_URL
 const defaultConfig = {
-  API_BASE: 'https://ds.chiho.app/api/v1',
-  WS_URL: 'wss://ds.chiho.app',
+  API_BASE: '',
+  WS_URL: '',
 
   HEARTBEAT_INTERVAL: 60000,            // 60s — e-paper trades latency for battery
   TELEMETRY_INTERVAL: 5 * 60 * 1000,    // 5 min full telemetry

@@ -66,13 +66,13 @@ pnpm --filter nexari-android build:debug
 
 Generate a QR code containing the JSON in
 `docs/dpc-provisioning.json` and serve it from
-`https://ds.chiho.app/android/dpc-provisioning.json`. On a factory-reset
+`https://your-platform.example.com/android/dpc-provisioning.json`. On a factory-reset
 device, tap the welcome screen 6× → scan QR → device enrols with our DPC
 and silently installs the latest APK.
 
 ## Auto-update flow
 
-1. On boot and every 6 h the player checks `https://ds.chiho.app/android/update.json`.
+1. On boot and every 6 h the player checks `https://your-platform.example.com/android/update.json`.
 2. If a newer version is published the player emits `app_update_downloading`
    over the existing API WebSocket and uses Android `DownloadManager` to fetch
    the APK, verifying SHA-256.

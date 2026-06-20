@@ -36,7 +36,7 @@ function getServerLanOrigins(): string[] {
 }
 
 function getAllowedOrigins(): Set<string> {
-  const configuredAppUrl = process.env['APP_URL'] ?? 'https://ds.chiho.app';
+  const configuredAppUrl = process.env['APP_URL'] ?? 'http://localhost:3000';
   const extraOrigins = (process.env['APP_EXTRA_ORIGINS'] ?? '')
     .split(',')
     .map((origin) => origin.trim())

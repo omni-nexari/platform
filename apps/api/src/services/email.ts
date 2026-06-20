@@ -3,7 +3,7 @@ import nodemailer from 'nodemailer';
 import { db, emailConfig as emailConfigTable } from '@signage/db';
 import { decryptSecret } from './crypto.js';
 
-const APP_URL = (process.env['APP_URL'] ?? 'https://ds.chiho.app').replace(/\/+$/, '');
+const APP_URL = (process.env['APP_URL'] ?? 'http://localhost:3000').replace(/\/+$/, '');
 
 // ── Email config (DB-backed, falls back to env vars) ──────────────────────────
 

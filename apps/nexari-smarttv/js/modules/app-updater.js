@@ -20,32 +20,36 @@
  */
 var AppUpdater;
 (function (AppUpdater) {
-    /** Hosts permitted as the origin for OTA downloads. */
-    const UPDATE_HOST_ALLOWLIST = ['ds.chiho.app', 'updates.chiho.app'];
     /**
      * Resolve a possibly-relative file URL against the CMS base URL, then
-     * enforce the host allowlist. Returns null if the resolved URL is not
-     * an http(s) URL whose host is allowed.
+     * enforce that the update host matches the configured API_BASE host.
+     * Returns null if the resolved URL is not an http(s) URL or host is not allowed.
      */
     function resolveUrl(wgtUrl) {
         let absolute;
+        // Strip /api/v1 suffix from API_BASE to get the server origin
+        const apiBase = (typeof CONFIG !== 'undefined' && CONFIG.API_BASE)
+            ? String(CONFIG.API_BASE).replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '')
+            : '';
         if (wgtUrl.startsWith('http://') || wgtUrl.startsWith('https://')) {
             absolute = wgtUrl;
         }
         else {
-            // Strip /api/v1 suffix from API_BASE to get the server origin
-            const base = (typeof CONFIG !== 'undefined' && CONFIG.API_BASE)
-                ? String(CONFIG.API_BASE).replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '')
-                : '';
-            absolute = base + (wgtUrl.startsWith('/') ? wgtUrl : '/' + wgtUrl);
+            absolute = apiBase + (wgtUrl.startsWith('/') ? wgtUrl : '/' + wgtUrl);
         }
         try {
             const u = new URL(absolute);
             if (u.protocol !== 'https:' && u.protocol !== 'http:')
                 return null;
-            if (UPDATE_HOST_ALLOWLIST.indexOf(u.hostname) === -1) {
-                console.error('[AppUpdater] Refusing download from non-allowlisted host:', u.hostname);
-                return null;
+            // Only allow downloads from the same host as the configured API_BASE
+            if (apiBase) {
+                try {
+                    const allowedHost = new URL(apiBase).hostname;
+                    if (u.hostname !== allowedHost) {
+                        console.error('[AppUpdater] Refusing download from non-allowlisted host:', u.hostname);
+                        return null;
+                    }
+                } catch { return null; }
             }
             return absolute;
         }
