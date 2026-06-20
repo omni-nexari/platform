@@ -128,9 +128,32 @@ export async function registerPlugins(app: FastifyInstance) {
   });
 
   await app.register(fastifyRateLimit, {
-    max: 600,
+    // Authenticated dashboard requests are keyed by user ID so every logged-in
+    // user gets their own independent bucket (avoids IP-based collisions for
+    // users on shared NAT / CDN egress).  Unauthenticated requests fall back to
+    // IP address.
+    max: 2000,
     timeWindow: '1 minute',
     redis: getRedis() ?? undefined,
+    keyGenerator: (req) => {
+      // The access_token JWT is a three-part base64url string.  Decode the
+      // payload (middle part) without verifying — we only need the `sub` claim
+      // as a bucket key, not for auth decisions.
+      const token =
+        (req.cookies as Record<string, string | undefined>)['access_token'] ??
+        (req.headers['authorization'] as string | undefined)?.replace(/^Bearer\s+/i, '');
+      if (token) {
+        try {
+          const payload = JSON.parse(
+            Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8'),
+          ) as { sub?: string };
+          if (payload.sub) return `user:${payload.sub}`;
+        } catch {
+          // fall through to IP
+        }
+      }
+      return req.ip;
+    },
   });
 
   await app.register(fastifyWebsocket);
