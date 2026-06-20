@@ -167,7 +167,8 @@ type SectionId =
   | 'pos-loyalty'
   | 'pos-uber-eats'
   | 'pos-integrations'
-  | 'integrations';
+  | 'integrations'
+  | 'migrate';
 
 const SECTIONS: {
   id: SectionId;
@@ -187,6 +188,7 @@ const SECTIONS: {
   { id: 'audit',        label: 'Audit Log',        icon: ClipboardList, group: 'Workspace' },
   { id: 'api-keys',     label: 'API Keys',         icon: Key,           group: 'Workspace' },
   { id: 'integrations', label: 'Integrations',     icon: Plug,          group: 'Workspace' },
+  { id: 'migrate',       label: 'Migrate from MagicInfo', icon: ArrowDownToLine, group: 'Workspace', cmsOnly: true },
   { id: 'notifications',label: 'Notifications',    icon: Bell,          group: 'Preferences' },
   // POS sections — rendered conditionally when posEnabled
   { id: 'pos-restaurant', label: 'Restaurant',   icon: Store,           group: 'Point of Sale', posOnly: true },
@@ -209,6 +211,7 @@ const SECTION_LABELS: Record<SectionId, string> = {
   audit:            'Audit Log',
   'api-keys':       'API Keys',
   integrations:     'Integrations',
+  migrate:          'Migrate from MagicInfo',
   notifications:    'Notifications',
   'pos-restaurant': 'Restaurant',
   'pos-menu':       'Menu',
@@ -5039,6 +5042,42 @@ function BillingSection() {
   );
 }
 
+// ─── Migrate from MagicInfo section ──────────────────────────────────────────
+
+function MigrateSection({ wsId }: { wsId: string | null }) {
+  const navigate = useNavigate();
+  const workspaces = useQuery<Workspace[]>({ queryKey: ['workspaces'], queryFn: () => api.get('/workspaces') });
+  const ws = workspaces.data?.find((w) => w.id === wsId);
+
+  return (
+    <div className="space-y-4">
+      <SectionCard>
+        <SectionCardHeader>
+          <h3 className="text-sm font-semibold">Migrate from MagicInfo</h3>
+        </SectionCardHeader>
+        <SectionCardBody>
+          <p className="text-sm text-[var(--text-muted)] mb-4">
+            Import your existing Samsung MagicInfo devices, content schedules, and playlists
+            into Nexari. The migration wizard connects to your MagicInfo server and guides you
+            through selecting and transferring your data.
+          </p>
+          {wsId ? (
+            <button
+              onClick={() => navigate(`/workspaces/${wsId}/migrate`)}
+              className="btn btn-primary flex items-center gap-2"
+            >
+              <ArrowDownToLine size={14} />
+              Start MagicInfo Migration{ws ? ` — ${ws.name}` : ''}
+            </button>
+          ) : (
+            <p className="text-sm text-[var(--text-muted)]">Select a workspace above to begin.</p>
+          )}
+        </SectionCardBody>
+      </SectionCard>
+    </div>
+  );
+}
+
 // ─── Main SettingsPage ────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -5062,13 +5101,14 @@ export default function SettingsPage() {
   }
 
   // Filter sections based on enabled modules
-  const visibleSections = SECTIONS.filter((s) => !s.posOnly || posEnabled);
+  const cmsEnabled = useCmsEnabled();
+  const visibleSections = SECTIONS.filter((s) => (!s.posOnly || posEnabled) && (!s.cmsOnly || cmsEnabled));
 
   // Group sections for sidebar rendering
   const groups = Array.from(new Set(visibleSections.map((s) => s.group)));
 
   const WORKSPACE_SECTIONS: SectionId[] = [
-    'workspace', 'tags', 'emergency', 'api-keys', 'integrations',
+    'workspace', 'tags', 'emergency', 'api-keys', 'integrations', 'migrate',
     'pos-restaurant', 'pos-menu', 'pos-tables', 'pos-hardware', 'pos-kiosk', 'pos-loyalty', 'pos-integrations',
   ];
   const needsWorkspacePicker = WORKSPACE_SECTIONS.includes(activeSection);
@@ -5144,6 +5184,7 @@ export default function SettingsPage() {
           {activeSection === 'pos-loyalty'       && <PosLoyaltySection wsId={resolvedWsId} />}
           {activeSection === 'pos-integrations' && <PosIntegrationsSection wsId={resolvedWsId} />}
           {activeSection === 'billing'         && <BillingSection />}
+          {activeSection === 'migrate'         && <MigrateSection wsId={resolvedWsId} />}
         </div>
       </div>
     </div>

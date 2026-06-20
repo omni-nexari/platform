@@ -52,7 +52,6 @@ import {
   Receipt,
   MessageSquare,
   ImageIcon,
-  ArrowDownToLine,
 } from 'lucide-react';
 
 interface Workspace {
@@ -441,26 +440,6 @@ export default function AppLayout() {
                               <BarChart2 className="w-4 h-4" />
                               Analytics
                             </NavLink>
-                            {(user?.orgRole === 'owner' || user?.orgRole === 'prime_owner' || user?.orgRole === 'admin') && (
-                              <>
-                                <div className="pt-2 pb-1 pl-8 pr-3">
-                                  <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Settings</p>
-                                </div>
-                                <NavLink
-                                  to={`/workspaces/${ws.id}/migrate`}
-                                  className={({ isActive }) =>
-                                    `flex items-center gap-2.5 pl-8 pr-3 py-1.5 rounded-lg text-sm transition-colors ${
-                                      isActive
-                                        ? 'bg-[var(--blue)] text-white'
-                                        : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-                                    }`
-                                  }
-                                >
-                                  <ArrowDownToLine className="w-4 h-4" />
-                                  Migrate from MagicInfo
-                                </NavLink>
-                              </>
-                            )}
                           </>
                         )}
 
