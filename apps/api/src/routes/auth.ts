@@ -11,6 +11,7 @@ import {
   refreshTokens,
   orgStorageQuotas,
   managementCompanies,
+  orgLicenseAllocations,
   contentItems,
   workspaces,
 } from '@signage/db';
@@ -977,11 +978,25 @@ export async function authRoutes(app: FastifyInstance) {
 
     // Ensure settings.modules is always explicitly set so the client never
     // falls back to the 'signage' default for POS-only orgs.
-    // If the org's own settings don't have a modules key, inherit from the
-    // parent management company's allowedModules.
+    // Priority order:
+    //   1. orgLicenseAllocations.enabledModules  (partner-assigned per-org override)
+    //   2. org.settings.modules                  (org-level override)
+    //   3. managementCompanies.allowedModules     (partner-wide default)
     let orgSettings: Record<string, unknown> = {};
     try { orgSettings = JSON.parse(org.settings || '{}') as Record<string, unknown>; } catch { /* ignore */ }
-    if (orgSettings.modules == null && org.managementCompanyId) {
+
+    // 1. Check per-org license allocation first (highest priority)
+    const allocation = await db.query.orgLicenseAllocations.findFirst({
+      where: eq(orgLicenseAllocations.orgId, orgId),
+      columns: { enabledModules: true },
+    });
+    if (allocation?.enabledModules && allocation.enabledModules.length > 0) {
+      const mods = allocation.enabledModules;
+      const hasSignage = mods.includes('signage');
+      const hasPos = mods.includes('pos');
+      orgSettings.modules = hasSignage && hasPos ? 'both' : hasPos ? 'pos' : 'signage';
+    } else if (orgSettings.modules == null && org.managementCompanyId) {
+      // 3. Fall back to management company's platform-wide allowedModules
       const company = await db.query.managementCompanies.findFirst({
         where: eq(managementCompanies.id, org.managementCompanyId),
         columns: { allowedModules: true },
