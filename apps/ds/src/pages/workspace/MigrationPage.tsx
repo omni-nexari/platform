@@ -47,13 +47,20 @@ interface MiPlaylist {
 }
 
 interface MiTimeChannel {
-  startTime: string;
-  endTime: string;
-  repeatDays?: number[];
+  startTime?: string;
+  endTime?: string;       // v1.0 field
+  stopTime?: string;      // v2.0 alias for endTime
+  durationInSeconds?: number;
+  repeatType?: string;    // "ONCE" | "DAILY" | "WEEKLY" | "MONTHLY"
+  repeatedDayOfWeekList?: string[]; // ["MON","TUE"...] as returned by MagicInfo API
   startDate?: string;
-  endDate?: string;
-  playlistId?: string;
+  endDate?: string;       // v1.0 field
+  stopDate?: string;      // v2.0 alias for endDate
+  isAllDayPlay?: boolean;
+  isInfinitePlay?: boolean;
   contentId?: string;
+  contentName?: string;
+  playlistId?: string;
 }
 
 interface MiSchedule {
@@ -135,28 +142,112 @@ function parseGroupPath(groupPath?: string, groupName?: string): string[] {
   return parts.slice(start);
 }
 
+// MagicInfo day strings → Nexari daysOfWeek numbers (0 = Monday)
+const DOW_MAP: Record<string, number> = { MON: 0, TUE: 1, WED: 2, THU: 3, FRI: 4, SAT: 5, SUN: 6 };
+
+function timeToSec(t?: string): number {
+  if (!t) return 0;
+  const parts = t.split(':').map(Number);
+  return (parts.every(Number.isFinite) && parts.length >= 2)
+    ? parts[0] * 3600 + parts[1] * 60 + (parts[2] ?? 0)
+    : 0;
+}
+
+function padTime(t?: string): string {
+  if (!t) return '00:00';
+  const p = t.split(':');
+  return `${(p[0] ?? '00').padStart(2, '0')}:${(p[1] ?? '00').padStart(2, '0')}`;
+}
+
 /** Map MagicInfo time channel → Nexari slot payload */
 function mapTimeChannel(ch: MiTimeChannel, nexariPlaylistId?: string, nexariContentId?: string) {
   const hasPlaylist = !!nexariPlaylistId;
   const hasContent = !!nexariContentId;
 
-  const days = ch.repeatDays ?? [];
-  const isOnce = days.length === 0 && !!ch.startDate;
-  const isWeekly = days.length > 0;
+  const rawRepeat = (ch.repeatType ?? 'ONCE').toUpperCase();
+  const recurrenceType =
+    rawRepeat === 'WEEKLY'  ? 'weekly'  :
+    rawRepeat === 'DAILY'   ? 'daily'   :
+    rawRepeat === 'MONTHLY' ? 'monthly' : 'once';
+
+  const isAllDay = ch.isAllDayPlay ?? false;
+  const rawEnd = ch.endTime ?? ch.stopTime;
+  const rawEndDate = ch.endDate ?? ch.stopDate ?? '';
+  const isInfinite = ch.isInfinitePlay ?? (!rawEndDate || rawEndDate >= '2900-01-01');
+
+  // Compute endTime: explicit field → startTime + durationInSeconds → default
+  let endTime: string;
+  if (isAllDay) {
+    endTime = '23:59';
+  } else if (rawEnd) {
+    endTime = padTime(rawEnd);
+  } else if (ch.startTime && ch.durationInSeconds) {
+    const endSec = timeToSec(ch.startTime) + ch.durationInSeconds;
+    const h = Math.floor(endSec / 3600) % 24;
+    const m = Math.floor((endSec % 3600) / 60);
+    endTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  } else {
+    endTime = '23:59';
+  }
+
+  const startTime = isAllDay ? '00:00' : padTime(ch.startTime);
+  const daysOfWeek = recurrenceType === 'weekly' && ch.repeatedDayOfWeekList?.length
+    ? ch.repeatedDayOfWeekList.map(d => DOW_MAP[d.toUpperCase()] ?? 0)
+    : undefined;
 
   return {
     playlistId: hasPlaylist ? nexariPlaylistId : undefined,
     contentId: !hasPlaylist && hasContent ? nexariContentId : undefined,
-    startTime: ch.startTime ?? '00:00',
-    endTime: ch.endTime ?? '23:59',
-    recurrenceType: isOnce ? 'once' : isWeekly ? 'weekly' : 'daily',
-    daysOfWeek: isWeekly ? days : undefined,
-    date: isOnce ? ch.startDate : undefined,
-    recurrenceStartDate: ch.startDate,
-    recurrenceEndDate: ch.endDate,
+    startTime,
+    endTime,
+    recurrenceType,
+    daysOfWeek,
+    date: recurrenceType === 'once' ? ch.startDate : undefined,
+    recurrenceStartDate: recurrenceType !== 'once' ? ch.startDate : undefined,
+    recurrenceEndDate: isInfinite ? '2999-12-31' : rawEndDate || undefined,
     color: '#3B82F6',
     priority: 0,
   };
+}
+
+/**
+ * Parse a MagicInfo v2.0 content-schedule detail response into MiTimeChannel[].
+ * Response shape: { items: { channels: [{ frame: { events: [...] } }] } }
+ * Each event has contentId + contentType ("PLAYLIST"|other) to distinguish playlist refs.
+ */
+function extractScheduleChannels(detail: unknown): MiTimeChannel[] {
+  const d = detail as Record<string, unknown>;
+  const schedObj = (d.items ?? d.data ?? d.result ?? d) as Record<string, unknown>;
+  const rawChannels = Array.isArray(schedObj.channels)
+    ? (schedObj.channels as Record<string, unknown>[])
+    : [];
+  return rawChannels.flatMap(ch => {
+    const frame = (ch.frame ?? {}) as Record<string, unknown>;
+    const events = Array.isArray(frame.events)
+      ? (frame.events as Record<string, unknown>[])
+      : [];
+    return events.map(ev => {
+      const ctype = String(ev.contentType ?? '').toUpperCase();
+      const isPlaylist = ctype === 'PLAYLIST';
+      const contentIdStr = ev.contentId ? String(ev.contentId) : undefined;
+      return {
+        startTime:            String(ev.startTime ?? '00:00'),
+        stopTime:             String(ev.stopTime ?? ev.endTime ?? ''),
+        durationInSeconds:    Number(ev.durationInSeconds ?? 0) || undefined,
+        repeatType:           String(ev.repeatType ?? 'ONCE'),
+        repeatedDayOfWeekList: Array.isArray(ev.repeatedDayOfWeekList)
+          ? (ev.repeatedDayOfWeekList as string[])
+          : undefined,
+        startDate:            String(ev.startDate ?? ''),
+        stopDate:             String(ev.stopDate ?? ev.endDate ?? ''),
+        isAllDayPlay:         Boolean(ev.isAllDayPlay ?? false),
+        isInfinitePlay:       Boolean(ev.isInfinitePlay ?? false),
+        playlistId:           isPlaylist ? contentIdStr : undefined,
+        contentId:            !isPlaylist ? contentIdStr : undefined,
+        contentName:          ev.contentName ? String(ev.contentName) : undefined,
+      } satisfies MiTimeChannel;
+    });
+  });
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -504,8 +595,8 @@ export default function MigrationPage() {
     if (checked) {
       next.add(scheduleId);
       try {
-        const detail = await miProxy(`/restapi/v1.0/dms/schedule/contents/${scheduleId}`);
-        const channels: MiTimeChannel[] = (detail as Record<string,unknown>)['timeChannels'] as MiTimeChannel[] ?? [];
+        const detail = await miProxy(`/restapi/v2.0/dms/content-schedules/${scheduleId}`);
+        const channels = extractScheduleChannels(detail);
         for (const ch of channels) {
           if (ch.playlistId) {
             await handleSelectPlaylist(ch.playlistId, true);
@@ -655,7 +746,28 @@ export default function MigrationPage() {
         if (items.length === 0) {
           try {
             const detail = await miProxy(`/restapi/v2.0/cms/playlists/${pl.playlistId}`) as Record<string, unknown>;
-            items = (detail['items'] as MiPlaylistItem[]) ?? (unwrapItems(detail) as MiPlaylistItem[]);
+            // Handle multiple possible response shapes (MagicInfo API varies by version)
+            const inner = (Array.isArray(detail['items']) ? detail : ((detail['items'] as Record<string, unknown>) ?? detail)) as Record<string, unknown>;
+            const candidates: unknown[] =
+              Array.isArray(detail['items'])         ? (detail['items'] as unknown[]) :
+              Array.isArray(inner['items'])           ? (inner['items'] as unknown[]) :
+              Array.isArray(inner['contents'])        ? (inner['contents'] as unknown[]) :
+              Array.isArray(inner['contentsIdList'])  ? (inner['contentsIdList'] as unknown[]) :
+              Array.isArray(inner['contentsList'])    ? (inner['contentsList'] as unknown[]) :
+              Array.isArray(inner['list'])            ? (inner['list'] as unknown[]) : [];
+            items = (candidates as Record<string, unknown>[]).map((it, i) => {
+              const durSec = it['contentDuration'] != null
+                ? Number(it['contentDuration'])
+                : it['contentDurationMilli'] != null
+                  ? Math.round(Number(it['contentDurationMilli']) / 1000)
+                  : it['duration'] != null ? Number(it['duration']) : 10;
+              return {
+                contentId: String(it['contentId'] ?? it['id'] ?? ''),
+                contentName: it['contentName'] ? String(it['contentName']) : undefined,
+                duration: Math.max(1, durSec),
+                order: Number(it['contentOrder'] ?? it['order'] ?? i),
+              };
+            }).filter(it => !!it.contentId);
           } catch { /* use empty */ }
         }
 
@@ -695,12 +807,12 @@ export default function MigrationPage() {
       appendLog({ type: 'schedule', miId: sched.scheduleId, name: sched.scheduleName, status: 'pending' });
 
       try {
-        // Fetch full detail for time channels
+        // Fetch full detail for time channels via v2.0 content-schedules endpoint
         let timeChannels: MiTimeChannel[] = sched.timeChannels ?? [];
         if (timeChannels.length === 0) {
           try {
-            const detail = await miProxy(`/restapi/v1.0/dms/schedule/contents/${sched.scheduleId}`) as Record<string, unknown>;
-            timeChannels = (detail['timeChannels'] as MiTimeChannel[]) ?? [];
+            const detail = await miProxy(`/restapi/v2.0/dms/content-schedules/${sched.scheduleId}`);
+            timeChannels = extractScheduleChannels(detail);
           } catch { /* use empty */ }
         }
 

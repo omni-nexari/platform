@@ -209,6 +209,13 @@ if (-not $NoPush) {
     Write-Host "  Follow: https://github.com/omni-nexari/platform/actions" -ForegroundColor DarkGray
 }
 
+# ── Sync docker-compose.yml to Pi ─────────────────────────────────────────────
+Write-Step "Syncing docker-compose.yml to Pi"
+$composeLocal = Join-Path $repoRoot "docker\docker-compose.yml"
+scp -P $SshPort $composeLocal "${SshUser}@${PiHost}:/opt/nexari/docker-compose.yml"
+if ($LASTEXITCODE -ne 0) { Write-Fail "scp docker-compose.yml failed" }
+Write-Ok "docker-compose.yml synced"
+
 # ── Deploy on Pi (using locally-built image — skip GHCR pull) ─────────────────
 Write-Step "Deploying v$newVersion on Pi"
 Write-Host "  Running update.sh --version v$newVersion --skip-pull"
