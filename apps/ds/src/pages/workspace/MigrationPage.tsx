@@ -147,16 +147,15 @@ const DOW_MAP: Record<string, number> = { MON: 0, TUE: 1, WED: 2, THU: 3, FRI: 4
 
 function timeToSec(t?: string): number {
   if (!t) return 0;
-  const parts = t.split(':').map(Number);
-  return (parts.every(Number.isFinite) && parts.length >= 2)
-    ? parts[0] * 3600 + parts[1] * 60 + (parts[2] ?? 0)
-    : 0;
+  const [hs = '0', ms = '0', ss = '0'] = t.split(':');
+  const h = parseInt(hs, 10), m = parseInt(ms, 10), s = parseInt(ss, 10);
+  return (Number.isFinite(h) && Number.isFinite(m)) ? h * 3600 + m * 60 + (Number.isFinite(s) ? s : 0) : 0;
 }
 
 function padTime(t?: string): string {
   if (!t) return '00:00';
-  const p = t.split(':');
-  return `${(p[0] ?? '00').padStart(2, '0')}:${(p[1] ?? '00').padStart(2, '0')}`;
+  const [h = '00', m = '00'] = t.split(':');
+  return `${h.padStart(2, '0')}:${m.padStart(2, '0')}`;
 }
 
 /** Map MagicInfo time channel → Nexari slot payload */
@@ -229,23 +228,28 @@ function extractScheduleChannels(detail: unknown): MiTimeChannel[] {
     return events.map(ev => {
       const ctype = String(ev.contentType ?? '').toUpperCase();
       const isPlaylist = ctype === 'PLAYLIST';
-      const contentIdStr = ev.contentId ? String(ev.contentId) : undefined;
-      return {
-        startTime:            String(ev.startTime ?? '00:00'),
-        stopTime:             String(ev.stopTime ?? ev.endTime ?? ''),
-        durationInSeconds:    Number(ev.durationInSeconds ?? 0) || undefined,
-        repeatType:           String(ev.repeatType ?? 'ONCE'),
-        repeatedDayOfWeekList: Array.isArray(ev.repeatedDayOfWeekList)
-          ? (ev.repeatedDayOfWeekList as string[])
-          : undefined,
-        startDate:            String(ev.startDate ?? ''),
-        stopDate:             String(ev.stopDate ?? ev.endDate ?? ''),
-        isAllDayPlay:         Boolean(ev.isAllDayPlay ?? false),
-        isInfinitePlay:       Boolean(ev.isInfinitePlay ?? false),
-        playlistId:           isPlaylist ? contentIdStr : undefined,
-        contentId:            !isPlaylist ? contentIdStr : undefined,
-        contentName:          ev.contentName ? String(ev.contentName) : undefined,
-      } satisfies MiTimeChannel;
+      const contentIdStr = ev.contentId ? String(ev.contentId) : null;
+      const dur = Number(ev.durationInSeconds ?? 0) || 0;
+      const dowList = Array.isArray(ev.repeatedDayOfWeekList)
+        ? (ev.repeatedDayOfWeekList as string[]) : null;
+      const cName = ev.contentName ? String(ev.contentName) : null;
+
+      const channel: MiTimeChannel = {
+        startTime:      String(ev.startTime ?? '00:00'),
+        stopTime:       String(ev.stopTime ?? ev.endTime ?? ''),
+        repeatType:     String(ev.repeatType ?? 'ONCE'),
+        startDate:      String(ev.startDate ?? ''),
+        stopDate:       String(ev.stopDate ?? ev.endDate ?? ''),
+        isAllDayPlay:   Boolean(ev.isAllDayPlay  ?? false),
+        isInfinitePlay: Boolean(ev.isInfinitePlay ?? false),
+        ...(dur      ? { durationInSeconds: dur }       : {}),
+        ...(dowList  ? { repeatedDayOfWeekList: dowList } : {}),
+        ...(isPlaylist
+          ? (contentIdStr ? { playlistId: contentIdStr } : {})
+          : (contentIdStr ? { contentId:  contentIdStr } : {})),
+        ...(cName ? { contentName: cName } : {}),
+      };
+      return channel;
     });
   });
 }
@@ -761,12 +765,13 @@ export default function MigrationPage() {
                 : it['contentDurationMilli'] != null
                   ? Math.round(Number(it['contentDurationMilli']) / 1000)
                   : it['duration'] != null ? Number(it['duration']) : 10;
-              return {
+              const item: MiPlaylistItem = {
                 contentId: String(it['contentId'] ?? it['id'] ?? ''),
-                contentName: it['contentName'] ? String(it['contentName']) : undefined,
                 duration: Math.max(1, durSec),
                 order: Number(it['contentOrder'] ?? it['order'] ?? i),
+                ...(it['contentName'] ? { contentName: String(it['contentName']) } : {}),
               };
+              return item;
             }).filter(it => !!it.contentId);
           } catch { /* use empty */ }
         }
