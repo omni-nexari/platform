@@ -544,10 +544,19 @@ window.ContentManager = {
       window.Player.handleDownloadProgress(0);
     }
     
-    // Use Tizen Download API for large files (better resume support, background download)
-    if (fileSize && fileSize > this.LARGE_FILE_THRESHOLD && typeof tizen !== 'undefined' && tizen.download) {
-      logger.info(`Large file detected (${(fileSize / 1024 / 1024).toFixed(1)}MB), using Tizen Download API`);
-      return this.downloadWithTizenAPI(content);
+    // Use Tizen Download API for large files OR when file size is unknown.
+    // Unknown size means the server didn't return Content-Length; the file
+    // could be arbitrarily large and must NOT be loaded into the JS heap
+    // (XHR arraybuffer + writeBytesChunked can exhaust RAM and freeze the device).
+    if (typeof tizen !== 'undefined' && tizen.download) {
+      if (!fileSize || fileSize > this.LARGE_FILE_THRESHOLD) {
+        if (!fileSize) {
+          logger.info('Unknown file size, using Tizen Download API to avoid JS heap pressure');
+        } else {
+          logger.info(`Large file detected (${(fileSize / 1024 / 1024).toFixed(1)}MB), using Tizen Download API`);
+        }
+        return this.downloadWithTizenAPI(content);
+      }
     }
     
     // Use XMLHttpRequest for smaller files or if Tizen API unavailable
@@ -1271,19 +1280,13 @@ window.ContentManager = {
       return null;
     }
 
-    const metadata = this.parseMetadata(content.metadata);
-    if (!metadata) {
-      return null;
-    }
+    // All html5-type content from Nexari is a ZIP package.  The isPackage flag
+    // is not always set in metadata depending on which upload path was used, so
+    // do NOT gate on it — always try to download and play locally.
+    const metadata = this.parseMetadata(content.metadata) || {};
 
     const filePath = typeof metadata.filePath === 'string' ? metadata.filePath : null;
     const packagePath = typeof metadata.packagePath === 'string' ? metadata.packagePath : null;
-    const hasZip = filePath && /\.zip$/i.test(filePath);
-    const isPackage = Boolean(metadata.isPackage || packagePath || hasZip);
-
-    if (!isPackage) {
-      return null;
-    }
 
     const startPage = (metadata.startPage || 'index.html').replace(/^\/+/, '');
     const packageKey = this.sanitizeId(content.id || content.contentId || content.slug || content.name || 'html');
@@ -1297,16 +1300,30 @@ window.ContentManager = {
       startPage,
     ].join('|');
 
+    // Build the ZIP download URL.  Priority:
+    //   1. metadata.packageZipUrl / metadata.filePath (explicit zip path)
+    //   2. content.fileUrl — the /device/content/:id/file?token=... endpoint
+    //      which serves the raw uploaded file (the ZIP) with device-auth
+    // NOTE: do NOT fall back to content.url — for html5 content that has already
+    // been normalised by api.js, content.url is the /html5/:token/index.html
+    // streaming URL, not a ZIP archive.
+    const zipUrl = this.buildPublicUrl(metadata.packageZipUrl || filePath)
+      || metadata.packageZipUrl
+      || content.fileUrl
+      || null;
+
+    if (!zipUrl) {
+      // No downloadable source (e.g. a pure web-URL content with no file upload).
+      logger.warn('HTML5 content has no downloadable ZIP source, will stream remotely:', content.name);
+      return null;
+    }
+
     return {
       metadata,
       startPage,
       packageKey,
       signature: this.hashString(signatureSource),
-      zipUrl: this.buildPublicUrl(metadata.packageZipUrl || filePath)
-        || metadata.packageZipUrl
-        || content.fileUrl
-        || content.url
-        || null,
+      zipUrl,
       packageUrl: metadata.packageUrl || (packagePath ? this.buildPublicUrl(`${packagePath}/${startPage}`) : null),
     };
   },
@@ -1434,6 +1451,8 @@ window.ContentManager = {
         const xhr = new XMLHttpRequest();
         xhr.open('GET', url, true);
         xhr.responseType = 'arraybuffer';
+        xhr.timeout = 120000; // 2-minute hard limit for HTML5 ZIP downloads
+        xhr.ontimeout = () => reject(new Error('Timeout downloading HTML5 package: ' + url));
         xhr.onload = () => {
           if (xhr.status >= 200 && xhr.status < 300) {
             resolve(xhr.response);
@@ -1519,10 +1538,24 @@ window.ContentManager = {
 
   writeBytesChunked(fs, uint8Array) {
     const chunkSize = 256 * 1024; // 256KB chunks keep memory bounded on low-RAM devices
+    // Tizen 6.5+ FileHandle.writeBytes() accepts Uint8Array directly — avoid the
+    // expensive Array.prototype.slice.call() that converts each chunk to a plain
+    // number Array (262K entries × 8 bytes each = 2MB per chunk, causing massive
+    // GC pressure on large files and can freeze the device).
+    // Fall back to plain Array only if the firmware rejects the Uint8Array.
+    let needsPlainArray = false;
     for (let offset = 0; offset < uint8Array.length; offset += chunkSize) {
       const chunk = uint8Array.subarray(offset, Math.min(offset + chunkSize, uint8Array.length));
-      const chunkArray = Array.prototype.slice.call(chunk);
-      fs.writeBytes(chunkArray);
+      if (!needsPlainArray) {
+        try {
+          fs.writeBytes(chunk);
+        } catch (_) {
+          needsPlainArray = true;
+          fs.writeBytes(Array.prototype.slice.call(chunk));
+        }
+      } else {
+        fs.writeBytes(Array.prototype.slice.call(chunk));
+      }
     }
   },
 

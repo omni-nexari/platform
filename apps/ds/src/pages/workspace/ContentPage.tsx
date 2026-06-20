@@ -509,15 +509,16 @@ function Thumb({ item, large = false }: { item: ContentItem; large?: boolean }) 
         await api.post(`/content/${item.id}/regenerate-thumbnail`);
         setThumbRev((r) => r + 1); // triggers AuthImg re-fetch
       } catch (error) {
-        const message = error instanceof Error ? error.message : '';
-        if (message.includes('Source file not found on disk') || message.includes('"error":"Source file not found on disk"')) {
-          missingThumbnailSourceIds.add(item.id);
-        }
+        // Mark permanently missing so future remounts skip the fetch entirely
+        missingThumbnailSourceIds.add(item.id);
         setImgFailed(true); // regeneration failed too, show placeholder
       } finally {
         setRegenerating(false);
       }
     } else {
+      // Already attempted regeneration (or non-404 error) — mark permanently
+      // so the module-level set prevents re-fetching after component remounts
+      missingThumbnailSourceIds.add(item.id);
       setImgFailed(true);
     }
   }

@@ -2841,6 +2841,13 @@ const Player = {
 
       // Swap immediately regardless of what is currently playing.
       logger.info('Download complete; swapping to new content immediately');
+      // Yield to the event loop before starting playback so Tizen can:
+      // - flush file I/O buffers from the Tizen Download API
+      // - allow GC to reclaim XHR ArrayBuffer memory (if the XHR path was used)
+      // - process pending UI updates (progress bar, notification)
+      // Without this yield, calling AVPlay open/prepare while a large ArrayBuffer
+      // is still in the JS heap causes the device to freeze (OOM + decoder alloc).
+      await new Promise<void>(r => setTimeout(r, 200));
       this.trySwapToPendingContent(true);
     } catch (error) {
       logger.error('Background download failed:', error);
@@ -2856,6 +2863,9 @@ const Player = {
       this.isDownloadingContent = false;
     }
   },
+
+  // Load current content
+  async loadContent() {
     if (this._loadInFlight) {
       logger.debug('loadContent skipped (already in flight)');
       return;

@@ -2857,6 +2857,14 @@ const Player = {
                 return;
             }
             this.isDownloadingContent = true;
+            // Safety net: if the download promise never resolves/rejects (e.g. firmware bug),
+            // force-clear the flag after 10 minutes so the next loadContent cycle can retry.
+            const downloadSafetyTimer = setTimeout(() => {
+                if (this.isDownloadingContent) {
+                    logger.warn('downloadContentInBackground: safety timeout hit (10 min), clearing flag');
+                    this.isDownloadingContent = false;
+                }
+            }, 10 * 60 * 1000);
             try {
                 logger.info('Downloading content in background...');
                 // Show idle screen with download progress only on true first-boot (no content
@@ -2879,6 +2887,13 @@ const Player = {
                 this.showDownloadNotification(content.playlistName || 'Content');
                 // Swap immediately regardless of what is currently playing.
                 logger.info('Download complete; swapping to new content immediately');
+                // Yield to the event loop before starting playback so Tizen can:
+                // - flush file I/O buffers from the Tizen Download API
+                // - allow GC to reclaim XHR ArrayBuffer memory (if the XHR path was used)
+                // - process pending UI updates (progress bar, notification)
+                // Without this yield, calling AVPlay open/prepare while a large ArrayBuffer
+                // is still in the JS heap causes the device to freeze (OOM + decoder alloc).
+                yield new Promise(r => setTimeout(r, 200));
                 this.trySwapToPendingContent(true);
             }
             catch (error) {
@@ -2892,6 +2907,7 @@ const Player = {
                 }
             }
             finally {
+                clearTimeout(downloadSafetyTimer);
                 this.isDownloadingContent = false;
             }
         });
