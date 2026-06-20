@@ -97,6 +97,48 @@ $AndroidDir   = Join-Path $RepoRoot "apps\nexari-android"
 $TizenCli     = "C:\tizen-studio\tools\ide\bin\tizen.bat"
 $SignProfile   = "nado-prod"
 
+# ── Tizen signing profile setup ───────────────────────────────────────────────
+# Mirrors deploy-tizen.ps1: writes the 'nado-prod' profile into Tizen Studio's
+# profiles.xml before every packaging step so the cert paths are always current.
+function Set-NadoProdProfile {
+    $profilesXml = "C:\tizen-studio-data\profile\profiles.xml"
+    $authorP12   = "C:\Users\chiho\SamsungCertificate\testforqbc\author.p12"
+    $authorPwd   = "C:\Users\chiho\SamsungCertificate\testforqbc\author.pwd"
+    $distP12     = Join-Path $RepoRoot "Docs\cert\NADO.p12"
+    $distPwd     = Join-Path $RepoRoot "Docs\cert\NADO.pwd"
+
+    foreach ($p in @($profilesXml, $authorP12, $authorPwd, $distP12, $distPwd)) {
+        if (-not (Test-Path $p)) { throw "Missing required cert file: $p" }
+    }
+
+    [xml]$pXml  = Get-Content $profilesXml
+    $pRoot      = $pXml.profiles
+    $existing   = $pRoot.profile | Where-Object { $_.name -eq 'nado-prod' }
+    if ($existing) { [void]$pRoot.RemoveChild($existing) }
+
+    $prof = $pXml.CreateElement('profile'); $prof.SetAttribute('name', 'nado-prod')
+
+    $a = $pXml.CreateElement('profileitem')
+    $a.SetAttribute('ca',''); $a.SetAttribute('distributor','0')
+    $a.SetAttribute('key', $authorP12); $a.SetAttribute('password', $authorPwd); $a.SetAttribute('rootca','')
+    [void]$prof.AppendChild($a)
+
+    $d = $pXml.CreateElement('profileitem')
+    $d.SetAttribute('ca',''); $d.SetAttribute('distributor','1')
+    $d.SetAttribute('key', $distP12); $d.SetAttribute('password', $distPwd); $d.SetAttribute('rootca','')
+    [void]$prof.AppendChild($d)
+
+    $d2 = $pXml.CreateElement('profileitem')
+    $d2.SetAttribute('ca',''); $d2.SetAttribute('distributor','2')
+    $d2.SetAttribute('key',''); $d2.SetAttribute('password',''); $d2.SetAttribute('rootca','')
+    [void]$prof.AppendChild($d2)
+
+    [void]$pRoot.AppendChild($prof)
+    $pRoot.SetAttribute('active', 'nado-prod')
+    $pXml.Save($profilesXml)
+    Write-Host "  Signing profile 'nado-prod' written to Tizen Studio." -ForegroundColor DarkGray
+}
+
 # ── Auth to nexari-admin API ──────────────────────────────────────────────────
 if ($AdminPassword -eq "") {
     $secPwd = Read-Host "Admin password for $AdminEmail" -AsSecureString
@@ -324,11 +366,14 @@ foreach ($plat in $platforms) {
                 Write-Host "  Building Tizen SSSP WGT..."
                 Push-Location $TizenDir
                 try {
-                    npm version patch --no-git-tag-version | Out-Null
+                    npm version patch --no-git-tag-version
+                    if ($LASTEXITCODE -ne 0) { throw "npm version patch failed" }
                     $env:API_BASE = $apiBase
                     $env:WS_URL   = $wsUrl
                     node scripts/generate-build-info.cjs
-                    npm run build 2>&1 | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "generate-build-info.cjs failed" }
+                    npm run build
+                    if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
 
                     # Stage + package (mirrors deploy-tizen.ps1)
                     $tmp = "$env:TEMP\nexari-tizen-partner"
@@ -342,7 +387,9 @@ foreach ($plat in $platforms) {
                     }
                     Copy-Item "$TizenDir\js" "$tmp\js" -Recurse -Force
                     Remove-Item "$TizenDir\*.wgt" -ErrorAction SilentlyContinue
-                    & $TizenCli package --type wgt --sign $SignProfile -o $TizenDir -- $tmp 2>&1 | Out-Null
+                    Set-NadoProdProfile
+                    Write-Host "  Packaging + signing with profile '$SignProfile'..."
+                    & $TizenCli package --type wgt --sign $SignProfile -o $TizenDir -- $tmp 2>&1 | Write-Host
                     $wgt = Get-ChildItem $TizenDir -Filter '*.wgt' | Select-Object -First 1
                     if (-not $wgt) { throw "Tizen package failed -- no WGT produced" }
                     if ($wgt.Name -ne 'NexariPlayer.wgt') { Rename-Item $wgt.FullName "$TizenDir\NexariPlayer.wgt" -Force }
@@ -370,10 +417,12 @@ foreach ($plat in $platforms) {
                 Write-Host "  Building ePaper WGT..."
                 Push-Location $EpaperDir
                 try {
-                    npm version patch --no-git-tag-version | Out-Null
+                    npm version patch --no-git-tag-version
+                    if ($LASTEXITCODE -ne 0) { throw "npm version patch failed" }
                     $env:API_BASE = $apiBase
                     $env:WS_URL   = $wsUrl
                     node scripts/generate-build-info.cjs
+                    if ($LASTEXITCODE -ne 0) { throw "generate-build-info.cjs failed" }
 
                     $tmp = "$env:TEMP\nexari-epaper-partner"
                     if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
@@ -386,7 +435,9 @@ foreach ($plat in $platforms) {
                     }
                     Copy-Item "$EpaperDir\js" "$tmp\js" -Recurse -Force
                     Remove-Item "$EpaperDir\*.wgt" -ErrorAction SilentlyContinue
-                    & $TizenCli package --type wgt --sign $SignProfile -o $EpaperDir -- $tmp 2>&1 | Out-Null
+                    Set-NadoProdProfile
+                    Write-Host "  Packaging + signing with profile '$SignProfile'..."
+                    & $TizenCli package --type wgt --sign $SignProfile -o $EpaperDir -- $tmp 2>&1 | Write-Host
                     $wgt = Get-ChildItem $EpaperDir -Filter '*.wgt' | Select-Object -First 1
                     if (-not $wgt) { throw "ePaper package failed -- no WGT produced" }
                     if ($wgt.Name -ne 'NexariEPaper.wgt') { Rename-Item $wgt.FullName "$EpaperDir\NexariEPaper.wgt" -Force }

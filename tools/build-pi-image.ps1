@@ -125,7 +125,8 @@ $pkgContent = Get-Content $pkgPath -Raw
 $pkgContent = $pkgContent -replace '"version": "[^"]*"', "`"version`": `"$newVersion`""
 Set-Content $pkgPath $pkgContent -NoNewline
 
-$versionChanged = git diff --quiet package.json ; $versionChanged = $LASTEXITCODE -ne 0
+$versionChanged = $false
+$null = git diff --quiet package.json 2>&1 ; $versionChanged = $LASTEXITCODE -ne 0
 if ($versionChanged) {
     git add package.json
     git commit -m "chore: bump to $newVersion"
