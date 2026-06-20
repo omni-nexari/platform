@@ -1694,9 +1694,12 @@ export async function contentRoutes(app: FastifyInstance) {
     }
 
     const stat = await fs.stat(absPath);
+    const rawName = item.originalName ?? id;
+    const asciiFallback = rawName.replace(/[^\x20-\x7E]/g, '_');
+    const encodedName = encodeURIComponent(rawName);
     reply.header('Content-Type', mimeType);
     reply.header('Content-Length', stat.size);
-    reply.header('Content-Disposition', `inline; filename="${item.originalName ?? id}"`);
+    reply.header('Content-Disposition', `inline; filename="${asciiFallback}"; filename*=UTF-8''${encodedName}`);
     return reply.send(createReadStream(absPath));
   });
 

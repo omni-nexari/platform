@@ -2742,7 +2742,11 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     const stat = await fsPromises.stat(absPath);
     const fileSize = stat.size;
-    const disposition = `inline; filename="${item.originalName ?? id}"`;
+    const rawName = item.originalName ?? id;
+    // RFC 5987: ASCII fallback (replace non-ASCII with '_') + UTF-8 encoded filename*
+    const asciiFallback = rawName.replace(/[^\x20-\x7E]/g, '_');
+    const encodedName = encodeURIComponent(rawName);
+    const disposition = `inline; filename="${asciiFallback}"; filename*=UTF-8''${encodedName}`;
 
     // Common headers always sent
     reply.header('Content-Type', mimeType);
