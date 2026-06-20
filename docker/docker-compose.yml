@@ -94,6 +94,7 @@ services:
       - 1.1.1.1
     networks:
       - internal
+      - external
     # Expose to nginx but not directly to the host
     expose:
       - "3000"
