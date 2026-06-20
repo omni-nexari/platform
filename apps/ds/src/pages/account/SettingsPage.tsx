@@ -4935,6 +4935,11 @@ function BillingSection() {
     enabled: isOwner,
   });
 
+  const { data: licenseInfo } = useQuery<LicenseInfo>({
+    queryKey: ['billing-license-info'],
+    queryFn: () => api.get('/billing/license-info'),
+  });
+
   const { data: invoices = [], isLoading: loadingInvoices } = useQuery<Invoice[]>({
     queryKey: ['billing-invoices'],
     queryFn: () => api.get('/billing/invoices'),
@@ -4996,12 +5001,46 @@ function BillingSection() {
   const price = billingData?.price;
 
   if (!sub) {
+    // For license-key-managed orgs billing is handled by the service provider —
+    // show the license plan summary instead of the Stripe empty state.
+    const tier = licenseInfo?.signageTier;
+    const planLabel = licenseInfo?.planType?.replace(/-/g, ' ') ?? null;
     return (
-      <EmptyState
-        icon={<CreditCard size={28} />}
-        title="No subscription"
-        description="Contact your platform administrator to set up billing."
-      />
+      <SectionCard>
+        <SectionCardBody>
+          <div className="flex flex-col items-center text-center py-4 gap-2">
+            <ShieldCheck size={28} className="text-[var(--text-muted)]" />
+            <p className="text-sm font-semibold text-[var(--text)]">Managed by your service provider</p>
+            <p className="text-xs text-[var(--text-muted)] max-w-sm">
+              Billing for your subscription is handled by your platform administrator. Contact them for invoices or plan changes.
+            </p>
+          </div>
+          {licenseInfo?.status && licenseInfo.status !== 'trial' && planLabel && (
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm pt-4 border-t border-[var(--border)] mt-2">
+              <div>
+                <dt className="text-xs text-[var(--text-muted)]">Plan</dt>
+                <dd className="font-medium capitalize">{planLabel}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-[var(--text-muted)]">Tier</dt>
+                <dd className="font-medium capitalize">{tier ?? '—'}</dd>
+              </div>
+              {licenseInfo.screenCount != null && (
+                <div>
+                  <dt className="text-xs text-[var(--text-muted)]">Screens in Use</dt>
+                  <dd className="font-medium">{licenseInfo.screenCount}{(licenseInfo.maxSignageScreens ?? licenseInfo.platformMaxScreens) != null ? ` / ${licenseInfo.maxSignageScreens ?? licenseInfo.platformMaxScreens}` : ''}</dd>
+                </div>
+              )}
+              {licenseInfo.expiresAt && (
+                <div>
+                  <dt className="text-xs text-[var(--text-muted)]">License Expires</dt>
+                  <dd className="font-medium">{formatBillingDate(licenseInfo.expiresAt)}</dd>
+                </div>
+              )}
+            </dl>
+          )}
+        </SectionCardBody>
+      </SectionCard>
     );
   }
 

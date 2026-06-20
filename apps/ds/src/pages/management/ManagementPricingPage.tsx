@@ -34,6 +34,10 @@ interface McPricing {
   screensIncluded: number;
   billingPeriod: 'monthly' | 'annual';
   module: string;
+  // Extra fields returned when pricing is derived from the platform license
+  perScreenCents?: number;
+  anchorDay?: number;
+  source?: 'license';
 }
 
 interface ManagedOrg {
@@ -380,6 +384,9 @@ export default function ManagementPricingPage() {
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold font-mono">{currency}</span>
                   <Badge tone="neutral">{rows.length} plan{rows.length !== 1 ? 's' : ''}</Badge>
+                  {rows.some(r => r.source === 'license') && (
+                    <Badge tone="accent">From license</Badge>
+                  )}
                 </div>
               </SectionCardHeader>
               <SectionCardBody>
@@ -390,6 +397,7 @@ export default function ManagementPricingPage() {
                       <th className="text-left pb-2">Module</th>
                       <th className="text-left pb-2">Period</th>
                       <th className="text-left pb-2">Screens</th>
+                      <th className="text-right pb-2">/Screen</th>
                       <th className="text-right pb-2">Retail</th>
                       <th className="text-right pb-2">Your Wholesale</th>
                       <th className="text-right pb-2">Margin</th>
@@ -402,6 +410,9 @@ export default function ManagementPricingPage() {
                         row.retailAmountCents > 0
                           ? Math.round((margin / row.retailAmountCents) * 100)
                           : 0;
+                      const perScreen = row.perScreenCents ?? (
+                        row.screensIncluded > 0 ? Math.round(row.wholesaleAmountCents / row.screensIncluded) : 0
+                      );
                       return (
                         <tr key={`${row.planId}-${row.currency}`} className="border-b border-[var(--border)] last:border-0">
                           <td className="py-2.5 font-medium">
@@ -413,14 +424,19 @@ export default function ManagementPricingPage() {
                           </td>
                           <td className="py-2.5">{PERIOD_LABELS[row.billingPeriod] ?? row.billingPeriod}</td>
                           <td className="py-2.5">{row.screensIncluded}</td>
+                          <td className="py-2.5 text-right">
+                            {perScreen > 0 ? formatCents(perScreen, currency) : '—'}
+                          </td>
                           <td className="py-2.5 text-right text-[var(--text-muted)]">
-                            {formatCents(row.retailAmountCents, currency)}
+                            {row.source === 'license' ? '—' : formatCents(row.retailAmountCents, currency)}
                           </td>
                           <td className="py-2.5 text-right font-semibold">
                             {formatCents(row.wholesaleAmountCents, currency)}
                           </td>
                           <td className="py-2.5 text-right">
-                            {margin > 0 ? (
+                            {row.source === 'license' ? (
+                              <Badge tone="neutral">N/A</Badge>
+                            ) : margin > 0 ? (
                               <Badge tone="success">{formatCents(margin, currency)} ({marginPct}%)</Badge>
                             ) : margin < 0 ? (
                               <Badge tone="danger">−{formatCents(Math.abs(margin), currency)}</Badge>

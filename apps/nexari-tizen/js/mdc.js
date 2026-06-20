@@ -840,8 +840,17 @@ var server = http.createServer(function(req, res) {
         });
         return;
       } else if (key === 'REBOOT') {
-        // MDC §2.1.11 – Power Control: 0x02 = Reboot
-        packet = buildPacket(CMD_POWER, [0x02]);
+        // CMD_POWER [0x02] for newer SSSP firmware (Tizen 5+), CMD_RESET [0xA1]
+        // for older/QBx firmware. Send both fire-and-forget — one triggers
+        // the reboot; the other is silently ignored by whichever firmware it
+        // doesn't match. (Same dual-send as the reboot_device MDC action.)
+        sendMdcPacket(buildPacket(CMD_POWER, [0x02]), function() {
+          sendMdcPacket(buildPacket(CMD_RESET, [0x00]), function() {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, key: key }));
+          });
+        });
+        return;
       } else if (KEY_CODES[key] !== undefined) {
         packet = buildPacket(CMD_KEY, [KEY_CODES[key]]);
       } else {

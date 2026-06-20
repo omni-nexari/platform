@@ -87,6 +87,24 @@ server {
         add_header         X-Accel-Buffering "no" always;
     }
 
+    # ── Screenshot live-view SSE — must come before /api/ catch-all ──────────
+    # Each active Live View panel holds one long-lived SSE connection.
+    # proxy_buffering off is required so frames reach the browser immediately.
+    location ~ ^/api/v1/devices/[^/]+/screenshot/stream {
+        proxy_pass         http://nexari_api;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering    off;
+        proxy_cache        off;
+        add_header         X-Accel-Buffering "no" always;
+        add_header         X-Content-Type-Options "nosniff" always;
+    }
+
     # ── Content file upload — stream directly to API, no nginx temp-file buffer ─
     # proxy_request_buffering off prevents nginx from spooling the entire multipart
     # body to disk before forwarding.  Without this, large video uploads exhaust

@@ -54,6 +54,11 @@ export interface LicenseState {
   billingPeriod: string | null;
   /** Plan type label e.g. 'signage-pro', 'bundle-basic' */
   planType: string | null;
+  /** Wholesale billing rates from the license server (populated via heartbeat) */
+  billingCurrency: string | null;
+  wholesaleCentsPerSignageScreen: number | null;
+  wholesaleCentsPerPosScreen: number | null;
+  billingAnchorDay: number | null;
   /** Source of this state */
   source: 'heartbeat' | 'offline-cert' | 'cache' | 'trial';
   checkedAt: string;
@@ -248,6 +253,10 @@ export function verifyOfflineCert(jwt: string): LicenseState {
     expiresAt: new Date(payload.expiresAt * 1000).toISOString(),
     billingPeriod: payload.billingPeriod,
     planType: payload.planType,
+    billingCurrency: null,
+    wholesaleCentsPerSignageScreen: null,
+    wholesaleCentsPerPosScreen: null,
+    billingAnchorDay: null,
     source: 'offline-cert',
     checkedAt: new Date().toISOString(),
   };
@@ -494,6 +503,10 @@ async function loadTrialState(): Promise<void> {
       expiresAt: trialExpiredAt.toISOString(),
       billingPeriod: null,
       planType: 'trial',
+      billingCurrency: null,
+      wholesaleCentsPerSignageScreen: null,
+      wholesaleCentsPerPosScreen: null,
+      billingAnchorDay: null,
       source: 'trial',
       checkedAt: new Date().toISOString(),
     };

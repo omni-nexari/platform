@@ -719,7 +719,7 @@ function LiveViewOverlay({ deviceId, isOnline, deviceInfo, onClose, onPowerChang
     statusRef.current = 'buffering'; setStatus('buffering');
     setWaitingElapsed(0);
     elapsedTimerRef.current = setInterval(() => setWaitingElapsed(s => s + 1), 1000);
-    const es = new EventSource(`/api/devices/${deviceId}/screenshot/stream?intervalMs=${interval}`);
+    const es = new EventSource(`/api/v1/devices/${deviceId}/screenshot/stream?intervalMs=${interval}`);
     esRef.current = es;
     es.onmessage = (e) => {
       if (elapsedTimerRef.current) { clearInterval(elapsedTimerRef.current); elapsedTimerRef.current = null; }

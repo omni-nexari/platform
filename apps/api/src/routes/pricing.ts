@@ -52,6 +52,7 @@ import {
 } from '@signage/db';
 import { eq, and, asc, desc, inArray } from 'drizzle-orm';
 import { writeAuditLog } from '../services/audit.js';
+import { getLicenseState } from '../services/license-client.js';
 
 // ── Auth types (mirrors superadmin.ts) ────────────────────────────────────────
 
@@ -690,7 +691,41 @@ export async function pricingRoutes(app: FastifyInstance) {
       orderBy: [asc(managementCompanyPricing.currency)],
     });
 
-    if (pricing.length === 0) return reply.send([]);
+    // ── Fallback: synthesize from the active license state when no DB pricing rows exist.
+    // The heartbeat from admin.nexari.ca now returns wholesale billing rates which are
+    // stored in LicenseState. Build a synthetic McPricing row so the management portal
+    // Pricing page always shows something useful.
+    if (pricing.length === 0) {
+      const ls = getLicenseState();
+      if (ls && ls.billingCurrency && ls.wholesaleCentsPerSignageScreen != null && ls.planType && ls.planType !== 'trial') {
+        const maxScreens = ls.maxScreens ?? 0;
+        const planKey = ls.planType;
+        const planName = planKey
+          .split('-')
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ');
+        const syntheticRows = [
+          {
+            planId: 'license-derived',
+            planKey,
+            planName,
+            currency: ls.billingCurrency,
+            // Total monthly cost = per-screen rate × max screens
+            wholesaleAmountCents: ls.wholesaleCentsPerSignageScreen * maxScreens,
+            retailAmountCents: 0,
+            screensIncluded: maxScreens,
+            billingPeriod: (ls.billingPeriod ?? 'monthly') as 'monthly' | 'annual',
+            module: ls.allowedModules === 'both' ? 'both' : ls.allowedModules === 'pos' ? 'pos' : 'signage',
+            // Extra info for the UI
+            perScreenCents: ls.wholesaleCentsPerSignageScreen,
+            anchorDay: ls.billingAnchorDay ?? 1,
+            source: 'license' as const,
+          },
+        ];
+        return reply.send(syntheticRows);
+      }
+      return reply.send([]);
+    }
 
     const planIds = [...new Set(pricing.map((p) => p.planId).filter((id): id is string => !!id))];
 
