@@ -22,20 +22,6 @@ CREATE TABLE "firmware_releases" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "org_license_allocations" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"org_id" uuid NOT NULL,
-	"management_company_id" uuid,
-	"max_signage_screens" integer,
-	"max_pos_screens" integer,
-	"enabled_modules" text[],
-	"notes" text,
-	"updated_by_id" uuid,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "org_license_allocations_org_id_unique" UNIQUE("org_id")
-);
---> statement-breakpoint
 CREATE TABLE "email_config" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"provider" text DEFAULT 'resend' NOT NULL,
@@ -54,7 +40,6 @@ ALTER TABLE "license_config" ADD COLUMN "signed_cert" text;--> statement-breakpo
 ALTER TABLE "license_config" ADD COLUMN "license_mode" text DEFAULT 'online' NOT NULL;--> statement-breakpoint
 ALTER TABLE "license_config" ADD COLUMN "cert_expires_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "firmware_release_approvals" ADD CONSTRAINT "firmware_release_approvals_release_id_firmware_releases_id_fk" FOREIGN KEY ("release_id") REFERENCES "public"."firmware_releases"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "org_license_allocations" ADD CONSTRAINT "org_license_allocations_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "uq_firmware_release_approvals_release_company" ON "firmware_release_approvals" USING btree ("release_id","management_company_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "firmware_releases_model_version_unique" ON "firmware_releases" USING btree ("firmware_model","version");--> statement-breakpoint
 CREATE UNIQUE INDEX "player_releases_platform_version_unique" ON "player_releases" USING btree ("platform","version");
