@@ -1918,13 +1918,28 @@ var server = http.createServer(function(req, res) {
         });
         return;
       } else if (action === 'b2b_timer_get' || action === 'b2b_timer_set' || action === 'b2b_timer_clear') {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          ok: false,
-          error: 'This device reached the local MDC bridge for a B2B timer action. The SSSP timer test must be intercepted in js/player.js first, so the player bundle on the device is stale or has not been restarted.',
-          action: action,
-          requiresPlayerIntercept: true,
-        }));
+        // These actions are intercepted in player.js when B2BControl is available.
+        // If we reach here the player bundle is stale or B2BControl failed — redirect
+        // to the equivalent MDC action via a self-HTTP call.
+        var mdcAction = (action === 'b2b_timer_get') ? 'on_timer_get' : 'on_timer_set';
+        var mdcBody = JSON.stringify(Object.assign({}, parsed, { action: mdcAction }));
+        var mdcRedirectReq = http.request(
+          { host: '127.0.0.1', port: 9615, path: '/mdc-control', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(mdcBody) } },
+          function(mdcRedirectRes) {
+            var chunks = [];
+            mdcRedirectRes.on('data', function(c) { chunks.push(c); });
+            mdcRedirectRes.on('end', function() {
+              res.writeHead(mdcRedirectRes.statusCode || 200, { 'Content-Type': 'application/json' });
+              res.end(Buffer.concat(chunks));
+            });
+          });
+        mdcRedirectReq.on('error', function(e) {
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'b2b_timer redirect error: ' + e.message }));
+        });
+        mdcRedirectReq.write(mdcBody);
+        mdcRedirectReq.end();
         return;
       } else if (action === 'auto_id_start') {
         // MDC §2.1.B8 Auto ID START — broadcast to all chained displays.

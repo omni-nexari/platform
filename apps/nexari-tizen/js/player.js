@@ -429,7 +429,7 @@ const Player = {
     },
     // Handle WebSocket messages
     handleWebSocketMessage(data) {
-        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u;
+        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9;
         try {
             const message = JSON.parse(data);
             const messageType = message.type || message.event;
@@ -867,6 +867,131 @@ const Player = {
                                 });
                             }
                         }
+                        // ── B2BControl timer intercept ─────────────────────────────────────
+                        // b2b_timer_set / b2b_timer_get: try b2bapis.b2bcontrol first (24-hour
+                        // format, no AM/PM ambiguity). Falls back to MDC bridge on error or when
+                        // b2bapis is not available.
+                        if (action === 'b2b_timer_set' || action === 'b2b_timer_get') {
+                            const B2B_REPEAT_MAP = {
+                                0: 'TIMER_ONCE', 1: 'TIMER_EVERY_DAY', 2: 'TIMER_MON_FRI',
+                                3: 'TIMER_MON_SAT', 4: 'TIMER_SAT_SUN', 5: 'TIMER_MANUAL',
+                            };
+                            const B2B_DAY_NAMES = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+                            const b2bSlot = Math.max(1, Math.min(7, parseInt(String((_d = mdcPayload.slot) !== null && _d !== void 0 ? _d : '1'), 10) || 1));
+                            const timerType = `TIMER${b2bSlot}`;
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            const b2bCtrl = (_g = (_f = window.b2bapis) === null || _f === void 0 ? void 0 : _f.b2bcontrol) !== null && _g !== void 0 ? _g : null;
+                            const toTime = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+                            const parseTime = (s) => {
+                                if (!s)
+                                    return null;
+                                const parts = String(s).match(/^(\d{1,2}):(\d{2})/);
+                                return parts ? { h: parseInt(parts[1], 10), m: parseInt(parts[2], 10) } : null;
+                            };
+                            if (action === 'b2b_timer_get') {
+                                if (b2bCtrl) {
+                                    try {
+                                        const onResult = b2bCtrl.getOnTimerRepeat(timerType);
+                                        const offResult = b2bCtrl.getOffTimerRepeat(timerType);
+                                        const volResult = b2bCtrl.getOnTimerVolume(timerType);
+                                        const onT = parseTime(onResult);
+                                        const offT = parseTime(offResult);
+                                        const vol = volResult != null ? parseInt(String(volResult), 10) : 20;
+                                        logger.info('[b2b-timer] GET ok:', timerType, onResult, offResult);
+                                        sendMdcControlResponse({
+                                            ok: true, method: 'b2bcontrol',
+                                            onHour: (_h = onT === null || onT === void 0 ? void 0 : onT.h) !== null && _h !== void 0 ? _h : 8, onMin: (_j = onT === null || onT === void 0 ? void 0 : onT.m) !== null && _j !== void 0 ? _j : 0, onEnable: onT != null,
+                                            offHour: (_k = offT === null || offT === void 0 ? void 0 : offT.h) !== null && _k !== void 0 ? _k : 22, offMin: (_l = offT === null || offT === void 0 ? void 0 : offT.m) !== null && _l !== void 0 ? _l : 0, offEnable: offT != null,
+                                            volume: isNaN(vol) ? 20 : vol,
+                                            repeat: 1, source: 0x01, manualDays: 0,
+                                        });
+                                        break;
+                                    }
+                                    catch (e) {
+                                        logger.warn('[b2b-timer] GET exception, falling back to MDC:', e);
+                                    }
+                                }
+                                // MDC fallback for GET
+                                self.sendLocalMdcXhr('on_timer_get', { slot: b2bSlot })
+                                    .then((r) => sendMdcControlResponse(Object.assign({ ok: !!r['ok'], method: 'mdc_fallback' }, r)))
+                                    .catch((e) => sendMdcControlResponse({ ok: false, error: String(e) }));
+                                break;
+                            }
+                            // action === 'b2b_timer_set'
+                            const onHour = Number((_m = mdcPayload.onHour) !== null && _m !== void 0 ? _m : 8);
+                            const onMin = Number((_o = mdcPayload.onMin) !== null && _o !== void 0 ? _o : 0);
+                            const offHour = Number((_p = mdcPayload.offHour) !== null && _p !== void 0 ? _p : 22);
+                            const offMin = Number((_q = mdcPayload.offMin) !== null && _q !== void 0 ? _q : 0);
+                            const onEnable = mdcPayload.onEnable !== false && mdcPayload.onEnable !== 0;
+                            const offEnable = mdcPayload.offEnable !== false && mdcPayload.offEnable !== 0;
+                            const b2bRepeat = Number((_r = mdcPayload.repeat) !== null && _r !== void 0 ? _r : 1);
+                            const manualDays = Number((_s = mdcPayload.manualDays) !== null && _s !== void 0 ? _s : 0);
+                            const b2bVolume = Number((_t = mdcPayload.volume) !== null && _t !== void 0 ? _t : 20);
+                            const repeatType = (_u = B2B_REPEAT_MAP[b2bRepeat]) !== null && _u !== void 0 ? _u : 'TIMER_EVERY_DAY';
+                            const dayStr = b2bRepeat === 5
+                                ? B2B_DAY_NAMES.filter((_, i) => manualDays & (1 << i)).join(':')
+                                : '';
+                            // MDC fallback — converts 24h → 12h (MDC uses 12-hour format in bytes)
+                            const mdcFallback = () => {
+                                var _a;
+                                const mdcOnHour = onHour % 12 || 12;
+                                const mdcOffHour = offHour % 12 || 12;
+                                self.sendLocalMdcXhr('on_timer_set', {
+                                    slot: b2bSlot,
+                                    onHour: mdcOnHour, onMin, onEnable: onEnable ? 1 : 0,
+                                    offHour: mdcOffHour, offMin, offEnable: offEnable ? 1 : 0,
+                                    repeat: b2bRepeat, manualDays, volume: b2bVolume,
+                                    source: (_a = mdcPayload.source) !== null && _a !== void 0 ? _a : 0x01,
+                                })
+                                    .then((r) => sendMdcControlResponse(Object.assign({ ok: !!r['ok'], method: 'mdc_fallback' }, r)))
+                                    .catch((e) => sendMdcControlResponse({ ok: false, error: String(e) }));
+                            };
+                            if (!b2bCtrl) {
+                                logger.warn('[b2b-timer] b2bapis not available, using MDC fallback');
+                                mdcFallback();
+                                break;
+                            }
+                            try {
+                                let pending = 0;
+                                const errors = [];
+                                const done = () => {
+                                    pending--;
+                                    if (pending > 0)
+                                        return;
+                                    if (errors.length > 0) {
+                                        logger.warn('[b2b-timer] B2BControl errors, falling back to MDC:', errors);
+                                        mdcFallback();
+                                    }
+                                    else {
+                                        // Volume — fire-and-forget after timer set succeeds
+                                        try {
+                                            b2bCtrl.setOnTimerVolume(timerType, b2bVolume, () => { }, () => { });
+                                        }
+                                        catch ( /* ignore volume errors */_a) { /* ignore volume errors */ }
+                                        logger.info('[b2b-timer] SET ok:', timerType);
+                                        sendMdcControlResponse({ ok: true, method: 'b2bcontrol' });
+                                    }
+                                };
+                                if (onEnable) {
+                                    pending++;
+                                    b2bCtrl.setOnTimerRepeat(timerType, toTime(onHour, onMin), repeatType, dayStr, () => { done(); }, (e) => { var _a; errors.push(`on:${(_a = e === null || e === void 0 ? void 0 : e.message) !== null && _a !== void 0 ? _a : 'err'}`); done(); });
+                                }
+                                if (offEnable) {
+                                    pending++;
+                                    b2bCtrl.setOffTimerRepeat(timerType, toTime(offHour, offMin), repeatType, dayStr, () => { done(); }, (e) => { var _a; errors.push(`off:${(_a = e === null || e === void 0 ? void 0 : e.message) !== null && _a !== void 0 ? _a : 'err'}`); done(); });
+                                }
+                                if (pending === 0) {
+                                    // Both disabled — use MDC bridge to clear the timer slot
+                                    mdcFallback();
+                                }
+                            }
+                            catch (e) {
+                                logger.warn('[b2b-timer] B2BControl exception, falling back to MDC:', e);
+                                mdcFallback();
+                            }
+                            break;
+                        }
+                        // ── END B2BControl timer intercept ─────────────────────────────────
                         const xhr = new XMLHttpRequest();
                         xhr.open('POST', 'http://127.0.0.1:9615/mdc-control', true);
                         xhr.setRequestHeader('Content-Type', 'application/json');
@@ -904,7 +1029,7 @@ const Player = {
                 case 'remote_status': {
                     // Call /status-full to aggregate status, serial, device-name, model, IP and remote-ctrl
                     // in a single round-trip (server.js performs the MDC commands sequentially).
-                    const rsRequestId = (_d = message.payload) === null || _d === void 0 ? void 0 : _d.requestId;
+                    const rsRequestId = (_v = message.payload) === null || _v === void 0 ? void 0 : _v.requestId;
                     const rsWs = this.wsConnection;
                     function sendMdcStatusResponse(payload) {
                         if (rsRequestId && rsWs && rsWs.readyState === WebSocket.OPEN) {
@@ -933,7 +1058,7 @@ const Player = {
                     break;
                 }
                 case 'tizen_probe': {
-                    const tpRequestId = (_f = message.payload) === null || _f === void 0 ? void 0 : _f.requestId;
+                    const tpRequestId = (_w = message.payload) === null || _w === void 0 ? void 0 : _w.requestId;
                     const tpWs = this.wsConnection;
                     function sendTizenProbeResult(sections) {
                         if (tpRequestId && tpWs && tpWs.readyState === WebSocket.OPEN) {
@@ -1027,7 +1152,7 @@ const Player = {
                                 audioResult[ac] = Boolean(si['isSupportedAudioCodec'](ac));
                             }
                             catch (e) {
-                                audioResult[ac] = `Error: ${(_g = e === null || e === void 0 ? void 0 : e.message) !== null && _g !== void 0 ? _g : String(e)}`;
+                                audioResult[ac] = `Error: ${(_x = e === null || e === void 0 ? void 0 : e.message) !== null && _x !== void 0 ? _x : String(e)}`;
                             }
                         }
                         siEntries.push({ label: 'Audio codec support', value: audioResult });
@@ -1038,7 +1163,7 @@ const Player = {
                                 videoResult[vc] = Boolean(si['isSupportedVideoCodec'](vc));
                             }
                             catch (e) {
-                                videoResult[vc] = `Error: ${(_h = e === null || e === void 0 ? void 0 : e.message) !== null && _h !== void 0 ? _h : String(e)}`;
+                                videoResult[vc] = `Error: ${(_y = e === null || e === void 0 ? void 0 : e.message) !== null && _y !== void 0 ? _y : String(e)}`;
                             }
                         }
                         siEntries.push({ label: 'Video codec support', value: videoResult });
@@ -1081,7 +1206,7 @@ const Player = {
                                 srcOrient[stt] = sc['getSourceOrientation'](stt);
                             }
                             catch (e) {
-                                srcOrient[stt] = `Error: ${(_j = e === null || e === void 0 ? void 0 : e.message) !== null && _j !== void 0 ? _j : String(e)}`;
+                                srcOrient[stt] = `Error: ${(_z = e === null || e === void 0 ? void 0 : e.message) !== null && _z !== void 0 ? _z : String(e)}`;
                             }
                         }
                         scEntries.push({ label: 'Source orientations', value: srcOrient });
@@ -1165,7 +1290,7 @@ const Player = {
                             tzEntries.push({ label: 'Device uptime (seconds)', value: tzsiTyped['getDeviceUptime']() });
                         }
                         catch (e) {
-                            tzEntries.push({ label: 'Device uptime (seconds)', error: `${(_k = e === null || e === void 0 ? void 0 : e.name) !== null && _k !== void 0 ? _k : 'Error'}: ${(_l = e === null || e === void 0 ? void 0 : e.message) !== null && _l !== void 0 ? _l : String(e)}` });
+                            tzEntries.push({ label: 'Device uptime (seconds)', error: `${(_0 = e === null || e === void 0 ? void 0 : e.name) !== null && _0 !== void 0 ? _0 : 'Error'}: ${(_1 = e === null || e === void 0 ? void 0 : e.message) !== null && _1 !== void 0 ? _1 : String(e)}` });
                         }
                         const capabilityKeys = [
                             'http://tizen.org/feature/screen',
@@ -1180,7 +1305,7 @@ const Player = {
                                 capabilities[ck] = tzsiTyped['getCapability'](ck);
                             }
                             catch (e) {
-                                capabilities[ck] = `Error: ${(_m = e === null || e === void 0 ? void 0 : e.message) !== null && _m !== void 0 ? _m : String(e)}`;
+                                capabilities[ck] = `Error: ${(_2 = e === null || e === void 0 ? void 0 : e.message) !== null && _2 !== void 0 ? _2 : String(e)}`;
                             }
                         }
                         tzEntries.push({ label: 'Capabilities', value: capabilities });
@@ -1373,11 +1498,11 @@ const Player = {
                                 case 'open': {
                                     const p = tcParams;
                                     const docinfo = {
-                                        docpath: (_o = p === null || p === void 0 ? void 0 : p.docpath) !== null && _o !== void 0 ? _o : '',
-                                        rectX: (_p = p === null || p === void 0 ? void 0 : p.rectX) !== null && _p !== void 0 ? _p : 0,
-                                        rectY: (_q = p === null || p === void 0 ? void 0 : p.rectY) !== null && _q !== void 0 ? _q : 0,
-                                        rectWidth: (_r = p === null || p === void 0 ? void 0 : p.rectWidth) !== null && _r !== void 0 ? _r : (window.innerWidth || 1920),
-                                        rectHeight: (_s = p === null || p === void 0 ? void 0 : p.rectHeight) !== null && _s !== void 0 ? _s : (window.innerHeight || 1080),
+                                        docpath: (_3 = p === null || p === void 0 ? void 0 : p.docpath) !== null && _3 !== void 0 ? _3 : '',
+                                        rectX: (_4 = p === null || p === void 0 ? void 0 : p.rectX) !== null && _4 !== void 0 ? _4 : 0,
+                                        rectY: (_5 = p === null || p === void 0 ? void 0 : p.rectY) !== null && _5 !== void 0 ? _5 : 0,
+                                        rectWidth: (_6 = p === null || p === void 0 ? void 0 : p.rectWidth) !== null && _6 !== void 0 ? _6 : (window.innerWidth || 1920),
+                                        rectHeight: (_7 = p === null || p === void 0 ? void 0 : p.rectHeight) !== null && _7 !== void 0 ? _7 : (window.innerHeight || 1080),
                                     };
                                     adapter.open(docinfo, ok, err);
                                     break;
@@ -1450,7 +1575,7 @@ const Player = {
                     // ── B2BControl API ─────────────────────────────────────────────────────
                     if (tcAction && tcAction.indexOf('b2b.') === 0) {
                         const rw3 = window;
-                        const b2bc = (_u = (_t = rw3['b2bapis']) === null || _t === void 0 ? void 0 : _t.b2bcontrol) !== null && _u !== void 0 ? _u : null;
+                        const b2bc = (_9 = (_8 = rw3['b2bapis']) === null || _8 === void 0 ? void 0 : _8.b2bcontrol) !== null && _9 !== void 0 ? _9 : null;
                         if (!b2bc) {
                             sendTizenCommandResult(false, undefined, 'b2bapis.b2bcontrol not available on this device');
                             break;

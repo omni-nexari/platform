@@ -895,6 +895,139 @@ const Player = {
               }
             }
 
+            // ── B2BControl timer intercept ─────────────────────────────────────
+            // b2b_timer_set / b2b_timer_get: try b2bapis.b2bcontrol first (24-hour
+            // format, no AM/PM ambiguity). Falls back to MDC bridge on error or when
+            // b2bapis is not available.
+            if (action === 'b2b_timer_set' || action === 'b2b_timer_get') {
+              const B2B_REPEAT_MAP: Record<number, string> = {
+                0: 'TIMER_ONCE', 1: 'TIMER_EVERY_DAY', 2: 'TIMER_MON_FRI',
+                3: 'TIMER_MON_SAT', 4: 'TIMER_SAT_SUN', 5: 'TIMER_MANUAL',
+              };
+              const B2B_DAY_NAMES = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+              const b2bSlot = Math.max(1, Math.min(7, parseInt(String(mdcPayload.slot ?? '1'), 10) || 1));
+              const timerType = `TIMER${b2bSlot}` as string;
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const b2bCtrl = (window as any).b2bapis?.b2bcontrol ?? null;
+
+              const toTime = (h: number, m: number) =>
+                `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+              const parseTime = (s: unknown): { h: number; m: number } | null => {
+                if (!s) return null;
+                const parts = String(s).match(/^(\d{1,2}):(\d{2})/);
+                return parts ? { h: parseInt(parts[1], 10), m: parseInt(parts[2], 10) } : null;
+              };
+
+              if (action === 'b2b_timer_get') {
+                if (b2bCtrl) {
+                  try {
+                    const onResult  = b2bCtrl.getOnTimerRepeat(timerType) as unknown;
+                    const offResult = b2bCtrl.getOffTimerRepeat(timerType) as unknown;
+                    const volResult = b2bCtrl.getOnTimerVolume(timerType) as unknown;
+                    const onT  = parseTime(onResult);
+                    const offT = parseTime(offResult);
+                    const vol  = volResult != null ? parseInt(String(volResult), 10) : 20;
+                    logger.info('[b2b-timer] GET ok:', timerType, onResult, offResult);
+                    sendMdcControlResponse({
+                      ok: true, method: 'b2bcontrol',
+                      onHour:  onT?.h  ?? 8,  onMin:  onT?.m  ?? 0,  onEnable:  onT  != null,
+                      offHour: offT?.h ?? 22, offMin: offT?.m ?? 0,  offEnable: offT != null,
+                      volume: isNaN(vol) ? 20 : vol,
+                      repeat: 1, source: 0x01, manualDays: 0,
+                    });
+                    break;
+                  } catch (e) {
+                    logger.warn('[b2b-timer] GET exception, falling back to MDC:', e);
+                  }
+                }
+                // MDC fallback for GET
+                self.sendLocalMdcXhr('on_timer_get', { slot: b2bSlot })
+                  .then((r) => sendMdcControlResponse({ ok: !!r['ok'], method: 'mdc_fallback', ...(r as Record<string, unknown>) }))
+                  .catch((e: unknown) => sendMdcControlResponse({ ok: false, error: String(e) }));
+                break;
+              }
+
+              // action === 'b2b_timer_set'
+              const onHour    = Number(mdcPayload.onHour   ?? 8);
+              const onMin     = Number(mdcPayload.onMin    ?? 0);
+              const offHour   = Number(mdcPayload.offHour  ?? 22);
+              const offMin    = Number(mdcPayload.offMin   ?? 0);
+              const onEnable  = mdcPayload.onEnable  !== false && mdcPayload.onEnable  !== 0;
+              const offEnable = mdcPayload.offEnable !== false && mdcPayload.offEnable !== 0;
+              const b2bRepeat = Number(mdcPayload.repeat ?? 1);
+              const manualDays = Number(mdcPayload.manualDays ?? 0);
+              const b2bVolume  = Number(mdcPayload.volume ?? 20);
+              const repeatType = B2B_REPEAT_MAP[b2bRepeat] ?? 'TIMER_EVERY_DAY';
+              const dayStr     = b2bRepeat === 5
+                ? B2B_DAY_NAMES.filter((_, i) => manualDays & (1 << i)).join(':')
+                : '';
+
+              // MDC fallback — converts 24h → 12h (MDC uses 12-hour format in bytes)
+              const mdcFallback = () => {
+                const mdcOnHour  = onHour  % 12 || 12;
+                const mdcOffHour = offHour % 12 || 12;
+                self.sendLocalMdcXhr('on_timer_set', {
+                  slot: b2bSlot,
+                  onHour: mdcOnHour, onMin, onEnable: onEnable ? 1 : 0,
+                  offHour: mdcOffHour, offMin, offEnable: offEnable ? 1 : 0,
+                  repeat: b2bRepeat, manualDays, volume: b2bVolume,
+                  source: mdcPayload.source ?? 0x01,
+                })
+                  .then((r) => sendMdcControlResponse({ ok: !!r['ok'], method: 'mdc_fallback', ...(r as Record<string, unknown>) }))
+                  .catch((e: unknown) => sendMdcControlResponse({ ok: false, error: String(e) }));
+              };
+
+              if (!b2bCtrl) {
+                logger.warn('[b2b-timer] b2bapis not available, using MDC fallback');
+                mdcFallback();
+                break;
+              }
+
+              try {
+                let pending = 0;
+                const errors: string[] = [];
+                const done = () => {
+                  pending--;
+                  if (pending > 0) return;
+                  if (errors.length > 0) {
+                    logger.warn('[b2b-timer] B2BControl errors, falling back to MDC:', errors);
+                    mdcFallback();
+                  } else {
+                    // Volume — fire-and-forget after timer set succeeds
+                    try {
+                      b2bCtrl.setOnTimerVolume(timerType, b2bVolume, () => {}, () => {});
+                    } catch { /* ignore volume errors */ }
+                    logger.info('[b2b-timer] SET ok:', timerType);
+                    sendMdcControlResponse({ ok: true, method: 'b2bcontrol' });
+                  }
+                };
+
+                if (onEnable) {
+                  pending++;
+                  b2bCtrl.setOnTimerRepeat(timerType, toTime(onHour, onMin), repeatType, dayStr,
+                    () => { done(); },
+                    (e: { message?: string }) => { errors.push(`on:${e?.message ?? 'err'}`); done(); },
+                  );
+                }
+                if (offEnable) {
+                  pending++;
+                  b2bCtrl.setOffTimerRepeat(timerType, toTime(offHour, offMin), repeatType, dayStr,
+                    () => { done(); },
+                    (e: { message?: string }) => { errors.push(`off:${e?.message ?? 'err'}`); done(); },
+                  );
+                }
+                if (pending === 0) {
+                  // Both disabled — use MDC bridge to clear the timer slot
+                  mdcFallback();
+                }
+              } catch (e) {
+                logger.warn('[b2b-timer] B2BControl exception, falling back to MDC:', e);
+                mdcFallback();
+              }
+              break;
+            }
+            // ── END B2BControl timer intercept ─────────────────────────────────
+
             const xhr = new XMLHttpRequest();
             xhr.open('POST', 'http://127.0.0.1:9615/mdc-control', true);
             xhr.setRequestHeader('Content-Type', 'application/json');

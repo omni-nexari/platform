@@ -2822,7 +2822,7 @@ export function DeviceDetailContent({
               <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
                 <AlarmClock className="w-3.5 h-3.5" />On/Off Timers
               </h2>
-              <span className="text-xs text-[var(--text-muted)]">Controls when the display wakes and sleeps &middot; 12-hr format</span>
+              <span className="text-xs text-[var(--text-muted)]">Controls when the display wakes and sleeps &middot; 24-hr format</span>
             </SectionCardHeader>
             <SectionCardBody className="space-y-4">
 
@@ -2931,7 +2931,7 @@ export function DeviceDetailContent({
                               onChange={(e) => update({ onHour: Number(e.target.value) })}
                               className="w-full px-2 py-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]"
                             >
-                              {Array.from({length: 13}, (_, h) => <option key={h} value={h}>{h}</option>)}
+                              {Array.from({length: 24}, (_, h) => <option key={h} value={h}>{String(h).padStart(2,'0')}</option>)}
                             </select>
                           </div>
                           <div className="flex-1 space-y-1">
@@ -2968,7 +2968,7 @@ export function DeviceDetailContent({
                               onChange={(e) => update({ offHour: Number(e.target.value) })}
                               className="w-full px-2 py-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:border-[var(--blue)]"
                             >
-                              {Array.from({length: 13}, (_, h) => <option key={h} value={h}>{h}</option>)}
+                              {Array.from({length: 24}, (_, h) => <option key={h} value={h}>{String(h).padStart(2,'0')}</option>)}
                             </select>
                           </div>
                           <div className="flex-1 space-y-1">
@@ -2993,7 +2993,7 @@ export function DeviceDetailContent({
                         onClick={async () => {
                           update({ busy: true });
                           try {
-                            const r = await api.post(`/devices/${deviceId}/mdc-control`, { action: 'on_timer_get', slot: selectedTimerSlot }) as Record<string,unknown>;
+                            const r = await api.post(`/devices/${deviceId}/mdc-control`, { action: 'b2b_timer_get', slot: selectedTimerSlot }) as Record<string,unknown>;
                             if (r['ok']) {
                               update({
                                 onHour: Number(r['onHour'] ?? 0), onMin: Number(r['onMin'] ?? 0), onEnable: !!r['onEnable'],
@@ -3022,7 +3022,7 @@ export function DeviceDetailContent({
                           update({ busy: true });
                           try {
                             const r = await api.post(`/devices/${deviceId}/mdc-control`, {
-                              action: 'on_timer_set', slot: selectedTimerSlot,
+                              action: 'b2b_timer_set', slot: selectedTimerSlot,
                               onHour: slot.onHour, onMin: slot.onMin, onEnable: slot.onEnable,
                               offHour: slot.offHour, offMin: slot.offMin, offEnable: slot.offEnable,
                               repeat: slot.repeat, volume: slot.volume, source: slot.source,
@@ -3050,7 +3050,7 @@ export function DeviceDetailContent({
                           update({ busy: true });
                           try {
                             const r = await api.post(`/devices/${deviceId}/mdc-control`, {
-                              action: 'on_timer_set', slot: selectedTimerSlot,
+                              action: 'b2b_timer_set', slot: selectedTimerSlot,
                               onHour: slot.onHour, onMin: slot.onMin, onEnable: false,
                               offHour: slot.offHour, offMin: slot.offMin, offEnable: false,
                               repeat: slot.repeat, volume: slot.volume, source: slot.source,
