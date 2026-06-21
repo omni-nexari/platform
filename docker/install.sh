@@ -348,10 +348,8 @@ echo ""
 echo "  Nexari Admin remote monitoring:"
 prompt_optional NEXARI_LICENSE_KEY "  NEXARI_LICENSE_KEY"
 NEXARI_ADMIN_URL="https://admin.nexari.ca"
-
-echo ""
-echo "  MQTT (for ESP32/e-paper devices):"
-prompt_optional MQTT_HOST     "  MQTT_HOST"
+  # OAuth proxy is always on admin.nexari.ca — set automatically
+  NEXARI_ADMIN_ORIGIN="https://admin.nexari.ca"
 MQTT_PORT="1883"
 prompt_optional MQTT_USERNAME "  MQTT_USERNAME"
 prompt_optional MQTT_PASSWORD "  MQTT_PASSWORD"
@@ -441,6 +439,7 @@ MICROSOFT_OAUTH_TENANT_ID=${MICROSOFT_OAUTH_TENANT_ID}
 NEXARI_LICENSE_KEY=${NEXARI_LICENSE_KEY}
 NEXARI_ADMIN_URL=${NEXARI_ADMIN_URL}
 LICENSE_SERVER_URL=${NEXARI_ADMIN_URL}
+NEXARI_ADMIN_ORIGIN=${NEXARI_ADMIN_ORIGIN}
 
 # ── MQTT ──
 MQTT_HOST=${MQTT_HOST}
