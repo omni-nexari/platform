@@ -76,11 +76,11 @@ export async function firmwareReleasesRoutes(app: FastifyInstance) {
     });
   });
 
-  // ── POST /firmware-releases/upload  (deploy key) ──────────────────────────
+  // ── POST /firmware-releases/upload  (deploy key OR platform owner) ─────────
   // Accepts a Samsung BEM ZIP (image/swuimage.bem + info.txt).
   // Extracts the .bem, parses info.txt, stores on disk.
   // Returns parsed metadata for confirmation before creating the release record.
-  app.post('/upload', { onRequest: [app.authenticateDeployKey] }, async (req, reply) => {
+  app.post('/upload', { onRequest: [app.authenticateDeployKeyOrPlatformOwner] }, async (req, reply) => {
     const data = await req.file();
     if (!data) return reply.status(400).send({ error: 'No file provided' });
 
