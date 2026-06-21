@@ -1035,11 +1035,39 @@ export function DeviceDetailContent({
     publishedAt: string;
     sha256?: string | null;
   };
+  type FirmwareRelease = {
+    id: string;
+    firmwareModel: string;
+    version: string;
+    swVersionString: string;
+    fileName: string;
+    downloadUrl: string;
+    sizeBytes: number;
+    sha256?: string | null;
+    releaseNotes: string | null;
+    isLatest: boolean;
+    superadminApproved: boolean;
+    publishedAt: string;
+  };
   const devicePlatform = (data?.device?.platform ?? 'tizen') as string;
   const { data: latestRelease } = useQuery<PlayerRelease | null>({
     queryKey: ['player-releases-latest', devicePlatform],
     queryFn: () => api.get(`/player-releases/latest?platform=${encodeURIComponent(devicePlatform)}`),
     enabled: bootstrapped && !!user,
+    staleTime: 60_000,
+    retry: false,
+  });
+  // Parse firmware model from device.firmwareVersion (e.g. 'S-KSU2EWWC-1170.6' → 'S-KSU2EWWC')
+  const deviceFirmwareModel = (() => {
+    const fv = data?.device?.firmwareVersion;
+    if (!fv) return null;
+    const m = fv.match(/^(.+)-(\d[\d.]*)$/);
+    return m ? m[1] : null;
+  })();
+  const { data: latestFirmwareRelease } = useQuery<FirmwareRelease | null>({
+    queryKey: ['firmware-releases-latest', deviceFirmwareModel],
+    queryFn: () => api.get(`/firmware-releases/latest?firmwareModel=${encodeURIComponent(deviceFirmwareModel!)}`),
+    enabled: bootstrapped && !!user && devicePlatform === 'tizen' && !!deviceFirmwareModel,
     staleTime: 60_000,
     retry: false,
   });
@@ -3124,7 +3152,7 @@ export function DeviceDetailContent({
                 <span className="font-mono text-xs text-[var(--text)]">{device.playerVersion ? `v${device.playerVersion}` : '—'}</span>
                 {latestRelease && device.playerVersion && latestRelease.version !== device.playerVersion && (
                   <>
-                    {latestRelease.managementApproved ? (
+                    {latestRelease.superadminApproved ? (
                       <>
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
                           Update available: v{latestRelease.version}
@@ -3138,10 +3166,9 @@ export function DeviceDetailContent({
                       </>
                     ) : (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">
-                        v{latestRelease.version} available
-                        {!latestRelease.superadminApproved ? ' · awaiting platform approval' : ' · awaiting reseller approval'}
+                        v{latestRelease.version} available · awaiting platform approval
                       </span>
-                    )}
+                    )
                   </>
                 )}
                 {latestRelease && device.playerVersion === latestRelease.version && (
@@ -3152,6 +3179,60 @@ export function DeviceDetailContent({
               </div>
             </SectionCardBody>
           </SectionCard>
+
+          {/* ── Screen Firmware (Tizen only) ───────────────────────────────── */}
+          {devicePlatform === 'tizen' && (
+          <SectionCard>
+            <SectionCardHeader>
+              <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
+                <Cpu className="w-3.5 h-3.5" />Screen Firmware
+              </h2>
+            </SectionCardHeader>
+            <SectionCardBody>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-xs text-[var(--text-muted)]">Installed:</span>
+                <span className="font-mono text-xs text-[var(--text)]">{device.firmwareVersion ?? '—'}</span>
+                {latestFirmwareRelease && deviceFirmwareModel && (
+                  <>
+                    {latestFirmwareRelease.superadminApproved && latestFirmwareRelease.version !== (() => {
+                      const m = (device.firmwareVersion ?? '').match(/^.+-(\d[\d.]*)$/);
+                      return m ? m[1] : '';
+                    })() ? (
+                      <>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                          Update available: {latestFirmwareRelease.swVersionString}
+                        </span>
+                        <ActionButton
+                          type="button"
+                          onClick={() => sendCmd({
+                            command: 'update_tv_firmware',
+                            payload: {
+                              softwareId: '0',
+                              fileName:   latestFirmwareRelease.fileName,
+                              swVersion:  latestFirmwareRelease.swVersionString,
+                              url:        latestFirmwareRelease.downloadUrl,
+                              sizeBytes:  latestFirmwareRelease.sizeBytes,
+                            },
+                          })}
+                          disabled={cmdDisabled}
+                          tone="primary" className="px-3 py-1 text-xs shrink-0"
+                        >Apply Firmware Update</ActionButton>
+                      </>
+                    ) : latestFirmwareRelease.superadminApproved ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/15 text-green-400 border border-green-500/30">
+                        Up to date
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">
+                        {latestFirmwareRelease.swVersionString} available · awaiting platform approval
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+            </SectionCardBody>
+          </SectionCard>
+          )}
 
         </div>
       )}

@@ -1,594 +1,601 @@
 {
-    "version":  "7",
-    "dialect":  "postgresql",
-    "entries":  [
-                    {
-                        "idx":  0,
-                        "version":  "7",
-                        "when":  1773794929065,
-                        "tag":  "0000_bizarre_justin_hammer",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  1,
-                        "version":  "7",
-                        "when":  1773804793950,
-                        "tag":  "0001_stormy_apocalypse",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  2,
-                        "version":  "7",
-                        "when":  1773806637823,
-                        "tag":  "0002_amazing_yellow_claw",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  3,
-                        "version":  "7",
-                        "when":  1773807035471,
-                        "tag":  "0003_hesitant_sersi",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  4,
-                        "version":  "7",
-                        "when":  1773850245823,
-                        "tag":  "0004_yummy_morg",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  5,
-                        "version":  "7",
-                        "when":  1773880395279,
-                        "tag":  "0005_plain_butterfly",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  6,
-                        "version":  "7",
-                        "when":  1773890140566,
-                        "tag":  "0006_previous_overlord",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  7,
-                        "version":  "7",
-                        "when":  1773894386963,
-                        "tag":  "0007_milky_sir_ram",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  8,
-                        "version":  "7",
-                        "when":  1773957283606,
-                        "tag":  "0008_tizen_device_expansion",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  9,
-                        "version":  "7",
-                        "when":  1773957283607,
-                        "tag":  "0009_content_folders",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  10,
-                        "version":  "7",
-                        "when":  1773957283608,
-                        "tag":  "0010_canvas_projects",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  11,
-                        "version":  "7",
-                        "when":  1773957283609,
-                        "tag":  "0011_smart_views",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  12,
-                        "version":  "7",
-                        "when":  1773957283610,
-                        "tag":  "0012_management_companies",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  13,
-                        "version":  "7",
-                        "when":  1773957283611,
-                        "tag":  "0013_management_company_logo",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  14,
-                        "version":  "7",
-                        "when":  1773960000000,
-                        "tag":  "0014_analytics_notifications",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  15,
-                        "version":  "7",
-                        "when":  1774046400000,
-                        "tag":  "0015_management_company_branding",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  16,
-                        "version":  "7",
-                        "when":  1774048200000,
-                        "tag":  "0016_management_company_branding_extras",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  17,
-                        "version":  "7",
-                        "when":  1774050000000,
-                        "tag":  "0017_portal_analytics_preferences",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  18,
-                        "version":  "7",
-                        "when":  1774060200000,
-                        "tag":  "0018_notification_prefs",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  19,
-                        "version":  "7",
-                        "when":  1774062000000,
-                        "tag":  "0019_device_publish_targets",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  20,
-                        "version":  "7",
-                        "when":  1774063800000,
-                        "tag":  "0020_syncplay",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  21,
-                        "version":  "7",
-                        "when":  1774065600000,
-                        "tag":  "0021_syncplay_groupid_int",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  22,
-                        "version":  "7",
-                        "when":  1774067400000,
-                        "tag":  "0022_power_state_nullable",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  23,
-                        "version":  "7",
-                        "when":  1774069200000,
-                        "tag":  "0023_mdc_columns",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  24,
-                        "version":  "7",
-                        "when":  1774071000000,
-                        "tag":  "0024_device_timer_slots",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  25,
-                        "version":  "7",
-                        "when":  1774072800000,
-                        "tag":  "0025_log_entries",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  26,
-                        "version":  "7",
-                        "when":  1774074600000,
-                        "tag":  "0026_heartbeat_memory_uptime",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  27,
-                        "version":  "7",
-                        "when":  1774076400000,
-                        "tag":  "0027_mdc_url_launcher",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  28,
-                        "version":  "7",
-                        "when":  1774078200000,
-                        "tag":  "0028_mdc_lux",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  29,
-                        "version":  "7",
-                        "when":  1774080000000,
-                        "tag":  "0029_mdc_hw_clock",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  30,
-                        "version":  "7",
-                        "when":  1774081800000,
-                        "tag":  "0030_sync_group_indexes",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  31,
-                        "version":  "7",
-                        "when":  1774083600000,
-                        "tag":  "0031_device_type_platform",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  32,
-                        "version":  "7",
-                        "when":  1774085400000,
-                        "tag":  "0032_pos_schema",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  33,
-                        "version":  "7",
-                        "when":  1774087200000,
-                        "tag":  "0033_device_groups",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  34,
-                        "version":  "7",
-                        "when":  1774089000000,
-                        "tag":  "0034_pos_settings",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  35,
-                        "version":  "7",
-                        "when":  1774090800000,
-                        "tag":  "0035_pos_payments",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  36,
-                        "version":  "7",
-                        "when":  1774092600000,
-                        "tag":  "0036_pos_phase6",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  37,
-                        "version":  "7",
-                        "when":  1774094400000,
-                        "tag":  "0037_pos_kitchen_config",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  38,
-                        "version":  "7",
-                        "when":  1774096200000,
-                        "tag":  "0038_content_hash",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  39,
-                        "version":  "7",
-                        "when":  1774098000000,
-                        "tag":  "0039_content_versions",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  40,
-                        "version":  "7",
-                        "when":  1774099800000,
-                        "tag":  "0040_playlist_shuffle_weight",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  41,
-                        "version":  "7",
-                        "when":  1774101600000,
-                        "tag":  "0041_smart_playlists",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  42,
-                        "version":  "7",
-                        "when":  1774103400000,
-                        "tag":  "0042_playlist_folders",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  43,
-                        "version":  "7",
-                        "when":  1774105200000,
-                        "tag":  "0043_schedule_timezone",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  44,
-                        "version":  "7",
-                        "when":  1774107000000,
-                        "tag":  "0044_schedule_recurrence",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  45,
-                        "version":  "7",
-                        "when":  1774108800000,
-                        "tag":  "0045_schedule_blackouts",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  46,
-                        "version":  "7",
-                        "when":  1774110600000,
-                        "tag":  "0046_device_config_templates",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  47,
-                        "version":  "7",
-                        "when":  1774112400000,
-                        "tag":  "0047_device_alert_thresholds",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  48,
-                        "version":  "7",
-                        "when":  1774114200000,
-                        "tag":  "0048_webhooks",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  49,
-                        "version":  "7",
-                        "when":  1774116000000,
-                        "tag":  "0049_sensors",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  50,
-                        "version":  "7",
-                        "when":  1774117800000,
-                        "tag":  "0050_device_group_sync_link",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  51,
-                        "version":  "7",
-                        "when":  1774119600000,
-                        "tag":  "0051_client_org_invite_owner_link",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  52,
-                        "version":  "7",
-                        "when":  1774121400000,
-                        "tag":  "0052_syncplay_observability",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  53,
-                        "version":  "7",
-                        "when":  1774123200000,
-                        "tag":  "0053_videowall_columns",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  54,
-                        "version":  "7",
-                        "when":  1774125000000,
-                        "tag":  "0054_calendar_integrations",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  55,
-                        "version":  "7",
-                        "when":  1778400000000,
-                        "tag":  "0055_epaper_devices",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  56,
-                        "version":  "7",
-                        "when":  1778401800000,
-                        "tag":  "0056_si_plan_modules",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  57,
-                        "version":  "7",
-                        "when":  1778403600000,
-                        "tag":  "0057_support_tickets",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  58,
-                        "version":  "7",
-                        "when":  1778410000000,
-                        "tag":  "0058_mgmt_invite_recipient_name",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  59,
-                        "version":  "7",
-                        "when":  1778500000000,
-                        "tag":  "0059_windows_player",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  60,
-                        "version":  "7",
-                        "when":  1778600000000,
-                        "tag":  "0060_windows_settings",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  61,
-                        "version":  "7",
-                        "when":  1778601800000,
-                        "tag":  "0061_cross_platform_sync",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  62,
-                        "version":  "7",
-                        "when":  1778610000000,
-                        "tag":  "0062_player_release_approvals",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  63,
-                        "version":  "7",
-                        "when":  1778700000000,
-                        "tag":  "0063_player_release_sha256",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  64,
-                        "version":  "7",
-                        "when":  1778710000000,
-                        "tag":  "0064_tizen_consumer_platform",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  65,
-                        "version":  "7",
-                        "when":  1778720000000,
-                        "tag":  "0065_trigger_rules",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  66,
-                        "version":  "7",
-                        "when":  1778730000000,
-                        "tag":  "0066_ble_scan_results",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  67,
-                        "version":  "7",
-                        "when":  1778740000000,
-                        "tag":  "0067_display_physical_dims",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  68,
-                        "version":  "7",
-                        "when":  1778741800000,
-                        "tag":  "0068_device_installed_apps",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  69,
-                        "version":  "7",
-                        "when":  1778743600000,
-                        "tag":  "0069_videowall_playlists",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  70,
-                        "version":  "7",
-                        "when":  1778745400000,
-                        "tag":  "0070_videowall_playlist_pages",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  71,
-                        "version":  "7",
-                        "when":  1778747200000,
-                        "tag":  "0071_workspace_rule_sets",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  72,
-                        "version":  "7",
-                        "when":  1778749000000,
-                        "tag":  "0072_uber_eats",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  73,
-                        "version":  "7",
-                        "when":  1778750800000,
-                        "tag":  "0073_pos_order_table_link",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  74,
-                        "version":  "7",
-                        "when":  1779321600000,
-                        "tag":  "0074_platform_integrations",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  75,
-                        "version":  "7",
-                        "when":  1779667200000,
-                        "tag":  "0075_ai_assistant",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  76,
-                        "version":  "7",
-                        "when":  1780704000000,
-                        "tag":  "0076_pos_item_86",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  77,
-                        "version":  "7",
-                        "when":  1780790400000,
-                        "tag":  "0077_pos_phase2",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  78,
-                        "version":  "7",
-                        "when":  1780876800000,
-                        "tag":  "0078_billing_system",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  79,
-                        "version":  "7",
-                        "when":  1780963200000,
-                        "tag":  "0079_pos_phase3",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  80,
-                        "version":  "7",
-                        "when":  1781365500983,
-                        "tag":  "0080_license_config",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  81,
-                        "version":  "7",
-                        "when":  1781365501983,
-                        "tag":  "0081_org_license_allocations",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  82,
-                        "version":  "7",
-                        "when":  1781913600000,
-                        "tag":  "0082_offline_license",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  83,
-                        "version":  "7",
-                        "when":  1782100000000,
-                        "tag":  "0083_email_config",
-                        "breakpoints":  true
-                    }
-                ]
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1773794929065,
+      "tag": "0000_bizarre_justin_hammer",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1773804793950,
+      "tag": "0001_stormy_apocalypse",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1773806637823,
+      "tag": "0002_amazing_yellow_claw",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1773807035471,
+      "tag": "0003_hesitant_sersi",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1773850245823,
+      "tag": "0004_yummy_morg",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1773880395279,
+      "tag": "0005_plain_butterfly",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1773890140566,
+      "tag": "0006_previous_overlord",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1773894386963,
+      "tag": "0007_milky_sir_ram",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1773957283606,
+      "tag": "0008_tizen_device_expansion",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1773957283607,
+      "tag": "0009_content_folders",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1773957283608,
+      "tag": "0010_canvas_projects",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1773957283609,
+      "tag": "0011_smart_views",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1773957283610,
+      "tag": "0012_management_companies",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1773957283611,
+      "tag": "0013_management_company_logo",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1773960000000,
+      "tag": "0014_analytics_notifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1774046400000,
+      "tag": "0015_management_company_branding",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1774048200000,
+      "tag": "0016_management_company_branding_extras",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1774050000000,
+      "tag": "0017_portal_analytics_preferences",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1774060200000,
+      "tag": "0018_notification_prefs",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1774062000000,
+      "tag": "0019_device_publish_targets",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1774063800000,
+      "tag": "0020_syncplay",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1774065600000,
+      "tag": "0021_syncplay_groupid_int",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1774067400000,
+      "tag": "0022_power_state_nullable",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1774069200000,
+      "tag": "0023_mdc_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1774071000000,
+      "tag": "0024_device_timer_slots",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1774072800000,
+      "tag": "0025_log_entries",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1774074600000,
+      "tag": "0026_heartbeat_memory_uptime",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1774076400000,
+      "tag": "0027_mdc_url_launcher",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1774078200000,
+      "tag": "0028_mdc_lux",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1774080000000,
+      "tag": "0029_mdc_hw_clock",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1774081800000,
+      "tag": "0030_sync_group_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1774083600000,
+      "tag": "0031_device_type_platform",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1774085400000,
+      "tag": "0032_pos_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1774087200000,
+      "tag": "0033_device_groups",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1774089000000,
+      "tag": "0034_pos_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1774090800000,
+      "tag": "0035_pos_payments",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1774092600000,
+      "tag": "0036_pos_phase6",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1774094400000,
+      "tag": "0037_pos_kitchen_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1774096200000,
+      "tag": "0038_content_hash",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1774098000000,
+      "tag": "0039_content_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1774099800000,
+      "tag": "0040_playlist_shuffle_weight",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1774101600000,
+      "tag": "0041_smart_playlists",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1774103400000,
+      "tag": "0042_playlist_folders",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1774105200000,
+      "tag": "0043_schedule_timezone",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1774107000000,
+      "tag": "0044_schedule_recurrence",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1774108800000,
+      "tag": "0045_schedule_blackouts",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1774110600000,
+      "tag": "0046_device_config_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1774112400000,
+      "tag": "0047_device_alert_thresholds",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1774114200000,
+      "tag": "0048_webhooks",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1774116000000,
+      "tag": "0049_sensors",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1774117800000,
+      "tag": "0050_device_group_sync_link",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1774119600000,
+      "tag": "0051_client_org_invite_owner_link",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1774121400000,
+      "tag": "0052_syncplay_observability",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1774123200000,
+      "tag": "0053_videowall_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1774125000000,
+      "tag": "0054_calendar_integrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1778400000000,
+      "tag": "0055_epaper_devices",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1778401800000,
+      "tag": "0056_si_plan_modules",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1778403600000,
+      "tag": "0057_support_tickets",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1778410000000,
+      "tag": "0058_mgmt_invite_recipient_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1778500000000,
+      "tag": "0059_windows_player",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1778600000000,
+      "tag": "0060_windows_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1778601800000,
+      "tag": "0061_cross_platform_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1778610000000,
+      "tag": "0062_player_release_approvals",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1778700000000,
+      "tag": "0063_player_release_sha256",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1778710000000,
+      "tag": "0064_tizen_consumer_platform",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1778720000000,
+      "tag": "0065_trigger_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1778730000000,
+      "tag": "0066_ble_scan_results",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1778740000000,
+      "tag": "0067_display_physical_dims",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1778741800000,
+      "tag": "0068_device_installed_apps",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1778743600000,
+      "tag": "0069_videowall_playlists",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1778745400000,
+      "tag": "0070_videowall_playlist_pages",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1778747200000,
+      "tag": "0071_workspace_rule_sets",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1778749000000,
+      "tag": "0072_uber_eats",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1778750800000,
+      "tag": "0073_pos_order_table_link",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1779321600000,
+      "tag": "0074_platform_integrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1779667200000,
+      "tag": "0075_ai_assistant",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1780704000000,
+      "tag": "0076_pos_item_86",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1780790400000,
+      "tag": "0077_pos_phase2",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1780876800000,
+      "tag": "0078_billing_system",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1780963200000,
+      "tag": "0079_pos_phase3",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1781365500983,
+      "tag": "0080_license_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1781365501983,
+      "tag": "0081_org_license_allocations",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1781913600000,
+      "tag": "0082_offline_license",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1782100000000,
+      "tag": "0083_email_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1782017242141,
+      "tag": "0084_broken_roxanne_simpson",
+      "breakpoints": true
+    }
+  ]
 }

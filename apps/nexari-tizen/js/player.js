@@ -429,7 +429,7 @@ const Player = {
     },
     // Handle WebSocket messages
     handleWebSocketMessage(data) {
-        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9;
+        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10;
         try {
             const message = JSON.parse(data);
             const messageType = message.type || message.event;
@@ -794,16 +794,15 @@ const Player = {
                     // REBOOT: use b2bcontrol.rebootDevice() directly — MDC CMD_POWER/RESET unreliable
                     if (keyName === 'REBOOT') {
                         try {
-                            const b2b = window.b2bapis && window.b2bapis.b2bcontrol ? window.b2bapis.b2bcontrol : null;
+                            const b2b = (_d = window.b2bapis) === null || _d === void 0 ? void 0 : _d.b2bcontrol;
                             if (b2b && typeof b2b.rebootDevice === 'function') {
-                                b2b.rebootDevice(
-                                    function () { logger.info('[remote-key] b2bcontrol.rebootDevice success'); },
-                                    function (e) { logger.warn('[remote-key] b2bcontrol.rebootDevice error:', (e && e.message) || e); }
-                                );
-                            } else {
+                                b2b.rebootDevice(() => logger.info('[remote-key] b2bcontrol.rebootDevice success'), (e) => logger.warn('[remote-key] b2bcontrol.rebootDevice error:', (e && e.message) || e));
+                            }
+                            else {
                                 logger.warn('[remote-key] b2bcontrol.rebootDevice not available');
                             }
-                        } catch (e) {
+                        }
+                        catch (e) {
                             logger.warn('[remote-key] REBOOT b2bcontrol threw:', e);
                         }
                         break;
@@ -894,10 +893,10 @@ const Player = {
                                 3: 'TIMER_MON_SAT', 4: 'TIMER_SAT_SUN', 5: 'TIMER_MANUAL',
                             };
                             const B2B_DAY_NAMES = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
-                            const b2bSlot = Math.max(1, Math.min(7, parseInt(String((_d = mdcPayload.slot) !== null && _d !== void 0 ? _d : '1'), 10) || 1));
+                            const b2bSlot = Math.max(1, Math.min(7, parseInt(String((_f = mdcPayload.slot) !== null && _f !== void 0 ? _f : '1'), 10) || 1));
                             const timerType = `TIMER${b2bSlot}`;
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            const b2bCtrl = (_g = (_f = window.b2bapis) === null || _f === void 0 ? void 0 : _f.b2bcontrol) !== null && _g !== void 0 ? _g : null;
+                            const b2bCtrl = (_h = (_g = window.b2bapis) === null || _g === void 0 ? void 0 : _g.b2bcontrol) !== null && _h !== void 0 ? _h : null;
                             const toTime = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
                             const parseTime = (s) => {
                                 if (!s)
@@ -917,8 +916,8 @@ const Player = {
                                         logger.info('[b2b-timer] GET ok:', timerType, onResult, offResult);
                                         sendMdcControlResponse({
                                             ok: true, method: 'b2bcontrol',
-                                            onHour: (_h = onT === null || onT === void 0 ? void 0 : onT.h) !== null && _h !== void 0 ? _h : 8, onMin: (_j = onT === null || onT === void 0 ? void 0 : onT.m) !== null && _j !== void 0 ? _j : 0, onEnable: onT != null,
-                                            offHour: (_k = offT === null || offT === void 0 ? void 0 : offT.h) !== null && _k !== void 0 ? _k : 22, offMin: (_l = offT === null || offT === void 0 ? void 0 : offT.m) !== null && _l !== void 0 ? _l : 0, offEnable: offT != null,
+                                            onHour: (_j = onT === null || onT === void 0 ? void 0 : onT.h) !== null && _j !== void 0 ? _j : 8, onMin: (_k = onT === null || onT === void 0 ? void 0 : onT.m) !== null && _k !== void 0 ? _k : 0, onEnable: onT != null,
+                                            offHour: (_l = offT === null || offT === void 0 ? void 0 : offT.h) !== null && _l !== void 0 ? _l : 22, offMin: (_m = offT === null || offT === void 0 ? void 0 : offT.m) !== null && _m !== void 0 ? _m : 0, offEnable: offT != null,
                                             volume: isNaN(vol) ? 20 : vol,
                                             repeat: 1, source: 0x01, manualDays: 0,
                                         });
@@ -935,16 +934,16 @@ const Player = {
                                 break;
                             }
                             // action === 'b2b_timer_set'
-                            const onHour = Number((_m = mdcPayload.onHour) !== null && _m !== void 0 ? _m : 8);
-                            const onMin = Number((_o = mdcPayload.onMin) !== null && _o !== void 0 ? _o : 0);
-                            const offHour = Number((_p = mdcPayload.offHour) !== null && _p !== void 0 ? _p : 22);
-                            const offMin = Number((_q = mdcPayload.offMin) !== null && _q !== void 0 ? _q : 0);
+                            const onHour = Number((_o = mdcPayload.onHour) !== null && _o !== void 0 ? _o : 8);
+                            const onMin = Number((_p = mdcPayload.onMin) !== null && _p !== void 0 ? _p : 0);
+                            const offHour = Number((_q = mdcPayload.offHour) !== null && _q !== void 0 ? _q : 22);
+                            const offMin = Number((_r = mdcPayload.offMin) !== null && _r !== void 0 ? _r : 0);
                             const onEnable = mdcPayload.onEnable !== false && mdcPayload.onEnable !== 0;
                             const offEnable = mdcPayload.offEnable !== false && mdcPayload.offEnable !== 0;
-                            const b2bRepeat = Number((_r = mdcPayload.repeat) !== null && _r !== void 0 ? _r : 1);
-                            const manualDays = Number((_s = mdcPayload.manualDays) !== null && _s !== void 0 ? _s : 0);
-                            const b2bVolume = Number((_t = mdcPayload.volume) !== null && _t !== void 0 ? _t : 20);
-                            const repeatType = (_u = B2B_REPEAT_MAP[b2bRepeat]) !== null && _u !== void 0 ? _u : 'TIMER_EVERY_DAY';
+                            const b2bRepeat = Number((_s = mdcPayload.repeat) !== null && _s !== void 0 ? _s : 1);
+                            const manualDays = Number((_t = mdcPayload.manualDays) !== null && _t !== void 0 ? _t : 0);
+                            const b2bVolume = Number((_u = mdcPayload.volume) !== null && _u !== void 0 ? _u : 20);
+                            const repeatType = (_v = B2B_REPEAT_MAP[b2bRepeat]) !== null && _v !== void 0 ? _v : 'TIMER_EVERY_DAY';
                             const dayStr = b2bRepeat === 5
                                 ? B2B_DAY_NAMES.filter((_, i) => manualDays & (1 << i)).join(':')
                                 : '';
@@ -1046,7 +1045,7 @@ const Player = {
                 case 'remote_status': {
                     // Call /status-full to aggregate status, serial, device-name, model, IP and remote-ctrl
                     // in a single round-trip (server.js performs the MDC commands sequentially).
-                    const rsRequestId = (_v = message.payload) === null || _v === void 0 ? void 0 : _v.requestId;
+                    const rsRequestId = (_w = message.payload) === null || _w === void 0 ? void 0 : _w.requestId;
                     const rsWs = this.wsConnection;
                     function sendMdcStatusResponse(payload) {
                         if (rsRequestId && rsWs && rsWs.readyState === WebSocket.OPEN) {
@@ -1075,7 +1074,7 @@ const Player = {
                     break;
                 }
                 case 'tizen_probe': {
-                    const tpRequestId = (_w = message.payload) === null || _w === void 0 ? void 0 : _w.requestId;
+                    const tpRequestId = (_x = message.payload) === null || _x === void 0 ? void 0 : _x.requestId;
                     const tpWs = this.wsConnection;
                     function sendTizenProbeResult(sections) {
                         if (tpRequestId && tpWs && tpWs.readyState === WebSocket.OPEN) {
@@ -1169,7 +1168,7 @@ const Player = {
                                 audioResult[ac] = Boolean(si['isSupportedAudioCodec'](ac));
                             }
                             catch (e) {
-                                audioResult[ac] = `Error: ${(_x = e === null || e === void 0 ? void 0 : e.message) !== null && _x !== void 0 ? _x : String(e)}`;
+                                audioResult[ac] = `Error: ${(_y = e === null || e === void 0 ? void 0 : e.message) !== null && _y !== void 0 ? _y : String(e)}`;
                             }
                         }
                         siEntries.push({ label: 'Audio codec support', value: audioResult });
@@ -1180,7 +1179,7 @@ const Player = {
                                 videoResult[vc] = Boolean(si['isSupportedVideoCodec'](vc));
                             }
                             catch (e) {
-                                videoResult[vc] = `Error: ${(_y = e === null || e === void 0 ? void 0 : e.message) !== null && _y !== void 0 ? _y : String(e)}`;
+                                videoResult[vc] = `Error: ${(_z = e === null || e === void 0 ? void 0 : e.message) !== null && _z !== void 0 ? _z : String(e)}`;
                             }
                         }
                         siEntries.push({ label: 'Video codec support', value: videoResult });
@@ -1223,7 +1222,7 @@ const Player = {
                                 srcOrient[stt] = sc['getSourceOrientation'](stt);
                             }
                             catch (e) {
-                                srcOrient[stt] = `Error: ${(_z = e === null || e === void 0 ? void 0 : e.message) !== null && _z !== void 0 ? _z : String(e)}`;
+                                srcOrient[stt] = `Error: ${(_0 = e === null || e === void 0 ? void 0 : e.message) !== null && _0 !== void 0 ? _0 : String(e)}`;
                             }
                         }
                         scEntries.push({ label: 'Source orientations', value: srcOrient });
@@ -1307,7 +1306,7 @@ const Player = {
                             tzEntries.push({ label: 'Device uptime (seconds)', value: tzsiTyped['getDeviceUptime']() });
                         }
                         catch (e) {
-                            tzEntries.push({ label: 'Device uptime (seconds)', error: `${(_0 = e === null || e === void 0 ? void 0 : e.name) !== null && _0 !== void 0 ? _0 : 'Error'}: ${(_1 = e === null || e === void 0 ? void 0 : e.message) !== null && _1 !== void 0 ? _1 : String(e)}` });
+                            tzEntries.push({ label: 'Device uptime (seconds)', error: `${(_1 = e === null || e === void 0 ? void 0 : e.name) !== null && _1 !== void 0 ? _1 : 'Error'}: ${(_2 = e === null || e === void 0 ? void 0 : e.message) !== null && _2 !== void 0 ? _2 : String(e)}` });
                         }
                         const capabilityKeys = [
                             'http://tizen.org/feature/screen',
@@ -1322,7 +1321,7 @@ const Player = {
                                 capabilities[ck] = tzsiTyped['getCapability'](ck);
                             }
                             catch (e) {
-                                capabilities[ck] = `Error: ${(_2 = e === null || e === void 0 ? void 0 : e.message) !== null && _2 !== void 0 ? _2 : String(e)}`;
+                                capabilities[ck] = `Error: ${(_3 = e === null || e === void 0 ? void 0 : e.message) !== null && _3 !== void 0 ? _3 : String(e)}`;
                             }
                         }
                         tzEntries.push({ label: 'Capabilities', value: capabilities });
@@ -1515,11 +1514,11 @@ const Player = {
                                 case 'open': {
                                     const p = tcParams;
                                     const docinfo = {
-                                        docpath: (_3 = p === null || p === void 0 ? void 0 : p.docpath) !== null && _3 !== void 0 ? _3 : '',
-                                        rectX: (_4 = p === null || p === void 0 ? void 0 : p.rectX) !== null && _4 !== void 0 ? _4 : 0,
-                                        rectY: (_5 = p === null || p === void 0 ? void 0 : p.rectY) !== null && _5 !== void 0 ? _5 : 0,
-                                        rectWidth: (_6 = p === null || p === void 0 ? void 0 : p.rectWidth) !== null && _6 !== void 0 ? _6 : (window.innerWidth || 1920),
-                                        rectHeight: (_7 = p === null || p === void 0 ? void 0 : p.rectHeight) !== null && _7 !== void 0 ? _7 : (window.innerHeight || 1080),
+                                        docpath: (_4 = p === null || p === void 0 ? void 0 : p.docpath) !== null && _4 !== void 0 ? _4 : '',
+                                        rectX: (_5 = p === null || p === void 0 ? void 0 : p.rectX) !== null && _5 !== void 0 ? _5 : 0,
+                                        rectY: (_6 = p === null || p === void 0 ? void 0 : p.rectY) !== null && _6 !== void 0 ? _6 : 0,
+                                        rectWidth: (_7 = p === null || p === void 0 ? void 0 : p.rectWidth) !== null && _7 !== void 0 ? _7 : (window.innerWidth || 1920),
+                                        rectHeight: (_8 = p === null || p === void 0 ? void 0 : p.rectHeight) !== null && _8 !== void 0 ? _8 : (window.innerHeight || 1080),
                                     };
                                     adapter.open(docinfo, ok, err);
                                     break;
@@ -1592,7 +1591,7 @@ const Player = {
                     // ── B2BControl API ─────────────────────────────────────────────────────
                     if (tcAction && tcAction.indexOf('b2b.') === 0) {
                         const rw3 = window;
-                        const b2bc = (_9 = (_8 = rw3['b2bapis']) === null || _8 === void 0 ? void 0 : _8.b2bcontrol) !== null && _9 !== void 0 ? _9 : null;
+                        const b2bc = (_10 = (_9 = rw3['b2bapis']) === null || _9 === void 0 ? void 0 : _9.b2bcontrol) !== null && _10 !== void 0 ? _10 : null;
                         if (!b2bc) {
                             sendTizenCommandResult(false, undefined, 'b2bapis.b2bcontrol not available on this device');
                             break;
@@ -7886,7 +7885,65 @@ const Player = {
                 }
                 break;
             }
-            case 'REQUEST_LOG_BURST': {
+            case 'UPDATE_TV_FIRMWARE': {
+                // Samsung B2B firmware OTA via b2bcontrol.updateFirmware()
+                // Payload: { softwareId, fileName, swVersion, url, sizeBytes }
+                try {
+                    const b2b = window.b2bapis && window.b2bapis.b2bcontrol ? window.b2bapis.b2bcontrol : null;
+                    if (!b2b || typeof b2b.updateFirmware !== 'function') {
+                        logger.warn('[firmware] b2bcontrol.updateFirmware not available on this device');
+                        break;
+                    }
+                    const softwareId = String((payload && payload.softwareId) || '0');
+                    const fileName   = String((payload && payload.fileName)   || 'swuimage.bem');
+                    const swVersion  = String((payload && payload.swVersion)  || '');
+                    const url        = String((payload && payload.url)        || '');
+                    const sizeBytes  = Number((payload && payload.sizeBytes)  || 0);
+                    if (!swVersion || !url || !sizeBytes) {
+                        logger.warn('[firmware] UPDATE_TV_FIRMWARE: missing required payload fields', payload);
+                        break;
+                    }
+                    if (typeof b2b.setUpdateFirmwareProgressChangeListener === 'function') {
+                        try {
+                            const self = this;
+                            b2b.setUpdateFirmwareProgressChangeListener(function (progress) {
+                                logger.info('[firmware] progress: ' + progress + '%');
+                                const ws = self.wsConnection;
+                                if (ws && ws.readyState === WebSocket.OPEN) {
+                                    ws.send(JSON.stringify({ type: 'heartbeat', payload: { pendingUpdatePct: progress } }));
+                                }
+                            });
+                        } catch (e) {
+                            logger.warn('[firmware] setUpdateFirmwareProgressChangeListener threw:', e);
+                        }
+                    }
+                    logger.info('[firmware] starting updateFirmware — model: ' + swVersion + ', file: ' + fileName + ', size: ' + sizeBytes);
+                    const self = this;
+                    b2b.updateFirmware(
+                        softwareId, fileName, swVersion, url, sizeBytes,
+                        function (val) {
+                            logger.info('[firmware] updateFirmware success:', val);
+                            try { if (b2b.unsetUpdateFirmwareProgressChangeListener) b2b.unsetUpdateFirmwareProgressChangeListener(); } catch (_) {}
+                            const ws = self.wsConnection;
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({ type: 'firmware_update_complete', payload: { ok: true, swVersion: swVersion } }));
+                            }
+                        },
+                        function (e) {
+                            logger.warn('[firmware] updateFirmware error:', (e && e.message) || e);
+                            try { if (b2b.unsetUpdateFirmwareProgressChangeListener) b2b.unsetUpdateFirmwareProgressChangeListener(); } catch (_) {}
+                            const ws = self.wsConnection;
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({ type: 'firmware_update_complete', payload: { ok: false, swVersion: swVersion, error: (e && e.message) || String(e) } }));
+                            }
+                        }
+                    );
+                }
+                catch (e) {
+                    logger.warn('[firmware] UPDATE_TV_FIRMWARE threw:', e);
+                }
+                break;
+            }
                 const max = (_c = payload === null || payload === void 0 ? void 0 : payload.max) !== null && _c !== void 0 ? _c : 200;
                 try {
                     const batch = (window.LogBuffer && window.LogBuffer.drain(max)) || [];

@@ -161,6 +161,51 @@ export const deviceScreenshots = pgTable('device_screenshots', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Samsung display firmware release catalog.
+ *  Each row represents one firmware version for a specific firmware model (e.g. 'S-KSU2EWWC').
+ *  (firmware_model, version) is the natural key; one is_latest row per firmware_model. */
+export const firmwareReleases = pgTable('firmware_releases', {
+  id:                   uuid('id').primaryKey().defaultRandom(),
+  /** Samsung firmware model prefix (e.g. 'S-KSU2EWWC') — matched against device.firmwareVersion. */
+  firmwareModel:        text('firmware_model').notNull(),
+  /** Version number string (e.g. '1175.0'). */
+  version:              text('version').notNull(),
+  /** Full string from info.txt (e.g. 'S-KSU2EWWC 1175.0') — passed as SWVersion to Samsung API. */
+  swVersionString:      text('sw_version_string').notNull(),
+  /** .bem filename inside the ZIP (e.g. 'swuimage.bem') — passed as SWUFileName to Samsung API. */
+  fileName:             text('file_name').notNull(),
+  /** Download URL for the .bem binary file. */
+  downloadUrl:          text('download_url').notNull(),
+  /** File size in bytes (required by Samsung updateFirmware API). */
+  sizeBytes:            bigint('size_bytes', { mode: 'number' }).notNull(),
+  /** SHA-256 hex digest of the .bem file (integrity verification). */
+  sha256:               text('sha256'),
+  releaseNotes:         text('release_notes'),
+  isLatest:             boolean('is_latest').notNull().default(false),
+  /** Set by platform owner to make this release visible to management companies. */
+  superadminApprovedAt: timestamp('superadmin_approved_at', { withTimezone: true }),
+  publishedAt:          timestamp('published_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt:            timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex('firmware_releases_model_version_unique').on(t.firmwareModel, t.version),
+]);
+
+/** Per-management-company approval of a firmware release.
+ *  Partners must approve before deploying to their clients' devices. */
+export const firmwareReleaseApprovals = pgTable(
+  'firmware_release_approvals',
+  {
+    id:                  uuid('id').primaryKey().defaultRandom(),
+    releaseId:           uuid('release_id').notNull().references(() => firmwareReleases.id, { onDelete: 'cascade' }),
+    managementCompanyId: uuid('management_company_id').notNull(),
+    approvedAt:          timestamp('approved_at', { withTimezone: true }).notNull().defaultNow(),
+    approvedBy:          uuid('approved_by'),
+  },
+  (t) => [
+    uniqueIndex('uq_firmware_release_approvals_release_company').on(t.releaseId, t.managementCompanyId),
+  ],
+);
+
 /** OTA player release catalog. (platform, version) is the natural key; one isLatest row per platform. */
 export const playerReleases = pgTable('player_releases', {
   id: uuid('id').primaryKey().defaultRandom(),

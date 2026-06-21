@@ -7964,6 +7964,71 @@ const Player = {
         break;
       }
 
+      case 'UPDATE_TV_FIRMWARE': {
+        // Samsung B2B firmware OTA via b2bcontrol.updateFirmware()
+        // Payload: { softwareId, fileName, swVersion, url, sizeBytes }
+        try {
+          const b2b = (window as any).b2bapis?.b2bcontrol;
+          if (!b2b || typeof b2b.updateFirmware !== 'function') {
+            logger.warn('[firmware] b2bcontrol.updateFirmware not available on this device');
+            break;
+          }
+          const softwareId = String(payload?.softwareId ?? '0');
+          const fileName   = String(payload?.fileName ?? 'swuimage.bem');
+          const swVersion  = String(payload?.swVersion ?? '');
+          const url        = String(payload?.url ?? '');
+          const sizeBytes  = Number(payload?.sizeBytes ?? 0);
+
+          if (!swVersion || !url || !sizeBytes) {
+            logger.warn('[firmware] UPDATE_TV_FIRMWARE: missing required payload fields', payload);
+            break;
+          }
+
+          // Register progress listener — sends heartbeat pendingUpdatePct each tick
+          if (typeof b2b.setUpdateFirmwareProgressChangeListener === 'function') {
+            try {
+              b2b.setUpdateFirmwareProgressChangeListener((progress: number) => {
+                logger.info(`[firmware] progress: ${progress}%`);
+                const ws = this.wsConnection;
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({ type: 'heartbeat', payload: { pendingUpdatePct: progress } }));
+                }
+              });
+            } catch (e) {
+              logger.warn('[firmware] setUpdateFirmwareProgressChangeListener threw:', e);
+            }
+          }
+
+          logger.info(`[firmware] starting updateFirmware — model: ${swVersion}, file: ${fileName}, size: ${sizeBytes}`);
+          b2b.updateFirmware(
+            softwareId,
+            fileName,
+            swVersion,
+            url,
+            sizeBytes,
+            (val: unknown) => {
+              logger.info('[firmware] updateFirmware success:', val);
+              try { b2b.unsetUpdateFirmwareProgressChangeListener?.(); } catch (_) {}
+              const ws = this.wsConnection;
+              if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'firmware_update_complete', payload: { ok: true, swVersion } }));
+              }
+            },
+            (e: any) => {
+              logger.warn('[firmware] updateFirmware error:', (e && e.message) || e);
+              try { b2b.unsetUpdateFirmwareProgressChangeListener?.(); } catch (_) {}
+              const ws = this.wsConnection;
+              if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'firmware_update_complete', payload: { ok: false, swVersion, error: (e && e.message) || String(e) } }));
+              }
+            }
+          );
+        } catch (e) {
+          logger.warn('[firmware] UPDATE_TV_FIRMWARE threw:', e);
+        }
+        break;
+      }
+
       case 'REQUEST_LOG_BURST': {
         const max = payload?.max ?? 200;
         try {
