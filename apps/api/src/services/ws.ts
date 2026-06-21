@@ -63,7 +63,7 @@ export type WsCommand =
   | { type: 'set_off_timer'; payload: { slot: number; time: string } }
   | { type: 'clear_on_timer'; payload: { slot: number } }
   | { type: 'clear_off_timer'; payload: { slot: number } }
-  | { type: 'update_tv_firmware' }
+  | { type: 'update_tv_firmware'; payload: { softwareId: string; fileName: string; swVersion: string; url: string; sizeBytes: number } }
   | { type: 'update_player'; payload: { version: string; downloadUrl: string; sha256?: string } }
   | { type: 'clear_cache' }
   | { type: 'dump_logs' }
