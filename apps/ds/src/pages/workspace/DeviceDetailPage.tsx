@@ -3168,7 +3168,7 @@ export function DeviceDetailContent({
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">
                         v{latestRelease.version} available · awaiting platform approval
                       </span>
-                    )
+                    )}
                   </>
                 )}
                 {latestRelease && device.playerVersion === latestRelease.version && (

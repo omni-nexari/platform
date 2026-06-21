@@ -1002,10 +1002,14 @@ const Player = {
 
               try {
                 let pending = 0;
+                let responded = false;
                 const errors: string[] = [];
+
                 const done = () => {
                   pending--;
-                  if (pending > 0) return;
+                  if (pending > 0 || responded) return;
+                  responded = true;
+                  clearTimeout(b2bSafetyTimer);
                   if (errors.length > 0) {
                     logger.warn('[b2b-timer] B2BControl errors, falling back to MDC:', errors);
                     mdcFallback();
@@ -1036,7 +1040,18 @@ const Player = {
                 if (pending === 0) {
                   // Both disabled — use MDC bridge to clear the timer slot
                   mdcFallback();
+                  break;
                 }
+
+                // Safety net: if Samsung B2B callbacks never fire, fall back to MDC
+                // before the 10s API budget expires (leaves ample time for MDC to respond)
+                const b2bSafetyTimer = setTimeout(() => {
+                  if (!responded) {
+                    responded = true;
+                    logger.warn('[b2b-timer] SET callbacks hung after 6s — falling back to MDC');
+                    mdcFallback();
+                  }
+                }, 6000);
               } catch (e) {
                 logger.warn('[b2b-timer] B2BControl exception, falling back to MDC:', e);
                 mdcFallback();

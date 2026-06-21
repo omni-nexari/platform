@@ -969,11 +969,13 @@ const Player = {
                             }
                             try {
                                 let pending = 0;
+                                let responded = false;
                                 const errors = [];
                                 const done = () => {
                                     pending--;
-                                    if (pending > 0)
-                                        return;
+                                    if (pending > 0 || responded) return;
+                                    responded = true;
+                                    clearTimeout(b2bSafetyTimer);
                                     if (errors.length > 0) {
                                         logger.warn('[b2b-timer] B2BControl errors, falling back to MDC:', errors);
                                         mdcFallback();
@@ -983,23 +985,33 @@ const Player = {
                                         try {
                                             b2bCtrl.setOnTimerVolume(timerType, b2bVolume, () => { }, () => { });
                                         }
-                                        catch ( /* ignore volume errors */_a) { /* ignore volume errors */ }
+                                        catch (_a) { /* ignore volume errors */ }
                                         logger.info('[b2b-timer] SET ok:', timerType);
                                         sendMdcControlResponse({ ok: true, method: 'b2bcontrol' });
                                     }
                                 };
                                 if (onEnable) {
                                     pending++;
-                                    b2bCtrl.setOnTimerRepeat(timerType, toTime(onHour, onMin), repeatType, dayStr, () => { done(); }, (e) => { var _a; errors.push(`on:${(_a = e === null || e === void 0 ? void 0 : e.message) !== null && _a !== void 0 ? _a : 'err'}`); done(); });
+                                    b2bCtrl.setOnTimerRepeat(timerType, toTime(onHour, onMin), repeatType, dayStr, () => { done(); }, (e) => { var _a; errors.push('on:' + ((_a = e === null || e === void 0 ? void 0 : e.message) !== null && _a !== void 0 ? _a : 'err')); done(); });
                                 }
                                 if (offEnable) {
                                     pending++;
-                                    b2bCtrl.setOffTimerRepeat(timerType, toTime(offHour, offMin), repeatType, dayStr, () => { done(); }, (e) => { var _a; errors.push(`off:${(_a = e === null || e === void 0 ? void 0 : e.message) !== null && _a !== void 0 ? _a : 'err'}`); done(); });
+                                    b2bCtrl.setOffTimerRepeat(timerType, toTime(offHour, offMin), repeatType, dayStr, () => { done(); }, (e) => { var _a; errors.push('off:' + ((_a = e === null || e === void 0 ? void 0 : e.message) !== null && _a !== void 0 ? _a : 'err')); done(); });
                                 }
                                 if (pending === 0) {
                                     // Both disabled — use MDC bridge to clear the timer slot
                                     mdcFallback();
+                                    break;
                                 }
+                                // Safety net: if Samsung B2B callbacks never fire, fall back to MDC
+                                // before the 10s API budget expires
+                                var b2bSafetyTimer = setTimeout(function () {
+                                    if (!responded) {
+                                        responded = true;
+                                        logger.warn('[b2b-timer] SET callbacks hung after 6s — falling back to MDC');
+                                        mdcFallback();
+                                    }
+                                }, 6000);
                             }
                             catch (e) {
                                 logger.warn('[b2b-timer] B2BControl exception, falling back to MDC:', e);
