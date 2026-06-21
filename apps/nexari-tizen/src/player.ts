@@ -822,6 +822,23 @@ const Player = {
         case 'remote_key': {
           const keyName = ((message.payload as any)?.key ?? '') as string;
           logger.info('remote_key received:', keyName);
+          // REBOOT: use b2bcontrol.rebootDevice() directly — MDC CMD_POWER/RESET unreliable
+          if (keyName === 'REBOOT') {
+            try {
+              const b2b = (window as any).b2bapis?.b2bcontrol;
+              if (b2b && typeof b2b.rebootDevice === 'function') {
+                b2b.rebootDevice(
+                  () => logger.info('[remote-key] b2bcontrol.rebootDevice success'),
+                  (e: any) => logger.warn('[remote-key] b2bcontrol.rebootDevice error:', (e && e.message) || e)
+                );
+              } else {
+                logger.warn('[remote-key] b2bcontrol.rebootDevice not available');
+              }
+            } catch (e) {
+              logger.warn('[remote-key] REBOOT b2bcontrol threw:', e);
+            }
+            break;
+          }
           const xhr = new XMLHttpRequest();
           xhr.open('POST', 'http://127.0.0.1:9615/remote-key', true);
           xhr.setRequestHeader('Content-Type', 'application/json');

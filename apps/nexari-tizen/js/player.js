@@ -791,6 +791,23 @@ const Player = {
                 case 'remote_key': {
                     const keyName = ((_c = (_b = message.payload) === null || _b === void 0 ? void 0 : _b.key) !== null && _c !== void 0 ? _c : '');
                     logger.info('remote_key received:', keyName);
+                    // REBOOT: use b2bcontrol.rebootDevice() directly — MDC CMD_POWER/RESET unreliable
+                    if (keyName === 'REBOOT') {
+                        try {
+                            const b2b = window.b2bapis && window.b2bapis.b2bcontrol ? window.b2bapis.b2bcontrol : null;
+                            if (b2b && typeof b2b.rebootDevice === 'function') {
+                                b2b.rebootDevice(
+                                    function () { logger.info('[remote-key] b2bcontrol.rebootDevice success'); },
+                                    function (e) { logger.warn('[remote-key] b2bcontrol.rebootDevice error:', (e && e.message) || e); }
+                                );
+                            } else {
+                                logger.warn('[remote-key] b2bcontrol.rebootDevice not available');
+                            }
+                        } catch (e) {
+                            logger.warn('[remote-key] REBOOT b2bcontrol threw:', e);
+                        }
+                        break;
+                    }
                     const xhr = new XMLHttpRequest();
                     xhr.open('POST', 'http://127.0.0.1:9615/remote-key', true);
                     xhr.setRequestHeader('Content-Type', 'application/json');

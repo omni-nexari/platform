@@ -3131,10 +3131,10 @@ export function DeviceDetailContent({
                         </span>
                         <ActionButton
                           type="button"
-                          onClick={() => sendCmd({ command: 'update_player', payload: { version: latestRelease.version, downloadUrl: latestRelease.downloadUrl, sha256: latestRelease.sha256 ?? undefined } })}
+                          onClick={() => sendCmd({ command: 'reboot' })}
                           disabled={cmdDisabled}
                           tone="primary" className="px-3 py-1 text-xs shrink-0"
-                        >Apply Update</ActionButton>
+                        >Reboot to Apply</ActionButton>
                       </>
                     ) : (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">
@@ -3149,27 +3149,6 @@ export function DeviceDetailContent({
                     Up to date
                   </span>
                 )}
-              </div>
-            </SectionCardBody>
-          </SectionCard>
-
-          <SectionCard>
-            <SectionCardHeader>
-              <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
-                <RotateCcw className="w-3.5 h-3.5" />Restart Player App
-              </h2>
-              <span className="text-xs text-[var(--text-muted)]">Restarts the Tizen player app without rebooting the display</span>
-            </SectionCardHeader>
-            <SectionCardBody>
-              <div className="flex items-center gap-3">
-                <ActionButton
-                  type="button"
-                  onClick={() => sendCmd({ command: 'relaunch_app' })}
-                  disabled={cmdDisabled}
-                >
-                  <RotateCcw className="w-3 h-3" />Restart App
-                </ActionButton>
-                <span className="text-xs text-[var(--text-muted)]">Use this after applying an update if the app does not restart automatically.</span>
               </div>
             </SectionCardBody>
           </SectionCard>
