@@ -3153,6 +3153,27 @@ export function DeviceDetailContent({
             </SectionCardBody>
           </SectionCard>
 
+          <SectionCard>
+            <SectionCardHeader>
+              <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
+                <RotateCcw className="w-3.5 h-3.5" />Restart Player App
+              </h2>
+              <span className="text-xs text-[var(--text-muted)]">Restarts the Tizen player app without rebooting the display</span>
+            </SectionCardHeader>
+            <SectionCardBody>
+              <div className="flex items-center gap-3">
+                <ActionButton
+                  type="button"
+                  onClick={() => sendCmd({ command: 'relaunch_app' })}
+                  disabled={cmdDisabled}
+                >
+                  <RotateCcw className="w-3 h-3" />Restart App
+                </ActionButton>
+                <span className="text-xs text-[var(--text-muted)]">Use this after applying an update if the app does not restart automatically.</span>
+              </div>
+            </SectionCardBody>
+          </SectionCard>
+
         </div>
       )}
 

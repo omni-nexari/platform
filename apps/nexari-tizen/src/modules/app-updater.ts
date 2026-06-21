@@ -216,20 +216,44 @@ namespace AppUpdater {
         oncomplete: (pkgId: string) => {
           console.log(`[AppUpdater] Install complete, pkgId=${pkgId}`);
           sendStatus('app_update_done', { version: msg.version, packageId: msg.packageId, pkgId });
-          // Schedule self-relaunch via Tizen Alarm, then exit.
-          // tizen.AlarmRelative fires N seconds from now and relaunches this appId.
+          // Wait for the package manager to release locks on the newly-installed WGT
+          // before attempting relaunch. tizen.alarm.add() is unreliable post-install
+          // (OS may delay it further due to power-saving) and tizen.package.install()
+          // may still hold a lock on the appId.
+          // Strategy: tizen.application.launch(appId) starts the new WGT, then we
+          // exit the old instance. Fallback to alarm, then plain exit (Samsung signage
+          // watchdog will relaunch on a clean exit).
           setTimeout(() => {
             try {
               const app = tizen.application.getCurrentApplication();
-              const alarm = new tizen.AlarmRelative(3);
-              tizen.alarm.add(alarm, app.appInfo.id);
-              console.log('[AppUpdater] Relaunch alarm set — exiting now');
-              app.exit();
+              const appId: string = app.appInfo.id;
+              // Preferred: launch the newly-installed version, then exit the old one.
+              tizen.application.launch(
+                appId,
+                () => {
+                  console.log('[AppUpdater] launch() succeeded — exiting old instance');
+                  try { app.exit(); } catch (_) {}
+                },
+                () => {
+                  // launch() failed (e.g. same instance already considered active) —
+                  // fall back to alarm which schedules a relaunch after app exits.
+                  console.warn('[AppUpdater] launch() failed, trying alarm fallback');
+                  try {
+                    const alarm = new tizen.AlarmRelative(5);
+                    tizen.alarm.add(alarm, appId);
+                    console.log('[AppUpdater] Alarm set (5s) — exiting');
+                    app.exit();
+                  } catch (e2) {
+                    console.warn('[AppUpdater] Alarm fallback failed, plain exit:', e2);
+                    try { app.exit(); } catch (_) {}
+                  }
+                }
+              );
             } catch (e) {
-              console.warn('[AppUpdater] Alarm relaunch failed, falling back to plain exit:', e);
+              console.warn('[AppUpdater] Relaunch setup threw, plain exit:', e);
               try { tizen.application.getCurrentApplication().exit(); } catch (_) {}
             }
-          }, 1500);
+          }, 4000);
         },
         onfailed: (req: any, error: any) => {
           const errMsg = error?.message || String(error);
