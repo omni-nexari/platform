@@ -30,6 +30,7 @@ import {
   listEventsForConnection,
   type CalendarConnectionRow,
 } from '../services/calendar/index.js';
+import { getLicenseHmacSecret } from '../services/license-client.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
@@ -236,6 +237,40 @@ export async function integrationsRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: 'Connection not found' });
       }
     }
+    const nonce = crypto.randomBytes(16).toString('hex');
+
+    // ── Proxy mode: route through admin.nexari.ca OAuth proxy ─────────────
+    // When NEXARI_ADMIN_ORIGIN is set the Platform delegates consent to nexari.ca,
+    // which owns the shared OAuth app credentials. Only ONE redirect URI per
+    // provider needs to be registered — on nexari.ca — regardless of how many
+    // partner domains exist.
+    const nexariAdminOrigin = process.env['NEXARI_ADMIN_ORIGIN'];
+    const licCreds = nexariAdminOrigin ? await getLicenseHmacSecret() : null;
+
+    if (nexariAdminOrigin && licCreds) {
+      // callbackOrigin = where the postMessage is targeted (the DS window origin)
+      const callbackOrigin = new URL(
+        process.env['APP_URL'] ?? process.env['API_PUBLIC_URL'] ?? 'http://localhost:5174',
+      ).origin;
+
+      const statePayload = {
+        licenseKey: licCreds.licenseKey,
+        workspaceId,
+        userId: desiredScope === 'personal' ? user.sub : null,
+        scope: desiredScope,
+        provider,
+        callbackOrigin,
+        ...(reconnectId ? { reconnectId } : {}),
+        nonce,
+        expiresAt: Date.now() + 10 * 60 * 1000,
+      };
+      const bodyB64 = Buffer.from(JSON.stringify(statePayload), 'utf8').toString('base64url');
+      const sig = crypto.createHmac('sha256', licCreds.hmacSecret).update(bodyB64, 'utf8').digest('base64url');
+      const proxyUrl = `${nexariAdminOrigin}/oauth/${provider}/start?state=${bodyB64}.${sig}`;
+      return reply.send({ redirectUrl: proxyUrl, nexariOrigin: nexariAdminOrigin });
+    }
+
+    // ── Direct mode: self-hosted instances without nexari-admin ───────────
     const stateToken = signState({
       workspaceId,
       scope: desiredScope,
@@ -243,7 +278,7 @@ export async function integrationsRoutes(app: FastifyInstance) {
       provider,
       popup,
       ...(reconnectId ? { reconnectId } : {}),
-      n: crypto.randomBytes(8).toString('base64url'),
+      n: nonce,
       ts: Date.now(),
     });
     const url = provider === 'google' ? googleAuthUrl(stateToken) : msAuthUrl(stateToken);
@@ -352,6 +387,107 @@ export async function integrationsRoutes(app: FastifyInstance) {
       const msg = e instanceof Error ? e.message : String(e);
       return finish('error', msg);
     }
+  });
+
+  // ── POST /calendar/oauth/:provider/relay ────────────────────────────────
+  // Called from the DS after receiving an `oauth_relay` postMessage from the
+  // nexari.ca OAuth proxy. Decrypts the AES-256-GCM token payload (key derived
+  // from LICENSE_HMAC_SECRET) and stores the tokens in calendar_connections.
+  app.post('/calendar/oauth/:provider/relay', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { provider } = req.params as { provider: string };
+    const { encrypted } = req.body as { encrypted?: string };
+
+    if (!encrypted) return reply.status(400).send({ error: 'encrypted payload required' });
+    if (provider !== 'google' && provider !== 'microsoft') {
+      return reply.status(400).send({ error: 'Unsupported provider' });
+    }
+
+    const licCreds = await getLicenseHmacSecret();
+    if (!licCreds) return reply.status(503).send({ error: 'License not configured — relay unavailable' });
+
+    // Derive the same relay key used by the nexari.ca proxy (deterministic).
+    const relayKey = Buffer.from(
+      crypto.createHmac('sha256', licCreds.hmacSecret).update('oauth-relay-v1', 'utf8').digest(),
+    );
+
+    // Decrypt: format is `iv:tag:cipher` (all base64url, colon-delimited)
+    let payload: {
+      type: string; provider: string; workspaceId: string;
+      userId: string | null; scope: 'personal' | 'workspace'; reconnectId?: string;
+      accessToken: string; refreshToken: string | null; expiresIn: number;
+      email: string | null;
+    };
+    try {
+      const parts = encrypted.split(':');
+      if (parts.length !== 3) throw new Error('Malformed');
+      const iv = Buffer.from(parts[0]!, 'base64url');
+      const tag = Buffer.from(parts[1]!, 'base64url');
+      const cipherBuf = Buffer.from(parts[2]!, 'base64url');
+      const decipher = crypto.createDecipheriv('aes-256-gcm', relayKey, iv);
+      decipher.setAuthTag(tag);
+      const plain = Buffer.concat([decipher.update(cipherBuf), decipher.final()]).toString('utf8');
+      payload = JSON.parse(plain);
+    } catch {
+      return reply.status(400).send({ error: 'Payload decryption failed — possible tampering or key mismatch' });
+    }
+
+    if (payload.type !== 'oauth_relay') {
+      return reply.status(400).send({ error: 'Invalid payload type' });
+    }
+
+    // Authorise: verify the calling user has workspace access
+    const member = await checkWorkspaceAccess(payload.workspaceId, user.sub);
+    if (!member) return reply.status(403).send({ error: 'Forbidden' });
+
+    // For personal scope: the authenticated user must be the one who initiated the flow
+    if (payload.scope === 'personal' && payload.userId && payload.userId !== user.sub) {
+      return reply.status(403).send({ error: 'User mismatch — please reconnect' });
+    }
+    if (payload.scope === 'workspace' && !MANAGER_ROLES.has(user.role)) {
+      return reply.status(403).send({ error: 'Manager role required for workspace-shared connections' });
+    }
+
+    const scopeStr = provider === 'google' ? GOOGLE_SCOPES : MS_SCOPES;
+
+    let conn: CalendarConnectionRow | undefined;
+    if (payload.reconnectId) {
+      await db.update(calendarConnections).set({
+        accessToken: encryptSecret(payload.accessToken),
+        ...(payload.refreshToken ? { refreshToken: encryptSecret(payload.refreshToken) } : {}),
+        tokenExpiresAt: new Date(Date.now() + payload.expiresIn * 1000),
+        status: 'active',
+        lastErrorMessage: null,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(calendarConnections.id, payload.reconnectId),
+        eq(calendarConnections.workspaceId, payload.workspaceId),
+      ));
+      conn = await db.query.calendarConnections.findFirst({
+        where: eq(calendarConnections.id, payload.reconnectId),
+      });
+    } else {
+      const [inserted] = await db.insert(calendarConnections).values({
+        workspaceId: payload.workspaceId,
+        userId: payload.scope === 'personal' ? (payload.userId ?? user.sub) : null,
+        provider,
+        displayName: payload.email ?? `${provider} calendar`,
+        accountEmail: payload.email ?? null,
+        accessToken: encryptSecret(payload.accessToken),
+        refreshToken: payload.refreshToken ? encryptSecret(payload.refreshToken) : null,
+        tokenExpiresAt: new Date(Date.now() + payload.expiresIn * 1000),
+        scopes: scopeStr,
+        status: 'active',
+      }).returning();
+      conn = inserted;
+    }
+
+    if (conn) {
+      try { await refreshCalendarCache(conn); } catch (e) {
+        console.warn('[relay] initial calendar sync failed', e);
+      }
+    }
+    return reply.status(201).send(conn ? projectConnection(conn) : null);
   });
 
   // ── POST /calendar/connections/ics ──────────────────────────────────────

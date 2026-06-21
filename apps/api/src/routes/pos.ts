@@ -6,6 +6,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { createReadStream } from 'node:fs';
+import { getLicenseHmacSecret } from '../services/license-client.js';
 import {
   db,
   posMenus,
@@ -3081,9 +3082,10 @@ export async function posRoutes(app: FastifyInstance) {
   });
 
   // ── GET /pos/mgmt/uber-eats/connect?workspaceId= ─────────────────────────────
-  // Redirects the browser to Uber's OAuth authorize page.
-  // Pass ?json=1 to get { redirectUrl } as JSON instead of a 302 (used by popup flow).
-  // Pass ?returnTo=settings&popup=1 to tell the callback where to land.
+  // Returns { redirectUrl, nexariOrigin? } for the DS to open in a popup.
+  // In proxy mode (NEXARI_ADMIN_ORIGIN set) the URL points to nexari.ca which
+  // owns the shared Uber Eats OAuth app — only ONE redirect URI needs to be
+  // registered. In direct mode it points to Uber's authorize endpoint directly.
   app.get('/mgmt/uber-eats/connect', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
     const { workspaceId, json, returnTo, popup } = req.query as {
@@ -3092,6 +3094,33 @@ export async function posRoutes(app: FastifyInstance) {
     if (!workspaceId) return reply.status(400).send({ error: 'workspaceId required' });
 
     try {
+      const nexariAdminOrigin = process.env['NEXARI_ADMIN_ORIGIN'];
+      const licCreds = nexariAdminOrigin ? await getLicenseHmacSecret() : null;
+
+      if (nexariAdminOrigin && licCreds) {
+        // ── Proxy mode ──────────────────────────────────────────────────────
+        const callbackOrigin = new URL(
+          process.env['APP_URL'] ?? process.env['API_PUBLIC_URL'] ?? 'http://localhost:5174',
+        ).origin;
+        const nonce = crypto.randomBytes(16).toString('hex');
+        const statePayload = {
+          licenseKey: licCreds.licenseKey,
+          workspaceId,
+          userId: user.sub,
+          scope: 'personal' as const,
+          provider: 'uber-eats',
+          callbackOrigin,
+          nonce,
+          expiresAt: Date.now() + 10 * 60 * 1000,
+        };
+        const bodyB64 = Buffer.from(JSON.stringify(statePayload), 'utf8').toString('base64url');
+        const sig = crypto.createHmac('sha256', licCreds.hmacSecret).update(bodyB64, 'utf8').digest('base64url');
+        const proxyUrl = `${nexariAdminOrigin}/oauth/uber-eats/start?state=${bodyB64}.${sig}`;
+        if (json === '1') return reply.send({ redirectUrl: proxyUrl, nexariOrigin: nexariAdminOrigin });
+        return reply.redirect(proxyUrl, 302);
+      }
+
+      // ── Direct mode ─────────────────────────────────────────────────────
       const state = crypto.randomUUID();
       const url   = await uberEatsLib.buildAuthorizeUrl(state, {
         workspaceId,
@@ -3104,6 +3133,57 @@ export async function posRoutes(app: FastifyInstance) {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       return reply.status(500).send({ error: `Failed to initiate Uber OAuth: ${message}` });
+    }
+  });
+
+  // ── POST /pos/uber-eats/relay ─────────────────────────────────────────────
+  // Called from the DS after receiving an `oauth_relay` postMessage from nexari.ca.
+  // Decrypts the merchant token, fetches the store list, stores a session, and
+  // returns { session } so the DS can continue the existing store-select wizard.
+  app.post('/uber-eats/relay', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+    const { encrypted } = req.body as { encrypted?: string };
+    if (!encrypted) return reply.status(400).send({ error: 'encrypted payload required' });
+
+    const licCreds = await getLicenseHmacSecret();
+    if (!licCreds) return reply.status(503).send({ error: 'License not configured — relay unavailable' });
+
+    const relayKey = Buffer.from(
+      crypto.createHmac('sha256', licCreds.hmacSecret).update('oauth-relay-v1', 'utf8').digest(),
+    );
+
+    let payload: { type: string; provider: string; workspaceId: string; merchantToken: string; refreshToken?: string; expiresIn?: number };
+    try {
+      const parts = encrypted.split(':');
+      if (parts.length !== 3) throw new Error('Malformed');
+      const iv = Buffer.from(parts[0]!, 'base64url');
+      const tag = Buffer.from(parts[1]!, 'base64url');
+      const cipherBuf = Buffer.from(parts[2]!, 'base64url');
+      const decipher = crypto.createDecipheriv('aes-256-gcm', relayKey, iv);
+      decipher.setAuthTag(tag);
+      const plain = Buffer.concat([decipher.update(cipherBuf), decipher.final()]).toString('utf8');
+      payload = JSON.parse(plain);
+    } catch {
+      return reply.status(400).send({ error: 'Payload decryption failed' });
+    }
+
+    if (payload.type !== 'oauth_relay' || payload.provider !== 'uber-eats') {
+      return reply.status(400).send({ error: 'Invalid payload' });
+    }
+
+    try {
+      const stores = await uberEatsLib.getMerchantStores(payload.merchantToken);
+      const sessionToken = crypto.randomUUID();
+      await uberEatsLib.storeOAuthSession(sessionToken, {
+        workspaceId:   payload.workspaceId,
+        orgId:         user.orgId,
+        merchantToken: payload.merchantToken,
+        stores,
+      });
+      return reply.send({ session: sessionToken });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.status(502).send({ error: `Uber Eats relay failed: ${msg}` });
     }
   });
 

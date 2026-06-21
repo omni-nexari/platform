@@ -2505,7 +2505,7 @@ function IntegrationsSection({ selectedWsId }: { selectedWsId: string | null }) 
     try {
       const params = new URLSearchParams({ workspaceId: selectedWsId, scope: effectiveScope, popup: '1' });
       if (reconnectId) params.set('reconnectId', reconnectId);
-      const res = await api.get<{ redirectUrl: string }>(
+      const res = await api.get<{ redirectUrl: string; nexariOrigin?: string }>(
         `/integrations/calendar/oauth/${provider}/start?${params.toString()}`,
       );
       const popup = window.open(res.redirectUrl, 'oauth_popup', 'width=600,height=700,left=200,top=100');
@@ -2514,19 +2514,43 @@ function IntegrationsSection({ selectedWsId }: { selectedWsId: string | null }) 
         window.location.href = res.redirectUrl;
         return;
       }
+      // Trust same-origin messages (direct/self-hosted mode) AND the nexari.ca
+      // proxy origin when NEXARI_ADMIN_ORIGIN is configured on the API.
+      const trustedOrigins = new Set([window.location.origin]);
+      if (res.nexariOrigin) trustedOrigins.add(res.nexariOrigin);
+
       const handler = (e: MessageEvent) => {
-        if (e.origin !== window.location.origin) return;
+        if (!trustedOrigins.has(e.origin)) return;
+        let data: Record<string, unknown>;
         try {
-          const data = typeof e.data === 'string' ? JSON.parse(e.data) as Record<string, unknown> : e.data as Record<string, unknown>;
-          if (data['type'] !== 'oauth_callback') return;
+          data = typeof e.data === 'string' ? JSON.parse(e.data) as Record<string, unknown> : e.data as Record<string, unknown>;
         } catch { return; }
-        window.removeEventListener('message', handler);
-        const data = typeof e.data === 'string' ? JSON.parse(e.data) as Record<string, string> : e.data as Record<string, string>;
-        if (data['oauth'] === 'connected') {
-          toast.success(`${data['provider'] === 'microsoft' ? 'Outlook' : 'Google'} calendar ${reconnectId ? 'reconnected' : 'connected'}`);
-          qc.invalidateQueries({ queryKey: ['calendar-connections', selectedWsId] });
-        } else {
-          toast.error(data['detail'] ? `Connection failed: ${data['detail']}` : 'Connection failed');
+
+        if (data['type'] === 'oauth_callback') {
+          // Direct/self-hosted mode: Platform handled the callback itself
+          window.removeEventListener('message', handler);
+          if ((data as Record<string, string>)['oauth'] === 'connected') {
+            toast.success(`${data['provider'] === 'microsoft' ? 'Outlook' : 'Google'} calendar ${reconnectId ? 'reconnected' : 'connected'}`);
+            qc.invalidateQueries({ queryKey: ['calendar-connections', selectedWsId] });
+          } else {
+            toast.error(data['detail'] ? `Connection failed: ${data['detail']}` : 'Connection failed');
+          }
+        } else if (data['type'] === 'oauth_relay') {
+          // Proxy mode: nexari.ca handled the consent; relay encrypted tokens to our API
+          window.removeEventListener('message', handler);
+          const encrypted = data['encrypted'] as string | undefined;
+          if (!encrypted) { toast.error('Connection failed: missing relay payload'); return; }
+          api.post<{ id: string }>(`/integrations/calendar/oauth/${provider}/relay`, { encrypted })
+            .then(() => {
+              toast.success(`${provider === 'microsoft' ? 'Outlook' : 'Google'} calendar ${reconnectId ? 'reconnected' : 'connected'}`);
+              qc.invalidateQueries({ queryKey: ['calendar-connections', selectedWsId] });
+            })
+            .catch((err: unknown) => {
+              toast.error(parseApiError(err) ?? 'Relay failed — please try again');
+            });
+        } else if (data['type'] === 'oauth_relay_error') {
+          window.removeEventListener('message', handler);
+          toast.error(data['error'] ? `Connection failed: ${data['error']}` : 'Connection failed');
         }
       };
       window.addEventListener('message', handler);
@@ -4291,6 +4315,9 @@ function PosUberEatsSection({ wsId }: { wsId: string | null }) {
   const [activatedStore, setActivatedStore] = useState<{ name: string; address: string | null } | null>(null);
   const [copiedWebhook, setCopiedWebhook]  = useState(false);
   const [pendingSession, setPendingSession] = useState<string | null>(null);
+  // Stores the nexari.ca origin when proxy mode is used, so the message listener
+  // can trust postMessages from that origin.
+  const [proxyOrigin, setProxyOrigin] = useState<string | null>(null);
 
   // Active session: prefer URL param (normal redirect flow), fall back to popup-received session
   const activeSession = uberSession ?? pendingSession;
@@ -4312,27 +4339,46 @@ function PosUberEatsSection({ wsId }: { wsId: string | null }) {
     if (activeSession && !uberStatus?.connected) setWizardStep('store-select');
   }, [activeSession, uberStatus?.connected]);
 
-  // Listen for popup callback via BroadcastChannel (primary) and window message (fallback)
+  // Listen for popup callback:
+  //   • Direct mode:  BroadcastChannel 'uber_oauth' (primary) + window message from same origin
+  //   • Proxy mode:   window message from nexari.ca origin with type 'oauth_relay'
   useEffect(() => {
-    const handle = (data: { type?: string; session?: string }) => {
+    const handleDirectSession = (data: { type?: string; session?: string }) => {
       if (data.type !== 'uber_oauth_callback' || !data.session) return;
       setPendingSession(data.session);
     };
     const msgHandler = (e: MessageEvent) => {
-      if (e.origin !== window.location.origin) return;
-      handle(e.data as { type?: string; session?: string });
+      const isSameOrigin = e.origin === window.location.origin;
+      const isProxyOrigin = proxyOrigin ? e.origin === proxyOrigin : false;
+      if (!isSameOrigin && !isProxyOrigin) return;
+
+      const data = e.data as Record<string, unknown>;
+
+      if (isSameOrigin && data['type'] === 'uber_oauth_callback') {
+        // Direct mode
+        handleDirectSession(data as { type?: string; session?: string });
+      } else if (isProxyOrigin && data['type'] === 'oauth_relay' && data['provider'] === 'uber-eats') {
+        // Proxy mode: call relay endpoint to exchange encrypted token for a session
+        const encrypted = data['encrypted'] as string | undefined;
+        if (!encrypted) return;
+        api.post<{ session: string }>('/pos/uber-eats/relay', { encrypted })
+          .then(({ session }) => setPendingSession(session))
+          .catch((err: unknown) => toast.error(parseApiError(err) ?? 'Uber Eats relay failed'));
+      } else if (isProxyOrigin && data['type'] === 'oauth_relay_error') {
+        toast.error(data['error'] ? `Uber Eats connection failed: ${data['error']}` : 'Uber Eats connection failed');
+      }
     };
     window.addEventListener('message', msgHandler);
     let bc: BroadcastChannel | null = null;
     try {
       bc = new BroadcastChannel('uber_oauth');
-      bc.onmessage = (e: MessageEvent) => handle(e.data as { type?: string; session?: string });
+      bc.onmessage = (e: MessageEvent) => handleDirectSession(e.data as { type?: string; session?: string });
     } catch { /* not supported */ }
     return () => {
       window.removeEventListener('message', msgHandler);
       bc?.close();
     };
-  }, []);
+  }, [proxyOrigin]);
 
   const activateMut = useMutation({
     mutationFn: () => api.post<{ ok: boolean; storeName: string; storeAddress: string | null }>(
@@ -4398,14 +4444,18 @@ function PosUberEatsSection({ wsId }: { wsId: string | null }) {
   async function handleConnect() {
     if (!wsId) return;
     try {
-      const { redirectUrl } = await api.get<{ redirectUrl: string }>(
+      const res = await api.get<{ redirectUrl: string; nexariOrigin?: string }>(
         `/pos/mgmt/uber-eats/connect?workspaceId=${wsId}&json=1&returnTo=settings&popup=1`,
       );
-      const popup = window.open(redirectUrl, 'uber_oauth', 'width=600,height=700,left=200,top=100');
+      const popup = window.open(res.redirectUrl, 'uber_oauth', 'width=600,height=700,left=200,top=100');
       if (!popup) {
         // Blocked — fall back to full redirect
-        window.location.href = redirectUrl;
+        window.location.href = res.redirectUrl;
       }
+      // In proxy mode store the nexariOrigin so the message listener can trust it.
+      // The listener is already attached in the useEffect above; we communicate the
+      // origin via a ref-like approach by setting it on the component's pending state.
+      if (res.nexariOrigin) { setProxyOrigin(res.nexariOrigin); }
     } catch (err: unknown) {
       toast.error(parseApiError(err) ?? 'Could not start Uber Eats authorization');
     }

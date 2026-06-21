@@ -102,6 +102,28 @@ export function getLicenseState(): LicenseState | null {
   return cachedState ?? trialCachedState;
 }
 
+/**
+ * Returns the HMAC secret used to sign heartbeats (and to sign/verify OAuth
+ * proxy state tokens). Reads from DB first, falls back to LICENSE_SECRET env.
+ * Returns null if no license is configured (self-hosted without nexari-admin).
+ */
+export async function getLicenseHmacSecret(): Promise<{ licenseKey: string; hmacSecret: string; serverUrl: string } | null> {
+  const dbConfig = await db.query.licenseConfig.findFirst();
+  if (dbConfig?.isEnabled && dbConfig.licenseKey && dbConfig.hmacSecret && dbConfig.licenseServerUrl) {
+    const hmacSecret = decryptSecret(dbConfig.hmacSecret);
+    if (hmacSecret) {
+      return { licenseKey: dbConfig.licenseKey, hmacSecret, serverUrl: dbConfig.licenseServerUrl };
+    }
+  }
+  const licenseKey = process.env['LICENSE_KEY'] ?? null;
+  const hmacSecret = process.env['LICENSE_SECRET'] ?? null;
+  const serverUrl = process.env['LICENSE_SERVER_URL'] ?? null;
+  if (licenseKey && hmacSecret && serverUrl) {
+    return { licenseKey, hmacSecret, serverUrl };
+  }
+  return null;
+}
+
 /** True when new device pairing should be blocked (suspended, expired trial, or revoked). */
 export function isPairingBlocked(): boolean {
   const s = getLicenseState()?.status;
