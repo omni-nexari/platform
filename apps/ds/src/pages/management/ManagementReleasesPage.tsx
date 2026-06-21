@@ -287,13 +287,6 @@ export default function ManagementReleasesPage() {
     </div>
   );
 }
-import {
-  Badge,
-  EmptyState,
-  InlineActionButton,
-  PageHeader,
-  Skeleton,
-} from '../../components/UiPrimitives.js';
 
 const PLATFORMS = ['tizen', 'android', 'windows', 'epaper'] as const;
 type ReleasePlatform = (typeof PLATFORMS)[number];
