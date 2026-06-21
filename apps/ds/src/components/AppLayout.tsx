@@ -52,6 +52,7 @@ import {
   Receipt,
   MessageSquare,
   ImageIcon,
+  Plus,
 } from 'lucide-react';
 
 interface Workspace {
@@ -104,6 +105,8 @@ export default function AppLayout() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [geoCoords, setGeoCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [createWsOpen, setCreateWsOpen] = useState(false);
+  const [createWsName, setCreateWsName] = useState('');
 
   // Request geolocation once on mount
   useEffect(() => {
@@ -249,6 +252,20 @@ export default function AppLayout() {
     onError: () => toast.error('Failed to clear override'),
   });
 
+  const createWorkspace = useMutation({
+    mutationFn: (name: string) => {
+      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'workspace';
+      return api.post('/workspaces', { name, slug, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' });
+    },
+    onSuccess: () => {
+      toast.success('Workspace created');
+      setCreateWsOpen(false);
+      setCreateWsName('');
+      void queryClient.invalidateQueries({ queryKey: ['workspaces'] });
+    },
+    onError: () => toast.error('Failed to create workspace'),
+  });
+
   function handleLogout() {
     void api.post('/auth/logout');
     clearAuth();
@@ -310,6 +327,20 @@ export default function AppLayout() {
             Support
           </NavLink>
           {/* Workspaces — always visible; clicking a workspace enters it */}
+          {workspaces.length === 0 && (user?.orgRole === 'owner' || user?.orgRole === 'admin') && (
+            <div className="pt-2">
+              <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                Workspaces
+              </p>
+              <button
+                onClick={() => setCreateWsOpen(true)}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-[var(--blue)] hover:bg-[var(--surface)] transition-colors text-left"
+              >
+                <Plus className="w-4 h-4 shrink-0" />
+                Create workspace
+              </button>
+            </div>
+          )}
           {workspaces.length > 0 && (
             <div className="pt-2">
               <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
@@ -768,6 +799,47 @@ export default function AppLayout() {
           wsId={currentWsId}
           onClose={() => setSearchOpen(false)}
         />
+      )}
+
+      {/* ---------- Create workspace modal ---------- */}
+      {createWsOpen && (
+        <Modal onClose={() => { setCreateWsOpen(false); setCreateWsName(''); }} size="sm">
+          <ModalHeader
+            title="Create Workspace"
+            subtitle="A workspace groups your devices, content and schedules"
+            onClose={() => { setCreateWsOpen(false); setCreateWsName(''); }}
+          />
+          <ModalBody>
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Workspace name</label>
+              <input
+                type="text"
+                autoFocus
+                value={createWsName}
+                onChange={(e) => setCreateWsName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && createWsName.trim().length >= 2) {
+                    createWorkspace.mutate(createWsName.trim());
+                  }
+                }}
+                placeholder="e.g. Main Office"
+                className="input w-full"
+              />
+            </div>
+          </ModalBody>
+          <ModalFooter className="modal-footer-plain">
+            <ModalSecondaryButton onClick={() => { setCreateWsOpen(false); setCreateWsName(''); }} className="flex-1">
+              Cancel
+            </ModalSecondaryButton>
+            <ModalPrimaryButton
+              onClick={() => createWorkspace.mutate(createWsName.trim())}
+              disabled={createWsName.trim().length < 2 || createWorkspace.isPending}
+              className="flex-1"
+            >
+              {createWorkspace.isPending ? 'Creating…' : 'Create'}
+            </ModalPrimaryButton>
+          </ModalFooter>
+        </Modal>
       )}
 
       {/* ---------- Emergency override modal ---------- */}

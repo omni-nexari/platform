@@ -5,7 +5,7 @@ import { useParams, useNavigate } from 'react-router';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { saFetch, useSAStore } from '../../lib/superadmin-auth.js';
-import type { SAUser } from '../../lib/superadmin-auth.js';
+import { buildApiUrl } from '../../lib/api.js';
 import {
   applyManagementBrandingDocument,
   getManagementBrandingStyle,
@@ -74,14 +74,27 @@ export default function ManagementLoginPage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      const res = await saFetch<{ user: SAUser }>(
-        '/superadmin/auth/company-login',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data),
-        },
-      );
+      // Use direct fetch (not saFetch) so a wrong-password 401 shows an error
+      // instead of triggering the session-expired redirect loop.
+      const res = await fetch(buildApiUrl('/superadmin/auth/company-login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+        credentials: 'include',
+      });
+      if (res.status === 401) {
+        toast.error('Invalid email or password');
+        return;
+      }
+      if (res.status === 403) {
+        toast.error('This account has been suspended. Please contact support.');
+        return;
+      }
+      if (!res.ok) {
+        const text = await res.text();
+        toast.error(text || 'Login failed');
+        return;
+      }
       beginBootstrap();
       navigate('/management');
     } catch (err) {
