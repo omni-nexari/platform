@@ -14,7 +14,7 @@ import type { WallMember, WallBezels } from '@signage/shared';
 import { writeAuditLog } from '../services/audit.js';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
 import { logActivity } from '../services/activity-logger.js';
-import { MDC_ALL_COMMAND_NAMES } from '../services/mdc.js';
+import { MDC_ALL_COMMAND_NAMES, sendMdcPower } from '../services/mdc.js';
 import { dispatchWebhookEvent } from '../services/webhooks.js';
 import {
   sendCommand,
@@ -321,7 +321,16 @@ function enrichCanvasContent<T extends { type?: string | null; id?: string | nul
   deviceToken: string,
   apiBase: string,
 ): T {
-  if (!content || content.type !== 'canvas' || !content.id) return content;
+  if (!content || !content.id) return content;
+
+  // HTML5 packages: inject fileUrl so the player can download the ZIP locally
+  // instead of streaming via the /html5/:token/ path (needed for older Tizen/SBB).
+  if (content.type === 'html5') {
+    const fileUrl = `${apiBase}/devices/device/content/${content.id}/file?token=${encodeURIComponent(deviceToken)}`;
+    return { ...content, fileUrl } as T;
+  }
+
+  if (content.type !== 'canvas') return content;
   try {
     const existing: Record<string, unknown> =
       typeof content.metadata === 'string'
@@ -1538,6 +1547,79 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
 
     if (!isDeviceOnline(id)) {
+      const offlineCmd = body.data.command;
+
+      // ── power_off: try direct MDC TCP to device IP (no WS needed) ─────────
+      if (offlineCmd === 'power_off') {
+        if (!device.ipAddress) {
+          return reply.status(409).send({
+            error: 'Device is offline and has no recorded IP address for direct MDC control',
+          });
+        }
+        try {
+          await sendMdcPower(device.ipAddress, false);
+        } catch (err) {
+          return reply.status(409).send({
+            error: 'Device is offline and direct MDC power-off failed',
+            detail: err instanceof Error ? err.message : String(err),
+          });
+        }
+        await db.update(devices).set({ powerState: 'off', updatedAt: new Date() }).where(eq(devices.id, id));
+        await writeAuditLog({
+          orgId: user.orgId, actorId: user.sub,
+          action: 'DEVICE_COMMAND_SENT', entityType: 'device', entityId: id,
+          meta: { command: 'power_off', viaMdc: true },
+          ipAddress: req.ip,
+        });
+        return reply.send({ sent: true, command: 'power_off', viaMdc: true });
+      }
+
+      // ── power_on: try direct MDC TCP first, then WoL relay ────────────────
+      if (offlineCmd === 'power_on') {
+        // 1) Direct MDC (works if device is in network standby on same LAN)
+        if (device.ipAddress) {
+          try {
+            await sendMdcPower(device.ipAddress, true);
+            await db.update(devices).set({ powerState: 'on', updatedAt: new Date() }).where(eq(devices.id, id));
+            await writeAuditLog({
+              orgId: user.orgId, actorId: user.sub,
+              action: 'DEVICE_COMMAND_SENT', entityType: 'device', entityId: id,
+              meta: { command: 'power_on', viaMdc: true },
+              ipAddress: req.ip,
+            });
+            return reply.send({ sent: true, command: 'power_on', viaMdc: true });
+          } catch {
+            // MDC failed — fall through to WoL
+          }
+        }
+        // 2) WoL relay (for devices that fully disconnect on power-off)
+        if (!device.macAddress) {
+          return reply.status(409).send({
+            error: 'Device is offline: direct MDC failed and no MAC address is stored for Wake-on-LAN',
+            hint: 'The device must connect at least once for its MAC to be stored.',
+          });
+        }
+        if (!device.workspaceId) {
+          return reply.status(409).send({ error: 'Device is offline and not assigned to a workspace; cannot relay Wake-on-LAN' });
+        }
+        const wolRelay = await findWolRelay(user.orgId, device.workspaceId, id, device.ipAddress);
+        if (!wolRelay) {
+          return reply.status(409).send({
+            error: 'Device is offline — direct MDC failed and no peer device is available to broadcast Wake-on-LAN',
+            hint: 'At least one other Tizen / Windows / e-paper player on the same LAN must be online.',
+          });
+        }
+        sendCommand(wolRelay.id, { type: 'wake_on_lan', payload: { targetMac: device.macAddress } });
+        await db.update(devices).set({ powerState: 'on', updatedAt: new Date() }).where(eq(devices.id, id));
+        await writeAuditLog({
+          orgId: user.orgId, actorId: user.sub,
+          action: 'DEVICE_COMMAND_SENT', entityType: 'device', entityId: id,
+          meta: { command: 'wake_on_lan', viaRelayDeviceId: wolRelay.id },
+          ipAddress: req.ip,
+        });
+        return reply.send({ sent: true, command: 'wake_on_lan', viaRelayDeviceId: wolRelay.id });
+      }
+
       return reply.status(409).send({ error: 'Device is offline' });
     }
 
@@ -1590,6 +1672,33 @@ export async function deviceRoutes(app: FastifyInstance) {
     return reply.send({ sent: true, command: cmd.command });
   });
 
+  // ── Wake-on-LAN relay helper ──────────────────────────────────────────────
+  // Finds the best online peer device to relay a WoL packet to the target.
+  // Prefers peers in the same /24 subnet, then any online peer in the workspace.
+  async function findWolRelay(
+    orgId: string,
+    workspaceId: string,
+    targetDeviceId: string,
+    targetIp: string | null | undefined,
+  ) {
+    const candidates = await db.query.devices.findMany({
+      where: and(eq(devices.orgId, orgId), eq(devices.workspaceId, workspaceId), isNull(devices.deletedAt)),
+      columns: { id: true, ipAddress: true, lastSeen: true },
+    });
+    const subnet24 = (ip: string | null | undefined) => (ip ? ip.split('.').slice(0, 3).join('.') : null);
+    const targetSubnet = subnet24(targetIp);
+    return candidates
+      .filter((c) => c.id !== targetDeviceId && isDeviceOnline(c.id))
+      .sort((a, b) => {
+        const aSub = subnet24(a.ipAddress) === targetSubnet ? 1 : 0;
+        const bSub = subnet24(b.ipAddress) === targetSubnet ? 1 : 0;
+        if (aSub !== bSub) return bSub - aSub;
+        const aSeen = a.lastSeen ? new Date(a.lastSeen).getTime() : 0;
+        const bSeen = b.lastSeen ? new Date(b.lastSeen).getTime() : 0;
+        return bSeen - aSeen;
+      })[0] ?? null;
+  }
+
   // ── POST /devices/:id/wake ─ Wake-on-LAN via a peer relay device ───────────
   // Picks an online device in the same workspace + same /24 subnet and tells it
   // to broadcast a WoL magic packet for the target's MAC address. Works across
@@ -1607,33 +1716,7 @@ export async function deviceRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'Target device has no recorded MAC address' });
     }
 
-    // Find peers in the same workspace that are currently online (WS connected).
-    const candidates = await db.query.devices.findMany({
-      where: and(
-        eq(devices.orgId, user.orgId),
-        eq(devices.workspaceId, target.workspaceId!),
-        isNull(devices.deletedAt),
-      ),
-      columns: { id: true, ipAddress: true, lastSeen: true, platform: true, kind: true },
-    });
-
-    // Prefer peers in the same /24 subnet, then any online peer.
-    const targetIp = target.ipAddress ?? null;
-    const subnet24 = (ip: string | null | undefined) => (ip ? ip.split('.').slice(0, 3).join('.') : null);
-    const targetSubnet = subnet24(targetIp);
-
-    const onlineCandidates = candidates
-      .filter((c) => c.id !== target.id && isDeviceOnline(c.id))
-      .sort((a, b) => {
-        const aSub = subnet24(a.ipAddress) === targetSubnet ? 1 : 0;
-        const bSub = subnet24(b.ipAddress) === targetSubnet ? 1 : 0;
-        if (aSub !== bSub) return bSub - aSub;
-        const aSeen = a.lastSeen ? new Date(a.lastSeen).getTime() : 0;
-        const bSeen = b.lastSeen ? new Date(b.lastSeen).getTime() : 0;
-        return bSeen - aSeen;
-      });
-
-    const relay = onlineCandidates[0];
+    const relay = await findWolRelay(user.orgId, target.workspaceId!, id, target.ipAddress);
     if (!relay) {
       return reply.status(409).send({
         error: 'No online peer device available to broadcast Wake-on-LAN',
@@ -1641,17 +1724,11 @@ export async function deviceRoutes(app: FastifyInstance) {
       });
     }
 
-    sendCommand(relay.id, {
-      type: 'wake_on_lan',
-      payload: { targetMac: target.macAddress },
-    });
+    sendCommand(relay.id, { type: 'wake_on_lan', payload: { targetMac: target.macAddress } });
 
     await writeAuditLog({
-      orgId: user.orgId,
-      actorId: user.sub,
-      action: 'DEVICE_COMMAND_SENT',
-      entityType: 'device',
-      entityId: target.id,
+      orgId: user.orgId, actorId: user.sub,
+      action: 'DEVICE_COMMAND_SENT', entityType: 'device', entityId: target.id,
       meta: { command: 'wake_on_lan', viaRelayDeviceId: relay.id },
       ipAddress: req.ip,
     });
@@ -3188,7 +3265,10 @@ export async function deviceRoutes(app: FastifyInstance) {
         ...(storedMdcId != null && rest.displayId == null ? { displayId: storedMdcId } : {}),
       };
       // Scan actions probe up to 10 IDs sequentially — give them a longer budget.
-      const mdcTimeout = (action === 'mdc_id_scan' || action === 'mdc_conn_type_fix') ? 20_000 : 10_000;
+      // b2b_timer_set waits up to 9s for B2B callbacks + response time → 14s total.
+      const mdcTimeout = (action === 'mdc_id_scan' || action === 'mdc_conn_type_fix') ? 20_000
+        : (action === 'b2b_timer_set' || action === 'b2b_timer_get') ? 14_000
+        : 10_000;
       const result = await requestMdcControl(device.id, action, payload, mdcTimeout);
 
       // Write-back: update DB immediately so the 15s UI poll reflects the new value
@@ -3226,6 +3306,22 @@ export async function deviceRoutes(app: FastifyInstance) {
             const current = (await db.query.devices.findFirst({ where: eq(devices.id, id) }))?.mdcOsdStatus ?? 0;
             dbSet.mdcOsdStatus = osdOnOff ? (current | (1 << osdType)) : (current & ~(1 << osdType));
           }
+        } else if (action === 'b2b_timer_set' && typeof body.slot === 'number') {
+          const slot = body.slot;
+          const existing = (await db.query.devices.findFirst({ where: eq(devices.id, id) }))?.timerSlots as Record<string, unknown> | null ?? {};
+          existing[String(slot)] = {
+            onHour:     typeof body.onHour     === 'number' ? body.onHour     : 0,
+            onMin:      typeof body.onMin      === 'number' ? body.onMin      : 0,
+            onEnable:   body.onEnable  !== false && body.onEnable  !== 0,
+            offHour:    typeof body.offHour    === 'number' ? body.offHour    : 0,
+            offMin:     typeof body.offMin     === 'number' ? body.offMin     : 0,
+            offEnable:  body.offEnable !== false && body.offEnable !== 0,
+            repeat:     typeof body.repeat     === 'number' ? body.repeat     : 1,
+            volume:     typeof body.volume     === 'number' ? body.volume     : 20,
+            source:     typeof body.source     === 'number' ? body.source     : 0x01,
+            manualDays: typeof body.manualDays === 'number' ? body.manualDays : 0,
+          };
+          dbSet.timerSlots = existing;
         }
         if (Object.keys(dbSet).length > 1) {
           await db.update(devices).set(dbSet).where(eq(devices.id, id));

@@ -417,7 +417,7 @@ window.ContentManager = {
           // When progress hits 100% but oncompleted hasn't fired yet, start a watchdog.
           // Some Tizen firmware versions stall between transfer-complete and file-sealed.
           if (progress >= 100 && !completionWatchdog && !settled) {
-            completionWatchdog = setTimeout(() => fallbackToXhr('oncompleted-not-fired-after-100pct'), 15_000);
+            completionWatchdog = setTimeout(() => fallbackToXhr('oncompleted-not-fired-after-100pct'), 15000);
           }
         },
         onpaused: (id) => {
@@ -637,7 +637,7 @@ window.ContentManager = {
             // When progress hits 100% but oncompleted hasn't fired yet, start a watchdog.
             // Some Tizen firmware versions stall between transfer-complete and file-sealed.
             if (percent >= 100 && !completionWatchdog && !settled) {
-              completionWatchdog = setTimeout(() => fallbackToXhr('oncompleted-not-fired-after-100pct'), 15_000);
+              completionWatchdog = setTimeout(() => fallbackToXhr('oncompleted-not-fired-after-100pct'), 15000);
             }
           },
 
@@ -1304,12 +1304,27 @@ window.ContentManager = {
     //   1. metadata.packageZipUrl / metadata.filePath (explicit zip path)
     //   2. content.fileUrl — the /device/content/:id/file?token=... endpoint
     //      which serves the raw uploaded file (the ZIP) with device-auth
+    //      (injected by API enrichCanvasContent for html5 type)
+    //   3. Fallback: construct fileUrl from localStorage token (handles older
+    //      API versions that did not inject fileUrl)
     // NOTE: do NOT fall back to content.url — for html5 content that has already
     // been normalised by api.js, content.url is the /html5/:token/index.html
     // streaming URL, not a ZIP archive.
+    var fallbackFileUrl = null;
+    if (!content.fileUrl && content.id) {
+      try {
+        var storedToken = (typeof localStorage !== 'undefined') ? localStorage.getItem('deviceToken') : null;
+        if (storedToken) {
+          var apiBase = (CONFIG.API_BASE || '').replace(/\/+$/, '');
+          fallbackFileUrl = apiBase + '/devices/device/content/' + content.id + '/file?token=' + encodeURIComponent(storedToken);
+        }
+      } catch (e) { /* localStorage not available */ }
+    }
+
     const zipUrl = this.buildPublicUrl(metadata.packageZipUrl || filePath)
       || metadata.packageZipUrl
       || content.fileUrl
+      || fallbackFileUrl
       || null;
 
     if (!zipUrl) {
@@ -1475,19 +1490,19 @@ window.ContentManager = {
   extractZipFile(zipFile, targetDir) {
     return new Promise((resolve, reject) => {
       try {
-        const zipUri = this.toUri(zipFile);
-        const destination = this.toUri(targetDir);
-        if (!zipUri || !destination) {
-          reject(new Error('Invalid ZIP or destination path for extraction'));
-          return;
-        }
+        // tizen.archive.open() requires a virtual path (DOMString) or File object.
+        // archive.extractAll() requires a virtual path (DOMString).
+        // Do NOT pass file:// URIs — the Archive API does not accept them.
+        var archiveSource = Platform.isLegacy
+          ? this._legacyResolve(zipFile)   // Tizen 4: needs a File object
+          : zipFile;                        // Tizen 5+: virtual path is fine
 
         tizen.archive.open(
-          zipUri,
+          archiveSource,
           'r',
           (archive) => {
             archive.extractAll(
-              destination,
+              targetDir,   // virtual path destination
               () => {
                 try { archive.close(); } catch (_) {}
                 resolve();

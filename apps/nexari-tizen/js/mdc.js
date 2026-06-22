@@ -1812,12 +1812,12 @@ var server = http.createServer(function(req, res) {
             }
           }
 
-          // Step 2: Apply user-supplied fields (hours clamped to 12h range)
-          if (parsed.onHour   != null) base[0]  = Math.max(0, Math.min(12, parseInt(parsed.onHour,  10) || 0));
+          // Step 2: Apply user-supplied fields (hours support full 24h range 0–23)
+          if (parsed.onHour   != null) base[0]  = Math.max(0, Math.min(23, parseInt(parsed.onHour,  10) || 0));
           if (parsed.onMin    != null) base[1]  = Math.max(0, Math.min(59, parseInt(parsed.onMin,   10) || 0));
           if (parsed.source   != null) base[2]  = parseInt(parsed.source, 10) & 0xFF;
           if (parsed.onEnable != null) base[3]  = parsed.onEnable ? 0x01 : 0x00;
-          if (parsed.offHour  != null) base[4]  = Math.max(0, Math.min(12, parseInt(parsed.offHour, 10) || 0));
+          if (parsed.offHour  != null) base[4]  = Math.max(0, Math.min(23, parseInt(parsed.offHour, 10) || 0));
           if (parsed.offMin   != null) base[5]  = Math.max(0, Math.min(59, parseInt(parsed.offMin,  10) || 0));
           if (parsed.repeat   != null) base[6]  = Math.max(0, Math.min(5,  parseInt(parsed.repeat,  10) || 0));
           if (parsed.offEnable != null) base[7] = parsed.offEnable ? 0x01 : 0x00;

@@ -931,8 +931,15 @@ const Player = {
                 `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
               const parseTime = (s: unknown): { h: number; m: number } | null => {
                 if (!s) return null;
-                const parts = String(s).match(/^(\d{1,2}):(\d{2})/);
-                return parts ? { h: parseInt(parts[1], 10), m: parseInt(parts[2], 10) } : null;
+                const str = String(s);
+                // Primary: starts with HH:MM
+                let parts = str.match(/^(\d{1,2}):(\d{2})/);
+                // Secondary: HH:MM after whitespace (Samsung B2B may return "TIMER_TYPE HH:MM")
+                if (!parts) parts = str.match(/\s(\d{1,2}):(\d{2})/);
+                if (!parts) return null;
+                const h = parseInt(parts[1], 10);
+                const m = parseInt(parts[2], 10);
+                return (h >= 0 && h <= 23 && m >= 0 && m <= 59) ? { h, m } : null;
               };
 
               if (action === 'b2b_timer_get') {
@@ -945,13 +952,33 @@ const Player = {
                     const offT = parseTime(offResult);
                     const vol  = volResult != null ? parseInt(String(volResult), 10) : 20;
                     logger.info('[b2b-timer] GET ok:', timerType, onResult, offResult);
-                    sendMdcControlResponse({
-                      ok: true, method: 'b2bcontrol',
-                      onHour:  onT?.h  ?? 8,  onMin:  onT?.m  ?? 0,  onEnable:  onT  != null,
-                      offHour: offT?.h ?? 22, offMin: offT?.m ?? 0,  offEnable: offT != null,
-                      volume: isNaN(vol) ? 20 : vol,
-                      repeat: 1, source: 0x01, manualDays: 0,
-                    });
+                    // B2B only returns time strings — also fetch repeat/source/manualDays
+                    // from MDC since b2bcontrol has no getter for those fields.
+                    self.sendLocalMdcXhr('on_timer_get', { slot: b2bSlot })
+                      .then((mdcR) => {
+                        sendMdcControlResponse({
+                          ok: true, method: 'b2bcontrol',
+                          onHour:  onT  != null ? onT.h  : Number(mdcR['onHour']   ?? 0),
+                          onMin:   onT  != null ? onT.m  : Number(mdcR['onMin']    ?? 0),
+                          onEnable:  onT  != null ? true : !!mdcR['onEnable'],
+                          offHour: offT != null ? offT.h : Number(mdcR['offHour']  ?? 0),
+                          offMin:  offT != null ? offT.m : Number(mdcR['offMin']   ?? 0),
+                          offEnable: offT != null ? true : !!mdcR['offEnable'],
+                          volume: isNaN(vol) ? 20 : vol,
+                          repeat:    Number(mdcR['repeat']     ?? 1),
+                          source:    Number(mdcR['source']     ?? 0x01),
+                          manualDays: Number(mdcR['manualDays'] ?? 0),
+                        });
+                      })
+                      .catch(() => {
+                        sendMdcControlResponse({
+                          ok: true, method: 'b2bcontrol',
+                          onHour:  onT?.h  ?? 8,  onMin:  onT?.m  ?? 0,  onEnable:  onT  != null,
+                          offHour: offT?.h ?? 22, offMin: offT?.m ?? 0,  offEnable: offT != null,
+                          volume: isNaN(vol) ? 20 : vol,
+                          repeat: 1, source: 0x01, manualDays: 0,
+                        });
+                      });
                     break;
                   } catch (e) {
                     logger.warn('[b2b-timer] GET exception, falling back to MDC:', e);
@@ -979,14 +1006,12 @@ const Player = {
                 ? B2B_DAY_NAMES.filter((_, i) => manualDays & (1 << i)).join(':')
                 : '';
 
-              // MDC fallback — converts 24h → 12h (MDC uses 12-hour format in bytes)
+              // MDC fallback — pass hours in 24h format (mdc.js on_timer_set now accepts 0–23)
               const mdcFallback = () => {
-                const mdcOnHour  = onHour  % 12 || 12;
-                const mdcOffHour = offHour % 12 || 12;
                 self.sendLocalMdcXhr('on_timer_set', {
                   slot: b2bSlot,
-                  onHour: mdcOnHour, onMin, onEnable: onEnable ? 1 : 0,
-                  offHour: mdcOffHour, offMin, offEnable: offEnable ? 1 : 0,
+                  onHour, onMin, onEnable: onEnable ? 1 : 0,
+                  offHour, offMin, offEnable: offEnable ? 1 : 0,
                   repeat: b2bRepeat, manualDays, volume: b2bVolume,
                   source: mdcPayload.source ?? 0x01,
                 })
@@ -1019,6 +1044,14 @@ const Player = {
                       b2bCtrl.setOnTimerVolume(timerType, b2bVolume, () => {}, () => {});
                     } catch { /* ignore volume errors */ }
                     logger.info('[b2b-timer] SET ok:', timerType);
+                    // B2B API only enables timers; it has no way to disable them.
+                    // Clear the enable bit for any disabled timer via MDC read-modify-write.
+                    if (!onEnable || !offEnable) {
+                      const mdcPatch: Record<string, unknown> = { slot: b2bSlot };
+                      if (!onEnable)  mdcPatch['onEnable']  = 0;
+                      if (!offEnable) mdcPatch['offEnable'] = 0;
+                      self.sendLocalMdcXhr('on_timer_set', mdcPatch).catch(() => { /* best-effort */ });
+                    }
                     sendMdcControlResponse({ ok: true, method: 'b2bcontrol' });
                   }
                 };
@@ -1043,18 +1076,19 @@ const Player = {
                   break;
                 }
 
-                // Safety net: if Samsung B2B callbacks never fire, fall back to MDC
-                // before the 10s API budget expires (leaves ample time for MDC to respond)
+                // Safety net: QBC B2B callbacks can take up to ~8s.
+                // Wait 9s before giving up — do NOT fall back to MDC for timer SET
+                // because QBC (and most B2B displays) reject MDC on_timer_set with NAK 0x01.
                 const b2bSafetyTimer = setTimeout(() => {
                   if (!responded) {
                     responded = true;
-                    logger.warn('[b2b-timer] SET callbacks hung after 6s — falling back to MDC');
-                    mdcFallback();
+                    logger.warn('[b2b-timer] SET callbacks timed out after 9s');
+                    sendMdcControlResponse({ ok: false, error: 'B2B timer SET timed out — display did not respond within 9s' });
                   }
-                }, 6000);
+                }, 9000);
               } catch (e) {
-                logger.warn('[b2b-timer] B2BControl exception, falling back to MDC:', e);
-                mdcFallback();
+                logger.warn('[b2b-timer] B2BControl exception:', e);
+                sendMdcControlResponse({ ok: false, error: String(e) });
               }
               break;
             }
@@ -8081,11 +8115,39 @@ const Player = {
       }
 
       case 'POWER_ON': {
-        // MDC §2.1.11 – CMD_POWER [0x01] = Power ON
-        const _ponId = this._scannedMdcId != null ? { displayId: this._scannedMdcId } : {};
-        this.sendLocalMdcXhr('power_on', _ponId)
-          .then(() => logger.info('[cmd] MDC power_on sent, mdcId=', this._scannedMdcId))
-          .catch((e) => logger.warn('[cmd] POWER_ON MDC failed:', e));
+        // Try B2B API first (same priority as b2b.setPower handler):
+        //   panelOn() → setPower(true) → setDisplayOnOff(true) → setPowerState('ON')
+        // Falls back to MDC if no B2B method is available on this device.
+        try {
+          const b2bPon = (window as any).b2bapis?.b2bcontrol;
+          const ponMethods: [string, unknown[]][] = [
+            ['panelOn', []],
+            ['setPower', [true]],
+            ['setDisplayOnOff', [true]],
+            ['setPowerState', ['ON']],
+          ];
+          let ponDispatched = false;
+          for (const [m, args] of ponMethods) {
+            if (b2bPon && typeof b2bPon[m] === 'function') {
+              (b2bPon[m] as Function)(
+                ...args,
+                () => logger.info('[cmd] b2bcontrol.' + m + ' power-on success'),
+                (e: any) => logger.warn('[cmd] b2bcontrol.' + m + ' power-on error:', (e && e.message) || e),
+              );
+              ponDispatched = true;
+              break;
+            }
+          }
+          if (!ponDispatched) {
+            logger.warn('[cmd] No B2B power-on method available, falling back to MDC');
+            const _ponId = this._scannedMdcId != null ? { displayId: this._scannedMdcId } : {};
+            this.sendLocalMdcXhr('power_on', _ponId)
+              .then(() => logger.info('[cmd] MDC power_on sent, mdcId=', this._scannedMdcId))
+              .catch((e) => logger.warn('[cmd] POWER_ON MDC failed:', e));
+          }
+        } catch (e) {
+          logger.warn('[cmd] POWER_ON threw:', e);
+        }
         break;
       }
 
