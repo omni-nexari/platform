@@ -1,6 +1,6 @@
 import { db, devices, deviceHeartbeats, deviceScreenshots, playEvents, syncGroupMembers, syncGroups, bleScanResults } from '@signage/db';
 import type { CompiledRuleSet } from '@signage/db';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 import { DeviceMessageSchema } from '@signage/shared';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -303,6 +303,19 @@ export function registerDevice(deviceId: string, socket: Conn): void {
 
 export function unregisterDevice(deviceId: string): void {
   connections.delete(deviceId);
+}
+
+/**
+ * Called once at API startup. The connections map is always empty at boot, so any
+ * device still marked 'online' in the DB is a stale status left over from an abrupt
+ * process kill (SIGKILL skips socket.on('close') handlers). Reset them all so the
+ * UI and command-handler offline checks stay consistent with the in-memory map.
+ */
+export async function resetOnlineStatuses(): Promise<void> {
+  await db
+    .update(devices)
+    .set({ status: 'offline', updatedAt: new Date() })
+    .where(and(eq(devices.status, 'online'), isNull(devices.deletedAt)));
 }
 
 export function isDeviceOnline(deviceId: string): boolean {
