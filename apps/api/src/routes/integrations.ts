@@ -244,8 +244,17 @@ export async function integrationsRoutes(app: FastifyInstance) {
     // which owns the shared OAuth app credentials. Only ONE redirect URI per
     // provider needs to be registered — on nexari.ca — regardless of how many
     // partner domains exist.
-    const nexariAdminOrigin = process.env['NEXARI_ADMIN_ORIGIN'];
+    const nexariAdminOrigin = (process.env['NEXARI_ADMIN_ORIGIN'] ?? '').trim() || null;
     const licCreds = nexariAdminOrigin ? await getLicenseHmacSecret() : null;
+
+    // If proxy mode is intended but the license secret is not yet provisioned,
+    // fail loudly — this prevents a silent fallthrough to direct mode with
+    // empty GOOGLE_OAUTH_CLIENT_ID which produces Google's "missing client_id" error.
+    if (nexariAdminOrigin && !licCreds) {
+      return reply.status(503).send({
+        error: 'OAuth proxy mode requires a configured license key. Ensure LICENSE_KEY, LICENSE_SECRET, and LICENSE_SERVER_URL are set in the Platform API environment (or a license is activated in Settings → License).',
+      });
+    }
 
     if (nexariAdminOrigin && licCreds) {
       // callbackOrigin = where the postMessage is targeted (the DS window origin)
