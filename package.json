@@ -1,7 +1,7 @@
 {
   "name": "omni-signage",
   "private": true,
-  "version": "1.0.78",
+  "version": "1.0.79",
   "engines": {
     "node": ">=22",
     "pnpm": ">=9"
