@@ -281,6 +281,26 @@ export async function integrationsRoutes(app: FastifyInstance) {
       n: nonce,
       ts: Date.now(),
     });
+
+    if (provider === 'google') {
+      const cid = (process.env['GOOGLE_OAUTH_CLIENT_ID'] ?? '').trim();
+      const sec = (process.env['GOOGLE_OAUTH_CLIENT_SECRET'] ?? '').trim();
+      if (!cid || !sec) {
+        return reply.status(503).send({
+          error: 'Google OAuth is not configured for direct mode. Set NEXARI_ADMIN_ORIGIN for proxy mode or configure GOOGLE_OAUTH_CLIENT_ID/GOOGLE_OAUTH_CLIENT_SECRET.',
+        });
+      }
+    }
+    if (provider === 'microsoft') {
+      const cid = (process.env['MICROSOFT_OAUTH_CLIENT_ID'] ?? process.env['MICROSOFT_CLIENT_ID'] ?? '').trim();
+      const sec = (process.env['MICROSOFT_OAUTH_CLIENT_SECRET'] ?? process.env['MICROSOFT_CLIENT_SECRET'] ?? '').trim();
+      if (!cid || !sec) {
+        return reply.status(503).send({
+          error: 'Microsoft OAuth is not configured for direct mode. Set NEXARI_ADMIN_ORIGIN for proxy mode or configure MICROSOFT_OAUTH_CLIENT_ID/MICROSOFT_OAUTH_CLIENT_SECRET.',
+        });
+      }
+    }
+
     const url = provider === 'google' ? googleAuthUrl(stateToken) : msAuthUrl(stateToken);
     return reply.send({ redirectUrl: url });
   });

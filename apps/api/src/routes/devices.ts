@@ -3265,9 +3265,10 @@ export async function deviceRoutes(app: FastifyInstance) {
         ...(storedMdcId != null && rest.displayId == null ? { displayId: storedMdcId } : {}),
       };
       // Scan actions probe up to 10 IDs sequentially — give them a longer budget.
-      // b2b_timer_set waits up to 9s for B2B callbacks + response time → 14s total.
+      // b2b_timer_set: old player safety(6s) + XHR(8s) = 14s max; new player responds in ≤9s.
+      // Give 18s so both old and new players complete before the API times out.
       const mdcTimeout = (action === 'mdc_id_scan' || action === 'mdc_conn_type_fix') ? 20_000
-        : (action === 'b2b_timer_set' || action === 'b2b_timer_get') ? 14_000
+        : (action === 'b2b_timer_set' || action === 'b2b_timer_get') ? 18_000
         : 10_000;
       const result = await requestMdcControl(device.id, action, payload, mdcTimeout);
 
