@@ -1948,6 +1948,16 @@ export async function deviceRoutes(app: FastifyInstance) {
       socket.send(JSON.stringify({ type: 'server_ack', payload: { timestamp: new Date().toISOString(), reason: 'connected' } }));
     } catch {}
 
+    // Send a lightweight keep-alive ping every 20 s so that reverse proxies
+    // (nginx, Cloudflare) never see the WS as idle and close it prematurely.
+    const kaPingInterval = setInterval(() => {
+      if ((socket as any).readyState === 1) {
+        try { socket.send(JSON.stringify({ type: 'ka_ping' })); } catch {}
+      } else {
+        clearInterval(kaPingInterval);
+      }
+    }, 20_000);
+
     // Always run periodic screenshots. Use the user-configured interval, or fall back to
     // 10 minutes so device-card thumbnails stay fresh even when the user sets "never".
     const DEFAULT_SCREENSHOT_INTERVAL_MIN = 10;
@@ -2112,6 +2122,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
 
     socket.on('close', async () => {
+      clearInterval(kaPingInterval);
       unregisterDevice(deviceId);
       try {
         const broker = await import('../services/calendar-broker.js');

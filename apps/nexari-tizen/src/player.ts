@@ -460,8 +460,15 @@ const Player = {
       };
       
       this.wsConnection.onerror = (error) => {
-        logger.error('WebSocket error:', error);
+        logger.error('WebSocket error — will reconnect in 5s:', error);
         this.updateConnectionStatus(false);
+        // Some Samsung Tizen builds do not fire onclose after onerror.
+        // Schedule a reconnect here too; onclose will cancel/ignore the duplicate.
+        setTimeout(() => {
+          if (!this.wsConnection || this.wsConnection.readyState !== WebSocket.OPEN) {
+            this.connectWebSocket();
+          }
+        }, 5000);
       };
       
       this.wsConnection.onclose = () => {
@@ -2687,21 +2694,26 @@ const Player = {
     }
     const staleAfterMs = Math.max((CONFIG.HEARTBEAT_INTERVAL || 30000) * 3, 90000);
     this.wsWatchdogInterval = setInterval(() => {
-      if (!this.wsConnection || this.wsConnection.readyState !== WebSocket.OPEN) {
+      const rs = this.wsConnection ? this.wsConnection.readyState : -1;
+      // Case 1: WS is closed/closing but onclose never triggered a reconnect (Tizen bug).
+      if (!this.wsConnection || rs === WebSocket.CLOSED || rs === WebSocket.CLOSING) {
+        logger.warn('WebSocket watchdog: connection dead, reconnecting...');
+        this.wsConnection = null;
+        this.updateConnectionStatus(false);
+        this.connectWebSocket();
         return;
       }
-      if (!this.lastWsMessageAt) {
-        return;
-      }
-      if (Date.now() - this.lastWsMessageAt <= staleAfterMs) {
-        return;
-      }
-      logger.warn('WebSocket appears stale despite open state; forcing reconnect');
-      this.updateConnectionStatus(false);
-      try {
-        this.wsConnection.close();
-      } catch (error) {
-        logger.debug('Failed to close stale WebSocket:', error);
+      // Case 2: WS appears OPEN but no messages for too long — stale TCP.
+      if (rs === WebSocket.OPEN) {
+        if (!this.lastWsMessageAt) return;
+        if (Date.now() - this.lastWsMessageAt <= staleAfterMs) return;
+        logger.warn('WebSocket appears stale despite open state; forcing reconnect');
+        this.updateConnectionStatus(false);
+        try {
+          this.wsConnection.close();
+        } catch (error) {
+          logger.debug('Failed to close stale WebSocket:', error);
+        }
       }
     }, CONFIG.HEARTBEAT_INTERVAL || 30000);
   },
