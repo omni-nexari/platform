@@ -2463,6 +2463,58 @@ function IntegrationsSection({ selectedWsId }: { selectedWsId: string | null }) 
   const [disconnectTarget, setDisconnectTarget] = useState<{ id: string; name: string } | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
+  // ── COOP relay fallback ──────────────────────────────────────────────────
+  // Google/Microsoft set Cross-Origin-Opener-Policy: same-origin on their
+  // consent pages, which nulls window.opener before the admin callback runs.
+  // When that happens, the admin proxy redirects the popup here with the
+  // encrypted relay payload in the URL instead of using postMessage.
+  const _oauthRelayHandled = useRef(false);
+  useEffect(() => {
+    if (_oauthRelayHandled.current) return;
+    const encrypted = searchParams.get('oauthRelay');
+    const provider = searchParams.get('oauthProvider') as 'google' | 'microsoft' | null;
+    const relayError = searchParams.get('oauthRelayError');
+    if (!encrypted && !relayError) return;
+    _oauthRelayHandled.current = true;
+    const cleanParams = () => {
+      const next = new URLSearchParams(searchParams);
+      next.delete('oauthRelay');
+      next.delete('oauthProvider');
+      next.delete('oauthRelayError');
+      setSearchParams(next, { replace: true });
+    };
+    if (relayError) {
+      toast.error(`Connection failed: ${relayError}`);
+      cleanParams();
+      try { window.close(); } catch { /* ok */ }
+      return;
+    }
+    if (!provider) return;
+    api.post<{ id: string }>(`/integrations/calendar/oauth/${provider}/relay`, { encrypted })
+      .then(() => {
+        toast.success(`${provider === 'microsoft' ? 'Outlook' : 'Google'} calendar connected`);
+        qc.invalidateQueries({ queryKey: ['calendar-connections', selectedWsId] });
+        try { localStorage.setItem('nexari-oauth-relay-done', JSON.stringify({ provider, ts: Date.now() })); } catch { /* ok */ }
+      })
+      .catch((err: unknown) => toast.error(parseApiError(err) ?? 'Relay failed'))
+      .finally(() => {
+        cleanParams();
+        try { window.close(); } catch { /* ok */ }
+      });
+  }, [searchParams, setSearchParams, api, qc, selectedWsId]);
+
+  // Refresh connections when a same-origin popup wrote nexari-oauth-relay-done
+  // to localStorage (storage events fire in OTHER windows on the same origin).
+  useEffect(() => {
+    const handler = (e: StorageEvent) => {
+      if (e.key === 'nexari-oauth-relay-done') {
+        qc.invalidateQueries({ queryKey: ['calendar-connections', selectedWsId] });
+      }
+    };
+    window.addEventListener('storage', handler);
+    return () => window.removeEventListener('storage', handler);
+  }, [qc, selectedWsId]);
+
   // Surface OAuth result toast on return from callback redirect.
   useEffect(() => {
     const result = searchParams.get('oauth');
