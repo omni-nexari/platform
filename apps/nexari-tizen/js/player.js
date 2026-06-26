@@ -409,8 +409,15 @@ const Player = {
                 this.handleWebSocketMessage(event.data);
             };
             this.wsConnection.onerror = (error) => {
-                logger.error('WebSocket error:', error);
+                logger.error('WebSocket error — will reconnect in 5s:', error);
                 this.updateConnectionStatus(false);
+                // Some Samsung Tizen builds do not fire onclose after onerror.
+                // Schedule a reconnect here too; onclose will cancel/ignore the duplicate.
+                setTimeout(() => {
+                    if (!this.wsConnection || this.wsConnection.readyState !== WebSocket.OPEN) {
+                        this.connectWebSocket();
+                    }
+                }, 5000);
             };
             this.wsConnection.onclose = () => {
                 logger.warn('WebSocket disconnected, reconnecting in 5s...');
@@ -909,9 +916,35 @@ const Player = {
                                     parts = str.match(/\s(\d{1,2}):(\d{2})/);
                                 if (!parts)
                                     return null;
-                                const h = parseInt(parts[1], 10);
+                                let h = parseInt(parts[1], 10);
                                 const m = parseInt(parts[2], 10);
+                                // Handle AM/PM suffix — Samsung B2B returns OSD-format (12h) on some firmware
+                                if (/pm/i.test(str) && h < 12)
+                                    h += 12;
+                                if (/am/i.test(str) && h === 12)
+                                    h = 0;
                                 return (h >= 0 && h <= 23 && m >= 0 && m <= 59) ? { h, m } : null;
+                            };
+                            // Resolve a 12h hour (1-12) returned by B2B getOnTimerRepeat to 24h using the
+                            // last value written to localStorage.  B2B returns strings like "07:05 PM" which
+                            // parseTime() converts, but QBC sometimes omits the AM/PM suffix so resolveHour
+                            // is a belt-and-suspenders fallback.  MDC on_timer_get now returns 24h directly.
+                            const resolveHour = (h12, lsKey) => {
+                                var _a;
+                                if (h12 > 12)
+                                    return h12; // already 24h
+                                try {
+                                    const stored = parseInt((_a = localStorage.getItem(lsKey)) !== null && _a !== void 0 ? _a : '', 10);
+                                    if (!isNaN(stored)) {
+                                        // e.g. stored=13 → 13%12=1, matches h12=1 → return 13
+                                        // e.g. stored=0  → 0%12||12=12, matches h12=12 → return 0 (midnight)
+                                        const s12 = stored % 12 || 12;
+                                        if (s12 === h12)
+                                            return stored;
+                                    }
+                                }
+                                catch ( /* localStorage unavailable */_b) { /* localStorage unavailable */ }
+                                return h12;
                             };
                             if (action === 'b2b_timer_get') {
                                 if (b2bCtrl) {
@@ -928,28 +961,38 @@ const Player = {
                                         self.sendLocalMdcXhr('on_timer_get', { slot: b2bSlot })
                                             .then((mdcR) => {
                                             var _a, _b, _c, _d, _f, _g, _h;
+                                            // Both B2B getOnTimerRepeat and MDC on_timer_get return 12h hours
+                                            // (e.g. 1 for 13h) on QBC because the display has no AM/PM byte
+                                            // in its MDC timer protocol.  Resolve using localStorage cache of
+                                            // the last value written by b2b_timer_set.
+                                            const raw12On = mdcR['onHour'] != null ? Number(mdcR['onHour']) : ((_a = onT === null || onT === void 0 ? void 0 : onT.h) !== null && _a !== void 0 ? _a : 0);
+                                            const raw12Off = mdcR['offHour'] != null ? Number(mdcR['offHour']) : ((_b = offT === null || offT === void 0 ? void 0 : offT.h) !== null && _b !== void 0 ? _b : 0);
+                                            const resolvedOnHour = resolveHour(raw12On, `nxTimer_${timerType}_onH`);
+                                            const resolvedOffHour = resolveHour(raw12Off, `nxTimer_${timerType}_offH`);
                                             sendMdcControlResponse({
                                                 ok: true, method: 'b2bcontrol',
-                                                onHour: onT != null ? onT.h : Number((_a = mdcR['onHour']) !== null && _a !== void 0 ? _a : 0),
-                                                onMin: onT != null ? onT.m : Number((_b = mdcR['onMin']) !== null && _b !== void 0 ? _b : 0),
-                                                onEnable: onT != null ? true : !!mdcR['onEnable'],
-                                                offHour: offT != null ? offT.h : Number((_c = mdcR['offHour']) !== null && _c !== void 0 ? _c : 0),
-                                                offMin: offT != null ? offT.m : Number((_d = mdcR['offMin']) !== null && _d !== void 0 ? _d : 0),
-                                                offEnable: offT != null ? true : !!mdcR['offEnable'],
+                                                onHour: resolvedOnHour,
+                                                onMin: mdcR['onMin'] != null ? Number(mdcR['onMin']) : ((_c = onT === null || onT === void 0 ? void 0 : onT.m) !== null && _c !== void 0 ? _c : 0),
+                                                onEnable: mdcR['onEnable'] != null ? !!mdcR['onEnable'] : (onT != null),
+                                                offHour: resolvedOffHour,
+                                                offMin: mdcR['offMin'] != null ? Number(mdcR['offMin']) : ((_d = offT === null || offT === void 0 ? void 0 : offT.m) !== null && _d !== void 0 ? _d : 0),
+                                                offEnable: mdcR['offEnable'] != null ? !!mdcR['offEnable'] : (offT != null),
                                                 volume: isNaN(vol) ? 20 : vol,
                                                 repeat: Number((_f = mdcR['repeat']) !== null && _f !== void 0 ? _f : 1),
-                                                source: Number((_g = mdcR['source']) !== null && _g !== void 0 ? _g : 0x01),
+                                                source: Number((_g = mdcR['source']) !== null && _g !== void 0 ? _g : 0x63),
                                                 manualDays: Number((_h = mdcR['manualDays']) !== null && _h !== void 0 ? _h : 0),
                                             });
                                         })
                                             .catch(() => {
                                             var _a, _b, _c, _d;
+                                            const rOn = resolveHour((_a = onT === null || onT === void 0 ? void 0 : onT.h) !== null && _a !== void 0 ? _a : 8, `nxTimer_${timerType}_onH`);
+                                            const rOff = resolveHour((_b = offT === null || offT === void 0 ? void 0 : offT.h) !== null && _b !== void 0 ? _b : 22, `nxTimer_${timerType}_offH`);
                                             sendMdcControlResponse({
                                                 ok: true, method: 'b2bcontrol',
-                                                onHour: (_a = onT === null || onT === void 0 ? void 0 : onT.h) !== null && _a !== void 0 ? _a : 8, onMin: (_b = onT === null || onT === void 0 ? void 0 : onT.m) !== null && _b !== void 0 ? _b : 0, onEnable: onT != null,
-                                                offHour: (_c = offT === null || offT === void 0 ? void 0 : offT.h) !== null && _c !== void 0 ? _c : 22, offMin: (_d = offT === null || offT === void 0 ? void 0 : offT.m) !== null && _d !== void 0 ? _d : 0, offEnable: offT != null,
+                                                onHour: rOn, onMin: (_c = onT === null || onT === void 0 ? void 0 : onT.m) !== null && _c !== void 0 ? _c : 0, onEnable: onT != null,
+                                                offHour: rOff, offMin: (_d = offT === null || offT === void 0 ? void 0 : offT.m) !== null && _d !== void 0 ? _d : 0, offEnable: offT != null,
                                                 volume: isNaN(vol) ? 20 : vol,
-                                                repeat: 1, source: 0x01, manualDays: 0,
+                                                repeat: 1, source: 0x63, manualDays: 0,
                                             });
                                         });
                                         break;
@@ -960,7 +1003,12 @@ const Player = {
                                 }
                                 // MDC fallback for GET
                                 self.sendLocalMdcXhr('on_timer_get', { slot: b2bSlot })
-                                    .then((r) => sendMdcControlResponse(Object.assign({ ok: !!r['ok'], method: 'mdc_fallback' }, r)))
+                                    .then((mdcR) => {
+                                    var _a, _b;
+                                    const raw12On = Number((_a = mdcR['onHour']) !== null && _a !== void 0 ? _a : 0);
+                                    const raw12Off = Number((_b = mdcR['offHour']) !== null && _b !== void 0 ? _b : 0);
+                                    sendMdcControlResponse(Object.assign(Object.assign({ ok: !!mdcR['ok'], method: 'mdc_fallback' }, mdcR), { onHour: resolveHour(raw12On, `nxTimer_${timerType}_onH`), offHour: resolveHour(raw12Off, `nxTimer_${timerType}_offH`) }));
+                                })
                                     .catch((e) => sendMdcControlResponse({ ok: false, error: String(e) }));
                                 break;
                             }
@@ -978,15 +1026,15 @@ const Player = {
                             const dayStr = b2bRepeat === 5
                                 ? B2B_DAY_NAMES.filter((_, i) => manualDays & (1 << i)).join(':')
                                 : '';
-                            // MDC fallback — pass hours in 24h format (mdc.js on_timer_set now accepts 0–23)
+                            // MDC fallback — pass hours in 24h format (mdc.js on_timer_set converts 24h→12h+AM/PM)
                             const mdcFallback = () => {
-                                var _a;
                                 self.sendLocalMdcXhr('on_timer_set', {
                                     slot: b2bSlot,
                                     onHour, onMin, onEnable: onEnable ? 1 : 0,
                                     offHour, offMin, offEnable: offEnable ? 1 : 0,
                                     repeat: b2bRepeat, manualDays, volume: b2bVolume,
-                                    source: (_a = mdcPayload.source) !== null && _a !== void 0 ? _a : 0x01,
+                                    // Pass source through; if undefined mdc.js preserves byte[13] from its GET
+                                    source: mdcPayload.source,
                                 })
                                     .then((r) => sendMdcControlResponse(Object.assign({ ok: !!r['ok'], method: 'mdc_fallback' }, r)))
                                     .catch((e) => sendMdcControlResponse({ ok: false, error: String(e) }));
@@ -1017,6 +1065,15 @@ const Player = {
                                         }
                                         catch ( /* ignore volume errors */_a) { /* ignore volume errors */ }
                                         logger.info('[b2b-timer] SET ok:', timerType);
+                                        // Persist 24h hours to localStorage so b2b_timer_get can resolve
+                                        // the 12h values returned by the display back to 24h.
+                                        try {
+                                            if (onEnable)
+                                                localStorage.setItem(`nxTimer_${timerType}_onH`, String(onHour));
+                                            if (offEnable)
+                                                localStorage.setItem(`nxTimer_${timerType}_offH`, String(offHour));
+                                        }
+                                        catch ( /* localStorage unavailable */_b) { /* localStorage unavailable */ }
                                         // B2B API only enables timers; it has no way to disable them.
                                         // Clear the enable bit for any disabled timer via MDC read-modify-write.
                                         if (!onEnable || !offEnable) {
@@ -2725,22 +2782,29 @@ const Player = {
         }
         const staleAfterMs = Math.max((CONFIG.HEARTBEAT_INTERVAL || 30000) * 3, 90000);
         this.wsWatchdogInterval = setInterval(() => {
-            if (!this.wsConnection || this.wsConnection.readyState !== WebSocket.OPEN) {
+            const rs = this.wsConnection ? this.wsConnection.readyState : -1;
+            // Case 1: WS is closed/closing but onclose never triggered a reconnect (Tizen bug).
+            if (!this.wsConnection || rs === WebSocket.CLOSED || rs === WebSocket.CLOSING) {
+                logger.warn('WebSocket watchdog: connection dead, reconnecting...');
+                this.wsConnection = null;
+                this.updateConnectionStatus(false);
+                this.connectWebSocket();
                 return;
             }
-            if (!this.lastWsMessageAt) {
-                return;
-            }
-            if (Date.now() - this.lastWsMessageAt <= staleAfterMs) {
-                return;
-            }
-            logger.warn('WebSocket appears stale despite open state; forcing reconnect');
-            this.updateConnectionStatus(false);
-            try {
-                this.wsConnection.close();
-            }
-            catch (error) {
-                logger.debug('Failed to close stale WebSocket:', error);
+            // Case 2: WS appears OPEN but no messages for too long — stale TCP.
+            if (rs === WebSocket.OPEN) {
+                if (!this.lastWsMessageAt)
+                    return;
+                if (Date.now() - this.lastWsMessageAt <= staleAfterMs)
+                    return;
+                logger.warn('WebSocket appears stale despite open state; forcing reconnect');
+                this.updateConnectionStatus(false);
+                try {
+                    this.wsConnection.close();
+                }
+                catch (error) {
+                    logger.debug('Failed to close stale WebSocket:', error);
+                }
             }
         }, CONFIG.HEARTBEAT_INTERVAL || 30000);
     },
@@ -2967,14 +3031,33 @@ const Player = {
                         logger.info('[mdc-poll] on_timer_get not supported on this model');
                     }
                 }
+                // Resolve 12h MDC hours to 24h using localStorage cache written by b2b_timer_set.
+                const resolveTimerHour = (h12, lsKey) => {
+                    var _a;
+                    if (h12 > 12)
+                        return h12;
+                    try {
+                        const stored = parseInt((_a = localStorage.getItem(lsKey)) !== null && _a !== void 0 ? _a : '', 10);
+                        if (!isNaN(stored)) {
+                            const s12 = stored % 12 || 12;
+                            if (s12 === h12)
+                                return stored;
+                        }
+                    }
+                    catch ( /* localStorage unavailable */_b) { /* localStorage unavailable */ }
+                    return h12;
+                };
                 p.timers = TIMER_SLOTS.map((s) => {
                     var _a, _b, _c, _d, _f, _g, _h, _j;
                     const r = results[`timer_${s}`];
                     if (!(r === null || r === void 0 ? void 0 : r.ok))
                         return null;
+                    const tType = `TIMER${s}`;
                     return {
-                        onHour: Number((_a = r.onHour) !== null && _a !== void 0 ? _a : 0), onMin: Number((_b = r.onMin) !== null && _b !== void 0 ? _b : 0), onEnable: !!r.onEnable,
-                        offHour: Number((_c = r.offHour) !== null && _c !== void 0 ? _c : 0), offMin: Number((_d = r.offMin) !== null && _d !== void 0 ? _d : 0), offEnable: !!r.offEnable,
+                        onHour: resolveTimerHour(Number((_a = r.onHour) !== null && _a !== void 0 ? _a : 0), `nxTimer_${tType}_onH`),
+                        onMin: Number((_b = r.onMin) !== null && _b !== void 0 ? _b : 0), onEnable: !!r.onEnable,
+                        offHour: resolveTimerHour(Number((_c = r.offHour) !== null && _c !== void 0 ? _c : 0), `nxTimer_${tType}_offH`),
+                        offMin: Number((_d = r.offMin) !== null && _d !== void 0 ? _d : 0), offEnable: !!r.offEnable,
                         repeat: Number((_f = r.repeat) !== null && _f !== void 0 ? _f : 1), volume: Number((_g = r.volume) !== null && _g !== void 0 ? _g : 20),
                         source: Number((_h = r.source) !== null && _h !== void 0 ? _h : 0x01), manualDays: Number((_j = r.manualDays) !== null && _j !== void 0 ? _j : 0),
                     };

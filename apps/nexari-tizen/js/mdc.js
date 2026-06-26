@@ -123,6 +123,7 @@ var INPUT_SOURCES = {
   'HDMI3':     0x31,
   'HDMI4':     0x33,
   'INTERNAL_USB': 0x62,
+  'URL_LAUNCHER': 0x63,
   'PC':        0x14,
   'DVI':       0x18,
   'DP':        0x25,
@@ -1792,43 +1793,57 @@ var server = http.createServer(function(req, res) {
         //   3. SET the modified bytes
         //
         // Hour fields use 12-hour format (0–12). Confirmed from packet capture:
-        // all working SET packets use onHour/offHour ≤ 12. Sending >12 causes NAK 0x01.
-        // AM/PM encoding is TBD — for now hours must be in the 12h range.
-        //
-        // 15-byte layout (confirmed from enable/disable captures):
-        // [0]=onHour, [1]=onMin, [2]=source, [3]=onEnable,
-        // [4]=offHour, [5]=offMin, [6]=repeat, [7]=offEnable,
-        // [8-11]=manualDayBits (LE), [12]=volume, [13-14]=model constants (read-only)
+        // 15-byte layout (confirmed from live packet capture + OSD cross-check):
+        // [0]=onHour(1-12), [1]=onMin, [2]=onAmPm(0=PM,1=AM), [3]=onEnable,
+        // [4]=offHour(1-12), [5]=offMin, [6]=offAmPm(0=PM,1=AM), [7]=offEnable,
+        // [8]=repeat(0=Once,1=EveryDay,2=MonFri,3=MonSat,4=SatSun,5=Manual),
+        // [9]=manualDayBits(7bits,bit0=Sun..bit6=Sat), [10-11]=flags(preserved),
+        // [12]=volume, [13]=source(0x63=URL_Launcher), [14]=model constant(preserved)
         var slot = Math.max(1, Math.min(7, parseInt(parsed.slot, 10) || 1));
         var timerCmd = ON_TIMER_CMDS[slot - 1];
 
+        // Convert 24h hour to 12h + AM/PM byte (0=PM, 1=AM)
+        function h24toAmPm(h24) {
+          var ampm = h24 < 12 ? 0x01 : 0x00;
+          var h12  = h24 === 0 ? 12 : (h24 > 12 ? h24 - 12 : h24);
+          return { h12: h12, ampm: ampm };
+        }
+
         // Step 1: GET current state
         sendMdcPacketWithResponse(buildPacket(timerCmd, []), function(getErr, getBuf) {
-          // Default base in case GET fails (safe factory-like values)
-          var base = [0x07, 0x00, 0x01, 0x00, 0x0C, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x60, 0x01];
+          // Default base in case GET fails (7:00 AM / 12:00 PM, both off, EveryDay, vol 20, URL_Launcher)
+          var base = [0x07, 0x00, 0x01, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x14, 0x63, 0x01];
           if (!getErr && getBuf && getBuf.length >= 22 && String.fromCharCode(getBuf[4]) === 'A') {
             for (var bi = 0; bi < 15; bi++) {
               if (6 + bi < getBuf.length - 1) base[bi] = getBuf[6 + bi];
             }
           }
 
-          // Step 2: Apply user-supplied fields (hours support full 24h range 0–23)
-          if (parsed.onHour   != null) base[0]  = Math.max(0, Math.min(23, parseInt(parsed.onHour,  10) || 0));
+          // Step 2: Apply user-supplied fields
+          // Hours: accept 24h (0-23), convert to 12h + set AM/PM byte
+          if (parsed.onHour != null) {
+            var onAp = h24toAmPm(Math.max(0, Math.min(23, parseInt(parsed.onHour, 10) || 0)));
+            base[0] = onAp.h12;
+            base[2] = onAp.ampm;
+          }
           if (parsed.onMin    != null) base[1]  = Math.max(0, Math.min(59, parseInt(parsed.onMin,   10) || 0));
-          if (parsed.source   != null) base[2]  = parseInt(parsed.source, 10) & 0xFF;
           if (parsed.onEnable != null) base[3]  = parsed.onEnable ? 0x01 : 0x00;
-          if (parsed.offHour  != null) base[4]  = Math.max(0, Math.min(23, parseInt(parsed.offHour, 10) || 0));
-          if (parsed.offMin   != null) base[5]  = Math.max(0, Math.min(59, parseInt(parsed.offMin,  10) || 0));
-          if (parsed.repeat   != null) base[6]  = Math.max(0, Math.min(5,  parseInt(parsed.repeat,  10) || 0));
-          if (parsed.offEnable != null) base[7] = parsed.offEnable ? 0x01 : 0x00;
+          if (parsed.offHour != null) {
+            var offAp = h24toAmPm(Math.max(0, Math.min(23, parseInt(parsed.offHour, 10) || 0)));
+            base[4] = offAp.h12;
+            base[6] = offAp.ampm;
+          }
+          if (parsed.offMin    != null) base[5]  = Math.max(0, Math.min(59, parseInt(parsed.offMin,  10) || 0));
+          if (parsed.offEnable != null) base[7]  = parsed.offEnable ? 0x01 : 0x00;
+          if (parsed.repeat    != null) base[8]  = Math.max(0, Math.min(5,  parseInt(parsed.repeat,  10) || 0));
           var manualBitsVal = parsed.manualBits != null ? parsed.manualBits : parsed.manualDays;
           if (manualBitsVal != null) {
-            var mb = parseInt(manualBitsVal, 10) || 0;
-            base[8] = mb & 0xFF; base[9] = (mb >> 8) & 0xFF;
-            base[10] = (mb >> 16) & 0xFF; base[11] = (mb >> 24) & 0xFF;
+            // 7 day bits in byte[9]; bytes[10-11] are other flags — preserve them from GET
+            base[9] = parseInt(manualBitsVal, 10) & 0x7F;
           }
           if (parsed.volume != null) base[12] = Math.max(0, Math.min(100, parseInt(parsed.volume, 10) || 0));
-          // base[13] and base[14] are always preserved from GET (model-specific constants)
+          if (parsed.source != null) base[13] = parseInt(parsed.source, 10) & 0xFF;
+          // base[14] always preserved from GET (model-specific constant)
 
           // Step 3: SET with modified bytes
           sendMdcPacketWithResponse(buildPacket(timerCmd, base), function(setErr, setBuf) {
@@ -1882,20 +1897,25 @@ var server = http.createServer(function(req, res) {
           // Data bytes start at buf[6]; response is 15 bytes (dataLen=0x11=17, minus 2 for ack+cmd)
           var dataBytes = [];
           for (var di = 6; di < buf.length - 1; di++) dataBytes.push(buf[di]);
-          // Parse raw bytes into named fields using the confirmed 15-byte layout:
-          // [0]=onHour [1]=onMin [2]=source [3]=onEnable
-          // [4]=offHour [5]=offMin [6]=repeat [7]=offEnable
-          // [8-11]=manualDayBits(LE) [12]=volume [13-14]=model constants
-          var onHour    = dataBytes[0] != null ? dataBytes[0] : 0;
+          // Parse raw bytes using corrected 15-byte layout (confirmed from live packet capture):
+          // [0]=onHour(1-12), [1]=onMin, [2]=onAmPm(0=PM,1=AM), [3]=onEnable,
+          // [4]=offHour(1-12), [5]=offMin, [6]=offAmPm(0=PM,1=AM), [7]=offEnable,
+          // [8]=repeat, [9]=manualDayBits(7bits), [10-11]=flags, [12]=volume, [13]=source
+          var onH12     = dataBytes[0] != null ? dataBytes[0] : 7;
           var onMin     = dataBytes[1] != null ? dataBytes[1] : 0;
-          var timerSrc  = dataBytes[2] != null ? dataBytes[2] : 0x01;
+          var onAmPm    = dataBytes[2] != null ? dataBytes[2] : 0x01; // 0=PM, 1=AM
           var onEnable  = dataBytes[3] === 0x01;
-          var offHour   = dataBytes[4] != null ? dataBytes[4] : 0;
+          var offH12    = dataBytes[4] != null ? dataBytes[4] : 12;
           var offMin    = dataBytes[5] != null ? dataBytes[5] : 0;
-          var timerRpt  = dataBytes[6] != null ? dataBytes[6] : 1;
+          var offAmPm   = dataBytes[6] != null ? dataBytes[6] : 0x00; // 0=PM, 1=AM
           var offEnable = dataBytes[7] === 0x01;
-          var manualDays = (dataBytes[8] || 0) | ((dataBytes[9] || 0) << 8) | ((dataBytes[10] || 0) << 16) | ((dataBytes[11] || 0) << 24);
+          var timerRpt  = dataBytes[8] != null ? dataBytes[8] : 1;
+          var manualDays = dataBytes[9] != null ? (dataBytes[9] & 0x7F) : 0;
           var timerVol  = dataBytes[12] != null ? dataBytes[12] : 0;
+          var timerSrc  = dataBytes[13] != null ? dataBytes[13] : 0x63;
+          // Convert 12h + AM/PM → 24h  (AM: 12→0, else h12;  PM: 12→12, else h12+12)
+          var onHour  = onAmPm  === 0x01 ? (onH12  === 12 ? 0  : onH12)  : (onH12  === 12 ? 12 : onH12  + 12);
+          var offHour = offAmPm === 0x01 ? (offH12 === 12 ? 0  : offH12) : (offH12 === 12 ? 12 : offH12 + 12);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             ok: true,
