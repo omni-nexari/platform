@@ -123,7 +123,7 @@ sudo systemctl restart signage-api
 
 # ── Health check ──────────────────────────────────────────────────────────────
 echo "==> [deploy] Waiting for API to come up..."
-sleep 3
+sleep 6
 if curl -sf http://127.0.0.1:3000/api/v1/health > /dev/null; then
     echo "    Health check PASSED"
 else
