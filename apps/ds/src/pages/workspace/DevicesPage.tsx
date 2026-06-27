@@ -981,7 +981,7 @@ export default function DevicesPage() {
       )}
 
       {/* Pair Device Modal */}
-      <Modal open={pairOpen} onClose={() => { setPairOpen(false); reset(); }}>
+      <Modal open={pairOpen} onClose={() => { setPairOpen(false); reset(); }} size="md">
         <ModalHeader>Pair a Device</ModalHeader>
         <ModalBody>
           {/* How-to instructions */}
@@ -992,7 +992,7 @@ export default function DevicesPage() {
               <label className="ui-label">Pairing Code</label>
               <input
                 {...register('code')}
-                className="ui-input w-full font-mono uppercase"
+                className="ui-input w-full font-mono uppercase placeholder:text-xs"
                 placeholder="ABC123"
                 autoFocus
               />
@@ -1004,7 +1004,7 @@ export default function DevicesPage() {
               <label className="ui-label">Device Name</label>
               <input
                 {...register('name')}
-                className="ui-input w-full"
+                className="ui-input w-full placeholder:text-xs"
                 placeholder="e.g. Lobby Display"
               />
               {errors.name && (

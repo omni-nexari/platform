@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <widget>
-	<ver>0.1.75</ver>
-	<size>183879</size>
+	<ver>0.1.76</ver>
+	<size>183883</size>
 	<widgetname>NexariEPaper</widgetname>
 	<webtype>tizen</webtype>
 </widget>
