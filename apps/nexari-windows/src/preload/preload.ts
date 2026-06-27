@@ -13,6 +13,8 @@ const api = {
 
   // ── Config ──────────────────────────────────────────────────────────────
   getDefaultApiBase: (): Promise<string> => ipcRenderer.invoke('app:getDefaultApiBase'),
+  /** Persist a URL entered in the pairing settings panel so the CSP is correct on next reload. */
+  setApiBase: (url: string): Promise<void> => ipcRenderer.invoke('app:setApiBase', url),
   getConfig: (): Promise<{ apiBase: string; deviceToken: string; deviceId: string; appVersion: string; isDev: boolean }> =>
     ipcRenderer.invoke('app:getConfig'),
   /** Clear stored credentials and return to the pairing screen. */

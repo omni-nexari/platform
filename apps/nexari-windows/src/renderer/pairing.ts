@@ -36,14 +36,16 @@ connToggle.addEventListener('click', () => {
   if (connOpen) apiInput.focus();
 });
 
-btnSave.addEventListener('click', () => {
+btnSave.addEventListener('click', async () => {
   const val = apiInput.value.trim().replace(/\/$/, '');
   try { new URL(val); } catch {
     connMsg.style.color = '#f87171';
     connMsg.textContent = 'Invalid URL — must start with http:// or https://';
     return;
   }
+  // Persist to both localStorage (renderer read) and electron-store (CSP rebuild on next load).
   localStorage.setItem('PLAYER_API_BASE', val);
+  await window.nexari.setApiBase(val);
   connMsg.style.color = '#4ade80';
   connMsg.textContent = 'Saved — reconnecting…';
   setTimeout(() => location.reload(), 700);

@@ -172,6 +172,12 @@ app.on('ready', async () => {
   // Expose default API base URL to renderer (pairing form)
   ipcMain.handle('app:getDefaultApiBase', () => getDefaultApiBase());
 
+  // Persist a pairing-screen URL change so the CSP builder picks it up on
+  // the next renderer load without requiring a full app restart.
+  ipcMain.handle('app:setApiBase', (_evt, url: string) => {
+    getStore().set('apiBase', (url as string).trim().replace(/\/$/, ''));
+  });
+
   // Allow renderer to trigger an update check manually (from settings overlay)
   ipcMain.handle('app:checkForUpdates', () => {
     autoUpdater.checkForUpdates().catch(() => {});
@@ -184,21 +190,9 @@ app.on('ready', async () => {
   //     variants; localhost is included for dev/HMR.
   //   - frame-src remains permissive because user content may include
   //     arbitrary iframes (HTML5 ads, calendars, dashboards).
-  const apiBase = (getStore().get('apiBase') as string | undefined)
-    || getDefaultApiBase();
-  const connectSrcHosts = new Set<string>(['ws://localhost:*', 'http://localhost:*', 'https://localhost:*']);
-  try {
-    const u = new URL(apiBase);
-    const isHttps = u.protocol === 'https:';
-    const httpOrigin = `${u.protocol}//${u.host}`;
-    const wsScheme = isHttps ? 'wss:' : 'ws:';
-    const wsOrigin = `${wsScheme}//${u.host}`;
-    connectSrcHosts.add(httpOrigin);
-    connectSrcHosts.add(wsOrigin);
-  } catch { /* ignore — apiBase malformed */ }
-
-  const connectSrc = ["'self'", ...Array.from(connectSrcHosts)].join(' ');
-
+  // connect-src is re-evaluated on every mainFrame load so that a URL saved
+  // via the pairing-screen settings panel takes effect immediately after reload
+  // without requiring a full app restart.
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     // Only enforce CSP on the main player frame itself — not on iframe content
     // (POS displays, HTML5 ads, dashboards) which should govern their own policies.
@@ -206,6 +200,20 @@ app.on('ready', async () => {
       callback({ responseHeaders: details.responseHeaders ?? {} });
       return;
     }
+    // Re-read apiBase on every mainFrame load so URL changes from the pairing
+    // settings panel (persisted via app:setApiBase IPC) are reflected immediately.
+    const currentApiBase = (getStore().get('apiBase') as string | undefined) || getDefaultApiBase();
+    const connectSrcHosts = new Set<string>(['ws://localhost:*', 'http://localhost:*', 'https://localhost:*']);
+    try {
+      const u = new URL(currentApiBase);
+      const isHttps = u.protocol === 'https:';
+      const httpOrigin = `${u.protocol}//${u.host}`;
+      const wsScheme = isHttps ? 'wss:' : 'ws:';
+      const wsOrigin = `${wsScheme}//${u.host}`;
+      connectSrcHosts.add(httpOrigin);
+      connectSrcHosts.add(wsOrigin);
+    } catch { /* ignore — apiBase malformed */ }
+    const connectSrc = ["'self'", ...Array.from(connectSrcHosts)].join(' ');
     callback({
       responseHeaders: {
         ...details.responseHeaders,

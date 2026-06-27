@@ -7,6 +7,15 @@ import path from 'path';
 import { app } from 'electron';
 
 export function getDefaultApiBase(): string {
+  // Partner builds: URL baked into package.json via electron-builder --em.nexariApiBase
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+    const pkg = require('../../package.json') as { nexariApiBase?: string };
+    const baked = pkg.nexariApiBase?.trim().replace(/\/$/, '');
+    if (baked) return baked;
+  } catch { /* not packaged or field missing */ }
+
+  // Dev / env-var override
   const configured = process.env.NEXARI_PLAYER_API_BASE ?? process.env.PLAYER_API_BASE;
   const normalized = configured?.trim().replace(/\/$/, '');
   if (normalized) return normalized;

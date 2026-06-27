@@ -518,16 +518,21 @@ foreach ($plat in $platforms) {
                     if ($LASTEXITCODE -ne 0) { throw "npm version patch failed" }
                 } finally { Pop-Location }
 
-                Write-Host "  Running electron-builder (NSIS)..."
+                Write-Host "  Building Windows player (TypeScript + renderer)..."
                 Push-Location $winAppDir
                 try {
-                    $env:NEXARI_PLAYER_API_BASE = $apiBase
-                    pnpm run package
+                    pnpm run build
+                    if ($LASTEXITCODE -ne 0) { throw "Windows player build failed" }
+                } finally { Pop-Location }
+
+                Write-Host "  Running electron-builder (NSIS) with baked API base: $apiBase ..."
+                Push-Location $winAppDir
+                try {
+                    # --em.nexariApiBase bakes the partner URL into package.json inside the asar.
+                    # store.ts reads it at runtime via require('../../package.json').nexariApiBase.
+                    pnpm exec electron-builder --win --x64 "--em.nexariApiBase=$apiBase"
                     if ($LASTEXITCODE -ne 0) { throw "electron-builder failed" }
-                } finally {
-                    Remove-Item Env:NEXARI_PLAYER_API_BASE -ErrorAction SilentlyContinue
-                    Pop-Location
-                }
+                } finally { Pop-Location }
             }
 
             $src = if ($WindowsInstallerPath -ne "") { $WindowsInstallerPath } else {
