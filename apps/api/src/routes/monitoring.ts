@@ -57,7 +57,7 @@ export async function monitoringRoutes(app: FastifyInstance) {
   // Proxies Netdata /api/v1/data with chart, after, points query params
   app.get(
     '/netdata',
-    { onRequest: [app.authenticatePlatformOwner] },
+    { onRequest: [app.authenticatePlatformAdmin] },
     async (req, reply) => {
       const { chart, after, points, format } = req.query as Record<string, string | undefined>;
       if (!chart) return reply.status(400).send({ error: 'chart param required' });
@@ -80,7 +80,7 @@ export async function monitoringRoutes(app: FastifyInstance) {
   // ── GET /monitoring/netdata/alarms ──────────────────────────────────────────
   app.get(
     '/netdata/alarms',
-    { onRequest: [app.authenticatePlatformOwner] },
+    { onRequest: [app.authenticatePlatformAdmin] },
     async (_req, reply) => {
       try {
         const data = await monitoringFetch<unknown>('/api/v1/alarms');
@@ -96,7 +96,7 @@ export async function monitoringRoutes(app: FastifyInstance) {
   // Proxies GoAccess /traffic/report.json
   app.get(
     '/traffic',
-    { onRequest: [app.authenticatePlatformOwner] },
+    { onRequest: [app.authenticatePlatformAdmin] },
     async (_req, reply) => {
       try {
         const data = await monitoringFetch<unknown>('/traffic/report.json');
@@ -111,7 +111,7 @@ export async function monitoringRoutes(app: FastifyInstance) {
   // ── GET /monitoring/ssl-status ──────────────────────────────────────────────
   app.get(
     '/ssl-status',
-    { onRequest: [app.authenticatePlatformOwner] },
+    { onRequest: [app.authenticatePlatformAdmin] },
     async (_req, reply) => {
       try {
         const url = new URL('/ssl-status', MONITORING_BASE_URL);
@@ -133,7 +133,7 @@ export async function monitoringRoutes(app: FastifyInstance) {
   // ── GET /monitoring/backup-status ───────────────────────────────────────────
   app.get(
     '/backup-status',
-    { onRequest: [app.authenticatePlatformOwner] },
+    { onRequest: [app.authenticatePlatformAdmin] },
     async (_req, reply) => {
       try {
         const url = new URL('/backup-status', MONITORING_BASE_URL);
@@ -160,7 +160,7 @@ export async function monitoringRoutes(app: FastifyInstance) {
   // ── GET /monitoring/crowdsec/decisions ──────────────────────────────────────
   app.get(
     '/crowdsec/decisions',
-    { onRequest: [app.authenticatePlatformOwner] },
+    { onRequest: [app.authenticatePlatformAdmin] },
     async (_req, reply) => {
       try {
         const data = await crowdsecFetch<unknown[]>('/v1/decisions');
@@ -176,7 +176,7 @@ export async function monitoringRoutes(app: FastifyInstance) {
   // Reads Mosquitto $SYS stats via mosquitto_sub (Netdata has no MQTT module)
   app.get(
     '/mqtt',
-    { onRequest: [app.authenticatePlatformOwner] },
+    { onRequest: [app.authenticatePlatformAdmin] },
     async (_req, reply) => {
       try {
         const topics = [
