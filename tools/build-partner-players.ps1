@@ -262,38 +262,47 @@ function Send-PlatformFiles {
 
     Write-Host "  Uploading $($FilePaths.Count) file(s) to platform..." -ForegroundColor DarkGray
 
-    $boundary = "----FormBoundary" + [System.Guid]::NewGuid().ToString("N")
-    $stream   = New-Object System.IO.MemoryStream
+    # Use HttpClient + StreamContent so large files (200 MB+ Windows installer) are
+    # streamed from disk rather than buffered into a MemoryStream.  Invoke-WebRequest
+    # uses the old .NET WebRequest stack which drops TLS connections on large sends.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-    foreach ($fp in $FilePaths) {
-        $name = Split-Path $fp -Leaf
-        $mime = if ($name -match '\.(xml|yml|yaml)$') { 'text/plain; charset=utf-8' } else { 'application/octet-stream' }
-        $hdr  = "--$boundary`r`nContent-Disposition: form-data; name=`"files`"; filename=`"$name`"`r`nContent-Type: $mime`r`n`r`n"
-        $hdrB = [System.Text.Encoding]::UTF8.GetBytes($hdr)
-        $stream.Write($hdrB, 0, $hdrB.Length)
-
-        $fileB = [System.IO.File]::ReadAllBytes($fp)
-        $stream.Write($fileB, 0, $fileB.Length)
-
-        $sep = [System.Text.Encoding]::UTF8.GetBytes("`r`n")
-        $stream.Write($sep, 0, $sep.Length)
-    }
-    $close = [System.Text.Encoding]::UTF8.GetBytes("--$boundary--`r`n")
-    $stream.Write($close, 0, $close.Length)
-    $body = $stream.ToArray()
-    $stream.Dispose()
-
+    $streams = @()
+    $form    = $null
+    $client  = $null
     try {
-        $resp = Invoke-WebRequest -Method Post `
-            -Uri "$instanceUrl/api/v1/player-releases/upload/$Plat" `
-            -ContentType "multipart/form-data; boundary=$boundary" `
-            -Body $body `
-            -Headers @{ 'Authorization' = "Bearer $($script:deployKey)" } `
-            -UseBasicParsing
-        return $resp.Content | ConvertFrom-Json
+        $client = New-Object System.Net.Http.HttpClient
+        $client.Timeout = [System.TimeSpan]::FromMinutes(10)
+        $client.DefaultRequestHeaders.Authorization =
+            New-Object System.Net.Http.Headers.AuthenticationHeaderValue('Bearer', $script:deployKey)
+
+        $form = New-Object System.Net.Http.MultipartFormDataContent
+
+        foreach ($fp in $FilePaths) {
+            $name    = Split-Path $fp -Leaf
+            $fs      = [System.IO.File]::OpenRead($fp)
+            $streams += $fs
+            $sc      = New-Object System.Net.Http.StreamContent($fs)
+            $sc.Headers.ContentType =
+                New-Object System.Net.Http.Headers.MediaTypeHeaderValue('application/octet-stream')
+            $form.Add($sc, 'files', $name)
+        }
+
+        $resp = $client.PostAsync("$instanceUrl/api/v1/player-releases/upload/$Plat", $form).GetAwaiter().GetResult()
+        $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+
+        if (-not $resp.IsSuccessStatusCode) {
+            Write-Warning "  Platform upload failed: HTTP $([int]$resp.StatusCode) — $body"
+            return $null
+        }
+        return $body | ConvertFrom-Json
     } catch {
         Write-Warning "  Platform upload failed: $($_.Exception.Message)"
         return $null
+    } finally {
+        if ($form)   { $form.Dispose() }
+        if ($client) { $client.Dispose() }
+        foreach ($s in $streams) { $s.Dispose() }
     }
 }
 
