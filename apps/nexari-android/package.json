@@ -1,6 +1,6 @@
 {
   "name": "nexari-android",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "description": "Nexari Signage — Android player (WebView host around @signage/player-web). Targets phones, tablets, Android TV, and Fire TV.",
   "private": true,
   "scripts": {

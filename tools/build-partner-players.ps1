@@ -58,7 +58,7 @@
 #>
 param(
     [string]$AdminEmail    = "chiho.lee23@gmail.com",
-    [string]$AdminPassword = "",
+    [string]$AdminPassword = "Samsung@2026!",
     [string]$AdminApiBase  = "https://admin.nexari.ca/api/v1",
 
     [ValidateSet("", "tizen", "epaper", "android", "windows", "esp32")]
@@ -492,10 +492,16 @@ foreach ($plat in $platforms) {
             $ver = (Get-Content "$AndroidDir\package.json" -Raw | ConvertFrom-Json).version
             $ApkSrc = "$AndroidDir\android\app\build\outputs\apk\self\release\app-self-release.apk"
             if (-not (Test-Path $ApkSrc)) { Write-Error "APK not found: $ApkSrc"; continue }
-            $apkFilename = "nexari-android.apk"
-            $uploadResult = Send-PlatformFiles -Plat android -FilePaths @($ApkSrc)
+            $versionedApk = "nexari-android-$ver.apk"   # versioned -- stored as downloadUrl in DB
+            $staticApk    = "nexari-android.apk"         # static -- refreshed for nginx redirect
+            $apkDir = Split-Path $ApkSrc -Parent
+            $versionedApkSrc = Join-Path $apkDir $versionedApk
+            $staticApkSrc    = Join-Path $apkDir $staticApk
+            Copy-Item $ApkSrc $versionedApkSrc -Force
+            Copy-Item $ApkSrc $staticApkSrc    -Force
+            $uploadResult = Send-PlatformFiles -Plat android -FilePaths @($versionedApkSrc, $staticApkSrc)
             Publish-PlatformRelease -Plat android -Ver $ver -UploadResult $uploadResult
-            Register-Build -Plat android -Filename $apkFilename -Ver $ver -BldUuid ""
+            Register-Build -Plat android -Filename $versionedApk -Ver $ver -BldUuid ""
             Write-Host "  Done. v$ver" -ForegroundColor Green
         }
 
@@ -528,9 +534,9 @@ foreach ($plat in $platforms) {
                 Write-Host "  Running electron-builder (NSIS) with baked API base: $apiBase ..."
                 Push-Location $winAppDir
                 try {
-                    # --em.nexariApiBase bakes the partner URL into package.json inside the asar.
+                    # -c.extraMetadata.nexariApiBase bakes the partner URL into package.json inside the asar.
                     # store.ts reads it at runtime via require('../../package.json').nexariApiBase.
-                    pnpm exec electron-builder --win --x64 "--em.nexariApiBase=$apiBase"
+                    pnpm exec electron-builder --win --x64 "-c.extraMetadata.nexariApiBase=$apiBase"
                     if ($LASTEXITCODE -ne 0) { throw "electron-builder failed" }
                 } finally { Pop-Location }
             }
@@ -543,17 +549,20 @@ foreach ($plat in $platforms) {
                 Write-Warning "  Windows: no installer found. Build with deploy-windows.ps1 first, or pass -WindowsInstallerPath. Skipping."
                 continue
             }
-            $filename = "nexari-windows-setup.exe"
             $ver = if ($src -match '(\d+\.\d+\.\d+)') { $Matches[1] } else { "0.0.0" }
-            # Upload the exe + latest.yml (electron auto-updater manifest) if present
-            $releaseDir  = Split-Path $src -Parent
+            $releaseDir        = Split-Path $src -Parent
+            $versionedFilename = "nexari-windows-setup-$ver.exe"   # versioned -- stored as downloadUrl in DB
+            $staticFilename    = "nexari-windows-setup.exe"         # static -- refreshed for nginx redirect
+            $versionedSrc = Join-Path $releaseDir $versionedFilename
+            $staticSrc    = Join-Path $releaseDir $staticFilename
+            Copy-Item $src $versionedSrc -Force
+            Copy-Item $src $staticSrc    -Force
             $latestYml   = Join-Path $releaseDir 'latest.yml'
-            $uploadFiles = @($src) + @(if (Test-Path $latestYml) { $latestYml } else { })
+            # Upload versioned first so it becomes the artifactUrl in the DB
+            $uploadFiles = @($versionedSrc, $staticSrc) + @(if (Test-Path $latestYml) { $latestYml } else { })
             $uploadResult = Send-PlatformFiles -Plat windows -FilePaths $uploadFiles
-            # Rename artifact URL to the fixed filename
-            if ($uploadResult) { $uploadResult.artifactUrl = "$instanceUrl/windows/$filename" }
             Publish-PlatformRelease -Plat windows -Ver $ver -UploadResult $uploadResult
-            Register-Build -Plat windows -Filename $filename -Ver $ver -BldUuid ""
+            Register-Build -Plat windows -Filename $versionedFilename -Ver $ver -BldUuid ""
             Write-Host "  Done. v$ver" -ForegroundColor Green
         }
 

@@ -70,6 +70,13 @@ function setStatus(msg: string, type: 'normal' | 'error' | 'success' = 'normal')
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 async function init() {
+  // 0. Show player version
+  try {
+    const cfg = await window.nexari.getConfig();
+    const vEl = document.getElementById('player-version');
+    if (vEl && cfg.appVersion) vEl.textContent = `v${cfg.appVersion}`;
+  } catch { /* ignore */ }
+
   // 1. Resolve apiBase: localStorage override → IPC default
   const apiBase = localStorage.getItem('PLAYER_API_BASE')
     || await window.nexari.getDefaultApiBase();

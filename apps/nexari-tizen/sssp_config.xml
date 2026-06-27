@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <widget>
-	<ver>1.0.181</ver>
-	<size>1086033</size>
+	<ver>1.0.182</ver>
+	<size>1086038</size>
 	<widgetname>NexariPlayer</widgetname>
 	<webtype>tizen</webtype>
 </widget>

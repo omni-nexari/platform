@@ -1,7 +1,7 @@
 ﻿import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { PackageCheck, CheckCircle2, Cpu, Send } from 'lucide-react';
+import { PackageCheck, CheckCircle2, Cpu, Send, Download } from 'lucide-react';
 import { saApi } from '../../lib/superadmin-auth.js';
 import {
   Badge,
@@ -198,13 +198,22 @@ export default function ManagementReleasesPage() {
                       Released {new Date(r.publishedAt).toLocaleDateString()}
                     </p>
                   </div>
-                  {!r.managementApproved && (
-                    <div className="shrink-0">
+                  <div className="shrink-0 flex items-center gap-2">
+                    <a
+                      href={r.downloadUrl}
+                      download
+                      title={`Download v${r.version}`}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-colors"
+                      style={{ borderColor: 'var(--card-border)', color: 'var(--text-muted)' }}
+                    >
+                      <Download size={12} />{r.downloadUrl.split('/').pop()}
+                    </a>
+                    {!r.managementApproved && (
                       <InlineActionButton onClick={() => approve.mutate(r.id)} disabled={approve.isPending}>
                         <CheckCircle2 size={13} />Approve for clients
                       </InlineActionButton>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
