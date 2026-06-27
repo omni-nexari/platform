@@ -301,7 +301,14 @@ function Send-PlatformFiles {
 function Publish-PlatformRelease {
     param([string]$Plat, [string]$Ver, $UploadResult)
 
-    if (-not $script:deployKey -or -not $UploadResult) { return }
+    if (-not $script:deployKey) {
+        Write-Warning "  Skipping platform release publish for $Plat -- no deploy key."
+        return
+    }
+    if (-not $UploadResult) {
+        Write-Warning "  Skipping platform release publish for $Plat -- upload failed (check warnings above)."
+        return
+    }
 
     try {
         $body = @{

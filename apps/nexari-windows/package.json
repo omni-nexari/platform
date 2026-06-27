@@ -1,6 +1,6 @@
 {
   "name": "nexari-windows",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "description": "Nexari Windows Player — Electron-based digital signage player with cross-platform syncplay, kiosk lockdown, and signed auto-update.",
   "private": true,
   "main": "dist/main/main.js",
