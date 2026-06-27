@@ -61,4 +61,4 @@ if ($LASTEXITCODE -ne 0) { throw "Update failed" }
 Write-Host ""
 Write-Host "Done. Check health:" -ForegroundColor Green
 Write-Host "  curl -sS http://127.0.0.1:3000/api/v1/health   (on Pi)" -ForegroundColor Gray
-Write-Host "  https://ds.chiho.app/api/v1/health              (public once TLS up)" -ForegroundColor Gray
+Write-Host "  https://platform.nexari.ca/api/v1/health              (public once TLS up)" -ForegroundColor Gray
