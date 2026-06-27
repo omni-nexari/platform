@@ -74,6 +74,7 @@ import ManagementLogsPage from './pages/management/ManagementLogsPage.js';
 import ManagementReleasesPage from './pages/management/ManagementReleasesPage.js';
 import ManagementPricingPage from './pages/management/ManagementPricingPage.js';
 import ManagementLicensePage from './pages/management/ManagementLicensePage.js';
+import ManagementMonitoringPage from './pages/management/ManagementMonitoringPage.js';
 
 import OrgSupportPage from './pages/support/OrgSupportPage.js';
 import OrgSupportTicketDetailPage from './pages/support/OrgSupportTicketDetailPage.js';
@@ -393,6 +394,7 @@ export default function App() {
         <Route path="support" element={<ManagementSupportPage />} />
         <Route path="support/:id" element={<ManagementSupportTicketDetailPage />} />
         <Route path="license" element={<ManagementLicensePage />} />
+        <Route path="monitoring" element={<ManagementMonitoringPage />} />
       </Route>
 
       {/* Authenticated user shell */}
