@@ -262,47 +262,29 @@ function Send-PlatformFiles {
 
     Write-Host "  Uploading $($FilePaths.Count) file(s) to platform..." -ForegroundColor DarkGray
 
-    # Use HttpClient + StreamContent so large files (200 MB+ Windows installer) are
-    # streamed from disk rather than buffered into a MemoryStream.  Invoke-WebRequest
-    # uses the old .NET WebRequest stack which drops TLS connections on large sends.
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    # Use curl.exe (built into Windows 10+) so large files are streamed from disk
+    # without buffering.  Invoke-WebRequest / System.Net.Http.HttpClient both have
+    # TLS/stream issues in PowerShell 5.1 when sending large binary payloads.
+    $formArgs = @()
+    foreach ($fp in $FilePaths) {
+        $name      = Split-Path $fp -Leaf
+        $formArgs += "-F"
+        $formArgs += "files=@`"$fp`";filename=`"$name`""
+    }
 
-    $streams = @()
-    $form    = $null
-    $client  = $null
     try {
-        $client = New-Object System.Net.Http.HttpClient
-        $client.Timeout = [System.TimeSpan]::FromMinutes(10)
-        $client.DefaultRequestHeaders.Authorization =
-            New-Object System.Net.Http.Headers.AuthenticationHeaderValue('Bearer', $script:deployKey)
-
-        $form = New-Object System.Net.Http.MultipartFormDataContent
-
-        foreach ($fp in $FilePaths) {
-            $name    = Split-Path $fp -Leaf
-            $fs      = [System.IO.File]::OpenRead($fp)
-            $streams += $fs
-            $sc      = New-Object System.Net.Http.StreamContent($fs)
-            $sc.Headers.ContentType =
-                New-Object System.Net.Http.Headers.MediaTypeHeaderValue('application/octet-stream')
-            $form.Add($sc, 'files', $name)
-        }
-
-        $resp = $client.PostAsync("$instanceUrl/api/v1/player-releases/upload/$Plat", $form).GetAwaiter().GetResult()
-        $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-
-        if (-not $resp.IsSuccessStatusCode) {
-            Write-Warning "  Platform upload failed: HTTP $([int]$resp.StatusCode) — $body"
+        $json = & curl.exe -s -S --fail `
+            -H "Authorization: Bearer $($script:deployKey)" `
+            @formArgs `
+            "$instanceUrl/api/v1/player-releases/upload/$Plat" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "  Platform upload failed (curl exit $LASTEXITCODE): $json"
             return $null
         }
-        return $body | ConvertFrom-Json
+        return $json | ConvertFrom-Json
     } catch {
         Write-Warning "  Platform upload failed: $($_.Exception.Message)"
         return $null
-    } finally {
-        if ($form)   { $form.Dispose() }
-        if ($client) { $client.Dispose() }
-        foreach ($s in $streams) { $s.Dispose() }
     }
 }
 
@@ -566,10 +548,13 @@ foreach ($plat in $platforms) {
             $staticSrc    = Join-Path $releaseDir $staticFilename
             Copy-Item $src $versionedSrc -Force
             Copy-Item $src $staticSrc    -Force
-            $latestYml   = Join-Path $releaseDir 'latest.yml'
-            # Upload versioned first so it becomes the artifactUrl in the DB
-            $uploadFiles = @($versionedSrc, $staticSrc) + @(if (Test-Path $latestYml) { $latestYml } else { })
-            $uploadResult = Send-PlatformFiles -Plat windows -FilePaths $uploadFiles
+            $latestYml = Join-Path $releaseDir 'latest.yml'
+            # Split into two uploads to stay under Cloudflare's 100 MB per-request limit.
+            # First request: versioned exe + yml manifest  → feeds artifactUrl/manifestUrl for release record
+            $mainFiles = @($versionedSrc) + @(if (Test-Path $latestYml) { $latestYml } else { })
+            $uploadResult = Send-PlatformFiles -Plat windows -FilePaths $mainFiles
+            # Second request: static "nexari-windows-setup.exe" (served at /windows/ for first-time installs)
+            $null = Send-PlatformFiles -Plat windows -FilePaths @($staticSrc)
             Publish-PlatformRelease -Plat windows -Ver $ver -UploadResult $uploadResult
             Register-Build -Plat windows -Filename $versionedFilename -Ver $ver -BldUuid ""
             Write-Host "  Done. v$ver" -ForegroundColor Green
