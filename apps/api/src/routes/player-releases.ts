@@ -201,10 +201,12 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
     return reply.send(updated);
   });
 
-  // ── GET /player-releases/management-list  (management admin) ─────────────
+  // ── GET /player-releases/management-list  (management admin OR platform owner) ──
   // Returns all superadmin-approved releases with this company's approval status.
-  app.get('/management-list', { onRequest: [app.authenticateManagementCompanyAdmin] }, async (req, reply) => {
-    const caller = req.user as { managementCompanyId: string };
+  // Accepts both management_company_admin and platform_owner tokens so the platform
+  // owner can view releases from the management portal without a separate login.
+  app.get('/management-list', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const caller = req.user as { type?: string; managementCompanyId?: string };
     const platformFilter = (req.query as { platform?: string })?.platform;
 
     const rows = platformFilter && (PLATFORMS as readonly string[]).includes(platformFilter)
@@ -215,9 +217,9 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
           .where(isNotNull(playerReleases.superadminApprovedAt))
           .orderBy(desc(playerReleases.publishedAt));
 
-    // Fetch this company's approvals in one query
+    // Fetch this company's approvals in one query (only when caller has a company)
     const releaseIds = rows.map((r) => r.id);
-    const approvals = releaseIds.length > 0
+    const approvals = releaseIds.length > 0 && caller.managementCompanyId
       ? await db.select({ releaseId: playerReleaseApprovals.releaseId })
           .from(playerReleaseApprovals)
           .where(and(
