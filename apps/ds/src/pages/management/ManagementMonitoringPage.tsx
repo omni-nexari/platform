@@ -144,9 +144,9 @@ function MetricCard({
   value: React.ReactNode;
   sub?: React.ReactNode;
   pct?: number;
-  sparkValues?: number[];
-  sparkColor?: string;
-  loading?: boolean;
+  sparkValues?: number[] | undefined;
+  sparkColor?: string | undefined;
+  loading?: boolean | undefined;
 }) {
   return (
     <div
