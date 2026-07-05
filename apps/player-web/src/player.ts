@@ -125,6 +125,9 @@ export class Player {
   private thumbTimer: ReturnType<typeof setTimeout> | null = null;
   private lastThumbAt = 0;
 
+  // Slot-boundary reload: fires when the active time slot ends or the next begins
+  private slotBoundaryTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Content download / cache state (mirrors Tizen downloadContentInBackground flow)
   private lastContentSignature: string | null = null;
   private pendingItems: ScheduleItem[] | null = null;
@@ -197,6 +200,7 @@ export class Player {
     if (this.reconnectTimer)       { clearTimeout(this.reconnectTimer);        this.reconnectTimer = null; }
     if (this.contentRefreshTimer)  { clearInterval(this.contentRefreshTimer);  this.contentRefreshTimer = null; }
     if (this.logStreamTimer)       { clearInterval(this.logStreamTimer);       this.logStreamTimer = null; }
+    if (this.slotBoundaryTimer)    { clearTimeout(this.slotBoundaryTimer);     this.slotBoundaryTimer = null; }
     this.cancelPlayback();
     if (this.syncActive) { try { syncStop(); } catch {} this.syncActive = false; }
     try { (window as any).nexari?.stopRelay?.(); } catch {}
@@ -1116,6 +1120,21 @@ export class Player {
     void this.renderPlaylist();
   }
 
+  /** Schedules loadContent() to fire precisely when the current slot ends or
+   *  the next timed slot begins, so the display switches at the exact boundary
+   *  rather than waiting up to 5 minutes for the regular poll. */
+  private scheduleSlotBoundaryReload(nextBoundaryMs: number | null | undefined): void {
+    if (this.slotBoundaryTimer) { clearTimeout(this.slotBoundaryTimer); this.slotBoundaryTimer = null; }
+    if (!nextBoundaryMs || nextBoundaryMs <= 0) return;
+    // Add a 2s buffer so the clock has definitely crossed the boundary.
+    const delay = nextBoundaryMs + 2_000;
+    logger.info(`[Player] slot boundary reload in ${Math.round(delay / 1000)}s`);
+    this.slotBoundaryTimer = setTimeout(() => {
+      this.slotBoundaryTimer = null;
+      void this.loadContent();
+    }, delay);
+  }
+
   private tryLoadCachedSchedule(): boolean {
     try {
       const raw = localStorage.getItem('nexari-schedule-cache');
@@ -1218,6 +1237,9 @@ export class Player {
       }
 
       void this.downloadContentInBackground(schedule.items, newSig);
+
+      // Schedule an exact reload when the active slot ends or the next begins.
+      this.scheduleSlotBoundaryReload((schedule as unknown as Record<string, unknown>)['_nextSlotBoundaryMs'] as number | null | undefined);
     } catch (e) {
       const err = e as Error & { status?: number };
       logger.warn(`[Player] loadContent failed: ${err?.message}`);

@@ -61,12 +61,31 @@ export class Api {
     if (!Array.isArray(body.schedules) || !body.schedules.length) return null;
 
     const raw = body.schedules[0] as Record<string, unknown>;
-    // Server uses 'slots' not 'items' — normalize and enrich content URLs
+    // Server uses 'slots' not 'items' — normalize and enrich content URLs.
+    // Select only the currently-active slot (respecting startTime/endTime and
+    // daysOfWeek), mirroring the Tizen player's _resolveScheduledPlaylist logic.
     const slots = (raw.slots as Array<Record<string, unknown>> | undefined) ?? [];
-    const items: ScheduleItem[] = slots.flatMap((slot): ScheduleItem[] => {
+
+    const now = new Date();
+    const dayOfWeek = now.getDay(); // 0=Sun … 6=Sat
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+    const slotIsActive = (slot: Record<string, unknown>): boolean => {
+      const days = slot['daysOfWeek'] as number[] | null | undefined;
+      if (days && Array.isArray(days) && !days.includes(dayOfWeek)) return false;
+      const startTime = slot['startTime'] as string | null | undefined;
+      const endTime   = slot['endTime']   as string | null | undefined;
+      if (startTime && endTime) {
+        const [sh, sm] = startTime.split(':').map(Number);
+        const [eh, em] = endTime.split(':').map(Number);
+        if (currentMinutes < (sh! * 60 + sm!) || currentMinutes >= (eh! * 60 + em!)) return false;
+      }
+      return true;
+    };
+
+    const slotToItems = (slot: Record<string, unknown>): ScheduleItem[] => {
       const playlist = slot['playlist'] as { items?: Array<Record<string, unknown>> } | null;
       if (playlist?.items?.length) {
-        // Playlist slot: expand into the playlist's individual items
         return playlist.items
           .map((pi): ScheduleItem | null => {
             const c = this.enrichContent(pi['content'] as Record<string, unknown> | null, t);
@@ -76,15 +95,63 @@ export class Api {
           })
           .filter((x): x is ScheduleItem => x !== null);
       }
-      // Direct content slot
       const c = this.enrichContent(slot['content'] as Record<string, unknown> | null, t);
       if (!c) return [];
       const contentRaw = slot['content'] as Record<string, unknown>;
       return [{ id: slot['id'] as string, contentId: slot['contentId'] as string | undefined,
         duration: contentRaw['duration'] as number | undefined, content: c }];
-    });
+    };
 
-    return { ...(raw as unknown as Schedule), items, resellerBranding };
+    // Find the first slot whose time window is currently active.
+    const activeSlot = slots.find(slotIsActive);
+
+    // If a time-windowed slot is active, use it exclusively.
+    // Otherwise fall back to always-on slots (no startTime/endTime).
+    const items: ScheduleItem[] = activeSlot
+      ? slotToItems(activeSlot)
+      : slots
+          .filter((s) => !s['startTime'] && !s['endTime'])
+          .flatMap((s) => slotToItems(s));
+
+    // Expose the next slot-boundary time so the player can schedule an exact
+    // content reload when the active slot ends or the next timed slot begins.
+    const nextBoundaryMs = this.computeNextSlotBoundaryMs(slots, currentMinutes, dayOfWeek);
+
+    return { ...(raw as unknown as Schedule), items, resellerBranding,
+      _nextSlotBoundaryMs: nextBoundaryMs } as unknown as Schedule;
+  }
+
+  /** Returns ms until the nearest upcoming slot boundary (end of current slot
+   *  or start of next timed slot), or null if there are no timed slots. */
+  private computeNextSlotBoundaryMs(
+    slots: Array<Record<string, unknown>>,
+    currentMinutes: number,
+    dayOfWeek: number,
+  ): number | null {
+    const timedSlots = slots.filter((s) => s['startTime'] && s['endTime']);
+    if (!timedSlots.length) return null;
+
+    const candidates: number[] = [];
+    for (const slot of timedSlots) {
+      const days = slot['daysOfWeek'] as number[] | null | undefined;
+      if (days && Array.isArray(days) && !days.includes(dayOfWeek)) continue;
+      const startTime = slot['startTime'] as string;
+      const endTime   = slot['endTime']   as string;
+      const [sh, sm] = startTime.split(':').map(Number);
+      const [eh, em] = endTime.split(':').map(Number);
+      const startM = sh! * 60 + sm!;
+      const endM   = eh! * 60 + em!;
+      // If inside this slot, the next boundary is its end time
+      if (currentMinutes >= startM && currentMinutes < endM) {
+        candidates.push((endM - currentMinutes) * 60_000);
+      }
+      // If this slot starts in the future today
+      if (startM > currentMinutes) {
+        candidates.push((startM - currentMinutes) * 60_000);
+      }
+    }
+    if (!candidates.length) return null;
+    return Math.min(...candidates);
   }
 
   private enrichContent(content: Record<string, unknown> | null, token: string | null): ContentRecord | null {

@@ -10,6 +10,9 @@ export declare class Api {
     constructor(base: string, token: () => string | null);
     /** Returns the schedule object for this device.  Throws on non-2xx. */
     getCurrentContent(_deviceId: string): Promise<Schedule | null>;
+    /** Returns ms until the nearest upcoming slot boundary (end of current slot
+     *  or start of next timed slot), or null if there are no timed slots. */
+    private computeNextSlotBoundaryMs;
     private enrichContent;
     /**
      * Sends a heartbeat.  The server processes heartbeats only via WebSocket

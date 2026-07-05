@@ -3424,17 +3424,38 @@ const Player = {
       return;
     }
 
-    // Remote URLs — use img tag directly
-    img.src = content.url;
+    // Remote URLs — download to local storage first so Tizen can load via file://
+    // (Tizen restricts loading HTTPS URLs directly in <img> tags due to CSP/CORS,
+    // which causes a silent black screen.  Local file:// loading is always reliable.)
+    const cm = (window as any).ContentManager;
+    if (cm && typeof cm.downloadContent === 'function') {
+      logger.info('Downloading image before display:', content.url);
+      cm.downloadContent(content)
+        .then((localUrl: string) => {
+          if (localUrl && localUrl.startsWith('file://')) {
+            logger.info('Image downloaded, loading from local file:', localUrl);
+            img.src = localUrl;
+          } else {
+            // downloadContent returned a remote URL — still try to display it
+            logger.warn('downloadContent returned non-local URL, using directly:', localUrl);
+            img.src = localUrl || content.url;
+          }
+        })
+        .catch((err: unknown) => {
+          const msg = (err as any)?.message || String(err);
+          logger.warn('Image pre-download failed, falling back to remote URL:', msg);
+          img.src = content.url;
+        });
+    } else {
+      img.src = content.url;
+    }
     img.onerror = (error) => {
-      logger.error('Image failed to load:', content.url, error);
+      logger.error('Image failed to load:', img.src, error);
       this.showImageError(container, content);
     };
-    
     img.onload = () => {
-      logger.info('Image loaded successfully:', content.url);
+      logger.info('Image loaded successfully:', img.src);
     };
-    
     container.appendChild(img);
   },
   

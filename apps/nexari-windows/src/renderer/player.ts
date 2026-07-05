@@ -1710,6 +1710,10 @@ window.nexari.onMessage('CMD_DISPLAY_POWER', (data: any) => {
 
 window.nexari.onMessage('WS_MESSAGE', (msg: any) => {
   switch (msg?.type) {
+    case 'WS_CONNECTED':
+      _wsConnected = msg.connected === true;
+      psSetWsStatus(_wsConnected);
+      break;
     case 'DEVICE_DELETED':
       console.warn('[Player] DEVICE_DELETED received — clearing credentials and returning to pairing');
       localStorage.removeItem('deviceToken');

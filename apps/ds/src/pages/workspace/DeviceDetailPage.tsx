@@ -3157,12 +3157,28 @@ export function DeviceDetailContent({
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
                           Update available: v{latestRelease.version}
                         </span>
-                        <ActionButton
-                          type="button"
-                          onClick={() => sendCmd({ command: 'reboot' })}
-                          disabled={cmdDisabled}
-                          tone="primary" className="px-3 py-1 text-xs shrink-0"
-                        >Reboot to Apply</ActionButton>
+                        {devicePlatform === 'tizen' || devicePlatform === 'epaper' ? (
+                          <ActionButton
+                            type="button"
+                            onClick={() => sendCmd({ command: 'reboot' })}
+                            disabled={cmdDisabled}
+                            tone="primary" className="px-3 py-1 text-xs shrink-0"
+                          >Reboot to Apply</ActionButton>
+                        ) : (
+                          <ActionButton
+                            type="button"
+                            onClick={() => sendCmd({
+                              command: 'update_player',
+                              payload: {
+                                version: latestRelease.version,
+                                downloadUrl: latestRelease.downloadUrl,
+                                ...(latestRelease.sha256 ? { sha256: latestRelease.sha256 } : {}),
+                              },
+                            })}
+                            disabled={cmdDisabled || !isOnline}
+                            tone="primary" className="px-3 py-1 text-xs shrink-0"
+                          >Update App</ActionButton>
+                        )}
                       </>
                     ) : (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">

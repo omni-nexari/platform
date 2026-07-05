@@ -150,7 +150,22 @@ var Api = class {
     if (!Array.isArray(body.schedules) || !body.schedules.length) return null;
     const raw = body.schedules[0];
     const slots = (_f = raw.slots) != null ? _f : [];
-    const items = slots.flatMap((slot) => {
+    const now = /* @__PURE__ */ new Date();
+    const dayOfWeek = now.getDay();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const slotIsActive = (slot) => {
+      const days = slot["daysOfWeek"];
+      if (days && Array.isArray(days) && !days.includes(dayOfWeek)) return false;
+      const startTime = slot["startTime"];
+      const endTime = slot["endTime"];
+      if (startTime && endTime) {
+        const [sh, sm] = startTime.split(":").map(Number);
+        const [eh, em] = endTime.split(":").map(Number);
+        if (currentMinutes < sh * 60 + sm || currentMinutes >= eh * 60 + em) return false;
+      }
+      return true;
+    };
+    const slotToItems = (slot) => {
       var _a2;
       const playlist = slot["playlist"];
       if ((_a2 = playlist == null ? void 0 : playlist.items) == null ? void 0 : _a2.length) {
@@ -174,8 +189,40 @@ var Api = class {
         duration: contentRaw["duration"],
         content: c
       }];
+    };
+    const activeSlot = slots.find(slotIsActive);
+    const items = activeSlot ? slotToItems(activeSlot) : slots.filter((s) => !s["startTime"] && !s["endTime"]).flatMap((s) => slotToItems(s));
+    const nextBoundaryMs = this.computeNextSlotBoundaryMs(slots, currentMinutes, dayOfWeek);
+    return __spreadProps(__spreadValues({}, raw), {
+      items,
+      resellerBranding,
+      _nextSlotBoundaryMs: nextBoundaryMs
     });
-    return __spreadProps(__spreadValues({}, raw), { items, resellerBranding });
+  }
+  /** Returns ms until the nearest upcoming slot boundary (end of current slot
+   *  or start of next timed slot), or null if there are no timed slots. */
+  computeNextSlotBoundaryMs(slots, currentMinutes, dayOfWeek) {
+    const timedSlots = slots.filter((s) => s["startTime"] && s["endTime"]);
+    if (!timedSlots.length) return null;
+    const candidates = [];
+    for (const slot of timedSlots) {
+      const days = slot["daysOfWeek"];
+      if (days && Array.isArray(days) && !days.includes(dayOfWeek)) continue;
+      const startTime = slot["startTime"];
+      const endTime = slot["endTime"];
+      const [sh, sm] = startTime.split(":").map(Number);
+      const [eh, em] = endTime.split(":").map(Number);
+      const startM = sh * 60 + sm;
+      const endM = eh * 60 + em;
+      if (currentMinutes >= startM && currentMinutes < endM) {
+        candidates.push((endM - currentMinutes) * 6e4);
+      }
+      if (startM > currentMinutes) {
+        candidates.push((startM - currentMinutes) * 6e4);
+      }
+    }
+    if (!candidates.length) return null;
+    return Math.min(...candidates);
   }
   enrichContent(content, token) {
     var _a;
@@ -6245,7 +6292,7 @@ var DeviceCommandSchema = external_exports.discriminatedUnion("command", [
   external_exports.object({ command: external_exports.literal("set_off_timer"), payload: external_exports.object({ slot: external_exports.number().int().min(1).max(7), time: external_exports.string() }) }),
   external_exports.object({ command: external_exports.literal("clear_on_timer"), payload: external_exports.object({ slot: external_exports.number().int().min(1).max(7) }) }),
   external_exports.object({ command: external_exports.literal("clear_off_timer"), payload: external_exports.object({ slot: external_exports.number().int().min(1).max(7) }) }),
-  external_exports.object({ command: external_exports.literal("update_tv_firmware") }),
+  external_exports.object({ command: external_exports.literal("update_tv_firmware"), payload: external_exports.object({ softwareId: external_exports.string(), fileName: external_exports.string(), swVersion: external_exports.string(), url: external_exports.string(), sizeBytes: external_exports.number() }) }),
   external_exports.object({ command: external_exports.literal("update_player"), payload: external_exports.object({ version: external_exports.string(), downloadUrl: external_exports.string(), sha256: external_exports.string().regex(/^[a-f0-9]{64}$/i).optional() }) }),
   external_exports.object({ command: external_exports.literal("clear_cache") }),
   external_exports.object({ command: external_exports.literal("dump_logs") }),
@@ -7639,6 +7686,8 @@ var Player = class {
     // Throttled content-change thumbnail: at most once per 10s
     this.thumbTimer = null;
     this.lastThumbAt = 0;
+    // Slot-boundary reload: fires when the active time slot ends or the next begins
+    this.slotBoundaryTimer = null;
     // Content download / cache state (mirrors Tizen downloadContentInBackground flow)
     this.lastContentSignature = null;
     this.pendingItems = null;
@@ -7717,6 +7766,10 @@ var Player = class {
     if (this.logStreamTimer) {
       clearInterval(this.logStreamTimer);
       this.logStreamTimer = null;
+    }
+    if (this.slotBoundaryTimer) {
+      clearTimeout(this.slotBoundaryTimer);
+      this.slotBoundaryTimer = null;
     }
     this.cancelPlayback();
     if (this.syncActive) {
@@ -8707,6 +8760,22 @@ var Player = class {
     this.cancelPlayback();
     void this.renderPlaylist();
   }
+  /** Schedules loadContent() to fire precisely when the current slot ends or
+   *  the next timed slot begins, so the display switches at the exact boundary
+   *  rather than waiting up to 5 minutes for the regular poll. */
+  scheduleSlotBoundaryReload(nextBoundaryMs) {
+    if (this.slotBoundaryTimer) {
+      clearTimeout(this.slotBoundaryTimer);
+      this.slotBoundaryTimer = null;
+    }
+    if (!nextBoundaryMs || nextBoundaryMs <= 0) return;
+    const delay = nextBoundaryMs + 2e3;
+    logger.info(`[Player] slot boundary reload in ${Math.round(delay / 1e3)}s`);
+    this.slotBoundaryTimer = setTimeout(() => {
+      this.slotBoundaryTimer = null;
+      void this.loadContent();
+    }, delay);
+  }
   tryLoadCachedSchedule() {
     try {
       const raw = localStorage.getItem("nexari-schedule-cache");
@@ -8795,6 +8864,7 @@ var Player = class {
         this._pendingSyncRelayInfo = null;
       }
       void this.downloadContentInBackground(schedule.items, newSig);
+      this.scheduleSlotBoundaryReload(schedule["_nextSlotBoundaryMs"]);
     } catch (e) {
       const err = e;
       logger.warn(`[Player] loadContent failed: ${err == null ? void 0 : err.message}`);

@@ -407,13 +407,16 @@ function PairInstructions() {
   const [tab, setTab] = useState<PlatformTab>('tizen');
   const [copied, setCopied] = useState(false);
 
-  // Download URLs are always served from the partner's own platform instance.
-  // Files are placed at /var/nexari/player-builds/{platform}/ on the server
-  // by build-partner-players.ps1 via SCP.
+  // Fetch latest approved release for each platform so we can show the version
+  // and use the exact versioned download URL instead of the static redirect.
+  const { data: winRelease }     = useQuery({ queryKey: ['latest-release', 'windows'], queryFn: () => api.get<{ downloadUrl: string; version: string } | null>('/player-releases/latest?platform=windows'), staleTime: 60_000 });
+  const { data: androidRelease } = useQuery({ queryKey: ['latest-release', 'android'], queryFn: () => api.get<{ downloadUrl: string; version: string } | null>('/player-releases/latest?platform=android'), staleTime: 60_000 });
+
+  // Download URLs: prefer versioned URL from the latest release record; fall back to static path.
   const tizenSsspUrl = `${window.location.origin}/tizen/sssp_config.xml`;
   const tizenWgtUrl  = `${window.location.origin}/tizen/NexariPlayer.wgt`;
-  const androidUrl   = `${window.location.origin}/android/nexari-android.apk`;
-  const windowsUrl   = `${window.location.origin}/windows/nexari-windows-setup.exe`;
+  const androidUrl   = androidRelease?.downloadUrl ?? `${window.location.origin}/android/nexari-android.apk`;
+  const windowsUrl   = winRelease?.downloadUrl     ?? `${window.location.origin}/windows/nexari-windows-setup.exe`;
 
   function copy() {
     navigator.clipboard.writeText(tizenSsspUrl).then(() => {
@@ -504,7 +507,7 @@ function PairInstructions() {
               rel="noopener noreferrer"
               className="flex items-center gap-2 w-full justify-center rounded-lg bg-[var(--blue)] hover:bg-[var(--blue-hover,#2563eb)] text-white text-sm font-semibold px-4 py-2.5 transition-colors"
             >
-              <Download size={14} /> Download APK
+              <Download size={14} /> Download APK{androidRelease?.version ? ` — v${androidRelease.version}` : ''}
             </a>
             <ol className="space-y-1.5 text-xs text-[var(--text-muted)] list-none">
               <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">1</span>On the Android device open <strong className="text-[var(--text)]">Settings → Security</strong> and enable <strong className="text-[var(--text)]">Install unknown apps</strong>.</li>
@@ -524,7 +527,7 @@ function PairInstructions() {
               rel="noopener noreferrer"
               className="flex items-center gap-2 w-full justify-center rounded-lg bg-[var(--blue)] hover:bg-[var(--blue-hover,#2563eb)] text-white text-sm font-semibold px-4 py-2.5 transition-colors"
             >
-              <Download size={14} /> Download Installer
+              <Download size={14} /> Download Installer{winRelease?.version ? ` — v${winRelease.version}` : ''}
             </a>
             <ol className="space-y-1.5 text-xs text-[var(--text-muted)] list-none">
               <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">1</span>Download the installer above and run it on the Windows PC.</li>

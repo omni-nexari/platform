@@ -48,6 +48,7 @@ export declare class Player {
     private liveCaptureBusy;
     private thumbTimer;
     private lastThumbAt;
+    private slotBoundaryTimer;
     private lastContentSignature;
     private pendingItems;
     private _pendingSyncGroupMsg;
@@ -102,6 +103,10 @@ export declare class Player {
     private updateIdleProgress;
     private downloadContentInBackground;
     private swapToPending;
+    /** Schedules loadContent() to fire precisely when the current slot ends or
+     *  the next timed slot begins, so the display switches at the exact boundary
+     *  rather than waiting up to 5 minutes for the regular poll. */
+    private scheduleSlotBoundaryReload;
     private tryLoadCachedSchedule;
     private loadContent;
     private cancelPlayback;

@@ -1,4 +1,4 @@
-import { db, devices, deviceHeartbeats, deviceScreenshots, playEvents, syncGroupMembers, syncGroups, bleScanResults } from '@signage/db';
+import { db, devices, deviceHeartbeats, deviceScreenshots, playEvents, syncGroupMembers, syncGroups, bleScanResults, playerReleases } from '@signage/db';
 import type { CompiledRuleSet } from '@signage/db';
 import { eq, and, isNull } from 'drizzle-orm';
 import { DeviceMessageSchema } from '@signage/shared';
@@ -176,6 +176,29 @@ export type WsCommand =
 const connections = new Map<string, Conn>();
 const deviceLogs = new Map<string, DeviceConsoleLogEntry[]>();
 const lastNtpResyncSentAt = new Map<string, number>(); // rate-limit ntp_resync per device
+const lastOtaSentAt = new Map<string, number>();       // rate-limit OTA push per device (1h)
+
+// Per-platform latest-release cache — refreshed every 5 minutes to avoid a
+// DB query on every heartbeat. Only platforms that support OTA via the player
+// WS channel (android, windows) are cached; tizen/epaper use SSSP auto-update.
+type CachedRelease = { version: string; downloadUrl: string; sha256: string | null; cachedAt: number };
+const releaseCache = new Map<string, CachedRelease>(); // key = platform
+const RELEASE_CACHE_TTL_MS = 5 * 60_000;
+const OTA_COOLDOWN_MS = 60 * 60_000; // 1 hour between pushes to the same device
+
+async function getLatestRelease(platform: string): Promise<CachedRelease | null> {
+  const cached = releaseCache.get(platform);
+  if (cached && Date.now() - cached.cachedAt < RELEASE_CACHE_TTL_MS) return cached;
+  const [row] = await db
+    .select({ version: playerReleases.version, downloadUrl: playerReleases.downloadUrl, sha256: playerReleases.sha256 })
+    .from(playerReleases)
+    .where(and(eq(playerReleases.platform, platform as 'android' | 'windows' | 'tizen' | 'epaper'), eq(playerReleases.isLatest, true)))
+    .limit(1);
+  if (!row) return null;
+  const entry: CachedRelease = { ...row, cachedAt: Date.now() };
+  releaseCache.set(platform, entry);
+  return entry;
+}
 const MAX_DEVICE_LOGS = 2000;
 const pendingMdcStatus = new Map<string, {
   resolve: (value: MdcStatusResponse) => void;
@@ -610,6 +633,34 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
           conn.send(JSON.stringify({ type: 'ntp_resync' }));
           lastNtpResyncSentAt.set(deviceId, Date.now());
           console.info(`[ws] ntp_resync sent to ${deviceId} (drift=${hb.clockDriftMs}ms)`);
+        }
+      }
+    }
+
+    // ── OTA auto-update for android / windows ────────────────────────────────
+    // Only push when: platform supports WS-OTA, the device reports its version,
+    // versions don't match, and we haven't already pushed in the last hour.
+    const devicePlatform = (hb as Record<string, unknown>)['kind'] as string | undefined
+      ?? (await db.query.devices.findFirst({ where: eq(devices.id, deviceId), columns: { platform: true } }))?.platform
+      ?? null;
+    if (devicePlatform && ['android', 'windows'].includes(devicePlatform) && hb.playerVersion) {
+      const latest = await getLatestRelease(devicePlatform).catch(() => null);
+      if (latest && latest.version !== hb.playerVersion) {
+        const lastOta = lastOtaSentAt.get(deviceId) ?? 0;
+        if (Date.now() - lastOta > OTA_COOLDOWN_MS) {
+          const conn = connections.get(deviceId);
+          if (conn?.readyState === 1) {
+            conn.send(JSON.stringify({
+              type: 'update_player',
+              payload: {
+                version: latest.version,
+                downloadUrl: latest.downloadUrl,
+                ...(latest.sha256 ? { sha256: latest.sha256 } : {}),
+              },
+            }));
+            lastOtaSentAt.set(deviceId, Date.now());
+            console.info(`[ws] OTA push → ${deviceId} (${devicePlatform}) ${hb.playerVersion} → ${latest.version}`);
+          }
         }
       }
     }

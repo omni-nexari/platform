@@ -460,6 +460,21 @@ foreach ($plat in $platforms) {
         "android" {
             if (-not $SkipBuild) {
                 Write-Host "  Building Android APK..."
+
+                # Build player-web bundle first, then sync into Android assets
+                Write-Host "  Building player-web bundle..." -ForegroundColor DarkGray
+                Push-Location $RepoRoot
+                try {
+                    $local:ErrorActionPreference = 'Continue'
+                    pnpm --filter "@signage/player-web" build
+                    $local:ErrorActionPreference = 'Stop'
+                    if ($LASTEXITCODE -ne 0) { throw "player-web build failed" }
+                } finally { Pop-Location }
+
+                Write-Host "  Syncing player-web assets -> android..." -ForegroundColor DarkGray
+                node "$AndroidDir\scripts\sync-player-web.cjs"
+                if ($LASTEXITCODE -ne 0) { throw "sync-player-web failed" }
+
                 Push-Location $AndroidDir
                 try {
                     npm version patch --no-git-tag-version | Out-Null
@@ -504,7 +519,9 @@ foreach ($plat in $platforms) {
                 Write-Host "  Building player-web bundle..."
                 Push-Location $RepoRoot
                 try {
+                    $local:ErrorActionPreference = 'Continue'
                     pnpm --filter "@signage/player-web" build
+                    $local:ErrorActionPreference = 'Stop'
                     if ($LASTEXITCODE -ne 0) { throw "player-web build failed" }
                 } finally { Pop-Location }
 
@@ -527,7 +544,11 @@ foreach ($plat in $platforms) {
                 try {
                     # -c.extraMetadata.nexariApiBase bakes the partner URL into package.json inside the asar.
                     # store.ts reads it at runtime via require('../../package.json').nexariApiBase.
-                    pnpm exec electron-builder --win --x64 "-c.extraMetadata.nexariApiBase=$apiBase"
+                    # -c.publish.url bakes the per-partner feed URL so electron-updater fetches
+                    # latest.yml from the correct instance (not the placeholder in package.json).
+                    pnpm exec electron-builder --win --x64 `
+                        "-c.extraMetadata.nexariApiBase=$apiBase" `
+                        "-c.publish.url=$instanceUrl/windows"
                     if ($LASTEXITCODE -ne 0) { throw "electron-builder failed" }
                 } finally { Pop-Location }
             }

@@ -177,6 +177,7 @@ function connect() {
     // Delay first heartbeat by 2 s so the player window is fully shown
     // and Electron's screen API returns real bounds instead of 0×0.
     setTimeout(() => { sendHeartbeat(); sendNetworkInfo(); }, 2_000);
+    win?.webContents.send('WS_MESSAGE', { type: 'WS_CONNECTED', connected: true });
   });
 
   ws.on('message', (raw: RawData) => {
@@ -186,6 +187,7 @@ function connect() {
   });
 
   ws.on('close', () => {
+    win?.webContents.send('WS_MESSAGE', { type: 'WS_CONNECTED', connected: false });
     if (hbTimer) { clearInterval(hbTimer); hbTimer = null; }
     // Reconnect with exponential backoff (capped at 30 s)
     setTimeout(connect, Math.min(30_000, 2_000 + Math.random() * 3_000));
