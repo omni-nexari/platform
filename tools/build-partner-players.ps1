@@ -253,6 +253,62 @@ if (-not $script:deployKey) {
     Write-Warning "  Uploads and releases will be skipped -- only nexari-admin registration will run."
 }
 
+# ── Fetch partner branding from the platform ──────────────────────────────────
+# GET /api/v1/player-releases/branding (requires deploy key).  On any failure,
+# falls back silently to Nexari defaults so builds continue uninterrupted.
+# Returns a PSCustomObject with CompanyName, LogoUrl, TempLogoPath, PrimaryColor.
+function Get-PartnerBranding {
+    if (-not $script:deployKey) {
+        Write-Host "  Branding: no deploy key, using Nexari defaults." -ForegroundColor DarkGray
+        return [PSCustomObject]@{ CompanyName = ''; LogoUrl = ''; TempLogoPath = ''; PrimaryColor = '' }
+    }
+    try {
+        $resp = Invoke-RestMethod `
+            -Method Get `
+            -Uri "$instanceUrl/api/v1/player-releases/branding" `
+            -Headers @{ 'Authorization' = "Bearer $($script:deployKey)" }
+
+        $companyName  = if ($resp.companyName)  { $resp.companyName  } else { '' }
+        $logoUrl      = if ($resp.logoUrl)       { $resp.logoUrl      } else { '' }
+        $portalTitle  = if ($resp.portalTitle)   { $resp.portalTitle  } else { '' }
+        $primaryColor = if ($resp.primaryColor)  { $resp.primaryColor } else { '' }
+
+        # Prefer portalTitle for the splash label (more partner-branded), fall back to company name
+        $displayName  = if ($portalTitle) { $portalTitle } elseif ($companyName) { $companyName } else { '' }
+
+        # Download the logo to a temp file so build tools can copy it in place
+        $tempLogoPath = ''
+        if ($logoUrl) {
+            $ext = [System.IO.Path]::GetExtension($logoUrl)
+            if (-not $ext -or $ext.Length -gt 6) { $ext = '.png' }  # safety fallback
+            $tempLogoPath = Join-Path $env:TEMP "partner-logo-$($partner.Id)$ext"
+            try {
+                Invoke-WebRequest -Uri $logoUrl -OutFile $tempLogoPath -UseBasicParsing
+                Write-Host "  Branding: '$displayName'  logo -> $(Split-Path $tempLogoPath -Leaf)" -ForegroundColor DarkGray
+            } catch {
+                Write-Warning "  Failed to download partner logo ($logoUrl): $_"
+                $tempLogoPath = ''
+            }
+        } else {
+            Write-Host "  Branding: '$displayName' (no logo configured, using Nexari default)" -ForegroundColor DarkGray
+        }
+
+        return [PSCustomObject]@{
+            CompanyName  = $displayName
+            LogoUrl      = $logoUrl
+            TempLogoPath = $tempLogoPath
+            PrimaryColor = $primaryColor
+        }
+    } catch {
+        Write-Warning "  Branding fetch failed: $_ -- using Nexari defaults."
+        return [PSCustomObject]@{ CompanyName = ''; LogoUrl = ''; TempLogoPath = ''; PrimaryColor = '' }
+    }
+}
+
+Write-Host ""
+Write-Host "Fetching partner branding..." -ForegroundColor Cyan
+$script:branding = Get-PartnerBranding
+
 # Upload one or more local files to the partner's platform via the upload API.
 # Returns the parsed JSON response, or $null on failure.
 function Send-PlatformFiles {
@@ -368,6 +424,11 @@ foreach ($plat in $platforms) {
                     if ($LASTEXITCODE -ne 0) { throw "npm version patch failed" }
                     $env:API_BASE = $apiBase
                     $env:WS_URL   = $wsUrl
+                    if ($script:branding.CompanyName) { $env:COMPANY_NAME = $script:branding.CompanyName }
+                    if ($script:branding.TempLogoPath) {
+                        Copy-Item $script:branding.TempLogoPath "$TizenDir\logo.png" -Force
+                        Write-Host "  Tizen: replaced logo.png with partner logo." -ForegroundColor DarkGray
+                    }
                     node scripts/generate-build-info.cjs
                     if ($LASTEXITCODE -ne 0) { throw "generate-build-info.cjs failed" }
                     npm run build
@@ -391,7 +452,7 @@ foreach ($plat in $platforms) {
                     $wgt = Get-ChildItem $TizenDir -Filter '*.wgt' | Select-Object -First 1
                     if (-not $wgt) { throw "Tizen package failed -- no WGT produced" }
                     if ($wgt.Name -ne 'NexariPlayer.wgt') { Rename-Item $wgt.FullName "$TizenDir\NexariPlayer.wgt" -Force }
-                    $env:API_BASE = $null; $env:WS_URL = $null
+                    $env:API_BASE = $null; $env:WS_URL = $null; $env:COMPANY_NAME = $null; $env:LOGO_URL = $null
                 } finally { Pop-Location }
             }
             $ver = (Get-Content "$TizenDir\package.json" -Raw | ConvertFrom-Json).version
@@ -419,6 +480,11 @@ foreach ($plat in $platforms) {
                     if ($LASTEXITCODE -ne 0) { throw "npm version patch failed" }
                     $env:API_BASE = $apiBase
                     $env:WS_URL   = $wsUrl
+                    if ($script:branding.CompanyName) { $env:COMPANY_NAME = $script:branding.CompanyName }
+                    if ($script:branding.TempLogoPath) {
+                        Copy-Item $script:branding.TempLogoPath "$EpaperDir\logo.png" -Force
+                        Write-Host "  ePaper: replaced logo.png with partner logo." -ForegroundColor DarkGray
+                    }
                     node scripts/generate-build-info.cjs
                     if ($LASTEXITCODE -ne 0) { throw "generate-build-info.cjs failed" }
 
@@ -439,7 +505,7 @@ foreach ($plat in $platforms) {
                     $wgt = Get-ChildItem $EpaperDir -Filter '*.wgt' | Select-Object -First 1
                     if (-not $wgt) { throw "ePaper package failed -- no WGT produced" }
                     if ($wgt.Name -ne 'NexariEPaper.wgt') { Rename-Item $wgt.FullName "$EpaperDir\NexariEPaper.wgt" -Force }
-                    $env:API_BASE = $null; $env:WS_URL = $null
+                    $env:API_BASE = $null; $env:WS_URL = $null; $env:COMPANY_NAME = $null; $env:LOGO_URL = $null
                 } finally { Pop-Location }
             }
             $ver = (Get-Content "$EpaperDir\package.json" -Raw | ConvertFrom-Json).version
@@ -472,7 +538,10 @@ foreach ($plat in $platforms) {
                 } finally { Pop-Location }
 
                 Write-Host "  Syncing player-web assets -> android..." -ForegroundColor DarkGray
+                # Pass partner logo path so sync-player-web.cjs uses it instead of the Nexari default
+                if ($script:branding.TempLogoPath) { $env:LOGO_PATH = $script:branding.TempLogoPath }
                 node "$AndroidDir\scripts\sync-player-web.cjs"
+                $env:LOGO_PATH = $null
                 if ($LASTEXITCODE -ne 0) { throw "sync-player-web failed" }
 
                 Push-Location $AndroidDir
@@ -488,9 +557,11 @@ foreach ($plat in $platforms) {
                     Set-Content $gradleFile $gc -Encoding UTF8
 
                     Push-Location "android"
-                    .\gradlew.bat assembleSelfRelease `
-                        "-PpartnerApiBase=$apiBase" `
-                        "-PpartnerWsBase=$wsUrl"
+                    $gradleArgs = @("-PpartnerApiBase=$apiBase", "-PpartnerWsBase=$wsUrl")
+                    if ($script:branding.CompanyName) {
+                        $gradleArgs += "-PpartnerName=$($script:branding.CompanyName)"
+                    }
+                    .\gradlew.bat assembleSelfRelease @gradleArgs
                     if ($LASTEXITCODE -ne 0) { throw "Gradle assembleSelfRelease failed" }
                     Pop-Location
                 } finally { Pop-Location }
@@ -535,6 +606,10 @@ foreach ($plat in $platforms) {
                 Write-Host "  Building Windows player (TypeScript + renderer)..."
                 Push-Location $winAppDir
                 try {
+                    if ($script:branding.TempLogoPath) {
+                        Copy-Item $script:branding.TempLogoPath "$winAppDir\src\renderer\nexari.png" -Force
+                        Write-Host "  Windows: replaced pairing-screen logo with partner logo." -ForegroundColor DarkGray
+                    }
                     pnpm run build
                     if ($LASTEXITCODE -ne 0) { throw "Windows player build failed" }
                 } finally { Pop-Location }
@@ -544,11 +619,18 @@ foreach ($plat in $platforms) {
                 try {
                     # -c.extraMetadata.nexariApiBase bakes the partner URL into package.json inside the asar.
                     # store.ts reads it at runtime via require('../../package.json').nexariApiBase.
+                    # -c.extraMetadata.nexariCompanyName bakes the partner's company name.
                     # -c.publish.url bakes the per-partner feed URL so electron-updater fetches
                     # latest.yml from the correct instance (not the placeholder in package.json).
-                    pnpm exec electron-builder --win --x64 `
-                        "-c.extraMetadata.nexariApiBase=$apiBase" `
+                    $ebArgs = @(
+                        '--win', '--x64',
+                        "-c.extraMetadata.nexariApiBase=$apiBase",
                         "-c.publish.url=$instanceUrl/windows"
+                    )
+                    if ($script:branding.CompanyName) {
+                        $ebArgs += "-c.extraMetadata.nexariCompanyName=$($script:branding.CompanyName)"
+                    }
+                    pnpm exec electron-builder @ebArgs
                     if ($LASTEXITCODE -ne 0) { throw "electron-builder failed" }
                 } finally { Pop-Location }
             }
@@ -607,6 +689,12 @@ foreach ($plat in $platforms) {
 Write-Host ""
 Write-Host "=================================================" -ForegroundColor Green
 Write-Host "  Builds complete for: $($partner.Name)"          -ForegroundColor Green
+if ($script:branding.CompanyName) {
+    Write-Host "  Branding applied:    $($script:branding.CompanyName)" -ForegroundColor Green
+    if ($script:branding.LogoUrl) {
+        Write-Host "  Logo:                $($script:branding.LogoUrl)" -ForegroundColor Green
+    }
+}
 Write-Host "  Platforms: $($platforms -join ', ')"            -ForegroundColor Green
 Write-Host "  Partner downloads:   https://partners.nexari.ca/downloads"           -ForegroundColor Green
 Write-Host "  Management releases: $instanceUrl/management/releases" -ForegroundColor Green

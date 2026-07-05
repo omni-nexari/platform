@@ -37,9 +37,13 @@ const buildId = formatBuildId(now);
 
 const apiBase = process.env.API_BASE || '';
 const wsUrl = process.env.WS_URL || '';
+const companyName = process.env.COMPANY_NAME || '';
+const logoUrl = process.env.LOGO_URL || '';
 const playerConfigLines = [];
 if (apiBase) playerConfigLines.push(`    API_BASE: ${JSON.stringify(apiBase)}`);
 if (wsUrl) playerConfigLines.push(`    WS_URL: ${JSON.stringify(wsUrl)}`);
+if (companyName) playerConfigLines.push(`    COMPANY_NAME: ${JSON.stringify(companyName)}`);
+if (logoUrl) playerConfigLines.push(`    LOGO_URL: ${JSON.stringify(logoUrl)}`);
 const playerConfigBlock = playerConfigLines.length
   ? `\n  // Dev config overrides (injected at build time)\n  window.__PLAYER_CONFIG__ = {\n${playerConfigLines.join(',\n')}\n  };\n`
   : '';

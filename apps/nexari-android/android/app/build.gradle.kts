@@ -63,6 +63,7 @@ android {
         // nginx proxies / to 127.0.0.1:3000 and upgrades WS automatically.
         create("dev") {
             dimension = "channel"
+            resValue("string", "app_name", "Nexari Android")
             buildConfigField("boolean", "OTA_ENABLED", "false")
             buildConfigField("String",  "DEFAULT_API_BASE", "\"http://192.168.1.17/api/v1\"")
             buildConfigField("String",  "DEFAULT_WS_BASE",  "\"ws://192.168.1.17\"")
@@ -76,7 +77,18 @@ android {
                 ?: ""
             val partnerWs = (project.findProperty("partnerWsBase") as String?)
                 ?: ""
+            // Per-partner launcher label; falls back to "Nexari" when not provided.
+            // Escape characters that are special in Android string resources / XML.
+            val partnerName = (project.findProperty("partnerName") as String?)
+                ?.takeIf { it.isNotBlank() } ?: "Nexari"
+            val safeName = partnerName
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("'", "\\'")
+                .replace("\"", "\\\"")
             val otaBase = partnerApi.removeSuffix("/api/v1")
+            resValue("string", "app_name", safeName)
             buildConfigField("boolean", "OTA_ENABLED", "true")
             buildConfigField("String",  "DEFAULT_API_BASE", "\"$partnerApi\"")
             buildConfigField("String",  "DEFAULT_WS_BASE",  "\"$partnerWs\"")
@@ -85,6 +97,7 @@ android {
         // Google Play / Managed Play â€” Play handles updates.
         create("play") {
             dimension = "channel"
+            resValue("string", "app_name", "Nexari")
             buildConfigField("boolean", "OTA_ENABLED", "false")
             buildConfigField("String",  "DEFAULT_API_BASE", "\"\"")
             buildConfigField("String",  "DEFAULT_WS_BASE",  "\"\"")

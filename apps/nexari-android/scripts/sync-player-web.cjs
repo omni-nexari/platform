@@ -24,7 +24,11 @@ function cp(src, dst) {
 }
 
 // Logo source — always ship alongside the bundle.
-const LOGO_SRC = path.resolve(__dirname, '..', '..', '..', 'Docs', 'logo', 'nexari.png');
+// For per-partner builds, build-partner-players.ps1 sets LOGO_PATH to the partner's
+// downloaded logo; fall back to the default Nexari logo when unset/missing.
+const PARTNER_LOGO = process.env.LOGO_PATH;
+const DEFAULT_LOGO = path.resolve(__dirname, '..', '..', '..', 'Docs', 'logo', 'nexari.png');
+const LOGO_SRC = (PARTNER_LOGO && fs.existsSync(PARTNER_LOGO)) ? PARTNER_LOGO : DEFAULT_LOGO;
 
 rmrf(DEST);
 fs.mkdirSync(DEST, { recursive: true });

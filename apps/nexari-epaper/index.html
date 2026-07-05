@@ -56,7 +56,7 @@
             <div class="logo">
                 <img src="logo.png" alt="Nexari" onerror="this.style.display='none'" />
             </div>
-            <h1>Nexari E-Paper</h1>
+            <h1 id="brand-name">Nexari E-Paper</h1>
             <div class="pairing-code-container">
                 <p class="pairing-label">Enter this code in your dashboard:</p>
                 <div id="pairing-code" class="pairing-code">------</div>
@@ -124,6 +124,17 @@
     <!-- webapis.js: Samsung TEP library required for webapis.epaper.* — must load before any module that calls it -->
     <script type="text/javascript" src="$WEBAPIS/webapis/webapis.js"></script>
     <script src="js/build-info.js"></script>
+    <!-- Apply per-partner branding (company name) injected at build time -->
+    <script>
+    (function() {
+      var cfg = window.__PLAYER_CONFIG__ || {};
+      if (cfg.COMPANY_NAME) {
+        var el = document.getElementById('brand-name');
+        if (el) el.textContent = cfg.COMPANY_NAME;
+        document.title = cfg.COMPANY_NAME;
+      }
+    })();
+    </script>
     <script src="js/config.js"></script>
     <script src="js/api.js"></script>
     <script src="js/telemetry.js"></script>

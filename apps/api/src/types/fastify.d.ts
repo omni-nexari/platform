@@ -16,4 +16,9 @@ declare module 'fastify' {
     /** Accepts platform_owner cookie session OR deploy key Bearer token */
     authenticateDeployKeyOrPlatformOwner(req: FastifyRequest, reply: FastifyReply): Promise<void>;
   }
+
+  interface FastifyRequest {
+    /** orgId of the deploy key that authenticated this request (set by authenticateDeployKey) */
+    deployKeyOrgId?: string;
+  }
 }

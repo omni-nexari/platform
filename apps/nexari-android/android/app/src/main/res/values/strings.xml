@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Nexari Android</string>
+    <!-- app_name is provided per product flavor via resValue in build.gradle.kts
+         (dev = "Nexari Android", self = partner name, play = "Nexari"). -->
 </resources>

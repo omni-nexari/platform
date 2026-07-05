@@ -39,7 +39,7 @@
             <div class="logo">
                 <img src="logo.png" alt="Nexari" />
             </div>
-            <h1>Nexari Signage</h1>
+            <h1 id="brand-name">Nexari Signage</h1>
             <div class="pairing-code-container">
                 <p class="pairing-label">Enter this code in your dashboard:</p>
                 <div id="pairing-code" class="pairing-code">------</div>
@@ -237,6 +237,17 @@
 
     <script src="js/platform.js"></script>
     <script src="js/build-info.js"></script>
+    <!-- Apply per-partner branding (company name) injected at build time -->
+    <script>
+    (function() {
+      var cfg = window.__PLAYER_CONFIG__ || {};
+      if (cfg.COMPANY_NAME) {
+        var el = document.getElementById('brand-name');
+        if (el) el.textContent = cfg.COMPANY_NAME;
+        document.title = cfg.COMPANY_NAME;
+      }
+    })();
+    </script>
     <script src="js/config.js"></script>
     <script type="text/javascript" src="$WEBAPIS/webapis/webapis.js"></script>
     <script type="text/javascript" src="$B2BAPIS/b2bapis/b2bapis.js"></script>

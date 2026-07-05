@@ -8,6 +8,7 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { sendCommand } from '../services/ws.js';
 import { organizations } from '@signage/db';
+import { managementCompanies, workspaces } from '@signage/db';
 
 const PLATFORMS = ['tizen', 'windows', 'epaper', 'android'] as const;
 type ReleasePlatform = typeof PLATFORMS[number];
@@ -82,6 +83,64 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
       superadminApproved: !!release.superadminApprovedAt,
       managementApproved,
     });
+  });
+
+  /**
+   * Deploy-key read: branding for the org that owns the deploy key.
+   * Used by build-partner-players.ps1 to bake the partner's logo + company name
+   * into per-partner player builds. Resolves the key's orgId → management company
+   * branding, falling back to the org's workspace logo. Returns nulls when the
+   * partner has not configured branding yet (caller falls back to Nexari defaults).
+   */
+  app.get('/branding', { onRequest: [app.authenticateDeployKey] }, async (req, reply) => {
+    const orgId = req.deployKeyOrgId;
+    if (!orgId) return reply.status(401).send({ error: 'Unauthorized' });
+
+    let companyName: string | null = null;
+    let logoUrl: string | null = null;
+    let portalTitle: string | null = null;
+    let primaryColor: string | null = null;
+
+    const org = await db.query.organizations.findFirst({
+      where: eq(organizations.id, orgId),
+      columns: { managementCompanyId: true },
+    });
+
+    if (org?.managementCompanyId) {
+      const company = await db.query.managementCompanies.findFirst({
+        where: eq(managementCompanies.id, org.managementCompanyId),
+        columns: {
+          name: true,
+          logoUrl: true,
+          portalTitle: true,
+          primaryColor: true,
+        },
+      });
+      if (company) {
+        companyName = company.name?.startsWith('(pending') ? null : company.name ?? null;
+        logoUrl = company.logoUrl ?? null;
+        portalTitle = company.portalTitle ?? null;
+        primaryColor = company.primaryColor ?? null;
+      }
+    }
+
+    // Fallback: use a workspace logo under this org if the company has none.
+    if (!logoUrl) {
+      const ws = await db.query.workspaces.findFirst({
+        where: and(eq(workspaces.orgId, orgId), isNotNull(workspaces.logoUrl)),
+        columns: { logoUrl: true },
+      });
+      if (ws?.logoUrl) logoUrl = ws.logoUrl;
+    }
+
+    // Resolve relative logo URLs (e.g. /api/superadmin/...) to absolute so the
+    // build script can download them without knowing the instance host.
+    const appUrl = (process.env['APP_URL'] ?? '').replace(/\/+$/, '');
+    if (logoUrl && logoUrl.startsWith('/') && appUrl) {
+      logoUrl = `${appUrl}${logoUrl}`;
+    }
+
+    return reply.send({ companyName, logoUrl, portalTitle, primaryColor });
   });
 
   /** Superadmin: list all releases (optional ?platform=) */

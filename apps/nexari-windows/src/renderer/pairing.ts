@@ -75,6 +75,11 @@ async function init() {
     const cfg = await window.nexari.getConfig();
     const vEl = document.getElementById('player-version');
     if (vEl && cfg.appVersion) vEl.textContent = `v${cfg.appVersion}`;
+    if (cfg.companyName) {
+      const nameEl = document.getElementById('brand-name');
+      if (nameEl) nameEl.textContent = cfg.companyName;
+      document.title = cfg.companyName;
+    }
   } catch { /* ignore */ }
 
   // 1. Resolve apiBase: localStorage override → IPC default

@@ -356,6 +356,8 @@ export async function registerPlugins(app: FastifyInstance) {
     if (!key.scopes.split(' ').includes('player:deploy')) {
       return reply.status(403).send({ error: 'API key missing player:deploy scope' });
     }
+    // Expose the key's orgId to downstream handlers (e.g. branding lookup)
+    req.deployKeyOrgId = key.orgId;
     // Fire-and-forget last-used stamp
     void db.update(apiKeys).set({ lastUsedAt: now }).where(eq(apiKeys.id, key.id));
   });

@@ -25,6 +25,17 @@ export function getDefaultApiBase(): string {
     : '';
 }
 
+export function getCompanyName(): string {
+  // Partner builds: name baked into package.json via electron-builder --em.nexariCompanyName
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+    const pkg = require('../../package.json') as { nexariCompanyName?: string };
+    const baked = pkg.nexariCompanyName?.trim();
+    if (baked) return baked;
+  } catch { /* not packaged or field missing */ }
+  return 'Nexari Player';
+}
+
 export interface StoreSchema {
   deviceToken: string;
   deviceId: string;

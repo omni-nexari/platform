@@ -13,7 +13,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { autoUpdater } from 'electron-updater';
-import { getDefaultApiBase, getStore } from './store.js';
+import { getCompanyName, getDefaultApiBase, getStore } from './store.js';
 import { createPlayerWindow } from './windows/player.js';
 import { createPairingWindow } from './windows/pairing.js';
 import { connectWs } from './ws-client.js';
@@ -115,6 +115,7 @@ app.on('ready', async () => {
       deviceToken: s.get('deviceToken') || '',
       deviceId:    s.get('deviceId')    || '',
       appVersion:  app.getVersion(),
+      companyName: getCompanyName(),
       isDev:       isDev,
     };
   });
