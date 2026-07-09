@@ -30,6 +30,7 @@ fi
 # ── Git pull ──────────────────────────────────────────────────────────────────
 echo "==> [deploy] Updating repo..."
 cd "$APP_DIR"
+git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 
 if [[ -n "$GIT_REPO" ]]; then
     git remote set-url origin "$GIT_REPO"
