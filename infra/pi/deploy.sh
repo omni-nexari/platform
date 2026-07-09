@@ -19,6 +19,8 @@ CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
 ENV_DIR="${ENV_DIR:-/etc/nexari}"
 SERVICE_NAME="${SERVICE_NAME:-nexari-api}"
 NGINX_CONF_FILE="${NGINX_CONF_FILE:-signage.conf}"
+PUBLIC_URL="${PUBLIC_URL:-}"
+LAN_URL="${LAN_URL:-}"
 ENV_FILE="$ENV_DIR/api.env"
 
 # ── Validate env file ─────────────────────────────────────────────────────────
@@ -136,5 +138,5 @@ fi
 
 echo ""
 echo "✓ Deploy complete."
-echo "  Public:  https://ds.chiho.app"
-echo "  LAN:     http://192.168.1.17"
+[[ -n "$PUBLIC_URL" ]] && echo "  Public:  $PUBLIC_URL"
+[[ -n "$LAN_URL" ]]    && echo "  LAN:     $LAN_URL"
