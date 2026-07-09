@@ -7,60 +7,173 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    :root {
+      --blue: #3a7bff;
+      --aqua: #4ff2d1;
+      --magenta: #ff3ea5;
+      --text: #e8eaf0;
+      --text-muted: #7a8299;
+    }
+
     body {
       font-family: 'Segoe UI', system-ui, sans-serif;
-      background: #0f172a; color: #e2e8f0;
+      background:
+        radial-gradient(ellipse 80% 60% at 20% -10%, rgba(58,123,255,0.18) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 50% at 80% 110%, rgba(79,242,209,0.14) 0%, transparent 55%),
+        radial-gradient(ellipse 40% 35% at 95% 8%, rgba(255,62,165,0.07) 0%, transparent 60%),
+        linear-gradient(180deg, #0a0d14 0%, #050709 100%);
+      color: var(--text);
       display: flex; align-items: center; justify-content: center;
       height: 100vh; overflow: hidden;
+      position: relative;
+    }
+
+    /* HUD grid overlay */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image:
+        linear-gradient(rgba(79,242,209,0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(79,242,209,0.045) 1px, transparent 1px);
+      background-size: 56px 56px;
+      mask-image: radial-gradient(ellipse 90% 80% at 50% 45%, #000 25%, transparent 78%);
+      pointer-events: none;
+    }
+
+    /* Horizon sweep */
+    body::after {
+      content: '';
+      position: fixed; left: 0; right: 0; height: 2px; top: -4%;
+      background: linear-gradient(90deg, transparent 0%, rgba(79,242,209,0) 18%,
+        rgba(79,242,209,0.35) 50%, rgba(79,242,209,0) 82%, transparent 100%);
+      animation: horizonSweep 10s linear infinite;
+      pointer-events: none;
+    }
+    @keyframes horizonSweep {
+      0%   { top: -4%; opacity: 0; }
+      10%  { opacity: 1; }
+      90%  { opacity: 1; }
+      100% { top: 104%; opacity: 0; }
     }
 
     .pairing-container {
       display: flex; flex-direction: column; align-items: center;
-      gap: 20px; width: 420px;
+      gap: 18px; width: 440px; position: relative; z-index: 1;
     }
 
-    .logo img { width: 160px; opacity: 0.95; }
+    .logo { animation: logoFloat 6s ease-in-out infinite; }
+    .logo img { width: 150px; opacity: 0.97; filter: drop-shadow(0 0 24px rgba(58,123,255,0.5)); }
+    @keyframes logoFloat {
+      0%, 100% { transform: translateY(0); }
+      50%      { transform: translateY(-6px); }
+    }
 
-    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: 0.01em; }
+    h1 {
+      font-size: 1.5rem; font-weight: 800; letter-spacing: 0.08em;
+      background: linear-gradient(90deg, #ffffff 0%, #9fb4d8 55%, #4ff2d1 120%);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
 
-    /* ── Pairing code ── */
-    .pairing-code-container { text-align: center; }
-    .pairing-label { font-size: 0.82rem; color: #94a3b8; margin-bottom: 10px; }
+    /* ── Pairing code card ── */
+    .pairing-code-container {
+      text-align: center;
+      position: relative;
+      padding: 26px 34px 22px;
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(20,26,38,0.78) 0%, rgba(10,14,22,0.86) 100%);
+      border: 1px solid rgba(79,242,209,0.16);
+      box-shadow:
+        0 0 50px rgba(58,123,255,0.12),
+        0 20px 50px rgba(0,0,0,0.5),
+        inset 0 1px 0 rgba(255,255,255,0.06);
+      overflow: hidden;
+    }
+    /* HUD corner brackets */
+    .pairing-code-container::before {
+      content: '';
+      position: absolute; inset: 9px;
+      pointer-events: none; opacity: 0.55;
+      background:
+        linear-gradient(var(--aqua), var(--aqua)) left 0 top 0 / 20px 2px no-repeat,
+        linear-gradient(var(--aqua), var(--aqua)) left 0 top 0 / 2px 20px no-repeat,
+        linear-gradient(var(--aqua), var(--aqua)) right 0 top 0 / 20px 2px no-repeat,
+        linear-gradient(var(--aqua), var(--aqua)) right 0 top 0 / 2px 20px no-repeat,
+        linear-gradient(var(--aqua), var(--aqua)) left 0 bottom 0 / 20px 2px no-repeat,
+        linear-gradient(var(--aqua), var(--aqua)) left 0 bottom 0 / 2px 20px no-repeat,
+        linear-gradient(var(--aqua), var(--aqua)) right 0 bottom 0 / 20px 2px no-repeat,
+        linear-gradient(var(--aqua), var(--aqua)) right 0 bottom 0 / 2px 20px no-repeat;
+    }
+    /* Scanline sweep */
+    .pairing-code-container::after {
+      content: '';
+      position: absolute; top: 0; bottom: 0; width: 90px; left: -110px;
+      background: linear-gradient(90deg, transparent 0%, rgba(79,242,209,0.07) 50%, transparent 100%);
+      transform: skewX(-18deg);
+      animation: cardScan 5.5s ease-in-out infinite;
+      pointer-events: none;
+    }
+    @keyframes cardScan {
+      0%        { left: -110px; }
+      55%, 100% { left: 110%; }
+    }
+
+    .pairing-label {
+      font-size: 0.68rem; color: var(--aqua); margin-bottom: 12px;
+      letter-spacing: 0.35em; text-transform: uppercase; font-weight: 700; opacity: 0.85;
+    }
     .pairing-code {
-      font-family: 'Courier New', monospace;
+      font-family: 'Cascadia Code', 'Consolas', monospace;
       font-size: 3rem; font-weight: 700; letter-spacing: 0.22em;
-      color: #a5b4fc; background: #1e293b;
-      border: 2px solid #334155; border-radius: 14px;
+      color: #9cc2ff;
+      text-shadow: 0 0 16px rgba(58,123,255,0.55), 0 0 50px rgba(58,123,255,0.3);
+      background: rgba(58,123,255,0.07);
+      border: 1px solid rgba(58,123,255,0.35); border-radius: 14px;
       padding: 16px 32px; min-width: 280px; text-align: center;
+      display: inline-block;
+      animation: codeGlowPulse 3s ease-in-out infinite;
+    }
+    @keyframes codeGlowPulse {
+      0%, 100% { box-shadow: inset 0 0 24px rgba(58,123,255,0.08), 0 0 24px rgba(58,123,255,0.12); }
+      50%      { box-shadow: inset 0 0 24px rgba(58,123,255,0.15), 0 0 56px rgba(58,123,255,0.28); }
     }
     .pairing-status {
-      margin-top: 10px; font-size: 0.82rem; color: #94a3b8; min-height: 1.2em;
+      margin-top: 12px; font-size: 0.82rem; color: var(--text-muted); min-height: 1.2em;
     }
-    .pairing-status.error { color: #f87171; }
-    .pairing-status.success { color: #4ade80; }
+    .pairing-status.error { color: #ff6eb8; }
+    .pairing-status.success { color: var(--aqua); }
 
-    /* ── Device info ── */
+    /* ── Device info — HUD chips ── */
     .device-info {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px;
-      width: 100%; padding: 12px 16px;
-      background: #1e293b; border: 1px solid #334155; border-radius: 10px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px;
+      width: 100%;
     }
-    .info-item { font-size: 0.78rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .info-item {
+      font-size: 0.74rem; color: var(--text-muted);
+      font-family: 'Cascadia Code', 'Consolas', monospace;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      padding: 8px 12px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-left: 3px solid rgba(58,123,255,0.55);
+      border-radius: 8px;
+    }
     .info-item span { color: #cbd5e1; }
 
     /* ── Connection settings ── */
     .conn-settings-wrap { width: 100%; }
     .conn-settings-toggle {
-      width: 100%; background: #1e293b; color: #94a3b8;
-      border: 1px solid #334155; border-radius: 10px;
+      width: 100%; background: rgba(255,255,255,0.05); color: var(--text-muted);
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 10px;
       padding: 9px 16px; font-size: 0.82rem; cursor: pointer;
       display: flex; align-items: center; justify-content: space-between;
+      transition: border-color 0.2s, color 0.2s;
     }
-    .conn-settings-toggle:hover { background: #253348; }
+    .conn-settings-toggle:hover { border-color: rgba(79,242,209,0.4); color: var(--aqua); }
     .conn-settings-toggle.open { border-radius: 10px 10px 0 0; }
 
     .conn-settings-panel {
-      background: #1a2540; border: 1px solid #334155; border-top: none;
+      background: rgba(10,14,22,0.85); border: 1px solid rgba(255,255,255,0.1); border-top: none;
       border-radius: 0 0 10px 10px; padding: 14px 16px;
       display: flex; flex-direction: column; gap: 10px;
     }
@@ -68,22 +181,37 @@
 
     .conn-hint { font-size: 0.75rem; color: #64748b; }
     .conn-field { display: flex; flex-direction: column; gap: 4px; }
-    .conn-field label { font-size: 0.78rem; color: #94a3b8; }
-    .conn-field input {
-      background: #0f172a; border: 1px solid #334155; border-radius: 7px;
-      color: #f1f5f9; padding: 8px 12px; font-size: 0.88rem; outline: none; width: 100%;
+    .conn-field label {
+      font-size: 0.7rem; color: var(--text-muted);
+      letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600;
     }
-    .conn-field input:focus { border-color: #6366f1; }
+    .conn-field input {
+      background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.15); border-radius: 7px;
+      color: #f1f5f9; padding: 8px 12px; font-size: 0.88rem; outline: none; width: 100%;
+      font-family: 'Cascadia Code', 'Consolas', monospace;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .conn-field input:focus {
+      border-color: rgba(58,123,255,0.6);
+      box-shadow: 0 0 0 2px rgba(58,123,255,0.15);
+    }
     .conn-actions { display: flex; gap: 8px; }
     .conn-btn {
-      flex: 1; padding: 8px; font-size: 0.82rem; border: none;
-      border-radius: 7px; cursor: pointer; font-weight: 500;
+      flex: 1; padding: 8px; font-size: 0.82rem;
+      border-radius: 7px; cursor: pointer; font-weight: 600;
+      transition: background 0.2s, border-color 0.2s;
     }
-    .conn-btn-apply { background: #6366f1; color: #fff; }
-    .conn-btn-apply:hover { background: #4f46e5; }
-    .conn-btn-reset { background: #334155; color: #94a3b8; }
-    .conn-btn-reset:hover { background: #3f5068; }
-    .conn-msg { font-size: 0.78rem; color: #4ade80; min-height: 1em; }
+    .conn-btn-apply {
+      background: rgba(58,123,255,0.16); color: #9cc2ff;
+      border: 1px solid rgba(58,123,255,0.45);
+    }
+    .conn-btn-apply:hover { background: rgba(58,123,255,0.28); border-color: var(--blue); }
+    .conn-btn-reset {
+      background: rgba(255,255,255,0.06); color: var(--text-muted);
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .conn-btn-reset:hover { background: rgba(255,255,255,0.1); }
+    .conn-msg { font-size: 0.78rem; color: var(--aqua); min-height: 1em; }
   </style>
 </head>
 <body>
@@ -94,7 +222,7 @@
     </div>
 
     <h1 id="brand-name">Nexari Player</h1>
-    <div id="player-version" style="font-size:0.75rem;color:#475569;letter-spacing:0.04em;margin-top:-8px">v—</div>
+    <div id="player-version" style="font-family:'Cascadia Code','Consolas',monospace;font-size:0.72rem;color:#5a6478;letter-spacing:0.18em;margin-top:-8px">v—</div>
 
     <div class="pairing-code-container">
       <p class="pairing-label">Enter this code in your dashboard:</p>

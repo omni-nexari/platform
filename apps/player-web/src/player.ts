@@ -290,59 +290,114 @@ export class Player {
     p.id = 'nexari-pair-panel';
     p.style.cssText = [
       'position:fixed;inset:0;z-index:99999;',
-      'background:#0d0f1a;color:#fff;',
+      'background:',
+      'radial-gradient(ellipse 80% 60% at 20% -10%, rgba(58,123,255,0.18) 0%, transparent 60%),',
+      'radial-gradient(ellipse 60% 50% at 80% 110%, rgba(79,242,209,0.14) 0%, transparent 55%),',
+      'radial-gradient(ellipse 40% 35% at 95% 8%, rgba(255,62,165,0.07) 0%, transparent 60%),',
+      'linear-gradient(180deg,#0a0d14 0%,#050709 100%);',
+      'color:#e8eaf0;',
       'display:flex;flex-direction:column;align-items:center;justify-content:center;',
       'font-family:system-ui,-apple-system,sans-serif;overflow:auto;',
     ].join('');
 
+    // Partner branding baked in at build time (falls back to Nexari)
+    const brandName =
+      (globalThis as { __PLAYER_CONFIG__?: { COMPANY_NAME?: string } }).__PLAYER_CONFIG__?.COMPANY_NAME
+      || 'Nexari Signage';
+
     p.innerHTML = `
-<div style="text-align:center;max-width:680px;width:90%;padding:40px 0;">
+<style>
+  @keyframes nxHorizonSweep {
+    0%   { top: -4%; opacity: 0; }
+    10%  { opacity: 1; }
+    90%  { opacity: 1; }
+    100% { top: 104%; opacity: 0; }
+  }
+  @keyframes nxCodeGlowPulse {
+    0%, 100% { box-shadow: inset 0 0 24px rgba(58,123,255,0.08), 0 0 24px rgba(58,123,255,0.12); }
+    50%      { box-shadow: inset 0 0 24px rgba(58,123,255,0.15), 0 0 56px rgba(58,123,255,0.28); }
+  }
+  @keyframes nxLogoFloat {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-6px); }
+  }
+  #nexari-pair-panel::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(79,242,209,0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(79,242,209,0.045) 1px, transparent 1px);
+    background-size: 56px 56px;
+    -webkit-mask-image: radial-gradient(ellipse 90% 80% at 50% 45%, #000 25%, transparent 78%);
+    mask-image: radial-gradient(ellipse 90% 80% at 50% 45%, #000 25%, transparent 78%);
+    pointer-events: none;
+  }
+  #nexari-pair-panel::after {
+    content: '';
+    position: fixed; left: 0; right: 0; height: 2px; top: -4%;
+    background: linear-gradient(90deg, transparent 0%, rgba(79,242,209,0) 18%,
+      rgba(79,242,209,0.35) 50%, rgba(79,242,209,0) 82%, transparent 100%);
+    animation: nxHorizonSweep 10s linear infinite;
+    pointer-events: none;
+  }
+  #nexari-pair-code { animation: nxCodeGlowPulse 3s ease-in-out infinite; }
+</style>
+<div style="text-align:center;max-width:680px;width:90%;padding:40px 0;position:relative;z-index:1;">
 
   <!-- Logo -->
-  <img src="./nexari-logo.png" alt="Nexari"
-       style="width:140px;margin-bottom:32px;opacity:0.95;"
+  <img src="./nexari-logo.png" alt="${escapeHtml(brandName)}"
+       style="width:130px;margin-bottom:28px;opacity:0.97;
+              filter:drop-shadow(0 0 24px rgba(58,123,255,0.5));
+              animation:nxLogoFloat 6s ease-in-out infinite;"
        onerror="this.style.display='none'">
 
   <!-- Title -->
-  <h1 style="font-size:36px;font-weight:800;margin:0 0 36px;letter-spacing:0.3px;">
-    Nexari Signage
+  <h1 style="font-size:34px;font-weight:800;margin:0 0 32px;letter-spacing:2px;
+             background:linear-gradient(90deg,#ffffff 0%,#9fb4d8 55%,#4ff2d1 120%);
+             -webkit-background-clip:text;background-clip:text;
+             -webkit-text-fill-color:transparent;">
+    ${escapeHtml(brandName)}
   </h1>
 
   <!-- Code card -->
-  <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);
-              border-radius:20px;padding:40px 48px;margin-bottom:32px;
+  <div style="background:linear-gradient(180deg,rgba(20,26,38,0.78) 0%,rgba(10,14,22,0.86) 100%);
+              border:1px solid rgba(79,242,209,0.16);
+              border-radius:18px;padding:38px 46px;margin-bottom:30px;
               backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-              box-shadow:0 16px 48px rgba(0,0,0,0.4);">
-    <p style="font-size:14px;color:#888;letter-spacing:0.15em;text-transform:uppercase;
-              margin:0 0 16px;font-weight:600;">
+              box-shadow:0 0 50px rgba(58,123,255,0.12),0 20px 50px rgba(0,0,0,0.5),
+                         inset 0 1px 0 rgba(255,255,255,0.06);">
+    <p style="font-size:13px;color:#4ff2d1;letter-spacing:0.35em;text-transform:uppercase;
+              margin:0 0 16px;font-weight:700;opacity:0.85;">
       Enter this code in your dashboard:
     </p>
     <div id="nexari-pair-code"
          style="font-size:80px;font-weight:900;letter-spacing:14px;
                 font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
-                color:#4a9eff;padding:10px 18px;border-radius:14px;
-                background:rgba(74,158,255,0.08);border:1px solid rgba(74,158,255,0.25);
+                color:#9cc2ff;padding:10px 22px;border-radius:14px;
+                text-shadow:0 0 16px rgba(58,123,255,0.55),0 0 50px rgba(58,123,255,0.3);
+                background:rgba(58,123,255,0.07);border:1px solid rgba(58,123,255,0.35);
                 display:inline-block;min-width:4ch;text-align:center;">
       ${escapeHtml(code)}
     </div>
     <div id="nexari-pair-status"
-         style="font-size:16px;color:#888;margin-top:20px;">
+         style="font-size:16px;color:#7a8299;margin-top:20px;letter-spacing:0.5px;">
       ${escapeHtml(status)}
     </div>
   </div>
 
   <!-- Device info -->
-  <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:10px 24px;
-              font-size:14px;color:#666;margin-bottom:32px;">
-    <span>Model: <strong style="color:#999;">${escapeHtml(info.modelName || info.modelCode || '—')}</strong></span>
-    <span>IP: <strong style="color:#999;">${escapeHtml(net.ipAddress || 'Connecting…')}</strong></span>
-    <span>Serial: <strong style="color:#999;">${escapeHtml(info.serialNumber || '—')}</strong></span>
-    <span>Platform: <strong style="color:#999;">${escapeHtml(info.platform || '—')}</strong></span>
+  <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:8px 10px;
+              font-size:13px;color:#7a8299;margin-bottom:28px;
+              font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">
+    <span style="padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);border-left:3px solid rgba(58,123,255,0.55);background:linear-gradient(180deg,rgba(255,255,255,0.05) 0%,rgba(255,255,255,0.02) 100%);">Model: <strong style="color:#cbd5e1;">${escapeHtml(info.modelName || info.modelCode || '—')}</strong></span>
+    <span style="padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);border-left:3px solid rgba(58,123,255,0.55);background:linear-gradient(180deg,rgba(255,255,255,0.05) 0%,rgba(255,255,255,0.02) 100%);">IP: <strong style="color:#cbd5e1;">${escapeHtml(net.ipAddress || 'Connecting…')}</strong></span>
+    <span style="padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);border-left:3px solid rgba(58,123,255,0.55);background:linear-gradient(180deg,rgba(255,255,255,0.05) 0%,rgba(255,255,255,0.02) 100%);">Serial: <strong style="color:#cbd5e1;">${escapeHtml(info.serialNumber || '—')}</strong></span>
+    <span style="padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);border-left:3px solid rgba(58,123,255,0.55);background:linear-gradient(180deg,rgba(255,255,255,0.05) 0%,rgba(255,255,255,0.02) 100%);">Platform: <strong style="color:#cbd5e1;">${escapeHtml(info.platform || '—')}</strong></span>
   </div>
 
   <!-- URL hint -->
-  <p style="font-size:14px;color:#555;margin:0 0 32px;">
-    Dashboard: <span style="color:#4a9eff;">${escapeHtml(serverHost || '')}</span>
+  <p style="font-size:14px;color:#555f75;margin:0 0 28px;">
+    Dashboard: <span style="color:#4ff2d1;">${escapeHtml(serverHost || '')}</span>
   </p>
 
   <!-- Connection settings (collapsible) -->
@@ -356,38 +411,42 @@ export class Player {
               a.textContent=show?'▲':'▼';
             })()"
             style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);
-                   border-radius:12px;padding:14px 20px;color:#999;font-size:14px;font-weight:600;
+                   border-radius:12px;padding:14px 20px;color:#7a8299;font-size:14px;font-weight:600;
                    cursor:pointer;display:flex;align-items:center;justify-content:space-between;
                    font-family:inherit;">
       ⚙ Connection settings <span id="nexari-conn-arrow">▼</span>
     </button>
     <div id="nexari-conn-panel"
-         style="display:none;background:rgba(255,255,255,0.04);
+         style="display:none;background:rgba(10,14,22,0.85);
                 border:1px solid rgba(255,255,255,0.1);border-top:none;
                 border-radius:0 0 12px 12px;padding:20px;">
-      <p style="font-size:13px;color:#666;margin:0 0 16px;">
+      <p style="font-size:13px;color:#64748b;margin:0 0 16px;">
         Override the server address this device connects to.
       </p>
       <div style="margin-bottom:12px;">
-        <label style="display:block;font-size:12px;color:#777;margin-bottom:6px;font-weight:600;">
+        <label style="display:block;font-size:11px;color:#7a8299;margin-bottom:6px;font-weight:600;
+                      letter-spacing:0.12em;text-transform:uppercase;">
           CMS / API Base URL
         </label>
         <input id="nexari-input-api" type="text" value="${escapeHtml(apiBase)}" spellcheck="false"
                placeholder="http://192.168.1.17:3000/api/v1"
-               style="width:100%;box-sizing:border-box;background:#111;border:1px solid #333;
-                      border-radius:8px;padding:10px 12px;color:#fff;font-size:14px;
+               style="width:100%;box-sizing:border-box;background:rgba(0,0,0,0.4);
+                      border:1px solid rgba(255,255,255,0.15);
+                      border-radius:8px;padding:10px 12px;color:#f1f5f9;font-size:14px;
                       font-family:ui-monospace,monospace;">
       </div>
       <div style="margin-bottom:16px;">
-        <label style="display:block;font-size:12px;color:#777;margin-bottom:6px;font-weight:600;">
+        <label style="display:block;font-size:11px;color:#7a8299;margin-bottom:6px;font-weight:600;
+                      letter-spacing:0.12em;text-transform:uppercase;">
           WebSocket URL
         </label>
         <input id="nexari-input-ws" type="text" value="${escapeHtml(wsBase)}" spellcheck="false"
                placeholder="ws://192.168.1.17:3000"
-               style="width:100%;box-sizing:border-box;background:#111;border:1px solid #333;
-                      border-radius:8px;padding:10px 12px;color:#fff;font-size:14px;
+               style="width:100%;box-sizing:border-box;background:rgba(0,0,0,0.4);
+                      border:1px solid rgba(255,255,255,0.15);
+                      border-radius:8px;padding:10px 12px;color:#f1f5f9;font-size:14px;
                       font-family:ui-monospace,monospace;">
-        <span style="font-size:11px;color:#555;">Auto-derived from API URL (http→ws, https→wss)</span>
+        <span style="font-size:11px;color:#555f75;">Auto-derived from API URL (http→ws, https→wss)</span>
       </div>
       <!-- Auto-derive WS from API input -->
       <script>
@@ -411,8 +470,9 @@ export class Player {
                   else localStorage.removeItem('PLAYER_WS_URL');
                   location.reload();
                 })()"
-                style="flex:1;background:#4a9eff;border:none;border-radius:8px;padding:10px;
-                       color:#fff;font-size:13px;font-weight:600;cursor:pointer;">
+                style="flex:1;background:rgba(58,123,255,0.16);border:1px solid rgba(58,123,255,0.45);
+                       border-radius:8px;padding:10px;
+                       color:#9cc2ff;font-size:13px;font-weight:600;cursor:pointer;">
           Save &amp; Reconnect
         </button>
         <button onclick="(function(){
@@ -420,8 +480,8 @@ export class Player {
                   localStorage.removeItem('PLAYER_WS_URL');
                   location.reload();
                 })()"
-                style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);
-                       border-radius:8px;padding:10px;color:#999;font-size:13px;font-weight:600;
+                style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);
+                       border-radius:8px;padding:10px;color:#7a8299;font-size:13px;font-weight:600;
                        cursor:pointer;">
           Reset to Default
         </button>

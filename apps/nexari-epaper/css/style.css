@@ -1,4 +1,4 @@
-/* Nexari E-Paper — minimal grayscale-friendly UI */
+/* Nexari E-Paper — monochrome HUD (e-ink safe: no animation, pure B/W) */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -20,61 +20,127 @@ html, body {
 }
 .screen.hidden { display: none !important; }
 
+/* Subtle dotted grid — renders cleanly on e-ink */
+#pairing-screen {
+  background-image: radial-gradient(#000 1px, transparent 1px);
+  background-size: 48px 48px;
+  background-position: 0 0;
+}
+
 /* ── Pairing screen ──────────────────────────────────────────────────────── */
 .pairing-container {
   text-align: center;
-  padding: 40px;
+  padding: 48px 56px;
   max-width: 90%;
+  background: #ffffff;
+  border: 3px solid #000;
+  position: relative;
+}
+
+/* HUD corner brackets */
+.pairing-container::before {
+  content: '';
+  position: absolute;
+  top: -14px; left: -14px; right: -14px; bottom: -14px;
+  pointer-events: none;
+  background:
+    linear-gradient(#000, #000) left 0 top 0 / 40px 6px no-repeat,
+    linear-gradient(#000, #000) left 0 top 0 / 6px 40px no-repeat,
+    linear-gradient(#000, #000) right 0 top 0 / 40px 6px no-repeat,
+    linear-gradient(#000, #000) right 0 top 0 / 6px 40px no-repeat,
+    linear-gradient(#000, #000) left 0 bottom 0 / 40px 6px no-repeat,
+    linear-gradient(#000, #000) left 0 bottom 0 / 6px 40px no-repeat,
+    linear-gradient(#000, #000) right 0 bottom 0 / 40px 6px no-repeat,
+    linear-gradient(#000, #000) right 0 bottom 0 / 6px 40px no-repeat;
 }
 
 .logo img { max-width: 200px; max-height: 80px; margin-bottom: 24px; }
 
 .pairing-container h1 {
-  font-size: 64px;
-  font-weight: 700;
-  margin-bottom: 32px;
-  letter-spacing: -0.02em;
+  font-size: 56px;
+  font-weight: 800;
+  margin-bottom: 8px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* Divider rule under the title */
+.pairing-container h1::after {
+  content: '';
+  display: block;
+  width: 120px;
+  height: 4px;
+  background: #000;
+  margin: 20px auto 0;
 }
 
 .pairing-code-container {
   border: 4px solid #000;
+  box-shadow: 10px 10px 0 #000;   /* hard offset shadow — crisp on e-ink */
   padding: 40px 60px;
-  margin: 32px auto;
+  margin: 36px auto;
   max-width: 720px;
+  background: #fff;
 }
 
 .pairing-label {
-  font-size: 24px;
+  font-size: 18px;
   margin-bottom: 16px;
-  color: #555;
+  color: #000;
+  font-weight: 700;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
 }
 
 .pairing-code {
   font-size: 120px;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.14em;
   font-family: 'Courier New', monospace;
   margin: 16px 0;
+  padding: 8px 24px;
+  display: inline-block;
+  background: #000;
+  color: #fff;
 }
 
 .pairing-status {
   font-size: 20px;
-  color: #555;
-  margin-top: 8px;
+  color: #333;
+  margin-top: 12px;
+  letter-spacing: 0.05em;
 }
 
 .device-info {
   margin-top: 32px;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 12px 32px;
+  gap: 0 32px;
   font-size: 18px;
+  font-family: 'Courier New', monospace;
   text-align: left;
   max-width: 720px;
   margin-left: auto;
   margin-right: auto;
+  border-top: 2px solid #000;
+  padding-top: 8px;
 }
-.info-item { padding: 6px 0; border-bottom: 1px solid #ddd; }
+.info-item {
+  padding: 10px 0 10px 18px;
+  border-bottom: 1px solid #999;
+  position: relative;
+}
+/* Square tick marker — HUD list style */
+.info-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  margin-top: -4px;
+  width: 8px;
+  height: 8px;
+  background: #000;
+}
 
 /* ── Connection settings ────────────────────────────────────────────────── */
 .conn-settings-wrap {
@@ -85,22 +151,25 @@ html, body {
 }
 
 .conn-settings-toggle {
-  background: #f0f0f0;
+  background: #fff;
   border: 2px solid #000;
   color: #000;
   padding: 12px 24px;
   font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   cursor: pointer;
   width: 100%;
-  border-radius: 12px;
+  border-radius: 0;
 }
 
 .conn-settings-panel {
-  background: #fafafa;
+  background: #fff;
   border: 2px solid #000;
   border-top: none;
   padding: 24px;
-  border-radius: 0 0 12px 12px;
+  border-radius: 0;
   text-align: left;
 }
 .conn-settings-panel.hidden { display: none; }
@@ -158,12 +227,17 @@ html, body {
 }
 
 /* ── Error screen ──────────────────────────────────────────────────────── */
-.error-container { text-align: center; padding: 40px; }
+.error-container {
+  text-align: center;
+  padding: 48px 56px;
+  border: 3px solid #000;
+  box-shadow: 10px 10px 0 #000;
+  background: #fff;
+}
 .error-icon {
   width: 96px;
   height: 96px;
   border: 4px solid #000;
-  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -175,6 +249,9 @@ html, body {
   margin-top: 24px;
   padding: 12px 32px;
   font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   border: 2px solid #000;
   background: #000;
   color: #fff;

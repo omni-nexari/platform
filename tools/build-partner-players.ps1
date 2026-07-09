@@ -538,10 +538,11 @@ foreach ($plat in $platforms) {
                 } finally { Pop-Location }
 
                 Write-Host "  Syncing player-web assets -> android..." -ForegroundColor DarkGray
-                # Pass partner logo path so sync-player-web.cjs uses it instead of the Nexari default
+                # Pass partner logo path + company name so sync-player-web.cjs bakes them in
                 if ($script:branding.TempLogoPath) { $env:LOGO_PATH = $script:branding.TempLogoPath }
+                if ($script:branding.CompanyName)  { $env:COMPANY_NAME = $script:branding.CompanyName }
                 node "$AndroidDir\scripts\sync-player-web.cjs"
-                $env:LOGO_PATH = $null
+                $env:LOGO_PATH = $null; $env:COMPANY_NAME = $null
                 if ($LASTEXITCODE -ne 0) { throw "sync-player-web failed" }
 
                 Push-Location $AndroidDir

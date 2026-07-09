@@ -12,11 +12,13 @@
 # ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/opt/signage}"
+APP_DIR="${APP_DIR:-/opt/nexari}"
 BRANCH="${BRANCH:-main}"
 GIT_REPO="${GIT_REPO:-}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
-ENV_FILE="/etc/signage/api.env"
+ENV_DIR="${ENV_DIR:-/etc/nexari}"
+SERVICE_NAME="${SERVICE_NAME:-nexari-api}"
+ENV_FILE="$ENV_DIR/api.env"
 
 # ── Validate env file ─────────────────────────────────────────────────────────
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -56,16 +58,15 @@ pnpm db:migrate
 # ── nginx config ──────────────────────────────────────────────────────────────
 echo "==> [deploy] Installing nginx config..."
 NGINX_CONF="$APP_DIR/infra/nginx/signage.conf"
-# Always write to the canonical 'signage' file (bootstrap may have created it
-# without the .conf extension; writing to it keeps the existing symlink valid).
-sudo cp "$NGINX_CONF" /etc/nginx/sites-available/signage
+sudo cp "$NGINX_CONF" /etc/nginx/sites-available/"$SERVICE_NAME"
 
-# Ensure the symlink exists (idempotent — bootstrap may have already created it)
-if [[ ! -L /etc/nginx/sites-enabled/signage ]]; then
-    sudo ln -s /etc/nginx/sites-available/signage /etc/nginx/sites-enabled/signage
+# Ensure the symlink exists (idempotent)
+if [[ ! -L /etc/nginx/sites-enabled/"$SERVICE_NAME" ]]; then
+    sudo ln -s /etc/nginx/sites-available/"$SERVICE_NAME" /etc/nginx/sites-enabled/"$SERVICE_NAME"
 fi
 
-# Remove stale .conf-suffixed link if a previous deploy created it
+# Remove stale legacy links
+[[ -L /etc/nginx/sites-enabled/signage ]] && sudo rm -f /etc/nginx/sites-enabled/signage
 [[ -L /etc/nginx/sites-enabled/signage.conf ]] && sudo rm -f /etc/nginx/sites-enabled/signage.conf
 
 # Remove default site if still present
@@ -107,19 +108,19 @@ if [[ -n "$CERTBOT_EMAIL" ]]; then
 fi
 
 # ── systemd service ───────────────────────────────────────────────────────────
-SERVICE_SRC="$APP_DIR/infra/systemd/signage-api.service"
-SERVICE_DST="/etc/systemd/system/signage-api.service"
+SERVICE_SRC="$APP_DIR/infra/systemd/$SERVICE_NAME.service"
+SERVICE_DST="/etc/systemd/system/$SERVICE_NAME.service"
 
 # Refresh service file if it changed
 if ! cmp -s "$SERVICE_SRC" "$SERVICE_DST" 2>/dev/null; then
     echo "==> [deploy] Updating systemd service file..."
     sudo cp "$SERVICE_SRC" "$SERVICE_DST"
     sudo systemctl daemon-reload
-    sudo systemctl enable signage-api
+    sudo systemctl enable "$SERVICE_NAME"
 fi
 
-echo "==> [deploy] Restarting signage-api..."
-sudo systemctl restart signage-api
+echo "==> [deploy] Restarting $SERVICE_NAME..."
+sudo systemctl restart "$SERVICE_NAME"
 
 # ── Health check ──────────────────────────────────────────────────────────────
 echo "==> [deploy] Waiting for API to come up..."
@@ -127,7 +128,7 @@ sleep 6
 if curl -sf http://127.0.0.1:3000/api/v1/health > /dev/null; then
     echo "    Health check PASSED"
 else
-    echo "!!! Health check FAILED — check: journalctl -u signage-api -n 50 --no-pager"
+    echo "!!! Health check FAILED — check: journalctl -u $SERVICE_NAME -n 50 --no-pager"
     exit 1
 fi
 

@@ -87,7 +87,7 @@ body.b2bdoc-active .telemetry-overlay {
   display: none !important;
 }
 
-/* Nexari ambient background blobs */
+/* Nexari ambient aurora background */
 body::before {
   content: '';
   position: fixed;
@@ -96,8 +96,9 @@ body::before {
   width: 100%;
   height: 100%;
   background:
-    radial-gradient(ellipse 80% 60% at 20% -10%, rgba(58, 123, 255, 0.15) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 50% at 80% 110%, rgba(79, 242, 209, 0.12) 0%, transparent 55%);
+    radial-gradient(ellipse 80% 60% at 20% -10%, rgba(58, 123, 255, 0.18) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 80% 110%, rgba(79, 242, 209, 0.14) 0%, transparent 55%),
+    radial-gradient(ellipse 40% 35% at 95% 8%, rgba(255, 62, 165, 0.07) 0%, transparent 60%);
   z-index: 0;
   pointer-events: none;
 }
@@ -117,7 +118,7 @@ body::before {
 }
 
 /* ========================================
-   PAIRING SCREEN - Futuristic Design
+   PAIRING SCREEN - Nexari HUD Design
    ======================================== */
 
 #pairing-screen {
@@ -127,17 +128,45 @@ body::before {
   animation: none;
 }
 
-/* Digital noise overlay */
+/* HUD grid overlay */
 #pairing-screen::before {
-  display: none;
+  content: '';
+  display: block;
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-image:
+    linear-gradient(rgba(79, 242, 209, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(79, 242, 209, 0.045) 1px, transparent 1px);
+  background-size: 64px 64px;
+  -webkit-mask-image: radial-gradient(ellipse 90% 80% at 50% 42%, #000 25%, transparent 78%);
+  mask-image: radial-gradient(ellipse 90% 80% at 50% 42%, #000 25%, transparent 78%);
+  pointer-events: none;
 }
 
-/* Animated scanning lines effect */
+/* Horizon sweep line drifting down the screen */
 #pairing-screen::after {
-  display: none;
+  content: '';
+  display: block;
+  position: absolute;
+  left: 0; right: 0;
+  height: 2px;
+  top: -4%;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(79, 242, 209, 0) 18%,
+    rgba(79, 242, 209, 0.35) 50%,
+    rgba(79, 242, 209, 0) 82%,
+    transparent 100%);
+  animation: horizonSweep 10s linear infinite;
+  pointer-events: none;
 }
 
-/* scanLines removed — Nexari theme */
+@keyframes horizonSweep {
+  0%   { top: -4%; opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { top: 104%; opacity: 0; }
+}
 
 .pairing-container {
   text-align: center;
@@ -147,27 +176,33 @@ body::before {
   z-index: 2;
 }
 
-/* Futuristic Logo */
+/* Floating glowing logo */
 .logo {
-  margin-bottom: 40px;
+  margin-bottom: 36px;
   position: relative;
   display: inline-block;
+  animation: logoFloat 6s ease-in-out infinite;
 }
 
 .logo img {
-  width: 120px;
-  height: 120px;
+  width: 110px;
+  height: 110px;
   object-fit: contain;
-  filter: drop-shadow(0 10px 30px rgba(0, 0, 0, 0.35));
-  opacity: 0.95;
+  filter: drop-shadow(0 0 28px rgba(58, 123, 255, 0.5));
+  opacity: 0.97;
 }
 
 .logo svg {
   width: 140px;
   height: 140px;
-  filter: drop-shadow(0 10px 30px rgba(0, 0, 0, 0.35));
+  filter: drop-shadow(0 0 28px rgba(58, 123, 255, 0.5));
   color: var(--text-primary);
   animation: none;
+}
+
+@keyframes logoFloat {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-8px); }
 }
 
 @keyframes pulse {
@@ -176,27 +211,30 @@ body::before {
 }
 
 .pairing-container h1 {
-  font-size: 48px;
+  font-size: 44px;
   font-weight: 800;
-  margin-bottom: 30px;
-  color: var(--text-primary);
-  letter-spacing: 0.5px;
-  text-transform: none;
+  margin-bottom: 28px;
+  letter-spacing: 2px;
+  background: linear-gradient(90deg, #ffffff 0%, #9fb4d8 55%, #4ff2d1 120%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
   animation: none;
 }
 
-/* shimmer removed — Nexari theme */
-
-/* Glassmorphic Pairing Code Card */
+/* HUD Pairing Code Card */
 .pairing-code-container {
-  background: var(--bg-glass);
+  background: linear-gradient(180deg, rgba(20, 26, 38, 0.78) 0%, rgba(10, 14, 22, 0.86) 100%);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-radius: 24px;
+  border-radius: 20px;
   padding: 50px;
   margin-bottom: 40px;
-  border: 1px solid var(--glass-border);
-  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(79, 242, 209, 0.16);
+  box-shadow:
+    0 0 60px rgba(58, 123, 255, 0.12),
+    0 24px 60px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
   position: relative;
   overflow: hidden;
   animation: cardAppear 0.6s cubic-bezier(0.16, 1, 0.3, 1);
@@ -213,14 +251,42 @@ body::before {
   }
 }
 
-/* Glowing border effect */
+/* HUD corner brackets */
 .pairing-code-container::before {
-  display: none;
+  content: '';
+  display: block;
+  position: absolute;
+  top: 12px; left: 12px; right: 12px; bottom: 12px;
+  pointer-events: none;
+  opacity: 0.55;
+  background:
+    linear-gradient(90deg, var(--aqua), var(--aqua)) left 0 top 0 / 26px 2px no-repeat,
+    linear-gradient(90deg, var(--aqua), var(--aqua)) left 0 top 0 / 2px 26px no-repeat,
+    linear-gradient(90deg, var(--aqua), var(--aqua)) right 0 top 0 / 26px 2px no-repeat,
+    linear-gradient(90deg, var(--aqua), var(--aqua)) right 0 top 0 / 2px 26px no-repeat,
+    linear-gradient(90deg, var(--aqua), var(--aqua)) left 0 bottom 0 / 26px 2px no-repeat,
+    linear-gradient(90deg, var(--aqua), var(--aqua)) left 0 bottom 0 / 2px 26px no-repeat,
+    linear-gradient(90deg, var(--aqua), var(--aqua)) right 0 bottom 0 / 26px 2px no-repeat,
+    linear-gradient(90deg, var(--aqua), var(--aqua)) right 0 bottom 0 / 2px 26px no-repeat;
 }
 
-/* Add data corruption lines */
+/* Scanline sweep across the card */
 .pairing-code-container::after {
-  display: none;
+  content: '';
+  display: block;
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 130px;
+  left: -150px;
+  background: linear-gradient(90deg, transparent 0%, rgba(79, 242, 209, 0.07) 50%, transparent 100%);
+  transform: skewX(-18deg);
+  animation: cardScan 5.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes cardScan {
+  0%        { left: -150px; }
+  55%, 100% { left: 110%; }
 }
 
 @keyframes borderGlow {
@@ -229,41 +295,48 @@ body::before {
 }
 
 .pairing-label {
-  font-size: 18px;
-  margin-bottom: 18px;
-  color: var(--text-secondary);
-  letter-spacing: 0.2px;
-  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 20px;
+  color: var(--aqua);
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  font-weight: 700;
+  opacity: 0.85;
 }
 
-/* Nexari Pairing Code */
+/* Neon Pairing Code */
 .pairing-code {
   display: inline-block;
   font-size: 104px;
   font-weight: 900;
   letter-spacing: 16px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  color: var(--blue);
+  color: #9cc2ff;
+  text-shadow:
+    0 0 18px rgba(58, 123, 255, 0.55),
+    0 0 60px rgba(58, 123, 255, 0.3);
   margin-bottom: 18px;
   position: relative;
-  padding: 10px 18px;
+  padding: 10px 22px;
   border-radius: 18px;
-  background: rgba(58, 123, 255, 0.08);
-  border: 1px solid rgba(58, 123, 255, 0.25);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
-  animation: codePulse 3s ease-in-out infinite;
+  background: rgba(58, 123, 255, 0.07);
+  border: 1px solid rgba(58, 123, 255, 0.35);
+  animation: codeGlowPulse 3s ease-in-out infinite;
 }
 
-@keyframes codePulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.88; }
+@keyframes codeGlowPulse {
+  0%, 100% {
+    box-shadow: inset 0 0 30px rgba(58, 123, 255, 0.08), 0 0 30px rgba(58, 123, 255, 0.12);
+  }
+  50% {
+    box-shadow: inset 0 0 30px rgba(58, 123, 255, 0.15), 0 0 70px rgba(58, 123, 255, 0.28);
+  }
 }
-
-/* codeGlow removed — Nexari theme */
 
 .pairing-status {
-  font-size: 18px;
+  font-size: 17px;
   color: var(--text-muted);
+  letter-spacing: 0.5px;
 }
 
 /* ========================================
@@ -296,7 +369,8 @@ body::before {
 .conn-settings-toggle:hover,
 .conn-settings-toggle:focus {
   background: rgba(255,255,255,0.09);
-  border-color: rgba(58,123,255,0.35);
+  border-color: rgba(79,242,209,0.4);
+  color: var(--aqua);
   outline: none;
 }
 
@@ -397,7 +471,7 @@ body::before {
   color: var(--success);
 }
 
-/* Device Info Cards */
+/* Device Info — HUD chips */
 .device-info {
   display: -webkit-flex; display: flex;
   -webkit-flex-wrap: wrap;
@@ -414,19 +488,24 @@ body::before {
 }
 
 .info-item {
-  padding: 16px 24px;
-  background: var(--bg-glass);
+  padding: 14px 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
   backdrop-filter: blur(10px);
-  border-radius: 12px;
-  border: 1px solid var(--glass-border);
-  font-size: 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 3px solid rgba(58, 123, 255, 0.55);
+  font-size: 15px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0.4px;
   color: var(--text-secondary);
+  text-align: left;
   transition: none;
 }
 
 .info-item:hover {
-  background: var(--bg-glass);
-  border-color: var(--glass-border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
+  border-color: rgba(255, 255, 255, 0.08);
+  border-left-color: rgba(79, 242, 209, 0.65);
   transform: none;
   box-shadow: none;
 }
@@ -467,6 +546,7 @@ body::before {
   background:
     radial-gradient(ellipse 70% 55% at 20% -10%, rgba(58, 123, 255, 0.18) 0%, transparent 60%),
     radial-gradient(ellipse 60% 50% at 85% 110%, rgba(79, 242, 209, 0.14) 0%, transparent 55%),
+    radial-gradient(ellipse 40% 35% at 95% 8%, rgba(255, 62, 165, 0.07) 0%, transparent 60%),
     linear-gradient(180deg, #0a0d14 0%, #050709 100%);
 }
 
@@ -490,8 +570,9 @@ body::before {
   background: linear-gradient(180deg, rgba(20, 26, 38, 0.82) 0%, rgba(12, 16, 24, 0.82) 100%);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(79, 242, 209, 0.14);
   box-shadow:
+    0 0 60px rgba(58, 123, 255, 0.1),
     0 30px 80px rgba(0, 0, 0, 0.55),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
   text-align: center;
@@ -518,7 +599,7 @@ body::before {
   font-weight: 700;
   letter-spacing: 6px;
   color: #f5f7fa;
-  background: linear-gradient(90deg, #ffffff 0%, #b9c4d4 100%);
+  background: linear-gradient(90deg, #ffffff 0%, #9fb4d8 55%, #4ff2d1 120%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -591,16 +672,18 @@ body::before {
   left: 0;
   right: 0;
   height: 50px;
-  background: linear-gradient(180deg, transparent 0%, rgba(10, 10, 15, 0.95) 100%);
+  background: linear-gradient(180deg, transparent 0%, rgba(8, 10, 16, 0.96) 100%);
   backdrop-filter: blur(20px);
   display: -webkit-flex; display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 30px;
-  font-size: 16px;
+  font-size: 15px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 1px;
   opacity: 0;
   transition: opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  border-top: 1px solid var(--card-border);
+  border-top: 1px solid rgba(79, 242, 209, 0.14);
   z-index: 100;
   pointer-events: auto;
 }
@@ -678,7 +761,8 @@ body::before {
   margin-bottom: 24px;
   color: var(--magenta);
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 4px;
+  text-shadow: 0 0 30px rgba(255, 62, 165, 0.4);
 }
 
 .error-container p {

@@ -16,6 +16,8 @@ param(
     [string]$GitToken,
 
     [string]$CertbotEmail = "",
+    [string]$IdentityFile = "$env:USERPROFILE\.ssh\id_ed25519",
+    [string]$AppUser = "nexari",
     [switch]$RunBootstrap
 )
 
@@ -31,7 +33,7 @@ function Require-Command {
 Require-Command "ssh"
 
 $sshTarget = "$User@$PiHost"
-$sshPortArgs = @("-p", $SshPort)
+$sshPortArgs = @("-p", $SshPort, "-i", $IdentityFile, "-o", "StrictHostKeyChecking=accept-new")
 
 # ── Write .netrc on Pi for passwordless HTTPS clone ───────────────────────────
 Write-Host "Configuring git credentials on $sshTarget ..." -ForegroundColor Cyan
@@ -41,14 +43,18 @@ if ($LASTEXITCODE -ne 0) { throw "Failed to write .netrc on remote host" }
 
 if ($RunBootstrap) {
     Write-Host "Running bootstrap on remote host ..." -ForegroundColor Yellow
-    # Bootstrap requires the repo to already be present; upload a minimal copy first via git archive
+    # Step 1: create remote dir with sudo (NOPASSWD required in sudoers)
+    ssh @sshPortArgs $sshTarget "sudo mkdir -p '$RemoteDir' && sudo chown $User`:$User '$RemoteDir'"
+    if ($LASTEXITCODE -ne 0) { throw "Failed to create remote directory" }
+    # Step 2: pipe git archive — no sudo needed, dir is already owned by user
     $archiveCmd = "git archive --format=tar HEAD"
-    $extractCmd = "sudo mkdir -p '$RemoteDir' && sudo chown $User`:$User '$RemoteDir' && tar -xf - -C '$RemoteDir'"
-    cmd /c "$archiveCmd | ssh -p $SshPort $sshTarget `"$extractCmd`""
+    $extractCmd = "tar -xf - -C '$RemoteDir'"
+    cmd /c "$archiveCmd | ssh -p $SshPort -i `"$IdentityFile`" -o StrictHostKeyChecking=accept-new $sshTarget `"$extractCmd`""
     if ($LASTEXITCODE -ne 0) { throw "Archive upload failed" }
-    # Strip Windows CRLF line endings from shell scripts before executing
+    # Step 3: strip Windows CRLF line endings from shell scripts before executing
     ssh @sshPortArgs $sshTarget "find '$RemoteDir/infra' -name '*.sh' -exec sed -i 's/\r//' {} \;"
-    ssh @sshPortArgs $sshTarget "cd '$RemoteDir' && sudo GIT_REPO='$GitRepo' GIT_USERNAME='$GitUsername' GIT_TOKEN='$GitToken' BRANCH='$Branch' APP_DIR='$RemoteDir' APP_USER='$User' bash infra/pi/bootstrap.sh"
+    # Step 4: run bootstrap
+    ssh @sshPortArgs $sshTarget "cd '$RemoteDir' && sudo GIT_REPO='$GitRepo' GIT_USERNAME='$GitUsername' GIT_TOKEN='$GitToken' BRANCH='$Branch' APP_DIR='$RemoteDir' APP_USER='$AppUser' bash infra/pi/bootstrap.sh"
     if ($LASTEXITCODE -ne 0) { throw "Bootstrap failed" }
 }
 

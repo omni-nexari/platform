@@ -1,0 +1,25 @@
+[Unit]
+Description=Nexari Platform API (Fastify)
+Documentation=https://nexari.ca
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=nexari
+Group=nexari
+WorkingDirectory=/opt/nexari
+EnvironmentFile=/etc/nexari/api.env
+ExecStart=/usr/bin/node --max-old-space-size=256 apps/api/dist/index.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nexari-api
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

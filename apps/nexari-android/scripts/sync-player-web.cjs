@@ -44,14 +44,20 @@ if (fs.existsSync(SRC_DIST)) {
 // Always ship a tiny index.html that boots the player. Hosts that want a
 // different bootstrap can override after this script runs.
 const INDEX = path.join(DEST, 'index.html');
+// Partner branding: bake COMPANY_NAME into __PLAYER_CONFIG__ so the player-web
+// pairing screen shows the partner's name (set by build-partner-players.ps1).
+const COMPANY_NAME = (process.env.COMPANY_NAME || '').trim();
+const brandScript = COMPANY_NAME
+  ? `<script>window.__PLAYER_CONFIG__ = { COMPANY_NAME: ${JSON.stringify(COMPANY_NAME)} };</script>\n`
+  : '';
 // Always write the index.html (overwrite if present) to keep it in sync.
 fs.writeFileSync(INDEX, `<!doctype html>
 <html><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
-<title>Nexari Player</title>
+<title>${COMPANY_NAME || 'Nexari Player'}</title>
 <style>html,body{margin:0;padding:0;background:#000;width:100%;height:100%;overflow:hidden}#player-root{position:fixed;inset:0}</style>
-</head><body>
+${brandScript}</head><body>
 <div id="player-root"></div>
 <script type="module">
 import { Player } from './bundle.js';

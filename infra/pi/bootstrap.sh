@@ -14,8 +14,11 @@
 # ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/opt/signage}"
-APP_USER="${APP_USER:-chiho}"
+APP_DIR="${APP_DIR:-/opt/nexari}"
+APP_USER="${APP_USER:-nexari}"
+DATA_DIR="${DATA_DIR:-/var/nexari}"
+ENV_DIR="${ENV_DIR:-/etc/nexari}"
+SERVICE_NAME="${SERVICE_NAME:-nexari-api}"
 GIT_REPO="${GIT_REPO:-}"
 GIT_USERNAME="${GIT_USERNAME:-}"
 GIT_TOKEN="${GIT_TOKEN:-}"
@@ -63,11 +66,17 @@ else
     echo "==> [bootstrap] pnpm $(pnpm --version) already installed, skipping."
 fi
 
+# ── Create app user ───────────────────────────────────────────────────────────
+echo "==> [bootstrap] Ensuring app user '$APP_USER' exists..."
+if ! id -u "$APP_USER" &>/dev/null; then
+    sudo useradd --system --no-create-home --shell /usr/sbin/nologin "$APP_USER"
+fi
+
 # ── App directories ───────────────────────────────────────────────────────────
 echo "==> [bootstrap] Creating application directories..."
-sudo mkdir -p "$APP_DIR" /var/signage/uploads /var/signage/tizen /var/signage/android /etc/signage /var/www/certbot
-sudo chown -R "$APP_USER:$APP_USER" "$APP_DIR" /var/signage /etc/signage
-sudo chmod 750 /etc/signage
+sudo mkdir -p "$APP_DIR" "$DATA_DIR/uploads" "$DATA_DIR/tizen" "$DATA_DIR/android" "$ENV_DIR" /var/www/certbot
+sudo chown -R "$APP_USER:$APP_USER" "$APP_DIR" "$DATA_DIR" "$ENV_DIR"
+sudo chmod 750 "$ENV_DIR"
 
 # ── Clone repo ────────────────────────────────────────────────────────────────
 if [[ -n "$GIT_REPO" ]]; then
@@ -93,15 +102,15 @@ else
 fi
 
 # ── systemd service ───────────────────────────────────────────────────────────
-SERVICE_SRC="$APP_DIR/infra/systemd/signage-api.service"
-SERVICE_DST="/etc/systemd/system/signage-api.service"
+SERVICE_SRC="$APP_DIR/infra/systemd/$SERVICE_NAME.service"
+SERVICE_DST="/etc/systemd/system/$SERVICE_NAME.service"
 
 if [[ -f "$SERVICE_SRC" ]]; then
     echo "==> [bootstrap] Installing systemd service..."
     sudo cp "$SERVICE_SRC" "$SERVICE_DST"
     sudo systemctl daemon-reload
-    sudo systemctl enable signage-api
-    echo "    Service enabled. Do NOT start it yet — populate /etc/signage/api.env first."
+    sudo systemctl enable "$SERVICE_NAME"
+    echo "    Service enabled. Do NOT start it yet — populate $ENV_DIR/api.env first."
 else
     echo "!!! [bootstrap] Service file not found at $SERVICE_SRC — install it manually after cloning."
 fi
@@ -140,7 +149,7 @@ echo "║     Set: requirepass <YOUR_REDIS_PASSWORD>                   ║"
 echo "║     Set: bind 127.0.0.1 -::1                                 ║"
 echo "║     sudo systemctl restart redis-server                      ║"
 echo "║                                                              ║"
-echo "║  3. Populate /etc/signage/api.env (use infra/env/api.env.example) ║"
+echo "║  3. Populate $ENV_DIR/api.env (use infra/env/api.env.example)       ║"
 echo "║                                                              ║"
 echo "║  4. Run deploy.sh to build, migrate, and start services:     ║"
 echo "║     (via deploy-pi.ps1 from Windows, or manually)           ║"
