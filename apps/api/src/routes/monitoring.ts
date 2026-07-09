@@ -123,7 +123,7 @@ export async function monitoringRoutes(app: FastifyInstance) {
       if (points !== undefined) params['points'] = points;
       if (format !== undefined) params['format'] = format;
 
-      // Local fallback for CPU/RAM when Netdata is not installed
+      // Use local /proc fallback when Netdata is not configured OR when it fails
       if (!isMonitoringConfigured()) {
         try {
           const data = await localNetdataChart(chart);
@@ -137,9 +137,15 @@ export async function monitoringRoutes(app: FastifyInstance) {
       try {
         const data = await monitoringFetch<unknown>('/api/v1/data', params);
         return reply.send(data);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Monitoring unavailable';
-        return reply.status(503).send({ error: message });
+      } catch {
+        // Netdata configured but unavailable — fall back to local /proc stats
+        try {
+          const data = await localNetdataChart(chart);
+          return reply.send(data);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Stats unavailable';
+          return reply.status(503).send({ error: message });
+        }
       }
     },
   );
@@ -180,28 +186,26 @@ export async function monitoringRoutes(app: FastifyInstance) {
     '/ssl-status',
     { onRequest: [app.authenticatePlatformAdmin] },
     async (_req, reply) => {
-      // Local fallback: read cert expiry directly from Let's Encrypt cert file
-      if (!isMonitoringConfigured()) {
-        if (!SSL_DOMAIN) return reply.status(503).send({ error: 'SSL_DOMAIN not configured' });
+      // SSL cert check via openssl s_client (no file read permissions needed)
+      if (SSL_DOMAIN) {
         try {
-          const certPath = `/etc/letsencrypt/live/${SSL_DOMAIN}/cert.pem`;
-          const certPem = readFileSync(certPath, 'utf8');
           const { stdout } = await execAsync(
-            `echo "${certPem.replace(/"/g, '').replace(/\n/g, '\\n')}" | openssl x509 -enddate -noout`,
-          ).catch(async () => {
-            // Fallback: use openssl directly on the file
-            return execAsync(`openssl x509 -enddate -noout -in ${certPath}`);
-          });
-          // stdout: "notAfter=Jul 14 12:00:00 2026 GMT"
+            `echo | openssl s_client -connect ${SSL_DOMAIN}:443 -servername ${SSL_DOMAIN} 2>/dev/null | openssl x509 -noout -enddate`,
+            { timeout: 12_000 },
+          );
           const match = stdout.match(/notAfter=(.+)/);
           if (!match) return reply.status(503).send({ error: 'Could not parse cert expiry' });
           const expiresAt = new Date(match[1]!);
           const daysRemaining = Math.floor((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
           return reply.send({ daysRemaining });
         } catch (err) {
-          const message = err instanceof Error ? err.message : 'Could not read cert';
+          const message = err instanceof Error ? err.message : 'Could not check SSL cert';
           return reply.status(503).send({ error: message });
         }
+      }
+
+      if (!isMonitoringConfigured()) {
+        return reply.status(503).send({ error: 'SSL_DOMAIN not configured' });
       }
 
       try {
