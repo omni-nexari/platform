@@ -43,7 +43,7 @@ git pull origin "$BRANCH"
 
 # ── Install dependencies ──────────────────────────────────────────────────────
 echo "==> [deploy] Installing dependencies..."
-pnpm install --frozen-lockfile
+pnpm install --prefer-offline
 
 # ── Build (scoped — excludes nexari-tizen, which is built on Windows) ─────────
 echo "==> [deploy] Building packages..."
