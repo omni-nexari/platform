@@ -5,9 +5,6 @@ packages:
   - '!apps/test-nodejs-mdc-sbb'
   - 'packages/*'
 
-neverBuiltDependencies:
-  - electron
-
 onlyBuiltDependencies:
   - argon2
   - core-js
