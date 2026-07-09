@@ -121,8 +121,9 @@ if [[ -L /etc/nginx/sites-enabled/default ]]; then
     sudo rm -f /etc/nginx/sites-enabled/default
 fi
 
-# ── nginx: install platform vhost scaffold ───────────────────────────────────
-if [[ -f "$APP_DIR/infra/nginx/platform.nexari.ca.conf" ]]; then
+# ── nginx: install platform vhost scaffold (only when explicitly requested) ───
+INSTALL_PLATFORM_VHOST="${INSTALL_PLATFORM_VHOST:-false}"
+if [[ "$INSTALL_PLATFORM_VHOST" == "true" && -f "$APP_DIR/infra/nginx/platform.nexari.ca.conf" ]]; then
     echo "==> [bootstrap] Installing platform nginx site..."
     sudo cp "$APP_DIR/infra/nginx/platform.nexari.ca.conf" /etc/nginx/sites-available/platform.nexari.ca.conf
     if [[ ! -L /etc/nginx/sites-enabled/platform.nexari.ca.conf ]]; then
