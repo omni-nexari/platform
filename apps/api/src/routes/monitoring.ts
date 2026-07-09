@@ -52,7 +52,7 @@ async function localNetdataChart(chart: string): Promise<unknown> {
     const text = readFileSync('/proc/meminfo', 'utf8');
     const getBytes = (key: string) => {
       const m = text.match(new RegExp(`^${key}:\\s+(\\d+)`, 'm'));
-      return m ? parseInt(m[1]) * 1024 : 0; // kB → bytes
+      return m ? parseInt(m[1]!) * 1024 : 0; // kB → bytes
     };
     const total    = getBytes('MemTotal');
     const free     = getBytes('MemFree');
@@ -195,7 +195,7 @@ export async function monitoringRoutes(app: FastifyInstance) {
           // stdout: "notAfter=Jul 14 12:00:00 2026 GMT"
           const match = stdout.match(/notAfter=(.+)/);
           if (!match) return reply.status(503).send({ error: 'Could not parse cert expiry' });
-          const expiresAt = new Date(match[1]);
+          const expiresAt = new Date(match[1]!);
           const daysRemaining = Math.floor((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
           return reply.send({ daysRemaining });
         } catch (err) {
