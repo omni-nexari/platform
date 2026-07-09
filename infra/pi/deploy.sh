@@ -18,6 +18,7 @@ GIT_REPO="${GIT_REPO:-}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
 ENV_DIR="${ENV_DIR:-/etc/nexari}"
 SERVICE_NAME="${SERVICE_NAME:-nexari-api}"
+NGINX_CONF_FILE="${NGINX_CONF_FILE:-signage.conf}"
 ENV_FILE="$ENV_DIR/api.env"
 
 # ── Validate env file ─────────────────────────────────────────────────────────
@@ -58,7 +59,7 @@ pnpm db:migrate
 
 # ── nginx config ──────────────────────────────────────────────────────────────
 echo "==> [deploy] Installing nginx config..."
-NGINX_CONF="$APP_DIR/infra/nginx/signage.conf"
+NGINX_CONF="$APP_DIR/infra/nginx/$NGINX_CONF_FILE"
 sudo cp "$NGINX_CONF" /etc/nginx/sites-available/"$SERVICE_NAME"
 
 # Ensure the symlink exists (idempotent)
