@@ -93,28 +93,41 @@ async function sendEmail(params: SendEmailParams): Promise<void> {
 
   if (cfg.provider === 'disabled') {
     // eslint-disable-next-line no-console
-    console.warn('[email] Email sending is disabled — skipping:', params.subject);
+    console.warn('[email] provider=disabled — skipping:', params.subject, '→', params.to);
     return;
   }
 
   const fromAddress = params.from === 'admin' ? cfg.fromAdmin : cfg.fromMail;
 
   if (cfg.provider === 'smtp') {
+    const port = cfg.smtpPort ?? 587;
+    // Port 465 = implicit SSL (secure: true); port 587/25 = STARTTLS (secure: false)
     const transporter = nodemailer.createTransport({
       host: cfg.smtpHost,
-      port: cfg.smtpPort ?? 587,
-      secure: cfg.smtpSecure ?? true,
+      port,
+      secure: port === 465,
+      requireTLS: port !== 465,
       auth: cfg.smtpUser && cfg.smtpPassword
         ? { user: cfg.smtpUser, pass: cfg.smtpPassword }
         : undefined,
     });
-    await transporter.sendMail({
-      from: fromAddress,
-      to:   params.to,
-      subject: params.subject,
-      html: params.html,
-      text: params.text,
-    });
+    // eslint-disable-next-line no-console
+    console.log(`[email] smtp → ${params.to} | subject: ${params.subject} | host: ${cfg.smtpHost}:${port}`);
+    try {
+      await transporter.sendMail({
+        from: fromAddress,
+        to:   params.to,
+        subject: params.subject,
+        html: params.html,
+        text: params.text,
+      });
+      // eslint-disable-next-line no-console
+      console.log(`[email] smtp sent OK → ${params.to}`);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[email] smtp FAILED:', err);
+      throw err;
+    }
     return;
   }
 

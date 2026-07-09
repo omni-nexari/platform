@@ -1,10 +1,12 @@
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
+import { readFileSync } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 
 const execAsync = promisify(exec);
 
-const MONITORING_BASE_URL = process.env['MONITORING_BASE_URL'] ?? 'http://192.168.1.17:8080';
+// Empty string = monitoring agent not configured; all agent-backed routes return 503
+const MONITORING_BASE_URL = process.env['MONITORING_BASE_URL'] ?? '';
 const MONITORING_USERNAME = process.env['MONITORING_USERNAME'] ?? '';
 const MONITORING_PASSWORD = process.env['MONITORING_PASSWORD'] ?? '';
 const CROWDSEC_BASE_URL = process.env['CROWDSEC_BASE_URL'] ?? 'http://127.0.0.1:8090';
@@ -13,6 +15,60 @@ const MQTT_HOST = process.env['MQTT_HOST'] ?? '127.0.0.1';
 const MQTT_PORT = process.env['MQTT_PORT'] ?? '1883';
 const MQTT_USERNAME = process.env['MQTT_USERNAME'] ?? '';
 const MQTT_PASSWORD = process.env['MQTT_PASSWORD'] ?? '';
+// Domain whose Let's Encrypt cert to check — used as local ssl-status fallback
+const SSL_DOMAIN = process.env['SSL_DOMAIN'] ?? '';
+
+function isMonitoringConfigured(): boolean {
+  return MONITORING_BASE_URL.length > 0;
+}
+
+// ── Local system stats (no external agent required) ───────────────────────────
+
+/** Build a minimal Netdata-compatible response for local system.cpu / system.ram */
+async function localNetdataChart(chart: string): Promise<unknown> {
+  const now = Math.floor(Date.now() / 1000);
+  if (chart === 'system.cpu') {
+    // Read /proc/stat twice 250ms apart for an accurate delta
+    const readStat = () => {
+      const line = readFileSync('/proc/stat', 'utf8').split('\n')[0] ?? '';
+      const [, user = '0', nice = '0', sys = '0', idle = '0', iowait = '0', irq = '0', softirq = '0'] = line.split(/\s+/);
+      const nums = [user, nice, sys, idle, iowait, irq, softirq].map(Number);
+      const total = nums.reduce((s, v) => s + v, 0);
+      return { user: nums[0]!, nice: nums[1]!, sys: nums[2]!, idle: nums[3]! + nums[4]!, total };
+    };
+    const s1 = readStat();
+    await new Promise((r) => setTimeout(r, 250));
+    const s2 = readStat();
+    const dt = s2.total - s1.total || 1;
+    const pct = (k: keyof typeof s1) => k === 'total' ? 0 : +((((s2[k] as number) - (s1[k] as number)) / dt) * 100).toFixed(1);
+    // idle column is what parseNetdataCpuChart uses: used = 100 - idle
+    return {
+      id: 'system.cpu', name: 'system.cpu',
+      labels: ['time', 'user', 'system', 'nice', 'idle'],
+      data: [[now, pct('user'), pct('sys'), pct('nice'), pct('idle')]],
+    };
+  }
+  if (chart === 'system.ram') {
+    const text = readFileSync('/proc/meminfo', 'utf8');
+    const getBytes = (key: string) => {
+      const m = text.match(new RegExp(`^${key}:\\s+(\\d+)`, 'm'));
+      return m ? parseInt(m[1]) * 1024 : 0; // kB → bytes
+    };
+    const total    = getBytes('MemTotal');
+    const free     = getBytes('MemFree');
+    const buffers  = getBytes('Buffers');
+    const cached   = getBytes('Cached');
+    const sReclaimable = getBytes('SReclaimable');
+    const used     = total - free - buffers - cached - sReclaimable;
+    // parseNetdataRamChart divides values by 1024*1024 to get MB, so pass bytes
+    return {
+      id: 'system.ram', name: 'system.ram',
+      labels: ['time', 'used', 'free', 'cached', 'buffers'],
+      data: [[now, used, free, cached + sReclaimable, buffers]],
+    };
+  }
+  throw new Error(`Local stats not available for chart: ${chart}`);
+}
 
 function monitoringBasicAuthHeader(): string {
   return `Basic ${Buffer.from(`${MONITORING_USERNAME}:${MONITORING_PASSWORD}`).toString('base64')}`;
@@ -67,12 +123,23 @@ export async function monitoringRoutes(app: FastifyInstance) {
       if (points !== undefined) params['points'] = points;
       if (format !== undefined) params['format'] = format;
 
+      // Local fallback for CPU/RAM when Netdata is not installed
+      if (!isMonitoringConfigured()) {
+        try {
+          const data = await localNetdataChart(chart);
+          return reply.send(data);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Local stats unavailable';
+          return reply.status(503).send({ error: message });
+        }
+      }
+
       try {
         const data = await monitoringFetch<unknown>('/api/v1/data', params);
         return reply.send(data);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Monitoring unavailable';
-        return reply.status(502).send({ error: message });
+        return reply.status(503).send({ error: message });
       }
     },
   );
@@ -87,7 +154,7 @@ export async function monitoringRoutes(app: FastifyInstance) {
         return reply.send(data);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Monitoring unavailable';
-        return reply.status(502).send({ error: message });
+        return reply.status(503).send({ error: message });
       }
     },
   );
@@ -113,6 +180,30 @@ export async function monitoringRoutes(app: FastifyInstance) {
     '/ssl-status',
     { onRequest: [app.authenticatePlatformAdmin] },
     async (_req, reply) => {
+      // Local fallback: read cert expiry directly from Let's Encrypt cert file
+      if (!isMonitoringConfigured()) {
+        if (!SSL_DOMAIN) return reply.status(503).send({ error: 'SSL_DOMAIN not configured' });
+        try {
+          const certPath = `/etc/letsencrypt/live/${SSL_DOMAIN}/cert.pem`;
+          const certPem = readFileSync(certPath, 'utf8');
+          const { stdout } = await execAsync(
+            `echo "${certPem.replace(/"/g, '').replace(/\n/g, '\\n')}" | openssl x509 -enddate -noout`,
+          ).catch(async () => {
+            // Fallback: use openssl directly on the file
+            return execAsync(`openssl x509 -enddate -noout -in ${certPath}`);
+          });
+          // stdout: "notAfter=Jul 14 12:00:00 2026 GMT"
+          const match = stdout.match(/notAfter=(.+)/);
+          if (!match) return reply.status(503).send({ error: 'Could not parse cert expiry' });
+          const expiresAt = new Date(match[1]);
+          const daysRemaining = Math.floor((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+          return reply.send({ daysRemaining });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Could not read cert';
+          return reply.status(503).send({ error: message });
+        }
+      }
+
       try {
         const url = new URL('/ssl-status', MONITORING_BASE_URL);
         const res = await fetch(url.toString(), {
@@ -125,7 +216,7 @@ export async function monitoringRoutes(app: FastifyInstance) {
         return reply.send({ daysRemaining: isNaN(daysRemaining) ? null : daysRemaining });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Monitoring unavailable';
-        return reply.status(502).send({ error: message });
+        return reply.status(503).send({ error: message });
       }
     },
   );
@@ -152,7 +243,7 @@ export async function monitoringRoutes(app: FastifyInstance) {
         return reply.send({ raw, timestamp, status, size, filename });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Monitoring unavailable';
-        return reply.status(502).send({ error: message });
+        return reply.status(503).send({ error: message });
       }
     },
   );
@@ -167,7 +258,7 @@ export async function monitoringRoutes(app: FastifyInstance) {
         return reply.send(data ?? []);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'CrowdSec unavailable';
-        return reply.status(502).send({ error: message });
+        return reply.status(503).send({ error: message });
       }
     },
   );

@@ -13,6 +13,7 @@ import {
   managementCompanyAdmins,
   managementCompanyAdminInvitations,
   clientOrgOwnerInvitations,
+  orgInvitations,
   contentItems,
   playlists,
   schedules,
@@ -2265,15 +2266,15 @@ export async function superAdminRoutes(app: FastifyInstance) {
       columns: { id: true, name: true, email: true, orgRole: true, status: true, createdAt: true },
     });
 
-    const pendingInvites = await db.query.clientOrgOwnerInvitations.findMany({
+    const pendingInvites = await db.query.orgInvitations.findMany({
       where: and(
-        eq(clientOrgOwnerInvitations.organizationId, id),
-        isNull(clientOrgOwnerInvitations.acceptedAt),
-        isNull(clientOrgOwnerInvitations.revokedAt),
+        eq(orgInvitations.orgId, id),
+        isNull(orgInvitations.acceptedAt),
+        gt(orgInvitations.expiresAt, new Date()),
       ),
-      columns: { id: true, email: true, expiresAt: true, createdAt: true },
+      columns: { id: true, email: true, orgRole: true, expiresAt: true, createdAt: true },
     });
-    const pendingInvitesWithRole = pendingInvites.map((inv) => ({ ...inv, role: 'owner' }));
+    const pendingInvitesWithRole = pendingInvites.map((inv) => ({ ...inv, role: inv.orgRole }));
 
     return reply.send({ org, members, pendingInvites: pendingInvitesWithRole });
   });
@@ -2537,22 +2538,20 @@ export async function superAdminRoutes(app: FastifyInstance) {
     });
 
     const token = randomToken();
-    await db.insert(clientOrgOwnerInvitations).values({
-      organizationId: id,
-      managementCompanyId: companyId,
-      invitedByOwnerId: isOwnerCaller(caller) ? caller.sub : null,
-      invitedByAdminId: isOwnerCaller(caller) ? null : caller.sub,
+    await db.insert(orgInvitations).values({
+      orgId: id,
+      invitedBy: caller.sub,
       email: body.data.email.toLowerCase(),
+      orgRole: 'owner',
       token,
-      expiresAt: inviteExpiry(7),
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
 
     try {
       await sendInviteEmail(body.data.email, token, {
         ...(body.data.name ? { recipientName: body.data.name } : {}),
         orgRole: 'owner',
-        inviteType: 'client_org_owner',
-        ...(company?.name ? { companyName: company.name } : {}),
+        orgName: org.name,
         ...(company
           ? {
               branding: {
@@ -2565,7 +2564,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
           : {}),
       });
     } catch (err) {
-      app.log.error({ err }, 'Failed to send client org owner invite email');
+      app.log.error({ err }, 'Failed to send org invite email');
     }
 
     return reply.status(201).send({ email: body.data.email });
@@ -2586,19 +2585,18 @@ export async function superAdminRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
-      const invite = await db.query.clientOrgOwnerInvitations.findFirst({
+      const invite = await db.query.orgInvitations.findFirst({
         where: and(
-          eq(clientOrgOwnerInvitations.id, inviteId),
-          eq(clientOrgOwnerInvitations.organizationId, id),
+          eq(orgInvitations.id, inviteId),
+          eq(orgInvitations.orgId, id),
         ),
       });
       if (!invite) return reply.status(404).send({ error: 'Invitation not found' });
       if (invite.acceptedAt) return reply.status(409).send({ error: 'Invitation already accepted' });
 
       await db
-        .update(clientOrgOwnerInvitations)
-        .set({ revokedAt: new Date(), updatedAt: new Date() })
-        .where(eq(clientOrgOwnerInvitations.id, inviteId));
+        .delete(orgInvitations)
+        .where(eq(orgInvitations.id, inviteId));
 
       return reply.status(204).send();
     },
