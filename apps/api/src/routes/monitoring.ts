@@ -108,7 +108,20 @@ async function crowdsecFetch<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function monitoringRoutes(app: FastifyInstance) {
+const BACKUP_STATUS_FILE = process.env['BACKUP_STATUS_FILE'] ?? '';
+
+function parseBackupStatusLine(raw: string) {
+  const parts = raw.trim().split(' ');
+  return {
+    raw,
+    timestamp: parts[0] ?? null,
+    status:    parts[1] ?? null,
+    size:      parts[2] ?? null,
+    filename:  parts[3] ?? null,
+  };
+}
+
+
   // ── GET /monitoring/netdata ─────────────────────────────────────────────────
   // Proxies Netdata /api/v1/data with chart, after, points query params
   app.get(
@@ -230,6 +243,17 @@ export async function monitoringRoutes(app: FastifyInstance) {
     '/backup-status',
     { onRequest: [app.authenticatePlatformAdmin] },
     async (_req, reply) => {
+      // Local fallback: read status file written by backup script
+      if (!isMonitoringConfigured()) {
+        if (!BACKUP_STATUS_FILE) return reply.status(503).send({ error: 'Backup not configured' });
+        try {
+          const raw = readFileSync(BACKUP_STATUS_FILE, 'utf8');
+          return reply.send(parseBackupStatusLine(raw));
+        } catch {
+          return reply.status(503).send({ error: 'No backup status available' });
+        }
+      }
+
       try {
         const url = new URL('/backup-status', MONITORING_BASE_URL);
         const res = await fetch(url.toString(), {
@@ -237,15 +261,15 @@ export async function monitoringRoutes(app: FastifyInstance) {
           signal: AbortSignal.timeout(10_000),
         });
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-        const raw = (await res.text()).trim();
-        // Format: "2026-05-07T10:22:35+08:00 OK 1.9M all-2026-05-07_1022.sql.gz"
-        const parts = raw.split(' ');
-        const timestamp = parts[0] ?? null;
-        const status = parts[1] ?? null;
-        const size = parts[2] ?? null;
-        const filename = parts[3] ?? null;
-        return reply.send({ raw, timestamp, status, size, filename });
+        return reply.send(parseBackupStatusLine(await res.text()));
       } catch (error) {
+        // Try local status file as fallback
+        if (BACKUP_STATUS_FILE) {
+          try {
+            const raw = readFileSync(BACKUP_STATUS_FILE, 'utf8');
+            return reply.send(parseBackupStatusLine(raw));
+          } catch { /* fall through */ }
+        }
         const message = error instanceof Error ? error.message : 'Monitoring unavailable';
         return reply.status(503).send({ error: message });
       }
