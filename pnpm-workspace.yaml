@@ -7,3 +7,10 @@ packages:
 
 neverBuiltDependencies:
   - electron
+
+onlyBuiltDependencies:
+  - argon2
+  - core-js
+  - esbuild
+  - msgpackr-extract
+  - sharp
