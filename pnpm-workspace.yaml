@@ -5,9 +5,10 @@ packages:
   - '!apps/test-nodejs-mdc-sbb'
   - 'packages/*'
 
-onlyBuiltDependencies:
-  - argon2
-  - core-js
-  - esbuild
-  - msgpackr-extract
-  - sharp
+allowBuilds:
+  argon2: true
+  core-js: true
+  electron: false
+  esbuild: true
+  msgpackr-extract: true
+  sharp: true
