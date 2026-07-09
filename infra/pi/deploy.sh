@@ -74,9 +74,9 @@ fi
 # Remove default site if still present
 [[ -L /etc/nginx/sites-enabled/default ]] && sudo rm -f /etc/nginx/sites-enabled/default
 
-# Install the platform vhost alongside signage so platform.nexari.ca serves
-# the correct origin certificate and proxy path.
-if [[ -f "$APP_DIR/infra/nginx/platform.nexari.ca.conf" ]]; then
+# Install the platform vhost only when explicitly requested
+INSTALL_PLATFORM_VHOST="${INSTALL_PLATFORM_VHOST:-false}"
+if [[ "$INSTALL_PLATFORM_VHOST" == "true" && -f "$APP_DIR/infra/nginx/platform.nexari.ca.conf" ]]; then
     sudo cp "$APP_DIR/infra/nginx/platform.nexari.ca.conf" /etc/nginx/sites-available/platform.nexari.ca.conf
     if [[ ! -L /etc/nginx/sites-enabled/platform.nexari.ca.conf ]]; then
         sudo ln -s /etc/nginx/sites-available/platform.nexari.ca.conf /etc/nginx/sites-enabled/platform.nexari.ca.conf
