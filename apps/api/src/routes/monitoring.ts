@@ -121,7 +121,7 @@ function parseBackupStatusLine(raw: string) {
   };
 }
 
-
+export async function monitoringRoutes(app: FastifyInstance) {
   // ── GET /monitoring/netdata ─────────────────────────────────────────────────
   // Proxies Netdata /api/v1/data with chart, after, points query params
   app.get(
