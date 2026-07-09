@@ -19,9 +19,6 @@
     "db:studio": "pnpm --filter @signage/db db:studio",
     "sync-tizen": "node tools/sync-tizen-shared.mjs"
   },
-  "pnpm": {
-    "neverBuiltDependencies": ["electron"]
-  },
   "devDependencies": {
     "sharp": "^0.34.5",
     "typescript": "^5.7.3"

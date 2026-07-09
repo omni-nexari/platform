@@ -4,3 +4,6 @@ packages:
   - '!apps/tizen-sbb'
   - '!apps/test-nodejs-mdc-sbb'
   - 'packages/*'
+
+neverBuiltDependencies:
+  - electron
