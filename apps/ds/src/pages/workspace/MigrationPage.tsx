@@ -323,7 +323,7 @@ export default function MigrationPage() {
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
 
   // Step 1 — Connect
-  const [baseUrl, setBaseUrl] = useState('https://');
+  const [baseUrl, setBaseUrl] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [totpCode, setTotpCode] = useState('');
@@ -911,7 +911,7 @@ export default function MigrationPage() {
                 type="url"
                 value={baseUrl}
                 onChange={e => setBaseUrl(e.target.value)}
-                placeholder="https://your-server:7002/MagicInfo"
+                placeholder="http://192.168.1.x:7001/MagicInfo or https://server:7002/MagicInfo"
                 className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--blue)]"
               />
             </div>

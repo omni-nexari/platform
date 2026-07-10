@@ -270,7 +270,7 @@ export async function migrationRoutes(app: FastifyInstance) {
       return reply.send({ token });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      return reply.status(502).send({ error: `Could not reach MagicInfo server: ${msg}` });
+      return reply.status(503).send({ error: `Could not reach MagicInfo server: ${msg}` });
     }
   });
 
@@ -300,7 +300,7 @@ export async function migrationRoutes(app: FastifyInstance) {
       return reply.status(result.ok ? 200 : result.status).send(result.data);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      return reply.status(502).send({ error: `MagicInfo proxy error: ${msg}` });
+      return reply.status(503).send({ error: `MagicInfo proxy error: ${msg}` });
     }
   });
 
