@@ -2537,6 +2537,12 @@ export async function superAdminRoutes(app: FastifyInstance) {
       where: eq(managementCompanies.id, companyId),
     });
 
+    // Include the org's default workspace so the user is added to it on accept
+    const defaultWorkspace = await db.query.workspaces.findFirst({
+      where: and(eq(workspaces.orgId, id), isNull(workspaces.deletedAt)),
+      columns: { id: true },
+    });
+
     const token = randomToken();
     await db.insert(orgInvitations).values({
       orgId: id,
@@ -2545,6 +2551,7 @@ export async function superAdminRoutes(app: FastifyInstance) {
       orgRole: 'owner',
       token,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      ...(defaultWorkspace ? { initialWorkspaceId: defaultWorkspace.id } : {}),
     });
 
     try {
