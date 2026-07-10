@@ -20,6 +20,7 @@ var __rest = (this && this.__rest) || function (s, e) {
         }
     return t;
 };
+var _a;
 /** Redact sensitive query parameters (token, access_token, auth, apiKey)
  *  from a URL before logging. Returns the original string if not parseable. */
 function redactUrl(url) {
@@ -170,7 +171,9 @@ const Player = {
     _calendarPushHandlers: new Map(),
     // Reseller branding: populated from /device/workspace → resellerBranding.
     // When set, replaces the default Nexari SVG logo on the idle screen.
-    resellerBrandingLogoUrl: null,
+    // Seeded from __PLAYER_CONFIG__.LOGO_URL (baked at partner build time) so the
+    // partner logo shows immediately — even before the first loadContent() response.
+    resellerBrandingLogoUrl: (((_a = window.__PLAYER_CONFIG__) === null || _a === void 0 ? void 0 : _a.LOGO_URL) || null),
     // BLE rule override — set by BleManager when a proximity rule triggers.
     // While set, loadContent() skips the normal schedule API call and plays
     // this content instead. Cleared when the beacon moves out of range.
@@ -7920,6 +7923,7 @@ const Player = {
     },
     // Show idle screen when no content
     showIdleScreen(downloadProgress = null) {
+        var _a;
         this.cancelCurrentPlayback();
         // Ensure AVPlay visual state is fully reset so the content-container is visible.
         this.setAvPlayVisualMode(false);
@@ -7936,8 +7940,12 @@ const Player = {
         }
         container._menuBoardRequestId = undefined;
         const deviceLabel = (this.deviceName || '').trim();
-        const brandHtml = this.resellerBrandingLogoUrl
-            ? `<img src="${this.resellerBrandingLogoUrl}" alt="Logo" class="idle-reseller-logo" style="max-height:56px;max-width:240px;object-fit:contain;" onerror="this.style.display='none'">`
+        // Use runtime reseller branding, or fall back to the URL baked in at partner build
+        // time (window.__PLAYER_CONFIG__.LOGO_URL set by generate-build-info.cjs).
+        const _idleLogoUrl = this.resellerBrandingLogoUrl
+            || (((_a = window.__PLAYER_CONFIG__) === null || _a === void 0 ? void 0 : _a.LOGO_URL) || null);
+        const brandHtml = _idleLogoUrl
+            ? `<img src="${_idleLogoUrl}" alt="Logo" class="idle-reseller-logo" style="max-height:56px;max-width:240px;object-fit:contain;" onerror="this.style.display='none'">`
             : `<svg class="idle-logo" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
               <defs>
                 <linearGradient id="nexariGrad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">

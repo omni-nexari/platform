@@ -1823,6 +1823,11 @@ showIdle('Loading content…');
     if (cfg.apiBase)     localStorage.setItem('apiBase',     cfg.apiBase);
     if (cfg.deviceToken) localStorage.setItem('deviceToken', cfg.deviceToken);
     if (cfg.deviceId)    localStorage.setItem('deviceId',    cfg.deviceId);
+    // Seed partner logo URL for idle screen. Only set if no runtime value from the
+    // platform's resellerBranding has been stored yet (runtime value takes precedence).
+    if (cfg.logoUrl && !localStorage.getItem('resellerBrandingLogoUrl')) {
+      localStorage.setItem('resellerBrandingLogoUrl', cfg.logoUrl);
+    }
     const ver = (cfg as any).appVersion || '0.1.0';
     console.info(`[Player] Boot: platform=windows version=${ver} deviceId=${cfg.deviceId || '(none)'} apiBase=${cfg.apiBase || '(none)'}`);
 

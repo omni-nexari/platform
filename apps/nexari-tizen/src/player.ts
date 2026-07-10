@@ -222,7 +222,9 @@ const Player = {
 
   // Reseller branding: populated from /device/workspace → resellerBranding.
   // When set, replaces the default Nexari SVG logo on the idle screen.
-  resellerBrandingLogoUrl: null as string | null,
+  // Seeded from __PLAYER_CONFIG__.LOGO_URL (baked at partner build time) so the
+  // partner logo shows immediately — even before the first loadContent() response.
+  resellerBrandingLogoUrl: ((window as any).__PLAYER_CONFIG__?.LOGO_URL || null) as string | null,
 
   // BLE rule override — set by BleManager when a proximity rule triggers.
   // While set, loadContent() skips the normal schedule API call and plays
@@ -7986,8 +7988,12 @@ const Player = {
     (container as HTMLElement & { _menuBoardRequestId?: string })._menuBoardRequestId = undefined;
     
     const deviceLabel = (this.deviceName || '').trim();
-    const brandHtml = this.resellerBrandingLogoUrl
-      ? `<img src="${this.resellerBrandingLogoUrl}" alt="Logo" class="idle-reseller-logo" style="max-height:56px;max-width:240px;object-fit:contain;" onerror="this.style.display='none'">`
+    // Use runtime reseller branding, or fall back to the URL baked in at partner build
+    // time (window.__PLAYER_CONFIG__.LOGO_URL set by generate-build-info.cjs).
+    const _idleLogoUrl = this.resellerBrandingLogoUrl
+      || ((window as any).__PLAYER_CONFIG__?.LOGO_URL || null);
+    const brandHtml = _idleLogoUrl
+      ? `<img src="${_idleLogoUrl}" alt="Logo" class="idle-reseller-logo" style="max-height:56px;max-width:240px;object-fit:contain;" onerror="this.style.display='none'">`
       : `<svg class="idle-logo" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
               <defs>
                 <linearGradient id="nexariGrad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">

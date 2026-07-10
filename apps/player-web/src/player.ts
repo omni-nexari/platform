@@ -139,7 +139,11 @@ export class Player {
   private pendingSignature: string | null = null;
   private isDownloadingContent = false;
   private deviceDisplayName = '';
-  private resellerBrandingLogoUrl: string | null = null;
+  // Seed from build-time baked config (build-partner-players.ps1 → generate-build-info.cjs
+  // injects LOGO_URL into window.__PLAYER_CONFIG__). Falls back to null so the platform's
+  // runtime resellerBranding response can still override it later (loadContent does that).
+  private resellerBrandingLogoUrl: string | null =
+    (globalThis as { __PLAYER_CONFIG__?: { LOGO_URL?: string } }).__PLAYER_CONFIG__?.LOGO_URL ?? null;
 
   constructor(cfg: PlayerConfig) {
     // Allow the connection settings panel to override apiBase/wsBase via localStorage
@@ -1995,6 +1999,11 @@ export class Player {
       : '';
 
     const deviceLabel = escapeHtml(this.deviceDisplayName);
+    // Use runtime reseller branding, or fall back to __PLAYER_CONFIG__.LOGO_URL baked at
+    // partner build time, or fall back to the nexari-logo.png asset (replaced at build time).
+    const _idleLogoUrl = this.resellerBrandingLogoUrl
+      || (globalThis as { __PLAYER_CONFIG__?: { LOGO_URL?: string } }).__PLAYER_CONFIG__?.LOGO_URL
+      || null;
 
     this.cfg.container.innerHTML = `
       <div style="position:absolute;inset:0;background:#0d0f1a;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:system-ui,sans-serif;">
@@ -2006,8 +2015,8 @@ export class Player {
 
           <!-- Logo -->
           <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:${deviceLabel ? '8px' : '24px'};">
-            ${this.resellerBrandingLogoUrl
-              ? `<img src="${this.resellerBrandingLogoUrl}" alt="Logo" style="max-height:48px;max-width:200px;object-fit:contain;" onerror="this.style.display='none'">`
+            ${_idleLogoUrl
+              ? `<img src="${_idleLogoUrl}" alt="Logo" style="max-height:48px;max-width:200px;object-fit:contain;" onerror="this.style.display='none'">`
               : `<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:48px;height:48px;" aria-hidden="true">
               <defs>
                 <linearGradient id="ng" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">

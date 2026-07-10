@@ -54,11 +54,11 @@ var _onLine = null;
 var _httpQueue = [];
 var _flushing = false;
 function initLogger(opts) {
-  var _a, _b;
+  var _a2, _b2;
   _apiBase = opts.apiBase;
   _deviceId = opts.deviceId;
-  _onLine = (_a = opts.onLine) != null ? _a : null;
-  setInterval(_flush, (_b = opts.flushIntervalMs) != null ? _b : 3e4);
+  _onLine = (_a2 = opts.onLine) != null ? _a2 : null;
+  setInterval(_flush, (_b2 = opts.flushIntervalMs) != null ? _b2 : 3e4);
 }
 function _push(level, msg) {
   const consoleFn = level === "error" ? console.error : level === "warn" ? console.warn : level === "debug" ? console.debug : console.info;
@@ -105,7 +105,7 @@ var Api = class {
   // ── Schedule / content ────────────────────────────────────────────────────
   /** Returns the schedule object for this device.  Throws on non-2xx. */
   async getCurrentContent(_deviceId2) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a2, _b2, _c, _d, _e, _f;
     const t = this.token();
     const [schedRes, wsRes] = await Promise.all([
       fetch(`${this.base}/devices/device/schedule${t ? `?token=${encodeURIComponent(t)}` : ""}`),
@@ -114,21 +114,21 @@ var Api = class {
     if (schedRes.status === 404) return null;
     if (!schedRes.ok) throw Object.assign(new Error(`schedule HTTP ${schedRes.status}`), { status: schedRes.status });
     const wsBody = (wsRes == null ? void 0 : wsRes.ok) ? await wsRes.json().catch(() => null) : null;
-    const resellerBranding = (_a = wsBody == null ? void 0 : wsBody["resellerBranding"]) != null ? _a : null;
+    const resellerBranding = (_a2 = wsBody == null ? void 0 : wsBody["resellerBranding"]) != null ? _a2 : null;
     const publishedSyncGroup = wsBody == null ? void 0 : wsBody["publishedSyncGroup"];
     if (publishedSyncGroup) {
       const sg = publishedSyncGroup;
       const sp = sg["syncPlaylist"];
-      const spItems = (_b = sp == null ? void 0 : sp["items"]) != null ? _b : [];
+      const spItems = (_b2 = sp == null ? void 0 : sp["items"]) != null ? _b2 : [];
       if (spItems.length > 0) {
         const items2 = spItems.map((item) => {
-          var _a2;
+          var _a3;
           const c = this.enrichContent(item["content"], t);
           if (!c) return null;
           return {
             id: item["id"],
             contentId: item["contentId"],
-            duration: (_a2 = item["durationSeconds"]) != null ? _a2 : 10,
+            duration: (_a3 = item["durationSeconds"]) != null ? _a3 : 10,
             content: c
           };
         }).filter((x) => x !== null);
@@ -166,9 +166,9 @@ var Api = class {
       return true;
     };
     const slotToItems = (slot) => {
-      var _a2;
+      var _a3;
       const playlist = slot["playlist"];
-      if ((_a2 = playlist == null ? void 0 : playlist.items) == null ? void 0 : _a2.length) {
+      if ((_a3 = playlist == null ? void 0 : playlist.items) == null ? void 0 : _a3.length) {
         return playlist.items.map((pi) => {
           const c2 = this.enrichContent(pi["content"], t);
           if (!c2) return null;
@@ -225,10 +225,10 @@ var Api = class {
     return Math.min(...candidates);
   }
   enrichContent(content, token) {
-    var _a;
+    var _a2;
     if (!content) return null;
     const id = content["id"];
-    const type = ((_a = content["type"]) != null ? _a : "").toLowerCase();
+    const type = ((_a2 = content["type"]) != null ? _a2 : "").toLowerCase();
     let url;
     if (type === "web_url") {
       url = content["webUrl"];
@@ -264,12 +264,12 @@ var Api = class {
   }
   /** Fetches NTP server time. Returns epoch-ms or null on failure. */
   async getServerTime() {
-    var _a, _b;
+    var _a2, _b2;
     try {
       const res = await fetch(`${this.base}/devices/time`);
       if (!res.ok) return null;
       const body = await res.json();
-      return (_b = (_a = body.timestamp) != null ? _a : body.serverTime) != null ? _b : null;
+      return (_b2 = (_a2 = body.timestamp) != null ? _a2 : body.serverTime) != null ? _b2 : null;
     } catch (e) {
       return null;
     }
@@ -332,14 +332,14 @@ var Api = class {
   }
   /** GET /devices/device/:id/content/:contentId/calendar/events */
   async getCalendarEvents(_deviceId2, contentId, from, to) {
-    var _a;
+    var _a2;
     const t = this.token();
     const res = await fetch(
       `${this.base}/devices/device/content/${encodeURIComponent(contentId)}/calendar/events?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}` + (t ? `&token=${encodeURIComponent(t)}` : "")
     );
     if (!res.ok) return [];
     const body = await res.json();
-    return (_a = body.events) != null ? _a : [];
+    return (_a2 = body.events) != null ? _a2 : [];
   }
   // ── Logging ───────────────────────────────────────────────────────────────
   async sendLogs(deviceId, entries) {
@@ -373,7 +373,7 @@ function parseMetadata(content) {
   return content.metadata;
 }
 function renderCalendar(container, content, api, deviceId, ws, registerPushHandler) {
-  var _a;
+  var _a2;
   const meta = parseMetadata(content);
   const view = String(meta["view"] || "week");
   const timezone = String(meta["timezone"] || "UTC");
@@ -387,7 +387,7 @@ function renderCalendar(container, content, api, deviceId, ws, registerPushHandl
   const border = isDark ? "#3a3a50" : "#e0e0e0";
   const text = isDark ? "#e2e8f0" : "#202124";
   const textMuted = isDark ? "#94a3b8" : "#70757a";
-  const clockStyle = (_a = theme.clockStyle) != null ? _a : "digital-12";
+  const clockStyle = (_a2 = theme.clockStyle) != null ? _a2 : "digital-12";
   void surface;
   let pollTimer = null;
   let clockTimer = null;
@@ -611,7 +611,7 @@ function renderCalendar(container, content, api, deviceId, ws, registerPushHandl
     startClock();
   };
   const renderMeetingRoom = (events) => {
-    var _a2;
+    var _a3;
     const now = getNow();
     const startOfDay = /* @__PURE__ */ new Date();
     startOfDay.setHours(0, 0, 0, 0);
@@ -628,7 +628,7 @@ function renderCalendar(container, content, api, deviceId, ws, registerPushHandl
     const railColor = isBusy && !isAmberEnding ? "#d93025" : isBusy && isAmberEnding || isAmberSoon ? "#f59e0b" : "#34a853";
     const portrait = window.innerHeight > window.innerWidth;
     const roomName = (roomMeta == null ? void 0 : roomMeta.name) || content.name || "Meeting Room";
-    const capacity = (_a2 = roomMeta == null ? void 0 : roomMeta.capacity) != null ? _a2 : null;
+    const capacity = (_a3 = roomMeta == null ? void 0 : roomMeta.capacity) != null ? _a3 : null;
     const bookingUrl = (roomMeta == null ? void 0 : roomMeta.bookingUrl) || "";
     const logoUrl = (roomMeta == null ? void 0 : roomMeta.logoUrl) || "";
     const backgroundUrl = (roomMeta == null ? void 0 : roomMeta.backgroundUrl) || "";
@@ -760,8 +760,8 @@ function renderCalendar(container, content, api, deviceId, ws, registerPushHandl
     }
   };
   const eventsSignature = (evs) => evs.map((e) => {
-    var _a2;
-    return `${e.id}|${e.start}|${e.end}|${e.title}|${(_a2 = e.location) != null ? _a2 : ""}`;
+    var _a3;
+    return `${e.id}|${e.start}|${e.end}|${e.title}|${(_a3 = e.location) != null ? _a3 : ""}`;
   }).join("\n");
   const boundaryCrossed = (evs, sinceMs) => {
     const nowMs = Date.now();
@@ -1065,11 +1065,11 @@ function buildMenuBoardHtml(content, menu, metadata, deviceDisplayIndex) {
   const pages = paginateSections(sections, itemsPerPage);
   const isFeatured = layout === "featured" || layout === "hero-banner" || layout === "magazine";
   function buildPageHtml(pageSections) {
-    var _a, _b, _c;
+    var _a2, _b2, _c;
     let featuredItem = null;
     if (isFeatured) {
       if (heroImageUrl) {
-        const anyItem = (_b = (_a = pageSections[0]) == null ? void 0 : _a.items[0]) != null ? _b : null;
+        const anyItem = (_b2 = (_a2 = pageSections[0]) == null ? void 0 : _a2.items[0]) != null ? _b2 : null;
         if (anyItem) featuredItem = __spreadProps(__spreadValues({}, anyItem), { imageUrl: heroImageUrl });
       } else {
         for (const cat of pageSections) {
@@ -1298,15 +1298,15 @@ function renderDataSync(container, contentId, apiBase, deviceId) {
     if (footer) footer.textContent = `Updated: ${(/* @__PURE__ */ new Date()).toLocaleTimeString()}`;
   };
   const patchCell = (data) => {
-    var _a, _b, _c;
+    var _a2, _b2, _c;
     const td = container.querySelector(`td[data-train="${data.trainId}"][data-station="${data.stationId}"]`);
     if (!td) return;
     switch (data.field) {
       case "value":
-        td.dataset["value"] = String((_a = data.value) != null ? _a : "");
+        td.dataset["value"] = String((_a2 = data.value) != null ? _a2 : "");
         break;
       case "note":
-        td.dataset["note"] = String((_b = data.value) != null ? _b : "");
+        td.dataset["note"] = String((_b2 = data.value) != null ? _b2 : "");
         break;
       case "status":
         td.dataset["cellStatus"] = String((_c = data.value) != null ? _c : "normal");
@@ -1396,7 +1396,7 @@ function renderDataSync(container, contentId, apiBase, deviceId) {
     }
   };
   const buildTable = (data) => {
-    var _a, _b, _c;
+    var _a2, _b2, _c;
     container.innerHTML = DS_STYLES;
     const wrapper = document.createElement("div");
     wrapper.className = "ds-wrapper";
@@ -1451,8 +1451,8 @@ function renderDataSync(container, contentId, apiBase, deviceId) {
         td.dataset["train"] = train.id;
         td.dataset["station"] = station.id;
         if (cell) {
-          td.dataset["value"] = (_a = cell.value) != null ? _a : "";
-          td.dataset["note"] = (_b = cell.note) != null ? _b : "";
+          td.dataset["value"] = (_a2 = cell.value) != null ? _a2 : "";
+          td.dataset["note"] = (_b2 = cell.note) != null ? _b2 : "";
           td.dataset["cellStatus"] = (_c = cell.status) != null ? _c : "normal";
           td.dataset["delayMins"] = cell.delayMins != null ? String(cell.delayMins) : "";
           renderCellContent(td, cell);
@@ -1737,10 +1737,10 @@ function _loadSrc(v, url) {
       resolve();
     };
     const onError = () => {
-      var _a;
+      var _a2;
       cleanup();
       const ve = v.error;
-      reject(new Error("video error code=" + ((_a = ve == null ? void 0 : ve.code) != null ? _a : "?") + " src=" + url));
+      reject(new Error("video error code=" + ((_a2 = ve == null ? void 0 : ve.code) != null ? _a2 : "?") + " src=" + url));
     };
     function cleanup() {
       v.removeEventListener("canplay", onCanPlay);
@@ -2591,17 +2591,17 @@ function processCreateParams(params) {
   if (errorMap2)
     return { errorMap: errorMap2, description };
   const customMap = (iss, ctx) => {
-    var _a, _b;
+    var _a2, _b2;
     const { message } = params;
     if (iss.code === "invalid_enum_value") {
       return { message: message != null ? message : ctx.defaultError };
     }
     if (typeof ctx.data === "undefined") {
-      return { message: (_a = message != null ? message : required_error) != null ? _a : ctx.defaultError };
+      return { message: (_a2 = message != null ? message : required_error) != null ? _a2 : ctx.defaultError };
     }
     if (iss.code !== "invalid_type")
       return { message: ctx.defaultError };
-    return { message: (_b = message != null ? message : invalid_type_error) != null ? _b : ctx.defaultError };
+    return { message: (_b2 = message != null ? message : invalid_type_error) != null ? _b2 : ctx.defaultError };
   };
   return { errorMap: customMap, description };
 }
@@ -2653,11 +2653,11 @@ var ZodType = class {
     throw result.error;
   }
   safeParse(data, params) {
-    var _a;
+    var _a2;
     const ctx = {
       common: {
         issues: [],
-        async: (_a = params == null ? void 0 : params.async) != null ? _a : false,
+        async: (_a2 = params == null ? void 0 : params.async) != null ? _a2 : false,
         contextualErrorMap: params == null ? void 0 : params.errorMap
       },
       path: (params == null ? void 0 : params.path) || [],
@@ -2670,7 +2670,7 @@ var ZodType = class {
     return handleResult(ctx, result);
   }
   "~validate"(data) {
-    var _a, _b;
+    var _a2, _b2;
     const ctx = {
       common: {
         issues: [],
@@ -2691,7 +2691,7 @@ var ZodType = class {
           issues: ctx.common.issues
         };
       } catch (err) {
-        if ((_b = (_a = err == null ? void 0 : err.message) == null ? void 0 : _a.toLowerCase()) == null ? void 0 : _b.includes("encountered")) {
+        if ((_b2 = (_a2 = err == null ? void 0 : err.message) == null ? void 0 : _a2.toLowerCase()) == null ? void 0 : _b2.includes("encountered")) {
           this["~standard"].async = true;
         }
         ctx.common = {
@@ -3319,7 +3319,7 @@ var ZodString = class _ZodString extends ZodType {
     return this._addCheck(__spreadValues({ kind: "cidr" }, errorUtil.errToObj(options)));
   }
   datetime(options) {
-    var _a, _b;
+    var _a2, _b2;
     if (typeof options === "string") {
       return this._addCheck({
         kind: "datetime",
@@ -3332,8 +3332,8 @@ var ZodString = class _ZodString extends ZodType {
     return this._addCheck(__spreadValues({
       kind: "datetime",
       precision: typeof (options == null ? void 0 : options.precision) === "undefined" ? null : options == null ? void 0 : options.precision,
-      offset: (_a = options == null ? void 0 : options.offset) != null ? _a : false,
-      local: (_b = options == null ? void 0 : options.local) != null ? _b : false
+      offset: (_a2 = options == null ? void 0 : options.offset) != null ? _a2 : false,
+      local: (_b2 = options == null ? void 0 : options.local) != null ? _b2 : false
     }, errorUtil.errToObj(options == null ? void 0 : options.message)));
   }
   date(message) {
@@ -3489,11 +3489,11 @@ var ZodString = class _ZodString extends ZodType {
   }
 };
 ZodString.create = (params) => {
-  var _a;
+  var _a2;
   return new ZodString(__spreadValues({
     checks: [],
     typeName: ZodFirstPartyTypeKind.ZodString,
-    coerce: (_a = params == null ? void 0 : params.coerce) != null ? _a : false
+    coerce: (_a2 = params == null ? void 0 : params.coerce) != null ? _a2 : false
   }, processCreateParams(params)));
 };
 function floatSafeRemainder(val, step) {
@@ -3896,11 +3896,11 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
   }
 };
 ZodBigInt.create = (params) => {
-  var _a;
+  var _a2;
   return new ZodBigInt(__spreadValues({
     checks: [],
     typeName: ZodFirstPartyTypeKind.ZodBigInt,
-    coerce: (_a = params == null ? void 0 : params.coerce) != null ? _a : false
+    coerce: (_a2 = params == null ? void 0 : params.coerce) != null ? _a2 : false
   }, processCreateParams(params)));
 };
 var ZodBoolean = class extends ZodType {
@@ -4389,8 +4389,8 @@ var ZodObject = class _ZodObject extends ZodType {
       unknownKeys: "strict"
     }), message !== void 0 ? {
       errorMap: (issue, ctx) => {
-        var _a, _b, _c, _d;
-        const defaultError = (_c = (_b = (_a = this._def).errorMap) == null ? void 0 : _b.call(_a, issue, ctx).message) != null ? _c : ctx.defaultError;
+        var _a2, _b2, _c, _d;
+        const defaultError = (_c = (_b2 = (_a2 = this._def).errorMap) == null ? void 0 : _b2.call(_a2, issue, ctx).message) != null ? _c : ctx.defaultError;
         if (issue.code === "unrecognized_keys")
           return {
             message: (_d = errorUtil.errToObj(message).message) != null ? _d : defaultError
@@ -5780,21 +5780,21 @@ function cleanParams(params, data) {
 function custom(check, _params = {}, fatal) {
   if (check)
     return ZodAny.create().superRefine((data, ctx) => {
-      var _a, _b;
+      var _a2, _b2;
       const r = check(data);
       if (r instanceof Promise) {
         return r.then((r2) => {
-          var _a2, _b2;
+          var _a3, _b3;
           if (!r2) {
             const params = cleanParams(_params, data);
-            const _fatal = (_b2 = (_a2 = params.fatal) != null ? _a2 : fatal) != null ? _b2 : true;
+            const _fatal = (_b3 = (_a3 = params.fatal) != null ? _a3 : fatal) != null ? _b3 : true;
             ctx.addIssue(__spreadProps(__spreadValues({ code: "custom" }, params), { fatal: _fatal }));
           }
         });
       }
       if (!r) {
         const params = cleanParams(_params, data);
-        const _fatal = (_b = (_a = params.fatal) != null ? _a : fatal) != null ? _b : true;
+        const _fatal = (_b2 = (_a2 = params.fatal) != null ? _a2 : fatal) != null ? _b2 : true;
         ctx.addIssue(__spreadProps(__spreadValues({ code: "custom" }, params), { fatal: _fatal }));
       }
       return;
@@ -6579,12 +6579,12 @@ var IptvProtocolEnum = external_exports.enum(["udp", "rtp", "rtsp", "hls", "dash
 var IPV4_OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
 var IPV4_RE = new RegExp(`^${IPV4_OCTET}(?:\\.${IPV4_OCTET}){3}$`);
 function isValidIptvUrl(url, protocol) {
-  var _a, _b, _c, _d, _e, _f;
+  var _a2, _b2, _c, _d, _e, _f;
   const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/.exec(url);
   if (!m)
     return false;
-  const scheme = ((_a = m[1]) != null ? _a : "").toLowerCase();
-  const authority = (_b = m[2]) != null ? _b : "";
+  const scheme = ((_a2 = m[1]) != null ? _a2 : "").toLowerCase();
+  const authority = (_b2 = m[2]) != null ? _b2 : "";
   const pathQuery = ((_c = m[3]) != null ? _c : "") + ((_d = m[4]) != null ? _d : "");
   const hostPortMatch = /^(?:[^@]*@)?([^:]+)(?::(\d+))?$/.exec(authority);
   const hostname = (_e = hostPortMatch == null ? void 0 : hostPortMatch[1]) != null ? _e : "";
@@ -6680,16 +6680,16 @@ var ImportM3USchema = external_exports.object({
 var DEFAULT_PANEL_W = 1920;
 var DEFAULT_PANEL_H = 1080;
 function panelLogicalW(m) {
-  var _a, _b, _c;
-  const rot = (_a = m.tileRotation) != null ? _a : "0";
-  const w = (_b = m.nativeWidthPx) != null ? _b : DEFAULT_PANEL_W;
+  var _a2, _b2, _c;
+  const rot = (_a2 = m.tileRotation) != null ? _a2 : "0";
+  const w = (_b2 = m.nativeWidthPx) != null ? _b2 : DEFAULT_PANEL_W;
   const h = (_c = m.nativeHeightPx) != null ? _c : DEFAULT_PANEL_H;
   return rot === "90" || rot === "270" ? h : w;
 }
 function panelLogicalH(m) {
-  var _a, _b, _c;
-  const rot = (_a = m.tileRotation) != null ? _a : "0";
-  const w = (_b = m.nativeWidthPx) != null ? _b : DEFAULT_PANEL_W;
+  var _a2, _b2, _c;
+  const rot = (_a2 = m.tileRotation) != null ? _a2 : "0";
+  const w = (_b2 = m.nativeWidthPx) != null ? _b2 : DEFAULT_PANEL_W;
   const h = (_c = m.nativeHeightPx) != null ? _c : DEFAULT_PANEL_H;
   return rot === "90" || rot === "270" ? w : h;
 }
@@ -6699,11 +6699,11 @@ function computeCanvasSize(colWidths, rowHeights) {
   return { canvasW, canvasH };
 }
 function computeCellRect(m, colWidths, rowHeights) {
-  var _a, _b, _c, _d, _e, _f;
+  var _a2, _b2, _c, _d, _e, _f;
   const col = m.positionCol;
   const row = m.positionRow;
-  const colSpan = (_a = m.colSpan) != null ? _a : 1;
-  const rowSpan = (_b = m.rowSpan) != null ? _b : 1;
+  const colSpan = (_a2 = m.colSpan) != null ? _a2 : 1;
+  const rowSpan = (_b2 = m.rowSpan) != null ? _b2 : 1;
   let x = 0;
   for (let c = 0; c < col; c++)
     x += (_c = colWidths[c]) != null ? _c : 0;
@@ -6719,14 +6719,14 @@ function computeCellRect(m, colWidths, rowHeights) {
   return { x, y, w, h };
 }
 function computeTileCssTransform(member, colWidths, rowHeights, bezelOffsets) {
-  var _a;
+  var _a2;
   const rect = computeCellRect(member, colWidths, rowHeights);
   const { canvasW, canvasH } = computeCanvasSize(colWidths, rowHeights);
   const panelW = panelLogicalW(member);
   const panelH = panelLogicalH(member);
   const scaleX = bezelOffsets ? (panelW + bezelOffsets.left + bezelOffsets.right) / panelW : 1;
   const scaleY = bezelOffsets ? (panelH + bezelOffsets.top + bezelOffsets.bottom) / panelH : 1;
-  const rotation = parseInt((_a = member.tileRotation) != null ? _a : "0", 10) || 0;
+  const rotation = parseInt((_a2 = member.tileRotation) != null ? _a2 : "0", 10) || 0;
   return {
     canvasW,
     canvasH,
@@ -7178,7 +7178,7 @@ var _followerResyncTimer = null;
 var _ownLatencyMs = 0;
 var _peerLatencies = /* @__PURE__ */ new Map();
 async function init(cfg) {
-  var _a, _b, _c, _d;
+  var _a2, _b2, _c, _d;
   _cfg = cfg;
   _stopped = false;
   _peers = [];
@@ -7194,9 +7194,9 @@ async function init(cfg) {
     clearTimeout(_followerResyncTimer);
     _followerResyncTimer = null;
   }
-  _ownLatencyMs = (_a = cfg.playLatencyMs) != null ? _a : 0;
+  _ownLatencyMs = (_a2 = cfg.playLatencyMs) != null ? _a2 : 0;
   _peerLatencies = /* @__PURE__ */ new Map();
-  _selfLatency = (_c = cfg.selfLatency) != null ? _c : cfg.playLatencyMs == null ? (_b = DEVICE_LATENCY_MS[cfg.deviceId]) != null ? _b : 0 : 0;
+  _selfLatency = (_c = cfg.selfLatency) != null ? _c : cfg.playLatencyMs == null ? (_b2 = DEVICE_LATENCY_MS[cfg.deviceId]) != null ? _b2 : 0 : 0;
   _role2 = cfg.pinnedLeaderId ? cfg.pinnedLeaderId === cfg.deviceId ? "leader" : "follower" : "pending";
   logger.info(`[Sync] init deviceId=${cfg.deviceId} group=${cfg.groupId} role=${_role2} pinned=${(_d = cfg.pinnedLeaderId) != null ? _d : "none"}`);
   cfg.onStatus("Connecting to relay\u2026");
@@ -7385,8 +7385,8 @@ function _waitPeers() {
   });
 }
 function _dispatch(msg) {
-  var _a, _b, _c, _d, _e, _f;
-  const from = String((_a = msg["from"]) != null ? _a : "relay");
+  var _a2, _b2, _c, _d, _e, _f;
+  const from = String((_a2 = msg["from"]) != null ? _a2 : "relay");
   if (msg["type"] === "PONG") return;
   if (msg["type"] === "PEERS" || msg["type"] === "HEARTBEAT_PEERS") {
     const list = msg["type"] === "PEERS" ? msg["peers"].map((p) => p.deviceId) : msg["peers"];
@@ -7421,7 +7421,7 @@ function _dispatch(msg) {
     if (msgIndex >= 0 && localPlaylist[msgIndex]) {
       localUrl = localPlaylist[msgIndex];
     } else {
-      const leaderFile = (_c = String((_b = msg["url"]) != null ? _b : "").split("/").pop()) != null ? _c : "";
+      const leaderFile = (_c = String((_b2 = msg["url"]) != null ? _b2 : "").split("/").pop()) != null ? _c : "";
       const matchIdx = localPlaylist.findIndex((u) => u.split("/").pop() === leaderFile);
       localUrl = matchIdx >= 0 ? localPlaylist[matchIdx] : (_e = localPlaylist[0]) != null ? _e : String((_d = msg["url"]) != null ? _d : "");
     }
@@ -7642,8 +7642,8 @@ function parseMetadata3(content) {
   return content.metadata;
 }
 function toContentRecord(item) {
-  var _a;
-  return (_a = item.content) != null ? _a : item;
+  var _a2;
+  return (_a2 = item.content) != null ? _a2 : item;
 }
 function getDurationMs(item) {
   if (item.duration && item.duration > 0) return item.duration * 1e3;
@@ -7651,6 +7651,7 @@ function getDurationMs(item) {
   const d = Number(meta["duration"] || meta["durationSeconds"]);
   return isFinite(d) && d > 0 ? d * 1e3 : 1e4;
 }
+var _a, _b;
 var Player = class {
   constructor(cfg) {
     this.ws = null;
@@ -7699,7 +7700,10 @@ var Player = class {
     this.pendingSignature = null;
     this.isDownloadingContent = false;
     this.deviceDisplayName = "";
-    this.resellerBrandingLogoUrl = null;
+    // Seed from build-time baked config (build-partner-players.ps1 → generate-build-info.cjs
+    // injects LOGO_URL into window.__PLAYER_CONFIG__). Falls back to null so the platform's
+    // runtime resellerBranding response can still override it later (loadContent does that).
+    this.resellerBrandingLogoUrl = (_b = (_a = globalThis.__PLAYER_CONFIG__) == null ? void 0 : _a.LOGO_URL) != null ? _b : null;
     /**
      * In-player settings overlay. Renders device/network/config info, a tail of
      * recent log lines, and technician actions (Re-pair, Reload, Clear logs,
@@ -7719,7 +7723,7 @@ var Player = class {
     this.api = new Api(this.cfg.apiBase, () => this.token);
   }
   async start() {
-    var _a, _b;
+    var _a2, _b2;
     const info = await this.cfg.adapter.getDeviceInfo();
     this.deviceId = info.deviceId;
     this.platform = info.platform || "";
@@ -7734,7 +7738,7 @@ var Player = class {
     if (this.token) {
       try {
         const payload = JSON.parse(atob(this.token.split(".")[1]));
-        this.dbDeviceId = String((_a = payload["sub"]) != null ? _a : "");
+        this.dbDeviceId = String((_a2 = payload["sub"]) != null ? _a2 : "");
       } catch (e) {
       }
     }
@@ -7743,14 +7747,14 @@ var Player = class {
     void this.sendHeartbeat();
     this.heartbeatTimer = setInterval(
       () => this.sendHeartbeat().catch((e) => logger.warn(`[Player] heartbeat: ${e}`)),
-      (_b = this.cfg.heartbeatMs) != null ? _b : 3e4
+      (_b2 = this.cfg.heartbeatMs) != null ? _b2 : 3e4
     );
     void this.loadContent();
     this.contentRefreshTimer = setInterval(() => void this.loadContent(), 5 * 6e4);
     this.logStreamTimer = setInterval(() => this.flushLogStream(), 5e3);
   }
   stop() {
-    var _a, _b;
+    var _a2, _b2;
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -7780,7 +7784,7 @@ var Player = class {
       this.syncActive = false;
     }
     try {
-      (_b = (_a = window.nexari) == null ? void 0 : _a.stopRelay) == null ? void 0 : _b.call(_a);
+      (_b2 = (_a2 = window.nexari) == null ? void 0 : _a2.stopRelay) == null ? void 0 : _b2.call(_a2);
     } catch (e) {
     }
     if (this.ws) {
@@ -7792,8 +7796,8 @@ var Player = class {
     }
   }
   async ensurePaired() {
-    var _a, _b;
-    const cached = (_a = window["__nexariToken"]) != null ? _a : localStorage.getItem("nexariToken");
+    var _a2, _b2;
+    const cached = (_a2 = window["__nexariToken"]) != null ? _a2 : localStorage.getItem("nexariToken");
     if (cached) {
       logger.info("[Pairing] found cached token, skipping pair flow");
       return cached;
@@ -7833,7 +7837,7 @@ var Player = class {
       this.hidePairingScreen();
       return pair.deviceToken;
     }
-    const code = (_b = pair.code) != null ? _b : "------";
+    const code = (_b2 = pair.code) != null ? _b2 : "------";
     logger.info(`[Pairing] showing code: ${code}`);
     this.showPairingScreen(code, info, net, "Waiting for confirmation in dashboard\u2026");
     for (; ; ) {
@@ -7860,8 +7864,8 @@ var Player = class {
     }
   }
   showPairingScreen(code, info, net, status) {
-    var _a, _b;
-    (_a = document.getElementById("nexari-pair-panel")) == null ? void 0 : _a.remove();
+    var _a2, _b2;
+    (_a2 = document.getElementById("nexari-pair-panel")) == null ? void 0 : _a2.remove();
     const apiBase = this.cfg.apiBase;
     const wsBase = this.cfg.wsBase;
     const serverHost = apiBase.replace(/\/api\/v1\/?$/, "").replace(/\/api\/?$/, "");
@@ -7878,7 +7882,7 @@ var Player = class {
       "display:flex;flex-direction:column;align-items:center;justify-content:center;",
       "font-family:system-ui,-apple-system,sans-serif;overflow:auto;"
     ].join("");
-    const brandName = ((_b = globalThis.__PLAYER_CONFIG__) == null ? void 0 : _b.COMPANY_NAME) || "Nexari Signage";
+    const brandName = ((_b2 = globalThis.__PLAYER_CONFIG__) == null ? void 0 : _b2.COMPANY_NAME) || "Nexari Signage";
     p.innerHTML = `
 <style>
   @keyframes nxHorizonSweep {
@@ -8072,8 +8076,8 @@ var Player = class {
     void codeEl;
   }
   hidePairingScreen() {
-    var _a;
-    (_a = document.getElementById("nexari-pair-panel")) == null ? void 0 : _a.remove();
+    var _a2;
+    (_a2 = document.getElementById("nexari-pair-panel")) == null ? void 0 : _a2.remove();
   }
   async syncNtp(samples = 5) {
     if (this.ntpSyncInProgress) return;
@@ -8138,16 +8142,16 @@ var Player = class {
     }
   }
   async onWsMessage(raw) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a2, _b2, _c, _d, _e, _f;
     let msg;
     try {
       msg = JSON.parse(raw);
     } catch (e) {
       return;
     }
-    const t = String((_a = msg["type"]) != null ? _a : "");
+    const t = String((_a2 = msg["type"]) != null ? _a2 : "");
     if (t === "calendar_events") {
-      const contentId = String((_b = msg["contentId"]) != null ? _b : "");
+      const contentId = String((_b2 = msg["contentId"]) != null ? _b2 : "");
       const handler = this.calendarPushHandlers.get(contentId);
       if (handler) handler(msg["events"] || []);
       return;
@@ -8223,7 +8227,7 @@ var Player = class {
     }
   }
   async dispatchCommand(command, payload) {
-    var _a, _b, _c, _d, _e;
+    var _a2, _b2, _c, _d, _e;
     const a = this.cfg.adapter;
     logger.info(`[Player] command ${command}`);
     switch (command) {
@@ -8298,7 +8302,7 @@ var Player = class {
         if (typeof (payload == null ? void 0 : payload["level"]) === "number") await a.setBrightness(payload["level"]);
         return;
       case "mdc_control": {
-        const action = String((_a = payload == null ? void 0 : payload["action"]) != null ? _a : "");
+        const action = String((_a2 = payload == null ? void 0 : payload["action"]) != null ? _a2 : "");
         if (action === "set_volume" && typeof (payload == null ? void 0 : payload["level"]) === "number") await a.setVolume(payload["level"]);
         if (action === "set_mute" && typeof (payload == null ? void 0 : payload["mute"]) === "boolean") await a.setMute(payload["mute"]);
         return;
@@ -8308,7 +8312,7 @@ var Player = class {
         this.flushLogStream();
         return;
       case "update_player": {
-        const url = String((_d = (_c = (_b = payload == null ? void 0 : payload["downloadUrl"]) != null ? _b : payload == null ? void 0 : payload["apkUrl"]) != null ? _c : payload == null ? void 0 : payload["wgtUrl"]) != null ? _d : "");
+        const url = String((_d = (_c = (_b2 = payload == null ? void 0 : payload["downloadUrl"]) != null ? _b2 : payload == null ? void 0 : payload["apkUrl"]) != null ? _c : payload == null ? void 0 : payload["wgtUrl"]) != null ? _d : "");
         const version = String((_e = payload == null ? void 0 : payload["version"]) != null ? _e : "");
         const sha256 = payload == null ? void 0 : payload["sha256"];
         if (!url || !version) {
@@ -8356,7 +8360,7 @@ var Player = class {
   /** Live-view capture loop (setTimeout chain, not setInterval — prevents concurrent calls). */
   scheduleLiveCapture(delayMs) {
     this.liveIntervalHandle = setTimeout(async () => {
-      var _a;
+      var _a2;
       if (!this.liveCaptureActive) return;
       if (this.liveCaptureBusy) {
         this.scheduleLiveCapture(200);
@@ -8365,7 +8369,7 @@ var Player = class {
       this.liveCaptureBusy = true;
       try {
         const shot = await this.cfg.adapter.screenshot();
-        if ((shot == null ? void 0 : shot.jpegBase64) && ((_a = this.ws) == null ? void 0 : _a.readyState) === WebSocket.OPEN) {
+        if ((shot == null ? void 0 : shot.jpegBase64) && ((_a2 = this.ws) == null ? void 0 : _a2.readyState) === WebSocket.OPEN) {
           this.send({ type: "screenshot_data", payload: { dataBase64: shot.jpegBase64, trigger: "live", contentId: null } });
         }
       } catch (e) {
@@ -8376,7 +8380,7 @@ var Player = class {
     }, delayMs);
   }
   async sendHeartbeat() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     if (!this.deviceId) return;
     try {
       const a = this.cfg.adapter;
@@ -8386,7 +8390,7 @@ var Player = class {
       const res = a.getResources ? await a.getResources().catch(() => null) : null;
       const items = this.playlistItems;
       const curIdx = this.playlistIdx;
-      const currentId = (_c = (_b = (_a = items[curIdx]) == null ? void 0 : _a.content) == null ? void 0 : _b.id) != null ? _c : null;
+      const currentId = (_c = (_b2 = (_a2 = items[curIdx]) == null ? void 0 : _a2.content) == null ? void 0 : _b2.id) != null ? _c : null;
       let nextId = null;
       let nextStartsAt = null;
       if (items.length > 1) {
@@ -8478,7 +8482,7 @@ var Player = class {
     logger.info(`[Settings] 10-tap gesture armed (zone=${ZONE}px top-left, window=${WINDOW_MS}ms, platform=${info.platform})`);
   }
   async showSettingsOverlay() {
-    var _a, _b, _c, _d, _e, _f;
+    var _a2, _b2, _c, _d, _e, _f;
     if (this.settingsOverlayEl) return;
     const adapter = this.cfg.adapter;
     let info = null;
@@ -8493,7 +8497,7 @@ var Player = class {
     } catch (e) {
       logger.warn(`[Settings] getNetworkInfo failed: ${e.message}`);
     }
-    const cachedToken = (_a = window["__nexariToken"]) != null ? _a : localStorage.getItem("nexariToken");
+    const cachedToken = (_a2 = window["__nexariToken"]) != null ? _a2 : localStorage.getItem("nexariToken");
     const overlay = document.createElement("div");
     overlay.id = "nexari-settings-overlay";
     overlay.setAttribute("style", [
@@ -8510,14 +8514,14 @@ var Player = class {
       "box-sizing:border-box"
     ].join(";"));
     const esc = (s) => String(s != null ? s : "").replace(/[&<>"']/g, (c) => {
-      var _a2;
-      return (_a2 = {
+      var _a3;
+      return (_a3 = {
         "&": "&amp;",
         "<": "&lt;",
         ">": "&gt;",
         '"': "&quot;",
         "'": "&#39;"
-      }[c]) != null ? _a2 : c;
+      }[c]) != null ? _a3 : c;
     });
     const tokenDisp = cachedToken ? `${cachedToken.slice(0, 8)}\u2026${cachedToken.slice(-6)}` : "(none)";
     const rows = [
@@ -8556,12 +8560,12 @@ var Player = class {
     document.body.appendChild(overlay);
     this.settingsOverlayEl = overlay;
     const close = () => this.hideSettingsOverlay();
-    (_b = overlay.querySelector("#nx-set-close")) == null ? void 0 : _b.addEventListener("click", close);
+    (_b2 = overlay.querySelector("#nx-set-close")) == null ? void 0 : _b2.addEventListener("click", close);
     (_c = overlay.querySelector("#nx-set-reload")) == null ? void 0 : _c.addEventListener("click", () => {
-      var _a2;
+      var _a3;
       logger.info("[Settings] Reload requested from overlay");
       try {
-        (_a2 = adapter.reloadRenderer) == null ? void 0 : _a2.call(adapter);
+        (_a3 = adapter.reloadRenderer) == null ? void 0 : _a3.call(adapter);
       } catch (e) {
       }
       setTimeout(() => {
@@ -8580,9 +8584,9 @@ var Player = class {
       }
       delete window["__nexariToken"];
       setTimeout(() => {
-        var _a2;
+        var _a3;
         try {
-          (_a2 = adapter.reloadRenderer) == null ? void 0 : _a2.call(adapter);
+          (_a3 = adapter.reloadRenderer) == null ? void 0 : _a3.call(adapter);
         } catch (e) {
         }
         try {
@@ -8592,9 +8596,9 @@ var Player = class {
       }, 200);
     });
     (_e = overlay.querySelector("#nx-set-clearlog")) == null ? void 0 : _e.addEventListener("click", () => {
-      var _a2;
+      var _a3;
       const buf = window["LogBuffer"];
-      (_a2 = buf == null ? void 0 : buf.clear) == null ? void 0 : _a2.call(buf);
+      (_a3 = buf == null ? void 0 : buf.clear) == null ? void 0 : _a3.call(buf);
       const pre = overlay.querySelector("#nx-set-logs");
       if (pre) pre.textContent = "";
     });
@@ -8613,15 +8617,15 @@ var Player = class {
       pauseBtn.textContent = paused ? "Resume auto-refresh" : "Pause auto-refresh";
     });
     const renderLogs = () => {
-      var _a2, _b2;
+      var _a3, _b3;
       if (paused) return;
       const buf = window["LogBuffer"];
-      const lines = (_b2 = (_a2 = buf == null ? void 0 : buf.tail) == null ? void 0 : _a2.call(buf, 200)) != null ? _b2 : [];
+      const lines = (_b3 = (_a3 = buf == null ? void 0 : buf.tail) == null ? void 0 : _a3.call(buf, 200)) != null ? _b3 : [];
       const pre = overlay.querySelector("#nx-set-logs");
       if (!pre) return;
       pre.textContent = lines.map((e) => {
-        var _a3, _b3, _c2;
-        return `${(_a3 = e.timestamp) != null ? _a3 : ""} [${((_b3 = e.level) != null ? _b3 : "info").toUpperCase()}] ${(_c2 = e.message) != null ? _c2 : ""}`;
+        var _a4, _b4, _c2;
+        return `${(_a4 = e.timestamp) != null ? _a4 : ""} [${((_b4 = e.level) != null ? _b4 : "info").toUpperCase()}] ${(_c2 = e.message) != null ? _c2 : ""}`;
       }).join("\n");
       pre.scrollTop = pre.scrollHeight;
     };
@@ -8642,7 +8646,7 @@ var Player = class {
     }
   }
   flushLogStream() {
-    var _a, _b;
+    var _a2, _b2;
     if (!this.wsReady) return;
     const buf = window["LogBuffer"];
     if (!(buf == null ? void 0 : buf.drain)) return;
@@ -8651,7 +8655,7 @@ var Player = class {
     const byLevel = { debug: [], info: [], warn: [], error: [] };
     for (const e of batch) {
       const lvl = e.level && byLevel[e.level] ? e.level : "info";
-      byLevel[lvl].push(`${(_a = e.timestamp) != null ? _a : (/* @__PURE__ */ new Date()).toISOString()} ${(_b = e.message) != null ? _b : ""}`);
+      byLevel[lvl].push(`${(_a2 = e.timestamp) != null ? _a2 : (/* @__PURE__ */ new Date()).toISOString()} ${(_b2 = e.message) != null ? _b2 : ""}`);
     }
     for (const [level, lines] of Object.entries(byLevel)) {
       if (!lines.length) continue;
@@ -8663,10 +8667,10 @@ var Player = class {
   // ── Content signature (mirrors Tizen getContentSignature) ──────────────────
   getContentSignature(items) {
     const parts = items.map((item) => {
-      var _a, _b, _c, _d, _e;
+      var _a2, _b2, _c, _d, _e;
       const c = item.content;
-      const updAt = (_a = item.updatedAt) != null ? _a : "";
-      return [(_b = item.id) != null ? _b : "", updAt, (_c = c == null ? void 0 : c.id) != null ? _c : "", (_d = c == null ? void 0 : c.updatedAt) != null ? _d : "", (_e = c == null ? void 0 : c.version) != null ? _e : ""].join(":");
+      const updAt = (_a2 = item.updatedAt) != null ? _a2 : "";
+      return [(_b2 = item.id) != null ? _b2 : "", updAt, (_c = c == null ? void 0 : c.id) != null ? _c : "", (_d = c == null ? void 0 : c.updatedAt) != null ? _d : "", (_e = c == null ? void 0 : c.version) != null ? _e : ""].join(":");
     });
     return JSON.stringify(parts);
   }
@@ -8678,8 +8682,8 @@ var Player = class {
   async preCacheItems(items) {
     const urls = Array.from(new Set(
       items.map((i) => {
-        var _a, _b;
-        return (_b = (_a = i.content) == null ? void 0 : _a.url) != null ? _b : "";
+        var _a2, _b2;
+        return (_b2 = (_a2 = i.content) == null ? void 0 : _a2.url) != null ? _b2 : "";
       }).filter((u) => !!u)
     ));
     const total = urls.length;
@@ -8688,9 +8692,9 @@ var Player = class {
     let done = 0;
     const diskCache = await caches.open("nexari-content-v1").catch(() => null);
     await Promise.allSettled(urls.map(async (url) => {
-      var _a;
+      var _a2;
       try {
-        const urlKey = (_a = url.split("?")[0]) != null ? _a : url;
+        const urlKey = (_a2 = url.split("?")[0]) != null ? _a2 : url;
         const existing = this.localUrlCache.get(urlKey);
         if (existing) {
           nextCache.set(urlKey, existing);
@@ -8737,10 +8741,10 @@ var Player = class {
   }
   /** Swap a remote content URL for the locally cached blob: URL if available. */
   resolveLocalUrl(url) {
-    var _a, _b;
+    var _a2, _b2;
     if (!url) return "";
-    const urlKey = (_a = url.split("?")[0]) != null ? _a : url;
-    return (_b = this.localUrlCache.get(urlKey)) != null ? _b : url;
+    const urlKey = (_a2 = url.split("?")[0]) != null ? _a2 : url;
+    return (_b2 = this.localUrlCache.get(urlKey)) != null ? _b2 : url;
   }
   // ── Update the idle progress bar in-place without re-rendering the screen ───
   updateIdleProgress(pct) {
@@ -8855,15 +8859,15 @@ var Player = class {
   }
   // ── Main content loader (mirrors Tizen loadContent) ──────────────────────────
   async loadContent() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j;
     logger.info("[Player] loadContent");
     try {
       const schedule = await this.api.getCurrentContent(this.deviceId);
-      if ((_a = schedule == null ? void 0 : schedule.resellerBranding) == null ? void 0 : _a.logoUrl) {
+      if ((_a2 = schedule == null ? void 0 : schedule.resellerBranding) == null ? void 0 : _a2.logoUrl) {
         this.resellerBrandingLogoUrl = schedule.resellerBranding.logoUrl;
       }
       if (!schedule || !Array.isArray(schedule.items) || !schedule.items.length) {
-        logger.warn(`[Player] loadContent: no items (schedule=${schedule ? "ok" : "null"} items=${(_c = (_b = schedule == null ? void 0 : schedule.items) == null ? void 0 : _b.length) != null ? _c : 0})`);
+        logger.warn(`[Player] loadContent: no items (schedule=${schedule ? "ok" : "null"} items=${(_c = (_b2 = schedule == null ? void 0 : schedule.items) == null ? void 0 : _b2.length) != null ? _c : 0})`);
         this.cancelPlayback();
         this.playlistItems = [];
         this.lastContentSignature = null;
@@ -8881,8 +8885,8 @@ var Player = class {
             groupId: String((_d = sg2["syncGroupId"]) != null ? _d : ""),
             relayUrl: String(sg2["relayUrl"]),
             leaderPriority: ((_e = sg2["peers"]) != null ? _e : []).sort((a, b) => {
-              var _a2, _b2;
-              return ((_a2 = a.leaderPriority) != null ? _a2 : 999) - ((_b2 = b.leaderPriority) != null ? _b2 : 999);
+              var _a3, _b3;
+              return ((_a3 = a.leaderPriority) != null ? _a3 : 999) - ((_b3 = b.leaderPriority) != null ? _b3 : 999);
             }).map((p) => p.deviceId),
             expectedPeers: Math.max(1, ((_f = sg2["peers"]) != null ? _f : []).length - 1),
             syncRelayMode: String((_g = sg2["syncRelayMode"]) != null ? _g : "cloud")
@@ -8904,8 +8908,8 @@ var Player = class {
       if (sg["allTizen"] === false && sg["relayUrl"]) {
         const rawPeers = (_h = sg["peers"]) != null ? _h : [];
         const sortedPeers = [...rawPeers].sort((a, b) => {
-          var _a2, _b2;
-          return ((_a2 = a.leaderPriority) != null ? _a2 : 999) - ((_b2 = b.leaderPriority) != null ? _b2 : 999);
+          var _a3, _b3;
+          return ((_a3 = a.leaderPriority) != null ? _a3 : 999) - ((_b3 = b.leaderPriority) != null ? _b3 : 999);
         });
         this._pendingSyncRelayInfo = {
           groupId: String((_i = sg["syncGroupId"]) != null ? _i : ""),
@@ -9303,9 +9307,9 @@ var Player = class {
     });
   }
   async renderCanvas(container, record, signal) {
-    var _a, _b;
+    var _a2, _b2;
     const meta = parseMetadata3(record);
-    const url = String((_b = (_a = meta["url"]) != null ? _a : record.url) != null ? _b : "");
+    const url = String((_b2 = (_a2 = meta["url"]) != null ? _a2 : record.url) != null ? _b2 : "");
     if (!url) {
       this.showIdle("Canvas: no URL");
       return;
@@ -9521,9 +9525,9 @@ var Player = class {
     return this.pdfJsLibPromise;
   }
   async renderZoneLayout(container, record, signal) {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a2, _b2, _c, _d, _e, _f, _g;
     const meta = parseMetadata3(record);
-    const zones = (_a = meta["zones"]) != null ? _a : [];
+    const zones = (_a2 = meta["zones"]) != null ? _a2 : [];
     if (!zones.length) {
       this.showIdle("Zone layout: no zones");
       return;
@@ -9541,7 +9545,7 @@ var Player = class {
         w = r.width / CANVAS_W * 100;
         h = r.height / CANVAS_H * 100;
       } else {
-        l = (_b = zone.x) != null ? _b : 0;
+        l = (_b2 = zone.x) != null ? _b2 : 0;
         t = (_c = zone.y) != null ? _c : 0;
         w = (_d = zone.width) != null ? _d : 100;
         h = (_e = zone.height) != null ? _e : 100;
@@ -9598,7 +9602,7 @@ var Player = class {
     }
   }
   async initSyncGroup(msg) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a2, _b2, _c, _d, _e, _f;
     if (this.syncActive) {
       try {
         stop();
@@ -9606,8 +9610,8 @@ var Player = class {
       }
       this.syncActive = false;
     }
-    const groupId = String((_a = msg["groupId"]) != null ? _a : "");
-    const expectedPeers = Number((_b = msg["expectedPeers"]) != null ? _b : 1);
+    const groupId = String((_a2 = msg["groupId"]) != null ? _a2 : "");
+    const expectedPeers = Number((_b2 = msg["expectedPeers"]) != null ? _b2 : 1);
     const leaderPriority = Array.isArray(msg["leaderPriority"]) ? msg["leaderPriority"] : [];
     const tok = this.token;
     const syncRelayMode = String((_c = msg["syncRelayMode"]) != null ? _c : "cloud");
@@ -9621,8 +9625,8 @@ var Player = class {
     }
     logger.info(`[Sync] relay URL (mode=${syncRelayMode}): ${wsUrl}`);
     let urls = this.playlistItems.map((i) => {
-      var _a2;
-      return this.resolveLocalUrl((_a2 = i.content) == null ? void 0 : _a2.url) || "";
+      var _a3;
+      return this.resolveLocalUrl((_a3 = i.content) == null ? void 0 : _a3.url) || "";
     }).filter(Boolean);
     if (!urls.length) {
       logger.info("[Player] syncGroup: no video URLs yet, deferring until download completes");
@@ -9669,15 +9673,15 @@ var Player = class {
     });
   }
   async initVideoWall(msg) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     const geo = msg["geometry"];
     const myCell = msg["myCell"];
     if (!geo || !myCell) {
       logger.warn("[Player] videowall: missing geometry/myCell");
       return;
     }
-    const colWidths = (_a = geo["colWidths"]) != null ? _a : [];
-    const rowHeights = (_b = geo["rowHeights"]) != null ? _b : [];
+    const colWidths = (_a2 = geo["colWidths"]) != null ? _a2 : [];
+    const rowHeights = (_b2 = geo["rowHeights"]) != null ? _b2 : [];
     const bezelOffsets = (_c = geo["bezelOffsets"]) != null ? _c : null;
     const member = {
       positionCol: Number((_d = myCell["positionCol"]) != null ? _d : 0),
@@ -9706,8 +9710,8 @@ var Player = class {
     const peers = Array.isArray(msg["peers"]) ? msg["peers"] : [];
     const expectedPeers = peers.length - 1 || 1;
     const urls = this.playlistItems.map((i) => {
-      var _a2;
-      return this.resolveLocalUrl((_a2 = i.content) == null ? void 0 : _a2.url) || "";
+      var _a3;
+      return this.resolveLocalUrl((_a3 = i.content) == null ? void 0 : _a3.url) || "";
     }).filter(Boolean);
     if (!urls.length) {
       logger.warn("[Player] videowall: no video URLs");
@@ -9751,10 +9755,12 @@ var Player = class {
     this.send({ type: p.kind, version: p.version, packageId: p.packageId, pct: p.pct, error: p.error });
   }
   showIdle(msg, downloadProgress) {
+    var _a2;
     const progressBar = downloadProgress !== void 0 && downloadProgress >= 0 && downloadProgress < 100 ? `<div style="width:200px;height:8px;background:rgba(255,255,255,.15);border-radius:4px;margin:20px auto;overflow:hidden;">
            <div class="nexari-download-bar" style="width:${downloadProgress}%;height:100%;background:linear-gradient(90deg,#3a7bff,#4ff2d1);transition:width .3s;"></div>
          </div>` : "";
     const deviceLabel = escapeHtml3(this.deviceDisplayName);
+    const _idleLogoUrl = this.resellerBrandingLogoUrl || ((_a2 = globalThis.__PLAYER_CONFIG__) == null ? void 0 : _a2.LOGO_URL) || null;
     this.cfg.container.innerHTML = `
       <div style="position:absolute;inset:0;background:#0d0f1a;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:system-ui,sans-serif;">
         <!-- bg grid -->
@@ -9765,7 +9771,7 @@ var Player = class {
 
           <!-- Logo -->
           <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:${deviceLabel ? "8px" : "24px"};">
-            ${this.resellerBrandingLogoUrl ? `<img src="${this.resellerBrandingLogoUrl}" alt="Logo" style="max-height:48px;max-width:200px;object-fit:contain;" onerror="this.style.display='none'">` : `<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:48px;height:48px;" aria-hidden="true">
+            ${_idleLogoUrl ? `<img src="${_idleLogoUrl}" alt="Logo" style="max-height:48px;max-width:200px;object-fit:contain;" onerror="this.style.display='none'">` : `<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:48px;height:48px;" aria-hidden="true">
               <defs>
                 <linearGradient id="ng" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
                   <stop offset="0%" stop-color="#3a7bff"/>
@@ -9831,8 +9837,8 @@ var VideoRenderer = class {
     }
   }
   pause() {
-    var _a;
-    (_a = this.el) == null ? void 0 : _a.pause();
+    var _a2;
+    (_a2 = this.el) == null ? void 0 : _a2.pause();
   }
   destroy() {
     if (this.el) {
@@ -9867,8 +9873,8 @@ var ImageRenderer = class {
   pause() {
   }
   destroy() {
-    var _a;
-    (_a = this.el) == null ? void 0 : _a.remove();
+    var _a2;
+    (_a2 = this.el) == null ? void 0 : _a2.remove();
     this.el = null;
   }
 };
@@ -9895,8 +9901,8 @@ var HtmlRenderer = class {
   pause() {
   }
   destroy() {
-    var _a;
-    (_a = this.el) == null ? void 0 : _a.remove();
+    var _a2;
+    (_a2 = this.el) == null ? void 0 : _a2.remove();
     this.el = null;
   }
 };

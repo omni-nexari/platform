@@ -253,6 +253,115 @@ if (-not $script:deployKey) {
     Write-Warning "  Uploads and releases will be skipped -- only nexari-admin registration will run."
 }
 
+# ── PNG → multi-size ICO converter ────────────────────────────────────────────
+# Writes a Windows ICO file embedding 256/128/64/48/32/16-px PNG frames.
+# Uses only built-in .NET System.Drawing — no third-party tools required.
+function New-IcoFromPng {
+    param([string]$PngPath, [string]$OutPath)
+    if (-not (Test-Path $PngPath)) {
+        Write-Warning "  ICO: source PNG not found: $PngPath"
+        return $false
+    }
+    try {
+        Add-Type -AssemblyName System.Drawing
+        $sizes = @(256, 128, 64, 48, 32, 16)
+        $pngDatas = @()
+        $srcBmp = New-Object System.Drawing.Bitmap($PngPath)
+        foreach ($size in $sizes) {
+            $resized = New-Object System.Drawing.Bitmap($size, $size)
+            $g = [System.Drawing.Graphics]::FromImage($resized)
+            $g.InterpolationMode  = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $g.SmoothingMode      = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+            $g.PixelOffsetMode    = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+            $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+            $g.DrawImage($srcBmp, 0, 0, $size, $size)
+            $g.Dispose()
+            $ms = New-Object System.IO.MemoryStream
+            $resized.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+            $resized.Dispose()
+            $pngDatas += ,$ms.ToArray()
+            $ms.Dispose()
+        }
+        $srcBmp.Dispose()
+
+        # ICO binary format: ICONDIR header + ICONDIRENTRY array + image data
+        $fs = [System.IO.File]::Open($OutPath, [System.IO.FileMode]::Create)
+        $w  = New-Object System.IO.BinaryWriter($fs)
+        $w.Write([uint16]0)              # Reserved
+        $w.Write([uint16]1)              # Type = ICO
+        $w.Write([uint16]$sizes.Count)
+        $dataOffset = 6 + 16 * $sizes.Count
+        for ($i = 0; $i -lt $sizes.Count; $i++) {
+            $w.Write([byte]($sizes[$i] % 256))  # Width  (0 = 256)
+            $w.Write([byte]($sizes[$i] % 256))  # Height (0 = 256)
+            $w.Write([byte]0)                   # Colour count
+            $w.Write([byte]0)                   # Reserved
+            $w.Write([uint16]1)                 # Colour planes
+            $w.Write([uint16]32)                # Bits per pixel
+            $w.Write([uint32]$pngDatas[$i].Length)
+            $w.Write([uint32]$dataOffset)
+            $dataOffset += $pngDatas[$i].Length
+        }
+        foreach ($data in $pngDatas) { $w.Write($data, 0, $data.Length) }
+        $w.Dispose(); $fs.Dispose()
+        Write-Host "  ICO: created $(Split-Path $OutPath -Leaf) ($($sizes.Count) sizes)" -ForegroundColor DarkGray
+        return $true
+    } catch {
+        Write-Warning "  ICO: failed to generate $OutPath : $_"
+        return $false
+    }
+}
+
+# ── Android adaptive icon updater ─────────────────────────────────────────────
+# Replaces the app launcher icon (used for the home-screen tile, recent-apps, and
+# the Android 12+ splash screen) with the partner's logo PNG.
+# Uses a <layer-list> drawable so the PNG is centered on a white background.
+function Set-AndroidPartnerIcon {
+    param([string]$PngPath, [string]$AndroidAppDir)
+    if (-not (Test-Path $PngPath)) { return }
+
+    $drawableDir = Join-Path $AndroidAppDir "src\main\res\drawable"
+    New-Item $drawableDir -ItemType Directory -Force | Out-Null
+    Copy-Item $PngPath "$drawableDir\nexari_partner_icon.png" -Force
+    Write-Host "  Android: copied partner logo to drawable/nexari_partner_icon.png" -ForegroundColor DarkGray
+
+    # Foreground: partner logo centered on transparent background
+    $fgXml = @'
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:gravity="center">
+        <bitmap
+            android:src="@drawable/nexari_partner_icon"
+            android:gravity="center"
+            android:tileMode="disabled" />
+    </item>
+</layer-list>
+'@
+    $fgPath = Join-Path $AndroidAppDir "src\main\res\drawable\ic_launcher_foreground.xml"
+    [System.IO.File]::WriteAllText($fgPath, $fgXml.TrimStart(), [System.Text.Encoding]::UTF8)
+    Write-Host "  Android: updated ic_launcher_foreground.xml" -ForegroundColor DarkGray
+
+    # Background: white (partner logos typically have their own colour palette)
+    $bgXml = @'
+<?xml version="1.0" encoding="utf-8"?>
+<color xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#ffffff" />
+'@
+    $bgPath = Join-Path $AndroidAppDir "src\main\res\drawable\ic_launcher_background.xml"
+    [System.IO.File]::WriteAllText($bgPath, $bgXml.TrimStart(), [System.Text.Encoding]::UTF8)
+    Write-Host "  Android: updated ic_launcher_background.xml" -ForegroundColor DarkGray
+
+    # Also update the splash-screen theme so the partner logo appears on cold start
+    $themesPath = Join-Path $AndroidAppDir "src\main\res\values\themes.xml"
+    if (Test-Path $themesPath) {
+        $xml = [System.IO.File]::ReadAllText($themesPath)
+        $xml = $xml -replace '(android:windowSplashScreenAnimatedIcon">)@drawable/ic_launcher_foreground<', `
+                             '${1}@drawable/nexari_partner_icon<'
+        [System.IO.File]::WriteAllText($themesPath, $xml, [System.Text.Encoding]::UTF8)
+        Write-Host "  Android: updated splash icon in themes.xml" -ForegroundColor DarkGray
+    }
+}
+
 # ── Fetch partner branding from the platform ──────────────────────────────────
 # GET /api/v1/player-releases/branding (requires deploy key).  On any failure,
 # falls back silently to Nexari defaults so builds continue uninterrupted.
@@ -425,9 +534,11 @@ foreach ($plat in $platforms) {
                     $env:API_BASE = $apiBase
                     $env:WS_URL   = $wsUrl
                     if ($script:branding.CompanyName) { $env:COMPANY_NAME = $script:branding.CompanyName }
+                    if ($script:branding.LogoUrl)     { $env:LOGO_URL     = $script:branding.LogoUrl }
                     if ($script:branding.TempLogoPath) {
                         Copy-Item $script:branding.TempLogoPath "$TizenDir\logo.png" -Force
-                        Write-Host "  Tizen: replaced logo.png with partner logo." -ForegroundColor DarkGray
+                        Copy-Item $script:branding.TempLogoPath "$TizenDir\icon.png" -Force
+                        Write-Host "  Tizen: replaced logo.png + icon.png with partner logo." -ForegroundColor DarkGray
                     }
                     node scripts/generate-build-info.cjs
                     if ($LASTEXITCODE -ne 0) { throw "generate-build-info.cjs failed" }
@@ -481,9 +592,11 @@ foreach ($plat in $platforms) {
                     $env:API_BASE = $apiBase
                     $env:WS_URL   = $wsUrl
                     if ($script:branding.CompanyName) { $env:COMPANY_NAME = $script:branding.CompanyName }
+                    if ($script:branding.LogoUrl)     { $env:LOGO_URL     = $script:branding.LogoUrl }
                     if ($script:branding.TempLogoPath) {
                         Copy-Item $script:branding.TempLogoPath "$EpaperDir\logo.png" -Force
-                        Write-Host "  ePaper: replaced logo.png with partner logo." -ForegroundColor DarkGray
+                        Copy-Item $script:branding.TempLogoPath "$EpaperDir\icon.png" -Force
+                        Write-Host "  ePaper: replaced logo.png + icon.png with partner logo." -ForegroundColor DarkGray
                     }
                     node scripts/generate-build-info.cjs
                     if ($LASTEXITCODE -ne 0) { throw "generate-build-info.cjs failed" }
@@ -544,6 +657,12 @@ foreach ($plat in $platforms) {
                 node "$AndroidDir\scripts\sync-player-web.cjs"
                 $env:LOGO_PATH = $null; $env:COMPANY_NAME = $null
                 if ($LASTEXITCODE -ne 0) { throw "sync-player-web failed" }
+
+                # Replace Android launcher icon / splash with partner logo
+                if ($script:branding.TempLogoPath) {
+                    Set-AndroidPartnerIcon -PngPath $script:branding.TempLogoPath `
+                                           -AndroidAppDir "$AndroidDir\android\app"
+                }
 
                 Push-Location $AndroidDir
                 try {
@@ -609,7 +728,8 @@ foreach ($plat in $platforms) {
                 try {
                     if ($script:branding.TempLogoPath) {
                         Copy-Item $script:branding.TempLogoPath "$winAppDir\src\renderer\nexari.png" -Force
-                        Write-Host "  Windows: replaced pairing-screen logo with partner logo." -ForegroundColor DarkGray
+                        $null = New-IcoFromPng -PngPath $script:branding.TempLogoPath -OutPath "$winAppDir\build\icon.ico"
+                        Write-Host "  Windows: replaced pairing-screen logo + app icon with partner logo." -ForegroundColor DarkGray
                     }
                     pnpm run build
                     if ($LASTEXITCODE -ne 0) { throw "Windows player build failed" }
@@ -630,6 +750,9 @@ foreach ($plat in $platforms) {
                     )
                     if ($script:branding.CompanyName) {
                         $ebArgs += "-c.extraMetadata.nexariCompanyName=$($script:branding.CompanyName)"
+                    }
+                    if ($script:branding.LogoUrl) {
+                        $ebArgs += "-c.extraMetadata.nexariLogoUrl=$($script:branding.LogoUrl)"
                     }
                     pnpm exec electron-builder @ebArgs
                     if ($LASTEXITCODE -ne 0) { throw "electron-builder failed" }
