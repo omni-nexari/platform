@@ -388,6 +388,61 @@ function CodeGrid({ codes }: { codes: string[] }) {
   );
 }
 
+function ChangePasswordCard() {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+
+  const mut = useMutation({
+    mutationFn: () =>
+      api.post('/auth/change-password', { currentPassword: current, newPassword: next }),
+    onSuccess: () => {
+      toast.success('Password changed');
+      setCurrent(''); setNext(''); setConfirm('');
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to change password'),
+  });
+
+  const canSubmit = current.length > 0 && next.length >= 8 && next === confirm;
+
+  return (
+    <SectionCard>
+      <SectionCardHeader>
+        <h3 className="text-sm font-semibold">Change Password</h3>
+      </SectionCardHeader>
+      <SectionCardBody>
+        <div className="space-y-3 max-w-sm">
+          <div>
+            <label className="block text-xs text-[var(--text-muted)] mb-1">Current password</label>
+            <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)}
+              className="input w-full" placeholder="••••••••" />
+          </div>
+          <div>
+            <label className="block text-xs text-[var(--text-muted)] mb-1">New password</label>
+            <input type="password" value={next} onChange={(e) => setNext(e.target.value)}
+              className="input w-full" placeholder="••••••••" />
+          </div>
+          <div>
+            <label className="block text-xs text-[var(--text-muted)] mb-1">Confirm new password</label>
+            <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
+              className="input w-full" placeholder="••••••••" />
+            {confirm && next !== confirm && (
+              <p className="text-xs text-[var(--danger)] mt-1">Passwords do not match</p>
+            )}
+          </div>
+          <ActionButton
+            tone="primary"
+            onClick={() => mut.mutate()}
+            disabled={!canSubmit || mut.isPending}
+          >
+            {mut.isPending ? 'Saving…' : 'Update Password'}
+          </ActionButton>
+        </div>
+      </SectionCardBody>
+    </SectionCard>
+  );
+}
+
 function SecuritySection() {
   const [step, setStep] = useState<'idle' | 'scan' | 'confirm' | 'codes'>('idle');
   const [setupData, setSetupData] = useState<TwoFASetupResponse | null>(null);
@@ -444,6 +499,10 @@ function SecuritySection() {
 
   return (
     <div className="space-y-6">
+      {/* Change Password */}
+      <ChangePasswordCard />
+
+      {/* 2FA */}
       <SectionCard>
         <SectionCardHeader>
           <div className="flex items-center gap-2">
