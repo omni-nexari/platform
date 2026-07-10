@@ -940,6 +940,29 @@ export async function authRoutes(app: FastifyInstance) {
     return reply.status(204).send();
   });
 
+  // ── POST /auth/change-password ─────────────────────────────────────────────
+  app.post('/change-password', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const body = z.object({
+      currentPassword: z.string().min(1),
+      newPassword: z.string().min(8),
+    }).safeParse(req.body);
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    const userId = (req.user as { sub: string }).sub;
+    const { default: argon2 } = await import('argon2');
+
+    const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
+    if (!user?.passwordHash) return reply.status(400).send({ error: 'Cannot change password' });
+
+    const pwOk = await argon2.verify(user.passwordHash, body.data.currentPassword);
+    if (!pwOk) return reply.status(401).send({ error: 'Current password is incorrect' });
+
+    const passwordHash = await argon2.hash(body.data.newPassword);
+    await db.update(users).set({ passwordHash, updatedAt: new Date() }).where(eq(users.id, userId));
+
+    return reply.status(204).send();
+  });
+
   // ── GET /auth/me ──────────────────────────────────────────────────────────
   app.get('/me', { onRequest: [app.authenticate] }, async (req, reply) => {
     const { sub, orgId, impersonatedBy } = req.user as {

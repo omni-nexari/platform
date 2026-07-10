@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ShieldCheck, ShieldOff, Download, Copy } from 'lucide-react';
+import { ShieldCheck, ShieldOff, Download, Copy, KeyRound } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useAuthStore } from '../../lib/auth.js';
 
@@ -26,6 +26,65 @@ function CodeGrid({ codes }: { codes: string[] }) {
           {c}
         </code>
       ))}
+    </div>
+  );
+}
+
+function ChangePasswordCard() {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+
+  const mut = useMutation({
+    mutationFn: () => api.post('/auth/change-password', { currentPassword: current, newPassword: next }),
+    onSuccess: () => {
+      toast.success('Password changed');
+      setCurrent(''); setNext(''); setConfirm('');
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to change password'),
+  });
+
+  const canSubmit = current.length > 0 && next.length >= 8 && next === confirm;
+
+  return (
+    <div
+      className="rounded-2xl border p-6 mb-6"
+      style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
+    >
+      <div className="flex items-center gap-3 mb-5">
+        <KeyRound size={20} className="text-[var(--text-muted)]" />
+        <div>
+          <h2 className="font-semibold">Change Password</h2>
+          <p className="text-xs text-[var(--text-muted)] mt-0.5">Use a strong password of at least 8 characters.</p>
+        </div>
+      </div>
+      <div className="space-y-3 max-w-sm">
+        <div>
+          <label className="block text-xs text-[var(--text-muted)] mb-1">Current password</label>
+          <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)}
+            className="input w-full" placeholder="••••••••" />
+        </div>
+        <div>
+          <label className="block text-xs text-[var(--text-muted)] mb-1">New password</label>
+          <input type="password" value={next} onChange={(e) => setNext(e.target.value)}
+            className="input w-full" placeholder="••••••••" />
+        </div>
+        <div>
+          <label className="block text-xs text-[var(--text-muted)] mb-1">Confirm new password</label>
+          <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
+            className="input w-full" placeholder="••••••••" />
+          {confirm && next !== confirm && (
+            <p className="text-xs text-[var(--danger)] mt-1">Passwords do not match</p>
+          )}
+        </div>
+        <button
+          onClick={() => mut.mutate()}
+          disabled={!canSubmit || mut.isPending}
+          className="btn-primary mt-1"
+        >
+          {mut.isPending ? 'Saving…' : 'Update Password'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -103,7 +162,10 @@ export default function SecurityPage() {
   return (
     <div className="min-h-dvh p-8 max-w-2xl mx-auto">
       <h1 className="text-2xl font-bold mb-1">Account Security</h1>
-      <p className="text-sm text-[var(--text-muted)] mb-8">Manage two-factor authentication for your account.</p>
+      <p className="text-sm text-[var(--text-muted)] mb-8">Manage your password and two-factor authentication.</p>
+
+      {/* Change Password Card */}
+      <ChangePasswordCard />
 
       {/* 2FA Card */}
       <div

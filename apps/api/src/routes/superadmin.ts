@@ -1605,6 +1605,32 @@ export async function superAdminRoutes(app: FastifyInstance) {
     });
   });
 
+  // ── POST /superadmin/auth/change-password  (management company admin) ────────
+  app.post('/auth/change-password', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const body = z.object({
+      currentPassword: z.string().min(1),
+      newPassword: z.string().min(8),
+    }).safeParse(req.body);
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    const caller = req.user as PlatformAdminCaller;
+    const admin = await db.query.managementCompanyAdmins.findFirst({
+      where: eq(managementCompanyAdmins.id, caller.sub),
+    });
+    if (!admin) return reply.status(404).send({ error: 'Admin not found' });
+
+    const pwOk = await argon2.verify(admin.passwordHash, body.data.currentPassword);
+    if (!pwOk) return reply.status(401).send({ error: 'Current password is incorrect' });
+
+    const passwordHash = await argon2.hash(body.data.newPassword);
+    await db
+      .update(managementCompanyAdmins)
+      .set({ passwordHash, updatedAt: new Date() })
+      .where(eq(managementCompanyAdmins.id, admin.id));
+
+    return reply.status(204).send();
+  });
+
   // ── GET /superadmin/management-companies  (platform owner only) ─────────────
   app.get(
     '/management-companies',
