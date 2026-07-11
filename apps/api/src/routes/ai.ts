@@ -18,20 +18,12 @@ import {
 import { buildSystemPrompt, buildAgentSystemPrompt } from '../services/ai-knowledge.js';
 import { logActivity } from '../services/activity-logger.js';
 import { shouldUseTools, getDirectListQuery, formatListResult, executeToolCall, AGENT_TOOLS } from '../services/ai-tools.js';
+import { checkWorkspaceAccess } from '../services/workspace-access.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
 // Cap how many prior messages are replayed into context to keep prompts small.
 const MAX_HISTORY_MESSAGES = 20;
-
-async function checkWorkspaceAccess(workspaceId: string, userId: string) {
-  return db.query.workspaceMembers.findFirst({
-    where: and(
-      eq(workspaceMembers.workspaceId, workspaceId),
-      eq(workspaceMembers.userId, userId),
-    ),
-  });
-}
 
 const sendMessageSchema = z.object({
   workspaceId: z.string().uuid(),

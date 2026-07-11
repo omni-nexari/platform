@@ -16,14 +16,7 @@ import { canUseSyncPlay, getLicenseTierLabel } from '../services/license-client.
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
-async function checkWorkspaceAccess(workspaceId: string, userId: string) {
-  return db.query.workspaceMembers.findFirst({
-    where: and(
-      eq(workspaceMembers.workspaceId, workspaceId),
-      eq(workspaceMembers.userId, userId),
-    ),
-  });
-}
+import { checkWorkspaceAccess } from '../services/workspace-access.js';
 
 /**
  * Detect mode from members: if every member is a Tizen/Tizen-SBB device,

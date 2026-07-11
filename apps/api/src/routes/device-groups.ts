@@ -13,14 +13,7 @@ import { allocateSyncPlayGroupId } from '../services/syncplay-allocator.js';
 
 type AuthUser = { sub: string; orgId: string; role: string };
 
-async function checkWorkspaceAccess(workspaceId: string, userId: string) {
-  return db.query.workspaceMembers.findFirst({
-    where: and(
-      eq(workspaceMembers.workspaceId, workspaceId),
-      eq(workspaceMembers.userId, userId),
-    ),
-  });
-}
+import { checkWorkspaceAccess } from '../services/workspace-access.js';
 
 /** Hydrate the linked sync group (when type='sync') onto a device-group row. */
 async function hydrateSyncGroup(group: typeof deviceGroups.$inferSelect) {

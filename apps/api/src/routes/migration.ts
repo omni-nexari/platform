@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { db, contentItems, playlists, playlistItems, schedules, scheduleSlots, workspaceMembers, workspaces, orgStorageQuotas, tagCategories, workspaceTags, tagAssignments } from '@signage/db';
+import { checkWorkspaceAccess } from '../services/workspace-access.js';
 import { eq, and, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import crypto from 'node:crypto';
@@ -16,15 +17,6 @@ type AuthUser = { sub: string; orgId: string; role: string };
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 
 const ADMIN_ROLES = new Set(['prime_owner', 'owner', 'admin', 'a-manager', 'c-manager']);
-
-async function checkWorkspaceAccess(wsId: string, userId: string) {
-  return db.query.workspaceMembers.findFirst({
-    where: and(
-      eq(workspaceMembers.workspaceId, wsId),
-      eq(workspaceMembers.userId, userId),
-    ),
-  });
-}
 
 /**
  * Build a fetch-compatible URL from a base URL + path.

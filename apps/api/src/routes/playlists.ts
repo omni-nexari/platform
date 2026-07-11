@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { db, playlists, playlistItems, playlistFolders, contentItems, workspaceMembers, workspaces, scheduleSlots, devices } from '@signage/db';
+import { checkWorkspaceAccess } from '../services/workspace-access.js';
 import { eq, and, isNull, isNotNull, desc, ilike, inArray, sql, getTableColumns, gte, asc } from 'drizzle-orm';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
 import { validatePlaylistItemConditions } from '@signage/shared';
@@ -8,15 +9,6 @@ import { logActivity } from '../services/activity-logger.js';
 type AuthUser = { sub: string; orgId: string; role: string };
 
 const APPROVE_ROLES = new Set(['prime_owner', 'owner', 'admin', 'a-manager']);
-
-async function checkWorkspaceAccess(workspaceId: string, userId: string) {
-  return db.query.workspaceMembers.findFirst({
-    where: and(
-      eq(workspaceMembers.workspaceId, workspaceId),
-      eq(workspaceMembers.userId, userId),
-    ),
-  });
-}
 
 /**
  * Recursively checks that none of the nestedPlaylistIds would create a cycle

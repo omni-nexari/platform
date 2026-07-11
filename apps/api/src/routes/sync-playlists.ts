@@ -1,17 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { db, syncPlaylists, syncPlaylistItems, contentItems, workspaces, workspaceMembers } from '@signage/db';
+import { checkWorkspaceAccess } from '../services/workspace-access.js';
 import { eq, and, isNull, desc, inArray, asc } from 'drizzle-orm';
 
 type AuthUser = { sub: string; orgId: string; role: string };
-
-async function checkWorkspaceAccess(workspaceId: string, userId: string) {
-  return db.query.workspaceMembers.findFirst({
-    where: and(
-      eq(workspaceMembers.workspaceId, workspaceId),
-      eq(workspaceMembers.userId, userId),
-    ),
-  });
-}
 
 export async function syncPlaylistRoutes(app: FastifyInstance) {
 

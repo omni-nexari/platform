@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { db, contentItems, contentFolders, contentVersions, playlistItems, workspaceMembers, workspaces, orgStorageQuotas, users, scheduleSlots, devices, calendarConnections } from '@signage/db';
+import { checkWorkspaceAccess } from '../services/workspace-access.js';
 import { eq, and, isNull, isNotNull, desc, ilike, or, sql, getTableColumns, asc, inArray } from 'drizzle-orm';
 import { createReadStream, promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -73,15 +74,6 @@ function detectType(mime: string, filename: string): 'image' | 'video' | 'html5'
   if (ext === '.zip' || mime === 'application/zip' || mime === 'application/x-zip-compressed') return 'html5';
   if (['.pptx', '.ppt'].includes(ext)) return 'presentation';
   return 'image';
-}
-
-async function checkWorkspaceAccess(wsId: string, userId: string) {
-  return db.query.workspaceMembers.findFirst({
-    where: and(
-      eq(workspaceMembers.workspaceId, wsId),
-      eq(workspaceMembers.userId, userId),
-    ),
-  });
 }
 
 // ── Chunked-upload helpers ────────────────────────────────────────────────────
