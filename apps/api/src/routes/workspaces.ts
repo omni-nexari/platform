@@ -49,6 +49,14 @@ export async function workspaceRoutes(app: FastifyInstance) {
       .values({ orgId: user.orgId, name: body.data.name, slug: body.data.slug, timezone: body.data.timezone ?? 'UTC' })
       .returning();
 
+    // Auto-add the creator as an admin workspace member so they have access
+    await db.insert(workspaceMembers).values({
+      workspaceId: ws!.id,
+      userId: user.sub,
+      role: 'admin',
+      addedBy: user.sub,
+    });
+
     await writeAuditLog({
       orgId: user.orgId,
       actorId: user.sub,
