@@ -12,8 +12,9 @@
     6. Reports the built image tag
     7. Asks whether to push the git tag → triggers GitHub Actions → GHCR release
 
-    The script does NOT deploy (no migrations, no service restart).
-    Run  bash /opt/nexari/update.sh --version vX.Y.Z  when ready to go live.
+    The script does NOT skip deployment — after pushing to GitHub it SSHes to
+    the Pi and runs  bash /opt/signage/infra/pi/update.sh  to pull the latest
+    code, rebuild, and restart the signage-api systemd service.
 
 .PARAMETER PiHost
     SSH hostname or IP of the Pi. Default: 192.168.1.17
@@ -210,17 +211,13 @@ if (-not $NoPush) {
     Write-Host "  Follow: https://github.com/omni-nexari/platform/actions" -ForegroundColor DarkGray
 }
 
-# ── Sync docker-compose.yml to Pi ─────────────────────────────────────────────
-Write-Step "Syncing docker-compose.yml to Pi"
-$composeLocal = Join-Path $repoRoot "docker\docker-compose.yml"
-scp -P $SshPort $composeLocal "${SshUser}@${PiHost}:/opt/nexari/docker-compose.yml"
-if ($LASTEXITCODE -ne 0) { Write-Fail "scp docker-compose.yml failed" }
-Write-Ok "docker-compose.yml synced"
-
-# ── Deploy on Pi (using locally-built image — skip GHCR pull) ─────────────────
+# ── Deploy on Pi via systemd update script ────────────────────────────────────
+# The Pi runs the API directly via systemd (signage-api), not via Docker.
+# infra/pi/update.sh does: git fetch + reset, pnpm install, build, migrate, restart.
+# We push to GitHub first (above) so the Pi fetches the exact version we just built.
 Write-Step "Deploying v$newVersion on Pi"
-Write-Host "  Running update.sh --version v$newVersion --skip-pull"
-ssh -p $SshPort "${SshUser}@${PiHost}" "cd /opt/nexari && bash update.sh --version v$newVersion --skip-pull"
+Write-Host "  Running infra/pi/update.sh on Pi..."
+ssh -p $SshPort "${SshUser}@${PiHost}" "bash /opt/signage/infra/pi/update.sh"
 if ($LASTEXITCODE -ne 0) { Write-Fail "Deploy failed" }
 Write-Ok "Deployed v$newVersion on Pi"
 
