@@ -266,10 +266,12 @@ function WorkspacePicker({
   workspaces,
   value,
   onChange,
+  onCreateNew,
 }: {
   workspaces: Workspace[];
   value: string | null;
   onChange: (id: string) => void;
+  onCreateNew?: () => void;
 }) {
   if (!workspaces.length) return null;
   return (
@@ -277,18 +279,164 @@ function WorkspacePicker({
       <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">
         Workspace
       </label>
-      <select
-        value={value ?? ''}
-        onChange={(e) => onChange(e.target.value)}
-        className="input text-sm"
-        style={{ maxWidth: 260 }}
+      <div className="flex items-center gap-2">
+        <select
+          value={value ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+          className="input text-sm"
+          style={{ maxWidth: 260 }}
+        >
+          {workspaces.map((ws) => (
+            <option key={ws.id} value={ws.id}>
+              {ws.name}
+            </option>
+          ))}
+        </select>
+        {onCreateNew && (
+          <button
+            onClick={onCreateNew}
+            title="Create new workspace"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+            style={{ background: 'var(--blue)', color: '#fff' }}
+          >
+            <Plus size={13} />
+            New Workspace
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Create Workspace Modal ───────────────────────────────────────────────────
+
+function slugify(str: string) {
+  return str
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50);
+}
+
+function CreateWorkspaceModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (wsId: string) => void;
+}) {
+  const qc = useQueryClient();
+  const [name, setName] = useState('');
+  const [slug, setSlug] = useState('');
+  const [slugEdited, setSlugEdited] = useState(false);
+  const [timezone, setTimezone] = useState('UTC');
+
+  const handleNameChange = (v: string) => {
+    setName(v);
+    if (!slugEdited) setSlug(slugify(v));
+  };
+
+  const createMut = useMutation({
+    mutationFn: () =>
+      api.post<Workspace>('/workspaces', { name: name.trim(), slug: slug.trim(), timezone }),
+    onSuccess: (ws) => {
+      void qc.invalidateQueries({ queryKey: ['workspaces'] });
+      toast.success(`Workspace "${ws.name}" created`);
+      onCreated(ws.id);
+      onClose();
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { message?: string })?.message ?? 'Failed to create workspace';
+      toast.error(msg);
+    },
+  });
+
+  const slugValid = /^[a-z0-9-]{2,50}$/.test(slug);
+  const canSubmit = name.trim().length >= 2 && slugValid && !createMut.isPending;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border shadow-2xl overflow-hidden"
+        style={{ background: 'var(--modal-bg)', borderColor: 'var(--card-border)' }}
+        onClick={(e) => e.stopPropagation()}
       >
-        {workspaces.map((ws) => (
-          <option key={ws.id} value={ws.id}>
-            {ws.name}
-          </option>
-        ))}
-      </select>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+          <div className="flex items-center gap-2">
+            <LayoutGrid size={15} className="text-[var(--text-muted)]" />
+            <h3 className="text-sm font-semibold text-[var(--text)]">New Workspace</h3>
+          </div>
+          <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-5 py-5 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Workspace Name</label>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => handleNameChange(e.target.value)}
+              placeholder="e.g. Downtown Store"
+              className="input w-full"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">
+              Slug
+              <span className="font-normal ml-1 text-[10px]">— used in URLs, lowercase letters, numbers, hyphens</span>
+            </label>
+            <input
+              value={slug}
+              onChange={(e) => { setSlug(e.target.value); setSlugEdited(true); }}
+              placeholder="e.g. downtown-store"
+              className="input w-full font-mono text-sm"
+            />
+            {slug && !slugValid && (
+              <p className="text-xs mt-1" style={{ color: 'var(--red)' }}>
+                Must be 2–50 chars, lowercase letters, numbers, and hyphens only.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-muted)] mb-1.5">Timezone</label>
+            <select
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
+              className="input w-full"
+            >
+              {TIMEZONES.map((tz) => (
+                <option key={tz.value} value={tz.value}>{tz.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end gap-2 px-5 py-4 border-t" style={{ borderColor: 'var(--border)' }}>
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 rounded-lg text-sm transition-colors text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]"
+          >
+            Cancel
+          </button>
+          <ActionButton
+            tone="primary"
+            onClick={() => createMut.mutate()}
+            disabled={!canSubmit}
+          >
+            {createMut.isPending ? 'Creating…' : 'Create Workspace'}
+          </ActionButton>
+        </div>
+      </div>
     </div>
   );
 }
@@ -5421,6 +5569,7 @@ export default function SettingsPage() {
   });
 
   const [selectedWsId, setSelectedWsId] = useState<string | null>(null);
+  const [showCreateWs, setShowCreateWs] = useState(false);
 
   // Default to first workspace once loaded
   const resolvedWsId = selectedWsId ?? workspaces[0]?.id ?? null;
@@ -5492,6 +5641,14 @@ export default function SettingsPage() {
               workspaces={workspaces}
               value={resolvedWsId}
               onChange={(id) => setSelectedWsId(id)}
+              onCreateNew={() => setShowCreateWs(true)}
+            />
+          )}
+
+          {showCreateWs && (
+            <CreateWorkspaceModal
+              onClose={() => setShowCreateWs(false)}
+              onCreated={(id) => setSelectedWsId(id)}
             />
           )}
 
