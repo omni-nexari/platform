@@ -131,6 +131,53 @@ jobs:
           pnpm --filter @signage/api    build
           pnpm --filter @signage/ds     build
 
+      - name: Obfuscate compiled output
+        run: |
+          npx --yes javascript-obfuscator@latest \
+            apps/api/dist \
+            --output apps/api/dist \
+            --compact true \
+            --identifier-names-generator hexadecimal \
+            --rename-globals false \
+            --string-array true \
+            --string-array-encoding base64 \
+            --string-array-threshold 0.75 \
+            --control-flow-flattening false \
+            --dead-code-injection false \
+            --self-defending false \
+            --debug-protection false \
+            --disable-console-output false
+
+          npx --yes javascript-obfuscator@latest \
+            packages/db/dist \
+            --output packages/db/dist \
+            --compact true \
+            --identifier-names-generator hexadecimal \
+            --rename-globals false \
+            --string-array true \
+            --string-array-encoding base64 \
+            --string-array-threshold 0.75 \
+            --control-flow-flattening false \
+            --dead-code-injection false \
+            --self-defending false \
+            --debug-protection false \
+            --disable-console-output false
+
+          npx --yes javascript-obfuscator@latest \
+            packages/shared/dist \
+            --output packages/shared/dist \
+            --compact true \
+            --identifier-names-generator hexadecimal \
+            --rename-globals false \
+            --string-array true \
+            --string-array-encoding base64 \
+            --string-array-threshold 0.75 \
+            --control-flow-flattening false \
+            --dead-code-injection false \
+            --self-defending false \
+            --debug-protection false \
+            --disable-console-output false
+
       - name: Package standalone release
         run: |
           PKG=_standalone/nexari-platform
