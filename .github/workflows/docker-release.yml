@@ -98,3 +98,79 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: nexari-install.tar.gz
+
+  release-standalone:
+    name: Build and upload standalone Node.js package
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build packages
+        run: |
+          pnpm --filter @signage/db     build
+          pnpm --filter @signage/shared build
+          pnpm --filter @signage/api    build
+          pnpm --filter @signage/ds     build
+
+      - name: Package standalone release
+        run: |
+          PKG=_standalone/nexari-platform
+          mkdir -p "$PKG"
+
+          # Root — workspace manifest + version
+          cp package.json pnpm-workspace.yaml "$PKG/"
+          cp -r node_modules "$PKG/"
+
+          # DB package
+          mkdir -p "$PKG/packages/db"
+          cp    packages/db/package.json   "$PKG/packages/db/"
+          cp -r packages/db/dist           "$PKG/packages/db/"
+          cp -r packages/db/scripts        "$PKG/packages/db/"
+          cp -r packages/db/migrations     "$PKG/packages/db/"
+          [ -d packages/db/node_modules ] && cp -r packages/db/node_modules "$PKG/packages/db/" || true
+
+          # Shared package
+          mkdir -p "$PKG/packages/shared"
+          cp    packages/shared/package.json   "$PKG/packages/shared/"
+          cp -r packages/shared/dist           "$PKG/packages/shared/"
+          [ -d packages/shared/node_modules ] && cp -r packages/shared/node_modules "$PKG/packages/shared/" || true
+
+          # API
+          mkdir -p "$PKG/apps/api"
+          cp    apps/api/package.json   "$PKG/apps/api/"
+          cp -r apps/api/dist           "$PKG/apps/api/"
+          [ -d apps/api/node_modules ] && cp -r apps/api/node_modules "$PKG/apps/api/" || true
+
+          # DS static files (served by API)
+          mkdir -p "$PKG/apps/ds"
+          cp -r apps/ds/dist "$PKG/apps/ds/"
+
+          # Key generator helper
+          cp docker/generate-keys.sh "$PKG/"
+          chmod +x "$PKG/generate-keys.sh"
+
+          tar -czf nexari-platform.tar.gz -C _standalone nexari-platform
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nexari-platform.tar.gz
