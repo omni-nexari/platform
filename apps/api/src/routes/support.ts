@@ -138,7 +138,7 @@ export async function supportRoutes(app: FastifyInstance) {
       category,
       subject,
       priority:          priority ?? 'medium',
-      message:           message ?? undefined,
+      ...(message != null ? { message } : {}),
     }).catch(() => undefined);
 
     return reply.status(201).send({ ticket: ticket! });

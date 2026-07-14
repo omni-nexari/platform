@@ -125,7 +125,7 @@ export async function ingestTicketCreated(params: {
     licenseKey:  creds.licenseKey,
     timestamp,
     signature,
-    instanceUrl,
+    ...(instanceUrl ? { instanceUrl } : {}),
     ticket: { ...params },
   });
 }
@@ -156,11 +156,11 @@ export async function ingestMessageAdded(params: {
     instanceUrl,
     platformTicketId: params.platformTicketId,
     message: {
-      platformMessageId: params.platformMessageId,
+      ...(params.platformMessageId != null ? { platformMessageId: params.platformMessageId } : {}),
       senderType:        params.senderType,
       senderName:        params.senderName,
       body:              params.body,
-      attachmentUrls:    params.attachmentUrls,
+      ...(params.attachmentUrls != null ? { attachmentUrls: params.attachmentUrls } : {}),
     },
   });
 }
