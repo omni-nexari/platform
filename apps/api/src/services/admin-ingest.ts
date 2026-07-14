@@ -153,7 +153,7 @@ export async function ingestMessageAdded(params: {
     licenseKey:       creds.licenseKey,
     timestamp,
     signature,
-    instanceUrl,
+    ...(instanceUrl ? { instanceUrl } : {}),
     platformTicketId: params.platformTicketId,
     message: {
       ...(params.platformMessageId != null ? { platformMessageId: params.platformMessageId } : {}),
