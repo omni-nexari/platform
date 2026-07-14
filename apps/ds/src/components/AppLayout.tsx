@@ -77,7 +77,7 @@ export default function AppLayout() {
 
   // Keep org.settings fresh — re-fetch /auth/me on window focus so module
   // changes made by an admin are reflected without requiring a full logout.
-  const { data: meData } = useQuery<{ user: typeof user; org: { id: string; name: string; slug: string; plan: string; settings: string } | null }>({
+  const { data: meData } = useQuery<{ user: typeof user; org: { id: string; name: string; slug: string; plan: string; settings: string } | null; branding: { logoUrl: string | null; name: string | null; portalTitle: string | null } | null }>({    
     queryKey: ['me'],
     queryFn: () => api.get('/auth/me'),
     enabled: bootstrapped && !!user,
@@ -294,8 +294,18 @@ export default function AppLayout() {
       <aside className={`ui-mobile-drawer fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col border-r border-[var(--border)] bg-[var(--card)] transition-transform duration-200 lg:static lg:z-auto lg:w-56 lg:max-w-none lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {/* Logo */}
         <div className="px-4 py-5 border-b border-[var(--border)]">
-          <span className="text-lg font-bold tracking-tight text-[var(--text)]">Nexari</span>
-          <span className="text-[var(--blue)] text-lg font-bold">.</span>
+          {meData?.branding?.logoUrl ? (
+            <img
+              src={meData.branding.logoUrl}
+              alt={meData.branding.name ?? meData.branding.portalTitle ?? 'Portal'}
+              className="h-8 max-w-[160px] object-contain"
+            />
+          ) : (
+            <>
+              <span className="text-lg font-bold tracking-tight text-[var(--text)]">Nexari</span>
+              <span className="text-[var(--blue)] text-lg font-bold">.</span>
+            </>
+          )}
         </div>
 
         {/* Nav */}

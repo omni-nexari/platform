@@ -1065,6 +1065,19 @@ export async function authRoutes(app: FastifyInstance) {
       pro: 53_687_091_200,
     };
 
+    // Fetch management company branding so the client portal can show the
+    // reseller's branded logo in the app sidebar.
+    let branding: { logoUrl: string | null; name: string | null; portalTitle: string | null } | null = null;
+    if (org.managementCompanyId) {
+      const mc = await db.query.managementCompanies.findFirst({
+        where: eq(managementCompanies.id, org.managementCompanyId),
+        columns: { logoUrl: true, name: true, portalTitle: true },
+      });
+      if (mc) {
+        branding = { logoUrl: mc.logoUrl ?? null, name: mc.name ?? null, portalTitle: mc.portalTitle ?? null };
+      }
+    }
+
     if (!req.cookies[CSRF_COOKIE]) {
       setCsrfCookie(reply);
     }
@@ -1079,6 +1092,7 @@ export async function authRoutes(app: FastifyInstance) {
         usedBytes: Number(storageUsageRow?.usedBytes ?? 0),
         limitBytes: quota?.limitBytes ?? planDefaults[resolvedOrg.plan] ?? planDefaults.basic,
       },
+      branding,
     });
   });
 }

@@ -6,7 +6,7 @@ import { api } from '../../lib/api.js';
 import {
   ArrowLeft, Plus, Save, Trash2, RefreshCw,
   ChevronUp, ChevronDown, X, Layers, Clock,
-  Play, AlertTriangle, Settings2, Monitor, GripVertical,
+  Play, AlertTriangle, Settings2, Monitor, GripVertical, Check,
 } from 'lucide-react';
 import {
   DndContext,
@@ -200,20 +200,22 @@ function ConditionsPopover({
 // ── Item row component ────────────────────────────────────────────────────
 
 function ItemRow({
-  item, index, total, orientationMismatch,
+  item, index, total, orientationMismatch, selected,
   onMoveUp, onMoveDown, onRemove,
-  onChangeDuration, onChangeTransition, onChangeConditions,
+  onChangeDuration, onChangeTransition, onChangeConditions, onToggleSelect,
 }: {
   item: EditorItem;
   index: number;
   total: number;
   orientationMismatch: boolean;
+  selected: boolean;
   onMoveUp: () => void;
   onMoveDown: () => void;
   onRemove: () => void;
   onChangeDuration: (d: number) => void;
   onChangeTransition: (t: string) => void;
   onChangeConditions: (c: string) => void;
+  onToggleSelect: () => void;
 }) {
   const [condOpen, setCondOpen] = useState(false);
   const isPlaylist = !!item.nestedPlaylistId;
@@ -228,8 +230,16 @@ function ItemRow({
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
-      className="flex items-center gap-3 p-3 rounded-xl border border-[var(--card-border)] bg-[var(--card)] group"
+      className={`flex items-center gap-3 p-3 rounded-xl border bg-[var(--card)] group transition-colors ${selected ? 'border-[var(--accent)]/60 bg-[var(--accent)]/5' : 'border-[var(--card-border)]'}`}
     >
+      {/* Selection checkbox */}
+      <button
+        onClick={onToggleSelect}
+        title={selected ? 'Deselect' : 'Select'}
+        className={`shrink-0 w-5 h-5 rounded border flex items-center justify-center transition-colors ${selected ? 'border-[var(--accent)] bg-[var(--accent)] text-white' : 'border-[var(--border)] text-transparent hover:border-[var(--accent)]/50'}`}
+      >
+        <Check size={11} strokeWidth={3} />
+      </button>
       {/* Drag handle */}
       <button
         {...attributes}
@@ -360,6 +370,8 @@ export default function PlaylistEditorPage() {
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDuration, setBulkDuration] = useState<string>('');
 
   // ── Unsaved changes guard ──
   useEffect(() => {
@@ -521,6 +533,30 @@ export default function PlaylistEditorPage() {
     markDirty();
   }
 
+  function toggleSelectItem(localId: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(localId)) next.delete(localId); else next.add(localId);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(items.map(i => i.localId)));
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  function applyBulkDuration() {
+    const d = parseInt(bulkDuration, 10);
+    if (!d || d < 1) return;
+    setItems(prev => prev.map(it => selectedIds.has(it.localId) ? { ...it, duration: d } : it));
+    setBulkDuration('');
+    markDirty();
+  }
+
   function updateDuration(idx: number, d: number) {
     setItems(prev => prev.map((it, i) => i === idx ? { ...it, duration: d } : it));
     markDirty();
@@ -666,27 +702,75 @@ export default function PlaylistEditorPage() {
               <p className="text-sm text-[var(--text-muted)]">No items — add content using the button below</p>
             </div>
           ) : (
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-              <SortableContext items={items.map(i => i.localId)} strategy={verticalListSortingStrategy}>
-                <div className="flex flex-col gap-2">
-                  {items.map((item, idx) => (
-                    <ItemRow
-                      key={item.localId}
-                      item={item}
-                      index={idx}
-                      total={items.length}
-                      orientationMismatch={isOrientationMismatch(item)}
-                      onMoveUp={() => moveItem(idx, idx - 1)}
-                      onMoveDown={() => moveItem(idx, idx + 1)}
-                      onRemove={() => removeItem(idx)}
-                      onChangeDuration={d => updateDuration(idx, d)}
-                      onChangeTransition={t => updateTransition(idx, t)}
-                      onChangeConditions={c => updateConditions(idx, c)}
-                    />
-                  ))}
-                </div>
-              </SortableContext>
-            </DndContext>
+            <>
+              {/* Select all / bulk action bar */}
+              <div className="flex items-center gap-3 px-1">
+                <button
+                  onClick={selectedIds.size === items.length ? clearSelection : selectAll}
+                  className={`flex items-center gap-1.5 text-xs font-medium transition-colors ${selectedIds.size === items.length ? 'text-[var(--accent)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
+                >
+                  <span className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${selectedIds.size === items.length ? 'border-[var(--accent)] bg-[var(--accent)] text-white' : selectedIds.size > 0 ? 'border-[var(--accent)] bg-[var(--accent)]/20 text-[var(--accent)]' : 'border-[var(--border)]'}`}>
+                    {selectedIds.size === items.length ? <Check size={10} strokeWidth={3} /> : selectedIds.size > 0 ? <span className="text-[8px] font-bold leading-none">—</span> : null}
+                  </span>
+                  {selectedIds.size === items.length ? 'Deselect all' : 'Select all'}
+                </button>
+                {selectedIds.size > 0 && (
+                  <>
+                    <span className="text-xs text-[var(--text-muted)]">{selectedIds.size} selected</span>
+                    <div className="flex items-center gap-1.5 ml-auto">
+                      <span className="text-xs text-[var(--text-muted)]">Set duration:</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={3600}
+                        value={bulkDuration}
+                        onChange={e => setBulkDuration(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && applyBulkDuration()}
+                        placeholder="sec"
+                        className="w-16 px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs text-[var(--text)] text-center outline-none focus:border-[var(--accent)]"
+                      />
+                      <button
+                        onClick={applyBulkDuration}
+                        disabled={!bulkDuration || parseInt(bulkDuration, 10) < 1}
+                        className="px-2.5 py-1 rounded-lg bg-[var(--accent)] text-white text-xs font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity"
+                      >
+                        Apply
+                      </button>
+                      <button
+                        onClick={clearSelection}
+                        className="text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors px-1"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={items.map(i => i.localId)} strategy={verticalListSortingStrategy}>
+                  <div className="flex flex-col gap-2">
+                    {items.map((item, idx) => (
+                      <ItemRow
+                        key={item.localId}
+                        item={item}
+                        index={idx}
+                        total={items.length}
+                        orientationMismatch={isOrientationMismatch(item)}
+                        selected={selectedIds.has(item.localId)}
+                        onMoveUp={() => moveItem(idx, idx - 1)}
+                        onMoveDown={() => moveItem(idx, idx + 1)}
+                        onRemove={() => removeItem(idx)}
+                        onChangeDuration={d => updateDuration(idx, d)}
+                        onChangeTransition={t => updateTransition(idx, t)}
+                        onChangeConditions={c => updateConditions(idx, c)}
+                        onToggleSelect={() => toggleSelectItem(item.localId)}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
+            </>
           )}
 
           {/* Add content button */}

@@ -8,6 +8,7 @@ import { createWriteStream } from 'node:fs';
 import path from 'node:path';
 import { CreateSupportTicketSchema, ReplyToTicketSchema } from '@signage/shared';
 import { sendSupportNotificationEmail } from '../services/email.js';
+import { ingestTicketCreated, ingestMessageAdded } from '../services/admin-ingest.js';
 
 type AuthUser = { sub: string; orgId: string; name?: string; email?: string; orgRole?: string };
 
@@ -129,6 +130,16 @@ export async function supportRoutes(app: FastifyInstance) {
     }
 
     void notifySuperAdmins(subject, message ?? '', ticket!.id).catch(() => undefined);
+    void ingestTicketCreated({
+      platformTicketId:  ticket!.id,
+      partyType:         'client_org',
+      submittedByName:   user.name ?? user.email ?? 'User',
+      submittedByEmail:  user.email ?? '',
+      category,
+      subject,
+      priority:          priority ?? 'medium',
+      message:           message ?? undefined,
+    }).catch(() => undefined);
 
     return reply.status(201).send({ ticket: ticket! });
   });
@@ -178,6 +189,14 @@ export async function supportRoutes(app: FastifyInstance) {
       .where(eq(supportTickets.id, id));
 
     void notifySuperAdmins(ticket.subject, body.data.body, id).catch(() => undefined);
+    void ingestMessageAdded({
+      platformTicketId:  id,
+      platformMessageId: msg!.id,
+      senderType:        'client',
+      senderName:        user.name ?? user.email ?? 'User',
+      body:              body.data.body,
+      attachmentUrls:    body.data.attachmentUrls ?? [],
+    }).catch(() => undefined);
 
     return reply.status(201).send({ message: formatMessage(msg!) });
   });

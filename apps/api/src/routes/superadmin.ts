@@ -51,6 +51,7 @@ import {
 import { sendInviteEmail, sendSupportNotificationEmail, invalidateEmailConfigCache, getEmailConfig } from '../services/email.js';
 import { writeAuditLog } from '../services/audit.js';
 import { canUseMultiTenant, getLicenseTierLabel } from '../services/license-client.js';
+import { ingestTicketCreated, ingestMessageAdded } from '../services/admin-ingest.js';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 const BRANDING_ASSET_TYPES = new Set(['logo', 'favicon', 'login-background']);
@@ -3627,6 +3628,16 @@ export async function superAdminRoutes(app: FastifyInstance) {
 
       // Notify superadmin
       void notifySuperAdmins(subject, message ?? '', ticket!.id).catch(() => undefined);
+      void ingestTicketCreated({
+        platformTicketId:  ticket!.id,
+        partyType:         orgId ? 'client_org' : 'management_company',
+        submittedByName:   caller.name ?? caller.email,
+        submittedByEmail:  caller.email,
+        category,
+        subject,
+        priority:          priority ?? 'medium',
+        message:           message ?? undefined,
+      }).catch(() => undefined);
 
       return reply.status(201).send({ ticket: ticket! });
     },
@@ -3707,6 +3718,14 @@ export async function superAdminRoutes(app: FastifyInstance) {
         .where(eq(supportTickets.id, id));
 
       void notifySuperAdmins(ticket.subject, body.data.body, id).catch(() => undefined);
+      void ingestMessageAdded({
+        platformTicketId:  id,
+        platformMessageId: msg!.id,
+        senderType:        'reseller',
+        senderName:        caller.name ?? caller.email,
+        body:              body.data.body,
+        attachmentUrls:    body.data.attachmentUrls ?? [],
+      }).catch(() => undefined);
 
       return reply.status(201).send({ message: formatMessage(msg!) });
     },

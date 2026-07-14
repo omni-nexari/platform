@@ -214,6 +214,41 @@ function SlotBlock({
   );
 }
 
+// -- 24h time input -----------------------------------------------------------
+
+function TimeInput24h({ value, onChange, className }: {
+  value: string;
+  onChange: (v: string) => void;
+  className?: string;
+}) {
+  const [raw, setRaw] = useState(value);
+  useEffect(() => { setRaw(value); }, [value]);
+
+  function handleBlur() {
+    const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+    if (match) {
+      const h = Math.min(23, parseInt(match[1], 10));
+      const m = Math.min(59, parseInt(match[2], 10));
+      const formatted = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      setRaw(formatted);
+      onChange(formatted);
+    } else {
+      setRaw(value);
+    }
+  }
+
+  return (
+    <input
+      type="text"
+      value={raw}
+      onChange={e => setRaw(e.target.value)}
+      onBlur={handleBlur}
+      placeholder="HH:MM"
+      className={className}
+    />
+  );
+}
+
 // -- Slot dialog --------------------------------------------------------------
 
 function SlotDialog({
@@ -301,19 +336,17 @@ function SlotDialog({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-[10px] text-[var(--text-muted)] mb-1">Start</label>
-                <input
-                  type="time"
+                <TimeInput24h
                   value={draft.startTime}
-                  onChange={e => onDraftChange({ ...draft, startTime: e.target.value })}
+                  onChange={v => onDraftChange({ ...draft, startTime: v })}
                   className="w-full px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
                 />
               </div>
               <div>
                 <label className="block text-[10px] text-[var(--text-muted)] mb-1">End</label>
-                <input
-                  type="time"
+                <TimeInput24h
                   value={draft.endTime}
-                  onChange={e => onDraftChange({ ...draft, endTime: e.target.value })}
+                  onChange={v => onDraftChange({ ...draft, endTime: v })}
                   className="w-full px-2 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text)] outline-none focus:border-[var(--accent)]"
                 />
               </div>
