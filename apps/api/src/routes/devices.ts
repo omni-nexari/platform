@@ -35,6 +35,7 @@ import {
   registerBleScanSubscriber,
   unregisterBleScanSubscriber,
   emitBleScanResult,
+  getFirmwareUpdatePct,
 } from '../services/ws.js';
 import { notifyDeviceStatusChange } from '../services/notifications.js';
 import { ensureEpaperVariant, type EpaperFitMode } from '../services/epaper-variants.js';
@@ -860,6 +861,7 @@ export async function deviceRoutes(app: FastifyInstance) {
         publishedTarget: publishedTargetMap[id] ?? null,
         status: resolveReportedDeviceStatus(device),
         healthScore: computeHealthScore(device, latestHeartbeat ?? null, latestRelease?.version ?? null),
+        firmwareUpdateProgress: getFirmwareUpdatePct(id),
       },
       screenshots,
       latestHeartbeat: latestHeartbeat

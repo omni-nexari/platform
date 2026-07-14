@@ -352,10 +352,30 @@ export function getOnlineDeviceIds(): string[] {
     .map(([id]) => id);
 }
 
+// ── In-memory firmware update progress ─────────────────────────────────────
+// Keyed by deviceId. Cleared on firmware_update_complete or after 2 h (reboot
+// may close the WS before the complete message arrives).
+const firmwareUpdateState = new Map<string, { pct: number; swVersion: string; startedAt: number }>();
+const FIRMWARE_UPDATE_EXPIRY_MS = 2 * 60 * 60 * 1000; // 2 h
+
+export function getFirmwareUpdatePct(deviceId: string): { pct: number; swVersion: string } | null {
+  const state = firmwareUpdateState.get(deviceId);
+  if (!state) return null;
+  if (Date.now() - state.startedAt > FIRMWARE_UPDATE_EXPIRY_MS) {
+    firmwareUpdateState.delete(deviceId);
+    return null;
+  }
+  return { pct: state.pct, swVersion: state.swVersion };
+}
+
 export function sendCommand(deviceId: string, command: WsCommand): boolean {
   const conn = connections.get(deviceId);
   if (!conn || conn.readyState !== 1) return false;
   conn.send(JSON.stringify(command));
+  // Seed firmware update state so progress bar appears immediately on the dashboard.
+  if (command.type === 'update_tv_firmware') {
+    firmwareUpdateState.set(deviceId, { pct: 0, swVersion: command.payload.swVersion, startedAt: Date.now() });
+  }
   return true;
 }
 
@@ -597,6 +617,17 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
         updatedAt: new Date(),
       })
       .where(eq(devices.id, deviceId));
+
+    // Track firmware OTA progress reported via pendingUpdatePct in the heartbeat payload.
+    const pendingPct = (hb as Record<string, unknown>).pendingUpdatePct;
+    if (typeof pendingPct === 'number') {
+      const existing = firmwareUpdateState.get(deviceId);
+      firmwareUpdateState.set(deviceId, {
+        pct: pendingPct,
+        swVersion: existing?.swVersion ?? '',
+        startedAt: existing?.startedAt ?? Date.now(),
+      });
+    }
 
     // Skip the heartbeat row for sleeping notifications — it carries no resource
     // data (cpuLoad, memory, storage are all null) and would become the "latest"
@@ -1018,6 +1049,12 @@ export async function handleDeviceMessage(deviceId: string, data: string): Promi
     } catch (err) {
       console.warn('[ws] sync_heartbeat persist failed', { deviceId, err: (err as Error)?.message });
     }
+    return;
+  }
+
+  // ── firmware_update_complete ────────────────────────────────────────────────
+  if (msg.type === 'firmware_update_complete') {
+    firmwareUpdateState.delete(deviceId);
     return;
   }
 

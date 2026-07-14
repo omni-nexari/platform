@@ -189,6 +189,8 @@ interface Device {
   screenshotIntervalMin: number | null;
   defaultPlaylistId: string | null;
   zones: any[] | null;
+  // Firmware OTA in-progress (set when update_tv_firmware command was sent, cleared on complete)
+  firmwareUpdateProgress: { pct: number; swVersion: string } | null;
   publishedTarget: {
     id: string;
     type: 'content' | 'playlist' | 'schedule';
@@ -3205,6 +3207,26 @@ export function DeviceDetailContent({
               </h2>
             </SectionCardHeader>
             <SectionCardBody>
+              {/* ── Firmware OTA in progress ── */}
+              {device.firmwareUpdateProgress ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[var(--text-muted)]">
+                      Updating to <span className="font-mono text-[var(--text)]">{device.firmwareUpdateProgress.swVersion}</span>
+                    </span>
+                    <span className="font-medium text-blue-400">{device.firmwareUpdateProgress.pct}%</span>
+                  </div>
+                  <div className="h-2 w-full rounded-full bg-[var(--surface)] overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-blue-500 transition-all duration-500"
+                      style={{ width: `${device.firmwareUpdateProgress.pct}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    The TV is downloading and applying the firmware. It will reboot automatically when done.
+                  </p>
+                </div>
+              ) : (
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-xs text-[var(--text-muted)]">Installed:</span>
                 <span className="font-mono text-xs text-[var(--text)]">{device.firmwareVersion ?? '—'}</span>
@@ -3246,6 +3268,7 @@ export function DeviceDetailContent({
                   </>
                 )}
               </div>
+              )}
             </SectionCardBody>
           </SectionCard>
           )}
