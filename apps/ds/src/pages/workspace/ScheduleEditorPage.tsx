@@ -227,8 +227,8 @@ function TimeInput24h({ value, onChange, className }: {
   function handleBlur() {
     const match = raw.match(/^(\d{1,2}):(\d{2})$/);
     if (match) {
-      const h = Math.min(23, parseInt(match[1], 10));
-      const m = Math.min(59, parseInt(match[2], 10));
+      const h = Math.min(23, parseInt(match[1] ?? '0', 10));
+      const m = Math.min(59, parseInt(match[2] ?? '0', 10));
       const formatted = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
       setRaw(formatted);
       onChange(formatted);
