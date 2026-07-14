@@ -90,6 +90,38 @@ else
     echo "    INFO: No APK in $DATA_DIR/android/ — build via apps/nexari-android and deploy with tools/deploy-android.ps1"
 fi
 
+# ── ePaper assets directory ────────────────────────────────────────────────
+# Hosts NexariEPaper.wgt + sssp_config.xml uploaded by build-partner-players.ps1.
+echo "==> [update] Checking ePaper assets directory..."
+sudo mkdir -p "$DATA_DIR/epaper"
+sudo chown -R nexari:nexari "$DATA_DIR/epaper"
+if compgen -G "$DATA_DIR/epaper/*.wgt" > /dev/null 2>&1; then
+    wgt_file=$(ls -1t "$DATA_DIR"/epaper/*.wgt | head -1)
+    wgt_size=$(du -sh "$wgt_file" | cut -f1)
+    echo "    WGT present: $(basename $wgt_file) (${wgt_size})"
+else
+    echo "    INFO: No .wgt file in $DATA_DIR/epaper/ — upload via build-partner-players.ps1 -Platform epaper"
+fi
+
+# ── Windows assets directory ───────────────────────────────────────────────
+# Hosts the Windows installer EXE + latest.yml uploaded by build-partner-players.ps1.
+echo "==> [update] Checking Windows assets directory..."
+sudo mkdir -p "$DATA_DIR/windows"
+sudo chown -R nexari:nexari "$DATA_DIR/windows"
+if compgen -G "$DATA_DIR/windows/*.exe" > /dev/null 2>&1; then
+    exe_file=$(ls -1t "$DATA_DIR"/windows/*.exe | head -1)
+    exe_size=$(du -sh "$exe_file" | cut -f1)
+    echo "    EXE present: $(basename $exe_file) (${exe_size})"
+else
+    echo "    INFO: No .exe file in $DATA_DIR/windows/ — upload via build-partner-players.ps1 -Platform windows"
+fi
+
+# ── ESP32 assets directory ─────────────────────────────────────────────────
+# Hosts firmware .bin files uploaded by build-partner-players.ps1.
+echo "==> [update] Checking ESP32 assets directory..."
+sudo mkdir -p "$DATA_DIR/esp32"
+sudo chown -R nexari:nexari "$DATA_DIR/esp32"
+
 echo ""
 echo "Done! Health check:"
 curl -s http://127.0.0.1:3000/api/v1/health
