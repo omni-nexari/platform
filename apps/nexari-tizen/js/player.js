@@ -3406,13 +3406,42 @@ const Player = {
         }
     },
     // Render image content
-    renderImage(container, content) {
-        return __awaiter(this, void 0, void 0, function* () {
+    renderImage(container_1, content_1) {
+        return __awaiter(this, arguments, void 0, function* (container, content, seamless = false) {
             const img = document.createElement('img');
             img.style.width = '100%';
             img.style.height = '100%';
             img.style.objectFit = 'contain';
             img.style.backgroundColor = '#000';
+            // For seamless IMAGE→IMAGE transitions: layer new image on top of the existing
+            // content so the old image stays visible while the new one downloads/decodes.
+            // Once onload fires the old image is removed atomically — no black gap.
+            if (seamless) {
+                img.style.position = 'absolute';
+                img.style.top = '0';
+                img.style.right = '0';
+                img.style.bottom = '0';
+                img.style.left = '0';
+                container.appendChild(img);
+            }
+            const swapIn = () => {
+                if (seamless) {
+                    // Remove every child except the newly-loaded image
+                    Array.from(container.children).forEach(child => {
+                        if (child !== img) {
+                            try {
+                                container.removeChild(child);
+                            }
+                            catch (_) { }
+                        }
+                    });
+                    img.style.position = '';
+                    img.style.top = '';
+                    img.style.right = '';
+                    img.style.bottom = '';
+                    img.style.left = '';
+                }
+            };
             // For local file:// URLs, try direct src first (works on Tizen for wgt-private files),
             // then fall back to blob via ContentManager.readPathBytes if direct load fails.
             if (content.url && content.url.startsWith('file://')) {
@@ -3430,7 +3459,7 @@ const Player = {
                         try {
                             const blob = new Blob([buffer], { type: mimeType });
                             img.src = URL.createObjectURL(blob);
-                            img.onload = () => { logger.info('Image loaded via blob fallback'); };
+                            img.onload = () => { logger.info('Image loaded via blob fallback'); swapIn(); };
                             img.onerror = () => {
                                 logger.error('Image failed to load via blob, trying data URL');
                                 img.src = this.bytesToDataUrl(buffer, mimeType);
@@ -3443,16 +3472,18 @@ const Player = {
                     catch (err) {
                         const msg = (err === null || err === void 0 ? void 0 : err.message) || String(err);
                         logger.error('Blob fallback failed:', msg);
+                        swapIn();
                         this.showImageError(container, content);
                     }
                 };
-                img.onload = () => { logger.info('Image loaded successfully from local file'); };
+                img.onload = () => { logger.info('Image loaded successfully from local file'); swapIn(); };
                 img.onerror = () => {
                     logger.warn('Direct file:// load failed, attempting blob fallback');
                     tryBlobFallback();
                 };
                 img.src = content.url;
-                container.appendChild(img);
+                if (!seamless)
+                    container.appendChild(img);
                 return;
             }
             // Remote URLs — download to local storage first so Tizen can load via file://
@@ -3484,12 +3515,15 @@ const Player = {
             }
             img.onerror = (error) => {
                 logger.error('Image failed to load:', img.src, error);
+                swapIn();
                 this.showImageError(container, content);
             };
             img.onload = () => {
                 logger.info('Image loaded successfully:', img.src);
+                swapIn();
             };
-            container.appendChild(img);
+            if (!seamless)
+                container.appendChild(img);
         });
     },
     // Show image error message
@@ -7530,7 +7564,10 @@ const Player = {
             if (!canReuseDocument && this.documentActive) {
                 this.closeDocument();
             }
-            if (!canReuseImage && !canReuseDocument && !canReuseCalendar) {
+            // For IMAGE→IMAGE transitions, renderImage handles the seamless swap itself
+            // (new image is appended over the old one and old is removed on load).
+            // For all other transitions, clear the container eagerly as before.
+            if (!canReuseImage && !canReuseDocument && !canReuseCalendar && content.type !== 'IMAGE') {
                 container.innerHTML = '';
             }
             container._menuBoardRequestId = undefined;
@@ -7538,7 +7575,14 @@ const Player = {
             switch (content.type) {
                 case 'IMAGE':
                     if (!canReuseImage) {
-                        this.renderImage(container, content);
+                        // Seamless swap when transitioning between images: keep old image
+                        // visible until the new one is decoded, then remove it atomically.
+                        // When coming from a non-image item, clear first and render normally.
+                        const prevWasImage = container.querySelector('img') !== null;
+                        if (!prevWasImage) {
+                            container.innerHTML = '';
+                        }
+                        this.renderImage(container, content, prevWasImage);
                         this.lastRenderedItemKey = itemKey;
                     }
                     else {
