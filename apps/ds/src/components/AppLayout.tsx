@@ -293,12 +293,12 @@ export default function AppLayout() {
       {/* ---------- Sidebar ---------- */}
       <aside className={`ui-mobile-drawer fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col border-r border-[var(--border)] bg-[var(--card)] transition-transform duration-200 lg:static lg:z-auto lg:w-56 lg:max-w-none lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {/* Logo */}
-        <div className="px-4 py-5 border-b border-[var(--border)]">
+        <div className="px-4 py-4 border-b border-[var(--border)]">
           {meData?.branding?.logoUrl ? (
             <img
               src={meData.branding.logoUrl}
               alt={meData.branding.name ?? meData.branding.portalTitle ?? 'Portal'}
-              className="h-8 max-w-[160px] object-contain"
+              className="w-full max-h-14 object-contain object-left"
             />
           ) : (
             <>
