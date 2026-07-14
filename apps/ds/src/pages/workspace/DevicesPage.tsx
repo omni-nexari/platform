@@ -401,34 +401,42 @@ function SyncGroupCard({
   );
 }
 
-type PlatformTab = 'tizen' | 'android' | 'windows';
+type PlatformTab = 'tizen' | 'epaper' | 'android' | 'windows';
 
 function PairInstructions() {
   const [tab, setTab] = useState<PlatformTab>('tizen');
-  const [copied, setCopied] = useState(false);
 
   // Fetch latest approved release for each platform so we can show the version
   // and use the exact versioned download URL instead of the static redirect.
   const { data: winRelease }     = useQuery({ queryKey: ['latest-release', 'windows'], queryFn: () => api.get<{ downloadUrl: string; version: string } | null>('/player-releases/latest?platform=windows'), staleTime: 60_000 });
   const { data: androidRelease } = useQuery({ queryKey: ['latest-release', 'android'], queryFn: () => api.get<{ downloadUrl: string; version: string } | null>('/player-releases/latest?platform=android'), staleTime: 60_000 });
+  const { data: epaperRelease }  = useQuery({ queryKey: ['latest-release', 'epaper'],  queryFn: () => api.get<{ downloadUrl: string; version: string } | null>('/player-releases/latest?platform=epaper'),  staleTime: 60_000 });
 
   // Download URLs: prefer versioned URL from the latest release record; fall back to static path.
-  const tizenSsspUrl = `${window.location.origin}/tizen/sssp_config.xml`;
-  const tizenWgtUrl  = `${window.location.origin}/tizen/NexariPlayer.wgt`;
-  const androidUrl   = androidRelease?.downloadUrl ?? `${window.location.origin}/android/nexari-android.apk`;
-  const windowsUrl   = winRelease?.downloadUrl     ?? `${window.location.origin}/windows/nexari-windows-setup.exe`;
+  const tizenSsspUrl  = `${window.location.origin}/tizen/sssp_config.xml`;
+  const tizenWgtUrl   = `${window.location.origin}/tizen/NexariPlayer.wgt`;
+  const epaperSsspUrl = `${window.location.origin}/epaper/sssp_config.xml`;
+  const epaperWgtUrl  = epaperRelease?.downloadUrl ?? `${window.location.origin}/epaper/NexariEPaper.wgt`;
+  const androidUrl    = androidRelease?.downloadUrl ?? `${window.location.origin}/android/nexari-android.apk`;
+  const windowsUrl    = winRelease?.downloadUrl     ?? `${window.location.origin}/windows/nexari-windows-setup.exe`;
 
-  function copy() {
-    navigator.clipboard.writeText(tizenSsspUrl).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+  const [copiedTizen,  setCopiedTizen]  = useState(false);
+  const [copiedEpaper, setCopiedEpaper] = useState(false);
+
+  function copy(which: 'tizen' | 'epaper') {
+    const url = which === 'tizen' ? tizenSsspUrl : epaperSsspUrl;
+    const setter = which === 'tizen' ? setCopiedTizen : setCopiedEpaper;
+    navigator.clipboard.writeText(url).then(() => {
+      setter(true);
+      setTimeout(() => setter(false), 2000);
     });
   }
 
   const tabs: { id: PlatformTab; label: string; Icon: React.ElementType }[] = [
-    { id: 'tizen', label: 'Tizen / Samsung', Icon: Tv2 },
-    { id: 'android', label: 'Android', Icon: Smartphone },
-    { id: 'windows', label: 'Windows', Icon: Monitor },
+    { id: 'tizen',   label: 'Tizen / Samsung', Icon: Tv2 },
+    { id: 'epaper',  label: 'ePaper',          Icon: Tablet },
+    { id: 'android', label: 'Android',         Icon: Smartphone },
+    { id: 'windows', label: 'Windows',         Icon: Monitor },
   ];
 
   return (
@@ -462,12 +470,12 @@ function PairInstructions() {
                 <span className="flex-1 font-mono text-xs text-[var(--text)] truncate select-all">{tizenSsspUrl}</span>
                 <button
                   type="button"
-                  onClick={copy}
+                  onClick={() => copy('tizen')}
                   className="shrink-0 flex items-center gap-1 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors text-xs"
                   title="Copy SSSP config URL"
                 >
-                  {copied ? <CheckCheck size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                  {copied ? 'Copied' : 'Copy'}
+                  {copiedTizen ? <CheckCheck size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                  {copiedTizen ? 'Copied' : 'Copy'}
                 </button>
               </div>
             </div>
@@ -493,6 +501,50 @@ function PairInstructions() {
             <ol className="space-y-1.5 text-xs text-[var(--text-muted)] list-none">
               <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">1</span>In <strong className="text-[var(--text)]">Samsung MagicInfo</strong> or the display&apos;s <strong className="text-[var(--text)]">URL Launcher</strong> settings, paste the SSSP Config URL above.</li>
               <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">2</span>The display downloads and installs <strong className="text-[var(--text)]">Nexari Player</strong> — a pairing code appears on screen.</li>
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">3</span>Enter that code in the <strong className="text-[var(--text)]">Pairing Code</strong> field below.</li>
+            </ol>
+          </div>
+        )}
+
+        {tab === 'epaper' && (
+          <div className="space-y-3">
+            <p className="text-xs text-[var(--text-muted)]">Enter the SSSP Config URL in the Samsung ePaper display&apos;s URL Launcher settings. The display downloads and installs the ePaper player automatically.</p>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">SSSP Config URL</p>
+              <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+                <span className="flex-1 font-mono text-xs text-[var(--text)] truncate select-all">{epaperSsspUrl}</span>
+                <button
+                  type="button"
+                  onClick={() => copy('epaper')}
+                  className="shrink-0 flex items-center gap-1 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors text-xs"
+                  title="Copy SSSP config URL"
+                >
+                  {copiedEpaper ? <CheckCheck size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                  {copiedEpaper ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <a
+                href={epaperWgtUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 flex items-center gap-2 justify-center rounded-lg bg-[var(--blue)] hover:bg-[var(--blue-hover,#2563eb)] text-white text-sm font-semibold px-4 py-2.5 transition-colors"
+              >
+                <Download size={14} /> Download WGT{epaperRelease?.version ? ` — v${epaperRelease.version}` : ''}
+              </a>
+              <a
+                href={epaperSsspUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 flex items-center gap-2 justify-center rounded-lg border border-[var(--border)] bg-[var(--card)] hover:opacity-80 text-[var(--text)] text-sm font-semibold px-4 py-2.5 transition-colors"
+              >
+                <Download size={14} /> Config XML
+              </a>
+            </div>
+            <ol className="space-y-1.5 text-xs text-[var(--text-muted)] list-none">
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">1</span>In the ePaper display&apos;s <strong className="text-[var(--text)]">URL Launcher</strong> settings, paste the SSSP Config URL above.</li>
+              <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">2</span>The display downloads and installs <strong className="text-[var(--text)]">Nexari E-Paper</strong> — a pairing code appears on screen.</li>
               <li className="flex gap-2"><span className="shrink-0 w-4 h-4 rounded-full bg-[var(--blue)]/20 text-[var(--blue)] flex items-center justify-center text-[10px] font-bold">3</span>Enter that code in the <strong className="text-[var(--text)]">Pairing Code</strong> field below.</li>
             </ol>
           </div>
