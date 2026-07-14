@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api.js';
-import { Search, X, ChevronDown, Eye, EyeOff } from 'lucide-react';
+import { Search, X, ChevronDown, LayoutGrid, LayoutList } from 'lucide-react';
 import AssignedTagPills, { type AssignedTag } from './AssignedTagPills.js';
 import AuthImg from './AuthImg.js';
 import { ToggleSwitch } from './UiPrimitives.js';
@@ -84,11 +84,13 @@ function sortLabel(k: SortKey) {
 // ── Sub-components ─────────────────────────────────────────────────────────
 
 function ContentCard({
-  item, selected, onToggle
+  item, selected, onToggle, layout = 'grid',
 }: {
-  item: PickerContent; selected: boolean; onToggle: () => void;
+  item: PickerContent; selected: boolean; onToggle: () => void; layout?: 'grid' | 'list';
 }) {
   const meta = TYPE_META[item.type] ?? { label: item.type, color: 'bg-gray-500' };
+  const thumbW = layout === 'list' ? (item.orientation === 'portrait' ? 26 : 56) : (item.orientation === 'portrait' ? 34 : 90);
+  const thumbH = layout === 'list' ? 36 : 54;
   return (
     <div
       onClick={onToggle}
@@ -108,7 +110,7 @@ function ContentCard({
       {/* Thumbnail */}
       <div
         className="relative shrink-0 rounded-lg overflow-hidden bg-[var(--surface-raised)]"
-        style={{ width: item.orientation === 'portrait' ? 34 : 90, height: 54 }}
+        style={{ width: thumbW, height: thumbH }}
       >
         {(item.type === 'image' || item.type === 'video') ? (
           <AuthImg
@@ -135,21 +137,28 @@ function ContentCard({
           <span className={`text-[9px] font-bold uppercase text-white px-1.5 py-0.5 rounded ${meta.color}`}>
             {meta.label}
           </span>
+          {layout === 'list' && item.duration != null && (
+            <span className="text-[10px] text-[var(--text-muted)]">{formatPickerDuration(item.duration)}</span>
+          )}
         </div>
-        <div className="mt-1">
-          <AssignedTagPills tags={item.assignedTags} />
-        </div>
+        {layout === 'grid' && (
+          <div className="mt-1">
+            <AssignedTagPills tags={item.assignedTags} />
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 function PlaylistCard({
-  item, selected, onToggle, disabled, disabledReason,
+  item, selected, onToggle, disabled, disabledReason, layout = 'grid',
 }: {
   item: PickerPlaylist; selected: boolean; onToggle: () => void;
-  disabled?: boolean | undefined; disabledReason?: string | undefined;
+  disabled?: boolean | undefined; disabledReason?: string | undefined; layout?: 'grid' | 'list';
 }) {
+  const thumbW = layout === 'list' ? 56 : 90;
+  const thumbH = layout === 'list' ? 36 : 54;
   return (
     <div
       onClick={disabled ? undefined : onToggle}
@@ -170,7 +179,7 @@ function PlaylistCard({
       </div>
 
       {/* Thumbnail */}
-      <div className="relative shrink-0 w-[90px] h-[54px] rounded-lg overflow-hidden bg-[var(--surface-raised)]">
+      <div className="relative shrink-0 rounded-lg overflow-hidden bg-[var(--surface-raised)]" style={{ width: thumbW, height: thumbH }}>
         {item.thumbnailContentId ? (
           <AuthImg
             itemId={item.thumbnailContentId}
@@ -198,9 +207,11 @@ function PlaylistCard({
           </span>
           <span className="text-[10px] text-[var(--text-muted)]">{item.itemCount} items</span>
         </div>
-        <div className="mt-1">
-          <AssignedTagPills tags={item.assignedTags} />
-        </div>
+        {layout === 'grid' && (
+          <div className="mt-1">
+            <AssignedTagPills tags={item.assignedTags} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -239,6 +250,7 @@ export default function ContentPickerModal({
   const [sortOpen, setSortOpen] = useState(false);
   const [hideUnavailable, setHideUnavailable] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
   const { data: contentResponse, isLoading: contentLoading } = useQuery<{ items: PickerContent[]; total: number }>({
     queryKey: ['picker-content', workspaceId],
@@ -415,6 +427,23 @@ export default function ContentPickerModal({
                 </div>
               )}
             </div>
+            {/* View toggle */}
+            <div className="flex rounded-lg border border-[var(--border)] overflow-hidden">
+              <button
+                onClick={() => setViewMode('grid')}
+                title="Grid view"
+                className={`px-2.5 py-2 transition-colors ${viewMode === 'grid' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)]'}`}
+              >
+                <LayoutGrid size={13} />
+              </button>
+              <button
+                onClick={() => setViewMode('list')}
+                title="List view"
+                className={`px-2.5 py-2 transition-colors ${viewMode === 'list' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)]'}`}
+              >
+                <LayoutList size={13} />
+              </button>
+            </div>
           </div>
 
           {/* Count + Hide unavailable */}
@@ -435,20 +464,20 @@ export default function ContentPickerModal({
           ) : totalCount === 0 ? (
             <div className="flex items-center justify-center h-32 text-sm text-[var(--text-muted)]">No items found</div>
           ) : (
-            <div className="grid grid-cols-2 gap-2">
+            <div className={viewMode === 'grid' ? 'grid grid-cols-2 gap-2' : 'flex flex-col gap-1.5'}>
               {tab === 'recent' && recentItems.map(item => {
                 if (item.type === 'content') {
                   const c = contentMap[item.id];
                   if (!c) return null;
-                  return <ContentCard key={item.id} item={c} selected={selected.has(item.id)} onToggle={() => toggle(item.id)} />;
+                  return <ContentCard key={item.id} item={c} selected={selected.has(item.id)} onToggle={() => toggle(item.id)} layout={viewMode} />;
                 }
                 const p = playlistMap[item.id];
                 if (!p) return null;
-                return <PlaylistCard key={item.id} item={p} selected={selected.has(item.id)} onToggle={() => toggle(item.id)} />;
+                return <PlaylistCard key={item.id} item={p} selected={selected.has(item.id)} onToggle={() => toggle(item.id)} layout={viewMode} />;
               })}
 
               {tab === 'content' && sortedContent.map(item => (
-                <ContentCard key={item.id} item={item} selected={selected.has(item.id)} onToggle={() => toggle(item.id)} />
+                <ContentCard key={item.id} item={item} selected={selected.has(item.id)} onToggle={() => toggle(item.id)} layout={viewMode} />
               ))}
 
               {tab === 'playlist' && sortedPlaylists.map(item => {
@@ -461,6 +490,7 @@ export default function ContentPickerModal({
                     onToggle={() => toggle(item.id)}
                     disabled={isNested}
                     disabledReason={isNested ? 'Cannot nest: this playlist already contains nested playlists (max depth 1)' : undefined}
+                    layout={viewMode}
                   />
                 );
               })}
