@@ -330,6 +330,14 @@ export const DeviceMessageSchema = z.discriminatedUnion('type', [
     }),
   }),
   z.object({
+    type: z.literal('firmware_update_complete'),
+    payload: z.object({
+      ok: z.boolean(),
+      swVersion: z.string().optional(),
+      error: z.string().optional(),
+    }),
+  }),
+  z.object({
     type: z.literal('play_log'),
     payload: z.object({ entries: z.array(PlayLogEntrySchema) }),
   }),
