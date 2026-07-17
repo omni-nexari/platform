@@ -1077,7 +1077,7 @@ export function DeviceDetailContent({
   const { data: latestFirmwareRelease } = useQuery<FirmwareRelease | null>({
     queryKey: ['firmware-releases-latest', deviceFirmwareModel],
     queryFn: () => api.get(`/firmware-releases/latest?firmwareModel=${encodeURIComponent(deviceFirmwareModel!)}`),
-    enabled: bootstrapped && !!user && devicePlatform === 'tizen' && !deviceIsEpaper && !!deviceFirmwareModel,
+    enabled: bootstrapped && !!user && devicePlatform === 'tizen' && !!deviceFirmwareModel,
     staleTime: 60_000,
     retry: false,
   });
@@ -3207,8 +3207,8 @@ export function DeviceDetailContent({
             </SectionCardBody>
           </SectionCard>
 
-          {/* ── Screen Firmware (Tizen only) ───────────────────────────────── */}
-          {devicePlatform === 'tizen' && !isEpaper && (
+          {/* ── Screen Firmware (Tizen + ePaper) ──────────────────────────── */}
+          {devicePlatform === 'tizen' && (
           <SectionCard>
             <SectionCardHeader>
               <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">

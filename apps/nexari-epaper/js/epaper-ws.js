@@ -180,6 +180,57 @@ window.EpaperWS = (function() {
         break;
       }
 
+      case 'update_tv_firmware': {
+        // Samsung B2B firmware OTA — identical to nexari-tizen implementation
+        try {
+          var b2b = window.b2bapis && window.b2bapis.b2bcontrol;
+          if (!b2b || typeof b2b.updateFirmware !== 'function') {
+            logger.warn('[firmware] b2bcontrol.updateFirmware not available on this device');
+            break;
+          }
+          var fwPayload = msg.payload || {};
+          var softwareId = String(fwPayload.softwareId || '0');
+          var fileName   = String(fwPayload.fileName   || 'swuimage.bem');
+          var swVersion  = String(fwPayload.swVersion  || '');
+          var fwUrl      = String(fwPayload.url        || '');
+          var sizeBytes  = Number(fwPayload.sizeBytes  || 0);
+
+          if (!swVersion || !fwUrl || !sizeBytes) {
+            logger.warn('[firmware] update_tv_firmware: missing required payload fields');
+            break;
+          }
+
+          if (typeof b2b.setUpdateFirmwareProgressChangeListener === 'function') {
+            try {
+              b2b.setUpdateFirmwareProgressChangeListener(function(progress) {
+                logger.info('[firmware] progress: ' + progress + '%');
+                send({ type: 'heartbeat', payload: { pendingUpdatePct: progress } });
+              });
+            } catch (e) {
+              logger.warn('[firmware] setUpdateFirmwareProgressChangeListener threw: ' + (e && e.message));
+            }
+          }
+
+          logger.info('[firmware] starting updateFirmware — swVersion: ' + swVersion + ', file: ' + fileName);
+          b2b.updateFirmware(
+            softwareId, fileName, swVersion, fwUrl, sizeBytes,
+            function(val) {
+              logger.info('[firmware] updateFirmware success: ' + val);
+              try { if (typeof b2b.unsetUpdateFirmwareProgressChangeListener === 'function') b2b.unsetUpdateFirmwareProgressChangeListener(); } catch (_) {}
+              send({ type: 'firmware_update_complete', payload: { ok: true, swVersion: swVersion } });
+            },
+            function(e) {
+              logger.warn('[firmware] updateFirmware error: ' + (e && e.message));
+              try { if (typeof b2b.unsetUpdateFirmwareProgressChangeListener === 'function') b2b.unsetUpdateFirmwareProgressChangeListener(); } catch (_) {}
+              send({ type: 'firmware_update_complete', payload: { ok: false, swVersion: swVersion, error: (e && e.message) || String(e) } });
+            }
+          );
+        } catch (e) {
+          logger.warn('[firmware] update_tv_firmware threw: ' + (e && e.message));
+        }
+        break;
+      }
+
       default:
         // Ignore TV-specific commands silently
         logger.debug('[WS] ignored type=' + t);
