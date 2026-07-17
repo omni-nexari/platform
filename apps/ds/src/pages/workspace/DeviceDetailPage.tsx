@@ -1052,10 +1052,18 @@ export function DeviceDetailContent({
     publishedAt: string;
   };
   const devicePlatform = (data?.device?.platform ?? 'tizen') as string;
+  const deviceIsEpaper = data?.device?.kind === 'epaper';
   const { data: latestRelease } = useQuery<PlayerRelease | null>({
     queryKey: ['player-releases-latest', devicePlatform],
     queryFn: () => api.get(`/player-releases/latest?platform=${encodeURIComponent(devicePlatform)}`),
-    enabled: bootstrapped && !!user,
+    enabled: bootstrapped && !!user && !deviceIsEpaper,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const { data: latestEpaperRelease } = useQuery<PlayerRelease | null>({
+    queryKey: ['player-releases-latest', 'epaper'],
+    queryFn: () => api.get(`/player-releases/latest?platform=epaper`),
+    enabled: bootstrapped && !!user && deviceIsEpaper,
     staleTime: 60_000,
     retry: false,
   });
@@ -1069,7 +1077,7 @@ export function DeviceDetailContent({
   const { data: latestFirmwareRelease } = useQuery<FirmwareRelease | null>({
     queryKey: ['firmware-releases-latest', deviceFirmwareModel],
     queryFn: () => api.get(`/firmware-releases/latest?firmwareModel=${encodeURIComponent(deviceFirmwareModel!)}`),
-    enabled: bootstrapped && !!user && devicePlatform === 'tizen' && !!deviceFirmwareModel,
+    enabled: bootstrapped && !!user && devicePlatform === 'tizen' && !deviceIsEpaper && !!deviceFirmwareModel,
     staleTime: 60_000,
     retry: false,
   });
@@ -1487,6 +1495,7 @@ export function DeviceDetailContent({
   const { device, screenshots, latestHeartbeat: hb } = data;
   const isOnline    = device.status === 'online';
   const isEpaper    = device.kind === 'epaper';
+  const effectivePlayerRelease = isEpaper ? latestEpaperRelease : latestRelease;
   const isWindows      = device.platform === 'windows';
   const isAndroid      = ['android', 'androidtv', 'firetv'].includes(device.platform ?? '');
   const isTizenTop     = ['tizen', 'tizen-sbb'].includes(device.platform ?? 'tizen');
@@ -1619,7 +1628,7 @@ export function DeviceDetailContent({
           ...(deviceType === 'kiosk'   ? [{ id: 'kiosk-config' as DeviceTabId, label: 'Kiosk Config' }] : []),
           ...(deviceType === 'kitchen' ? [{ id: 'order-filter' as DeviceTabId, label: 'Order Filter' }] : []),
           { id: 'tags',         label: 'Tags' },
-          ...(!isEpaper && deviceType === 'signage' ? [{ id: 'update' as DeviceTabId, label: 'Update' }] : []),
+          ...(deviceType === 'signage' || isEpaper ? [{ id: 'update' as DeviceTabId, label: 'Update' }] : []),
           ...(!isEpaper ? [{ id: 'rules' as DeviceTabId, label: 'BLE Scan' }] : []),
           { id: 'logs',         label: 'Logs' },
         ];
@@ -3152,14 +3161,14 @@ export function DeviceDetailContent({
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-xs text-[var(--text-muted)]">Installed:</span>
                 <span className="font-mono text-xs text-[var(--text)]">{device.playerVersion ? `v${device.playerVersion}` : '—'}</span>
-                {latestRelease && device.playerVersion && latestRelease.version !== device.playerVersion && (
+                {effectivePlayerRelease && device.playerVersion && effectivePlayerRelease.version !== device.playerVersion && (
                   <>
-                    {latestRelease.superadminApproved ? (
+                    {effectivePlayerRelease.superadminApproved ? (
                       <>
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                          Update available: v{latestRelease.version}
+                          Update available: v{effectivePlayerRelease.version}
                         </span>
-                        {devicePlatform === 'tizen' || devicePlatform === 'epaper' ? (
+                        {(devicePlatform === 'tizen' || isEpaper) ? (
                           <ActionButton
                             type="button"
                             onClick={() => sendCmd({ command: 'reboot' })}
@@ -3172,9 +3181,9 @@ export function DeviceDetailContent({
                             onClick={() => sendCmd({
                               command: 'update_player',
                               payload: {
-                                version: latestRelease.version,
-                                downloadUrl: latestRelease.downloadUrl,
-                                ...(latestRelease.sha256 ? { sha256: latestRelease.sha256 } : {}),
+                                version: effectivePlayerRelease.version,
+                                downloadUrl: effectivePlayerRelease.downloadUrl,
+                                ...(effectivePlayerRelease.sha256 ? { sha256: effectivePlayerRelease.sha256 } : {}),
                               },
                             })}
                             disabled={cmdDisabled || !isOnline}
@@ -3184,12 +3193,12 @@ export function DeviceDetailContent({
                       </>
                     ) : (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">
-                        v{latestRelease.version} available · awaiting platform approval
+                        v{effectivePlayerRelease.version} available · awaiting platform approval
                       </span>
                     )}
                   </>
                 )}
-                {latestRelease && device.playerVersion === latestRelease.version && (
+                {effectivePlayerRelease && device.playerVersion === effectivePlayerRelease.version && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/15 text-green-400 border border-green-500/30">
                     Up to date
                   </span>
@@ -3199,7 +3208,7 @@ export function DeviceDetailContent({
           </SectionCard>
 
           {/* ── Screen Firmware (Tizen only) ───────────────────────────────── */}
-          {devicePlatform === 'tizen' && (
+          {devicePlatform === 'tizen' && !isEpaper && (
           <SectionCard>
             <SectionCardHeader>
               <h2 className="text-sm font-semibold flex items-center gap-2 text-[var(--text)]">
