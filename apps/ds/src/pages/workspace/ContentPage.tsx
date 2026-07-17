@@ -139,7 +139,7 @@ function CalendarCardPreview({ item, large = false }: { item: ContentItem; large
   if (view === 'week') from.setDate(today.getDate() - today.getDay());
   else if (view === 'month') from.setDate(1);
   const to = new Date(from);
-  if (view === 'meeting_room' || view === 'day') {
+  if (view === 'meeting_room' || view === 'meeting_room_lobby' || view === 'day') {
     to.setDate(to.getDate() + 1);
   } else if (view === 'week') {
     to.setDate(to.getDate() + 7);
@@ -161,7 +161,7 @@ function CalendarCardPreview({ item, large = false }: { item: ContentItem; large
   const fmt = (iso: string) =>
     new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz });
 
-  if (view === 'meeting_room') {
+  if (view === 'meeting_room' || view === 'meeting_room_lobby') {
     const currentEvent = events.find(e => !e.allDay && new Date(e.start) <= today && new Date(e.end) > today);
     const upcoming = events.filter(e => !e.allDay && new Date(e.start) > today);
     const shown = currentEvent ? [currentEvent, ...upcoming].slice(0, 2) : upcoming.slice(0, 2);

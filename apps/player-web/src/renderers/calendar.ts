@@ -10,7 +10,7 @@ import type { Api } from '../api.js';
 
 export interface CalendarHandle { destroy(): void; }
 
-type CalendarView = 'day' | 'week' | 'workweek' | 'month' | 'meeting_room';
+type CalendarView = 'day' | 'week' | 'workweek' | 'month' | 'meeting_room' | 'meeting_room_lobby';
 
 interface CalendarTheme {
   accentColor?: string;
@@ -439,6 +439,122 @@ export function renderCalendar(
     startClock();
   };
 
+  const renderMeetingRoomLobby = (events: Ev[]) => {
+    const now = getNow();
+    const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
+    const endOfDay = new Date(startOfDay); endOfDay.setDate(endOfDay.getDate()+1);
+
+    const today = events
+      .filter(e => !e.allDay && new Date(e.end).getTime() > startOfDay.getTime() && new Date(e.start).getTime() < endOfDay.getTime())
+      .sort((a,b) => new Date(a.start).getTime()-new Date(b.start).getTime());
+
+    const currentEv = today.find(e => new Date(e.start).getTime() <= Date.now() && new Date(e.end).getTime() > Date.now());
+    const nextEv    = today.find(e => new Date(e.start).getTime() > Date.now()) ?? null;
+    const highlightEv = currentEv ?? nextEv;
+
+    const roomName    = roomMeta?.name || content.name || 'Meeting Room';
+    const locationStr = roomMeta?.location || '';
+    const lobbyBookingUrl = roomMeta?.bookingUrl || '';
+    const showAtt     = !!theme.showAttendeeCount;
+
+    // Fixed dark-blue palette for the lobby template
+    const lobbyMain  = '#1446c0';
+    const lobbyPanel = '#0d2f7e';
+    const lobbyCyan  = '#22d3ee';
+
+    const fmtRange = (e: Ev) => `${fmtClockTime(toLocal(e.start))} \u2013 ${fmtClockTime(toLocal(e.end))}`;
+
+    const listedEvs = today
+      .filter(e => new Date(e.end).getTime() > Date.now())
+      .slice(0, 5);
+
+    const evItemsHtml = listedEvs.length === 0
+      ? `<div style="color:rgba(255,255,255,0.45);font-size:15px;margin-top:8px;">No upcoming events today</div>`
+      : listedEvs.map(ev => {
+          const isCur = ev === currentEv;
+          const title = ev.isPrivate ? 'Busy' : (ev.title || 'Reserved');
+          const org   = ev.organizerName || ev.organizerEmail || '';
+          const cnt   = showAtt && typeof ev.attendeeCount === 'number' ? ev.attendeeCount : null;
+          return `
+            <div style="background:rgba(255,255,255,0.1);border-radius:8px;padding:10px 14px;margin-bottom:10px;${isCur ? `border-left:3px solid ${lobbyCyan};padding-left:11px;` : ''}">
+              <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.75);">${escapeHtml(fmtRange(ev))}</div>
+              <div style="font-size:14px;font-weight:700;color:#fff;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                ${escapeHtml(title)}${cnt !== null ? ` <span style="opacity:0.65;">(${cnt})</span>` : ''}
+              </div>
+              ${org ? `<div style="font-size:12px;color:rgba(255,255,255,0.65);margin-top:1px;">${escapeHtml(org)}</div>` : ''}
+            </div>`;
+        }).join('');
+
+    const highlightTitle = highlightEv ? (highlightEv.isPrivate ? 'Busy' : (highlightEv.title || 'Reserved')) : '';
+    const highlightOrg   = highlightEv && !highlightEv.isPrivate ? (highlightEv.organizerName || highlightEv.organizerEmail || '') : '';
+    const highlightRange = highlightEv ? fmtRange(highlightEv) : '';
+    const highlightCount = highlightEv && showAtt && typeof highlightEv.attendeeCount === 'number' ? highlightEv.attendeeCount : null;
+    const prefix         = currentEv ? '' : nextEv ? 'NEXT: ' : '';
+    const tappable       = !!lobbyBookingUrl;
+
+    const rightContent = highlightEv ? `
+      <div style="font-size:36px;font-weight:800;color:#fff;line-height:1.2;text-transform:uppercase;margin-top:8px;">${escapeHtml(prefix + highlightTitle)}</div>
+      <div style="border-top:1px solid rgba(255,255,255,0.25);margin:20px 0 16px;"></div>
+      ${highlightOrg ? `<div style="font-size:15px;font-weight:600;color:rgba(255,255,255,0.8);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:12px;">RESERVED BY: ${escapeHtml(highlightOrg)}</div>` : ''}
+      <div style="font-size:52px;font-weight:800;color:#fff;letter-spacing:-1px;line-height:1;">${escapeHtml(highlightRange)}</div>
+      <div style="flex:1;min-height:16px;"></div>
+      <div style="border-top:1px solid rgba(255,255,255,0.25);margin-bottom:20px;"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        ${tappable
+          ? `<button data-lobby-enter style="padding:12px 40px;background:transparent;border:2px solid rgba(255,255,255,0.55);border-radius:6px;color:#fff;font-size:20px;font-weight:700;letter-spacing:2px;cursor:pointer;font-family:inherit;text-transform:uppercase;">ENTER</button>`
+          : `<div></div>`}
+        ${highlightCount !== null
+          ? `<div style="background:rgba(255,255,255,0.12);border-radius:10px;padding:10px 18px;text-align:center;border:1px solid rgba(255,255,255,0.2);">
+              <div style="font-size:28px;font-weight:700;color:#fff;line-height:1;">${highlightCount}</div>
+              <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.65);letter-spacing:1.5px;text-transform:uppercase;margin-top:3px;">Attendees</div>
+            </div>`
+          : ''}
+      </div>` : `
+      <div style="flex:1;display:flex;align-items:center;justify-content:center;margin-top:20px;">
+        <div style="font-size:42px;font-weight:800;color:rgba(255,255,255,0.6);text-transform:uppercase;letter-spacing:3px;">Available</div>
+      </div>
+      ${tappable ? `
+      <div style="border-top:1px solid rgba(255,255,255,0.25);margin-bottom:20px;margin-top:16px;"></div>
+      <div><button data-lobby-enter style="padding:12px 40px;background:transparent;border:2px solid rgba(255,255,255,0.55);border-radius:6px;color:#fff;font-size:20px;font-weight:700;letter-spacing:2px;cursor:pointer;font-family:inherit;text-transform:uppercase;">BOOK</button></div>` : ''}`;
+
+    container.innerHTML = `
+      <div style="position:absolute;inset:0;display:flex;background:${lobbyMain};color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:hidden;">
+        <div style="width:30%;min-width:260px;max-width:360px;flex-shrink:0;background:${lobbyPanel};display:flex;flex-direction:column;padding:28px 22px;overflow:hidden;">
+          <div>
+            <div id="cal-clock" style="font-size:52px;font-weight:700;color:#fff;line-height:1;letter-spacing:-1px;">${clockStyle === 'none' ? '' : escapeHtml(fmtClockTime(now))}</div>
+            <div style="font-size:16px;font-weight:600;color:rgba(255,255,255,0.7);margin-top:6px;letter-spacing:0.5px;">
+              ${now.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }).toUpperCase()}
+            </div>
+          </div>
+          <div style="margin-top:28px;flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0;">
+            <div style="font-size:11px;font-weight:700;letter-spacing:2.5px;color:${lobbyCyan};margin-bottom:14px;text-transform:uppercase;">Forthcoming Events</div>
+            <div style="flex:1;overflow-y:auto;">${evItemsHtml}</div>
+          </div>
+          ${tappable ? `
+          <div style="margin-top:16px;flex-shrink:0;">
+            <button data-lobby-book style="width:44px;height:44px;border-radius:50%;border:2px solid rgba(255,255,255,0.4);background:transparent;color:#fff;font-size:24px;font-weight:300;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:inherit;">+</button>
+          </div>` : ''}
+        </div>
+        <div style="flex:1;display:flex;flex-direction:column;padding:32px 40px;overflow:hidden;min-width:0;">
+          <div style="flex-shrink:0;">
+            <div style="font-size:22px;font-weight:700;color:#fff;letter-spacing:3px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(roomName)}</div>
+            ${locationStr ? `<div style="font-size:13px;color:rgba(255,255,255,0.6);margin-top:3px;">${escapeHtml(locationStr)}</div>` : ''}
+          </div>
+          <div style="border-top:1px solid rgba(255,255,255,0.25);margin:18px 0 0;flex-shrink:0;"></div>
+          <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;">${rightContent}</div>
+        </div>
+      </div>`;
+
+    if (tappable) {
+      container.querySelectorAll<HTMLButtonElement>('[data-lobby-enter],[data-lobby-book]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          try { window.open(lobbyBookingUrl, '_blank', 'noopener'); } catch { /**/ }
+        });
+      });
+    }
+    startClock();
+  };
+
   const renderError = (msg: string) => {
     container.innerHTML = `
       <div style="position:absolute;inset:0;display:flex;flex-direction:column;background:${bg};color:${text};font-family:-apple-system,sans-serif;">
@@ -451,11 +567,12 @@ export function renderCalendar(
   const renderEvents = (events: Ev[]) => {
     if (destroyed) return;
     switch (view) {
-      case 'day':         renderDayView(events); break;
-      case 'week':        renderWeekView(events, 7); break;
-      case 'workweek':    renderWeekView(events, 5); break;
-      case 'month':       renderMonthView(events); break;
-      case 'meeting_room': renderMeetingRoom(events); break;
+      case 'day':                renderDayView(events); break;
+      case 'week':               renderWeekView(events, 7); break;
+      case 'workweek':           renderWeekView(events, 5); break;
+      case 'month':              renderMonthView(events); break;
+      case 'meeting_room':       renderMeetingRoom(events); break;
+      case 'meeting_room_lobby': renderMeetingRoomLobby(events); break;
     }
   };
 
@@ -476,7 +593,7 @@ export function renderCalendar(
     if (destroyed || !container.isConnected) return;
     lastKnownEvents = evs;
     const sig = eventsSignature(evs);
-    const needBoundary = view==='meeting_room' && lastBoundaryRender>0 && boundaryCrossed(evs, lastBoundaryRender);
+    const needBoundary = (view==='meeting_room'||view==='meeting_room_lobby') && lastBoundaryRender>0 && boundaryCrossed(evs, lastBoundaryRender);
     if (lastSig!=='' && sig===lastSig && !needBoundary) return;
     lastSig = sig;
     lastBoundaryRender = Date.now();
@@ -490,7 +607,7 @@ export function renderCalendar(
     if (destroyed) return;
     const from = new Date(); from.setHours(0,0,0,0);
     const to = new Date(from);
-    const days = view==='day'||view==='meeting_room' ? 1 : view==='month' ? 31 : 7;
+    const days = (view==='day'||view==='meeting_room'||view==='meeting_room_lobby') ? 1 : view==='month' ? 31 : 7;
     to.setDate(to.getDate()+days);
     try {
       const events = await api.getCalendarEvents(deviceId, content.id, from, to);

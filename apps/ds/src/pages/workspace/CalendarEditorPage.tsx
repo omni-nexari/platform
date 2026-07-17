@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 import {
   ArrowLeft, ArrowRight, Save, CalendarDays, CalendarRange,
   Calendar, MapPin, Filter, Lock, Palette, Clock, Settings2,
-  Link2, Image as ImageIcon, Sparkles,
+  Link2, Image as ImageIcon, Sparkles, Monitor,
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { ActionButton, Skeleton, Badge, Callout, SectionCard, SectionCardHeader, SectionCardBody } from '../../components/UiPrimitives.js';
@@ -54,7 +54,7 @@ interface CalendarEvent {
   attendeeCount?: number;
 }
 
-type View = 'day' | 'week' | 'month' | 'meeting_room';
+type View = 'day' | 'week' | 'month' | 'meeting_room' | 'meeting_room_lobby';
 type Privacy = 'titles' | 'busy_only';
 type ClockStyle = 'digital-12' | 'digital-24' | 'analog' | 'none';
 type HeaderStyle = 'full' | 'compact' | 'none';
@@ -133,6 +133,123 @@ function validateUrl(val: string): string | null {
   } catch {
     return 'Enter a valid URL (e.g. https://example.com/image.png)';
   }
+}
+
+// ── MeetingRoomLobbyPreview ─────────────────────────────────────────────────
+function MeetingRoomLobbyPreview({
+  form, events, loading, error,
+}: {
+  form: Form;
+  events: CalendarEvent[];
+  loading: boolean;
+  error: string | null;
+}) {
+  const now = new Date();
+  const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(startOfDay); endOfDay.setDate(endOfDay.getDate() + 1);
+
+  const today = events
+    .filter(e => !e.allDay && new Date(e.end).getTime() > startOfDay.getTime() && new Date(e.start).getTime() < endOfDay.getTime())
+    .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+
+  const currentEv = today.find(e => new Date(e.start).getTime() <= now.getTime() && new Date(e.end).getTime() > now.getTime());
+  const nextEv = today.find(e => new Date(e.start).getTime() > now.getTime());
+  const highlightEv = currentEv ?? nextEv ?? null;
+  const roomName = form.roomMeta.name || 'Meeting Room';
+
+  const lobbyMain  = '#1446c0';
+  const lobbyPanel = '#0d2f7e';
+  const lobbyCyan  = '#22d3ee';
+
+  function fmtT(d: Date) {
+    if (form.theme.clockStyle === 'digital-24') {
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+    const h = d.getHours() % 12 || 12;
+    const m = String(d.getMinutes()).padStart(2, '0');
+    return `${h}:${m} ${d.getHours() >= 12 ? 'PM' : 'AM'}`;
+  }
+
+  const timeLabel = form.theme.clockStyle === 'none' ? null : fmtT(now);
+  const dateLabel = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).toUpperCase();
+  const listedEvs = today.filter(e => new Date(e.end).getTime() > now.getTime()).slice(0, 3);
+  const highlightTitle = highlightEv ? (highlightEv.title || 'Reserved') : null;
+  const highlightOrg   = highlightEv ? ((highlightEv as any).organizerName ?? (highlightEv as any).organizerEmail ?? '') : '';
+  const highlightRange = highlightEv ? `${fmtT(new Date(highlightEv.start))} \u2013 ${fmtT(new Date(highlightEv.end))}` : '';
+  const prefix = currentEv ? '' : nextEv ? 'NEXT: ' : '';
+  const hasBooking = !!form.roomMeta.bookingUrl;
+
+  return (
+    <div style={{ display: 'flex', background: lobbyMain, color: '#fff', minHeight: 260, fontFamily: 'system-ui, sans-serif', userSelect: 'none', overflow: 'hidden', position: 'relative' }}>
+      {/* Left panel */}
+      <div style={{ width: '32%', background: lobbyPanel, display: 'flex', flexDirection: 'column', padding: '12px 10px', overflow: 'hidden', flexShrink: 0 }}>
+        {timeLabel && (
+          <div style={{ fontSize: 24, fontWeight: 700, color: '#fff', lineHeight: 1, letterSpacing: -0.5 }}>{timeLabel}</div>
+        )}
+        <div style={{ fontSize: 9, fontWeight: 600, color: 'rgba(255,255,255,0.7)', marginTop: 3, letterSpacing: 0.3 }}>{dateLabel}</div>
+        <div style={{ marginTop: 12, flex: 1, overflow: 'hidden' }}>
+          <div style={{ fontSize: 7, fontWeight: 700, letterSpacing: 2, color: lobbyCyan, marginBottom: 6, textTransform: 'uppercase' }}>Forthcoming Events</div>
+          {loading && <div style={{ fontSize: 7, color: 'rgba(255,255,255,0.5)' }}>Loading…</div>}
+          {!loading && listedEvs.length === 0 && (
+            <div style={{ fontSize: 7, color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>No upcoming events</div>
+          )}
+          {listedEvs.map(ev => (
+            <div key={ev.id} style={{ background: 'rgba(255,255,255,0.1)', borderRadius: 4, padding: '4px 6px', marginBottom: 5 }}>
+              <div style={{ fontSize: 6.5, color: 'rgba(255,255,255,0.7)' }}>
+                {fmtT(new Date(ev.start))} &ndash; {fmtT(new Date(ev.end))}
+              </div>
+              <div style={{ fontSize: 7.5, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {ev.isPrivate ? 'Busy' : ev.title}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {/* Right panel */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '12px 14px', overflow: 'hidden', minWidth: 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#fff', letterSpacing: 2, textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{roomName}</div>
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.25)', margin: '6px 0' }} />
+        {highlightEv ? (
+          <>
+            <div style={{ fontSize: 14, fontWeight: 800, color: '#fff', textTransform: 'uppercase', lineHeight: 1.2, overflow: 'hidden' }}>
+              {prefix}{highlightTitle}
+            </div>
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.2)', margin: '6px 0' }} />
+            {highlightOrg && (
+              <div style={{ fontSize: 7, fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+                RESERVED BY: {highlightOrg}
+              </div>
+            )}
+            <div style={{ fontSize: 22, fontWeight: 800, color: '#fff', letterSpacing: -0.5, lineHeight: 1 }}>
+              {highlightRange}
+            </div>
+            <div style={{ flex: 1 }} />
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.2)', marginTop: 6, marginBottom: 8 }} />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              {hasBooking ? (
+                <div style={{ padding: '4px 12px', border: '1px solid rgba(255,255,255,0.5)', borderRadius: 4, fontSize: 9, fontWeight: 700, letterSpacing: 1, color: '#fff' }}>ENTER</div>
+              ) : <div />}
+              {form.theme.showAttendeeCount && highlightEv.attendeeCount != null && (
+                <div style={{ background: 'rgba(255,255,255,0.12)', borderRadius: 5, padding: '3px 8px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>{highlightEv.attendeeCount}</div>
+                  <div style={{ fontSize: 6, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: 1 }}>Attendees</div>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 2 }}>Available</div>
+          </div>
+        )}
+      </div>
+      {error && (
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 20 }}>
+          <div style={{ background: '#fef2f2', color: '#dc2626', padding: '8px 14px', borderRadius: 8, fontSize: 11, maxWidth: '80%', textAlign: 'center' }}>{error}</div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── MeetingRoomPreview ───────────────────────────────────────────────────────
@@ -521,7 +638,7 @@ export default function CalendarEditorPage() {
         timezone: form.timezone,
         refreshSeconds: form.refreshSeconds,
         duration: form.duration,
-        roomMeta: form.view === 'meeting_room' ? {
+        roomMeta: (form.view === 'meeting_room' || form.view === 'meeting_room_lobby') ? {
           name: form.roomMeta.name.trim() || null,
           capacity: form.roomMeta.capacity ? Number(form.roomMeta.capacity) : null,
           location: form.roomMeta.location.trim() || null,
@@ -707,6 +824,7 @@ export default function CalendarEditorPage() {
                     { id: 'week', label: 'Week', desc: 'Mon–Sun', icon: <CalendarRange size={18} /> },
                     { id: 'month', label: 'Month', desc: 'Whole month grid', icon: <CalendarDays size={18} /> },
                     { id: 'meeting_room', label: 'Meeting room', desc: 'Room status + next meetings', icon: <MapPin size={18} /> },
+                    { id: 'meeting_room_lobby', label: 'Lobby display', desc: 'Dark blue corridor/lobby style', icon: <Monitor size={18} /> },
                   ] as { id: View; label: string; desc: string; icon: React.ReactNode }[]).map((v) => (
                     <button
                       key={v.id}
@@ -723,7 +841,7 @@ export default function CalendarEditorPage() {
                   ))}
                 </div>
 
-                {form.view === 'meeting_room' && (
+                {(form.view === 'meeting_room' || form.view === 'meeting_room_lobby') && (
                   <div className="mt-5 space-y-5">
                     {/* Autofill from room calendar */}
                     {autofillSource && (
@@ -1039,12 +1157,19 @@ export default function CalendarEditorPage() {
                   <SectionCardHeader>
                     <h3 className="text-sm font-semibold">Preview</h3>
                     <span className="text-xs text-[var(--text-muted)]">
-                      {form.view === 'meeting_room' ? 'Meeting room display' : 'Upcoming events'}
+                      {form.view === 'meeting_room' ? 'Meeting room display' : form.view === 'meeting_room_lobby' ? 'Lobby display' : 'Upcoming events'}
                     </span>
                   </SectionCardHeader>
                   <SectionCardBody className="p-0 overflow-hidden rounded-b-xl">
                     {form.view === 'meeting_room' ? (
                       <MeetingRoomPreview
+                        form={form}
+                        events={previewQuery.data?.events ?? []}
+                        loading={previewQuery.isLoading}
+                        error={previewQuery.isError ? ((previewQuery.error as any)?.response?.data?.detail ?? 'Could not load events') : null}
+                      />
+                    ) : form.view === 'meeting_room_lobby' ? (
+                      <MeetingRoomLobbyPreview
                         form={form}
                         events={previewQuery.data?.events ?? []}
                         loading={previewQuery.isLoading}
