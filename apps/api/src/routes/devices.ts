@@ -1676,7 +1676,8 @@ export async function deviceRoutes(app: FastifyInstance) {
     }
 
     // Map discriminated-union command to WsCommand (payload varies by type)
-    const wsCmd = device.platform === 'tizen' && (cmd.command === 'power_on' || cmd.command === 'power_off')
+    const isTizenFamily = device.platform.startsWith('tizen');
+    const wsCmd = isTizenFamily && (cmd.command === 'power_on' || cmd.command === 'power_off')
       ? { type: 'remote_key', payload: { key: cmd.command === 'power_on' ? 'POWER_ON' : 'POWER_OFF' } }
       : 'payload' in cmd
         ? { type: cmd.command, payload: (cmd as { command: string; payload: unknown }).payload }
