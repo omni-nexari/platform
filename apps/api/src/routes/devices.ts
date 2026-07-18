@@ -14,7 +14,7 @@ import type { WallMember, WallBezels } from '@signage/shared';
 import { writeAuditLog } from '../services/audit.js';
 import { cloneEntityTags, getAssignedTagsForEntities, getEntityIdsForTags } from '../services/entityTags.js';
 import { logActivity } from '../services/activity-logger.js';
-import { MDC_ALL_COMMAND_NAMES, sendMdcPower } from '../services/mdc.js';
+import { MDC_ALL_COMMAND_NAMES, sendMdcPower, sendSamsungHttpPower } from '../services/mdc.js';
 import { dispatchWebhookEvent } from '../services/webhooks.js';
 import {
   sendCommand,
@@ -1577,8 +1577,9 @@ export async function deviceRoutes(app: FastifyInstance) {
       }
 
       // ── power_on: try direct MDC TCP first, then WoL relay ────────────────
+      // ── power_on: try direct MDC TCP, Samsung HTTP API, then WoL relay ──
       if (offlineCmd === 'power_on') {
-        // 1) Direct MDC (works if device is in network standby on same LAN)
+        // 1) Direct MDC TCP (works if Network Standby is ON and port 1515 reachable)
         if (device.ipAddress) {
           try {
             await sendMdcPower(device.ipAddress, true);
@@ -1591,7 +1592,23 @@ export async function deviceRoutes(app: FastifyInstance) {
             });
             return reply.send({ sent: true, command: 'power_on', viaMdc: true });
           } catch {
-            // MDC failed — fall through to WoL
+            // MDC failed — try Samsung HTTP Remote Power API
+          }
+
+          // 2) Samsung HTTP Remote Power API (works when "Remote Access" is
+          //    enabled on the display and network standby keeps the web server up)
+          try {
+            await sendSamsungHttpPower(device.ipAddress, true);
+            await db.update(devices).set({ powerState: 'on', updatedAt: new Date() }).where(eq(devices.id, id));
+            await writeAuditLog({
+              orgId: user.orgId, actorId: user.sub,
+              action: 'DEVICE_COMMAND_SENT', entityType: 'device', entityId: id,
+              meta: { command: 'power_on', viaSamsungHttp: true },
+              ipAddress: req.ip,
+            });
+            return reply.send({ sent: true, command: 'power_on', viaSamsungHttp: true });
+          } catch {
+            // HTTP API failed — fall through to WoL relay
           }
         }
         // 2) WoL relay (for devices that fully disconnect on power-off)
@@ -1607,8 +1624,8 @@ export async function deviceRoutes(app: FastifyInstance) {
         const wolRelay = await findWolRelay(user.orgId, device.workspaceId, id, device.ipAddress);
         if (!wolRelay) {
           return reply.status(409).send({
-            error: 'Device is offline — direct MDC failed and no peer device is available to broadcast Wake-on-LAN',
-            hint: 'At least one other Tizen / Windows / e-paper player on the same LAN must be online.',
+            error: 'Device is offline — direct MDC failed, Samsung HTTP power API unreachable, and no peer device is available to broadcast Wake-on-LAN',
+            hint: 'Ensure Network Standby is ON and either port 1515 (MDC) or port 7080/80 (Remote Access) is reachable from the server, or bring another Tizen / Windows / e-paper player online on the same LAN.',
           });
         }
         sendCommand(wolRelay.id, { type: 'wake_on_lan', payload: { targetMac: device.macAddress } });

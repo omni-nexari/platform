@@ -93,3 +93,60 @@ export function sendMdcPower(ip: string, on: boolean): Promise<void> {
 export function sendMdcReboot(ip: string): Promise<void> {
   return sendPacket(ip, buildPacket(MDC_CMD_RESET, [0x00]));
 }
+
+/**
+ * Samsung Smart Signage HTTP Remote Power On.
+ *
+ * When the display has "Remote Access" / "Remote Control" enabled in its
+ * network settings, it exposes a lightweight HTTP server that accepts power
+ * commands even while the panel is off (network standby must be ON).
+ *
+ * Samsung Tizen commercial displays (2016+) support several known endpoints
+ * depending on firmware generation — we try them in sequence and resolve on
+ * the first 2xx response, or reject if all fail.
+ *
+ * Endpoints (tried in order):
+ *   1. POST /SmartView/NetworkPage/RequestIPPowerCmd   (Tizen 2.x–4.x SSSP4–6)
+ *   2. POST /SmartView/NetworkPage/RequestPowerCmd     (Tizen 4.x–5.x SSSP6–7)
+ *   3. GET  /SmartView/NetworkPage/RequestIPPowerCmd   (older HTTP-only models)
+ *
+ * Ports tried: 7080 (HTTP, common for B2B web API) then 80 (HTTP fallback).
+ */
+const SAMSUNG_HTTP_POWER_TIMEOUT_MS = 4_000;
+const SAMSUNG_HTTP_PORTS = [7080, 80];
+const SAMSUNG_HTTP_ENDPOINTS = [
+  { method: 'POST', path: '/SmartView/NetworkPage/RequestIPPowerCmd' },
+  { method: 'POST', path: '/SmartView/NetworkPage/RequestPowerCmd' },
+  { method: 'GET',  path: '/SmartView/NetworkPage/RequestIPPowerCmd' },
+] as const;
+
+export async function sendSamsungHttpPower(ip: string, on: boolean): Promise<void> {
+  const body = JSON.stringify({ cmd: on ? 'poweron' : 'poweroff', power: on ? 'on' : 'off' });
+
+  const errors: string[] = [];
+
+  for (const port of SAMSUNG_HTTP_PORTS) {
+    for (const { method, path } of SAMSUNG_HTTP_ENDPOINTS) {
+      const url = `http://${ip}:${port}${path}`;
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), SAMSUNG_HTTP_POWER_TIMEOUT_MS);
+        const res = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, */*' },
+          body: method === 'POST' ? body : undefined,
+          signal: controller.signal,
+        }).finally(() => clearTimeout(timer));
+        // Accept any 2xx response as success
+        if (res.ok || res.status === 204) {
+          return;
+        }
+        errors.push(`${method} ${url} → HTTP ${res.status}`);
+      } catch (e) {
+        errors.push(`${method} ${url} → ${(e as Error).message}`);
+      }
+    }
+  }
+
+  throw new Error(`Samsung HTTP power-on failed on all endpoints: ${errors.join(' | ')}`);
+}
