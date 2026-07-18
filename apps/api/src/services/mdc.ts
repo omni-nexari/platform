@@ -134,7 +134,7 @@ export async function sendSamsungHttpPower(ip: string, on: boolean): Promise<voi
         const res = await fetch(url, {
           method,
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, */*' },
-          body: method === 'POST' ? body : undefined,
+          ...(method === 'POST' ? { body } : {}),
           signal: controller.signal,
         }).finally(() => clearTimeout(timer));
         // Accept any 2xx response as success
