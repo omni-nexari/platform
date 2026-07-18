@@ -1983,26 +1983,28 @@ export function DeviceDetailContent({
           {/* ── Power ───────────────────────────────────────────────────── */}
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs text-[var(--text-muted)] w-16 shrink-0">Power</span>
+            {/* Power On — works offline via direct MDC TCP / Wake-on-LAN relay */}
             <button
               type="button"
               onClick={() => {
                 setOptimisticPowerState('on');
-                void sendRemoteKey('POWER_ON');
-                void queryClient.invalidateQueries({ queryKey: ['device', deviceId] });
+                sendCmd({ command: 'power_on' });
               }}
-              disabled={cmdDisabled}
+              disabled={cmdMutation.isPending}
+              title={isOnline ? 'Power on' : 'Power on via MDC / Wake-on-LAN (device is offline)'}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-40 transition-colors text-xs font-medium text-emerald-400"
             >
               <Power className="w-3 h-3" />On
             </button>
+            {/* Power Off — works offline via direct MDC TCP */}
             <button
               type="button"
               onClick={() => {
                 setOptimisticPowerState('off');
-                void sendRemoteKey('POWER_OFF');
-                void queryClient.invalidateQueries({ queryKey: ['device', deviceId] });
+                sendCmd({ command: 'power_off' });
               }}
-              disabled={cmdDisabled}
+              disabled={cmdMutation.isPending}
+              title={isOnline ? 'Power off' : 'Power off via MDC (device is offline)'}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 disabled:opacity-40 transition-colors text-xs font-medium text-red-400"
             >
               <Power className="w-3 h-3" />Off
@@ -2015,6 +2017,11 @@ export function DeviceDetailContent({
             >
               <RotateCcw className="w-3 h-3" />Reboot
             </button>
+            {!isOnline && (
+              <span className="text-[10px] text-[var(--text-muted)]">
+                On/Off available via MDC · Reboot requires online
+              </span>
+            )}
           </div>
 
           <div className="h-px bg-[var(--border)]" />
