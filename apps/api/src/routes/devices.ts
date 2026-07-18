@@ -1680,7 +1680,7 @@ export async function deviceRoutes(app: FastifyInstance) {
     // die the moment it calls b2bcontrol.setPowerOff(), dropping the WS before the
     // command fully dispatches — the HTTP API is handled by the panel firmware
     // independently of the Tizen app and is more reliable on these devices.
-    if (cmd.command === 'power_off' && device.ipAddress && device.devicePlatform === 'tizen') {
+    if (cmd.command === 'power_off' && device.ipAddress && device.platform === 'tizen') {
       sendSamsungHttpPower(device.ipAddress, false).catch(() => {
         // Fire-and-forget — non-blocking, WS command is the primary path
       });
