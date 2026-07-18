@@ -67,6 +67,7 @@ const Player = {
     deviceToken: null,
     _scannedMdcId: null, // MDC device ID found by scan; persisted to DB once WS is open
     _mdcStartupDone: false, // Set to true once Phase 1 ID scan completes; gates sendMdcHeartbeat
+    _tizenPV: '', // Platform version string e.g. '4.0', '6.5'; set in runStartupMdcSetup
     _mdcHeartbeatInFlight: false, // Prevents concurrent MDC heartbeat TCP connections
     _mdcPhase2InFlight: 0, // Count of in-flight Phase 2 MDC commands; heartbeat waits until 0
     _lastMdcHeartbeatAt: 0, // Timestamp of last MDC heartbeat; rate-limit to CONFIG.HEARTBEAT_INTERVAL
@@ -2835,8 +2836,16 @@ const Player = {
     },
     // Phase 1: run at startup (app.js), before pairing — no WS/deviceId needed
     runStartupMdcSetup() {
+        var _a, _b;
         logger.info('[mdc-startup] Phase 1: conn type, ID scan, network standby...');
         const self = this;
+        // Cache the Tizen platform version once at startup so power handlers can
+        // branch by generation without repeated capability lookups.
+        try {
+            self._tizenPV = ((_b = (_a = window.tizen) === null || _a === void 0 ? void 0 : _a.systeminfo) === null || _b === void 0 ? void 0 : _b.getCapability('http://tizen.org/feature/platform.version')) || '';
+            logger.info('[mdc-startup] Tizen platform version:', self._tizenPV);
+        }
+        catch ( /* non-blocking */_c) { /* non-blocking */ }
         self.sendLocalMdcXhr('mdc_conn_type_set', { value: 1 })
             .then((r) => { logger.info('[mdc-startup] conn type RJ45:', r.ok); })
             .catch(() => { });
@@ -8083,18 +8092,40 @@ const Player = {
                 break;
             }
             case 'POWER_OFF': {
-                // b2bapis.b2bcontrol.setPowerOff — native B2B API, keeps networking alive (NetworkStandby ON)
-                try {
-                    const b2b = (_b = window.b2bapis) === null || _b === void 0 ? void 0 : _b.b2bcontrol;
-                    if (b2b && typeof b2b.setPowerOff === 'function') {
-                        b2b.setPowerOff(() => logger.info('[cmd] b2bcontrol.setPowerOff success'), (e) => logger.warn('[cmd] b2bcontrol.setPowerOff error:', (e && e.message) || e));
-                    }
-                    else {
-                        logger.warn('[cmd] b2bcontrol.setPowerOff not available');
-                    }
+                // On Tizen 4 (SSSP6), b2bcontrol.setPowerOff() terminates the Tizen app
+                // immediately, dropping the WebSocket before any server-side cleanup can
+                // happen.  Instead send MDC CMD_POWER(off) to the local bridge at port
+                // 1515 — this puts the panel in standby at the hardware level while the
+                // Tizen app (and WS) keep running.
+                //
+                // On Tizen 5+ / 6+ the app survives setPowerOff via NetworkStandby, so
+                // we keep using the B2B API there for a clean display-off path.
+                const isTizen4 = this._tizenPV.startsWith('4.');
+                if (isTizen4) {
+                    logger.info('[cmd] POWER_OFF via MDC local bridge (Tizen 4 — keeps WS alive)');
+                    this.sendLocalMdcXhr('power_off', {})
+                        .then((r) => {
+                        if (r.ok)
+                            logger.info('[cmd] MDC POWER_OFF ack ok');
+                        else
+                            logger.warn('[cmd] MDC POWER_OFF nak:', r.error);
+                    })
+                        .catch((e) => logger.warn('[cmd] MDC POWER_OFF bridge error:', e));
                 }
-                catch (e) {
-                    logger.warn('[cmd] POWER_OFF b2bcontrol threw:', e);
+                else {
+                    // Tizen 5+ / 6+: use B2B API; NetworkStandby keeps WS alive
+                    try {
+                        const b2b = (_b = window.b2bapis) === null || _b === void 0 ? void 0 : _b.b2bcontrol;
+                        if (b2b && typeof b2b.setPowerOff === 'function') {
+                            b2b.setPowerOff(() => logger.info('[cmd] b2bcontrol.setPowerOff success'), (e) => logger.warn('[cmd] b2bcontrol.setPowerOff error:', (e && e.message) || e));
+                        }
+                        else {
+                            logger.warn('[cmd] b2bcontrol.setPowerOff not available');
+                        }
+                    }
+                    catch (e) {
+                        logger.warn('[cmd] POWER_OFF b2bcontrol threw:', e);
+                    }
                 }
                 break;
             }
@@ -8218,12 +8249,26 @@ const Player = {
                             break;
                         }
                     }
+                    // ALWAYS also send MDC POWER_ON via the local bridge as a parallel
+                    // path.  On Tizen 6.5+ the B2B panelOn/setPower methods exist but
+                    // fail silently when the panel is in network-standby; the MDC command
+                    // to 127.0.0.1:1515 reliably wakes it (same path that LiveView uses
+                    // via remote_key → POWER_ON).  On Tizen 4/5 this is a harmless
+                    // duplicate that arrives slightly after the B2B call.
+                    logger.info('[cmd] POWER_ON also trying MDC local bridge (parallel)');
+                    this.sendLocalMdcXhr('power_on', {})
+                        .then((r) => {
+                        if (r.ok)
+                            logger.info('[cmd] MDC POWER_ON ack ok');
+                        else
+                            logger.warn('[cmd] MDC POWER_ON nak:', r.error);
+                    })
+                        .catch((e) => {
+                        if (!ponDispatched)
+                            logger.warn('[cmd] POWER_ON MDC bridge failed (no B2B either):', e);
+                    });
                     if (!ponDispatched) {
-                        logger.warn('[cmd] No B2B power-on method available, falling back to MDC');
-                        const _ponId = this._scannedMdcId != null ? { displayId: this._scannedMdcId } : {};
-                        this.sendLocalMdcXhr('power_on', _ponId)
-                            .then(() => logger.info('[cmd] MDC power_on sent, mdcId=', this._scannedMdcId))
-                            .catch((e) => logger.warn('[cmd] POWER_ON MDC failed:', e));
+                        logger.warn('[cmd] No B2B power-on method available, MDC is sole path');
                     }
                 }
                 catch (e) {

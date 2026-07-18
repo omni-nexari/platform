@@ -1675,21 +1675,12 @@ export async function deviceRoutes(app: FastifyInstance) {
       }
     }
 
-    // For power_off on online Samsung/Tizen devices, also fire the Samsung HTTP Remote
-    // Power API in parallel with the WS command. On older S6 devices the Tizen app can
-    // die the moment it calls b2bcontrol.setPowerOff(), dropping the WS before the
-    // command fully dispatches — the HTTP API is handled by the panel firmware
-    // independently of the Tizen app and is more reliable on these devices.
-    if (cmd.command === 'power_off' && device.ipAddress && device.platform === 'tizen') {
-      sendSamsungHttpPower(device.ipAddress, false).catch(() => {
-        // Fire-and-forget — non-blocking, WS command is the primary path
-      });
-    }
-
     // Map discriminated-union command to WsCommand (payload varies by type)
-    const wsCmd = 'payload' in cmd
-      ? { type: cmd.command, payload: (cmd as { command: string; payload: unknown }).payload }
-      : { type: cmd.command };
+    const wsCmd = device.platform === 'tizen' && (cmd.command === 'power_on' || cmd.command === 'power_off')
+      ? { type: 'remote_key', payload: { key: cmd.command === 'power_on' ? 'POWER_ON' : 'POWER_OFF' } }
+      : 'payload' in cmd
+        ? { type: cmd.command, payload: (cmd as { command: string; payload: unknown }).payload }
+        : { type: cmd.command };
 
     sendCommand(id, wsCmd as Parameters<typeof sendCommand>[1]);
 
