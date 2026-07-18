@@ -1551,18 +1551,36 @@ export async function deviceRoutes(app: FastifyInstance) {
     if (!isDeviceOnline(id)) {
       const offlineCmd = body.data.command;
 
-      // ── power_off: try direct MDC TCP to device IP (no WS needed) ─────────
+      // ── power_off: try Samsung HTTP API, then MDC TCP (no WS needed) ────────
       if (offlineCmd === 'power_off') {
         if (!device.ipAddress) {
           return reply.status(409).send({
-            error: 'Device is offline and has no recorded IP address for direct MDC control',
+            error: 'Device is offline and has no recorded IP address for direct power control',
           });
         }
+
+        // 1) Samsung HTTP Remote Power API (always enabled via Remote Management;
+        //    works even on older S6 devices where the Tizen app may have already died)
+        try {
+          await sendSamsungHttpPower(device.ipAddress, false);
+          await db.update(devices).set({ powerState: 'off', updatedAt: new Date() }).where(eq(devices.id, id));
+          await writeAuditLog({
+            orgId: user.orgId, actorId: user.sub,
+            action: 'DEVICE_COMMAND_SENT', entityType: 'device', entityId: id,
+            meta: { command: 'power_off', viaSamsungHttp: true },
+            ipAddress: req.ip,
+          });
+          return reply.send({ sent: true, command: 'power_off', viaSamsungHttp: true });
+        } catch {
+          // Samsung HTTP failed — fall back to MDC TCP
+        }
+
+        // 2) Direct MDC TCP (port 1515, requires Network Standby)
         try {
           await sendMdcPower(device.ipAddress, false);
         } catch (err) {
           return reply.status(409).send({
-            error: 'Device is offline and direct MDC power-off failed',
+            error: 'Device is offline and all power-off methods failed (Samsung HTTP + MDC)',
             detail: err instanceof Error ? err.message : String(err),
           });
         }
@@ -1655,6 +1673,17 @@ export async function deviceRoutes(app: FastifyInstance) {
       } catch {
         // Non-blocking — proceed with power_off even if this fails
       }
+    }
+
+    // For power_off on online Samsung/Tizen devices, also fire the Samsung HTTP Remote
+    // Power API in parallel with the WS command. On older S6 devices the Tizen app can
+    // die the moment it calls b2bcontrol.setPowerOff(), dropping the WS before the
+    // command fully dispatches — the HTTP API is handled by the panel firmware
+    // independently of the Tizen app and is more reliable on these devices.
+    if (cmd.command === 'power_off' && device.ipAddress && device.devicePlatform === 'tizen') {
+      sendSamsungHttpPower(device.ipAddress, false).catch(() => {
+        // Fire-and-forget — non-blocking, WS command is the primary path
+      });
     }
 
     // Map discriminated-union command to WsCommand (payload varies by type)
