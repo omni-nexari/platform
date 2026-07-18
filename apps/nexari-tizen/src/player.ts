@@ -110,6 +110,7 @@ const Player = {
   _scannedMdcId: null as number | null, // MDC device ID found by scan; persisted to DB once WS is open
   _mdcStartupDone: false, // Set to true once Phase 1 ID scan completes; gates sendMdcHeartbeat
   _tizenPV: '' as string,   // Platform version string e.g. '4.0', '6.5'; set in runStartupMdcSetup
+  _tizen4PanelMuted: false as boolean, // Tizen 4 safe screen-off state (panel mute, not hardware power off)
   _mdcHeartbeatInFlight: false, // Prevents concurrent MDC heartbeat TCP connections
   _mdcPhase2InFlight: 0, // Count of in-flight Phase 2 MDC commands; heartbeat waits until 0
   _lastMdcHeartbeatAt: 0, // Timestamp of last MDC heartbeat; rate-limit to CONFIG.HEARTBEAT_INTERVAL
@@ -832,6 +833,13 @@ const Player = {
         case 'remote_key': {
           const keyName = ((message.payload as any)?.key ?? '') as string;
           logger.info('remote_key received:', keyName);
+          // Tizen 4 safe power control: true power-off kills the app/WS.
+          // Use B2B panel mute as screen-off/screen-on, matching Samsung's
+          // documented API since Tizen 2.4.
+          if (this._tizenPV.startsWith('4.') && (keyName === 'POWER_OFF' || keyName === 'POWER_ON')) {
+            this.setTizen4PanelMute(keyName === 'POWER_OFF', 'remote-key');
+            break;
+          }
           // REBOOT: use b2bcontrol.rebootDevice() directly — MDC CMD_POWER/RESET unreliable
           if (keyName === 'REBOOT') {
             try {
@@ -2787,6 +2795,29 @@ const Player = {
     });
   },
 
+  setTizen4PanelMute(muted: boolean, source: string): boolean {
+    try {
+      const b2b = (window as any).b2bapis?.b2bcontrol;
+      if (!b2b || typeof b2b.setPanelMute !== 'function') {
+        logger.warn(`[${source}] Tizen 4 panel mute unavailable; refusing true power command to keep app alive`);
+        return false;
+      }
+      const value = muted ? 'ON' : 'OFF';
+      b2b.setPanelMute(
+        value,
+        () => {
+          this._tizen4PanelMuted = muted;
+          logger.info(`[${source}] b2bcontrol.setPanelMute(${value}) success`);
+        },
+        (e: any) => logger.warn(`[${source}] b2bcontrol.setPanelMute(${value}) error:`, (e && e.message) || e),
+      );
+      return true;
+    } catch (e) {
+      logger.warn(`[${source}] Tizen 4 panel mute threw:`, e);
+      return false;
+    }
+  },
+
   // Phase 1: run at startup (app.js), before pairing — no WS/deviceId needed
   runStartupMdcSetup(): void {
     logger.info('[mdc-startup] Phase 1: conn type, ID scan, network standby...');
@@ -2873,9 +2904,10 @@ const Player = {
         if (!r.ok || !r.status) return;
         if (ws.readyState !== WebSocket.OPEN) return;
         const s = r.status as { power?: number; volume?: number; mute?: number; input?: number };
+        const power = this._tizen4PanelMuted ? 0 : s.power;
         ws.send(JSON.stringify({
           type: 'mdc_heartbeat',
-          payload: { power: s.power, volume: s.volume, mute: s.mute, input: s.input },
+          payload: { power, volume: s.volume, mute: s.mute, input: s.input },
         }));
       })
       .catch(() => { /* non-blocking */ })
@@ -8144,23 +8176,15 @@ const Player = {
       }
         
       case 'POWER_OFF': {
-        // On Tizen 4 (SSSP6), b2bcontrol.setPowerOff() terminates the Tizen app
-        // immediately, dropping the WebSocket before any server-side cleanup can
-        // happen.  Instead send MDC CMD_POWER(off) to the local bridge at port
-        // 1515 — this puts the panel in standby at the hardware level while the
-        // Tizen app (and WS) keep running.
+        // On Tizen 4 (SSSP6), true power-off terminates the Tizen app
+        // immediately, dropping the WebSocket. Use B2B panel mute instead:
+        // the screen goes dark while the app and WS keep running.
         //
         // On Tizen 5+ / 6+ the app survives setPowerOff via NetworkStandby, so
         // we keep using the B2B API there for a clean display-off path.
         const isTizen4 = this._tizenPV.startsWith('4.');
         if (isTizen4) {
-          logger.info('[cmd] POWER_OFF via MDC local bridge (Tizen 4 — keeps WS alive)');
-          this.sendLocalMdcXhr('power_off', {})
-            .then((r) => {
-              if (r.ok) logger.info('[cmd] MDC POWER_OFF ack ok');
-              else logger.warn('[cmd] MDC POWER_OFF nak:', r.error);
-            })
-            .catch((e) => logger.warn('[cmd] MDC POWER_OFF bridge error:', e));
+          this.setTizen4PanelMute(true, 'cmd');
         } else {
           // Tizen 5+ / 6+: use B2B API; NetworkStandby keeps WS alive
           try {
@@ -8282,6 +8306,9 @@ const Player = {
       }
 
       case 'POWER_ON': {
+        if (this._tizenPV.startsWith('4.') && this.setTizen4PanelMute(false, 'cmd')) {
+          break;
+        }
         // Try B2B API first (same priority as b2b.setPower handler):
         //   panelOn() → setPower(true) → setDisplayOnOff(true) → setPowerState('ON')
         // Falls back to MDC if no B2B method is available on this device.

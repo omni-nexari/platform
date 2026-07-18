@@ -3,18 +3,11 @@
 (function () {
   var info = {
     version: "1.0.194",
-    buildId: "20260718-204112Z",
-    builtAt: "2026-07-18T20:41:12.339Z"
+    buildId: "20260718-205839Z",
+    builtAt: "2026-07-18T20:58:39.572Z"
   };
 
   // Exposed for debugging in Remote Inspector
   window.PLAYER_BUILD_INFO = info;
   window.PLAYER_DEPLOY_VERSION = info.version + ' ' + info.buildId;
-
-  // Dev config overrides (injected at build time)
-  window.__PLAYER_CONFIG__ = {
-    API_BASE: "https://platform.nexari.ca/api/v1",
-    WS_URL: "wss://platform.nexari.ca",
-    COMPANY_NAME: "nexari"
-  };
 })();
