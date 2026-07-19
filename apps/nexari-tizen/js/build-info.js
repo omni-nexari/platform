@@ -3,19 +3,11 @@
 (function () {
   var info = {
     version: "1.0.197",
-    buildId: "20260719-000618Z",
-    builtAt: "2026-07-19T00:06:18.249Z"
+    buildId: "20260719-150410Z",
+    builtAt: "2026-07-19T15:04:10.876Z"
   };
 
   // Exposed for debugging in Remote Inspector
   window.PLAYER_BUILD_INFO = info;
   window.PLAYER_DEPLOY_VERSION = info.version + ' ' + info.buildId;
-
-  // Dev config overrides (injected at build time)
-  window.__PLAYER_CONFIG__ = {
-    API_BASE: "https://screenhub.900.ca/api/v1",
-    WS_URL: "wss://screenhub.900.ca",
-    COMPANY_NAME: "900",
-    LOGO_URL: "https://screenhub.900.ca/api/superadmin/auth/company-assets/aba67887-c06b-4a72-b13c-5a504128a3f8/logo-0f4e983f6aa01e1f.png"
-  };
 })();

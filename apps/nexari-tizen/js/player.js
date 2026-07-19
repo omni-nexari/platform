@@ -68,7 +68,6 @@ const Player = {
     _scannedMdcId: null, // MDC device ID found by scan; persisted to DB once WS is open
     _mdcStartupDone: false, // Set to true once Phase 1 ID scan completes; gates sendMdcHeartbeat
     _tizenPV: '', // Platform version string e.g. '4.0', '6.5'; set in runStartupMdcSetup
-    _tizen4PanelMuted: false, // Tizen 4 safe screen-off state (panel mute, not hardware power off)
     _mdcHeartbeatInFlight: false, // Prevents concurrent MDC heartbeat TCP connections
     _mdcPhase2InFlight: 0, // Count of in-flight Phase 2 MDC commands; heartbeat waits until 0
     _lastMdcHeartbeatAt: 0, // Timestamp of last MDC heartbeat; rate-limit to CONFIG.HEARTBEAT_INTERVAL
@@ -803,11 +802,9 @@ const Player = {
                 case 'remote_key': {
                     const keyName = ((_c = (_b = message.payload) === null || _b === void 0 ? void 0 : _b.key) !== null && _c !== void 0 ? _c : '');
                     logger.info('remote_key received:', keyName);
-                    // Tizen 4 safe power control: true power-off kills the app/WS.
-                    // Use B2B panel mute as screen-off/screen-on, matching Samsung's
-                    // documented API since Tizen 2.4.
-                    if (this._tizenPV.startsWith('4.') && (keyName === 'POWER_OFF' || keyName === 'POWER_ON')) {
-                        this.setTizen4PanelMute(keyName === 'POWER_OFF', 'remote-key');
+                    // Tizen 4: user requested true B2B power-off, not panel mute/MDC.
+                    if (this._tizenPV.startsWith('4.') && keyName === 'POWER_OFF') {
+                        this.setTizen4PowerOff('remote-key');
                         break;
                     }
                     // REBOOT: use b2bcontrol.rebootDevice() directly — MDC CMD_POWER/RESET unreliable
@@ -2842,23 +2839,37 @@ const Player = {
             xhr.send(JSON.stringify(Object.assign({ action }, payload)));
         });
     },
-    setTizen4PanelMute(muted, source) {
+    setTizen4PowerOff(source) {
         var _a;
         try {
             const b2b = (_a = window.b2bapis) === null || _a === void 0 ? void 0 : _a.b2bcontrol;
-            if (!b2b || typeof b2b.setPanelMute !== 'function') {
-                logger.warn(`[${source}] Tizen 4 panel mute unavailable; refusing true power command to keep app alive`);
+            if (!b2b || typeof b2b.setPowerOff !== 'function') {
+                logger.warn(`[${source}] Tizen 4 b2bcontrol.setPowerOff unavailable`);
                 return false;
             }
-            const value = muted ? 'ON' : 'OFF';
-            b2b.setPanelMute(value, () => {
-                this._tizen4PanelMuted = muted;
-                logger.info(`[${source}] b2bcontrol.setPanelMute(${value}) success`);
-            }, (e) => logger.warn(`[${source}] b2bcontrol.setPanelMute(${value}) error:`, (e && e.message) || e));
+            const powerOff = () => b2b.setPowerOff(() => logger.info(`[${source}] Tizen 4 b2bcontrol.setPowerOff success`), (e) => logger.warn(`[${source}] Tizen 4 b2bcontrol.setPowerOff error:`, (e && e.message) || e));
+            if (typeof b2b.setNetworkStandby === 'function') {
+                try {
+                    b2b.setNetworkStandby('ON', () => {
+                        logger.info(`[${source}] Tizen 4 b2bcontrol.setNetworkStandby(ON) success`);
+                        powerOff();
+                    }, (e) => {
+                        logger.warn(`[${source}] Tizen 4 b2bcontrol.setNetworkStandby(ON) error:`, (e && e.message) || e);
+                        powerOff();
+                    });
+                }
+                catch (e) {
+                    logger.warn(`[${source}] Tizen 4 setNetworkStandby threw:`, e);
+                    powerOff();
+                }
+            }
+            else {
+                powerOff();
+            }
             return true;
         }
         catch (e) {
-            logger.warn(`[${source}] Tizen 4 panel mute threw:`, e);
+            logger.warn(`[${source}] Tizen 4 b2bcontrol.setPowerOff threw:`, e);
             return false;
         }
     },
@@ -2955,10 +2966,9 @@ const Player = {
             if (ws.readyState !== WebSocket.OPEN)
                 return;
             const s = r.status;
-            const power = this._tizen4PanelMuted ? 0 : s.power;
             ws.send(JSON.stringify({
                 type: 'mdc_heartbeat',
-                payload: { power, volume: s.volume, mute: s.mute, input: s.input },
+                payload: { power: s.power, volume: s.volume, mute: s.mute, input: s.input },
             }));
         })
             .catch(() => { })
@@ -8121,15 +8131,12 @@ const Player = {
                 break;
             }
             case 'POWER_OFF': {
-                // On Tizen 4 (SSSP6), true power-off terminates the Tizen app
-                // immediately, dropping the WebSocket. Use B2B panel mute instead:
-                // the screen goes dark while the app and WS keep running.
-                //
+                // Tizen 4: user requested true B2B power-off, not panel mute/MDC.
                 // On Tizen 5+ / 6+ the app survives setPowerOff via NetworkStandby, so
                 // we keep using the B2B API there for a clean display-off path.
                 const isTizen4 = this._tizenPV.startsWith('4.');
                 if (isTizen4) {
-                    this.setTizen4PanelMute(true, 'cmd');
+                    this.setTizen4PowerOff('cmd');
                 }
                 else {
                     // Tizen 5+ / 6+: use B2B API; NetworkStandby keeps WS alive
@@ -8249,9 +8256,6 @@ const Player = {
                 break;
             }
             case 'POWER_ON': {
-                if (this._tizenPV.startsWith('4.') && this.setTizen4PanelMute(false, 'cmd')) {
-                    break;
-                }
                 // Try B2B API first (same priority as b2b.setPower handler):
                 //   panelOn() → setPower(true) → setDisplayOnOff(true) → setPowerState('ON')
                 // Falls back to MDC if no B2B method is available on this device.
