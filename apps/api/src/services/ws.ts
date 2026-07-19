@@ -324,8 +324,19 @@ export function registerDevice(deviceId: string, socket: Conn): void {
   connections.set(deviceId, socket);
 }
 
-export function unregisterDevice(deviceId: string): void {
+export function ensureDeviceConnection(deviceId: string, socket: Conn): void {
+  const current = connections.get(deviceId);
+  if (!current || current.readyState !== 1) {
+    connections.set(deviceId, socket);
+  }
+}
+
+export function unregisterDevice(deviceId: string, socket?: Conn): boolean {
+  const current = connections.get(deviceId);
+  if (!current) return false;
+  if (socket && current !== socket) return false;
   connections.delete(deviceId);
+  return true;
 }
 
 /**

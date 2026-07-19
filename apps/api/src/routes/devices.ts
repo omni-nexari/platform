@@ -26,6 +26,7 @@ import {
   isDeviceOnline,
   registerDevice,
   unregisterDevice,
+  ensureDeviceConnection,
   handleDeviceMessage,
   getDeviceLogs,
   clearDeviceLogs,
@@ -2135,6 +2136,10 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     socket.on('message', async (rawData: any) => {
+      ensureDeviceConnection(
+        deviceId,
+        socket as { send: (d: string) => void; close: () => void; readyState: number },
+      );
       const rawText = rawData.toString() as string;
       let messageType: string | undefined;
       try {
@@ -2152,7 +2157,15 @@ export async function deviceRoutes(app: FastifyInstance) {
     });
 
     socket.on('close', async () => {
-      unregisterDevice(deviceId);
+      const removedCurrent = unregisterDevice(
+        deviceId,
+        socket as { send: (d: string) => void; close: () => void; readyState: number },
+      );
+      if (!removedCurrent) {
+        app.log.info({ deviceId }, 'Stale device WS disconnected; active replacement remains registered');
+        return;
+      }
+
       try {
         const broker = await import('../services/calendar-broker.js');
         broker.unsubscribeDevice(deviceId);
