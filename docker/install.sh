@@ -58,13 +58,9 @@ info "Docker Compose: $(docker compose version --short 2>/dev/null || echo 'ok')
 # ── Key generator hint ────────────────────────────────────────────────────────
 section "Secret Keys"
 echo ""
-echo -e "${BOLD}Before continuing, run this in another terminal to generate your secrets:${RESET}"
+echo -e "${BOLD}The installer can generate secure secrets automatically.${RESET}"
+echo "If you already generated values with generate-keys.sh, you can paste them instead."
 echo ""
-echo "    bash generate-keys.sh"
-echo ""
-echo "You will be asked to paste each generated value in the prompts below."
-echo ""
-read -rp "Press ENTER when you have your generated values ready..."
 
 # ── Input helpers ─────────────────────────────────────────────────────────────
 
@@ -104,63 +100,96 @@ prompt_optional() {
   printf -v "$var" '%s' "$val"
 }
 
+write_nginx_config() {
+  local mode="${1:-http}"
+  local tls_listen=""
+  local tls_certs=""
+  local config
+
+  if [[ "$mode" == "tls" ]]; then
+    tls_listen=$'    listen 443 ssl;\n    listen [::]:443 ssl;'
+    tls_certs="    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;"
+  fi
+
+  config=$(<nginx.conf.template)
+  config="${config//NEXARI_DOMAIN/$DOMAIN}"
+  config="${config//NEXARI_TLS_LISTEN/$tls_listen}"
+  config="${config//NEXARI_TLS_CERTS/$tls_certs}"
+  printf '%s\n' "$config" > nginx.conf
+}
+
 # ── Infrastructure secrets ────────────────────────────────────────────────────
 section "Infrastructure Secrets"
-echo "Paste the values from generate-keys.sh output."
+read -rp "  Generate secure secrets automatically? [Y/n]: " AUTO_SECRET_CHOICE
 echo ""
 
-while true; do
-  prompt_secret DB_PASSWORD "DB_PASSWORD (min 16 chars)"
-  if [[ ${#DB_PASSWORD} -lt 16 ]]; then
-    warn "DB_PASSWORD must be at least 16 characters."
-  else
-    break
-  fi
-done
+if [[ "$AUTO_SECRET_CHOICE" =~ ^[Nn]$ ]]; then
+  echo "Paste the values from generate-keys.sh output."
+  echo ""
 
-while true; do
-  prompt_secret REDIS_PASSWORD "REDIS_PASSWORD (min 16 chars)"
-  if [[ ${#REDIS_PASSWORD} -lt 16 ]]; then
-    warn "REDIS_PASSWORD must be at least 16 characters."
-  else
-    break
-  fi
-done
+  while true; do
+    prompt_secret DB_PASSWORD "DB_PASSWORD (min 16 chars)"
+    if [[ ${#DB_PASSWORD} -lt 16 ]]; then
+      warn "DB_PASSWORD must be at least 16 characters."
+    else
+      break
+    fi
+  done
 
-while true; do
-  prompt_secret JWT_SECRET "JWT_SECRET (min 64 hex chars)"
-  if [[ ${#JWT_SECRET} -lt 64 ]]; then
-    warn "JWT_SECRET must be at least 64 characters."
-  elif ! [[ "$JWT_SECRET" =~ ^[0-9a-fA-F]+$ ]]; then
-    warn "JWT_SECRET must be hexadecimal (0-9, a-f)."
-  else
-    break
-  fi
-done
+  while true; do
+    prompt_secret REDIS_PASSWORD "REDIS_PASSWORD (min 16 chars)"
+    if [[ ${#REDIS_PASSWORD} -lt 16 ]]; then
+      warn "REDIS_PASSWORD must be at least 16 characters."
+    else
+      break
+    fi
+  done
 
-while true; do
-  prompt_secret JWT_REFRESH_SECRET "JWT_REFRESH_SECRET (min 64 hex chars, different from JWT_SECRET)"
-  if [[ ${#JWT_REFRESH_SECRET} -lt 64 ]]; then
-    warn "JWT_REFRESH_SECRET must be at least 64 characters."
-  elif ! [[ "$JWT_REFRESH_SECRET" =~ ^[0-9a-fA-F]+$ ]]; then
-    warn "JWT_REFRESH_SECRET must be hexadecimal."
-  elif [[ "$JWT_REFRESH_SECRET" == "$JWT_SECRET" ]]; then
-    warn "JWT_REFRESH_SECRET must differ from JWT_SECRET."
-  else
-    break
-  fi
-done
+  while true; do
+    prompt_secret JWT_SECRET "JWT_SECRET (min 64 hex chars)"
+    if [[ ${#JWT_SECRET} -lt 64 ]]; then
+      warn "JWT_SECRET must be at least 64 characters."
+    elif ! [[ "$JWT_SECRET" =~ ^[0-9a-fA-F]+$ ]]; then
+      warn "JWT_SECRET must be hexadecimal (0-9, a-f)."
+    else
+      break
+    fi
+  done
 
-while true; do
-  prompt_secret TOKEN_ENCRYPTION_KEY "TOKEN_ENCRYPTION_KEY (exactly 64 hex chars)"
-  if [[ ${#TOKEN_ENCRYPTION_KEY} -ne 64 ]]; then
-    warn "TOKEN_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)."
-  elif ! [[ "$TOKEN_ENCRYPTION_KEY" =~ ^[0-9a-fA-F]+$ ]]; then
-    warn "TOKEN_ENCRYPTION_KEY must be hexadecimal."
-  else
-    break
-  fi
-done
+  while true; do
+    prompt_secret JWT_REFRESH_SECRET "JWT_REFRESH_SECRET (min 64 hex chars, different from JWT_SECRET)"
+    if [[ ${#JWT_REFRESH_SECRET} -lt 64 ]]; then
+      warn "JWT_REFRESH_SECRET must be at least 64 characters."
+    elif ! [[ "$JWT_REFRESH_SECRET" =~ ^[0-9a-fA-F]+$ ]]; then
+      warn "JWT_REFRESH_SECRET must be hexadecimal."
+    elif [[ "$JWT_REFRESH_SECRET" == "$JWT_SECRET" ]]; then
+      warn "JWT_REFRESH_SECRET must differ from JWT_SECRET."
+    else
+      break
+    fi
+  done
+
+  while true; do
+    prompt_secret TOKEN_ENCRYPTION_KEY "TOKEN_ENCRYPTION_KEY (exactly 64 hex chars)"
+    if [[ ${#TOKEN_ENCRYPTION_KEY} -ne 64 ]]; then
+      warn "TOKEN_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)."
+    elif ! [[ "$TOKEN_ENCRYPTION_KEY" =~ ^[0-9a-fA-F]+$ ]]; then
+      warn "TOKEN_ENCRYPTION_KEY must be hexadecimal."
+    else
+      break
+    fi
+  done
+else
+  DB_PASSWORD=$(openssl rand -base64 48 | tr -d '+/=\n' | cut -c1-32)
+  REDIS_PASSWORD=$(openssl rand -base64 48 | tr -d '+/=\n' | cut -c1-32)
+  JWT_SECRET=$(openssl rand -hex 48)
+  JWT_REFRESH_SECRET=$(openssl rand -hex 48)
+  TOKEN_ENCRYPTION_KEY=$(openssl rand -hex 32)
+  info "Generated database, Redis, JWT, and encryption secrets."
+fi
 
 # ── Domain + URLs ─────────────────────────────────────────────────────────────
 section "Domain Configuration"
@@ -321,7 +350,7 @@ while true; do
       ;;
     3)
       EMAIL_PROVIDER="disabled"
-      ok "Email skipped — configure later from the management portal."
+      info "Email skipped — configure later from the management portal."
       break
       ;;
     *) warn "Enter 1, 2, or 3." ;;
@@ -350,7 +379,13 @@ prompt_optional NEXARI_LICENSE_KEY "  NEXARI_LICENSE_KEY"
 NEXARI_ADMIN_URL="https://admin.nexari.ca"
   # OAuth proxy is always on admin.nexari.ca — set automatically
   NEXARI_ADMIN_ORIGIN="https://admin.nexari.ca"
+
+echo ""
+echo "  MQTT broker (ESP32 / e-paper devices):"
+prompt_optional MQTT_HOST "  MQTT_HOST"
 MQTT_PORT="1883"
+prompt_optional MQTT_PORT "  MQTT_PORT [1883]"
+MQTT_PORT="${MQTT_PORT:-1883}"
 prompt_optional MQTT_USERNAME "  MQTT_USERNAME"
 prompt_optional MQTT_PASSWORD "  MQTT_PASSWORD"
 
@@ -397,6 +432,8 @@ fi
 
 # ── Write .env ────────────────────────────────────────────────────────────────
 section "Writing .env"
+
+ENABLE_TLS=false
 
 cat > .env <<EOF
 # Generated by install.sh on $(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -457,6 +494,11 @@ COOKIE_SECURE=true
 NODE_OPTIONS=--max-old-space-size=2048
 NEXARI_VERSION=${NEXARI_VERSION}
 
+# ── Deployment mode ──
+BEHIND_PROXY=${BEHIND_PROXY}
+CERTBOT_EMAIL=${CERTBOT_EMAIL:-}
+ENABLE_TLS=${ENABLE_TLS}
+
 # ── Network binding ──
 NEXARI_HTTP_PORT=${NEXARI_HTTP_PORT}
 NEXARI_HTTP_BIND=${NEXARI_HTTP_BIND}
@@ -472,7 +514,7 @@ if [[ ! -f nginx.conf.template ]]; then
   die "nginx.conf.template not found in $SCRIPT_DIR"
 fi
 
-sed "s/NEXARI_DOMAIN/${DOMAIN}/g" nginx.conf.template > nginx.conf
+write_nginx_config http
 info "nginx.conf written"
 
 # ── Pull Docker image ─────────────────────────────────────────────────────────
@@ -554,6 +596,10 @@ else
       --email "${CERTBOT_EMAIL}" \
       --agree-tos \
       --no-eff-email
+    ENABLE_TLS=true
+    sed -i "s|^ENABLE_TLS=.*|ENABLE_TLS=true|" .env
+    write_nginx_config tls
+    docker compose exec nginx nginx -t
     docker compose exec nginx nginx -s reload
     info "Certificate installed and nginx reloaded."
   else
@@ -564,7 +610,7 @@ else
     echo "      -d ${DOMAIN} \\"
     echo "      --email admin@${DOMAIN} --agree-tos --no-eff-email"
     echo ""
-    echo "Then reload nginx:  docker compose exec nginx nginx -s reload"
+    echo "Then enable HTTPS config and reload nginx:  bash update.sh --enable-tls"
   fi
   echo ""
   echo "To auto-renew (add to crontab):"
@@ -593,7 +639,11 @@ section "Installation Complete"
 echo ""
 echo -e "${GREEN}${BOLD}Nexari Platform is running!${RESET}"
 echo ""
+if [[ "$BEHIND_PROXY" = "true" || "$ENABLE_TLS" = "true" ]]; then
   echo "  Open your browser and navigate to:  https://${DOMAIN}/setup"
+else
+  echo "  Open your browser and navigate to:  http://${DOMAIN}/setup"
+fi
 echo "  Complete the first-run wizard to create your admin account."
 echo ""
 echo "  Useful commands:"

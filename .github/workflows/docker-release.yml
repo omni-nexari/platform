@@ -88,16 +88,21 @@ jobs:
              docker/nginx.conf.template \
              docker/.env.template \
              docker/generate-keys.sh \
+             docker/bootstrap.sh \
              docker/install.sh \
              docker/update.sh \
              _pkg/nexari/
-          chmod +x _pkg/nexari/generate-keys.sh _pkg/nexari/install.sh _pkg/nexari/update.sh
+          chmod +x _pkg/nexari/bootstrap.sh _pkg/nexari/generate-keys.sh _pkg/nexari/install.sh _pkg/nexari/update.sh
           tar -czf nexari-install.tar.gz -C _pkg nexari
+          cp docker/bootstrap.sh nexari-bootstrap.sh
+          chmod +x nexari-bootstrap.sh
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: nexari-install.tar.gz
+          files: |
+            nexari-install.tar.gz
+            nexari-bootstrap.sh
 
   release-standalone:
     name: Build and upload standalone Node.js package
