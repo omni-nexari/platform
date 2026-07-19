@@ -1496,6 +1496,16 @@ export function DeviceDetailContent({
   const isOnline    = device.status === 'online';
   const isEpaper    = device.kind === 'epaper';
   const effectivePlayerRelease = isEpaper ? latestEpaperRelease : latestRelease;
+  const installedPlayerVersion = (device.playerVersion ?? '').match(/v?(\d+\.\d+\.\d+)/i)?.[1] ?? null;
+  const latestPlayerVersion = (effectivePlayerRelease?.version ?? '').match(/v?(\d+\.\d+\.\d+)/i)?.[1] ?? null;
+  const playerUpdateAvailable = effectivePlayerRelease?.superadminApproved === true
+    && !!latestPlayerVersion
+    && installedPlayerVersion !== latestPlayerVersion;
+  const installedFirmwareVersion = (device.firmwareVersion ?? '').match(/(?:^|[-_\s])(\d+(?:\.\d+)*)$/)?.[1] ?? null;
+  const latestFirmwareVersion = (latestFirmwareRelease?.version ?? '').match(/(?:^|[-_\s])(\d+(?:\.\d+)*)$/)?.[1] ?? null;
+  const firmwareUpdateAvailable = latestFirmwareRelease?.superadminApproved === true
+    && !!latestFirmwareVersion
+    && installedFirmwareVersion !== latestFirmwareVersion;
   const isWindows      = device.platform === 'windows';
   const isAndroid      = ['android', 'androidtv', 'firetv'].includes(device.platform ?? '');
   const isTizenTop     = ['tizen', 'tizen-sbb'].includes(device.platform ?? 'tizen');
@@ -3168,18 +3178,24 @@ export function DeviceDetailContent({
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-xs text-[var(--text-muted)]">Installed:</span>
                 <span className="font-mono text-xs text-[var(--text)]">{device.playerVersion ? `v${device.playerVersion}` : '—'}</span>
-                {effectivePlayerRelease && device.playerVersion && effectivePlayerRelease.version !== device.playerVersion && (
+                {effectivePlayerRelease && (
                   <>
                     {effectivePlayerRelease.superadminApproved ? (
                       <>
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                          Update available: v{effectivePlayerRelease.version}
-                        </span>
+                        {playerUpdateAvailable ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                            Update available: v{effectivePlayerRelease.version}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/15 text-green-400 border border-green-500/30">
+                            Up to date
+                          </span>
+                        )}
                         {(devicePlatform === 'tizen' || isEpaper) ? (
                           <ActionButton
                             type="button"
                             onClick={() => sendCmd({ command: 'reboot' })}
-                            disabled={cmdDisabled}
+                            disabled={cmdDisabled || !playerUpdateAvailable}
                             tone="primary" className="px-3 py-1 text-xs shrink-0"
                           >Reboot to Apply</ActionButton>
                         ) : (
@@ -3193,22 +3209,24 @@ export function DeviceDetailContent({
                                 ...(effectivePlayerRelease.sha256 ? { sha256: effectivePlayerRelease.sha256 } : {}),
                               },
                             })}
-                            disabled={cmdDisabled || !isOnline}
+                            disabled={cmdDisabled || !playerUpdateAvailable}
                             tone="primary" className="px-3 py-1 text-xs shrink-0"
                           >Update App</ActionButton>
                         )}
                       </>
                     ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">
-                        v{effectivePlayerRelease.version} available · awaiting platform approval
-                      </span>
+                      <>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">
+                          v{effectivePlayerRelease.version} available · awaiting platform approval
+                        </span>
+                        <ActionButton
+                          type="button"
+                          disabled
+                          tone="primary" className="px-3 py-1 text-xs shrink-0"
+                        >{(devicePlatform === 'tizen' || isEpaper) ? 'Reboot to Apply' : 'Update App'}</ActionButton>
+                      </>
                     )}
                   </>
-                )}
-                {effectivePlayerRelease && device.playerVersion === effectivePlayerRelease.version && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/15 text-green-400 border border-green-500/30">
-                    Up to date
-                  </span>
                 )}
               </div>
             </SectionCardBody>
@@ -3248,14 +3266,17 @@ export function DeviceDetailContent({
                 <span className="font-mono text-xs text-[var(--text)]">{device.firmwareVersion ?? '—'}</span>
                 {latestFirmwareRelease && deviceFirmwareModel && (
                   <>
-                    {latestFirmwareRelease.superadminApproved && latestFirmwareRelease.version !== (() => {
-                      const m = (device.firmwareVersion ?? '').match(/^.+-(\d[\d.]*)$/);
-                      return m ? m[1] : '';
-                    })() ? (
+                    {latestFirmwareRelease.superadminApproved ? (
                       <>
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                          Update available: {latestFirmwareRelease.swVersionString}
-                        </span>
+                        {firmwareUpdateAvailable ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                            Update available: {latestFirmwareRelease.swVersionString}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/15 text-green-400 border border-green-500/30">
+                            Up to date
+                          </span>
+                        )}
                         <ActionButton
                           type="button"
                           onClick={() => sendCmd({
@@ -3268,18 +3289,21 @@ export function DeviceDetailContent({
                               sizeBytes:  latestFirmwareRelease.sizeBytes,
                             },
                           })}
-                          disabled={cmdDisabled}
+                          disabled={cmdDisabled || !firmwareUpdateAvailable}
                           tone="primary" className="px-3 py-1 text-xs shrink-0"
                         >Apply Firmware Update</ActionButton>
                       </>
-                    ) : latestFirmwareRelease.superadminApproved ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/15 text-green-400 border border-green-500/30">
-                        Up to date
-                      </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">
-                        {latestFirmwareRelease.swVersionString} available · awaiting platform approval
-                      </span>
+                      <>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">
+                          {latestFirmwareRelease.swVersionString} available · awaiting platform approval
+                        </span>
+                        <ActionButton
+                          type="button"
+                          disabled
+                          tone="primary" className="px-3 py-1 text-xs shrink-0"
+                        >Apply Firmware Update</ActionButton>
+                      </>
                     )}
                   </>
                 )}
