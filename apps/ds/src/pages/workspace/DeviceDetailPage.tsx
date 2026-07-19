@@ -1499,11 +1499,13 @@ export function DeviceDetailContent({
   const installedPlayerVersion = (device.playerVersion ?? '').match(/v?(\d+\.\d+\.\d+)/i)?.[1] ?? null;
   const latestPlayerVersion = (effectivePlayerRelease?.version ?? '').match(/v?(\d+\.\d+\.\d+)/i)?.[1] ?? null;
   const playerUpdateAvailable = effectivePlayerRelease?.superadminApproved === true
+    && !!installedPlayerVersion
     && !!latestPlayerVersion
     && installedPlayerVersion !== latestPlayerVersion;
   const installedFirmwareVersion = (device.firmwareVersion ?? '').match(/(?:^|[-_\s])(\d+(?:\.\d+)*)$/)?.[1] ?? null;
-  const latestFirmwareVersion = (latestFirmwareRelease?.version ?? '').match(/(?:^|[-_\s])(\d+(?:\.\d+)*)$/)?.[1] ?? null;
+  const latestFirmwareVersion = (latestFirmwareRelease?.version ?? latestFirmwareRelease?.swVersionString ?? '').match(/(?:^|[-_\s])(\d+(?:\.\d+)*)$/)?.[1] ?? null;
   const firmwareUpdateAvailable = latestFirmwareRelease?.superadminApproved === true
+    && !!installedFirmwareVersion
     && !!latestFirmwareVersion
     && installedFirmwareVersion !== latestFirmwareVersion;
   const isWindows      = device.platform === 'windows';
@@ -3194,21 +3196,27 @@ export function DeviceDetailContent({
                         {(devicePlatform === 'tizen' || isEpaper) ? (
                           <ActionButton
                             type="button"
-                            onClick={() => sendCmd({ command: 'reboot' })}
+                            onClick={() => {
+                              if (!playerUpdateAvailable) return;
+                              sendCmd({ command: 'reboot' });
+                            }}
                             disabled={cmdDisabled || !playerUpdateAvailable}
                             tone="primary" className="px-3 py-1 text-xs shrink-0"
-                          >Reboot to Apply</ActionButton>
+                          >Apply</ActionButton>
                         ) : (
                           <ActionButton
                             type="button"
-                            onClick={() => sendCmd({
-                              command: 'update_player',
-                              payload: {
-                                version: effectivePlayerRelease.version,
-                                downloadUrl: effectivePlayerRelease.downloadUrl,
-                                ...(effectivePlayerRelease.sha256 ? { sha256: effectivePlayerRelease.sha256 } : {}),
-                              },
-                            })}
+                            onClick={() => {
+                              if (!playerUpdateAvailable) return;
+                              sendCmd({
+                                command: 'update_player',
+                                payload: {
+                                  version: effectivePlayerRelease.version,
+                                  downloadUrl: effectivePlayerRelease.downloadUrl,
+                                  ...(effectivePlayerRelease.sha256 ? { sha256: effectivePlayerRelease.sha256 } : {}),
+                                },
+                              });
+                            }}
                             disabled={cmdDisabled || !playerUpdateAvailable}
                             tone="primary" className="px-3 py-1 text-xs shrink-0"
                           >Update App</ActionButton>
@@ -3223,7 +3231,7 @@ export function DeviceDetailContent({
                           type="button"
                           disabled
                           tone="primary" className="px-3 py-1 text-xs shrink-0"
-                        >{(devicePlatform === 'tizen' || isEpaper) ? 'Reboot to Apply' : 'Update App'}</ActionButton>
+                        >{(devicePlatform === 'tizen' || isEpaper) ? 'Apply' : 'Update App'}</ActionButton>
                       </>
                     )}
                   </>
@@ -3279,16 +3287,19 @@ export function DeviceDetailContent({
                         )}
                         <ActionButton
                           type="button"
-                          onClick={() => sendCmd({
-                            command: 'update_tv_firmware',
-                            payload: {
-                              softwareId: '0',
-                              fileName:   latestFirmwareRelease.fileName,
-                              swVersion:  latestFirmwareRelease.swVersionString,
-                              url:        latestFirmwareRelease.downloadUrl,
-                              sizeBytes:  latestFirmwareRelease.sizeBytes,
-                            },
-                          })}
+                          onClick={() => {
+                            if (!firmwareUpdateAvailable) return;
+                            sendCmd({
+                              command: 'update_tv_firmware',
+                              payload: {
+                                softwareId: '0',
+                                fileName:   latestFirmwareRelease.fileName,
+                                swVersion:  latestFirmwareRelease.swVersionString,
+                                url:        latestFirmwareRelease.downloadUrl,
+                                sizeBytes:  latestFirmwareRelease.sizeBytes,
+                              },
+                            });
+                          }}
                           disabled={cmdDisabled || !firmwareUpdateAvailable}
                           tone="primary" className="px-3 py-1 text-xs shrink-0"
                         >Apply Firmware Update</ActionButton>
