@@ -30,21 +30,17 @@ Docs/cert/nexari-android.jks
 Docs/cert/nexari-android.pwd
 
 # Player build outputs (binaries / release artifacts)
-apps/nexari-windows/release/
-apps/nexari-windows/dist/
-apps/nexari-tizen/*.wgt
-apps/nexari-smarttv/*.wgt
-apps/nexari-epaper/*.wgt
-apps/nexari-html5-sync/*.wgt
+apps/nexari-windows/
+apps/nexari-tizen/
+apps/nexari-smarttv/
+apps/nexari-epaper/
+apps/nexari-html5-sync/
 *.wgt
 
 # Android build outputs and Gradle caches
-apps/nexari-android/android/app/build/
-apps/nexari-android/android/.gradle/
-apps/nexari-android/android/build/
+apps/nexari-android/android/
 *.apk
 *.aab
 
 # ESP32
-apps/nexari-esp32/.pio/
-apps/nexari-esp32/firmware.bin
+apps/nexari-esp32/

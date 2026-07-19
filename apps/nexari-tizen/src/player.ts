@@ -110,6 +110,7 @@ const Player = {
   _scannedMdcId: null as number | null, // MDC device ID found by scan; persisted to DB once WS is open
   _mdcStartupDone: false, // Set to true once Phase 1 ID scan completes; gates sendMdcHeartbeat
   _tizenPV: '' as string,   // Platform version string e.g. '4.0', '6.5'; set in runStartupMdcSetup
+  _tizen4PanelMuted: false as boolean,
   _mdcHeartbeatInFlight: false, // Prevents concurrent MDC heartbeat TCP connections
   _mdcPhase2InFlight: 0, // Count of in-flight Phase 2 MDC commands; heartbeat waits until 0
   _lastMdcHeartbeatAt: 0, // Timestamp of last MDC heartbeat; rate-limit to CONFIG.HEARTBEAT_INTERVAL
@@ -832,9 +833,9 @@ const Player = {
         case 'remote_key': {
           const keyName = ((message.payload as any)?.key ?? '') as string;
           logger.info('remote_key received:', keyName);
-          // Tizen 4: user requested true B2B power-off, not panel mute/MDC.
-          if (this._tizenPV.startsWith('4.') && keyName === 'POWER_OFF') {
-            this.setTizen4PowerOff('remote-key');
+          // Tizen 4: keep the app/WS alive by muting/unmuting the panel instead of full power-off.
+          if (this._tizenPV.startsWith('4.') && (keyName === 'POWER_OFF' || keyName === 'POWER_ON')) {
+            this.setTizen4PanelMute(keyName === 'POWER_OFF', 'remote-key');
             break;
           }
           // REBOOT: use b2bcontrol.rebootDevice() directly — MDC CMD_POWER/RESET unreliable
@@ -2792,42 +2793,26 @@ const Player = {
     });
   },
 
-  setTizen4PowerOff(source: string): boolean {
+  setTizen4PanelMute(muted: boolean, source: string): boolean {
     try {
       const b2b = (window as any).b2bapis?.b2bcontrol;
-      if (!b2b || typeof b2b.setPowerOff !== 'function') {
-        logger.warn(`[${source}] Tizen 4 b2bcontrol.setPowerOff unavailable`);
+      if (!b2b || typeof b2b.setPanelMute !== 'function') {
+        logger.warn(`[${source}] Tizen 4 b2bcontrol.setPanelMute unavailable`);
         return false;
       }
 
-      const powerOff = () => b2b.setPowerOff(
-        () => logger.info(`[${source}] Tizen 4 b2bcontrol.setPowerOff success`),
-        (e: any) => logger.warn(`[${source}] Tizen 4 b2bcontrol.setPowerOff error:`, (e && e.message) || e),
+      const value = muted ? 'ON' : 'OFF';
+      b2b.setPanelMute(
+        value,
+        () => {
+          this._tizen4PanelMuted = muted;
+          logger.info(`[${source}] Tizen 4 b2bcontrol.setPanelMute(${value}) success`);
+        },
+        (e: any) => logger.warn(`[${source}] Tizen 4 b2bcontrol.setPanelMute(${value}) error:`, (e && e.message) || e),
       );
-
-      if (typeof b2b.setNetworkStandby === 'function') {
-        try {
-          b2b.setNetworkStandby(
-            'ON',
-            () => {
-              logger.info(`[${source}] Tizen 4 b2bcontrol.setNetworkStandby(ON) success`);
-              powerOff();
-            },
-            (e: any) => {
-              logger.warn(`[${source}] Tizen 4 b2bcontrol.setNetworkStandby(ON) error:`, (e && e.message) || e);
-              powerOff();
-            },
-          );
-        } catch (e) {
-          logger.warn(`[${source}] Tizen 4 setNetworkStandby threw:`, e);
-          powerOff();
-        }
-      } else {
-        powerOff();
-      }
       return true;
     } catch (e) {
-      logger.warn(`[${source}] Tizen 4 b2bcontrol.setPowerOff threw:`, e);
+      logger.warn(`[${source}] Tizen 4 b2bcontrol.setPanelMute threw:`, e);
       return false;
     }
   },
@@ -2918,9 +2903,10 @@ const Player = {
         if (!r.ok || !r.status) return;
         if (ws.readyState !== WebSocket.OPEN) return;
         const s = r.status as { power?: number; volume?: number; mute?: number; input?: number };
+        const power = this._tizenPV.startsWith('4.') && this._tizen4PanelMuted ? 0 : s.power;
         ws.send(JSON.stringify({
           type: 'mdc_heartbeat',
-          payload: { power: s.power, volume: s.volume, mute: s.mute, input: s.input },
+          payload: { power, volume: s.volume, mute: s.mute, input: s.input },
         }));
       })
       .catch(() => { /* non-blocking */ })
@@ -8189,12 +8175,12 @@ const Player = {
       }
         
       case 'POWER_OFF': {
-        // Tizen 4: user requested true B2B power-off, not panel mute/MDC.
+        // Tizen 4: use panel mute so the app/WS stays alive and can unmute later.
         // On Tizen 5+ / 6+ the app survives setPowerOff via NetworkStandby, so
         // we keep using the B2B API there for a clean display-off path.
         const isTizen4 = this._tizenPV.startsWith('4.');
         if (isTizen4) {
-          this.setTizen4PowerOff('cmd');
+          this.setTizen4PanelMute(true, 'cmd');
         } else {
           // Tizen 5+ / 6+: use B2B API; NetworkStandby keeps WS alive
           try {
@@ -8316,6 +8302,8 @@ const Player = {
       }
 
       case 'POWER_ON': {
+        if (this._tizenPV.startsWith('4.') && this.setTizen4PanelMute(false, 'cmd')) break;
+
         // Try B2B API first (same priority as b2b.setPower handler):
         //   panelOn() → setPower(true) → setDisplayOnOff(true) → setPowerState('ON')
         // Falls back to MDC if no B2B method is available on this device.
