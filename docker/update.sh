@@ -5,7 +5,6 @@
 # Usage:
 #   bash update.sh                  — pull latest image and restart API
 #   bash update.sh --version v2.5.0 — pin to a specific version
-#   bash update.sh --enable-tls     — enable nginx HTTPS after certbot succeeds
 #
 # This script:
 #   1. Optionally updates NEXARI_VERSION in .env
@@ -30,36 +29,13 @@ die()     { echo -e "${RED}✖${RESET}  $*" >&2; exit 1; }
 # ── CLI args ──────────────────────────────────────────────────────────────────
 NEW_VERSION=""
 SKIP_PULL=0
-ENABLE_TLS=0
 while [[ $# -gt 0 ]]; do
   case $1 in
     --version)    NEW_VERSION="$2"; shift 2 ;;
     --skip-pull)  SKIP_PULL=1; shift ;;
-    --enable-tls) ENABLE_TLS=1; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
-
-write_nginx_config() {
-  local mode="${1:-http}"
-  local tls_listen=""
-  local tls_certs=""
-  local config
-
-  if [[ "$mode" == "tls" ]]; then
-    tls_listen=$'    listen 443 ssl;\n    listen [::]:443 ssl;'
-    tls_certs="    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers off;"
-  fi
-
-  config=$(<nginx.conf.template)
-  config="${config//NEXARI_DOMAIN/$DOMAIN}"
-  config="${config//NEXARI_TLS_LISTEN/$tls_listen}"
-  config="${config//NEXARI_TLS_CERTS/$tls_certs}"
-  printf '%s\n' "$config" > nginx.conf
-}
 
 # ── Prereqs ───────────────────────────────────────────────────────────────────
 [[ -f .env ]] || die ".env not found — run install.sh first"
@@ -72,11 +48,6 @@ if [[ -n "$NEW_VERSION" ]]; then
   BARE_VERSION="${NEW_VERSION#v}"
   sed -i "s|^NEXARI_VERSION=.*|NEXARI_VERSION=${BARE_VERSION}|" .env
   info "NEXARI_VERSION set to $BARE_VERSION in .env"
-fi
-
-if [[ "$ENABLE_TLS" -eq 1 ]]; then
-  sed -i "s|^ENABLE_TLS=.*|ENABLE_TLS=true|" .env
-  info "ENABLE_TLS set to true in .env"
 fi
 
 CURRENT_VERSION=$(grep '^NEXARI_VERSION=' .env | cut -d= -f2 || echo "latest")
@@ -129,13 +100,8 @@ if [[ -f nginx.conf.template ]]; then
   DOMAIN=$(grep '^DOMAIN=' .env | cut -d= -f2 || grep '^NEXARI_DOMAIN=' .env | cut -d= -f2 || echo "")
   if [[ -n "$DOMAIN" ]]; then
     cp nginx.conf nginx.conf.bak 2>/dev/null || true
-    if grep -q '^ENABLE_TLS=true' .env; then
-      write_nginx_config tls
-      info "nginx.conf regenerated with HTTPS enabled for domain: $DOMAIN"
-    else
-      write_nginx_config http
-      info "nginx.conf regenerated for domain: $DOMAIN"
-    fi
+    sed "s/NEXARI_DOMAIN/${DOMAIN}/g" nginx.conf.template > nginx.conf
+    info "nginx.conf regenerated for domain: $DOMAIN"
   else
     warn "DOMAIN not found in .env — skipping nginx.conf regeneration"
   fi
