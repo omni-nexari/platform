@@ -18,6 +18,10 @@ SERVICE_NAME="${SERVICE_NAME:-signage-api}"
 DATA_DIR="${DATA_DIR:-/var/signage}"
 NGINX_CONF_FILE="${NGINX_CONF_FILE:-signage.conf}"
 INSTALL_PLATFORM_VHOST="${INSTALL_PLATFORM_VHOST:-false}"
+# Space-separated extra server names — when set, replaces the template server_name
+# with the full list (e.g. "reflowcast.com ct.reflowcast.com").  Leave unset to
+# keep only the primary domain derived from APP_URL.
+NGINX_SERVER_NAMES="${NGINX_SERVER_NAMES:-}"
 ENV_FILE="$ENV_DIR/api.env"
 
 echo "==> [update] Pulling latest code..."
@@ -62,6 +66,11 @@ sed -i "s|/opt/signage|$APP_DIR|g" "$tmp_nginx"
 # Patch source domain to the domain from api.env (APP_URL)
 _domain="$(grep '^APP_URL=' "$ENV_FILE" | sed 's|APP_URL=https\?://||;s|/.*||')"
 if [[ -n "$_domain" ]]; then
+  # If extra server names provided, replace server_name with the full list;
+  # otherwise just replace the placeholder domain with the primary domain.
+  if [[ -n "$NGINX_SERVER_NAMES" ]]; then
+    sed -i "s|server_name ds.chiho.app;|server_name $NGINX_SERVER_NAMES;|g; s|server_name screenhub.900.ca;|server_name $NGINX_SERVER_NAMES;|g" "$tmp_nginx"
+  fi
   sed -i "s|ds.chiho.app|$_domain|g; s|screenhub.900.ca|$_domain|g" "$tmp_nginx"
 fi
 sudo cp "$tmp_nginx" /etc/nginx/sites-available/"$SERVICE_NAME"

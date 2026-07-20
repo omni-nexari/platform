@@ -47,7 +47,9 @@ sudo apt-get install -y --no-install-recommends --allow-change-held-packages \
     postgresql-client \
     ca-certificates \
     gnupg \
-    lsb-release
+    lsb-release \
+    mosquitto \
+    mosquitto-clients
 
 # ── Node 22 via NodeSource ────────────────────────────────────────────────────
 if ! command -v node &>/dev/null || [[ "$(node --version)" != v22* ]]; then
@@ -65,6 +67,58 @@ if ! command -v pnpm &>/dev/null; then
 else
     echo "==> [bootstrap] pnpm $(pnpm --version) already installed, skipping."
 fi
+
+# ── Playwright Chromium (optional — for HTML5 thumbnail generation) ───────────
+echo "==> [bootstrap] Installing Playwright Chromium to /opt/playwright-browsers..."
+sudo mkdir -p /opt/playwright-browsers
+sudo npm install -g playwright 2>/dev/null || true
+PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers playwright install --with-deps chromium 2>/dev/null \
+    && echo "    Playwright Chromium installed." \
+    || echo "    WARNING: Playwright install failed — HTML5 thumbnails will be unavailable."
+sudo chmod -R a+rX /opt/playwright-browsers
+
+# ── Mosquitto MQTT broker ─────────────────────────────────────────────────────
+echo "==> [bootstrap] Configuring Mosquitto MQTT broker..."
+# Stop it so we can write the config before starting
+sudo systemctl stop mosquitto 2>/dev/null || true
+
+# Derive MQTT password from api.env if already present, else prompt
+_mqtt_pwd=""
+if [[ -f "$ENV_DIR/api.env" ]]; then
+    _mqtt_pwd=$(grep '^MQTT_PASSWORD=' "$ENV_DIR/api.env" 2>/dev/null | sed "s/MQTT_PASSWORD=//;s/'//g;s/\"//g" || true)
+fi
+if [[ -z "$_mqtt_pwd" || "$_mqtt_pwd" == "CHANGE_ME_MQTT_PASSWORD" ]]; then
+    _mqtt_pwd="$(openssl rand -hex 16)"
+    echo "    Generated MQTT password: $_mqtt_pwd"
+fi
+
+sudo mkdir -p /etc/mosquitto/conf.d
+# Write broker config
+sudo tee /etc/mosquitto/conf.d/nexari.conf > /dev/null <<MQTTCONF
+# Nexari Platform MQTT broker config
+# MQTT over TCP (local + LAN devices)
+listener 1883 0.0.0.0
+# WebSocket listener for browser/player WebSocket connections
+listener 9001 0.0.0.0
+protocol websockets
+# Require auth on both listeners
+allow_anonymous false
+password_file /etc/mosquitto/passwd
+# Persist session state so offline players resume cleanly
+persistence true
+persistence_location /var/lib/mosquitto/
+# $SYS stats every 10s (used by monitoring dashboard)
+sys_interval 10
+MQTTCONF
+
+# Create password file with 'nexari' user
+sudo mosquitto_passwd -b -c /etc/mosquitto/passwd nexari "$_mqtt_pwd"
+sudo chmod 600 /etc/mosquitto/passwd
+
+sudo systemctl enable mosquitto
+sudo systemctl start mosquitto
+echo "    Mosquitto configured. Username: nexari  Password: $_mqtt_pwd"
+
 
 # ── Create app user ───────────────────────────────────────────────────────────
 echo "==> [bootstrap] Ensuring app user '$APP_USER' exists..."
@@ -129,6 +183,21 @@ if [[ "$INSTALL_PLATFORM_VHOST" == "true" && -f "$APP_DIR/infra/nginx/platform.n
     if [[ ! -L /etc/nginx/sites-enabled/platform.nexari.ca.conf ]]; then
         sudo ln -s /etc/nginx/sites-available/platform.nexari.ca.conf /etc/nginx/sites-enabled/platform.nexari.ca.conf
     fi
+fi
+
+# ── Backup systemd service + timer ────────────────────────────────────────────
+if [[ -f "$APP_DIR/infra/systemd/signage-backup.service" ]]; then
+    echo "==> [bootstrap] Installing backup systemd service + timer..."
+    sudo cp "$APP_DIR/infra/systemd/signage-backup.service" /etc/systemd/system/signage-backup.service
+    sudo cp "$APP_DIR/infra/systemd/signage-backup.timer"   /etc/systemd/system/signage-backup.timer
+    # Patch paths if APP_DIR is non-default
+    if [[ "$APP_DIR" != "/opt/nexari" ]]; then
+        sudo sed -i "s|/opt/nexari|$APP_DIR|g" /etc/systemd/system/signage-backup.service
+    fi
+    sudo systemctl daemon-reload
+    sudo systemctl enable signage-backup.timer
+    sudo systemctl start  signage-backup.timer
+    echo "    Backup timer enabled. First run at 03:00 UTC."
 fi
 
 echo ""

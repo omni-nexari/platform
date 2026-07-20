@@ -1,0 +1,17 @@
+[Unit]
+Description=Nexari Platform PostgreSQL backup
+After=network.target postgresql.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/signage/api.env
+Environment=ENV_DIR=/etc/signage
+Environment=DATA_DIR=/var/nexari
+ExecStart=/opt/nexari/infra/pi/backup.sh
+User=root
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=signage-backup
+
+[Install]
+WantedBy=multi-user.target

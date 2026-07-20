@@ -367,9 +367,12 @@ function Set-AndroidPartnerIcon {
 # falls back silently to Nexari defaults so builds continue uninterrupted.
 # Returns a PSCustomObject with CompanyName, LogoUrl, TempLogoPath, PrimaryColor.
 function Get-PartnerBranding {
+    $nexariLogoPath = Join-Path $RepoRoot "Docs\logo\nexari.png"
+    if (-not (Test-Path $nexariLogoPath)) { $nexariLogoPath = '' }
+
     if (-not $script:deployKey) {
         Write-Host "  Branding: no deploy key, using Nexari defaults." -ForegroundColor DarkGray
-        return [PSCustomObject]@{ CompanyName = ''; LogoUrl = ''; TempLogoPath = ''; PrimaryColor = '' }
+        return [PSCustomObject]@{ CompanyName = ''; LogoUrl = ''; TempLogoPath = $nexariLogoPath; PrimaryColor = '' }
     }
     try {
         $resp = Invoke-RestMethod `
@@ -395,11 +398,12 @@ function Get-PartnerBranding {
                 Invoke-WebRequest -Uri $logoUrl -OutFile $tempLogoPath -UseBasicParsing
                 Write-Host "  Branding: '$displayName'  logo -> $(Split-Path $tempLogoPath -Leaf)" -ForegroundColor DarkGray
             } catch {
-                Write-Warning "  Failed to download partner logo ($logoUrl): $_"
-                $tempLogoPath = ''
+                Write-Warning "  Failed to download partner logo ($logoUrl): $_ -- falling back to Nexari logo."
+                $tempLogoPath = $nexariLogoPath
             }
         } else {
             Write-Host "  Branding: '$displayName' (no logo configured, using Nexari default)" -ForegroundColor DarkGray
+            $tempLogoPath = $nexariLogoPath
         }
 
         return [PSCustomObject]@{
@@ -410,7 +414,7 @@ function Get-PartnerBranding {
         }
     } catch {
         Write-Warning "  Branding fetch failed: $_ -- using Nexari defaults."
-        return [PSCustomObject]@{ CompanyName = ''; LogoUrl = ''; TempLogoPath = ''; PrimaryColor = '' }
+        return [PSCustomObject]@{ CompanyName = ''; LogoUrl = ''; TempLogoPath = $nexariLogoPath; PrimaryColor = '' }
     }
 }
 
@@ -453,10 +457,21 @@ if ($tenantData -and $tenantData.tenantRoutes -and $tenantData.tenantRoutes.Coun
         $targetIdx = [int]$targetPick - 2
         if ($targetIdx -ge 0 -and $targetIdx -lt $routeList.Count) {
             $selectedRoute = $routeList[$targetIdx]
-            $instanceUrl   = $selectedRoute.url.TrimEnd('/')
-            $wsUrl         = $instanceUrl -replace '^https://', 'wss://' -replace '^http://', 'ws://'
-            $apiBase       = "$instanceUrl/api/v1"
-            Write-Host "  Building for: $instanceUrl" -ForegroundColor Cyan
+            # For PATH-ALIAS routes (non-empty pathPrefix) the API lives at the
+            # root hostname, not at hostname/pathPrefix.  The path prefix is only
+            # for the client web portal; API calls, WS connections, and player
+            # file downloads all use the root.  Only pure subdomains (pathPrefix='')
+            # have their own distinct API root.
+            if ($selectedRoute.pathPrefix -ne '' -and $null -ne $selectedRoute.pathPrefix) {
+                $instanceUrl = "https://$($selectedRoute.hostname)"
+                Write-Host "  Client portal: $($selectedRoute.url)" -ForegroundColor Cyan
+                Write-Host "  API / player downloads: $instanceUrl" -ForegroundColor DarkGray
+            } else {
+                $instanceUrl = $selectedRoute.url.TrimEnd('/')
+                Write-Host "  Building for: $instanceUrl" -ForegroundColor Cyan
+            }
+            $wsUrl   = $instanceUrl -replace '^https://', 'wss://' -replace '^http://', 'ws://'
+            $apiBase = "$instanceUrl/api/v1"
         }
     }
 }
