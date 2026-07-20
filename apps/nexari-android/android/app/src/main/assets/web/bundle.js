@@ -6177,6 +6177,48 @@ var AcceptClientOrgInviteSchema = external_exports.object({
   workspaceName: external_exports.string().min(2).max(100),
   workspaceTimezone: external_exports.string().min(1).default("UTC")
 });
+var TenantRouteTypeSchema = external_exports.enum(["management", "client_org", "workspace"]);
+var TenantRouteStatusSchema = external_exports.enum(["pending_dns", "verified", "active", "failed"]);
+var TenantRouteTlsStatusSchema = external_exports.enum(["pending", "ready", "failed", "external"]);
+var RESERVED_TENANT_PATH_PREFIXES = [
+  "api",
+  "assets",
+  "dashboard",
+  "kiosk",
+  "kitchen",
+  "login",
+  "m",
+  "management",
+  "qr",
+  "setup",
+  "settings",
+  "support",
+  "workspaces"
+];
+var hostname = external_exports.string().trim().toLowerCase().min(4).max(253).regex(/^(?!-)(?:[a-z0-9-]{1,63}\.)+[a-z]{2,63}$/, "Enter a hostname like client.partner.com without https:// or a path");
+var tenantPathPrefix = external_exports.string().trim().toLowerCase().transform((value) => value.replace(/^\/+|\/+$/g, "")).refine((value) => value === "" || /^[a-z0-9][a-z0-9-]{0,62}$/.test(value), "Use lowercase letters, numbers, and hyphens").refine((value) => !RESERVED_TENANT_PATH_PREFIXES.includes(value), "This path is reserved");
+var TenantRouteSchema = external_exports.object({
+  id: external_exports.string().uuid(),
+  hostname,
+  pathPrefix: tenantPathPrefix,
+  routeType: TenantRouteTypeSchema,
+  managementCompanyId: external_exports.string().uuid(),
+  organizationId: external_exports.string().uuid().nullable(),
+  workspaceId: external_exports.string().uuid().nullable(),
+  status: TenantRouteStatusSchema,
+  verificationToken: external_exports.string(),
+  verifiedAt: external_exports.string().datetime().nullable(),
+  tlsStatus: TenantRouteTlsStatusSchema,
+  lastCheckedAt: external_exports.string().datetime().nullable(),
+  createdAt: external_exports.string().datetime(),
+  updatedAt: external_exports.string().datetime()
+});
+var CreateTenantRouteSchema = external_exports.object({
+  hostname,
+  pathPrefix: tenantPathPrefix.optional().default(""),
+  routeType: external_exports.enum(["client_org", "workspace"]).default("client_org"),
+  workspaceId: external_exports.string().uuid().nullable().optional()
+});
 
 // ../../packages/shared/dist/schemas/workspace.js
 var WorkspaceSchema = external_exports.object({
@@ -6697,18 +6739,18 @@ function isValidIptvUrl(url, protocol) {
   const authority = (_b2 = m[2]) != null ? _b2 : "";
   const pathQuery = ((_c = m[3]) != null ? _c : "") + ((_d = m[4]) != null ? _d : "");
   const hostPortMatch = /^(?:[^@]*@)?([^:]+)(?::(\d+))?$/.exec(authority);
-  const hostname = (_e = hostPortMatch == null ? void 0 : hostPortMatch[1]) != null ? _e : "";
+  const hostname2 = (_e = hostPortMatch == null ? void 0 : hostPortMatch[1]) != null ? _e : "";
   const port = (_f = hostPortMatch == null ? void 0 : hostPortMatch[2]) != null ? _f : "";
   switch (protocol) {
     case "udp":
     case "rtp":
       if (scheme !== protocol)
         return false;
-      if (!hostname || !port)
+      if (!hostname2 || !port)
         return false;
       return true;
     case "rtsp":
-      return scheme === "rtsp" && !!hostname;
+      return scheme === "rtsp" && !!hostname2;
     case "hls":
       return (scheme === "http" || scheme === "https") && /\.m3u8(\?|$)/i.test(pathQuery);
     case "dash":
