@@ -42,15 +42,30 @@ pnpm --filter @signage/api    build
 pnpm --filter @signage/ds     build
 
 echo "==> [update] Running migrations..."
-set -a; source "$ENV_FILE"; set +a
-pnpm db:migrate
+sudo bash -c "
+  set -a
+  source '$ENV_FILE'
+  set +a
+  cd '$APP_DIR'
+  node packages/db/scripts/migrate.js
+"
 
 echo "==> [update] Restarting service..."
 sudo systemctl restart "$SERVICE_NAME"
 
 echo "==> [update] Updating nginx config..."
 NGINX_CONF="$APP_DIR/infra/nginx/$NGINX_CONF_FILE"
-sudo cp "$NGINX_CONF" /etc/nginx/sites-available/"$SERVICE_NAME"
+tmp_nginx="$(mktemp)"
+cp "$NGINX_CONF" "$tmp_nginx"
+# Patch /opt/signage → actual APP_DIR
+sed -i "s|/opt/signage|$APP_DIR|g" "$tmp_nginx"
+# Patch source domain to the domain from api.env (APP_URL)
+_domain="$(grep '^APP_URL=' "$ENV_FILE" | sed 's|APP_URL=https\?://||;s|/.*||')"
+if [[ -n "$_domain" ]]; then
+  sed -i "s|ds.chiho.app|$_domain|g; s|screenhub.900.ca|$_domain|g" "$tmp_nginx"
+fi
+sudo cp "$tmp_nginx" /etc/nginx/sites-available/"$SERVICE_NAME"
+rm -f "$tmp_nginx"
 if [[ ! -L /etc/nginx/sites-enabled/"$SERVICE_NAME" ]]; then
     sudo ln -s /etc/nginx/sites-available/"$SERVICE_NAME" /etc/nginx/sites-enabled/"$SERVICE_NAME"
 fi

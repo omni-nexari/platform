@@ -418,6 +418,49 @@ Write-Host ""
 Write-Host "Fetching partner branding..." -ForegroundColor Cyan
 $script:branding = Get-PartnerBranding
 
+# ── Tenant route / subdomain picker ──────────────────────────────────────────
+# After selecting the partner, query available tenant routes so the builder can
+# target a specific client subdomain (e.g. ct.reflowcast.com) instead of always
+# baking the root instance URL into the player.
+function Get-TenantRoutes {
+    if (-not $script:deployKey -or -not $instanceUrl) { return $null }
+    try {
+        $resp = Invoke-RestMethod `
+            -Method Get `
+            -Uri "$instanceUrl/api/v1/player-releases/tenant-routes" `
+            -Headers @{ 'Authorization' = "Bearer $($script:deployKey)" }
+        return $resp
+    } catch {
+        Write-Warning "  Could not fetch tenant routes: $_ -- using main instance URL."
+        return $null
+    }
+}
+
+$tenantData = Get-TenantRoutes
+if ($tenantData -and $tenantData.tenantRoutes -and $tenantData.tenantRoutes.Count -gt 0) {
+    Write-Host ""
+    Write-Host "Available build targets:" -ForegroundColor White
+    Write-Host "   1.  $instanceUrl  (main instance)" -ForegroundColor Gray
+    $routeList = @($tenantData.tenantRoutes)
+    for ($ri = 0; $ri -lt $routeList.Count; $ri++) {
+        $rt = $routeList[$ri]
+        $rtStatus = if ($rt.status) { "[$($rt.status)]" } else { "" }
+        Write-Host "  $($ri+2).  $($rt.url)  $rtStatus" -ForegroundColor Gray
+    }
+    Write-Host ""
+    $targetPick = Read-Host "Build for which URL? [1 = main instance, or 2-$($routeList.Count+1) for a subdomain, Enter to use main]"
+    if ($targetPick -match '^\d+$') {
+        $targetIdx = [int]$targetPick - 2
+        if ($targetIdx -ge 0 -and $targetIdx -lt $routeList.Count) {
+            $selectedRoute = $routeList[$targetIdx]
+            $instanceUrl   = $selectedRoute.url.TrimEnd('/')
+            $wsUrl         = $instanceUrl -replace '^https://', 'wss://' -replace '^http://', 'ws://'
+            $apiBase       = "$instanceUrl/api/v1"
+            Write-Host "  Building for: $instanceUrl" -ForegroundColor Cyan
+        }
+    }
+}
+
 # Upload one or more local files to the partner's platform via the upload API.
 # Returns the parsed JSON response, or $null on failure.
 function Send-PlatformFiles {

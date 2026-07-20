@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { db, playerReleases, playerReleaseApprovals, devices } from '@signage/db';
+import { db, playerReleases, playerReleaseApprovals, devices, tenantRoutes } from '@signage/db';
 import { eq, desc, and, isNull, inArray, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
@@ -141,6 +141,53 @@ export async function playerReleasesRoutes(app: FastifyInstance) {
     }
 
     return reply.send({ companyName, logoUrl, portalTitle, primaryColor });
+  });
+
+  /**
+   * Deploy-key read: active tenant routes on this instance.
+   * Returns subdomains/path-aliases partners can build players for.
+   * Used by build-partner-players.ps1 to present a URL picker.
+   */
+  app.get('/tenant-routes', { onRequest: [app.authenticateDeployKey] }, async (req, reply) => {
+    const orgId = req.deployKeyOrgId;
+    if (!orgId) return reply.status(401).send({ error: 'Unauthorized' });
+
+    const appUrl = (process.env['APP_URL'] ?? '').replace(/\/+$/, '');
+
+    const routes = await db.query.tenantRoutes.findMany({
+      where: and(
+        isNull(tenantRoutes.deletedAt),
+      ),
+      columns: {
+        id: true,
+        hostname: true,
+        pathPrefix: true,
+        routeType: true,
+        status: true,
+        organizationId: true,
+      },
+    });
+
+    const result = routes.map((r) => {
+      const url = r.pathPrefix
+        ? `https://${r.hostname}/${r.pathPrefix}`
+        : `https://${r.hostname}`;
+      return {
+        id: r.id,
+        hostname: r.hostname,
+        pathPrefix: r.pathPrefix,
+        routeType: r.routeType,
+        status: r.status,
+        organizationId: r.organizationId,
+        url,
+      };
+    });
+
+    // Always include the main instance URL as the first option
+    return reply.send({
+      instanceUrl: appUrl,
+      tenantRoutes: result,
+    });
   });
 
   /** Superadmin: list all releases (optional ?platform=) */
