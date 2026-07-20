@@ -34,12 +34,14 @@ and place a reverse proxy in front of Nexari.
 
 ## Step 1 — Obtain the install package
 
-Download the latest release package from the Nexari Partner Portal or run:
+Download the latest release package from GitHub Releases or run:
 
 ```bash
-curl -fsSL https://releases.nexari.io/platform/latest/install-package.tar.gz -o nexari.tar.gz
-tar xzf nexari.tar.gz
-cd nexari
+sudo mkdir -p /opt/nexari && sudo chown $USER /opt/nexari
+cd /opt/nexari
+curl -fsSL https://github.com/omni-nexari/platform/releases/latest/download/nexari-install.tar.gz -o nexari-install.tar.gz
+tar xzf nexari-install.tar.gz --strip-components=1
+rm nexari-install.tar.gz
 ```
 
 The package contains:
