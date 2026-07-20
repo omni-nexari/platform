@@ -72,8 +72,10 @@ jobs:
   release-package:
     name: Upload install package to GitHub Release
     runs-on: ubuntu-latest
-    # Only run on real version tags, not workflow_dispatch
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Run on real version tags, or manually when a v* release tag is provided.
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && startsWith(github.event.inputs.tag, 'v'))
     permissions:
       contents: write
 
@@ -100,6 +102,7 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
           files: |
             nexari-install.tar.gz
             nexari-bootstrap.sh
@@ -107,7 +110,9 @@ jobs:
   release-standalone:
     name: Build and upload standalone Node.js package
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && startsWith(github.event.inputs.tag, 'v'))
     permissions:
       contents: write
 
@@ -225,4 +230,5 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
           files: nexari-platform.tar.gz
