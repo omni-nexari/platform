@@ -62,8 +62,14 @@ pnpm --filter @signage/ds      build
 
 # ── DB migrations ─────────────────────────────────────────────────────────────
 echo "==> [deploy] Running database migrations..."
-set -a; source "$ENV_FILE"; set +a
-pnpm db:migrate
+sudo bash -c "
+    set -euo pipefail
+    set -a
+    source '$ENV_FILE'
+    set +a
+    cd '$APP_DIR'
+    runuser -u '$APP_USER' -- pnpm db:migrate
+"
 
 PRIMARY_DOMAIN="${SSL_DOMAIN:-}"
 if [[ -z "$PRIMARY_DOMAIN" && -n "${APP_URL:-}" ]]; then
