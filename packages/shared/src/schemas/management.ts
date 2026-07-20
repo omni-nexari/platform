@@ -166,3 +166,76 @@ export const AcceptClientOrgInviteSchema = z.object({
   workspaceTimezone: z.string().min(1).default('UTC'),
 });
 export type AcceptClientOrgInviteInput = z.infer<typeof AcceptClientOrgInviteSchema>;
+
+// ---------------------------------------------------------------------------
+// Tenant routes / client domains
+// ---------------------------------------------------------------------------
+export const TenantRouteTypeSchema = z.enum(['management', 'client_org', 'workspace']);
+export type TenantRouteType = z.infer<typeof TenantRouteTypeSchema>;
+
+export const TenantRouteStatusSchema = z.enum(['pending_dns', 'verified', 'active', 'failed']);
+export type TenantRouteStatus = z.infer<typeof TenantRouteStatusSchema>;
+
+export const TenantRouteTlsStatusSchema = z.enum(['pending', 'ready', 'failed', 'external']);
+export type TenantRouteTlsStatus = z.infer<typeof TenantRouteTlsStatusSchema>;
+
+export const RESERVED_TENANT_PATH_PREFIXES = [
+  'api',
+  'assets',
+  'dashboard',
+  'kiosk',
+  'kitchen',
+  'login',
+  'm',
+  'management',
+  'qr',
+  'setup',
+  'settings',
+  'support',
+  'workspaces',
+] as const;
+
+const hostname = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(4)
+  .max(253)
+  .regex(
+    /^(?!-)(?:[a-z0-9-]{1,63}\.)+[a-z]{2,63}$/,
+    'Enter a hostname like client.partner.com without https:// or a path',
+  );
+
+const tenantPathPrefix = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .transform((value) => value.replace(/^\/+|\/+$/g, ''))
+  .refine((value) => value === '' || /^[a-z0-9][a-z0-9-]{0,62}$/.test(value), 'Use lowercase letters, numbers, and hyphens')
+  .refine((value) => !RESERVED_TENANT_PATH_PREFIXES.includes(value as typeof RESERVED_TENANT_PATH_PREFIXES[number]), 'This path is reserved');
+
+export const TenantRouteSchema = z.object({
+  id: z.string().uuid(),
+  hostname,
+  pathPrefix: tenantPathPrefix,
+  routeType: TenantRouteTypeSchema,
+  managementCompanyId: z.string().uuid(),
+  organizationId: z.string().uuid().nullable(),
+  workspaceId: z.string().uuid().nullable(),
+  status: TenantRouteStatusSchema,
+  verificationToken: z.string(),
+  verifiedAt: z.string().datetime().nullable(),
+  tlsStatus: TenantRouteTlsStatusSchema,
+  lastCheckedAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type TenantRoute = z.infer<typeof TenantRouteSchema>;
+
+export const CreateTenantRouteSchema = z.object({
+  hostname,
+  pathPrefix: tenantPathPrefix.optional().default(''),
+  routeType: z.enum(['client_org', 'workspace']).default('client_org'),
+  workspaceId: z.string().uuid().nullable().optional(),
+});
+export type CreateTenantRouteInput = z.infer<typeof CreateTenantRouteSchema>;

@@ -9,6 +9,7 @@ import {
   devices,
   deviceScreenshots,
   orgStorageQuotas,
+  tenantRoutes,
   managementCompanies,
   managementCompanyAdmins,
   managementCompanyAdminInvitations,
@@ -47,6 +48,7 @@ import {
   CreateSupportTicketSchema,
   ReplyToTicketSchema,
   UpdateTicketSchema,
+  CreateTenantRouteSchema,
 } from '@signage/shared';
 import { sendInviteEmail, sendSupportNotificationEmail, invalidateEmailConfigCache, getEmailConfig } from '../services/email.js';
 import { writeAuditLog } from '../services/audit.js';
@@ -222,6 +224,14 @@ function clearMainRefreshCookie(reply: FastifyReply) {
 
 function deletedSlugTombstone(slug: string): string {
   return `${slug}--deleted-${randomToken(4)}`;
+}
+
+function normalizeTenantHostname(hostname: string) {
+  return hostname.trim().toLowerCase().replace(/\.$/, '');
+}
+
+function normalizeTenantPathPrefix(pathPrefix: string | null | undefined) {
+  return (pathPrefix ?? '').trim().toLowerCase().replace(/^\/+|\/+$/g, '');
 }
 
 function deletedEmailTombstone(email: string, uniquePart: string): string {
@@ -2304,6 +2314,141 @@ export async function superAdminRoutes(app: FastifyInstance) {
     const pendingInvitesWithRole = pendingInvites.map((inv) => ({ ...inv, role: inv.orgRole }));
 
     return reply.send({ org, members, pendingInvites: pendingInvitesWithRole });
+  });
+
+  // ── GET /superadmin/orgs/:id/tenant-routes ────────────────────────────────
+  app.get('/orgs/:id/tenant-routes', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const caller = req.user as PlatformAdminCaller;
+
+    const org = await db.query.organizations.findFirst({ where: eq(organizations.id, id) });
+    if (!org || org.deletedAt) return reply.status(404).send({ error: 'Not found' });
+
+    if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
+      return reply.status(403).send({ error: 'Forbidden' });
+    }
+
+    const routes = await db.query.tenantRoutes.findMany({
+      where: and(eq(tenantRoutes.organizationId, id), isNull(tenantRoutes.deletedAt)),
+      orderBy: [asc(tenantRoutes.hostname), asc(tenantRoutes.pathPrefix)],
+    });
+
+    return reply.send(routes);
+  });
+
+  // ── POST /superadmin/orgs/:id/tenant-routes ───────────────────────────────
+  app.post('/orgs/:id/tenant-routes', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const caller = req.user as PlatformAdminCaller;
+
+    const org = await db.query.organizations.findFirst({ where: eq(organizations.id, id) });
+    if (!org || org.deletedAt) return reply.status(404).send({ error: 'Not found' });
+
+    if (!org.managementCompanyId) {
+      return reply.status(400).send({ error: 'Organization is not managed by a partner' });
+    }
+
+    if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
+      return reply.status(403).send({ error: 'Forbidden' });
+    }
+
+    const body = CreateTenantRouteSchema.safeParse(req.body);
+    if (!body.success) return reply.status(400).send({ error: body.error.flatten() });
+
+    const hostname = normalizeTenantHostname(body.data.hostname);
+    const pathPrefix = normalizeTenantPathPrefix(body.data.pathPrefix);
+    const routeType = body.data.routeType;
+    const workspaceId = body.data.workspaceId ?? null;
+
+    if (routeType === 'workspace' && !workspaceId) {
+      return reply.status(400).send({ error: 'workspaceId is required for workspace routes' });
+    }
+
+    if (workspaceId) {
+      const workspace = await db.query.workspaces.findFirst({
+        where: and(
+          eq(workspaces.id, workspaceId),
+          eq(workspaces.orgId, id),
+          isNull(workspaces.deletedAt),
+        ),
+      });
+      if (!workspace) return reply.status(400).send({ error: 'Workspace does not belong to this client organization' });
+    }
+
+    const existingRoute = await db.query.tenantRoutes.findFirst({
+      where: and(
+        eq(tenantRoutes.hostname, hostname),
+        eq(tenantRoutes.pathPrefix, pathPrefix),
+        isNull(tenantRoutes.deletedAt),
+      ),
+    });
+    if (existingRoute) return reply.status(409).send({ error: 'Route already exists' });
+
+    const [created] = await db
+      .insert(tenantRoutes)
+      .values({
+        hostname,
+        pathPrefix,
+        routeType,
+        managementCompanyId: org.managementCompanyId,
+        organizationId: id,
+        workspaceId: routeType === 'workspace' ? workspaceId : null,
+        verificationToken: `nexari-${randomToken(16)}`,
+      })
+      .returning();
+
+    await writeAuditLog({
+      orgId: id,
+      actorId: caller.sub,
+      actorType: 'system',
+      action: 'TENANT_ROUTE_CREATED',
+      entityType: 'tenant_route',
+      entityId: created!.id,
+      meta: { hostname, pathPrefix, routeType, workspaceId },
+      ipAddress: req.ip,
+    });
+
+    return reply.status(201).send(created);
+  });
+
+  // ── DELETE /superadmin/orgs/:id/tenant-routes/:routeId ────────────────────
+  app.delete('/orgs/:id/tenant-routes/:routeId', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const { id, routeId } = req.params as { id: string; routeId: string };
+    const caller = req.user as PlatformAdminCaller;
+
+    const org = await db.query.organizations.findFirst({ where: eq(organizations.id, id) });
+    if (!org || org.deletedAt) return reply.status(404).send({ error: 'Not found' });
+
+    if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
+      return reply.status(403).send({ error: 'Forbidden' });
+    }
+
+    const route = await db.query.tenantRoutes.findFirst({
+      where: and(
+        eq(tenantRoutes.id, routeId),
+        eq(tenantRoutes.organizationId, id),
+        isNull(tenantRoutes.deletedAt),
+      ),
+    });
+    if (!route) return reply.status(404).send({ error: 'Route not found' });
+
+    await db
+      .update(tenantRoutes)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(eq(tenantRoutes.id, routeId));
+
+    await writeAuditLog({
+      orgId: id,
+      actorId: caller.sub,
+      actorType: 'system',
+      action: 'TENANT_ROUTE_DELETED',
+      entityType: 'tenant_route',
+      entityId: routeId,
+      meta: { hostname: route.hostname, pathPrefix: route.pathPrefix, routeType: route.routeType },
+      ipAddress: req.ip,
+    });
+
+    return reply.status(204).send();
   });
 
   // ── POST /superadmin/orgs ───────────────────────────────────────────────────

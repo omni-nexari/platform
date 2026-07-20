@@ -1,5 +1,6 @@
 export * from './auth.js';
 export * from './management.js';
+export * from './tenant-routes.js';
 export * from './users.js';
 export * from './workspaces.js';
 export * from './devices.js';

@@ -22,6 +22,7 @@ import { eq, and, isNull, asc, gt } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 import { sendInviteEmail } from '../services/email.js';
 import { writeAuditLog } from '../services/audit.js';
+import { resolveTenantRoute } from '../services/tenant-routes.js';
 
 // UUID used as `invitedBy` for system-initiated invitations (no human inviter).
 const SYSTEM_INVITER_ID = '00000000-0000-0000-0000-000000000000';
@@ -63,6 +64,58 @@ const SignupSchema = z.object({
 // =============================================================================
 
 export async function publicRoutes(app: FastifyInstance) {
+
+  // ── GET /public/tenant-context ────────────────────────────────────────────
+  // Resolves the current Host header and optional path alias to partner/client
+  // context. Used by the SPA before redirecting/branding a custom route.
+  app.get('/tenant-context', async (req, reply) => {
+    const query = z.object({ path: z.string().optional() }).safeParse(req.query);
+    if (!query.success) return reply.status(400).send({ error: query.error.flatten() });
+
+    const forwardedHost = req.headers['x-forwarded-host'];
+    const host = Array.isArray(forwardedHost)
+      ? forwardedHost[0]
+      : forwardedHost ?? req.headers.host ?? null;
+    const resolved = await resolveTenantRoute(host, query.data.path);
+
+    if (!resolved) {
+      return reply.send({ route: null });
+    }
+
+    const { route, source, managementCompany, organization, workspace } = resolved;
+    return reply.send({
+      source,
+      route: {
+        id: route.id,
+        hostname: route.hostname,
+        pathPrefix: route.pathPrefix,
+        routeType: route.routeType,
+        status: route.status,
+        tlsStatus: route.tlsStatus,
+      },
+      managementCompany: managementCompany ? {
+        id: managementCompany.id,
+        name: managementCompany.name,
+        slug: managementCompany.slug,
+        portalTitle: managementCompany.portalTitle,
+        logoUrl: managementCompany.logoUrl,
+        faviconUrl: managementCompany.faviconUrl,
+        primaryColor: managementCompany.primaryColor,
+        accentColor: managementCompany.accentColor,
+      } : null,
+      organization: organization ? {
+        id: organization.id,
+        name: organization.name,
+        slug: organization.slug,
+        status: organization.status,
+      } : null,
+      workspace: workspace ? {
+        id: workspace.id,
+        name: workspace.name,
+        slug: workspace.slug,
+      } : null,
+    });
+  });
 
   // ── GET /public/pricing ────────────────────────────────────────────────────
   // Returns all active, public plans each with their prices array.

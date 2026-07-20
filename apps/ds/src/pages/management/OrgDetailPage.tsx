@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowLeft, Mail, Users, Clock, Trash2, HardDrive, LogIn } from 'lucide-react';
+import { ArrowLeft, Mail, Users, Clock, Trash2, HardDrive, LogIn, Globe } from 'lucide-react';
 import { saApi, saImpersonateOrg } from '../../lib/superadmin-auth.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
 import {
@@ -56,6 +56,17 @@ interface OrgQuota {
   alertThresholdPct: number;
 }
 
+interface TenantRoute {
+  id: string;
+  hostname: string;
+  pathPrefix: string;
+  routeType: 'management' | 'client_org' | 'workspace';
+  status: 'pending_dns' | 'verified' | 'active' | 'failed';
+  verificationToken: string;
+  tlsStatus: 'pending' | 'ready' | 'failed' | 'external';
+  createdAt: string;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
   if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
@@ -106,6 +117,8 @@ export default function OrgDetailPage() {
   const [showDelete, setShowDelete] = useState(false);
   const [quotaInput, setQuotaInput] = useState('');
   const [showImpersonateConfirm, setShowImpersonateConfirm] = useState(false);
+  const [routeHostname, setRouteHostname] = useState('');
+  const [routePathPrefix, setRoutePathPrefix] = useState('');
 
   const { data, isLoading } = useQuery({
     queryKey: ['sa-org', id],
@@ -116,6 +129,12 @@ export default function OrgDetailPage() {
   const { data: quota } = useQuery({
     queryKey: ['sa-org-quota', id],
     queryFn: () => saApi.get<OrgQuota>(`/superadmin/orgs/${id}/quota`),
+    enabled: !!id,
+  });
+
+  const { data: tenantRoutes = [] } = useQuery({
+    queryKey: ['sa-org-tenant-routes', id],
+    queryFn: () => saApi.get<TenantRoute[]>(`/superadmin/orgs/${id}/tenant-routes`),
     enabled: !!id,
   });
 
@@ -150,6 +169,30 @@ export default function OrgDetailPage() {
       void qc.invalidateQueries({ queryKey: ['sa-org', id] });
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to send invite'),
+  });
+
+  const createTenantRouteMut = useMutation({
+    mutationFn: () => saApi.post<TenantRoute>(`/superadmin/orgs/${id}/tenant-routes`, {
+      hostname: routeHostname.trim(),
+      pathPrefix: routePathPrefix.trim(),
+      routeType: 'client_org',
+    }),
+    onSuccess: () => {
+      toast.success('Client route added');
+      setRouteHostname('');
+      setRoutePathPrefix('');
+      void qc.invalidateQueries({ queryKey: ['sa-org-tenant-routes', id] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to add route'),
+  });
+
+  const deleteTenantRouteMut = useMutation({
+    mutationFn: (routeId: string) => saApi.delete(`/superadmin/orgs/${id}/tenant-routes/${routeId}`),
+    onSuccess: () => {
+      toast.success('Client route removed');
+      void qc.invalidateQueries({ queryKey: ['sa-org-tenant-routes', id] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to remove route'),
   });
 
   const revokeInviteMut = useMutation({
@@ -238,6 +281,86 @@ export default function OrgDetailPage() {
             <p className="text-xs text-[var(--text-muted)] mb-1">Created</p>
             <p className="font-semibold">{new Date(org.createdAt).toLocaleDateString()}</p>
           </div>
+        </SectionCardBody>
+      </SectionCard>
+
+      <SectionCard>
+        <SectionCardHeader>
+          <h2 className="text-base font-semibold flex items-center gap-2"><Globe size={16} /> Domains & Routes</h2>
+        </SectionCardHeader>
+        <SectionCardBody className="space-y-5">
+          <div className="grid gap-3 lg:grid-cols-[1fr_0.8fr_auto] lg:items-end">
+            <div>
+              <label className="block text-xs text-[var(--text-muted)] mb-1">Hostname</label>
+              <input
+                value={routeHostname}
+                onChange={(e) => setRouteHostname(e.target.value)}
+                placeholder="client1.partner.com or partner.com"
+                className="input w-full"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-[var(--text-muted)] mb-1">Path alias optional</label>
+              <input
+                value={routePathPrefix}
+                onChange={(e) => setRoutePathPrefix(e.target.value)}
+                placeholder="client1"
+                className="input w-full"
+              />
+            </div>
+            <button
+              onClick={() => createTenantRouteMut.mutate()}
+              disabled={!routeHostname.trim() || createTenantRouteMut.isPending}
+              className="btn-primary whitespace-nowrap w-full lg:w-auto"
+            >
+              {createTenantRouteMut.isPending ? 'Adding…' : 'Add Route'}
+            </button>
+          </div>
+
+          <p className="text-xs text-[var(--text-muted)]">
+            Use a subdomain like <span className="font-mono text-[var(--text)]">client1.partner.com</span> for strongest client isolation. Use a path alias like <span className="font-mono text-[var(--text)]">partner.com/client1</span> when the partner prefers one shared hostname.
+          </p>
+
+          {tenantRoutes.length === 0 ? (
+            <div className="rounded-xl border border-dashed p-5 text-sm text-[var(--text-muted)]" style={{ borderColor: 'var(--card-border)' }}>
+              No client routes yet.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {tenantRoutes.map((route) => {
+                const publicUrl = route.pathPrefix ? `https://${route.hostname}/${route.pathPrefix}` : `https://${route.hostname}`;
+                return (
+                  <div key={route.id} className="rounded-xl border p-4" style={{ borderColor: 'var(--card-border)', background: 'var(--surface)' }}>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="font-mono text-sm text-[var(--text)] break-all">{publicUrl}</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <Badge tone={route.status === 'active' || route.status === 'verified' ? 'success' : route.status === 'failed' ? 'danger' : 'warning'}>
+                            {route.status.replace('_', ' ')}
+                          </Badge>
+                          <Badge tone={route.tlsStatus === 'ready' || route.tlsStatus === 'external' ? 'success' : route.tlsStatus === 'failed' ? 'danger' : 'warning'}>
+                            TLS {route.tlsStatus}
+                          </Badge>
+                        </div>
+                        <div className="mt-3 space-y-1 text-xs text-[var(--text-muted)]">
+                          <p>DNS: point <span className="font-mono text-[var(--text)]">{route.hostname}</span> to this Nexari server.</p>
+                          <p>TXT: <span className="font-mono text-[var(--text)]">_nexari.{route.hostname}</span> = <span className="font-mono text-[var(--text)] break-all">{route.verificationToken}</span></p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => deleteTenantRouteMut.mutate(route.id)}
+                        disabled={deleteTenantRouteMut.isPending}
+                        className="ui-inline-action-btn ui-inline-action-btn-danger self-start"
+                        title="Remove route"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </SectionCardBody>
       </SectionCard>
 
