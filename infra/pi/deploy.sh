@@ -68,7 +68,7 @@ sudo bash -c "
     source '$ENV_FILE'
     set +a
     cd '$APP_DIR'
-    runuser -u '$APP_USER' -- pnpm db:migrate
+    node packages/db/scripts/migrate.js
 "
 
 PRIMARY_DOMAIN="${SSL_DOMAIN:-}"
@@ -149,6 +149,34 @@ if [[ "$INSTALL_PLATFORM_VHOST" == "true" && -f "$APP_DIR/infra/nginx/platform.n
     if [[ ! -L /etc/nginx/sites-enabled/platform.nexari.ca.conf ]]; then
         sudo ln -s /etc/nginx/sites-available/platform.nexari.ca.conf /etc/nginx/sites-enabled/platform.nexari.ca.conf
     fi
+fi
+
+# certbot certonly --standalone issues certificates but may not create the
+# nginx helper files normally written by the nginx plugin. The bundled nginx
+# configs include these paths, so create safe fallbacks before nginx -t.
+if [[ -d /etc/letsencrypt ]]; then
+    if [[ ! -f /etc/letsencrypt/options-ssl-nginx.conf ]]; then
+        echo "==> [deploy] Creating /etc/letsencrypt/options-ssl-nginx.conf fallback..."
+        sudo tee /etc/letsencrypt/options-ssl-nginx.conf > /dev/null <<'EOF'
+ssl_session_cache shared:le_nginx_SSL:10m;
+ssl_session_timeout 1440m;
+ssl_session_tickets off;
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_prefer_server_ciphers off;
+EOF
+    fi
+
+    if [[ ! -f /etc/letsencrypt/ssl-dhparams.pem ]]; then
+        echo "==> [deploy] Creating /etc/letsencrypt/ssl-dhparams.pem fallback..."
+        sudo openssl dhparam -out /etc/letsencrypt/ssl-dhparams.pem 2048
+    fi
+fi
+
+if sudo grep -Eq '^\s*cp_nodelay\b' /etc/nginx/nginx.conf; then
+    echo "ERROR: /etc/nginx/nginx.conf contains 'cp_nodelay', which is not a valid nginx directive."
+    echo "       Run: sudo sed -i 's/^\([[:space:]]*\)cp_nodelay/\1tcp_nodelay/' /etc/nginx/nginx.conf"
+    echo "       Then rerun: sudo nginx -t"
+    exit 1
 fi
 
 sudo nginx -t
