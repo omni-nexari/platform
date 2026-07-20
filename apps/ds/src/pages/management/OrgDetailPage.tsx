@@ -195,6 +195,20 @@ export default function OrgDetailPage() {
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Failed to remove route'),
   });
 
+  const verifyTenantRouteMut = useMutation({
+    mutationFn: (routeId: string) =>
+      saApi.post<{ verified: boolean; reason: string }>(`/superadmin/orgs/${id}/tenant-routes/${routeId}/verify`, {}),
+    onSuccess: (result) => {
+      if (result.verified) {
+        toast.success('Domain verified!');
+      } else {
+        toast.error(`Verification failed: ${result.reason}`);
+      }
+      void qc.invalidateQueries({ queryKey: ['sa-org-tenant-routes', id] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Verification failed'),
+  });
+
   const revokeInviteMut = useMutation({
     mutationFn: (inviteId: string) => saApi.delete(`/superadmin/orgs/${id}/invites/${inviteId}`),
     onSuccess: () => {
@@ -347,14 +361,26 @@ export default function OrgDetailPage() {
                           <p>TXT: <span className="font-mono text-[var(--text)]">_nexari.{route.hostname}</span> = <span className="font-mono text-[var(--text)] break-all">{route.verificationToken}</span></p>
                         </div>
                       </div>
-                      <button
-                        onClick={() => deleteTenantRouteMut.mutate(route.id)}
-                        disabled={deleteTenantRouteMut.isPending}
-                        className="ui-inline-action-btn ui-inline-action-btn-danger self-start"
-                        title="Remove route"
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      <div className="flex items-center gap-2 self-start">
+                        {route.status !== 'active' && (
+                          <button
+                            onClick={() => verifyTenantRouteMut.mutate(route.id)}
+                            disabled={verifyTenantRouteMut.isPending}
+                            className="ui-inline-action-btn"
+                            title="Check DNS and verify domain"
+                          >
+                            {verifyTenantRouteMut.isPending ? 'Checking…' : 'Verify'}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => deleteTenantRouteMut.mutate(route.id)}
+                          disabled={deleteTenantRouteMut.isPending}
+                          className="ui-inline-action-btn ui-inline-action-btn-danger"
+                          title="Remove route"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );

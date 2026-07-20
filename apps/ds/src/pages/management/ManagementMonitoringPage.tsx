@@ -249,7 +249,7 @@ export default function ManagementMonitoringPage() {
     sslDays === null ? 'danger' : sslDays > 30 ? 'success' : sslDays > 14 ? 'warning' : 'danger';
 
   // ── Backup ──
-  const backupOk = backupQ.data?.status === 'OK';
+  const backupOk = backupQ.data?.status?.toLowerCase() === 'ok';
   const backupDate = backupQ.data?.timestamp
     ? new Date(backupQ.data.timestamp).toLocaleString('en-CA', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
     : null;

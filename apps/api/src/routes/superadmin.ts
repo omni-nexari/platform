@@ -54,6 +54,7 @@ import { sendInviteEmail, sendSupportNotificationEmail, invalidateEmailConfigCac
 import { writeAuditLog } from '../services/audit.js';
 import { canUseMultiTenant, getLicenseTierLabel } from '../services/license-client.js';
 import { ingestTicketCreated, ingestMessageAdded } from '../services/admin-ingest.js';
+import { verifyTenantRoute } from '../services/tenant-route-verification.js';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 const BRANDING_ASSET_TYPES = new Set(['logo', 'favicon', 'login-background']);
@@ -2409,6 +2410,27 @@ export async function superAdminRoutes(app: FastifyInstance) {
     });
 
     return reply.status(201).send(created);
+  });
+
+  // ── POST /superadmin/orgs/:id/tenant-routes/:routeId/verify ─────────────
+  app.post('/orgs/:id/tenant-routes/:routeId/verify', { onRequest: [app.authenticatePlatformAdmin] }, async (req, reply) => {
+    const { id, routeId } = req.params as { id: string; routeId: string };
+    const caller = req.user as PlatformAdminCaller;
+
+    const org = await db.query.organizations.findFirst({ where: eq(organizations.id, id) });
+    if (!org || org.deletedAt) return reply.status(404).send({ error: 'Not found' });
+
+    if (!isOwnerCaller(caller) && org.managementCompanyId !== caller.managementCompanyId) {
+      return reply.status(403).send({ error: 'Forbidden' });
+    }
+
+    const route = await db.query.tenantRoutes.findFirst({
+      where: and(eq(tenantRoutes.id, routeId), eq(tenantRoutes.organizationId, id), isNull(tenantRoutes.deletedAt)),
+    });
+    if (!route) return reply.status(404).send({ error: 'Route not found' });
+
+    const result = await verifyTenantRoute(routeId);
+    return reply.send(result);
   });
 
   // ── DELETE /superadmin/orgs/:id/tenant-routes/:routeId ────────────────────

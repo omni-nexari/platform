@@ -16,6 +16,8 @@ import {
 import { runWebhookDeliveryJob } from './webhooks.js';
 import { runScreenUsageReport } from '../routes/billing.js';
 import { getRedis } from './redis.js';
+import { runTenantRouteVerification } from './tenant-route-verification.js';
+export { runTenantRouteVerification } from './tenant-route-verification.js';
 
 const STORAGE_ROOT = process.env['STORAGE_ROOT'] ?? './signage_uploads';
 const TRASH_RETENTION_DAYS = Number(process.env['TRASH_RETENTION_DAYS'] ?? '7');
@@ -62,12 +64,13 @@ function wrapJob(name: string, fn: () => Promise<void>): () => Promise<void> {
 
 export function startJobs(): void {
   // Stagger initial runs to avoid hammering the DB at startup
-  setTimeout(wrapJob('play-events-partition', runPlayEventsPartition), 5_000);
-  setTimeout(wrapJob('file-cleanup',          runFileCleanup),          10_000);
-  setTimeout(wrapJob('content-expiry',        runContentExpiryNotifier), 20_000);
-  setTimeout(wrapJob('heartbeat-cleanup',     runHeartbeatCleanup),      30_000);
-  setTimeout(wrapJob('webhook-delivery',      runWebhookDeliveryJob),    35_000);
-  setTimeout(wrapJob('screen-usage-report',  runScreenUsageReport),     45_000);
+  setTimeout(wrapJob('play-events-partition',        runPlayEventsPartition),        5_000);
+  setTimeout(wrapJob('file-cleanup',                  runFileCleanup),                10_000);
+  setTimeout(wrapJob('content-expiry',                runContentExpiryNotifier),      20_000);
+  setTimeout(wrapJob('heartbeat-cleanup',             runHeartbeatCleanup),           30_000);
+  setTimeout(wrapJob('webhook-delivery',              runWebhookDeliveryJob),         35_000);
+  setTimeout(wrapJob('screen-usage-report',           runScreenUsageReport),          45_000);
+  setTimeout(wrapJob('tenant-route-verification',     runTenantRouteVerification),    50_000);
 
   // When Redis is available the BullMQ recurring worker (workers/recurring.ts)
   // owns the scheduling — skip setIntervals to avoid double-execution. We keep
@@ -82,6 +85,7 @@ export function startJobs(): void {
     setInterval(wrapJob('sensor-reading-cleanup',    runSensorReadingCleanup),     24 * 60 * 60 * 1000);
     setInterval(wrapJob('webhook-delivery-cleanup',  runWebhookDeliveryCleanup),   24 * 60 * 60 * 1000);
     setInterval(wrapJob('screen-usage-report',       runScreenUsageReport),        60 * 60 * 1000);
+    setInterval(wrapJob('tenant-route-verification', runTenantRouteVerification),  5 * 60 * 1000);
   }
   // Always keep the webhook delivery sweeper — cheap, and catches any
   // delivery row that BullMQ missed (e.g. inserted during a Redis outage).

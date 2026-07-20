@@ -19,6 +19,7 @@ import {
   runPlayEventsPartition,
   runSensorReadingCleanup,
   runWebhookDeliveryCleanup,
+  runTenantRouteVerification,
 } from '../services/jobs.js';
 import { runScreenUsageReport } from '../routes/billing.js';
 
@@ -28,24 +29,25 @@ export interface RecurringJobData {
 
 /** Job name → handler. Webhook delivery is enqueued at dispatch time, not as a recurring job. */
 const HANDLERS: Record<string, () => Promise<void>> = {
-  'file-cleanup':            runFileCleanup,
-  'content-expiry':          runContentExpiryNotifier,
-  'heartbeat-cleanup':       runHeartbeatCleanup,
-  'play-events-partition':   runPlayEventsPartition,
-  'sensor-reading-cleanup':  runSensorReadingCleanup,
-  'webhook-delivery-cleanup': runWebhookDeliveryCleanup,
-  'screen-usage-report':       runScreenUsageReport,
+  'file-cleanup':                runFileCleanup,
+  'content-expiry':              runContentExpiryNotifier,
+  'heartbeat-cleanup':           runHeartbeatCleanup,
+  'play-events-partition':       runPlayEventsPartition,
+  'sensor-reading-cleanup':      runSensorReadingCleanup,
+  'webhook-delivery-cleanup':    runWebhookDeliveryCleanup,
+  'screen-usage-report':         runScreenUsageReport,
+  'tenant-route-verification':   runTenantRouteVerification,
 };
 
-/** Cron schedules — UTC. */
 const SCHEDULES: Record<string, string> = {
-  'file-cleanup':             '0 * * * *',     // hourly
-  'content-expiry':           '*/5 * * * *',   // every 5 minutes
-  'heartbeat-cleanup':        '0 3 * * *',     // 03:00 UTC
-  'play-events-partition':    '0 2 * * *',     // 02:00 UTC
-  'sensor-reading-cleanup':   '0 4 * * *',     // 04:00 UTC
-  'webhook-delivery-cleanup': '0 5 * * *',     // 05:00 UTC
-  'screen-usage-report':       '0 * * * *',     // hourly — report metered screen counts to Stripe
+  'file-cleanup':               '0 * * * *',     // hourly
+  'content-expiry':             '*/5 * * * *',   // every 5 minutes
+  'heartbeat-cleanup':          '0 3 * * *',     // 03:00 UTC
+  'play-events-partition':      '0 2 * * *',     // 02:00 UTC
+  'sensor-reading-cleanup':     '0 4 * * *',     // 04:00 UTC
+  'webhook-delivery-cleanup':   '0 5 * * *',     // 05:00 UTC
+  'screen-usage-report':        '0 * * * *',     // hourly
+  'tenant-route-verification':  '*/5 * * * *',   // every 5 minutes
 };
 
 /** Register one BullMQ repeatable per recurring job. Idempotent. */

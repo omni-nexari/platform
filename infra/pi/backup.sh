@@ -40,12 +40,12 @@ FILEPATH="$BACKUP_DIR/$FILENAME"
 echo "==> [backup] pg_dump → $FILEPATH"
 if pg_dump "$DATABASE_URL" | gzip > "$FILEPATH"; then
     SIZE=$(du -sh "$FILEPATH" | cut -f1)
-    echo "$(_ts) ok $SIZE $FILENAME" > "$BACKUP_STATUS_FILE"
+    echo "$(_ts) OK $SIZE $FILENAME" > "$BACKUP_STATUS_FILE"
     echo "    OK  $SIZE  $FILENAME"
     # Prune backups older than KEEP_DAYS
     find "$BACKUP_DIR" -name 'backup-*.sql.gz' -mtime "+${KEEP_DAYS}" -delete 2>/dev/null || true
 else
-    echo "$(_ts) error - pg_dump-failed -" > "$BACKUP_STATUS_FILE"
+    echo "$(_ts) ERROR - pg_dump-failed -" > "$BACKUP_STATUS_FILE"
     echo "ERROR: pg_dump failed"
     exit 1
 fi
