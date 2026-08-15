@@ -525,10 +525,12 @@ export default function SchedulePage() {
             <span className="text-sm font-semibold text-[var(--text)]">{selectedItems.size} selected</span>
             <div className="w-px h-5 bg-[var(--border)]" />
             <button
-              onClick={() => setSelectedItems(new Set())}
+              onClick={() => selectedItems.size === scheduleList.length
+                ? setSelectedItems(new Set())
+                : setSelectedItems(new Set(scheduleList.map((s) => s.id)))}
               className="text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
             >
-              Deselect all
+              {selectedItems.size === scheduleList.length ? 'Deselect all' : `Select all (${scheduleList.length})`}
             </button>
             <button
               onClick={() => setBulkTagOpen(true)}

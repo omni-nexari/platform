@@ -814,10 +814,12 @@ export default function PlaylistPage() {
             <span className="text-sm font-semibold text-[var(--text)]">{selectedItems.size} selected</span>
             <div className="w-px h-5 bg-[var(--border)]" />
             <button
-              onClick={() => setSelectedItems(new Set())}
+              onClick={() => selectedItems.size === items.length
+                ? setSelectedItems(new Set())
+                : setSelectedItems(new Set(items.map((i) => i.id)))}
               className="text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
             >
-              Deselect all
+              {selectedItems.size === items.length ? 'Deselect all' : `Select all (${items.length})`}
             </button>
             <button
               onClick={() => setBulkTagOpen(true)}

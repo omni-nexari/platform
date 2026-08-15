@@ -1108,13 +1108,13 @@ export default function DevicesPage() {
           <span className="text-sm font-semibold text-[var(--text)]">{selectedItems.size} selected</span>
           <div className="w-px h-5 bg-[var(--border)]" />
           <button
-            onClick={() => setSelectedItems(new Set())}
+            onClick={() => selectedItems.size === filteredDevices.length
+              ? setSelectedItems(new Set())
+              : setSelectedItems(new Set(filteredDevices.map((d) => d.id)))}
             className="text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
           >
-            Deselect all
+            {selectedItems.size === filteredDevices.length ? 'Deselect all' : `Select all (${filteredDevices.length})`}
           </button>
-          <button
-            onClick={() => setBulkPublishOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-300 text-xs font-semibold hover:bg-purple-500/25 transition-colors"
           >
             <Play size={12} /> Publish

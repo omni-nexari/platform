@@ -1244,13 +1244,13 @@ export default function ContentPage() {
           <span className="text-sm font-semibold text-[var(--text)]">{selectedItems.size} selected</span>
           <div className="w-px h-5 bg-[var(--border)]" />
           <button
-            onClick={() => setSelectedItems(new Set())}
+            onClick={() => selectedItems.size === items.length
+              ? setSelectedItems(new Set())
+              : setSelectedItems(new Set(items.map((i) => i.id)))}
             className="text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
           >
-            Deselect all
+            {selectedItems.size === items.length ? 'Deselect all' : `Select all (${items.length})`}
           </button>
-          <button
-            onClick={() => setBulkTagOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent)]/15 border border-[var(--accent)]/30 text-[var(--accent)] text-xs font-semibold hover:bg-[var(--accent)]/25 transition-colors"
           >
             <Check size={12} /> Apply Tags
