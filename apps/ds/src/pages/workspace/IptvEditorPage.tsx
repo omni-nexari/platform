@@ -2,7 +2,7 @@
  * IPTV wizard — build a channel group and save as an `iptv` content item.
  * Steps:  1. Channels   2. Settings
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -38,10 +38,11 @@ function extractIptvHost(url: string): string | null {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function IptvEditorPage() {
-  const { wsId } = useParams<{ wsId: string }>();
+  const { wsId, id: contentId } = useParams<{ wsId: string; id?: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
+  const isEditing = Boolean(contentId);
   const [step, setStep] = useState(0);
   const [name, setName] = useState('IPTV Channels');
   const [rows, setRows] = useState<ChannelRow[]>([makeChannelRow(1)]);
@@ -49,9 +50,50 @@ export default function IptvEditorPage() {
   const [m3uText, setM3uText] = useState('');
   const [showM3u, setShowM3u] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(isEditing);
 
   const stepNames = ['Channels', 'Settings'];
   const totalSteps = stepNames.length;
+
+  useEffect(() => {
+    if (!isEditing || !contentId || !wsId) return;
+
+    let cancelled = false;
+    setLoading(true);
+
+    void api.get<{ id: string; name: string; metadata: string | null }>(`/content/${contentId}`)
+      .then((item) => {
+        if (cancelled) return;
+        setName(item.name || 'IPTV Channels');
+        try {
+          const parsed = JSON.parse(item.metadata ?? '{}') as { channels?: Array<{ number: number; name: string; url: string; protocol: IptvProtocol }>; defaultChannelNumber?: number };
+          const nextRows = (parsed.channels ?? []).map((ch) => ({
+            rowId: crypto.randomUUID(),
+            number: ch.number,
+            name: ch.name,
+            url: ch.url,
+            protocol: ch.protocol,
+          }));
+          setRows(nextRows.length ? nextRows : [makeChannelRow(1)]);
+          setDefaultCh(parsed.defaultChannelNumber ?? nextRows[0]?.number ?? 1);
+        } catch {
+          setRows([makeChannelRow(1)]);
+          setDefaultCh(1);
+        }
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        toast.error(e instanceof Error ? e.message : 'Failed to load IPTV channel group');
+        navigate(`/workspaces/${wsId}/content`);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [contentId, isEditing, navigate, wsId]);
 
   // ── Mutations ─────────────────────────────────────────────────────────────
   const importM3uMut = useMutation({
@@ -77,22 +119,34 @@ export default function IptvEditorPage() {
   });
 
   const saveMut = useMutation({
-    mutationFn: () =>
-      api.post('/content/channel-group', {
+    mutationFn: () => {
+      const channels = rows.map((r) => ({
+        number: r.number,
+        name: r.name.trim(),
+        url: r.url.trim(),
+        protocol: r.protocol,
+      }));
+
+      if (isEditing && contentId) {
+        return api.patch(`/content/${contentId}/channel-group`, {
+          name: name.trim(),
+          channels,
+          defaultChannelNumber: defaultCh,
+        });
+      }
+
+      return api.post('/content/channel-group', {
         workspaceId: wsId,
         name: name.trim(),
-        channels: rows.map((r) => ({
-          number: r.number,
-          name: r.name.trim(),
-          url: r.url.trim(),
-          protocol: r.protocol,
-        })),
+        channels,
         defaultChannelNumber: defaultCh,
-      }),
+      });
+    },
     onSuccess: (created: unknown) => {
-      toast.success('Channel group created');
+      const action = isEditing ? 'Channel group updated' : 'Channel group created';
+      toast.success(action);
       void queryClient.invalidateQueries({ queryKey: ['content', wsId] });
-      const cid = (created as { id?: string })?.id;
+      const cid = (created as { id?: string })?.id ?? contentId;
       navigate(`/workspaces/${wsId}/content${cid ? `?openId=${cid}` : ''}`);
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : 'Failed to save'),
@@ -139,6 +193,14 @@ export default function IptvEditorPage() {
   })();
 
   if (!wsId) return null;
+
+  if (loading && isEditing) {
+    return (
+      <div className="flex h-full items-center justify-center bg-[var(--bg)]">
+        <div className="text-sm text-[var(--text-muted)]">Loading IPTV channel group…</div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full">

@@ -6,7 +6,7 @@ import {
   X, Monitor, Eye, Download, MoreVertical, Plus, Check,
   XCircle, Clock, AlertTriangle, Copy, Trash2, RotateCcw,
   Image as ImageIcon, Video, Code2, FileText, Presentation,
-  Globe, Film, Tag as TagIcon, Calendar, LayoutGrid, Pencil, Tv2,
+  Globe, Film, Tag as TagIcon, Calendar, LayoutGrid, Pencil, Tv, Tv2,
 } from 'lucide-react';
 import { api, buildApiUrl } from '../lib/api.js';
 import { useAuthStore } from '../lib/auth.js';
@@ -116,7 +116,7 @@ function MenuBoardPreview({ item }: { item: ContentDetail }) {
 interface ContentDetail {
   id: string;
   name: string;
-  type: 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout' | 'menu_board';
+  type: 'image' | 'video' | 'html5' | 'pdf' | 'presentation' | 'web_url' | 'zone_layout' | 'menu_board' | 'channel_group';
   mimeType: string | null;
   fileSize: number | null;
   width: number | null;
@@ -166,6 +166,7 @@ const TYPE_META: Record<ContentDetail['type'], { label: string; color: string; i
   web_url:      { label: 'Web URL',      color: 'bg-emerald-500/80', icon: <Globe size={10} /> },
   zone_layout:  { label: 'Zone Layout',  color: 'bg-teal-500/80',    icon: <LayoutGrid size={10} /> },
   menu_board:   { label: 'Menu Board',   color: 'bg-rose-500/80',    icon: <Tv2 size={10} /> },
+  channel_group:{ label: 'IPTV',          color: 'bg-orange-500/80',  icon: <Tv size={10} /> },
 };
 
 function formatSize(bytes: number | null): string {
@@ -225,6 +226,7 @@ function TypePlaceholder({ type }: { type: ContentDetail['type'] }) {
     web_url:      <Globe size={32} className="text-emerald-400" />,
     zone_layout:  <LayoutGrid size={32} className="text-teal-400" />,
     menu_board:   <Tv2 size={32} className="text-rose-400" />,
+    channel_group:<Tv size={32} className="text-orange-400" />,
   };
   return <>{iconMap[type]}</>;
 }
@@ -1086,6 +1088,17 @@ export default function ContentDetailPanel({ itemId, workspaceId, onClose, onDel
             <ActionButton
               title="Edit HTML5 Package"
               onClick={() => setHtml5EditorOpen(true)}
+              className="px-2.5"
+            >
+              <Pencil size={14} />
+            </ActionButton>
+          )}
+
+          {/* Edit — IPTV channel group */}
+          {item?.type === 'channel_group' && (
+            <ActionButton
+              title="Edit IPTV Channels"
+              onClick={() => navigate(`/workspaces/${workspaceId}/iptv/${item.id}`)}
               className="px-2.5"
             >
               <Pencil size={14} />

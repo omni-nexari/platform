@@ -462,6 +462,7 @@ export default function App() {
         <Route path="/workspaces/:wsId/zone-layout/:id" element={<ZoneLayoutEditorPage />} />
         <Route path="/workspaces/:wsId/calendar/:id" element={<CalendarEditorPage />} />
         <Route path="/workspaces/:wsId/iptv/new" element={<IptvEditorPage />} />
+        <Route path="/workspaces/:wsId/iptv/:id" element={<IptvEditorPage />} />
         <Route path="/workspaces/:wsId/template/new" element={<TemplateEditorPage />} />
         <Route path="/workspaces/:wsId/livedata/new" element={<LiveDataEditorPage />} />
         <Route path="/workspaces/:wsId/live-link-face/:id" element={<LiveLinkFaceEditorPage />} />

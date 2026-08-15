@@ -33,8 +33,11 @@ async function resolveTlsStatus(hostname: string): Promise<'ready' | 'external' 
 }
 
 /**
- * Verify a single tenant route by checking its TXT record.
- * Updates `status`, `tlsStatus`, `verifiedAt`, and `lastCheckedAt` in the DB.
+ * Verify a single tenant route.
+ *
+ * Routes on the server's own domain (SSL_DOMAIN or subdomains) are trusted
+ * automatically — no TXT check required since we already own and have TLS for
+ * that hostname.  External partner domains require a TXT record.
  */
 export async function verifyTenantRoute(
   routeId: string,
@@ -45,28 +48,35 @@ export async function verifyTenantRoute(
   if (!route) return { verified: false, reason: 'Route not found' };
   if (route.status === 'active') return { verified: true, reason: 'Already active' };
 
-  const txtName = `_nexari.${route.hostname}`;
-  let txtRecords: string[][];
-  try {
-    txtRecords = await dns.resolveTxt(txtName);
-  } catch {
-    await db
-      .update(tenantRoutes)
-      .set({ lastCheckedAt: new Date(), updatedAt: new Date() })
-      .where(eq(tenantRoutes.id, routeId));
-    return { verified: false, reason: `TXT lookup failed for ${txtName}` };
-  }
+  const isOwnDomain =
+    SSL_DOMAIN !== '' &&
+    (route.hostname === SSL_DOMAIN || route.hostname.endsWith(`.${SSL_DOMAIN}`));
 
-  const flat = txtRecords.flat();
-  if (!flat.includes(route.verificationToken)) {
-    await db
-      .update(tenantRoutes)
-      .set({ lastCheckedAt: new Date(), updatedAt: new Date() })
-      .where(eq(tenantRoutes.id, routeId));
-    return {
-      verified: false,
-      reason: `TXT record not found or does not match. Expected: ${route.verificationToken}`,
-    };
+  if (!isOwnDomain) {
+    // External partner domain — require TXT proof of ownership
+    const txtName = `_nexari.${route.hostname}`;
+    let txtRecords: string[][];
+    try {
+      txtRecords = await dns.resolveTxt(txtName);
+    } catch {
+      await db
+        .update(tenantRoutes)
+        .set({ lastCheckedAt: new Date(), updatedAt: new Date() })
+        .where(eq(tenantRoutes.id, routeId));
+      return { verified: false, reason: `TXT lookup failed for ${txtName}` };
+    }
+
+    const flat = txtRecords.flat();
+    if (!flat.includes(route.verificationToken)) {
+      await db
+        .update(tenantRoutes)
+        .set({ lastCheckedAt: new Date(), updatedAt: new Date() })
+        .where(eq(tenantRoutes.id, routeId));
+      return {
+        verified: false,
+        reason: `TXT record not found or does not match. Expected: ${route.verificationToken}`,
+      };
+    }
   }
 
   const tlsStatus = await resolveTlsStatus(route.hostname);

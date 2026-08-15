@@ -200,12 +200,14 @@ $allPartners = $resp.partners
 
 $partnerInfos = @($allPartners | ForEach-Object {
     [PSCustomObject]@{
-        Id           = $_.id
-        Name         = $_.name
-        Status       = $_.status
-        InstanceUrl  = $_.instanceUrl
-        LicenseKeyId = $_.licenseKeyId
-        DeployKey    = $_.platformDeployKey
+        Id                = $_.id
+        Name              = $_.name
+        Status            = $_.status
+        InstanceUrl       = $_.instanceUrl
+        ManualInstanceUrl = $_.manualInstanceUrl
+        IsOfflineLicense  = [bool]$_.isOfflineLicense
+        LicenseKeyId      = $_.licenseKeyId
+        DeployKey         = $_.platformDeployKey
     }
 })
 
@@ -213,10 +215,12 @@ $partnerInfos = @($allPartners | ForEach-Object {
 Write-Host ""
 Write-Host "Partners:" -ForegroundColor White
 for ($i = 0; $i -lt $partnerInfos.Count; $i++) {
-    $pi = $partnerInfos[$i]
-    $urlDisplay = if ($pi.InstanceUrl) { $pi.InstanceUrl } else { "⚠  no instance URL (no heartbeat yet)" }
+    $pi           = $partnerInfos[$i]
+    $effectiveUrl = if ($pi.InstanceUrl) { $pi.InstanceUrl } elseif ($pi.ManualInstanceUrl) { $pi.ManualInstanceUrl } else { '' }
+    $offlineBadge = if ($pi.IsOfflineLicense) { ' [OFFLINE]' } else { '' }
+    $urlDisplay   = if ($effectiveUrl) { $effectiveUrl } else { '⚠  no instance URL' }
     $idx = ($i + 1).ToString().PadLeft(3)
-    Write-Host "  $idx.  $($pi.Name.PadRight(30)) $urlDisplay"
+    Write-Host "  $idx.  $($pi.Name.PadRight(30)) $urlDisplay$offlineBadge"
 }
 
 Write-Host ""
@@ -225,14 +229,29 @@ $idx = [int]$pick - 1
 if ($idx -lt 0 -or $idx -ge $partnerInfos.Count) { Write-Error "Invalid selection."; exit 1 }
 
 $partner = $partnerInfos[$idx]
-if (-not $partner.InstanceUrl -and -not $SkipBuild) {
-    Write-Error "No instance URL for $($partner.Name). Wait for their platform to send a heartbeat."
-    exit 1
+
+# Effective URL: heartbeat-discovered wins; fall back to manually-set URL for offline partners
+$instanceUrl = if ($partner.InstanceUrl) { $partner.InstanceUrl }
+               elseif ($partner.ManualInstanceUrl) { $partner.ManualInstanceUrl }
+               else { '' }
+# -InstanceUrl parameter always wins (e.g. after domain migration)
+if ($InstanceUrl -ne '') { $instanceUrl = $InstanceUrl.TrimEnd('/') }
+
+if (-not $instanceUrl -and -not $SkipBuild) {
+    $instanceUrl = (Read-Host "No URL on record for $($partner.Name). Enter instance URL (e.g. https://signage.acme.com)").TrimEnd('/')
+    if (-not $instanceUrl) { Write-Error 'Instance URL required.'; exit 1 }
+    if ($partner.LicenseKeyId) {
+        $save = Read-Host 'Save this URL to nexari-admin for future builds? [Y/n]'
+        if ($save -notmatch '^[Nn]') {
+            Invoke-AdminApi -Method Patch -Path "/license/keys/$($partner.LicenseKeyId)" `
+                -Body @{ manualInstanceUrl = $instanceUrl }
+            Write-Host '  Saved manual instance URL to nexari-admin.' -ForegroundColor DarkGray
+        }
+    }
 }
 
-$instanceUrl = $partner.InstanceUrl
-# Allow caller to override the URL from the DB (e.g. after domain migration)
-if ($InstanceUrl -ne "") { $instanceUrl = $InstanceUrl.TrimEnd('/') }
+# Offline partners: artifacts are stored in nexari-admin instead of the partner's platform
+$script:isOfflinePartner = $partner.IsOfflineLicense
 $wsUrl = if ($instanceUrl) {
     $instanceUrl -replace '^https://', 'wss://' -replace '^http://', 'ws://'
 } else { "" }
@@ -374,6 +393,10 @@ function Get-PartnerBranding {
         Write-Host "  Branding: no deploy key, using Nexari defaults." -ForegroundColor DarkGray
         return [PSCustomObject]@{ CompanyName = ''; LogoUrl = ''; TempLogoPath = $nexariLogoPath; PrimaryColor = '' }
     }
+    if ($script:isOfflinePartner) {
+        Write-Host "  Branding: offline partner — using Nexari defaults." -ForegroundColor DarkGray
+        return [PSCustomObject]@{ CompanyName = ''; LogoUrl = ''; TempLogoPath = $nexariLogoPath; PrimaryColor = '' }
+    }
     try {
         $resp = Invoke-RestMethod `
             -Method Get `
@@ -511,6 +534,48 @@ function Send-PlatformFiles {
     }
 }
 
+# Upload one or more build artifacts to nexari-admin storage (offline partner builds).
+# Uses the admin session cookies so no partner deploy key is required.
+# Returns the parsed JSON response ({ build, fileUrls }), or $null on failure.
+function Send-AdminFiles {
+    param([string]$Plat, [string[]]$FilePaths, [string]$Ver)
+
+    Write-Host "  Uploading $($FilePaths.Count) file(s) to nexari-admin (offline storage)..." -ForegroundColor DarkGray
+
+    $adminCookies = ($session.Cookies.GetCookies("https://admin.nexari.ca/") |
+        ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '; '
+
+    $formArgs = @(
+        '-F', "partnerId=$($partner.Id)",
+        '-F', "platform=$Plat",
+        '-F', "version=$Ver",
+        '-F', "builtBy=$AdminEmail"
+    )
+    if ($partner.LicenseKeyId) { $formArgs += '-F', "licenseKeyId=$($partner.LicenseKeyId)" }
+    if ($instanceUrl)           { $formArgs += '-F', "instanceUrl=$instanceUrl" }
+
+    foreach ($fp in $FilePaths) {
+        $name      = Split-Path $fp -Leaf
+        $formArgs += '-F', "files=@`"$fp`";filename=`"$name`""
+    }
+
+    try {
+        $json = & curl.exe -s -S --fail `
+            -H "Cookie: $adminCookies" `
+            -H "X-CSRF-Token: $csrfToken" `
+            @formArgs `
+            "$AdminApiBase/player-builds/upload" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "  Admin upload failed (curl exit $LASTEXITCODE): $json"
+            return $null
+        }
+        return $json | ConvertFrom-Json
+    } catch {
+        Write-Warning "  Admin upload failed: $($_.Exception.Message)"
+        return $null
+    }
+}
+
 # Create + auto-approve a platform release so it appears in /management/releases.
 function Publish-PlatformRelease {
     param([string]$Plat, [string]$Ver, $UploadResult)
@@ -634,10 +699,18 @@ foreach ($plat in $platforms) {
             $ssspXml = $ssspXml -replace '<ver>[^<]*</ver>', "<ver>$ver</ver>"
             [System.IO.File]::WriteAllText($tizenSsspPath, $ssspXml)
             Write-Host "  sssp_config.xml: <ver>$ver</ver> <size>$wgtBytes</size>" -ForegroundColor DarkGray
-            $uploadResult = Send-PlatformFiles -Plat tizen -FilePaths @("$TizenDir\NexariPlayer.wgt", "$TizenDir\sssp_config.xml")
-            Publish-PlatformRelease -Plat tizen -Ver $ver -UploadResult $uploadResult
-            Register-Build -Plat tizen -Filename "NexariPlayer.wgt" -Ver $ver -BldUuid ""
-            Write-Host "  Done. v$ver  SSSP: $instanceUrl/tizen/sssp_config.xml" -ForegroundColor Green
+            if ($script:isOfflinePartner) {
+                $adminResult = Send-AdminFiles -Plat tizen -FilePaths @("$TizenDir\NexariPlayer.wgt", "$TizenDir\sssp_config.xml") -Ver $ver
+                if ($adminResult) {
+                    Write-Host "  Done (offline). v$ver" -ForegroundColor Green
+                    Write-Host "  Samsung TV SSSP URL: $($adminResult.fileUrls.'sssp_config.xml')" -ForegroundColor Cyan
+                }
+            } else {
+                $uploadResult = Send-PlatformFiles -Plat tizen -FilePaths @("$TizenDir\NexariPlayer.wgt", "$TizenDir\sssp_config.xml")
+                Publish-PlatformRelease -Plat tizen -Ver $ver -UploadResult $uploadResult
+                Register-Build -Plat tizen -Filename "NexariPlayer.wgt" -Ver $ver -BldUuid ""
+                Write-Host "  Done. v$ver  SSSP: $instanceUrl/tizen/sssp_config.xml" -ForegroundColor Green
+            }
         }
 
         "epaper" {
@@ -688,10 +761,18 @@ foreach ($plat in $platforms) {
             $ssspXml = $ssspXml -replace '<ver>[^<]*</ver>', "<ver>$ver</ver>"
             [System.IO.File]::WriteAllText($epaperSsspPath, $ssspXml)
             Write-Host "  sssp_config.xml: <ver>$ver</ver> <size>$wgtBytes</size>" -ForegroundColor DarkGray
-            $uploadResult = Send-PlatformFiles -Plat epaper -FilePaths @("$EpaperDir\NexariEPaper.wgt", "$EpaperDir\sssp_config.xml")
-            Publish-PlatformRelease -Plat epaper -Ver $ver -UploadResult $uploadResult
-            Register-Build -Plat epaper -Filename "NexariEPaper.wgt" -Ver $ver -BldUuid ""
-            Write-Host "  Done. v$ver  SSSP: $instanceUrl/epaper/sssp_config.xml" -ForegroundColor Green
+            if ($script:isOfflinePartner) {
+                $adminResult = Send-AdminFiles -Plat epaper -FilePaths @("$EpaperDir\NexariEPaper.wgt", "$EpaperDir\sssp_config.xml") -Ver $ver
+                if ($adminResult) {
+                    Write-Host "  Done (offline). v$ver" -ForegroundColor Green
+                    Write-Host "  Samsung TV SSSP URL: $($adminResult.fileUrls.'sssp_config.xml')" -ForegroundColor Cyan
+                }
+            } else {
+                $uploadResult = Send-PlatformFiles -Plat epaper -FilePaths @("$EpaperDir\NexariEPaper.wgt", "$EpaperDir\sssp_config.xml")
+                Publish-PlatformRelease -Plat epaper -Ver $ver -UploadResult $uploadResult
+                Register-Build -Plat epaper -Filename "NexariEPaper.wgt" -Ver $ver -BldUuid ""
+                Write-Host "  Done. v$ver  SSSP: $instanceUrl/epaper/sssp_config.xml" -ForegroundColor Green
+            }
         }
 
         "android" {
@@ -754,10 +835,18 @@ foreach ($plat in $platforms) {
             $staticApkSrc    = Join-Path $apkDir $staticApk
             Copy-Item $ApkSrc $versionedApkSrc -Force
             Copy-Item $ApkSrc $staticApkSrc    -Force
-            $uploadResult = Send-PlatformFiles -Plat android -FilePaths @($versionedApkSrc, $staticApkSrc)
-            Publish-PlatformRelease -Plat android -Ver $ver -UploadResult $uploadResult
-            Register-Build -Plat android -Filename $versionedApk -Ver $ver -BldUuid ""
-            Write-Host "  Done. v$ver" -ForegroundColor Green
+            if ($script:isOfflinePartner) {
+                $adminResult = Send-AdminFiles -Plat android -FilePaths @($versionedApkSrc, $staticApkSrc) -Ver $ver
+                if ($adminResult) {
+                    Write-Host "  Done (offline). v$ver" -ForegroundColor Green
+                    Write-Host "  APK download: $($adminResult.build.downloadUrl)" -ForegroundColor Cyan
+                }
+            } else {
+                $uploadResult = Send-PlatformFiles -Plat android -FilePaths @($versionedApkSrc, $staticApkSrc)
+                Publish-PlatformRelease -Plat android -Ver $ver -UploadResult $uploadResult
+                Register-Build -Plat android -Filename $versionedApk -Ver $ver -BldUuid ""
+                Write-Host "  Done. v$ver" -ForegroundColor Green
+            }
         }
 
         "windows" {
@@ -834,15 +923,26 @@ foreach ($plat in $platforms) {
             Copy-Item $src $versionedSrc -Force
             Copy-Item $src $staticSrc    -Force
             $latestYml = Join-Path $releaseDir 'latest.yml'
-            # Split into two uploads to stay under Cloudflare's 100 MB per-request limit.
-            # First request: versioned exe + yml manifest  → feeds artifactUrl/manifestUrl for release record
-            $mainFiles = @($versionedSrc) + @(if (Test-Path $latestYml) { $latestYml } else { })
-            $uploadResult = Send-PlatformFiles -Plat windows -FilePaths $mainFiles
-            # Second request: static "nexari-windows-setup.exe" (served at /windows/ for first-time installs)
-            $null = Send-PlatformFiles -Plat windows -FilePaths @($staticSrc)
-            Publish-PlatformRelease -Plat windows -Ver $ver -UploadResult $uploadResult
-            Register-Build -Plat windows -Filename $versionedFilename -Ver $ver -BldUuid ""
-            Write-Host "  Done. v$ver" -ForegroundColor Green
+            if ($script:isOfflinePartner) {
+                # Combine EXE + yml in one request (admin has no Cloudflare 100 MB per-file limit concern
+                # for the YML; EXE may be large -- warn if over ~95 MB)
+                $allFiles = @($versionedSrc, $staticSrc) + @(if (Test-Path $latestYml) { $latestYml } else { })
+                $adminResult = Send-AdminFiles -Plat windows -FilePaths $allFiles -Ver $ver
+                if ($adminResult) {
+                    Write-Host "  Done (offline). v$ver" -ForegroundColor Green
+                    Write-Host "  Installer download: $($adminResult.build.downloadUrl)" -ForegroundColor Cyan
+                }
+            } else {
+                # Split into two uploads to stay under Cloudflare's 100 MB per-request limit.
+                # First request: versioned exe + yml manifest  → feeds artifactUrl/manifestUrl for release record
+                $mainFiles = @($versionedSrc) + @(if (Test-Path $latestYml) { $latestYml } else { })
+                $uploadResult = Send-PlatformFiles -Plat windows -FilePaths $mainFiles
+                # Second request: static "nexari-windows-setup.exe" (served at /windows/ for first-time installs)
+                $null = Send-PlatformFiles -Plat windows -FilePaths @($staticSrc)
+                Publish-PlatformRelease -Plat windows -Ver $ver -UploadResult $uploadResult
+                Register-Build -Plat windows -Filename $versionedFilename -Ver $ver -BldUuid ""
+                Write-Host "  Done. v$ver" -ForegroundColor Green
+            }
         }
 
         "esp32" {
@@ -859,10 +959,17 @@ foreach ($plat in $platforms) {
             Push-Location (Join-Path $RepoRoot "apps\nexari-esp32")
             $ver = try { (Get-Content "platformio.ini" | Select-String 'version\s*=\s*(.+)').Matches[0].Groups[1].Value.Trim() } catch { "0.0.0" }
             Pop-Location
-            $uploadResult = Send-PlatformFiles -Plat esp32 -FilePaths @($src)
-            # ESP32 has no player_releases entry (no approval flow) -- just register to admin
-            Register-Build -Plat esp32 -Filename $filename -Ver $ver -BldUuid ""
-            Write-Host "  Done. v$ver" -ForegroundColor Green
+            if ($script:isOfflinePartner) {
+                $adminResult = Send-AdminFiles -Plat esp32 -FilePaths @($src) -Ver $ver
+                if ($adminResult) {
+                    Write-Host "  Done (offline). v$ver" -ForegroundColor Green
+                    Write-Host "  Firmware download: $($adminResult.build.downloadUrl)" -ForegroundColor Cyan
+                }
+            } else {
+                $uploadResult = Send-PlatformFiles -Plat esp32 -FilePaths @($src)
+                Register-Build -Plat esp32 -Filename $filename -Ver $ver -BldUuid ""
+                Write-Host "  Done. v$ver" -ForegroundColor Green
+            }
         }
     }
 }
@@ -878,6 +985,10 @@ if ($script:branding.CompanyName) {
     }
 }
 Write-Host "  Platforms: $($platforms -join ', ')"            -ForegroundColor Green
+if ($script:isOfflinePartner) {
+    Write-Host "  Artifacts stored in: https://admin.nexari.ca/player-builds/" -ForegroundColor Green
+} else {
+    Write-Host "  Management releases: $instanceUrl/management/releases" -ForegroundColor Green
+}
 Write-Host "  Partner downloads:   https://partners.nexari.ca/downloads"           -ForegroundColor Green
-Write-Host "  Management releases: $instanceUrl/management/releases" -ForegroundColor Green
 Write-Host "=================================================" -ForegroundColor Green
