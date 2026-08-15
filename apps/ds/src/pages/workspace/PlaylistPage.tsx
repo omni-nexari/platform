@@ -13,7 +13,6 @@ import {
 } from 'lucide-react';
 import AuthImg from '../../components/AuthImg.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
-import SmartViewsBar from '../../components/SmartViewsBar.js';
 import TagFilterBar from '../../components/TagFilterBar.js';
 import {
   Modal,
@@ -697,19 +696,6 @@ export default function PlaylistPage() {
           )}
         />
 
-        {wsId && (
-          <div className="mb-5">
-            <SmartViewsBar
-              workspaceId={wsId}
-              entityType="playlist"
-              currentFilters={currentFilters}
-              onApplyFilters={(filters) => {
-                const next = filters as Partial<typeof currentFilters>;
-                setSelectedTagIds(Array.isArray(next.selectedTagIds) ? next.selectedTagIds.filter((value): value is string => typeof value === 'string') : []);
-              }}
-            />
-          </div>
-        )}
 
         {wsId && (
           <div className="mb-5">

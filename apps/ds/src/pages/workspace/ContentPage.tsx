@@ -17,7 +17,6 @@ import ContentDetailPanel from '../../components/ContentDetailPanel.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
 import PublishWizardModal from '../../components/PublishWizardModal.js';
 import BulkTagModal from '../../components/BulkTagModal.js';
-import SmartViewsBar from '../../components/SmartViewsBar.js';
 import TagFilterBar from '../../components/TagFilterBar.js';
 import { Badge, EmptyState, FilterChip, Modal, ModalBody, ModalFooter, ModalHeader, ModalPrimaryButton, ModalSecondaryButton, PageHeader, Skeleton } from '../../components/UiPrimitives.js';
 
@@ -1018,26 +1017,6 @@ export default function ContentPage() {
         </div>
       )}
 
-      {wsId && (
-        <div className="mb-5">
-          <SmartViewsBar
-            workspaceId={wsId}
-            entityType="content"
-            currentFilters={currentFilters}
-            onApplyFilters={(filters) => {
-              const next = filters as Partial<typeof currentFilters>;
-              updateBrowseParams((params) => {
-                params.set('type', next.filterType === undefined ? 'all' : next.filterType as FilterType);
-                params.set('tagIds', Array.isArray(next.selectedTagIds) ? next.selectedTagIds.filter((value): value is string => typeof value === 'string').join(',') : '');
-                params.set('sort', next.sort === 'name' || next.sort === 'size' ? next.sort : 'created_at');
-                params.set('view', next.view === 'grid-sm' || next.view === 'list' ? next.view : 'grid-lg');
-                params.set('folderId', typeof next.selectedFolderId === 'string' ? next.selectedFolderId : 'all');
-                params.set('page', '1');
-              });
-            }}
-          />
-        </div>
-      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)] gap-6">
         <aside className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-3 h-fit">

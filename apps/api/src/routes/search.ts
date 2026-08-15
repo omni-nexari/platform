@@ -63,7 +63,12 @@ export async function searchRoutes(app: FastifyInstance) {
         where: and(
           eq(devices.workspaceId, workspaceId),
           isNull(devices.deletedAt),
-          ilike(devices.name, term),
+          or(
+            ilike(devices.name, term),
+            ilike(devices.serialNumber, term),
+            ilike(devices.modelName, term),
+            ilike(devices.ipAddress, term),
+          ),
         ),
         columns: { id: true, name: true, status: true, createdAt: true },
         limit: 10,

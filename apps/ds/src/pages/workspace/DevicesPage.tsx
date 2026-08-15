@@ -164,7 +164,6 @@ import AssignedTagPills, { type AssignedTag } from '../../components/AssignedTag
 import BulkTagModal from '../../components/BulkTagModal.js';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
 import ContentPickerModal, { type PickedItem } from '../../components/ContentPickerModal.js';
-import SmartViewsBar from '../../components/SmartViewsBar.js';
 import TagFilterBar from '../../components/TagFilterBar.js';
 import {
   Badge,
@@ -768,18 +767,7 @@ export default function DevicesPage() {
         }
       />
 
-      <SmartViewsBar
-        workspaceId={wsId!}
-        entityType="device"
-        currentFilters={{ tagIds: selectedTagIds, status: selectedStatus }}
-        onApplyFilters={(filters) => {
-          const next = filters as { tagIds?: string[]; status?: StatusFilter };
-          setSelectedTagIds(Array.isArray(next.tagIds) ? next.tagIds : []);
-          setSelectedStatus(next.status ?? 'all');
-        }}
-      />
-
-      {/* Filters row */}
+      {/* Filters row */}}
       <div className="flex flex-wrap items-center gap-3">
         {/* Status filter */}
         <div className="flex items-center gap-1 rounded-lg border border-[var(--card-border)] overflow-hidden text-xs">

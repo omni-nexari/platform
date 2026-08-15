@@ -11,7 +11,6 @@ import {
   CheckCircle2, Clock, ChevronLeft, ChevronRight, Check, Monitor,
 } from 'lucide-react';
 import ConfirmDialog from '../../components/ConfirmDialog.js';
-import SmartViewsBar from '../../components/SmartViewsBar.js';
 import TagFilterBar from '../../components/TagFilterBar.js';
 import {
   Badge,
@@ -452,19 +451,6 @@ export default function SchedulePage() {
             )}
           />
 
-          {wsId && (
-            <div className="mt-4">
-              <SmartViewsBar
-                workspaceId={wsId}
-                entityType="schedule"
-                currentFilters={currentFilters}
-                onApplyFilters={(filters) => {
-                  const next = filters as Partial<typeof currentFilters>;
-                  setSelectedTagIds(Array.isArray(next.selectedTagIds) ? next.selectedTagIds.filter((value): value is string => typeof value === 'string') : []);
-                }}
-              />
-            </div>
-          )}
 
           {wsId && (
             <div className="mt-4">
