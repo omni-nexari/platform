@@ -727,7 +727,114 @@ export async function deviceRoutes(app: FastifyInstance) {
     return reply.status(201).send({ device: updated });
   });
 
-  // ── GET /devices ─ list devices for org (optional ?workspaceId=) ───────────
+  // ── POST /devices/import-fleet ─ bulk pre-register TVs by serial number ────
+  // Accepts a JSON array of devices (frontend parses the MagicInfo CSV).
+  // Each device is pre-assigned to the workspace with a pre-issued token so the
+  // TV auto-claims on first connect without needing a pairing code.
+  app.post('/import-fleet', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = req.user as AuthUser;
+
+    const ImportFleetSchema = z.object({
+      workspaceId: z.string().uuid(),
+      devices: z.array(z.object({
+        serialNo:   z.string().min(1).max(100),
+        name:       z.string().max(200).optional(),
+        modelName:  z.string().max(200).optional(),
+        macAddress: z.string().max(30).optional(),
+        groupName:  z.string().max(200).optional(),
+      })).min(1).max(2000),
+    });
+
+    const parsed = ImportFleetSchema.safeParse(req.body);
+    if (!parsed.success) return reply.status(400).send({ error: 'Invalid input', details: parsed.error.flatten() });
+
+    const { workspaceId, devices: rows } = parsed.data;
+
+    const workspace = await db.query.workspaces.findFirst({
+      where: and(eq(workspaces.id, workspaceId), eq(workspaces.orgId, user.orgId), isNull(workspaces.deletedAt)),
+    });
+    if (!workspace) return reply.status(404).send({ error: 'Workspace not found' });
+
+    let imported = 0;
+    let skipped  = 0;
+    const results: Array<{ serialNo: string; deviceId: string; status: 'imported' | 'updated' | 'skipped' }> = [];
+
+    for (const row of rows) {
+      const serial = row.serialNo.trim();
+      if (!serial) { skipped++; continue; }
+
+      const existing = await db.query.devices.findFirst({
+        where: and(eq(devices.serialNumber, serial), isNull(devices.deletedAt)),
+      });
+
+      if (existing?.orgId && existing.workspaceId && existing.deviceToken) {
+        // Already fully provisioned in some workspace — skip
+        skipped++;
+        results.push({ serialNo: serial, deviceId: existing.id, status: 'skipped' });
+        continue;
+      }
+
+      const deviceToken = app.jwt.sign(
+        { sub: existing?.id ?? 'pending', type: 'device', orgId: user.orgId, workspaceId },
+        { expiresIn: '87600h' },
+      );
+
+      if (existing) {
+        // Unclaimed stub already exists — claim it into this workspace
+        const [updated] = await db
+          .update(devices)
+          .set({
+            orgId: user.orgId,
+            workspaceId,
+            name: row.name?.trim() || existing.name,
+            modelName: row.modelName?.trim() || existing.modelName,
+            macAddress: row.macAddress?.trim() || existing.macAddress,
+            status: 'unclaimed',
+            deviceToken,
+            updatedAt: new Date(),
+          })
+          .where(eq(devices.id, existing.id))
+          .returning({ id: devices.id });
+
+        // Patch the token with the real device id (sub was 'pending' above)
+        const finalToken = app.jwt.sign(
+          { sub: updated!.id, type: 'device', orgId: user.orgId, workspaceId },
+          { expiresIn: '87600h' },
+        );
+        await db.update(devices).set({ deviceToken: finalToken }).where(eq(devices.id, updated!.id));
+
+        imported++;
+        results.push({ serialNo: serial, deviceId: updated!.id, status: 'updated' });
+      } else {
+        // Create a new pre-provisioned device stub
+        const [created] = await db
+          .insert(devices)
+          .values({
+            orgId: user.orgId,
+            workspaceId,
+            serialNumber: serial,
+            name: row.name?.trim() || serial,
+            modelName: row.modelName?.trim() || null,
+            macAddress: row.macAddress?.trim() || null,
+            status: 'unclaimed',
+            deviceToken,   // placeholder — patched below with real id
+            kind: 'tv',
+          })
+          .returning({ id: devices.id });
+
+        const finalToken = app.jwt.sign(
+          { sub: created!.id, type: 'device', orgId: user.orgId, workspaceId },
+          { expiresIn: '87600h' },
+        );
+        await db.update(devices).set({ deviceToken: finalToken }).where(eq(devices.id, created!.id));
+
+        imported++;
+        results.push({ serialNo: serial, deviceId: created!.id, status: 'imported' });
+      }
+    }
+
+    return reply.status(200).send({ imported, skipped, total: rows.length, devices: results });
+  });
   app.get('/', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
     const { workspaceId, tagIds: rawTagIds, q, status } = req.query as {

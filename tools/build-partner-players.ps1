@@ -42,6 +42,10 @@
 .PARAMETER SkipBuild
     Skip the actual build step -- just re-upload and re-register an existing artifact.
 
+.PARAMETER IsOffline
+    Force offline mode: store artifacts on admin.nexari.ca instead of the partner's platform.
+    Use when the partner has no deploy key or their server is unreachable.
+
 .PARAMETER RegisterGeneric
     Register the current Windows installer and ESP32 firmware as generic builds
     for the selected partner (no rebuild -- uses existing files on server).
@@ -55,7 +59,8 @@
 
     # Skip build, just re-register existing artifacts:
     .\tools\build-partner-players.ps1 -SkipBuild
-#>
+    # No deploy key / unreachable platform -- store artifacts on admin.nexari.ca:
+    .\tools\build-partner-players.ps1 -IsOffline#>
 param(
     [string]$AdminEmail    = "chiho.lee23@gmail.com",
     [string]$AdminPassword = "Samsung@2026!",
@@ -86,6 +91,7 @@ param(
     [string]$Esp32BinPath = "",
 
     [switch]$SkipBuild,
+    [switch]$IsOffline,
     [switch]$RegisterGeneric
 )
 
@@ -251,7 +257,8 @@ if (-not $instanceUrl -and -not $SkipBuild) {
 }
 
 # Offline partners: artifacts are stored in nexari-admin instead of the partner's platform
-$script:isOfflinePartner = $partner.IsOfflineLicense
+# -IsOffline flag overrides regardless of the DB flag (useful when no deploy key)
+$script:isOfflinePartner = $partner.IsOfflineLicense -or $IsOffline
 $wsUrl = if ($instanceUrl) {
     $instanceUrl -replace '^https://', 'wss://' -replace '^http://', 'ws://'
 } else { "" }
@@ -394,7 +401,7 @@ function Get-PartnerBranding {
         return [PSCustomObject]@{ CompanyName = ''; LogoUrl = ''; TempLogoPath = $nexariLogoPath; PrimaryColor = '' }
     }
     if ($script:isOfflinePartner) {
-        Write-Host "  Branding: offline partner — using Nexari defaults." -ForegroundColor DarkGray
+        Write-Host "  Branding: offline partner -- using Nexari defaults." -ForegroundColor DarkGray
         return [PSCustomObject]@{ CompanyName = ''; LogoUrl = ''; TempLogoPath = $nexariLogoPath; PrimaryColor = '' }
     }
     try {
@@ -698,7 +705,7 @@ foreach ($plat in $platforms) {
             $ssspXml = $ssspXml -replace '<size>\d+</size>', "<size>$wgtBytes</size>"
             $ssspXml = $ssspXml -replace '<ver>[^<]*</ver>', "<ver>$ver</ver>"
             [System.IO.File]::WriteAllText($tizenSsspPath, $ssspXml)
-            Write-Host "  sssp_config.xml: <ver>$ver</ver> <size>$wgtBytes</size>" -ForegroundColor DarkGray
+            Write-Host "  sssp_config.xml updated: ver=$ver  size=$wgtBytes" -ForegroundColor DarkGray
             if ($script:isOfflinePartner) {
                 $adminResult = Send-AdminFiles -Plat tizen -FilePaths @("$TizenDir\NexariPlayer.wgt", "$TizenDir\sssp_config.xml") -Ver $ver
                 if ($adminResult) {
@@ -760,7 +767,7 @@ foreach ($plat in $platforms) {
             $ssspXml = $ssspXml -replace '<size>\d+</size>', "<size>$wgtBytes</size>"
             $ssspXml = $ssspXml -replace '<ver>[^<]*</ver>', "<ver>$ver</ver>"
             [System.IO.File]::WriteAllText($epaperSsspPath, $ssspXml)
-            Write-Host "  sssp_config.xml: <ver>$ver</ver> <size>$wgtBytes</size>" -ForegroundColor DarkGray
+            Write-Host "  sssp_config.xml updated: ver=$ver  size=$wgtBytes" -ForegroundColor DarkGray
             if ($script:isOfflinePartner) {
                 $adminResult = Send-AdminFiles -Plat epaper -FilePaths @("$EpaperDir\NexariEPaper.wgt", "$EpaperDir\sssp_config.xml") -Ver $ver
                 if ($adminResult) {
@@ -924,10 +931,9 @@ foreach ($plat in $platforms) {
             Copy-Item $src $staticSrc    -Force
             $latestYml = Join-Path $releaseDir 'latest.yml'
             if ($script:isOfflinePartner) {
-                # Combine EXE + yml in one request (admin has no Cloudflare 100 MB per-file limit concern
-                # for the YML; EXE may be large -- warn if over ~95 MB)
-                $allFiles = @($versionedSrc, $staticSrc) + @(if (Test-Path $latestYml) { $latestYml } else { })
-                $adminResult = Send-AdminFiles -Plat windows -FilePaths $allFiles -Ver $ver
+                # Admin upload: versioned EXE + yml only (skip static copy -- no nginx redirect needed)
+                $adminFiles = @($versionedSrc) + @(if (Test-Path $latestYml) { $latestYml } else { })
+                $adminResult = Send-AdminFiles -Plat windows -FilePaths $adminFiles -Ver $ver
                 if ($adminResult) {
                     Write-Host "  Done (offline). v$ver" -ForegroundColor Green
                     Write-Host "  Installer download: $($adminResult.build.downloadUrl)" -ForegroundColor Cyan
