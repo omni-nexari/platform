@@ -193,6 +193,7 @@ const SECTION_LABELS: Record<SectionId, string> = {
   integrations:     'Integrations',
   migrate:          'Migrate from MagicInfo',
   notifications:    'Notifications',
+};
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
 

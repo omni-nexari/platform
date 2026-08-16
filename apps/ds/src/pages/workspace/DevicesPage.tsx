@@ -767,7 +767,7 @@ export default function DevicesPage() {
         }
       />
 
-      {/* Filters row */}}
+      {/* Filters row */}
       <div className="flex flex-wrap items-center gap-3">
         {/* Status filter */}
         <div className="flex items-center gap-1 rounded-lg border border-[var(--card-border)] overflow-hidden text-xs">
@@ -1103,6 +1103,8 @@ export default function DevicesPage() {
           >
             {selectedItems.size === filteredDevices.length ? 'Deselect all' : `Select all (${filteredDevices.length})`}
           </button>
+          <button
+            onClick={() => setBulkPublishOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-300 text-xs font-semibold hover:bg-purple-500/25 transition-colors"
           >
             <Play size={12} /> Publish

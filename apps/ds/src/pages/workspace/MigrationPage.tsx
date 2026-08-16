@@ -1420,6 +1420,7 @@ export default function MigrationPage() {
               )}
             </SectionCardBody>
           </SectionCard>
+          <div className="flex items-center justify-between">
             <button onClick={() => setStep(2)} className="flex items-center gap-2 px-4 py-2 border border-[var(--border)] rounded-lg text-sm text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]">
               <ArrowLeft className="w-4 h-4" /> Back
             </button>

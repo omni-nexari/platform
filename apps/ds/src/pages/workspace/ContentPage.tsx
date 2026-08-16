@@ -1230,6 +1230,8 @@ export default function ContentPage() {
           >
             {selectedItems.size === items.length ? 'Deselect all' : `Select all (${items.length})`}
           </button>
+          <button
+            onClick={() => setBulkTagOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent)]/15 border border-[var(--accent)]/30 text-[var(--accent)] text-xs font-semibold hover:bg-[var(--accent)]/25 transition-colors"
           >
             <Check size={12} /> Apply Tags
