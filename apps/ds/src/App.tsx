@@ -60,27 +60,9 @@ import TwoFactorPage from './pages/auth/TwoFactorPage.js';
 import AcceptInvitePage from './pages/auth/AcceptInvitePage.js';
 import ResetPasswordPage from './pages/auth/ResetPasswordPage.js';
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage.js';
-import OrgsListPage from './pages/management/OrgsListPage.js';
-import OrgDetailPage from './pages/management/OrgDetailPage.js';
-import ManagementLoginPage from './pages/management/ManagementLoginPage.js';
-import ManagementLayout from './pages/management/ManagementLayout.js';
-import ManagementDashboardPage from './pages/management/ManagementDashboardPage.js';
-import ManagementAnalyticsPage from './pages/management/ManagementAnalyticsPage.js';
-import ManagementNotificationsPage from './pages/management/ManagementNotificationsPage.js';
-import ManagementSupportPage from './pages/management/ManagementSupportPage.js';
-import ManagementSupportTicketDetailPage from './pages/management/ManagementSupportTicketDetailPage.js';
-import ManagementBrandingPage from './pages/management/ManagementBrandingPage.js';
-import ManagementLogsPage from './pages/management/ManagementLogsPage.js';
-import ManagementReleasesPage from './pages/management/ManagementReleasesPage.js';
-import ManagementPricingPage from './pages/management/ManagementPricingPage.js';
-import ManagementLicensePage from './pages/management/ManagementLicensePage.js';
-import ManagementMonitoringPage from './pages/management/ManagementMonitoringPage.js';
-import ManagementAccountPage from './pages/management/ManagementAccountPage.js';
-import ManagementTeamPage from './pages/management/ManagementTeamPage.js';
 
 import OrgSupportPage from './pages/support/OrgSupportPage.js';
 import OrgSupportTicketDetailPage from './pages/support/OrgSupportTicketDetailPage.js';
-import AcceptManagementCompanyInvitePage from './pages/auth/AcceptManagementCompanyInvitePage.js';
 import AcceptClientOrgInvitePage from './pages/auth/AcceptClientOrgInvitePage.js';
 import SettingsPage from './pages/account/SettingsPage.js';
 import AppLayout from './components/AppLayout.js';
@@ -231,21 +213,8 @@ function DisplayPinGateWrapper({ children }: { children: React.ReactNode }) {
   );
 }
 
-function RequireManagementAdmin({ children }: { children: React.ReactNode }) {
-  const { bootstrapped, user } = useSAStore();
-  if (!bootstrapped) return null;
-  if (!user || user.type !== 'management_company_admin') {
-    return <Navigate to="/management/login" replace />;
-  }
-  return <>{children}</>;
-}
-
-function isPortalPath(pathname: string) {
-  return (
-    pathname.startsWith('/management') ||
-    pathname.startsWith('/m/') ||
-    /^\/[a-z0-9][a-z0-9-]*\/login(?:\/.*)?$/.test(pathname)
-  );
+function isPortalPath(_pathname: string) {
+  return false;
 }
 
 function isMainPublicAuthPath(pathname: string) {
@@ -255,7 +224,6 @@ function isMainPublicAuthPath(pathname: string) {
     || pathname === '/setup'
     || pathname.startsWith('/reset-password/')
     || pathname.startsWith('/accept-invite/')
-    || pathname.startsWith('/accept-management-company-invite/')
     || pathname.startsWith('/accept-client-org-invite/')
     // Public device display pages — no session auth needed
     || pathname.startsWith('/kiosk/')
@@ -291,10 +259,8 @@ function RootRedirect() {
   return <Navigate to="/dashboard" replace />;
 }
 
-function isPortalPublicAuthPath(pathname: string) {
-  return pathname === '/management/login'
-    || /^\/m\/[^/]+(?:\/login)?$/.test(pathname)
-    || /^\/[a-z0-9][a-z0-9-]*\/login$/.test(pathname);
+function isPortalPublicAuthPath(_pathname: string) {
+  return false;
 }
 
 function PortalAuthBootstrap({ children }: { children: React.ReactNode }) {
@@ -339,12 +305,6 @@ function PortalAuthBootstrap({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-/** Redirects /m/:slug/login → /:slug/login (backward compat for old links) */
-function MSlugLoginRedirect() {
-  const { slug } = useParams<{ slug: string }>();
-  return <Navigate to={`/${slug}/login`} replace />;
-}
-
 export default function App() {
   return (
     <AuthBootstrap>
@@ -364,42 +324,11 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/login/2fa" element={<TwoFactorPage />} />
       <Route path="/accept-invite/:token" element={<AcceptInvitePage />} />
-      <Route path="/accept-management-company-invite/:token" element={<AcceptManagementCompanyInvitePage />} />
       <Route path="/accept-client-org-invite/:token" element={<AcceptClientOrgInvitePage />} />
       <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
       {/* Platform Owner portal */}
-      {/* Management Company portal — short URL: /:slug/login */}
-      <Route path="/:slug/login" element={<ManagementLoginPage />} />
-      {/* Backward compat: /m/:slug/login → /:slug/login */}
-      <Route path="/m/:slug/login" element={<MSlugLoginRedirect />} />
-      <Route path="/m/:slug" element={<MSlugLoginRedirect />} />
-      <Route path="/management/login" element={<ManagementLoginPage />} />
-      <Route
-        path="/management"
-        element={
-          <RequireManagementAdmin>
-            <ManagementLayout />
-          </RequireManagementAdmin>
-        }
-      >
-        <Route index element={<ManagementDashboardPage />} />
-        <Route path="orgs" element={<OrgsListPage />} />
-        <Route path="orgs/:id" element={<OrgDetailPage />} />
-        <Route path="settings/branding" element={<ManagementBrandingPage />} />
-        <Route path="analytics" element={<ManagementAnalyticsPage />} />
-        <Route path="pricing" element={<ManagementPricingPage />} />
-        <Route path="notifications" element={<ManagementNotificationsPage />} />
-        <Route path="logs" element={<ManagementLogsPage />} />
-        <Route path="releases" element={<ManagementReleasesPage />} />
-        <Route path="support" element={<ManagementSupportPage />} />
-        <Route path="support/:id" element={<ManagementSupportTicketDetailPage />} />
-        <Route path="license" element={<ManagementLicensePage />} />
-        <Route path="monitoring" element={<ManagementMonitoringPage />} />
-        <Route path="account" element={<ManagementAccountPage />} />
-        <Route path="team" element={<ManagementTeamPage />} />
-      </Route>
 
       {/* Authenticated user shell */}
       <Route
