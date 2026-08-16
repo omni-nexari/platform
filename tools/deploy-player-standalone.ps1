@@ -98,6 +98,22 @@ if (-not $DeployApiKey.StartsWith('sk_live_')) {
 
 Write-Host "Deploying to: $InstanceUrl" -ForegroundColor Cyan
 
+# ── Verify baked URL in existing WGT matches -InstanceUrl (SkipBuild safety check) ──
+function Test-BakedUrl {
+    param([string]$BuildInfoPath)
+    if (-not (Test-Path $BuildInfoPath)) { return }
+    $content = Get-Content $BuildInfoPath -Raw
+    if ($content -match 'API_BASE:\s*"([^"]+)"') {
+        $baked = $Matches[1] -replace '/api/v1.*$', ''
+        if ($baked -ne $InstanceUrl) {
+            Write-Warning "  MISMATCH: WGT was built for '$baked' but -InstanceUrl is '$InstanceUrl'."
+            Write-Warning "  Run without -SkipBuild to rebuild with the correct URL."
+        } else {
+            Write-Host "  Baked URL verified: $baked" -ForegroundColor DarkGray
+        }
+    }
+}
+
 # ── Upload files + create + approve release ───────────────────────────────────
 function Deploy-Release {
     param([string]$Plat, [string[]]$FilePaths, [string]$Ver)
@@ -190,6 +206,7 @@ foreach ($plat in $platforms) {
     switch ($plat) {
 
         "tizen" {
+            if ($SkipBuild) { Test-BakedUrl -BuildInfoPath "$TizenDir\js\build-info.js" }
             if (-not $SkipBuild) {
                 Push-Location $TizenDir
                 try {
@@ -232,6 +249,7 @@ foreach ($plat in $platforms) {
         }
 
         "epaper" {
+            if ($SkipBuild) { Test-BakedUrl -BuildInfoPath "$EpaperDir\js\build-info.js" }
             if (-not $SkipBuild) {
                 Push-Location $EpaperDir
                 try {
@@ -365,6 +383,17 @@ foreach ($plat in $platforms) {
 Write-Host ""
 Write-Host "=================================================" -ForegroundColor Green
 Write-Host "  Deploy complete: $InstanceUrl"                   -ForegroundColor Green
-Write-Host "  Tizen SSSP URL:  $InstanceUrl/tizen/sssp_config.xml" -ForegroundColor Green
-Write-Host "  ePaper SSSP URL: $InstanceUrl/epaper/sssp_config.xml" -ForegroundColor Green
+Write-Host ""
+Write-Host "  Samsung TV (Tizen SSSP)" -ForegroundColor White
+Write-Host "    Enter this URL in MagicInfo or URL Launcher:" -ForegroundColor DarkGray
+Write-Host "    $InstanceUrl/tizen/sssp_config.xml" -ForegroundColor Cyan
+Write-Host "    Direct WGT download: $InstanceUrl/tizen/NexariPlayer.wgt" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "  ePaper (Tizen SSSP)" -ForegroundColor White
+Write-Host "    Enter this URL in URL Launcher:" -ForegroundColor DarkGray
+Write-Host "    $InstanceUrl/epaper/sssp_config.xml" -ForegroundColor Cyan
+Write-Host "    Direct WGT download: $InstanceUrl/epaper/NexariEPaper.wgt" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "  Android APK:  $InstanceUrl/android/nexari-android.apk" -ForegroundColor DarkGray
+Write-Host "  Windows EXE:  $InstanceUrl/windows/nexari-windows-setup.exe" -ForegroundColor DarkGray
 Write-Host "=================================================" -ForegroundColor Green

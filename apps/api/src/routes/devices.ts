@@ -499,9 +499,15 @@ export async function deviceRoutes(app: FastifyInstance) {
     const existingByDuid = duid
       ? await db.query.devices.findFirst({ where: eq(devices.duid, duid) })
       : null;
-    const existing = existingByDuid ?? (serialNumber
+    const existingBySerial = !existingByDuid && serialNumber
       ? await db.query.devices.findFirst({ where: and(eq(devices.serialNumber, serialNumber), isNull(devices.deletedAt)) })
-      : null);
+      : null;
+    // Fallback: fleet-imported devices often have MAC stored as `duid` in Tizen format.
+    // If the device's DUID looks like a MAC (aa-bb-cc-dd-ee-ff), also try the macAddress column.
+    const existingByMac = !existingByDuid && !existingBySerial && duid && /^[0-9a-f]{2}(-[0-9a-f]{2}){5}$/.test(duid)
+      ? await db.query.devices.findFirst({ where: and(eq(devices.macAddress, duid), isNull(devices.deletedAt)) })
+      : null;
+    const existing = existingByDuid ?? existingBySerial ?? existingByMac;
 
     if (existing?.orgId && existing.deviceToken && !existing.deletedAt) {
       // Device reinstalled — reset mdcNetworkStandby so auto-enable fires on next WS connect
@@ -727,17 +733,27 @@ export async function deviceRoutes(app: FastifyInstance) {
     return reply.status(201).send({ device: updated });
   });
 
-  // ── POST /devices/import-fleet ─ bulk pre-register TVs by serial number ────
-  // Accepts a JSON array of devices (frontend parses the MagicInfo CSV).
-  // Each device is pre-assigned to the workspace with a pre-issued token so the
-  // TV auto-claims on first connect without needing a pairing code.
+  // ── POST /devices/import-fleet ─ bulk pre-register TVs ─────────────────────
+  // Accepts serial number, DUID, or MAC address as identifier.
+  // Samsung Tizen sends DUID = MAC in lowercase-dash format (e.g. 1c-86-9a-a4-8c-97).
+  // Storing the normalized MAC as `duid` lets pair/request auto-claim without a pairing code.
   app.post('/import-fleet', { onRequest: [app.authenticate] }, async (req, reply) => {
     const user = req.user as AuthUser;
+
+    /** Normalize any MAC format to Tizen DUID format: aa-bb-cc-dd-ee-ff */
+    function normalizeMacDuid(raw: string): string | null {
+      const hex = raw.replace(/[^0-9a-fA-F]/g, '');
+      if (hex.length !== 12) return null;
+      const pairs: string[] = [];
+      for (let i = 0; i < 12; i += 2) pairs.push(hex.slice(i, i + 2).toLowerCase());
+      return pairs.join('-');
+    }
 
     const ImportFleetSchema = z.object({
       workspaceId: z.string().uuid(),
       devices: z.array(z.object({
-        serialNo:   z.string().min(1).max(100),
+        serialNo:   z.string().min(1).max(100).optional(),
+        duid:       z.string().min(1).max(100).optional(),
         name:       z.string().max(200).optional(),
         modelName:  z.string().max(200).optional(),
         macAddress: z.string().max(30).optional(),
@@ -757,20 +773,27 @@ export async function deviceRoutes(app: FastifyInstance) {
 
     let imported = 0;
     let skipped  = 0;
-    const results: Array<{ serialNo: string; deviceId: string; status: 'imported' | 'updated' | 'skipped' }> = [];
+    const results: Array<{ identifier: string; deviceId: string; status: 'imported' | 'updated' | 'skipped' }> = [];
 
     for (const row of rows) {
-      const serial = row.serialNo.trim();
-      if (!serial) { skipped++; continue; }
+      // Resolve the best available identifier
+      const serial = row.serialNo?.trim() || null;
+      // DUID: explicit > normalized MAC
+      const effectiveDuid = row.duid?.trim() || (row.macAddress ? normalizeMacDuid(row.macAddress) : null);
+      const identifier = serial || effectiveDuid;
+      if (!identifier) { skipped++; continue; }
 
-      const existing = await db.query.devices.findFirst({
-        where: and(eq(devices.serialNumber, serial), isNull(devices.deletedAt)),
-      });
+      // Lookup: by DUID first (fastest auto-claim path), then by serial
+      const existingByDuid = effectiveDuid
+        ? await db.query.devices.findFirst({ where: and(eq(devices.duid, effectiveDuid), isNull(devices.deletedAt)) })
+        : null;
+      const existing = existingByDuid ?? (serial
+        ? await db.query.devices.findFirst({ where: and(eq(devices.serialNumber, serial), isNull(devices.deletedAt)) })
+        : null);
 
       if (existing?.orgId && existing.workspaceId && existing.deviceToken) {
-        // Already fully provisioned in some workspace — skip
         skipped++;
-        results.push({ serialNo: serial, deviceId: existing.id, status: 'skipped' });
+        results.push({ identifier, deviceId: existing.id, status: 'skipped' });
         continue;
       }
 
@@ -780,7 +803,6 @@ export async function deviceRoutes(app: FastifyInstance) {
       );
 
       if (existing) {
-        // Unclaimed stub already exists — claim it into this workspace
         const [updated] = await db
           .update(devices)
           .set({
@@ -789,6 +811,8 @@ export async function deviceRoutes(app: FastifyInstance) {
             name: row.name?.trim() || existing.name,
             modelName: row.modelName?.trim() || existing.modelName,
             macAddress: row.macAddress?.trim() || existing.macAddress,
+            duid: effectiveDuid ?? existing.duid,
+            serialNumber: serial ?? existing.serialNumber,
             status: 'unclaimed',
             deviceToken,
             updatedAt: new Date(),
@@ -796,7 +820,6 @@ export async function deviceRoutes(app: FastifyInstance) {
           .where(eq(devices.id, existing.id))
           .returning({ id: devices.id });
 
-        // Patch the token with the real device id (sub was 'pending' above)
         const finalToken = app.jwt.sign(
           { sub: updated!.id, type: 'device', orgId: user.orgId, workspaceId },
           { expiresIn: '87600h' },
@@ -804,20 +827,20 @@ export async function deviceRoutes(app: FastifyInstance) {
         await db.update(devices).set({ deviceToken: finalToken }).where(eq(devices.id, updated!.id));
 
         imported++;
-        results.push({ serialNo: serial, deviceId: updated!.id, status: 'updated' });
+        results.push({ identifier, deviceId: updated!.id, status: 'updated' });
       } else {
-        // Create a new pre-provisioned device stub
         const [created] = await db
           .insert(devices)
           .values({
             orgId: user.orgId,
             workspaceId,
-            serialNumber: serial,
-            name: row.name?.trim() || serial,
+            serialNumber: serial ?? null,
+            duid: effectiveDuid ?? null,
+            name: row.name?.trim() || identifier,
             modelName: row.modelName?.trim() || null,
             macAddress: row.macAddress?.trim() || null,
             status: 'unclaimed',
-            deviceToken,   // placeholder — patched below with real id
+            deviceToken,
             kind: 'tv',
           })
           .returning({ id: devices.id });
@@ -829,7 +852,7 @@ export async function deviceRoutes(app: FastifyInstance) {
         await db.update(devices).set({ deviceToken: finalToken }).where(eq(devices.id, created!.id));
 
         imported++;
-        results.push({ serialNo: serial, deviceId: created!.id, status: 'imported' });
+        results.push({ identifier, deviceId: created!.id, status: 'imported' });
       }
     }
 

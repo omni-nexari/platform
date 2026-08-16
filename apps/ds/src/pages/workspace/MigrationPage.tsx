@@ -91,7 +91,7 @@ interface MiDevice {
 
 type LogStatus = 'pending' | 'ok' | 'error' | 'skipped';
 interface LogEntry {
-  type: 'content' | 'playlist' | 'schedule' | 'tag';
+  type: 'content' | 'playlist' | 'schedule' | 'tag' | 'device';
   miId: string;
   name: string;
   status: LogStatus;
@@ -345,7 +345,7 @@ export default function MigrationPage() {
   const [scheduleItemsLoading, setScheduleItemsLoading] = useState(new Set<string>());
 
   // Step 3 — Select
-  const [activeTab, setActiveTab] = useState<'content' | 'playlists' | 'schedules'>('content');
+  const [activeTab, setActiveTab] = useState<'content' | 'playlists' | 'schedules' | 'devices'>('content');
   const [contentList, setContentList] = useState<MiContent[]>([]);
   const [playlistList, setPlaylistList] = useState<MiPlaylist[]>([]);
   const [scheduleList, setScheduleList] = useState<MiSchedule[]>([]);
@@ -354,9 +354,11 @@ export default function MigrationPage() {
   const [selectedContentIds, setSelectedContentIds] = useState(new Set<string>());
   const [selectedPlaylistIds, setSelectedPlaylistIds] = useState(new Set<string>());
   const [selectedScheduleIds, setSelectedScheduleIds] = useState(new Set<string>());
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState(new Set<string>());
   const [contentSearch, setContentSearch] = useState('');
   const [playlistSearch, setPlaylistSearch] = useState('');
   const [scheduleSearch, setScheduleSearch] = useState('');
+  const [deviceSearch, setDeviceSearch] = useState('');
 
   // Step 4 — Migrate
   const [migrating, setMigrating] = useState(false);
@@ -366,7 +368,7 @@ export default function MigrationPage() {
   const logRef = useRef<HTMLDivElement>(null);
 
   // Step 5 — Done
-  const [summary, setSummary] = useState({ content: 0, playlist: 0, schedule: 0, failed: 0 });
+  const [summary, setSummary] = useState({ content: 0, playlist: 0, schedule: 0, device: 0, failed: 0 });
 
   // ── Proxy helper ──────────────────────────────────────────────────────────
 
@@ -847,7 +849,40 @@ export default function MigrationPage() {
       }
     }
 
-    setSummary({ content: successContent, playlist: successPlaylist, schedule: successSchedule, failed });
+    // ── Batch 4: Devices ─────────────────────────────────────────────────
+    // Pre-register selected MagicInfo devices by serial number so TVs auto-claim
+    // when the Nexari player first boots (no pairing code needed).
+    const selectedDevices = devices.filter(d => selectedDeviceIds.has(d.deviceId) && (d.serialNo || d.macAddress));
+    let successDevice = 0;
+    if (selectedDevices.length > 0) {
+      for (const d of selectedDevices) {
+        appendLog({ type: 'device', miId: d.deviceId, name: d.deviceName, status: 'pending' });
+      }
+      try {
+        const res = await api.post<{ imported: number; skipped: number }>('/devices/import-fleet', {
+          workspaceId: wsId,
+          devices: selectedDevices.map(d => ({
+            serialNo:   d.serialNo ?? undefined,
+            macAddress: d.macAddress ?? undefined,
+            name:       d.deviceName,
+            modelName:  d.deviceType ?? undefined,
+            groupName:  d.groupName ?? undefined,
+          })),
+        });
+        successDevice = res.imported;
+        for (const d of selectedDevices) {
+          updateLog(d.deviceId, { status: 'ok', message: 'Pre-registered — will auto-claim on first connect' });
+        }
+      } catch (err: unknown) {
+        const e = err as { message?: string };
+        for (const d of selectedDevices) {
+          updateLog(d.deviceId, { status: 'error', message: e.message ?? 'Import failed' });
+        }
+        failed += selectedDevices.length;
+      }
+    }
+
+    setSummary({ content: successContent, playlist: successPlaylist, schedule: successSchedule, device: successDevice, failed });
     setMigrating(false);
     if (!stopRef.current) setStep(5);
   }
@@ -884,7 +919,7 @@ export default function MigrationPage() {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  const totalSelected = selectedContentIds.size + selectedPlaylistIds.size + selectedScheduleIds.size;
+  const totalSelected = selectedContentIds.size + selectedPlaylistIds.size + selectedScheduleIds.size + selectedDeviceIds.size;
 
   return (
     <div className="p-4 sm:p-6 max-w-5xl mx-auto">
@@ -1167,10 +1202,10 @@ export default function MigrationPage() {
 
           {/* Tabs */}
           <div className="flex border-b border-[var(--border)]">
-            {(['content', 'playlists', 'schedules'] as const).map(tab => (
+            {(['content', 'playlists', 'schedules', 'devices'] as const).map(tab => (
               <button
                 key={tab}
-                onClick={() => handleTabChange(tab)}
+                onClick={() => handleTabChange(tab as Parameters<typeof handleTabChange>[0])}
                 className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors capitalize ${
                   activeTab === tab
                     ? 'border-[var(--blue)] text-[var(--blue)]'
@@ -1186,6 +1221,9 @@ export default function MigrationPage() {
                 )}
                 {tab === 'schedules' && selectedScheduleIds.size > 0 && (
                   <span className="ml-1.5 bg-[var(--blue)] text-white text-[10px] px-1.5 py-0.5 rounded-full">{selectedScheduleIds.size}</span>
+                )}
+                {tab === 'devices' && selectedDeviceIds.size > 0 && (
+                  <span className="ml-1.5 bg-[var(--blue)] text-white text-[10px] px-1.5 py-0.5 rounded-full">{selectedDeviceIds.size}</span>
                 )}
               </button>
             ))}
@@ -1324,10 +1362,64 @@ export default function MigrationPage() {
                   </div>
                 </>
               )}
+              {/* Devices tab — pre-register by serial number for zero-touch claiming */}
+              {activeTab === 'devices' && (
+                <>
+                  <div className="flex items-center gap-3 px-3 py-2 border-b border-[var(--border)]">
+                    <input type="checkbox"
+                      checked={devices.filter(d => d.serialNo || d.macAddress).length > 0 && devices.filter(d => d.serialNo || d.macAddress).every(d => selectedDeviceIds.has(d.deviceId))}
+                      onChange={e => setSelectedDeviceIds(e.target.checked ? new Set(devices.filter(d => d.serialNo || d.macAddress).map(d => d.deviceId)) : new Set())}
+                      className="rounded"
+                    />
+                    <input
+                      type="text" placeholder="Search devices..." value={deviceSearch}
+                      onChange={e => setDeviceSearch(e.target.value)}
+                      className="flex-1 px-2 py-1 text-sm bg-transparent border border-[var(--border)] rounded focus:outline-none focus:ring-1 focus:ring-[var(--blue)]"
+                    />
+                    <span className="text-xs text-[var(--text-muted)]">{devices.filter(d => d.serialNo || d.macAddress).length} importable</span>
+                  </div>
+                  <p className="px-3 py-2 text-xs text-[var(--text-muted)] border-b border-[var(--border)] bg-[var(--surface)]">
+                    Selected devices are pre-registered by serial number or MAC address. When the Nexari player first boots, it auto-claims without a pairing code.
+                    Devices with neither serial nor MAC cannot be pre-registered.
+                  </p>
+                  <div className="divide-y divide-[var(--border)] max-h-80 overflow-y-auto">
+                    {devices
+                      .filter(d => !deviceSearch || d.deviceName.toLowerCase().includes(deviceSearch.toLowerCase()) || (d.serialNo ?? '').toLowerCase().includes(deviceSearch.toLowerCase()))
+                      .map(d => {
+                        const hasIdentifier = !!(d.serialNo || d.macAddress);
+                        return (
+                          <label key={d.deviceId} className={`flex items-center gap-3 px-3 py-2 hover:bg-[var(--surface)] ${hasIdentifier ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>
+                            <input
+                              type="checkbox"
+                              disabled={!hasIdentifier}
+                              checked={selectedDeviceIds.has(d.deviceId)}
+                              onChange={e => {
+                                const next = new Set(selectedDeviceIds);
+                                e.target.checked ? next.add(d.deviceId) : next.delete(d.deviceId);
+                                setSelectedDeviceIds(next);
+                              }}
+                              className="rounded"
+                            />
+                            <Monitor className="w-4 h-4 text-[var(--blue)] shrink-0" />
+                            <span className="flex-1 text-sm text-[var(--text)] truncate">{d.deviceName}</span>
+                            {d.serialNo
+                              ? <span className="text-xs font-mono text-[var(--text-muted)]">{d.serialNo}</span>
+                              : d.macAddress
+                              ? <span className="text-xs font-mono text-[var(--text-muted)]">{d.macAddress}</span>
+                              : <Badge tone="warning">No identifier</Badge>
+                            }
+                            {d.groupName && <span className="text-xs text-[var(--text-muted)] truncate max-w-24">{d.groupName}</span>}
+                          </label>
+                        );
+                      })}
+                    {devices.length === 0 && (
+                      <EmptyState icon={<Monitor className="w-8 h-8" />} title="No devices found" className="py-6" />
+                    )}
+                  </div>
+                </>
+              )}
             </SectionCardBody>
           </SectionCard>
-
-          <div className="flex justify-between items-center">
             <button onClick={() => setStep(2)} className="flex items-center gap-2 px-4 py-2 border border-[var(--border)] rounded-lg text-sm text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]">
               <ArrowLeft className="w-4 h-4" /> Back
             </button>
@@ -1409,7 +1501,8 @@ export default function MigrationPage() {
               <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
               <h2 className="text-xl font-bold text-[var(--text)] mb-1">Migration Complete</h2>
               <p className="text-sm text-[var(--text-muted)]">
-                {summary.content} content items · {summary.playlist} playlists · {summary.schedule} schedules migrated
+                {summary.content} content items · {summary.playlist} playlists · {summary.schedule} schedules
+                {summary.device > 0 && ` · ${summary.device} device${summary.device !== 1 ? 's' : ''} pre-registered`}
                 {summary.failed > 0 && ` · ${summary.failed} failed`}
               </p>
             </SectionCardBody>
@@ -1433,15 +1526,12 @@ export default function MigrationPage() {
           )}
 
           <div className="flex flex-wrap gap-3">
-            <ActionButton onClick={() => navigate(`/workspaces/${wsId}/content`)}>
-              View Content →
-            </ActionButton>
-            <ActionButton onClick={() => navigate(`/workspaces/${wsId}/playlist`)}>
-              View Playlists →
-            </ActionButton>
-            <ActionButton onClick={() => navigate(`/workspaces/${wsId}/schedule`)}>
-              View Schedules →
-            </ActionButton>
+            <ActionButton onClick={() => navigate(`/workspaces/${wsId}/content`)}>View Content →</ActionButton>
+            <ActionButton onClick={() => navigate(`/workspaces/${wsId}/playlist`)}>View Playlists →</ActionButton>
+            <ActionButton onClick={() => navigate(`/workspaces/${wsId}/schedule`)}>View Schedules →</ActionButton>
+            {summary.device > 0 && (
+              <ActionButton onClick={() => navigate(`/workspaces/${wsId}/devices`)}>View Devices →</ActionButton>
+            )}
             <ActionButton
               onClick={() => {
                 setStep(1);
@@ -1449,6 +1539,7 @@ export default function MigrationPage() {
                 setSelectedContentIds(new Set());
                 setSelectedPlaylistIds(new Set());
                 setSelectedScheduleIds(new Set());
+                setSelectedDeviceIds(new Set());
                 setListLoaded({ content: false, playlists: false, schedules: false });
                 setMiToken('');
               }}
