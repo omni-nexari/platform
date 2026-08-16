@@ -43,7 +43,6 @@ async function start() {
   const app = Fastify({ loggerInstance: logger, maxParamLength: 2048, trustProxy: true });
 
   startLogCleanup();
-  startLogAlerts();
   startJobs();
   startWorkers(app.log);
 
