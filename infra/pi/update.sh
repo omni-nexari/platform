@@ -22,6 +22,11 @@ INSTALL_PLATFORM_VHOST="${INSTALL_PLATFORM_VHOST:-false}"
 # with the full list (e.g. "reflowcast.com ct.reflowcast.com").  Leave unset to
 # keep only the primary domain derived from APP_URL.
 NGINX_SERVER_NAMES="${NGINX_SERVER_NAMES:-}"
+# Set SKIP_NGINX=true to skip nginx config installation (e.g. when the host
+# already has its own nginx vhost managed separately).
+SKIP_NGINX="${SKIP_NGINX:-false}"
+# OS user that owns DATA_DIR subdirectories (tizen, android, etc.).
+SERVICE_USER="${SERVICE_USER:-nexari}"
 ENV_FILE="$ENV_DIR/api.env"
 
 echo "==> [update] Pulling latest code..."
@@ -58,7 +63,10 @@ echo "==> [update] Restarting service..."
 sudo systemctl restart "$SERVICE_NAME"
 
 echo "==> [update] Updating nginx config..."
-NGINX_CONF="$APP_DIR/infra/nginx/$NGINX_CONF_FILE"
+if [[ "$SKIP_NGINX" == "true" ]]; then
+  echo "    SKIP_NGINX=true -- skipping nginx config install"
+else
+  NGINX_CONF="$APP_DIR/infra/nginx/$NGINX_CONF_FILE"
 tmp_nginx="$(mktemp)"
 cp "$NGINX_CONF" "$tmp_nginx"
 # Patch /opt/signage → actual APP_DIR
@@ -85,6 +93,7 @@ if [[ "$INSTALL_PLATFORM_VHOST" == "true" && -f "$APP_DIR/infra/nginx/platform.n
     fi
 fi
 sudo nginx -t && sudo systemctl reload nginx
+fi
 
 # ── Tizen assets directory ────────────────────────────────────────────────────
 # /var/signage/tizen/ is created by bootstrap.sh, but guard here in case this
@@ -92,7 +101,7 @@ sudo nginx -t && sudo systemctl reload nginx
 # The WGT and sssp_config.xml are deployed here from Windows via install-nexari2.ps1.
 echo "==> [update] Checking Tizen assets directory..."
 sudo mkdir -p "$DATA_DIR/tizen"
-sudo chown -R nexari:nexari "$DATA_DIR/tizen"
+sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR/tizen"
 if compgen -G "$DATA_DIR/tizen/*.wgt" > /dev/null 2>&1; then
     wgt_file=$(ls -1t "$DATA_DIR"/tizen/*.wgt | head -1)
     wgt_size=$(du -sh "$wgt_file" | cut -f1)
@@ -106,7 +115,7 @@ fi
 # case the script is run on a fresh clone without a full bootstrap.
 echo "==> [update] Checking Android assets directory..."
 sudo mkdir -p "$DATA_DIR/android"
-sudo chown -R nexari:nexari "$DATA_DIR/android"
+sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR/android"
 if [[ -f "$DATA_DIR/android/nexari-android-latest.apk" ]]; then
     apk_size=$(du -sh "$DATA_DIR/android/nexari-android-latest.apk" | cut -f1)
     echo "    APK present: nexari-android-latest.apk (${apk_size})"
@@ -118,7 +127,7 @@ fi
 # Hosts NexariEPaper.wgt + sssp_config.xml uploaded by build-partner-players.ps1.
 echo "==> [update] Checking ePaper assets directory..."
 sudo mkdir -p "$DATA_DIR/epaper"
-sudo chown -R nexari:nexari "$DATA_DIR/epaper"
+sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR/epaper"
 if compgen -G "$DATA_DIR/epaper/*.wgt" > /dev/null 2>&1; then
     wgt_file=$(ls -1t "$DATA_DIR"/epaper/*.wgt | head -1)
     wgt_size=$(du -sh "$wgt_file" | cut -f1)
@@ -131,7 +140,7 @@ fi
 # Hosts the Windows installer EXE + latest.yml uploaded by build-partner-players.ps1.
 echo "==> [update] Checking Windows assets directory..."
 sudo mkdir -p "$DATA_DIR/windows"
-sudo chown -R nexari:nexari "$DATA_DIR/windows"
+sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR/windows"
 if compgen -G "$DATA_DIR/windows/*.exe" > /dev/null 2>&1; then
     exe_file=$(ls -1t "$DATA_DIR"/windows/*.exe | head -1)
     exe_size=$(du -sh "$exe_file" | cut -f1)
@@ -144,7 +153,7 @@ fi
 # Hosts firmware .bin files uploaded by build-partner-players.ps1.
 echo "==> [update] Checking ESP32 assets directory..."
 sudo mkdir -p "$DATA_DIR/esp32"
-sudo chown -R nexari:nexari "$DATA_DIR/esp32"
+sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR/esp32"
 
 echo ""
 echo "Done! Health check:"
