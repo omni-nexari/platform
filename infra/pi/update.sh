@@ -157,5 +157,6 @@ sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR/esp32"
 
 echo ""
 echo "Done! Health check:"
-curl -s http://127.0.0.1:3000/api/v1/health
+sleep 3
+curl -s http://127.0.0.1:3000/api/v1/health || echo "(API not yet ready -- check journalctl -u $SERVICE_NAME)"
 echo ""
