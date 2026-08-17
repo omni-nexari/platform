@@ -499,7 +499,9 @@ export async function deviceRoutes(app: FastifyInstance) {
     const existingByDuid = duid
       ? await db.query.devices.findFirst({ where: eq(devices.duid, duid) })
       : null;
-    const existingBySerial = !existingByDuid && serialNumber
+    // Also try serial even when DUID found a record — the DUID row may be an unclaimed orphan from a
+    // previous pairing attempt, while the serial row is the MagicInfo-imported device with orgId+token.
+    const existingBySerial = serialNumber
       ? await db.query.devices.findFirst({ where: and(eq(devices.serialNumber, serialNumber), isNull(devices.deletedAt)) })
       : null;
     // Fallback: fleet-imported devices often have MAC stored as `duid` in Tizen format.
@@ -507,10 +509,16 @@ export async function deviceRoutes(app: FastifyInstance) {
     const existingByMac = !existingByDuid && !existingBySerial && duid && /^[0-9a-f]{2}(-[0-9a-f]{2}){5}$/.test(duid)
       ? await db.query.devices.findFirst({ where: and(eq(devices.macAddress, duid), isNull(devices.deletedAt)) })
       : null;
-    const existing = existingByDuid ?? existingBySerial ?? existingByMac;
+    // Prefer the record that has orgId+token (pre-registered via MagicInfo migration).
+    // If serial lookup finds a claimable device, use it even if DUID found an unclaimed orphan.
+    const claimableBySerial = existingBySerial?.orgId && existingBySerial.deviceToken ? existingBySerial : null;
+    const existing = claimableBySerial ?? existingByDuid ?? existingBySerial ?? existingByMac;
 
     if (existing?.orgId && existing.deviceToken && !existing.deletedAt) {
-      // Device reinstalled — reset mdcNetworkStandby so auto-enable fires on next WS connect
+      // When auto-claiming via serial match, stamp the real hardware DUID onto the device so future
+      // connections resolve by DUID directly (fast path). Also clean up any orphan unclaimed row.
+      const dupeOrphanId = (claimableBySerial && existingByDuid && existingByDuid.id !== existing.id && !existingByDuid.orgId)
+        ? existingByDuid.id : null;
       await db
         .update(devices)
         .set({
@@ -531,6 +539,11 @@ export async function deviceRoutes(app: FastifyInstance) {
           ...(epaperApiVersion ? { epaperApiVersion: epaperApiVersion } : {}),
         })
         .where(eq(devices.id, existing.id));
+
+      // Remove the unclaimed orphan row (different device ID, no org) to avoid future confusion
+      if (dupeOrphanId) {
+        await db.delete(devices).where(eq(devices.id, dupeOrphanId));
+      }
 
       return reply.status(200).send({
         status: 'claimed',
