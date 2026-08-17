@@ -73,6 +73,15 @@ async function start() {
 
     app.get('/favicon.svg', (_: FastifyRequest, reply: FastifyReply) =>
       reply.sendFile('favicon.svg'));
+
+    // SPA catch-all: serve index.html for all non-API paths so client-side
+    // routing works for /, /login, /setup, /dashboard, /workspaces/*, etc.
+    app.setNotFoundHandler((req: FastifyRequest, reply: FastifyReply) => {
+      if (req.url.startsWith('/api/')) {
+        return reply.status(404).send({ message: `Route ${req.method}:${req.url} not found`, error: 'Not Found', statusCode: 404 });
+      }
+      return reply.sendFile('index.html');
+    });
   } else {
     app.log.warn(`DS dist not found at ${dsDist} — kiosk/kitchen display URLs will not work. Run: pnpm --filter @signage/ds build`);
   }
