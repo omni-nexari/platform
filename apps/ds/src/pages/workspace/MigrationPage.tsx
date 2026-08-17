@@ -482,8 +482,8 @@ export default function MigrationPage() {
               if (detail) {
                 const base = enriched[globalIdx];
                 if (!base) return;
-                // Prefer detail fields (richer data) over base list fields
-                const serialNo = (detail['serialNo'] ?? detail['serialNum'] ?? detail['serial'] ?? base.serialNo) as string | undefined;
+                // deviceSerial is the field name in MagicInfo v2.0 detail response
+                const serialNo = (detail['deviceSerial'] ?? detail['serialNo'] ?? detail['serialNum'] ?? base.serialNo) as string | undefined;
                 const macAddress = (detail['macAddress'] ?? detail['macAddr'] ?? base.macAddress) as string | undefined;
                 enriched[globalIdx] = {
                   deviceId: base.deviceId,

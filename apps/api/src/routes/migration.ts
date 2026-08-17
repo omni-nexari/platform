@@ -94,12 +94,13 @@ function nodeRequest(
   });
 }
 
-/** Stream a MagicInfo content download to a WriteStream, computing SHA-256 hash simultaneously. */
+/** Stream a MagicInfo content download (POST with JSON body) to a WriteStream, computing SHA-256 hash. */
 function nodeStreamDownload(
   url: string,
   token: string,
   writeStream: ReturnType<typeof createWriteStream>,
   hashStream: ReturnType<typeof crypto.createHash>,
+  body?: string,
 ): Promise<{ ok: boolean; status: number; fileSize: number }> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
@@ -114,8 +115,12 @@ function nodeStreamDownload(
         hostname: parsed.hostname,
         port: Number(parsed.port) || (isHttps ? 443 : 80),
         path: `${parsed.pathname}${parsed.search}`,
-        method: 'GET',
-        headers: { 'api_key': token, 'Accept': '*/*' },
+        method: body ? 'POST' : 'GET',
+        headers: {
+          'api_key': token,
+          'Accept': '*/*',
+          ...(body ? { 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(body)) } : {}),
+        },
         rejectUnauthorized: false,
       },
       (res) => {
@@ -144,6 +149,7 @@ function nodeStreamDownload(
       req.destroy(new Error('MagicInfo download timed out after 90s'));
     });
     req.on('error', (err) => settle(() => reject(err)));
+    if (body) req.write(body);
     req.end();
   });
 }
@@ -350,25 +356,30 @@ export async function migrationRoutes(app: FastifyInstance) {
       try { wsSettings = JSON.parse(wsRow?.settings ?? '{}'); } catch { /* ignore */ }
       const initialApprovalState = wsSettings.approvalRequired && !new Set(['prime_owner', 'owner', 'admin', 'a-manager']).has(user.role) ? 'draft' : 'approved';
 
-      // Build download URL. Try REST v2.0 first; fall back to legacy GetFileLoader servlet.
-      // The REST endpoint is at /restapi/v2.0/cms/contents/{id}/download (relative to baseUrl).
-      // The servlet may need /MagicInfo/ prefix depending on how baseUrl is configured.
-      if (mainFileId.includes('/') || mainFileId.includes('..') || mainFileName.includes('..')) {
+      // Build download URL. Primary: POST /restapi/v2.0/cms/contents/download with {contentIds:[id]}
+      // (matches the MagicInfo v2.0 Swagger spec). Servlet paths are fallbacks.
+      if (mainFileId.includes('..') || mainFileName.includes('..')) {
         return reply.status(400).send({ error: 'Invalid mainFileId or mainFileName' });
       }
-      const restDownloadPath = `/restapi/v2.0/cms/contents/${encodeURIComponent(body.data.miContentId)}/download`;
+      const postDownloadUrl = buildMiUrl(baseUrl, '/restapi/v2.0/cms/contents/download');
+      const postDownloadBody = JSON.stringify({ contentIds: [body.data.miContentId] });
       const servletPath = `/MagicInfo/servlet/GetFileLoader?paramPathConfName=CONTENTS_HOME&filepath=${encodeURIComponent(mainFileId)}/${encodeURIComponent(mainFileName)}`;
       const servletPathAlt = `/servlet/GetFileLoader?paramPathConfName=CONTENTS_HOME&filepath=${encodeURIComponent(mainFileId)}/${encodeURIComponent(mainFileName)}`;
 
-      // Probe which download URL works (HEAD request to avoid wasted bandwidth)
-      let downloadUrl = buildMiUrl(baseUrl, restDownloadPath);
-      const probe = await nodeRequest(buildMiUrl(baseUrl, restDownloadPath), { method: 'HEAD', headers: { 'api_key': token } }).catch(() => null);
-      if (!probe || probe.status === 404 || probe.status === 405) {
-        // REST endpoint not available — try MagicInfo-prefixed servlet, then bare servlet
+      // Determine which URL to use: probe the POST REST endpoint first
+      let downloadUrl = postDownloadUrl;
+      let downloadBody: string | undefined = postDownloadBody;
+      const probe = await nodeRequest(postDownloadUrl, {
+        method: 'HEAD',
+        headers: { 'api_key': token, 'Content-Type': 'application/json' },
+      }).catch(() => null);
+      if (probe && (probe.status === 404 || probe.status === 405)) {
+        // REST endpoint not available — fall back to servlet
         const probe2 = await nodeRequest(buildMiUrl(baseUrl, servletPath), { method: 'HEAD', headers: { 'api_key': token } }).catch(() => null);
         downloadUrl = (probe2 && probe2.status < 400)
           ? buildMiUrl(baseUrl, servletPath)
           : buildMiUrl(baseUrl, servletPathAlt);
+        downloadBody = undefined;
       }
       const fileName = mainFileName;
       const type = mimeToNexariType(mimeType, fileName);
@@ -383,7 +394,7 @@ export async function migrationRoutes(app: FastifyInstance) {
 
       const hashStream = crypto.createHash('sha256');
       const writeStream = createWriteStream(absPath);
-      const dl = await nodeStreamDownload(downloadUrl, token, writeStream, hashStream);
+      const dl = await nodeStreamDownload(downloadUrl, token, writeStream, hashStream, downloadBody);
 
       if (!dl.ok) {
         await fs.unlink(absPath).catch(() => undefined);
