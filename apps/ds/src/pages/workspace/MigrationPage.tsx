@@ -482,18 +482,19 @@ export default function MigrationPage() {
               if (detail) {
                 const base = enriched[globalIdx];
                 if (!base) return;
+                // Prefer detail fields (richer data) over base list fields
+                const serialNo = (detail['serialNo'] ?? detail['serialNum'] ?? detail['serial'] ?? base.serialNo) as string | undefined;
+                const macAddress = (detail['macAddress'] ?? detail['macAddr'] ?? base.macAddress) as string | undefined;
                 enriched[globalIdx] = {
                   deviceId: base.deviceId,
-                  deviceName: base.deviceName,
-                  ...(base.deviceType !== undefined && { deviceType: base.deviceType }),
-                  ...(base.connectionStatus !== undefined && { connectionStatus: base.connectionStatus }),
-                  ...(base.serialNo !== undefined && { serialNo: base.serialNo }),
-                  ...(base.macAddress !== undefined && { macAddress: base.macAddress }),
-                  ...(base.groupId !== undefined && { groupId: base.groupId }),
-                  ...(base.groupName !== undefined && { groupName: base.groupName }),
-                  ...(base.groupPath !== undefined && { groupPath: base.groupPath }),
-                  ...(base.currentScheduleId !== undefined && { currentScheduleId: base.currentScheduleId }),
-                  ...(base.scheduleId !== undefined && { scheduleId: base.scheduleId }),
+                  deviceName: (detail['deviceName'] as string | undefined) ?? base.deviceName,
+                  ...(detail['deviceType'] ?? base.deviceType ? { deviceType: (detail['deviceType'] ?? base.deviceType) as string } : {}),
+                  ...(detail['connectionStatus'] ?? base.connectionStatus ? { connectionStatus: (detail['connectionStatus'] ?? base.connectionStatus) as string } : {}),
+                  ...(serialNo ? { serialNo } : {}),
+                  ...(macAddress ? { macAddress } : {}),
+                  ...(detail['groupId'] ?? base.groupId ? { groupId: (detail['groupId'] ?? base.groupId) as string } : {}),
+                  ...(detail['groupName'] ?? base.groupName ? { groupName: (detail['groupName'] ?? base.groupName) as string } : {}),
+                  ...(detail['groupPath'] ?? base.groupPath ? { groupPath: (detail['groupPath'] ?? base.groupPath) as string } : {}),
                   ...(detail['contentScheduleId'] ? { contentScheduleId: detail['contentScheduleId'] as string } : {}),
                   ...(detail['contentScheduleName'] ? { contentScheduleName: detail['contentScheduleName'] as string } : {}),
                   ...(detail['messageScheduleName'] ? { messageScheduleName: detail['messageScheduleName'] as string } : {}),

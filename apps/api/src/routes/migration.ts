@@ -350,15 +350,26 @@ export async function migrationRoutes(app: FastifyInstance) {
       try { wsSettings = JSON.parse(wsRow?.settings ?? '{}'); } catch { /* ignore */ }
       const initialApprovalState = wsSettings.approvalRequired && !new Set(['prime_owner', 'owner', 'admin', 'a-manager']).has(user.role) ? 'draft' : 'approved';
 
-      // Build download URL via GetFileLoader servlet (the MagicInfo REST download endpoints don't exist)
-      // Validate inputs to prevent path traversal
+      // Build download URL. Try REST v2.0 first; fall back to legacy GetFileLoader servlet.
+      // The REST endpoint is at /restapi/v2.0/cms/contents/{id}/download (relative to baseUrl).
+      // The servlet may need /MagicInfo/ prefix depending on how baseUrl is configured.
       if (mainFileId.includes('/') || mainFileId.includes('..') || mainFileName.includes('..')) {
         return reply.status(400).send({ error: 'Invalid mainFileId or mainFileName' });
       }
-      const downloadUrl = buildMiUrl(
-        baseUrl,
-        `/servlet/GetFileLoader?paramPathConfName=CONTENTS_HOME&filepath=${encodeURIComponent(mainFileId)}/${encodeURIComponent(mainFileName)}`,
-      );
+      const restDownloadPath = `/restapi/v2.0/cms/contents/${encodeURIComponent(body.data.miContentId)}/download`;
+      const servletPath = `/MagicInfo/servlet/GetFileLoader?paramPathConfName=CONTENTS_HOME&filepath=${encodeURIComponent(mainFileId)}/${encodeURIComponent(mainFileName)}`;
+      const servletPathAlt = `/servlet/GetFileLoader?paramPathConfName=CONTENTS_HOME&filepath=${encodeURIComponent(mainFileId)}/${encodeURIComponent(mainFileName)}`;
+
+      // Probe which download URL works (HEAD request to avoid wasted bandwidth)
+      let downloadUrl = buildMiUrl(baseUrl, restDownloadPath);
+      const probe = await nodeRequest(buildMiUrl(baseUrl, restDownloadPath), { method: 'HEAD', headers: { 'api_key': token } }).catch(() => null);
+      if (!probe || probe.status === 404 || probe.status === 405) {
+        // REST endpoint not available — try MagicInfo-prefixed servlet, then bare servlet
+        const probe2 = await nodeRequest(buildMiUrl(baseUrl, servletPath), { method: 'HEAD', headers: { 'api_key': token } }).catch(() => null);
+        downloadUrl = (probe2 && probe2.status < 400)
+          ? buildMiUrl(baseUrl, servletPath)
+          : buildMiUrl(baseUrl, servletPathAlt);
+      }
       const fileName = mainFileName;
       const type = mimeToNexariType(mimeType, fileName);
       const ext = path.extname(fileName) || '';
