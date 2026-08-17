@@ -213,9 +213,6 @@ export default function SetupWizardPage() {
     return (
       <div className="min-h-dvh flex items-center justify-center p-4">
         <div className="w-full max-w-md">
-          <div className="mb-8 text-center">
-            <img src="/logo/nexari.png" alt="OmniHub" className="h-10 mx-auto mb-4" />
-          </div>
           <div className="rounded-2xl border p-6" style={{ background: 'var(--card)', borderColor: 'var(--card-border)' }}>
             <SuccessScreen email={setupEmail} />
           </div>
@@ -228,7 +225,6 @@ export default function SetupWizardPage() {
     <div className="min-h-dvh flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <img src="/logo/nexari.png" alt="OmniHub" className="h-10 mx-auto mb-4" />
           <h1 className="text-2xl font-bold text-[var(--text)]">Platform Setup</h1>
           <p className="text-sm text-[var(--text-muted)] mt-1">Complete these steps to get started</p>
         </div>
