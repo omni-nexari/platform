@@ -791,11 +791,12 @@ export async function deviceRoutes(app: FastifyInstance) {
         ? await db.query.devices.findFirst({ where: eq(devices.serialNumber, serial) })
         : null);
 
-      // Only skip if device is ACTIVE (not soft-deleted) in the same org/workspace.
-      // Soft-deleted devices should be RESTORED (fall through to UPDATE/INSERT).
-      if (existing && !existing.deletedAt && existing.orgId && existing.workspaceId && existing.deviceToken) {
+      // Skip only if device has actually connected (claimed/online/offline).
+      // Unclaimed devices are always re-importable so serial/name can be updated.
+      const isConnected = existing && !existing.deletedAt && existing.status !== 'unclaimed';
+      if (isConnected && existing!.orgId && existing!.workspaceId && existing!.deviceToken) {
         skipped++;
-        results.push({ identifier, deviceId: existing.id, status: 'skipped' });
+        results.push({ identifier, deviceId: existing!.id, status: 'skipped' });
         continue;
       }
 
