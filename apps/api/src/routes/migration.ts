@@ -356,29 +356,22 @@ export async function migrationRoutes(app: FastifyInstance) {
       try { wsSettings = JSON.parse(wsRow?.settings ?? '{}'); } catch { /* ignore */ }
       const initialApprovalState = wsSettings.approvalRequired && !new Set(['prime_owner', 'owner', 'admin', 'a-manager']).has(user.role) ? 'draft' : 'approved';
 
-      // Build download URL. Primary: POST /restapi/v2.0/cms/contents/download with {contentIds:[id]}
-      // (matches the MagicInfo v2.0 Swagger spec). Servlet paths are fallbacks.
+      // Fetch content detail to get the exact mainFileUrl (avoids doubled-extension bug in list response)
       if (mainFileId.includes('..') || mainFileName.includes('..')) {
         return reply.status(400).send({ error: 'Invalid mainFileId or mainFileName' });
       }
-      const postDownloadUrl = buildMiUrl(baseUrl, '/restapi/v2.0/cms/contents/download');
-      const postDownloadBody = JSON.stringify({ contentIds: [body.data.miContentId] });
-      const servletPath = `/MagicInfo/servlet/GetFileLoader?paramPathConfName=CONTENTS_HOME&filepath=${encodeURIComponent(mainFileId)}/${encodeURIComponent(mainFileName)}`;
-      const servletPathAlt = `/servlet/GetFileLoader?paramPathConfName=CONTENTS_HOME&filepath=${encodeURIComponent(mainFileId)}/${encodeURIComponent(mainFileName)}`;
-
-      // Determine which URL to use: probe the POST REST endpoint first
-      let downloadUrl = postDownloadUrl;
-      let downloadBody: string | undefined = postDownloadBody;
-      const probe = await nodeRequest(postDownloadUrl, {
-        method: 'HEAD',
-        headers: { 'api_key': token, 'Content-Type': 'application/json' },
-      }).catch(() => null);
-      if (probe && (probe.status === 404 || probe.status === 405)) {
-        // REST endpoint not available — fall back to servlet
-        const probe2 = await nodeRequest(buildMiUrl(baseUrl, servletPath), { method: 'HEAD', headers: { 'api_key': token } }).catch(() => null);
-        downloadUrl = (probe2 && probe2.status < 400)
-          ? buildMiUrl(baseUrl, servletPath)
-          : buildMiUrl(baseUrl, servletPathAlt);
+      let downloadUrl: string;
+      let downloadBody: string | undefined;
+      const detailRes = await miRequest(baseUrl, token, 'GET', `/restapi/v2.0/cms/contents/${encodeURIComponent(body.data.miContentId)}`);
+      const detailItems = (detailRes.data as Record<string, unknown> | null)?.['items'] as Record<string, unknown> | null;
+      const mainFileUrl = detailItems?.['mainFileUrl'] as string | undefined;
+      if (mainFileUrl) {
+        // Use the URL exactly as MagicInfo provides it (includes correct filename and path)
+        downloadUrl = mainFileUrl;
+        downloadBody = undefined;
+      } else {
+        // Fallback: construct servlet URL with /MagicInfo/ prefix
+        downloadUrl = buildMiUrl(baseUrl, `/MagicInfo/servlet/GetFileLoader?paramPathConfName=CONTENTS_HOME&filepath=${encodeURIComponent(mainFileId)}/${encodeURIComponent(mainFileName)}`);
         downloadBody = undefined;
       }
       const fileName = mainFileName;
