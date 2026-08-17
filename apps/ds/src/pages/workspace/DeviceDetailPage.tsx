@@ -1698,7 +1698,9 @@ export function DeviceDetailContent({
           </SectionCardHeader>
           <SectionCardBody className="space-y-3">
             <InfoRow icon={Monitor}     label="Model"             value={[observedSystemInfo?.realModel || device.modelName, device.modelCode].filter(Boolean).join(' / ') || null} />
-            <InfoRow icon={Fingerprint} label="DUID"              value={device.duid} />
+            {device.duid && device.duid !== resolvedMacAddress && (
+              <InfoRow icon={Fingerprint} label="DUID" value={device.duid} />
+            )}
             <InfoRow icon={Settings2}   label="Serial Number"     value={device.serialNumber} />
             <InfoRow icon={Cpu}         label="Software version"  value={device.firmwareVersion ?? observedSystemInfo?.firmwareVersion} />
             <InfoRow icon={Cpu}         label="Player version"    value={device.playerVersion ? `v${device.playerVersion}` : null} />
