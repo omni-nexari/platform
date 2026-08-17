@@ -56,6 +56,8 @@ async function start() {
   // Serve the DS production build so the TV player can load kiosk/kitchen pages
   // directly from port 3000 (already open in Windows Firewall via the CMS connection)
   // without needing a separate port 5174.
+  let serveSpa: ((req: FastifyRequest, reply: FastifyReply) => void) | null = null;
+
   if (existsSync(dsDist)) {
     await app.register(fastifyStatic, {
       root: dsDist,
@@ -63,7 +65,7 @@ async function start() {
       decorateReply: true,
     });
 
-    const serveSpa = (_: FastifyRequest, reply: FastifyReply) => reply.sendFile('index.html');
+    serveSpa = (_: FastifyRequest, reply: FastifyReply) => reply.sendFile('index.html');
     app.get('/kiosk/*',   serveSpa);
     app.get('/kitchen/*', serveSpa);
 
@@ -73,15 +75,6 @@ async function start() {
 
     app.get('/favicon.svg', (_: FastifyRequest, reply: FastifyReply) =>
       reply.sendFile('favicon.svg'));
-
-    // SPA catch-all: serve index.html for all non-API paths so client-side
-    // routing works for /, /login, /setup, /dashboard, /workspaces/*, etc.
-    app.setNotFoundHandler((req: FastifyRequest, reply: FastifyReply) => {
-      if (req.url.startsWith('/api/')) {
-        return reply.status(404).send({ message: `Route ${req.method}:${req.url} not found`, error: 'Not Found', statusCode: 404 });
-      }
-      return reply.sendFile('index.html');
-    });
   } else {
     app.log.warn(`DS dist not found at ${dsDist} — kiosk/kitchen display URLs will not work. Run: pnpm --filter @signage/ds build`);
   }
@@ -98,6 +91,13 @@ async function start() {
     const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
     return reply.redirect(`/api/v1/${tail}${qs}`, 307);
   });
+
+  // SPA catch-all — registered last so API routes always win.
+  // Serves index.html for /, /login, /setup, /workspaces/*, etc.
+  if (serveSpa) {
+    app.get('/', serveSpa);
+    app.get('/*', serveSpa);
+  }
 
   // Graceful shutdown — close BullMQ workers and queues so jobs aren't
   // silently lost on SIGTERM (systemd restart). Idempotent.
