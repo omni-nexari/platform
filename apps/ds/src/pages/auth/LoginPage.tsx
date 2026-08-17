@@ -46,7 +46,6 @@ export default function LoginPage() {
     <div className="min-h-dvh flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <img src="/logo/nexari.png" alt="OmniHub" className="h-10 mx-auto mb-4" />
           <h1 className="text-2xl font-bold text-[var(--text)]">Sign in</h1>
           <p className="text-sm text-[var(--text-muted)] mt-1">Welcome back</p>
         </div>

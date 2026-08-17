@@ -50,7 +50,6 @@ import {
   DollarSign,
   FileText,
   Receipt,
-  MessageSquare,
   ImageIcon,
   Plus,
 } from 'lucide-react';
@@ -302,7 +301,7 @@ export default function AppLayout() {
             />
           ) : (
             <>
-              <span className="text-lg font-bold tracking-tight text-[var(--text)]">Nexari</span>
+              <span className="text-lg font-bold tracking-tight text-[var(--text)]">Kevito</span>
               <span className="text-[var(--blue)] text-lg font-bold">.</span>
             </>
           )}
@@ -322,19 +321,6 @@ export default function AppLayout() {
           >
             <LayoutDashboard className="w-4 h-4" />
             Dashboard
-          </NavLink>
-          <NavLink
-            to="/support"
-            className={({ isActive }) =>
-              `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                isActive
-                  ? 'bg-[var(--blue)] text-white'
-                  : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]'
-              }`
-            }
-          >
-            <MessageSquare className="w-4 h-4" />
-            Support
           </NavLink>
           {/* Workspaces — always visible; clicking a workspace enters it */}
           {workspaces.length === 0 && (user?.orgRole === 'owner' || user?.orgRole === 'admin') && (
