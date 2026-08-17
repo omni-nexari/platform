@@ -783,15 +783,17 @@ export async function deviceRoutes(app: FastifyInstance) {
       const identifier = serial || effectiveDuid;
       if (!identifier) { skipped++; continue; }
 
-      // Lookup: by DUID first (fastest auto-claim path), then by serial
+      // Lookup without filtering deleted: DUID is a unique DB constraint across all rows
       const existingByDuid = effectiveDuid
-        ? await db.query.devices.findFirst({ where: and(eq(devices.duid, effectiveDuid), isNull(devices.deletedAt)) })
+        ? await db.query.devices.findFirst({ where: eq(devices.duid, effectiveDuid) })
         : null;
       const existing = existingByDuid ?? (serial
-        ? await db.query.devices.findFirst({ where: and(eq(devices.serialNumber, serial), isNull(devices.deletedAt)) })
+        ? await db.query.devices.findFirst({ where: eq(devices.serialNumber, serial) })
         : null);
 
-      if (existing?.orgId && existing.workspaceId && existing.deviceToken) {
+      // Only skip if device is ACTIVE (not soft-deleted) in the same org/workspace.
+      // Soft-deleted devices should be RESTORED (fall through to UPDATE/INSERT).
+      if (existing && !existing.deletedAt && existing.orgId && existing.workspaceId && existing.deviceToken) {
         skipped++;
         results.push({ identifier, deviceId: existing.id, status: 'skipped' });
         continue;
@@ -815,6 +817,7 @@ export async function deviceRoutes(app: FastifyInstance) {
             serialNumber: serial ?? existing.serialNumber,
             status: 'unclaimed',
             deviceToken,
+            deletedAt: null,
             updatedAt: new Date(),
           })
           .where(eq(devices.id, existing.id))
@@ -842,6 +845,22 @@ export async function deviceRoutes(app: FastifyInstance) {
             status: 'unclaimed',
             deviceToken,
             kind: 'tv',
+          })
+          // Safety net: if duid already exists (e.g. soft-deleted row lookup missed it),
+          // restore the existing row instead of failing.
+          .onConflictDoUpdate({
+            target: devices.duid,
+            set: {
+              orgId: user.orgId,
+              workspaceId,
+              name: row.name?.trim() || identifier,
+              serialNumber: serial ?? null,
+              macAddress: row.macAddress?.trim() || null,
+              status: 'unclaimed',
+              deviceToken,
+              deletedAt: null,
+              updatedAt: new Date(),
+            },
           })
           .returning({ id: devices.id });
 
